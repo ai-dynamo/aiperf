@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Exact NVIDIA Riva protobuf and RPC binding parity tests.
+//! NVIDIA Riva protobuf and RPC wire-compatibility tests.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -107,7 +107,6 @@ fn all_riva_bindings_use_the_exact_service_paths_and_cardinalities() {
 
 #[test]
 fn asr_unary_codec_matches_reference_defaults_overrides_and_response_shape() {
-    // Python parity: riva_asr_serializers.py:20-117,147-181.
     let binding = binding("riva_asr");
     let encoded = binding
         .encode_request(
@@ -124,7 +123,7 @@ fn asr_unary_codec_matches_reference_defaults_overrides_and_response_shape() {
             "request-1",
         )
         .unwrap();
-    // Serialized by the reference Python serializer at commit a391cfe27.
+    // Byte contract from riva_asr_serializers.py at commit a391cfe27.
     assert_eq!(
         wire_hex(&encoded),
         "0a1e080210c03e1a0566722d465220026a0e6578706c696369742d6d6f64656c1203616263a2060b0a09726571756573742d31"
@@ -180,7 +179,6 @@ fn asr_unary_codec_matches_reference_defaults_overrides_and_response_shape() {
 
 #[test]
 fn asr_bidi_codec_emits_config_first_then_audio_and_decodes_stream_chunks() {
-    // Python parity: riva_asr_serializers.py:119-145,183-224.
     let binding = binding("riva_asr");
     let messages = binding
         .encode_bidi_requests(
@@ -252,7 +250,6 @@ fn asr_bidi_codec_emits_config_first_then_audio_and_decodes_stream_chunks() {
 
 #[test]
 fn tts_codec_supports_unary_and_server_streaming_audio() {
-    // Python parity: riva_tts_serializers.py:20-94.
     let binding = binding("riva_tts");
     let encoded = binding
         .encode_request(
@@ -301,7 +298,6 @@ fn tts_codec_supports_unary_and_server_streaming_audio() {
 
 #[test]
 fn all_nlp_request_codecs_preserve_reference_fields() {
-    // Python parity: riva_nlp_serializers.py:38-271.
     let payload = json!({
         "texts": ["one", "two"],
         "top_n": 3,

@@ -3,9 +3,8 @@
 
 //! SLA-driven adaptive load control.
 //!
-//! This crate implements the `ramp_until_fail` controller described by
-//! `specs/2026-07-11-aiperf-rust-adaptive-scale-design.md`. It is transport
-//! neutral: returned-request observations enter through [`WindowSampler`], time
+//! The `ramp_until_fail` controller is transport neutral: returned-request
+//! observations enter through [`WindowSampler`], time
 //! comes from [`crate::clock::Clock`], and every mutable load knob sits behind
 //! [`ControlActuator`]. The same controller can therefore drive live HTTP, a
 //! socket-backed mock, or an in-process simulated sink without branching on the

@@ -3,7 +3,6 @@
 mod common;
 use common::*;
 
-/// None UI mode (no interactive output).
 #[tokio::test]
 async fn test_none_ui() {
     let h = AIPerfHarness::new().await;

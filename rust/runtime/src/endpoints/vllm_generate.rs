@@ -3,10 +3,8 @@
 
 //! Token-native vLLM/Dynamo `/inference/v1/generate` endpoint.
 //!
-//! The Rust port
-//! deliberately tightens the boundary: dataset composition validates and owns
-//! the raw token IDs, so formatting maps a typed [`crate::endpoints::Turn`] field to the
-//! vLLM wire field without inspecting arbitrary JSON values.
+//! Dataset composition validates raw token IDs before formatting maps the typed
+//! [`crate::endpoints::Turn`] field to the vLLM wire field.
 
 use std::collections::BTreeMap;
 
@@ -75,8 +73,7 @@ impl EndpointFactory for VllmGenerateFactory {
         config: EffectiveEndpointConfig,
     ) -> EndpointResult<Box<dyn PreparedEndpoint>> {
         let headers = bearer_headers(config.as_raw());
-        // The endpoint `extra`/`sampling_params` split depends only on immutable
-        // config, so validate and lift it once here instead of on every dispatch.
+        // The immutable `extra`/`sampling_params` split is prepared once.
         let mut endpoint_extra = config.as_raw().extra.clone().unwrap_or_default();
         validate_protected_extras(Some(&endpoint_extra), "endpoint.extra")?;
         let endpoint_sampling = take_sampling_params(&mut endpoint_extra, "endpoint.extra")?;

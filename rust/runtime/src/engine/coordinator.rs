@@ -180,13 +180,8 @@ impl Coordinator {
                     );
                 }
             };
-        // In cellular mode every cell runs this coordinator, but sidecar telemetry
-        // (GPU/DCGM, network-latency calibration, server-metrics scraping) is
-        // host-level and the controller drops all but one cell's anyway
-        // (`warn_dropped_sidecar_telemetry`). Running the collectors on every cell
-        // is pure waste — N DCGM/Prometheus scrapes, N localhost telemetry probes.
-        // So only the primary cell (`cell_id == 0`, or any non-cellular run) starts
-        // the collectors; secondary cells prepare an empty sidecar set.
+        // Sidecar telemetry is host-level, so only the primary cell starts
+        // collectors; the controller discards duplicate cell telemetry.
         let run_sidecars = crate::cellular::ModuloCellPartition::from_env()
             .map(|partition| {
                 !(crate::cellular::CellPartition::cell_count(&partition) > 1
@@ -417,14 +412,9 @@ fn persist_prepared_report(
         message: format!("{error:#}"),
     })?;
     tracing::info!(report = %report_path.display(), "Report written to: {}", report_path.display());
-    // Native post-report export plane. Best-effort: the native-v2 report above is
-    // the committed authority; genai-perf compat / OTLP / MLflow side outputs log
-    // and never fail the run (see `crate::export`).
-    //
-    // `AIPERF_EXPORT_SUBDIR` (parity-proof only) redirects the native sink outputs
-    // into `<artifact_dir>/<subdir>/` so they coexist with the legacy Python
-    // exporter files under `<artifact_dir>/`, enabling a same-`native-v2.json`
-    // byte-diff. Unset in normal runs (sinks write to the artifact root).
+    // The native-v2 report is authoritative; optional side outputs are
+    // best-effort and never fail the run.
+    // `AIPERF_EXPORT_SUBDIR` redirects sink outputs for parity checks.
     let export_dir = match std::env::var("AIPERF_EXPORT_SUBDIR") {
         Ok(subdir) if !subdir.is_empty() => {
             let dir = artifact_dir.join(subdir);

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Real-HTTP proof that phased scheduling uses the normal transport path.
+//! Real-HTTP phased scheduling over the normal transport path.
 
 use std::rc::Rc;
 use std::sync::Arc;

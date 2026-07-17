@@ -24,9 +24,8 @@ pub enum EndpointError {
     InvalidConfig(String),
     /// A response shape is hard-invalid for this endpoint.
     InvalidResponse(String),
-    /// Serializing a formatted request body failed. Held as a rendered string so
-    /// `EndpointError` stays `Clone`/`PartialEq` (a `serde_json::Error` is
-    /// neither); the source `serde_json::Error` is folded in via `From`.
+    /// Request serialization failed. The rendered error keeps this type
+    /// cloneable and comparable.
     Serialization(String),
 }
 
@@ -120,11 +119,8 @@ pub struct Turn {
     pub extra_body: Option<Map<String, Value>>,
     /// Prebuilt raw request body used by the raw endpoint reconstruction path.
     pub raw_payload: Option<Value>,
-    /// Pre-serialized message wire(s) lowered at load for a static content turn
-    /// (segment spec §3/§3a/§5). When present, message-array formatters splice
-    /// these bytes verbatim instead of re-rendering and re-serializing the turn's
-    /// content. Bytes only — this carries no dataset/segment-store dependency,
-    /// and it is a pure dispatch-time optimization, never serialized.
+    /// Message wires serialized at load and spliced verbatim at dispatch
+    /// (segment spec §3/§3a/§5); never serialized as part of the turn.
     #[serde(skip)]
     pub lowered: Option<SmallVec<[Bytes; 1]>>,
 }

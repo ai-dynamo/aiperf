@@ -4,10 +4,8 @@
 //! GPU gauge accumulation, boundary-counter attribution, and efficiency joins.
 //!
 //! Per-GPU distributions and cross-GPU rollups use a NaN-aware `ddof=1` kernel.
-//! Counter lookup is
-//! intentionally replaced by the telemetry design addendum's exact synchronous
-//! phase snapshots; only the source-grounded reset clamp and MJ-to-J rollup
-//! remain.
+//! Counter deltas use exact synchronous phase snapshots, a source-grounded reset
+//! clamp, and MJ-to-J rollup.
 
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter, Result as FmtResult};
@@ -237,8 +235,8 @@ impl GpuTelemetryAccumulator {
     /// Materializes the raw per-GPU scrape records in deterministic time order.
     ///
     /// Native-v2 reporting stays columnar through [`summarize_phase`](Self::summarize_phase).
-    /// This colder clone path exists for the legacy-compatible telemetry JSONL
-    /// artifact consumed by Python plot and user-extension code.
+    /// This colder clone path serves the telemetry JSONL artifact consumed by
+    /// Python plot and user-extension code.
     pub fn records(&self) -> Vec<GpuTelemetryRecord> {
         let mut records = self
             .series

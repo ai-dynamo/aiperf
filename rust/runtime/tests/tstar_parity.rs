@@ -1,17 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Cross-language golden-vector parity for `t*` sampling.
+//! Golden-vector verification for `t*` sampling.
 //!
-//! Python numpy is authoritative: `tools/gen_tstar_parity_vectors.py` computes
-//! `t_star_us` with the exact agentx logic from
-//! `src/aiperf/timing/graph_ir_source.py:113-150` (`_sample_t_star` +
-//! `_seed_for_trace_lane`) and commits the grid as
-//! `tests/data/tstar_parity_vectors.json`, storing each `t_star_us` as its f64
-//! bit pattern. This test replays every row through
-//! `aiperf_runtime::graph::tstar::WindowTStarSampler` and asserts bit-exact equality; a
-//! mismatch is a parity bug in the Rust `NumpyPcg64` (A1) or sampler (A2), never
-//! in the Python-authored JSON.
+//! `tools/gen_tstar_parity_vectors.py` records each reference `t_star_us` as its
+//! f64 bit pattern. Every row must match [`WindowTStarSampler`] bit-exactly.
 
 use aiperf_runtime::graph::tstar::{TStarSampler, WindowTStarSampler};
 

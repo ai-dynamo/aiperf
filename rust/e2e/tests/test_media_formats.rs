@@ -3,9 +3,6 @@
 mod common;
 use common::*;
 
-// Tests for different media format support (JPEG, PNG, MP3, WAV).
-
-/// Check for media in OpenAI message format.
 fn has_openai_media(payload: &serde_json::Value, content_type: &str) -> bool {
     let Some(messages) = payload.get("messages").and_then(|m| m.as_array()) else {
         return false;
@@ -26,7 +23,6 @@ fn has_openai_media(payload: &serde_json::Value, content_type: &str) -> bool {
     false
 }
 
-/// Check for media at the top level of the payload.
 fn has_top_level_media(payload: &serde_json::Value, media_attr: &str) -> bool {
     payload
         .get(media_attr)
@@ -35,7 +31,6 @@ fn has_top_level_media(payload: &serde_json::Value, media_attr: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Check if inputs contain media of the specified type.
 fn has_input_media(inputs: &serde_json::Value, media_attr: &str) -> bool {
     let content_type = match media_attr {
         "images" => "image_url",
@@ -72,7 +67,6 @@ fn has_input_audio(inputs: &serde_json::Value) -> bool {
     has_input_media(inputs, "audios")
 }
 
-/// Test different image format support (jpeg).
 #[tokio::test]
 async fn test_image_formats_jpeg() {
     let h = AIPerfHarness::new().await;
@@ -94,7 +88,6 @@ async fn test_image_formats_jpeg() {
     assert!(has_input_images(&r.artifacts.inputs()));
 }
 
-/// Test different image format support (png).
 #[tokio::test]
 async fn test_image_formats_png() {
     let h = AIPerfHarness::new().await;
@@ -116,7 +109,6 @@ async fn test_image_formats_png() {
     assert!(has_input_images(&r.artifacts.inputs()));
 }
 
-/// Test different audio format support (mp3).
 #[tokio::test]
 async fn test_audio_formats_mp3() {
     let h = AIPerfHarness::new().await;
@@ -137,7 +129,6 @@ async fn test_audio_formats_mp3() {
     assert!(has_input_audio(&r.artifacts.inputs()));
 }
 
-/// Test different audio format support (wav).
 #[tokio::test]
 async fn test_audio_formats_wav() {
     let h = AIPerfHarness::new().await;

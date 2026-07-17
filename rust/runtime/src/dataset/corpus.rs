@@ -10,9 +10,8 @@
 //! embed and one tokenization routine here prevents the two corpus consumers
 //! from drifting apart and avoids embedding the ~5 MB asset twice.
 //!
-//! The chunk tokenization reproduces the inherited Python
-//! `PromptGenerator._initialize_corpus`
-//! (`src/aiperf/dataset/generator/prompt.py:89-153`) exactly: lines are
+//! Chunk tokenization matches `PromptGenerator._initialize_corpus`
+//! (`src/aiperf/dataset/generator/prompt.py:89-153`): lines are
 //! stripped, empty lines dropped, accumulated into character-bounded chunks,
 //! each chunk joined with a single space and tokenized independently, and the
 //! per-chunk token vectors concatenated. Character-based (not CPU-based)
@@ -53,13 +52,11 @@ pub fn tokenize_corpus_chunked(corpus: &str, tokenizer: &dyn TextTokenizer) -> R
     let mut chars = 0_usize;
 
     for raw_line in corpus.lines() {
-        // Python: `line.strip()` then drop empties (prompt.py:109).
         let line = raw_line.trim();
         if line.is_empty() {
             continue;
         }
         buffer.push(line);
-        // Python `len(line)` counts Unicode code points, matching `chars().count()`.
         chars = chars.saturating_add(line.chars().count());
         if chars >= MAX_CHARS_PER_CHUNK {
             tokens.extend(tokenizer.encode(&buffer.join(" "))?);
@@ -67,7 +64,6 @@ pub fn tokenize_corpus_chunked(corpus: &str, tokenizer: &dyn TextTokenizer) -> R
             chars = 0;
         }
     }
-    // Trailing partial chunk (prompt.py:137-138).
     if !buffer.is_empty() {
         tokens.extend(tokenizer.encode(&buffer.join(" "))?);
     }
@@ -82,7 +78,6 @@ mod tests {
     #[test]
     fn sonnet_corpus_is_embedded_and_substantial() {
         assert!(SHAKESPEARE_CORPUS.len() > 4_000_000);
-        // The genai-perf asset opens with the sonnet collection header.
         assert!(SHAKESPEARE_CORPUS.trim_start().starts_with("THE SONNETS"));
     }
 
@@ -91,9 +86,7 @@ mod tests {
         let tokenizer = TiktokenTokenizer::builtin();
         let first = tokenize_sonnet_corpus(&tokenizer).unwrap();
         let second = tokenize_sonnet_corpus(&tokenizer).unwrap();
-        // Tokenization is a pure function of (corpus, tokenizer).
         assert_eq!(first, second);
-        // ~5 MB of English is on the order of a million tokens; guard the floor.
         assert!(
             first.len() > 1_000_000,
             "sonnet corpus produced only {} tokens",
@@ -103,9 +96,6 @@ mod tests {
 
     #[test]
     fn chunk_boundaries_follow_character_budget_not_wholesale_encode() {
-        // Two lines whose combined stripped length crosses the chunk budget must
-        // be tokenized as two independent chunks; a wholesale encode of the
-        // joined string would differ at the boundary for a real BPE tokenizer.
         let tokenizer = TiktokenTokenizer::builtin();
         let long_line = "word ".repeat(MAX_CHARS_PER_CHUNK); // > budget on its own
         let corpus = format!("{long_line}\ntail line");

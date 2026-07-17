@@ -69,8 +69,7 @@ impl ChatCompletionRequest {
     }
 }
 
-/// vLLM/Dynamo token-native `sampling_params` block. Only the fields the mock's
-/// deterministic generator reads are decoded; every other vLLM knob is ignored.
+/// Supported vLLM/Dynamo token-native sampling parameters.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct VllmSamplingParams {
@@ -81,12 +80,8 @@ pub struct VllmSamplingParams {
 
 /// vLLM/Dynamo token-native Generate request (`POST /inference/v1/generate`).
 ///
-/// The AIPerf runner's `vllm_generate` endpoint sends validated raw input
-/// `token_ids` plus a `sampling_params` block (see
-/// `aiperf_runtime::endpoints::vllm_generate::format_payload`, vllm_generate.rs:146-162);
-/// the mock consumes the token array as the prompt (ISL = its length) and returns
-/// integer `token_ids` arrays the runner parses back into `ResponseData::TokenIds`
-/// (vllm_generate.rs:259-303). Non-streaming only (`stream: false` always).
+/// `token_ids` are both the prompt and the source for deterministic output IDs.
+/// The endpoint is non-streaming.
 #[derive(Debug, Clone, Deserialize)]
 pub struct VllmGenerateRequest {
     pub model: String,
@@ -101,11 +96,7 @@ pub struct VllmGenerateRequest {
 
 /// OpenAI Responses API request (`POST /v1/responses`).
 ///
-/// The runner's `responses` endpoint authors `{input, model, stream,
-/// instructions?, max_output_tokens?, tools?}` (endpoints.rs:498-533). `input`
-/// is either a bare string or an array of `{type:"message", role, content}`
-/// items whose `content` is a string or a list of typed parts — the mock walks
-/// both shapes to recover the prompt text for its deterministic token generator.
+/// `input` accepts a string or message items with string or typed-part content.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ResponsesRequest {
     pub model: String,
@@ -120,11 +111,7 @@ pub struct ResponsesRequest {
 }
 
 impl ResponsesRequest {
-    /// Flatten the request's `instructions` plus `input` into a single prompt
-    /// string, mirroring how the runner's `extract_payload_inputs` collects
-    /// Responses text (endpoints.rs:419-457): a top-level string, an array of
-    /// `{content}` items, and typed `{type, text}` parts all contribute their
-    /// `text`.
+    /// Flattens `instructions` and text-bearing `input` parts into one prompt.
     pub fn prompt_text(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         collect_responses_text(&self.instructions, &mut parts);
@@ -133,9 +120,6 @@ impl ResponsesRequest {
     }
 }
 
-/// Recursively harvest human-readable text out of a Responses `input`/
-/// `instructions` value: bare strings, `{content}` message items, and typed
-/// `{text}` parts. Non-text parts (images, audio) are skipped.
 fn collect_responses_text(value: &Value, out: &mut Vec<String>) {
     match value {
         Value::String(s) if !s.is_empty() => out.push(s.clone()),
@@ -433,27 +417,21 @@ pub struct Usage {
     pub completion_tokens_details: Option<CompletionTokensDetails>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_tokens_details: Option<PromptTokensDetails>,
-    /// Prompt tokens written into the provider KV cache. Emitted top-level for
-    /// OpenAI-compatible dialects, matching the key AIPerf's `UsageView` reads
-    /// (`aiperf_runtime::endpoints::usage` line 110 -> `usage_prompt_cache_write_tokens`).
-    /// Populated only when `--usage-cache-write-tokens` is set (else absent, so a
-    /// normal run is byte-unchanged).
+    /// Prompt tokens written into the provider KV cache. Emitted only when
+    /// `--usage-cache-write-tokens` is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_creation_input_tokens: Option<usize>,
-    /// Explicit prompt cache-miss count (AIPerf `UsageView` line 114 ->
-    /// `usage_prompt_cache_miss_tokens`). Set by `--usage-cache-miss-tokens`.
+    /// Prompt cache misses configured by `--usage-cache-miss-tokens`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_cache_miss_tokens: Option<usize>,
-    /// Gemini-style tool-definition prompt tokens. AIPerf reads exactly
-    /// `toolUsePromptTokenCount` (`UsageView` line 161 ->
-    /// `usage_tool_use_prompt_tokens`). Set by `--usage-tool-use-prompt-tokens`.
+    /// Gemini `toolUsePromptTokenCount`, configured by
+    /// `--usage-tool-use-prompt-tokens`.
     #[serde(
         rename = "toolUsePromptTokenCount",
         skip_serializing_if = "Option::is_none"
     )]
     pub tool_use_prompt_token_count: Option<usize>,
-    /// Prompt-audio duration in seconds, distinct from audio tokens (AIPerf
-    /// `UsageView` line 165 -> `usage_prompt_audio_seconds`). Set by
+    /// Prompt-audio duration in seconds, configured by
     /// `--usage-prompt-audio-seconds`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_audio_seconds: Option<f64>,
@@ -467,17 +445,14 @@ pub struct Usage {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct CompletionTokensDetails {
     pub reasoning_tokens: usize,
-    /// Audio tokens attributed to model output (AIPerf `UsageView` line 136 ->
-    /// `usage_completion_audio_tokens`). Set by `--usage-completion-audio-tokens`.
+    /// Output audio tokens configured by `--usage-completion-audio-tokens`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_tokens: Option<usize>,
-    /// Accepted predicted-output tokens (AIPerf `UsageView` line 144 ->
-    /// `usage_accepted_prediction_tokens`). Set by
+    /// Accepted predicted-output tokens configured by
     /// `--usage-accepted-prediction-tokens`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accepted_prediction_tokens: Option<usize>,
-    /// Rejected predicted-output tokens (AIPerf `UsageView` line 152 ->
-    /// `usage_rejected_prediction_tokens`). Set by
+    /// Rejected predicted-output tokens configured by
     /// `--usage-rejected-prediction-tokens`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rejected_prediction_tokens: Option<usize>,
@@ -488,8 +463,7 @@ pub struct CompletionTokensDetails {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PromptTokensDetails {
     pub cached_tokens: usize,
-    /// Audio tokens attributed to the prompt (AIPerf `UsageView` line 128 ->
-    /// `usage_prompt_audio_tokens`). Set by `--usage-prompt-audio-tokens`.
+    /// Prompt audio tokens configured by `--usage-prompt-audio-tokens`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_tokens: Option<usize>,
 }

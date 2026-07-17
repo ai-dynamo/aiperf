@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Process-level proofs for strict protocol-v2 bootstrap and validation.
+//! Process-level coverage for strict protocol-v2 bootstrap and validation.
 
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
@@ -9,7 +9,6 @@ use std::process::{Command, Output, Stdio};
 use serde_json::{Value, json};
 
 fn runner_capabilities() -> Value {
-    // Capabilities is an in-process call now — one binary, no subprocess.
     serde_json::to_value(
         aiperf_cli::execute_mode::capabilities_catalog().expect("capabilities catalog"),
     )
@@ -57,8 +56,6 @@ fn graph_grpc_request(operation: &str) -> Value {
 }
 
 fn run(request: &Value) -> Output {
-    // The stdin wire is the bare `run`; the operation is selected by the re-exec
-    // MODE (`--execute` / `--validate`), not a wire field.
     let flag = match request["operation"].as_str() {
         Some("validate") => "--validate",
         _ => "--execute",
@@ -104,12 +101,6 @@ fn capabilities_emit_plugins_shaped_catalog() {
 
 #[test]
 fn graph_dataset_selects_graph_path_before_execution() {
-    // `grpc + graph` is now admitted at selection (any workload runs over any
-    // transport — no pair object, no compatibility predicate). The graph
-    // workload resolves the gRPC transport and reaches run-level validation,
-    // which fails here because the authored `chat` endpoint over `http://` has no
-    // gRPC binding — proving the graph path was selected and validated before any
-    // execution, not rejected at selection.
     let output = run(&graph_grpc_request("validate"));
     let response = one_json_line(&output.stdout);
 
@@ -133,9 +124,6 @@ fn graph_dataset_selects_graph_path_before_execution() {
 
 #[test]
 fn authored_workload_field_is_ignored_not_rejected() {
-    // `workload` was a removed selector. The runner ignores unknown Config keys
-    // by design (Python dumps the whole BenchmarkConfig), so a stray `workload`
-    // is decoded as if absent rather than rejected by a dedicated guard.
     let mut authored = request("validate");
     authored["run"]["cfg"]["tokenizer"] = json!({"name": "builtin"});
     authored["run"]["cfg"]["workload"] = json!({"type": "scheduled"});

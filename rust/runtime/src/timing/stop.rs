@@ -64,8 +64,7 @@ pub struct RunState {
 /// A single ordered stop condition: a pure predicate over a [`RunState`]
 /// snapshot and `now_ns`.
 pub trait StopCondition {
-    /// Whether this condition is relevant for the given configuration (Python
-    /// `should_use`). Conditions that don't apply are excluded from the chain.
+    /// Whether this condition is relevant for the given configuration.
     fn applies(cfg: &StopConfig) -> bool
     where
         Self: Sized;

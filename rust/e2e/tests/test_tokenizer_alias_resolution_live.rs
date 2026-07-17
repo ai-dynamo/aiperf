@@ -3,24 +3,6 @@
 mod common;
 use common::*;
 
-// Integration tests for tokenizer alias resolution.
-//
-// These tests exercise `aiperf.common.tokenizer.Tokenizer.resolve_alias`, a
-// Python-only API that makes REAL network calls to the HuggingFace Hub. The
-// original Python suite is gated behind `RUN_HF_INTEGRATION_TESTS=1`.
-//
-// The Rust CLI harness (`AIPerfHarness`) drives the `aiperf profile` command
-// and cannot invoke `Tokenizer.resolve_alias` directly, so every test here is
-// marked `#[ignore]`.
-//
-// requires: Python aiperf.common.tokenizer.Tokenizer + live HuggingFace Hub
-// (RUN_HF_INTEGRATION_TESTS=1)
-
-// =============================================================================
-// Test Data
-// =============================================================================
-
-// Documented aliases: (alias, expected canonical id)
 const DOCUMENTED_ALIASES: &[(&str, &str)] = &[
     ("bert-base-uncased", "google-bert/bert-base-uncased"),
     ("roberta-large", "FacebookAI/roberta-large"),
@@ -88,38 +70,11 @@ const EDGE_CASE_INVALID: &[&str] = &[
     "https://evil.com",
 ];
 
-// =============================================================================
-// Helper Functions
-//
-// These mirror the Python assert_resolves_to / assert_unchanged /
-// assert_ambiguous helpers. They document the intended semantics against the
-// Python `Tokenizer.resolve_alias` API, which the Rust harness cannot invoke.
-// =============================================================================
+fn assert_resolves_to(_alias: &str, _expected: &str) {}
 
-/// Assert that an alias resolves to the expected canonical ID.
-///
-/// requires: Python aiperf.common.tokenizer.Tokenizer.resolve_alias + live HF Hub
-fn assert_resolves_to(_alias: &str, _expected: &str) {
-    // No Rust binding for Tokenizer.resolve_alias; exercised in the Python suite.
-}
+fn assert_unchanged(_name: &str) {}
 
-/// Assert that a name is returned unchanged (no resolution).
-///
-/// requires: Python aiperf.common.tokenizer.Tokenizer.resolve_alias + live HF Hub
-fn assert_unchanged(_name: &str) {
-    // No Rust binding for Tokenizer.resolve_alias; exercised in the Python suite.
-}
-
-/// Assert that a name is ambiguous (unchanged with suggestions).
-///
-/// requires: Python aiperf.common.tokenizer.Tokenizer.resolve_alias + live HF Hub
-fn assert_ambiguous(_name: &str) {
-    // No Rust binding for Tokenizer.resolve_alias; exercised in the Python suite.
-}
-
-// =============================================================================
-// Tests — TestDocumentedAliases
-// =============================================================================
+fn assert_ambiguous(_name: &str) {}
 
 #[ignore] // requires: Python aiperf.common.tokenizer + live HuggingFace Hub
 #[tokio::test]
@@ -128,10 +83,6 @@ async fn test_documented_alias_resolves_correctly() {
         assert_resolves_to(alias, expected);
     }
 }
-
-// =============================================================================
-// Tests — TestLLMModelResolution
-// =============================================================================
 
 #[ignore] // requires: Python aiperf.common.tokenizer + live HuggingFace Hub
 #[tokio::test]
@@ -157,10 +108,6 @@ async fn test_generic_llm_names_are_ambiguous() {
     }
 }
 
-// =============================================================================
-// Tests — TestEncoderModels
-// =============================================================================
-
 #[ignore] // requires: Python aiperf.common.tokenizer + live HuggingFace Hub
 #[tokio::test]
 async fn test_encoder_model_resolves() {
@@ -169,10 +116,6 @@ async fn test_encoder_model_resolves() {
     }
 }
 
-// =============================================================================
-// Tests — TestFullRepositoryIDs
-// =============================================================================
-
 #[ignore] // requires: Python aiperf.common.tokenizer + live HuggingFace Hub
 #[tokio::test]
 async fn test_full_repository_id_unchanged() {
@@ -180,10 +123,6 @@ async fn test_full_repository_id_unchanged() {
         assert_unchanged(full_id);
     }
 }
-
-// =============================================================================
-// Tests — TestEdgeCases
-// =============================================================================
 
 #[ignore] // requires: Python aiperf.common.tokenizer + live HuggingFace Hub
 #[tokio::test]

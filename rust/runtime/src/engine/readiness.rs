@@ -8,10 +8,6 @@
 //! immutable plan, then drives every `(profile URL, model)` target before the
 //! runner creates its exclusive artifact directory. No fallback inference
 //! payload or endpoint-kind match lives in the driver.
-//!
-//! Request construction deliberately does not port the Python readiness
-//! probe's endpoint tables: the selected Rust endpoint adapter is
-//! authoritative.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -296,8 +292,8 @@ struct PreparedReadinessTarget {
     /// message (model listing vs. inference liveness) and to gate the
     /// models-mode base-URL fallback.
     success: ReadinessSuccess,
-    /// Base-URL `GET` issued when a models-listing probe returns 404, matching
-    /// the Python probe's "server has no model list but is responsive" path.
+    /// Base-URL `GET` issued when a models-listing probe returns 404, allowing a
+    /// responsive server without a model-list endpoint to satisfy liveness.
     fallback: Option<ReadinessAttemptRequest>,
     timeout_ns: i64,
     interval_ns: i64,
@@ -308,17 +304,11 @@ struct PreparedReadinessTarget {
 impl PreparedReadinessTarget {
     /// Emit the endpoint-appropriate readiness-ready progress line to stderr.
     ///
-    /// The Python orchestrator forwards the runner's stderr into the run log,
-    /// so these lines are the operator-facing readiness trace. Message wording
-    /// mirrors `src/aiperf/common/readiness_probe.py` so existing log-scraping
-    /// and integration expectations continue to match on the native path.
+    /// Message wording is a compatibility contract for log-scraping consumers.
     fn log_ready(&self, attempts: usize, response: &ReadinessAttemptResponse) {
-        // Success events are INFO (Python `readiness_probe.py`); only the retry
-        // path below stays at WARN.
         match &self.success {
             ReadinessSuccess::ModelListed(_) => {
-                // Wording mirrors Python `readiness_probe.py:145` so the harness'
-                // readiness-log grep (`Model '<id>' ready`) matches.
+                // Keep `Model '<id>' ready` stable for readiness-log consumers.
                 tracing::info!(
                     "Model '{}' ready at {} after {} attempt(s)",
                     self.model,
@@ -330,8 +320,7 @@ impl PreparedReadinessTarget {
                 let status = response
                     .status
                     .map_or_else(|| "unknown".to_owned(), |value| value.to_string());
-                // Wording mirrors Python `readiness_probe.py:342` (`Inference probe
-                // ready`, capital I) for the harness grep.
+                // Keep the capitalized prefix stable for readiness-log consumers.
                 tracing::info!(
                     "Inference probe ready at {} (status={}, attempt {})",
                     self.request.url,
@@ -606,8 +595,7 @@ impl PreparedOnlineReadiness for NativePreparedOnlineReadiness {
         clock: Rc<dyn Clock>,
         transport: Rc<dyn ReadinessTransport>,
     ) -> Result<ReadinessReport> {
-        // Probe-start line mirroring `readiness_probe.py`'s "Waiting for endpoint
-        // readiness across N target(s)" INFO.
+        // Keep this operator-facing message stable for log consumers.
         tracing::info!(
             targets = self.targets.len(),
             "Waiting for endpoint readiness across {} target(s)",

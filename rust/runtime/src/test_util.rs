@@ -108,8 +108,7 @@ async fn build_prepared_source(
     )
 }
 
-/// Synthetic multi-turn conversation source, replacing the removed synthetic
-/// loader. Each session has `turns` turns of `input_tokens`-word prompts.
+/// Synthetic multi-turn source with `turns` `input_tokens`-word prompts.
 pub async fn synthetic_prepared_source(
     turns: usize,
     input_tokens: usize,

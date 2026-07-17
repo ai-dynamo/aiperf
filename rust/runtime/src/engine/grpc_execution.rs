@@ -1,14 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Protocol-v2 run-level validation for the native online gRPC transport.
-//!
-//! There is no protocol-v1 request projection, endpoint adapter, or
-//! transport×workload pair object in this module. The scheduled and graph
-//! workload factories resolve the gRPC transport by id and call
-//! [`validate_grpc_run`] for the transport-specific endpoint checks before
-//! lowering into the common prepared native plan; execution then flows through
-//! the shared `PreparedTurn`/graph placement over the gRPC dispatcher.
+//! Run-level validation and binding for the native gRPC transport.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -26,11 +19,7 @@ use crate::engine::turn_execution::RequestExecutorFactory;
 
 /// Native execution binding for the built-in `grpc` transport.
 ///
-/// gRPC drives the same `RequestExecutor` seam as HTTP; the binding owns its
-/// own [`GrpcExecutionFactory`] (it is not a named field of the
-/// process execution-factory set), so gRPC is a transport the workloads treat
-/// identically to any other. Readiness polling is skipped (no gRPC server-ready
-/// probe today) and graph nodes dispatch over the Tonic sink.
+/// Owns the gRPC executor and graph dispatcher; readiness polling is disabled.
 #[derive(Debug, Default)]
 pub struct GrpcNativeExecution;
 
@@ -87,11 +76,7 @@ impl NativeTransportExecution for GrpcNativeExecution {
 
 /// Validate the gRPC-specific endpoint policy for one authored run.
 ///
-/// Called by the scheduled and graph workload factories once the gRPC transport
-/// is resolved by id. Confirms every endpoint profile has a built-in gRPC
-/// binding, `grpc://`/`grpcs://` URLs, no HTTP-only client policy, no readiness
-/// retries (unsupported over gRPC today), one routing/session policy across
-/// profiles, and no online sidecars.
+/// Requires gRPC bindings and schemes, shared routing policy, and no sidecars.
 pub(crate) fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunContext) -> Result<()> {
     let default = context.default_endpoint_profile()?;
     let default_http_client = ClientConfig::default();

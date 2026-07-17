@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Integration test for random prompt generation consistency.
-//!
-//! This test ensures that randomly generated prompt texts remain consistent across
-//! different configuration changes when using the same seed. The goal is to verify
-//! that the random text generation is decoupled from other configuration parameters.
+//! Seeded prompt text is independent of multimodal configuration.
 
 mod common;
 use common::*;
@@ -13,9 +9,6 @@ use common::*;
 const CONSISTENCY_SEED: u32 = 12345;
 const WORKERS_MAX: u32 = 1;
 
-/// Extract all prompt text content from payloads in `inputs.json`.
-///
-/// Returns the list of all text content from prompts in order.
 fn extract_prompt_texts(inputs: &serde_json::Value) -> Vec<String> {
     let mut texts = Vec::new();
     let sessions = match inputs.get("data").and_then(|d| d.as_array()) {
@@ -29,12 +22,10 @@ fn extract_prompt_texts(inputs: &serde_json::Value) -> Vec<String> {
         };
         for payload in payloads {
             if let Some(messages) = payload.get("messages").and_then(|m| m.as_array()) {
-                // Chat format
                 for message in messages {
                     match message.get("content") {
                         Some(serde_json::Value::String(s)) => texts.push(s.clone()),
                         Some(serde_json::Value::Array(items)) => {
-                            // Multimodal content
                             for item in items {
                                 if item.get("type").and_then(|t| t.as_str()) == Some("text") {
                                     if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
@@ -47,7 +38,6 @@ fn extract_prompt_texts(inputs: &serde_json::Value) -> Vec<String> {
                     }
                 }
             } else if let Some(prompt) = payload.get("prompt").and_then(|p| p.as_str()) {
-                // Completions format
                 texts.push(prompt.to_string());
             }
         }
@@ -55,13 +45,8 @@ fn extract_prompt_texts(inputs: &serde_json::Value) -> Vec<String> {
     texts
 }
 
-/// Verify prompt texts are identical when adding audio/images.
-///
-/// Adding multimodal content (audio/images) should not affect the randomly
-/// generated text portions of prompts.
 #[tokio::test]
 async fn test_prompt_consistency_with_multimodal_additions() {
-    // Run without multimodal content
     let h_text_only = AIPerfHarness::new().await;
     let result_text_only = h_text_only.run(&format!(
         "--model {DEFAULT_MODEL} \
@@ -79,7 +64,6 @@ async fn test_prompt_consistency_with_multimodal_additions() {
     ));
     assert!(result_text_only.success());
 
-    // Run with audio and images
     let h_multimodal = AIPerfHarness::new().await;
     let result_multimodal = h_multimodal.run(&format!(
         "--model {DEFAULT_MODEL} \

@@ -1,32 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! `aiperf._native` — the compiled target of the single interned `aiperf` wheel.
+//! Build metadata for the `aiperf._native` wheel extension.
 //!
-//! This module exists so maturin has a legal binding target to build alongside
-//! the `aiperf` `[project.scripts]` console command (maturin forbids
-//! `bindings = "bin"` there; see the crate-level docs in `Cargo.toml`). The
-//! full-fat native `aiperf` executable ships in the same wheel as interned
-//! package data at `aiperf/_bin/aiperf`, resolved at runtime via
-//! `importlib.resources` — that path deliberately does **not** import this
-//! module, so a load failure here never blocks binary discovery.
-//!
-//! The functions below expose build metadata for `aiperf --version` / support
-//! diagnostics only.
+//! Maturin builds this PyO3 module. Wheel repacking injects the native executable
+//! into the wheel's `.data/scripts/aiperf` path, which pip installs as the
+//! `aiperf` command. This extension does not discover or launch that executable.
 
 use pyo3::prelude::*;
 
-/// Basename of the interned native executable inside the wheel.
-///
-/// The single authority for the filename shared by the maturin `include` glob
-/// (`aiperf/_bin/aiperf`) and Python discovery.
+/// Native executable basename reported in build metadata.
 #[pyfunction]
 fn runner_filename() -> &'static str {
     "aiperf"
 }
 
-/// Package-relative path of the interned binary within the installed `aiperf`
-/// package (POSIX separators; the wheel is built on Unix build hosts).
+/// Return the `_bin/aiperf` metadata value.
+///
+/// Wheel installation and executable discovery do not use this value.
 #[pyfunction]
 fn runner_relpath() -> &'static str {
     "_bin/aiperf"

@@ -340,10 +340,8 @@ pub struct PhaseCommonSpec {
     /// Optional single-run adaptive load controller.
     #[serde(default)]
     pub adaptive_scale: Option<AdaptiveScaleSpec>,
-    /// Optional agentic cache-warmup duration in seconds, carried on the warmup
-    /// phase. Python projects the Config `agentic_cache_warmup_duration`; C2
-    /// lowers it into the recorded-graph cache-pressure window. Absent leaves the
-    /// pair's default cache-warmup policy unchanged.
+    /// Optional agentic cache-warmup duration in seconds. Recorded-graph execution
+    /// uses it as the cache-pressure window; absence selects the pair's default.
     #[serde(default)]
     pub agentic_cache_warmup_duration: Option<f64>,
 }
@@ -530,8 +528,6 @@ mod tests {
 
     #[test]
     fn phase_common_carries_agentic_cache_warmup_duration() {
-        // The warmup phase carries the agentic cache-warmup duration; C2 lowers
-        // it into the recorded-graph cache-pressure window.
         let phase: PhaseSpec = serde_json::from_str(
             r#"{
                 "type": "concurrency",

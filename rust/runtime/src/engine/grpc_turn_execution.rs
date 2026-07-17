@@ -1,15 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! gRPC transport for protocol-v2 turn execution.
-//!
-//! gRPC contributes only a [`WorkerSink`] (its [`GrpcTransportSink`]) and the
-//! [`GrpcSinkBuilder`] that constructs one per worker. It owns NO execution
-//! machinery: worker threads, measurement, drain, cancellation, and streaming
-//! all live once in [`crate::engine::turn_execution`] and are shared with HTTP
-//! (and any future socket transport) via [`build_native`]. This is the Rust
-//! analogue of the Python `BaseTransport.send_request` seam — a transport is a
-//! sink, not an execution model.
+//! gRPC transport sink for protocol-v2 turn execution.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -36,18 +28,14 @@ use crate::engine::turn_execution::{
     RequestExecutorFactory, WorkerSink, build_native,
 };
 
-/// V2-only native gRPC execution factory.
-///
-/// A thin adapter: it validates gRPC-specific prerequisites, then hands a
-/// [`GrpcSinkBuilder`] to the shared [`build_native`] executor. There is no gRPC
-/// worker loop.
+/// Native gRPC execution factory.
 #[derive(Clone, Debug, Default)]
 pub struct GrpcExecutionFactory {
     bindings: Option<GrpcBindingRegistry>,
 }
 
 impl GrpcExecutionFactory {
-    /// Construct with the built-in open gRPC binding registry.
+    /// Construct with the built-in gRPC binding registry.
     pub fn builtin() -> Result<Self> {
         Ok(Self {
             bindings: Some(GrpcBindingRegistry::builtin()?),
@@ -89,7 +77,7 @@ impl RequestExecutorFactory for GrpcExecutionFactory {
     }
 }
 
-/// Built-in gRPC sink builder: constructs a worker-local [`GrpcTransportSink`].
+/// Constructs worker-local gRPC transport sinks.
 pub struct GrpcSinkBuilder {
     base_urls: Vec<String>,
     model: String,
@@ -99,7 +87,6 @@ pub struct GrpcSinkBuilder {
 }
 
 impl GrpcSinkBuilder {
-    /// Capture the per-run gRPC sink inputs from the resolved backend config.
     pub fn from_config(config: &ExecutionBackendConfig, bindings: GrpcBindingRegistry) -> Self {
         Self {
             base_urls: config.base_urls.clone(),
@@ -142,7 +129,7 @@ impl WorkerSink for GrpcTransportSink {
     }
 
     fn supports_response_streaming(&self) -> bool {
-        // gRPC does not relay intermediate responses to a live observer today.
+        // The gRPC sink reports only terminal responses.
         false
     }
 
@@ -154,8 +141,6 @@ impl WorkerSink for GrpcTransportSink {
         on_first_token: &dyn Fn(i64),
         _responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<DispatchResult> {
-        // `_responses` is unused: `supports_response_streaming` is false, so the
-        // shared worker loop never opens a live response channel for gRPC.
         GrpcTransportSink::dispatch_measured(self, observer, turn, context, on_first_token).await
     }
 }
@@ -183,15 +168,7 @@ fn prepare_grpc_sink(
     )
 }
 
-/// Assemble a v2 gRPC sink from an already-built worker-local prepared endpoint
-/// table, translating the transport-neutral [`TransportSinkConfig`] into the
-/// gRPC client/reuse/session policy and preparing dense per-endpoint bindings.
-///
-/// This is the shared sink-construction core reused both by the scheduled gRPC
-/// worker path (via [`prepare_grpc_sink`], which resolves the table from a
-/// [`PreparedEndpointTableFactory`]) and by the graph endpoint runtime
-/// factory (which owns its `PreparedEndpointTable` directly). Keeping one core
-/// keeps the gRPC client/reuse/session mapping in a single place.
+/// Assemble a gRPC sink from a worker-local prepared endpoint table.
 ///
 /// [`TransportSinkConfig`]: crate::transport::http::TransportSinkConfig
 pub(crate) fn grpc_sink_with_endpoints(
@@ -212,9 +189,8 @@ pub(crate) fn grpc_sink_with_endpoints(
             client: GrpcClientConfig {
                 total_timeout_ns: transport.client.total_timeout_ns,
                 trace_chunks: transport.client.collect_trace_chunks,
-                // Carry the endpoint's ssl_verify to the gRPC TLS builder so a
-                // `grpcs://` run can disable cert verification (self-signed test
-                // servers), mirroring the HTTP transport.
+                // This policy must reach the gRPC TLS builder for self-signed
+                // `grpcs://` endpoints.
                 ssl_verify: transport.client.ssl_verify,
                 ..GrpcClientConfig::default()
             },

@@ -70,24 +70,19 @@ pub struct CyclingGraphTraceSource {
     /// off: the WARMUP -> PROFILING handoff carries the next-undrawn corpus
     /// position (`corpus_cursor`), and profiling seeds this offset with it so its
     /// first draw serves template `corpus_cursor % len` instead of re-serving the
-    /// 0th. Ports the `next_index = self._warmup_handoff.corpus_cursor` seed of
-    /// `graph_ir_replay.py::_run_lanes` (`src/aiperf/timing/strategies/
-    /// graph_ir_replay.py:1297-1300`, branch `ajc/aiperf-graph-ir`). The session
-    /// and static-request budgets stay anchored to the raw session ordinal (drawn
-    /// from `0`), mirroring Python's separate `_can_recycle`/`--request-count`
-    /// gates — the cursor governs ONLY which template each draw picks, never how
+    /// 0th. Session and static-request budgets stay anchored to the raw session
+    /// ordinal drawn from `0`; the cursor governs only which template each draw picks, never how
     /// many sessions profiling runs. Absent a handoff this is `0` (unchanged).
     start_ordinal: u64,
     /// Strategy-aware corpus-index remap for the profiling recycle draw.
     ///
     /// `Sequential` (the default, [`PermutationDraw::sequential`]) returns
-    /// `draw % len` — byte-for-byte the historic cursor-with-wrap pick (legacy
-    /// `SequentialSampler`). `Shuffle`/`Random` draws derive a child generator off
-    /// the run root so the template pick continues the SAME legacy sampler stream
-    /// the pressure stage draws under (both route through the shared
+    /// `draw % len`, the cursor-with-wrap `SequentialSampler` pick.
+    /// `Shuffle`/`Random` draws derive a child generator from the run root so the
+    /// template pick continues the same sampler stream
+    /// pressure warmup draws under (both route through the shared
     /// [`PermutationDraw`]), so a freed profiling lane never re-serves a template
-    /// the pressure stage already replayed under a different order (agentx
-    /// `dataset/dataset_samplers.py`).
+    /// pressure warmup already replayed under a different order.
     draw: PermutationDraw,
 }
 
@@ -171,10 +166,7 @@ impl CyclingGraphTraceSource {
     /// The first `next_trace` then serves template `start_ordinal % len` and the
     /// cycle continues from there, so the bounded profiling recycle does not
     /// re-serve the templates a cache-pressure warmup already consumed. Session
-    /// and static-request budgets are unaffected (they count from `0`). Default
-    /// `0` (no builder call) is the byte-unchanged no-handoff path. Port of the
-    /// `next_index = self._warmup_handoff.corpus_cursor` seed in
-    /// `graph_ir_replay.py::_run_lanes` (`:1297-1300`, branch `ajc/aiperf-graph-ir`).
+    /// and static-request budgets are unaffected because they count from `0`.
     pub fn starting_at(mut self, start_ordinal: u64) -> Self {
         self.start_ordinal = start_ordinal;
         self
@@ -182,13 +174,12 @@ impl CyclingGraphTraceSource {
 
     /// Route the recycle template pick through a resolved strategy-aware draw.
     ///
-    /// `Sequential` leaves `next_trace` byte-identical to the historic
-    /// `draw % len` pick (legacy `SequentialSampler`). `Shuffle` picks
-    /// `epoch[draw / len][draw % len]` under the legacy `ShuffleSampler`
+    /// `Sequential` leaves `next_trace` as the byte-identical `draw % len` pick.
+    /// `Shuffle` picks `epoch[draw / len][draw % len]` under the `ShuffleSampler`
     /// persistent-epoch shuffle; `Random` picks the x-th `randbelow(len)` of the
-    /// legacy `RandomSampler` CPython stream — both seeded once from the run root
+    /// `RandomSampler` CPython stream — both seeded once from the run root
     /// (via [`crate::graph::tstar::TStarWindow::recycle_draw`]), so the profiling
-    /// recycle continues the SAME order the pressure stage draws under (both route
+    /// recycle continues the same order pressure warmup draws under (both route
     /// through the shared [`PermutationDraw`]). Default `sequential` (no builder
     /// call) is the byte-unchanged product path.
     pub fn with_sampling(mut self, draw: PermutationDraw) -> Self {
@@ -205,14 +196,11 @@ impl GraphTraceSource for CyclingGraphTraceSource {
         }
         // The corpus draw position is the session ordinal shifted by the handoff
         // resume cursor; the session-limit gate above stays on the raw ordinal, so
-        // the cursor moves ONLY which template each draw picks (Python threads
-        // `next_index` independently of the `_can_recycle` session gate).
+        // the cursor moves only which template each draw picks.
         let draw = ordinal
             .checked_add(self.start_ordinal)
             .ok_or_else(|| GraphWorkloadError("graph resumed draw ordinal exceeds u64".into()))?;
-        // Strategy-aware remap (legacy `dataset_samplers.py`): Sequential is
-        // `draw % len` (unchanged); Shuffle/Random is `epoch[draw / len][draw % len]`
-        // under the same persistent-epoch shuffle the pressure stage draws.
+        // The remap changes template selection without changing draw counters.
         let template_index = self.draw.index(draw, self.templates.len());
         let mut plan = self.templates[template_index].clone();
         let requests = u64::try_from(plan.graph.nodes.len()).map_err(|_| {
@@ -267,13 +255,13 @@ pub struct PartitionedGraphTraceSource {
     next_local: Cell<u64>,
     /// Strategy-aware corpus-index remap keyed on the GLOBAL session ordinal.
     ///
-    /// `Sequential` (the default) is `global_ordinal % len` — the historic
-    /// interleave pick, byte-unchanged. Under `Shuffle`/`Random` each cell draws
+    /// `Sequential` (the default) is `global_ordinal % len`. Under
+    /// `Shuffle`/`Random` each cell draws
     /// `epoch[global / len][global % len]`; because the union of all cells' global
     /// ordinals is the contiguous `0..N`, each persistent-epoch pass is still
     /// covered exactly once across the cells, so the deterministic-per-topology
     /// cover-the-corpus-once contract holds and equals a single-cell cycling run
-    /// under the identical draw (legacy `dataset_samplers.py`).
+    /// under the identical draw.
     draw: PermutationDraw,
 }
 
@@ -318,7 +306,7 @@ impl PartitionedGraphTraceSource {
     ///
     /// See [`CyclingGraphTraceSource::with_sampling`]: `Sequential` is the
     /// byte-unchanged `global_ordinal % len` pick; `Shuffle`/`Random` picks the
-    /// same legacy draw the pressure stage and the single-cell cycler use, keyed
+    /// same draw pressure warmup and the single-cell cycler use, keyed
     /// on the global ordinal so the per-topology cover-the-corpus-once union is
     /// preserved (`Shuffle`; `Random` is with replacement, so the union matches a
     /// single-cell run but need not cover every template each pass).
@@ -492,7 +480,7 @@ impl GraphArrivalPolicy for IntervalGraphArrival {
     ) -> Result<(), GraphWorkloadError> {
         // The (AtStart, KeepAbsolute) arrival policy (see `crate::timing::arrival`):
         // arrival 0 fires at `run_start` exactly, later arrivals accumulate absolutely
-        // off the prior target with no re-anchor. `prev` reproduces the original
+        // off the prior target with no re-anchor. `prev` preserves the
         // ordinal-keyed first-arrival branch (and its `unwrap_or(run_start)` fallback)
         // exactly, so the closure draws on precisely the same ticks as before.
         let prev = if ordinal == 0 {
@@ -1014,7 +1002,7 @@ mod tests {
     #[test]
     fn cycling_source_shuffle_matches_shared_draw_and_covers_each_pass() {
         // (b) Shuffle: the profiling recycle `next_trace` template order equals the
-        // shared persistent-epoch `PermutationDraw` on the same legacy
+        // shared persistent-epoch `PermutationDraw` on the same
         // `ShuffleSampler` child seed, and every full pass covers each template once.
         let handle = sample_handle();
         let letters = ["a", "b", "c", "d", "e"];
@@ -1052,8 +1040,8 @@ mod tests {
     fn cycling_source_shuffle_continues_pressure_shared_sampler_order() {
         // (c) Shared-sampler-with-pressure: a freed profiling lane that resumes at
         // corpus cursor `k` (`starting_at(k)`) serves the SAME template the shared
-        // `PermutationDraw` (the pressure stage's remap) yields for counter `k+i`,
-        // so profiling never re-serves a template the pressure stage replayed
+        // `PermutationDraw` (the pressure-warmup remap) yields for counter `k+i`,
+        // so profiling never re-serves a template pressure warmup replayed
         // under a different order. Both route through the identical remap on the
         // identical `(base_seed, total)`.
         let handle = sample_handle();
@@ -1067,7 +1055,7 @@ mod tests {
             .unwrap()
             .starting_at(start)
             .with_sampling(PermutationDraw::shuffle(base_seed));
-        // The reference sampler the pressure stage draws from on the same counter.
+        // The reference sampler pressure warmup draws from on the same counter.
         let pressure = PermutationDraw::shuffle(base_seed);
         for i in 0..total as u64 {
             let id = source.next_trace().unwrap().unwrap().trace.id;

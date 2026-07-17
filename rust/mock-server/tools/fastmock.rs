@@ -1,4 +1,7 @@
-// Minimal blazing-fast OpenAI-ish mock: fixed streaming chat response.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// Minimal fixed-response OpenAI-compatible mock.
 //
 // Compile standalone (no cargo, no crates):  rustc -O fastmock.rs -o /tmp/fastmock
 //
@@ -9,11 +12,10 @@
 //               ceiling with zero added latency — no proxy, same process.
 //   --procs N   N independent server processes sharing PORT via SO_REUSEPORT
 //               (default 1; 0 = auto = available parallelism). The kernel spreads
-//               new connections across the processes — true multi-process load
-//               sharing with ZERO proxy hop (unlike an L4 balancer). Linux only.
+//               new connections across the processes without a proxy hop.
 //
 // --threads and --procs compose: `--procs 4 --threads 2` = 4 processes, each with
-// 2 accept threads. `./fastmock 8131` alone is the unchanged 1-thread baseline.
+// 2 accept threads.
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
@@ -32,7 +34,6 @@ fn content_length(head: &[u8]) -> usize {
     0
 }
 
-/// Prebuilt, shared response bytes (built once, cloned as `Arc` into every thread).
 struct Responses {
     chat: Arc<Vec<u8>>,
     models: Arc<Vec<u8>>,
@@ -53,8 +54,6 @@ fn build_responses() -> Responses {
     }
 }
 
-/// Serve one keep-alive connection until it closes: parse each pipelined request
-/// off the byte buffer and write back the fixed chat (POST) or models (GET) reply.
 fn handle(mut stream: TcpStream, chat: Arc<Vec<u8>>, models: Arc<Vec<u8>>) {
     let mut buf = vec![0u8; 65536];
     let mut acc: Vec<u8> = Vec::with_capacity(65536);
@@ -90,9 +89,7 @@ fn handle(mut stream: TcpStream, chat: Arc<Vec<u8>>, models: Arc<Vec<u8>>) {
     }
 }
 
-/// One accept loop over a shared listener; spawns a thread per accepted
-/// connection. Run `threads` copies of this concurrently on the same listener to
-/// parallelize `accept()` (the kernel serializes the syscall safely).
+/// The kernel serializes concurrent `accept` calls on the shared listener.
 fn accept_loop(listener: Arc<TcpListener>, resp: &Responses) {
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
@@ -103,7 +100,6 @@ fn accept_loop(listener: Arc<TcpListener>, resp: &Responses) {
     }
 }
 
-/// Run the server in this process: `threads` accept threads over one listener.
 fn serve(listener: TcpListener, threads: usize) {
     let listener = Arc::new(listener);
     let resp = Arc::new(build_responses());
@@ -151,17 +147,12 @@ fn main() {
         procs = auto_parallelism();
     }
 
-    // Multi-process leader: spawn N SO_REUSEPORT children and supervise them.
-    // Children are marked with FASTMOCK_CHILD so they skip this branch and go
-    // straight to serving on a reuseport socket.
     let is_child = std::env::var_os("FASTMOCK_CHILD").is_some();
     if procs > 1 && !is_child {
         run_supervisor(&port, threads, procs);
         return;
     }
 
-    // Serving path. A reuseport child binds with SO_REUSEPORT so it can share the
-    // port with its siblings; a lone process just binds normally.
     let listener = if procs > 1 {
         bind_reuseport(&port)
     } else {
@@ -175,10 +166,7 @@ fn main() {
     serve(listener, threads);
 }
 
-/// Spawn `procs` copies of ourselves, each an SO_REUSEPORT server on `port`, and
-/// wait on them. Children get `FASTMOCK_CHILD=1` and, on Linux, `PR_SET_PDEATHSIG`
-/// so they die if this leader dies (a lone Ctrl-C on the terminal also drops the
-/// whole process group).
+/// Supervise `procs` SO_REUSEPORT workers and kill them with their parent.
 fn run_supervisor(port: &str, threads: usize, procs: usize) {
     use std::process::Command;
     let exe = std::env::current_exe().expect("current_exe");
@@ -204,15 +192,10 @@ fn run_supervisor(port: &str, threads: usize, procs: usize) {
     }
 }
 
-/// Build a listener with SO_REUSEADDR + SO_REUSEPORT set *before* bind, so many
-/// processes can bind the same port and let the kernel load-balance accepts.
-/// `std::net::TcpListener` binds on creation and never exposes SO_REUSEPORT, so
-/// we create the socket by hand via the system libc (linked into every Rust
-/// binary — no `libc` crate needed) and adopt the fd.
+/// Set SO_REUSEPORT before bind because `TcpListener` exposes no post-bind API.
 #[cfg(target_os = "linux")]
 fn bind_reuseport(port: &str) -> TcpListener {
     use std::os::unix::io::FromRawFd;
-    // Resolved against the system libc at link time.
     extern "C" {
         fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
         fn setsockopt(
@@ -259,15 +242,13 @@ fn bind_reuseport(port: &str) -> TcpListener {
     }
 }
 
-/// Non-Linux fallback: no SO_REUSEPORT, so `--procs > 1` degrades to a plain bind
-/// (the second process will fail to bind). fastmock is a Linux loopback tool.
+/// Without SO_REUSEPORT, a second process cannot bind the same address.
 #[cfg(not(target_os = "linux"))]
 fn bind_reuseport(port: &str) -> TcpListener {
     TcpListener::bind(format!("127.0.0.1:{port}")).unwrap()
 }
 
-/// Ask the kernel to SIGKILL a child when this leader dies (PR_SET_PDEATHSIG), so
-/// SO_REUSEPORT children never orphan and keep holding the port.
+/// Prevent workers from orphaning and retaining the shared port.
 #[cfg(target_os = "linux")]
 fn set_parent_death_signal(cmd: &mut std::process::Command) {
     use std::os::unix::process::CommandExt;

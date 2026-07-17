@@ -14,10 +14,8 @@ use serde::{Deserialize, Serialize};
 
 /// Stable model and selected-endpoint dimensions for one inference request.
 ///
-/// Python keeps the configured model list and endpoint URL list as independent
-/// dimensions. The native collector additionally retains the *selected* pair per
-/// request so a multi-model or multi-endpoint run can emit honest labeled series
-/// instead of folding every request into one unlabeled aggregate.
+/// Retaining the selected pair lets multi-model or multi-endpoint runs emit
+/// labeled series instead of folding every request into one unlabeled aggregate.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct InferenceDimensions {
     /// Fully resolved endpoint URL selected for the request.
@@ -111,11 +109,9 @@ pub struct RequestTrace {
 
 /// One completed request record ready for metric ingestion.
 ///
-/// Serializable so a cell can ship its captured records to the controller, which
-/// re-ingests them in global dispatch-ordinal order — the exact mechanism the
-/// single-process path uses for worker-count-independent byte parity. The
-/// `metric_overrides` `MetricValue`s round-trip through a self-describing format
-/// (the cellular wire is MessagePack).
+/// Cells serialize captured records to the controller for global
+/// dispatch-ordinal ingestion. `metric_overrides` round-trip through the
+/// self-describing MessagePack cellular wire.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordIngest {
     /// Absolute zero-based request slot assigned by the workload.

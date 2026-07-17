@@ -86,18 +86,13 @@ impl GpuTelemetryRun {
             }
         }
 
-        // A `--gpu-telemetry <file>.csv` supplies additional DCGM exporter fields
-        // beyond the built-in catalog. Loading is fail-closed (a missing/unreadable
-        // path is a hard error via `?`), mirroring the Python custom collector.
+        // Custom metric files fail closed before any source process starts.
         let loaded_custom = match &spec.metrics_file {
             Some(path) => Some(crate::gpu_telemetry::load_custom_dcgm_metrics(path)?),
             None => None,
         };
 
-        // Validate the complete metric catalog before supervising any source
-        // process so a local configuration error cannot strand a child. Custom
-        // CSV specs are registered in place of the (unused) `custom_metrics`
-        // block when a metrics file is supplied.
+        // Validate the complete catalog before supervising source processes.
         let accumulator = if let Some(loaded) = &loaded_custom {
             GpuTelemetryAccumulator::new()
                 .with_additional_metric_specs(loaded.specs.iter().cloned())?
@@ -352,11 +347,8 @@ impl GpuTelemetryState {
     }
 
     async fn collect_continuously(self: Rc<Self>) {
-        // Python's canonical collector starts its cadence task with
-        // `immediate=True`.
-        // The forced baseline belongs just before the phase; this first ordinary
-        // scrape belongs just after the common phase-start barrier and ensures a
-        // short phase still has an in-window gauge sample.
+        // Scrape immediately after the phase-start barrier so short phases have
+        // an in-window gauge sample.
         self.collect_active().await;
         loop {
             let sleep = self.clock.clone().sleep(self.collection_interval_ns);

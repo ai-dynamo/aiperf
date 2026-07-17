@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! The request path: send, then stream SSE or read a text body, recording all
-//! timing into a RequestRecord. Port of `AioHttpClient._request`.
+//! HTTP request dispatch, response collection, and timing.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -202,19 +201,11 @@ where
     }
 }
 
-/// Non-backpressured fast-path SSE handler: records every message and drives the
-/// filter's first-token search only until it reports the first significant
-/// token, then stops invoking it while still draining the body.
+/// Non-backpressured handler that records every message and stops filtering
+/// after the first significant token.
 ///
-/// This mirrors the former inline `read_sse` closure exactly — same
-/// `perf_ns - start_ns` TTFT delta, same `first_seen` short-circuit, and an
-/// always-ready `poll_ready` (a non-backpressured filter never blocks on
-/// capacity, so it is never consulted here). The reason it exists as a handler
-/// rather than an infallible closure is panic safety: `SseMessageFilter` is a
-/// public trait, so an external filter may legitimately override
-/// `is_backpressured()` to `false` yet return `Err` from `start_send`. Routing
-/// through the fallible [`SseMessageHandler`] seam propagates that error to fail
-/// the request instead of unwrapping it into a panic.
+/// The fallible handler preserves errors from external filters instead of
+/// converting them into panics.
 struct FirstTokenSseHandler<'a, F>
 where
     F: SseMessageFilter + ?Sized,
@@ -306,7 +297,6 @@ impl HttpClient {
         let start_ns = self.clock.now_ns();
         let mut record = RequestRecord::started(start_ns);
         let mut trace = TraceData {
-            // aiohttp emits on_request_start before connection acquisition.
             request_send_start_ns: Some(start_ns),
             ..TraceData::default()
         };
@@ -628,7 +618,6 @@ impl HttpClient {
         .await
     }
 
-    /// The un-timed send + response body raced by [`dispatch`](Self::dispatch).
     #[allow(clippy::too_many_arguments)]
     async fn dispatch_inner(
         &self,
@@ -652,7 +641,6 @@ impl HttpClient {
             trace.request_send_start_ns = Some(self.clock.now_ns());
         }
         let resp = sender.send(req).await?;
-        // Response headers received; the body finished writing at `send_end`.
         let hdr_ns = self.clock.now_ns();
         let send_end = completion.sent_ns().unwrap_or(hdr_ns);
         trace.request_send_end_ns = Some(send_end);

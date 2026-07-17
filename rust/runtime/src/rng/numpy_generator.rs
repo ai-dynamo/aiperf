@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Byte-exact port of `numpy.random.Generator` (the `default_rng` object) atop
+//! Byte-exact `numpy.random.Generator` compatibility atop
 //! the [`NumpyPcg64`] bit generator.
 //!
 //! Reproduces `np.random.default_rng(seed).<method>()` bit-for-bit for the
 //! methods AIPerf's seeded dataset generators use: `random`, `standard_normal`,
 //! `normal`, `lognormal`, `integers`, `bytes`, and weighted/uniform `choice`.
-//! Every algorithm is ported verbatim from the numpy 1.26.4 C source
+//! Algorithms follow the NumPy 1.26.4 C source
 //! (`src/distributions/distributions.c`, `_generator.pyx`), cited per method;
 //! the normal-ziggurat tables are extracted verbatim in
 //! [`crate::rng::ziggurat_constants`]. Golden-vector tested against numpy.
@@ -39,7 +39,7 @@ impl NumpyGenerator {
         (0..size).map(|_| self.bit.next_double()).collect()
     }
 
-    /// `standard_normal()` — the normal ziggurat, byte-exact port of
+    /// `standard_normal()` — the byte-exact normal ziggurat from
     /// `random_standard_normal` (`distributions.c`). 99.3% fast path.
     pub fn standard_normal(&mut self) -> f64 {
         loop {
@@ -112,7 +112,7 @@ impl NumpyGenerator {
     }
 
     /// `integers(low, high)` (endpoint exclusive) — one draw in `[low, high)`.
-    /// Ports `random_bounded_uint64_fill`'s `rng <= 0xFFFFFFFF` (Lemire) path,
+    /// Uses `random_bounded_uint64_fill`'s `rng <= 0xFFFFFFFF` Lemire path,
     /// which is the branch AIPerf's small-range integer draws hit.
     pub fn integers(&mut self, low: i64, high: i64) -> i64 {
         let rng = (high - 1 - low) as u64; // inclusive span
@@ -121,7 +121,7 @@ impl NumpyGenerator {
         }
         assert!(
             rng <= 0xFFFF_FFFF,
-            "integers range must fit in u32 for this port"
+            "integers range must fit in u32 for NumPy-compatible sampling"
         );
         if rng == 0xFFFF_FFFF {
             return low + self.bit.next_u32() as i64;
@@ -146,7 +146,7 @@ impl NumpyGenerator {
     }
 
     /// `choice(n, p=weights)` (replace=True, size=None) — one weighted index in
-    /// `[0, n)`. Ports the `p`-branch: `cdf = cumsum(p); cdf /= cdf[-1];
+    /// `[0, n)` using `cdf = cumsum(p); cdf /= cdf[-1];
     /// idx = cdf.searchsorted(random(), side='right')`.
     pub fn choice_weighted(&mut self, weights: &[f64]) -> usize {
         let mut cdf: Vec<f64> = Vec::with_capacity(weights.len());

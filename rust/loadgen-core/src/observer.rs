@@ -1,14 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shared measurement observer backed by one single-loop [`TraceCollector`].
+//! Measurement observer backed by a worker-local [`TraceCollector`].
 //!
 //! The observer is a pure recorder — it does not own a clock. Callers supply
-//! millisecond timestamps drawn from one shared time source (the live HTTP
-//! path uses the `aiperf-transport-http` `Clock`), so arrival, admit, and token
-//! events all sit on the same timeline. It lives here beside the
-//! [`TraceCollector`] it writes into so both online HTTP dispatch and the
-//! `aiperf-graph` engine can record without a dependency cycle.
+//! millisecond timestamps from one shared time source so arrival, admission,
+//! and token events use the same timeline.
 
 use std::cell::RefCell;
 
@@ -39,10 +36,7 @@ impl CollectorObserver {
         self.take().finish().with_wall_time_ms(wall_ms)
     }
 
-    /// Drain the owned collector without reducing it.
-    ///
-    /// Post-drain runtimes can move this plain data value to a reduction worker;
-    /// no observer callback or clock access remains after this boundary.
+    /// Drain the collector without reducing it.
     pub fn take(&self) -> TraceCollector {
         std::mem::take(&mut *self.inner.borrow_mut())
     }

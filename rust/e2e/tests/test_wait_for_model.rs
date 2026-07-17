@@ -5,22 +5,6 @@ use common::*;
 
 use aiperf_mock_server::config::MockServerConfig;
 
-// Integration tests for the `--wait-for-model-timeout` readiness probe.
-//
-// Covers both probe modes:
-//
-// Models mode (`--wait-for-model-mode models`):
-// - success immediately (models endpoint ready from t=0)
-// - success after N retries (models endpoint returns empty data until delay elapses)
-// - timeout failure (requested model never appears)
-// - 404 fallback (models endpoint disabled; probe accepts 2xx on base URL)
-//
-// Inference mode (`--wait-for-model-mode inference`, the default):
-// - success immediately (inference endpoint ready from t=0)
-// - success after N retries (inference endpoint returns 503 until delay elapses)
-
-/// Build a fast, single-worker mock config that advertises `mock-model` on
-/// `GET /v1/models`.
 fn mock_model_cfg() -> MockServerConfig {
     let mut cfg = MockServerConfig::default();
     cfg.fast = true;
@@ -29,12 +13,6 @@ fn mock_model_cfg() -> MockServerConfig {
     cfg
 }
 
-// ---------------------------------------------------------------------------
-// Models mode: `--wait-for-model-mode models`
-// ---------------------------------------------------------------------------
-
-/// With no configured delay, /v1/models lists the model from the start and the
-/// probe returns on the first attempt.
 #[tokio::test]
 async fn test_models_probe_success_immediate() {
     let h = AIPerfHarness::new_with(mock_model_cfg()).await;
@@ -56,17 +34,10 @@ async fn test_models_probe_success_immediate() {
     );
 }
 
-/// With models_ready_delay_seconds>0, the probe sees an empty data list on
-/// early attempts and must retry until the model appears.
-///
-/// requires: mock server `models_ready_delay_seconds` support (not implemented
-/// in aiperf-mock-server).
 #[tokio::test]
-#[ignore]
+#[ignore = "requires mock-server control over model-list readiness delay"]
 async fn test_models_probe_success_after_retries() {
     let mut cfg = mock_model_cfg();
-    // models_ready_delay_seconds is unsupported by the Rust mock; this would set
-    // it to 20.0 to force the empty-data retry path.
     cfg.workers = 1;
     let h = AIPerfHarness::new_with(cfg).await;
     let r = h.run_timeout(
@@ -88,8 +59,6 @@ async fn test_models_probe_success_after_retries() {
     );
 }
 
-/// If the requested model id never appears in /v1/models, the probe must exit
-/// non-zero and the error must reference the model and URL.
 #[tokio::test]
 async fn test_models_probe_timeout() {
     let h = AIPerfHarness::new_with(mock_model_cfg()).await;
@@ -113,13 +82,8 @@ async fn test_models_probe_timeout() {
     assert!(combined.contains("Timed out"), "got:\n{combined}");
 }
 
-/// When /v1/models returns 404, the probe must fall back to a base-URL GET and
-/// accept a 2xx as 'server is up'.
-///
-/// requires: mock server `disable_models_endpoint` support (not implemented in
-/// aiperf-mock-server).
 #[tokio::test]
-#[ignore]
+#[ignore = "requires mock-server control to disable the models endpoint"]
 async fn test_models_probe_404_fallback() {
     let h = AIPerfHarness::new_with(mock_model_cfg()).await;
     let r = h.run_timeout(
@@ -137,12 +101,6 @@ async fn test_models_probe_404_fallback() {
     assert!(combined.contains("accepting as ready"), "got:\n{combined}");
 }
 
-// ---------------------------------------------------------------------------
-// Inference mode: `--wait-for-model-mode inference`
-// ---------------------------------------------------------------------------
-
-/// With no configured delay, /v1/chat/completions responds 200 from t=0 and the
-/// probe returns on the first attempt.
 #[tokio::test]
 async fn test_inference_probe_success_immediate() {
     let mut cfg = MockServerConfig::default();
@@ -167,14 +125,8 @@ async fn test_inference_probe_success_immediate() {
     );
 }
 
-/// With inference_ready_delay_seconds>0, the inference endpoint returns 503 on
-/// early attempts and the probe must retry until the stack starts responding
-/// 2xx.
-///
-/// requires: mock server `inference_ready_delay_seconds` support (not
-/// implemented in aiperf-mock-server).
 #[tokio::test]
-#[ignore]
+#[ignore = "requires mock-server control over inference readiness delay"]
 async fn test_inference_probe_success_after_retries() {
     let mut cfg = MockServerConfig::default();
     cfg.fast = true;

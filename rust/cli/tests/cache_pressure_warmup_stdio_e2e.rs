@@ -1,26 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Phase-E capstone: process-level proof that the full cache-pressure warmup
-//! flow works end-to-end through the runner's product protocol-v2 stdio path.
-//!
-//! Drives ONE run in which the WARMUP phase carries
-//! `agentic_cache_warmup_duration` (the C2-lowered cache-pressure window) over a
-//! recorded WEKA trace with an active trajectory-start (`t*`) window, so:
-//!
-//!   * E3b's [`GraphPressureRecycle`] recycles the warmup corpus for the pressure
-//!     duration (more than one corpus pass), rather than the single-pass workload
-//!     an ordinary warmup runs;
-//!   * E3c stashes a `GraphWarmupHandoff` and PROFILING resumes each lane from its
-//!     recorded frontier, replaying the post-`t*` remainder;
-//!   * the run reaches a valid native report with no hang and no abort.
-//!
-//! The recycle count is proved from the run's own native report (the WARMUP
-//! accumulator's `request_count` counter total exceeds one corpus pass), not by
-//! racing the mock, so the assertion is deterministic. The pressure loop is
-//! Clock-duration-bounded and the child is wrapped in a wall-clock timeout, so
-//! the test cannot hang. Mirrors the harness in `warmup_abort_stdio_e2e.rs` and
-//! the `t*` midpoint trace it pins.
+//! Process-level cache-pressure warmup and profiling handoff coverage.
 
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
@@ -30,15 +11,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use axum::{Router, body::Bytes, extract::State, response::IntoResponse, routing::post};
 use serde_json::{Value, json};
 
-/// Shared mock state: total node dispatches observed across warmup + profiling.
 #[derive(Default)]
 struct MockState {
     requests: AtomicU64,
 }
 
-/// Every dispatched node returns one streamed token and a terminal usage frame,
-/// so both the recycled warmup instances and the resumed profiling frontier
-/// produce complete records.
 async fn chat(State(state): State<Arc<MockState>>, _body: Bytes) -> impl IntoResponse {
     state.requests.fetch_add(1, Ordering::SeqCst);
     (
@@ -50,22 +27,22 @@ async fn chat(State(state): State<Arc<MockState>>, _body: Bytes) -> impl IntoRes
         .into_response()
 }
 
-fn benchmark_run(legacy: Value) -> Value {
-    let mut endpoint = legacy["resources"]["endpoints"]["profiles"][0].clone();
+fn benchmark_run(source: Value) -> Value {
+    let mut endpoint = source["resources"]["endpoints"]["profiles"][0].clone();
     endpoint.as_object_mut().unwrap().remove("id");
     let cfg = json!({
-        "models": legacy["resources"]["models"],
+        "models": source["resources"]["models"],
         "endpoint": endpoint,
-        "datasets": [legacy["workload"]["config"]["dataset"]],
-        "phases": legacy["workload"]["config"]["phases"],
-        "tokenizer": legacy["workload"]["config"]["tokenizer"],
-        "transport": {"type": legacy["transport"]["type"]},
-        "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
+        "datasets": [source["workload"]["config"]["dataset"]],
+        "phases": source["workload"]["config"]["phases"],
+        "tokenizer": source["workload"]["config"]["tokenizer"],
+        "transport": {"type": source["transport"]["type"]},
+        "runtime": {"workers": source["workload"]["config"]["worker_count"]}
     });
     json!({
-        "benchmark_id": legacy["identity"]["benchmark_id"],
-        "artifact_dir": legacy["artifact_target"],
-        "random_seed": legacy["identity"]["random_seed"],
+        "benchmark_id": source["identity"]["benchmark_id"],
+        "artifact_dir": source["artifact_target"],
+        "random_seed": source["identity"]["random_seed"],
         "cfg": cfg
     })
 }
@@ -84,9 +61,6 @@ fn run_child(mut request: Value) -> Output {
     child.wait_with_output().unwrap()
 }
 
-/// A `t*` window pinned at the midpoint so WARMUP primes the pre-`t*` boundary
-/// turn and PROFILING replays the post-`t*` frontier — the active window is what
-/// engages the warmup/profiling snapshot split and the cache-pressure priming.
 fn synthesis() -> Value {
     json!({
         "speedup_ratio": 1.0,
@@ -102,12 +76,6 @@ fn synthesis() -> Value {
     })
 }
 
-/// One WEKA session with three time-spaced requests so the lowered chain
-/// straddles the midpoint `t*`: exactly one node is the pre-`t*` warmup boundary
-/// (the corpus is a single template that dispatches ONE node per pass) and the
-/// post-`t*` remainder is the profiling frontier. Identical trace shape to
-/// `warmup_abort_stdio_e2e.rs`, whose clean case proves warmup dispatches exactly
-/// one node without recycle — so any warmup `request_count > 1` here is recycle.
 fn weka_dataset() -> Value {
     let request = |t: f64| {
         json!({
@@ -136,11 +104,6 @@ fn weka_dataset() -> Value {
     })
 }
 
-/// A warmup + profiling request whose WARMUP phase carries a small
-/// `agentic_cache_warmup_duration` (the C2 knob), engaging the in-runtime
-/// cache-pressure recycle. The duration is tiny (localhost dispatches are
-/// sub-millisecond) so the recycle loop turns hundreds of passes within the
-/// budget while the whole run finishes in a few seconds.
 fn request(
     endpoint: &str,
     artifact_target: &std::path::Path,
@@ -178,10 +141,8 @@ fn request(
                 },
                 "phases": [
                     {
-                        // The auto cache-pressure warmup carries NO explicit
-                        // sessions/requests/duration stop condition: the pressure
-                        // duration IS its deadline. Adding one would end the phase
-                        // (and cancel the recycle) after the first trace completes.
+                        // The pressure duration is the deadline; another stop
+                        // condition could end recycling after the first trace.
                         "type": "concurrency",
                         "name": "warmup",
                         "exclude_from_results": true,
@@ -212,28 +173,17 @@ async fn spawn_mock() -> (String, Arc<MockState>) {
     (format!("http://{address}"), state)
 }
 
-/// The `request_count` counter total for a metric map (warmup or profiling): the
-/// number of records the phase's accumulator ingested. `request_count` is an
-/// Aggregate/Sum metric, serialized as a `counter` with a `total`
-/// (`metrics_core::report::report_stats`).
 fn request_count_total(metrics: &Value) -> f64 {
     metrics["request_count"]["series"][0]["stats"]["total"]
         .as_f64()
         .unwrap_or_else(|| panic!("request_count.total missing: {metrics}"))
 }
 
-/// The full cache-pressure warmup -> handoff -> profiling-resume flow completes
-/// through the product stdio path: warmup recycles the corpus more than once,
-/// profiling produces records for the resumed post-frontier nodes, and the run
-/// reaches a valid report with no hang and no abort.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cache_pressure_warmup_recycles_then_profiling_resumes() {
     let (endpoint, state) = spawn_mock().await;
     let temporary = tempfile::tempdir().unwrap();
     let artifact_target = temporary.path().join("cache-pressure-warmup");
-    // A tiny but comfortably-larger-than-one-dispatch pressure budget: localhost
-    // dispatches are sub-millisecond, so 250 ms turns many recycle passes while
-    // the whole run stays fast. The recycle loop is Clock-deadline-bounded.
     let request = request(&endpoint, &artifact_target, "cache-pressure-warmup", 0.3);
 
     // Wall-clock guard: the run is duration-bounded and the mock always answers,
@@ -253,20 +203,14 @@ async fn cache_pressure_warmup_recycles_then_profiling_resumes() {
             String::from_utf8_lossy(&output.stderr)
         )
     });
-    // The run completes cleanly: no warmup abort, no failure envelope.
     assert_eq!(terminal["event"], "run_terminal", "{terminal}");
     assert_eq!(terminal["success"], true, "{terminal}");
 
-    // A valid native report was written.
     let report_path = terminal["report_path"].as_str().unwrap();
     let report: Value = serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
     assert_eq!(report["schema_version"], "2.0", "{report}");
 
-    // Recycle proof: the WARMUP accumulator ingested strictly more than one
-    // corpus pass. The single-template corpus dispatches exactly one node per
-    // pass (a plain warmup over this trace dispatches one — see the sibling
-    // abort test), so a warmup `request_count > 1` can only come from E3b's
-    // pressure recycle turning additional corpus passes.
+    // This single-template corpus dispatches one node per pass.
     let warmup = &report["warmup_metrics"];
     assert!(warmup.is_object(), "warmup_metrics missing: {report}");
     let warmup_requests = request_count_total(warmup);
@@ -275,15 +219,12 @@ async fn cache_pressure_warmup_recycles_then_profiling_resumes() {
         "expected warmup cache-pressure recycle (>1 corpus pass), saw request_count={warmup_requests}"
     );
 
-    // Profiling produced records for the resumed post-frontier nodes.
     let profiling_requests = request_count_total(&report["metrics"]);
     assert!(
         profiling_requests >= 1.0,
         "expected profiling records for the resumed frontier, saw request_count={profiling_requests}"
     );
 
-    // Corroboration at the wire: total dispatches exceed a single warmup pass
-    // plus the profiling frontier, i.e. the recycle actually hit the backend.
     let total_dispatches = state.requests.load(Ordering::SeqCst);
     assert!(
         total_dispatches >= 3,

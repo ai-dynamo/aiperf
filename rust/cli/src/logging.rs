@@ -1,24 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Structured `tracing` setup for the native `aiperf` binary, brought to parity
-//! with the Python frontend's logging (`src/aiperf/common/logging.py`).
+//! Structured `tracing` setup for the `aiperf` binary.
 //!
-//! Parity contract (see the design under
-//! `~/.aiperf/docs/superpowers/specs/2026-07-15-rust-logging-parity-design.md`):
-//!
-//! - **Default level is INFO** (Python `config/runtime.py::LOG_LEVEL`), not the
-//!   old `warn`. `--extra-verbose` → TRACE, `--verbose`/`-v` → DEBUG,
-//!   `--log-level <lvl>` → explicit (Python `_converter_runtime`). `AIPERF_LOG`
-//!   (an env directive, e.g. `info,aiperf_runtime::foo=debug`) overrides everything.
-//! - **Console** goes to stderr (stdout is the runner's JSONL protocol channel),
-//!   ANSI off, `HH:MM:SS.mmm LEVEL message` — a close, not byte-exact, match for
-//!   Python's basic handler.
+//! - The default level is INFO. `--extra-verbose` selects TRACE,
+//!   `--verbose`/`-v` selects DEBUG, and `--log-level <lvl>` selects an explicit
+//!   level. `AIPERF_LOG` overrides these flags.
+//! - Console output goes to stderr because stdout is the JSONL protocol channel.
 //! - **File**: every line is also written to `<artifact_dir>/logs/aiperf.log`
-//!   once [`set_log_file`] is called (Python's `FileHandler`). The parent front
-//!   door owns the file; the `--execute` child logs only to its (piped) stderr,
-//!   which the parent forwards via `tracing::info!("aiperf: …")`.
-//! - The resolved level directive is propagated to the re-exec child through the
-//!   `AIPERF_LOG` env (see [`current_directive`]); no reload handle is needed.
+//!   after [`set_log_file`] is called. The parent owns the file and forwards
+//!   child stderr through its subscriber.
+//! - `AIPERF_LOG` propagates the resolved directive to the re-exec child.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -30,21 +21,14 @@ use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::prelude::*;
 
-/// The env var carrying the `tracing` filter directive (also used to hand the
-/// resolved level down to the `aiperf --execute` child).
+/// Environment variable carrying the `tracing` filter directive.
 pub const LOG_ENV: &str = "AIPERF_LOG";
 
-/// The resolved filter directive, stored at [`init`] so the parent can pass it to
-/// the re-exec child through [`current_directive`].
 static RESOLVED_DIRECTIVE: OnceLock<String> = OnceLock::new();
 
-/// The open `logs/aiperf.log` file, installed lazily by [`set_log_file`] once the
-/// run's artifact dir is known. Absent until then, so the file layer discards.
 static LOG_FILE: OnceLock<Mutex<File>> = OnceLock::new();
 
-/// Install the process-wide `tracing` subscriber. Call once, early in `main`,
-/// before any dispatch work (and before the `--execute` re-exec interception, so
-/// the child inherits the same subscriber).
+/// Install the process-wide `tracing` subscriber before dispatch.
 pub fn init(argv: &[String]) {
     let directive = std::env::var(LOG_ENV)
         .ok()
@@ -52,8 +36,7 @@ pub fn init(argv: &[String]) {
         .unwrap_or_else(|| level_directive_from_argv(argv));
     let _ = RESOLVED_DIRECTIVE.set(directive.clone());
 
-    // A parse failure on an operator-supplied directive falls back to INFO rather
-    // than aborting the process before it can report anything.
+    // Invalid operator directives fall back to INFO so startup can report errors.
     let env_filter =
         EnvFilter::try_new(&directive).unwrap_or_else(|_| EnvFilter::new(DEFAULT_LEVEL));
 
@@ -76,10 +59,7 @@ pub fn init(argv: &[String]) {
         .init();
 }
 
-/// The resolved filter directive for this process, for propagation to the
-/// `aiperf --execute` child via the [`LOG_ENV`] env. The child has no verbosity
-/// flags of its own (its argv is just `--execute`), so the parent's resolved
-/// level is the only way the child inherits it.
+/// Return the resolved filter directive for execution children.
 pub fn current_directive() -> String {
     RESOLVED_DIRECTIVE
         .get()
@@ -87,10 +67,7 @@ pub fn current_directive() -> String {
         .unwrap_or_else(|| DEFAULT_LEVEL.to_owned())
 }
 
-/// Begin also writing every log line to `<artifact_dir>/logs/aiperf.log` (Python
-/// `setup_rich_logging`'s `FileHandler`). Idempotent and best-effort: a failure to
-/// create the folder or open the file logs a warning and leaves logging
-/// console-only. Called by the entry point once a run's artifact dir is resolved.
+/// Add best-effort logging to `<artifact_dir>/logs/aiperf.log`.
 pub fn set_log_file(artifact_dir: &Path) {
     if LOG_FILE.get().is_some() {
         return;
@@ -112,13 +89,8 @@ pub fn set_log_file(artifact_dir: &Path) {
     }
 }
 
-/// The default level when nothing else selects one — INFO, matching Python.
 const DEFAULT_LEVEL: &str = "info";
 
-/// Derive an `EnvFilter` directive from the CLI verbosity flags, mirroring
-/// Python's `_converter_runtime`: `--extra-verbose` → TRACE, `--verbose`/`-v` →
-/// DEBUG, `--log-level <lvl>` → the named level, else INFO. `--extra-verbose`
-/// outranks `--verbose` outranks `--log-level`.
 fn level_directive_from_argv(argv: &[String]) -> String {
     if argv.iter().any(|arg| arg == "--extra-verbose") {
         return "trace".to_owned();
@@ -127,12 +99,11 @@ fn level_directive_from_argv(argv: &[String]) -> String {
         return "debug".to_owned();
     }
     if let Some(level) = option_value(argv, "--log-level") {
-        return map_python_level(&level).to_owned();
+        return map_log_level(&level).to_owned();
     }
     DEFAULT_LEVEL.to_owned()
 }
 
-/// Read `--flag value` or `--flag=value` from `argv`.
 fn option_value(argv: &[String], flag: &str) -> Option<String> {
     let mut iter = argv.iter();
     while let Some(arg) = iter.next() {
@@ -149,11 +120,7 @@ fn option_value(argv: &[String], flag: &str) -> Option<String> {
     None
 }
 
-/// Map a Python `AIPerfLogLevel` name onto a `tracing` level. Python's NOTICE
-/// (between INFO and WARNING) and SUCCESS (between WARNING and ERROR) have no
-/// `tracing` equivalent, so they collapse to the nearest lower `tracing` level
-/// that still shows on a normal run (INFO / WARN respectively).
-fn map_python_level(level: &str) -> &'static str {
+fn map_log_level(level: &str) -> &'static str {
     match level.trim().to_ascii_lowercase().as_str() {
         "trace" => "trace",
         "debug" => "debug",
@@ -164,7 +131,6 @@ fn map_python_level(level: &str) -> &'static str {
     }
 }
 
-/// Console timer: `HH:MM:SS.mmm` in local time (Python basic-handler datefmt).
 struct LocalTime;
 
 impl FormatTime for LocalTime {
@@ -173,7 +139,6 @@ impl FormatTime for LocalTime {
     }
 }
 
-/// File timer: `YYYY-MM-DD HH:MM:SS.mmm` in local time (Python file-handler datefmt).
 struct LocalDateTime;
 
 impl FormatTime for LocalDateTime {
@@ -186,10 +151,7 @@ impl FormatTime for LocalDateTime {
     }
 }
 
-/// A `MakeWriter` that writes to `logs/aiperf.log` once [`set_log_file`] has run,
-/// and silently discards before then. This lets one subscriber be installed at
-/// process start while the file target is bound later, when the artifact dir is
-/// known.
+/// Writer factory that discards events until the log file is bound.
 struct LogFileMakeWriter;
 
 impl<'a> MakeWriter<'a> for LogFileMakeWriter {
@@ -200,7 +162,6 @@ impl<'a> MakeWriter<'a> for LogFileMakeWriter {
     }
 }
 
-/// Per-event writer half of [`LogFileMakeWriter`].
 struct LogFileWriter;
 
 impl Write for LogFileWriter {
@@ -210,8 +171,7 @@ impl Write for LogFileWriter {
         {
             let _ = guard.write_all(buf);
         }
-        // Report success even when no file is bound: the file sink is optional and
-        // must never surface a write error to the tracing machinery.
+        // The optional file sink must not fail the tracing subscriber.
         Ok(buf.len())
     }
 
@@ -272,9 +232,9 @@ mod tests {
 
     #[test]
     fn notice_and_success_collapse_to_nearest_tracing_level() {
-        assert_eq!(map_python_level("NOTICE"), "info");
-        assert_eq!(map_python_level("success"), "warn");
-        assert_eq!(map_python_level("critical"), "error");
-        assert_eq!(map_python_level("bogus"), "info");
+        assert_eq!(map_log_level("NOTICE"), "info");
+        assert_eq!(map_log_level("success"), "warn");
+        assert_eq!(map_log_level("critical"), "error");
+        assert_eq!(map_log_level("bogus"), "info");
     }
 }

@@ -1,18 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Product proof for native thread-per-core HTTP placement.
+//! Product coverage for native thread-per-core HTTP placement.
 //!
-//! Config v2 resolves one worker count; for `worker_count > 1` the runner runs
-//! that many self-contained sharded sub-cells (design "a thread is a sub-cell"):
-//! each is its own scheduler + persistent worker-local transport over a `1/W`
-//! slice of the run, and warmup/profiling accounting is merged back phase-owned at
-//! the cell join. This process test proves that three authored workers become
-//! three persistent worker-local connections, each dispatching a balanced,
-//! deterministic-per-topology share of the turns. (Before P3 the runner used a
-//! single coordinator round-robining a shared worker pool; that strict global
-//! order is now a benign per-thread scheduling race, but the per-connection turn
-//! counts remain fixed.)
+//! Each worker owns its scheduler and persistent transport connection. Phase
+//! accounting is merged at the cell join.
 
 use std::io::Write;
 use std::net::SocketAddr;
@@ -46,21 +38,21 @@ async fn chat(
     ([(header::CONTENT_TYPE, "text/event-stream")], body)
 }
 
-fn benchmark_run(legacy: Value) -> Value {
-    let mut endpoint = legacy["resources"]["endpoints"]["profiles"][0].clone();
+fn benchmark_run(source: Value) -> Value {
+    let mut endpoint = source["resources"]["endpoints"]["profiles"][0].clone();
     endpoint.as_object_mut().unwrap().remove("id");
     json!({
-        "benchmark_id": legacy["identity"]["benchmark_id"],
-        "artifact_dir": legacy["artifact_target"],
-        "random_seed": legacy["identity"]["random_seed"],
+        "benchmark_id": source["identity"]["benchmark_id"],
+        "artifact_dir": source["artifact_target"],
+        "random_seed": source["identity"]["random_seed"],
         "cfg": {
-            "models": legacy["resources"]["models"],
+            "models": source["resources"]["models"],
             "endpoint": endpoint,
-            "datasets": [legacy["workload"]["config"]["dataset"]],
-            "phases": legacy["workload"]["config"]["phases"],
-            "tokenizer": legacy["workload"]["config"]["tokenizer"],
-            "transport": {"type": legacy["transport"]["type"]},
-            "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
+            "datasets": [source["workload"]["config"]["dataset"]],
+            "phases": source["workload"]["config"]["phases"],
+            "tokenizer": source["workload"]["config"]["tokenizer"],
+            "transport": {"type": source["transport"]["type"]},
+            "runtime": {"workers": source["workload"]["config"]["worker_count"]}
         }
     })
 }

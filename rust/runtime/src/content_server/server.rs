@@ -43,8 +43,8 @@ use crate::content_server::{ContentServerError, Result};
 pub struct ContentServerConfig {
     /// Host/interface to bind and advertise.
     pub host: String,
-    /// TCP port. `0` is accepted by the library for isolated tests; the strict
-    /// runner adapter accepts only `1..=65535` like the Python environment.
+    /// TCP port. `0` is accepted by the library for isolated tests; the runner
+    /// adapter accepts only `1..=65535`.
     pub port: u16,
     /// Existing directory to serve, or `None` for a run-scoped temporary root.
     pub content_dir: Option<PathBuf>,

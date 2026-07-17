@@ -3,26 +3,12 @@
 mod common;
 use common::*;
 
-// Tests for server metrics collection and reporting.
-//
-// Ported from `tests/integration/test_server_metrics.py`. These tests verify the
-// full end-to-end flow of server metrics collection, including scraping from
-// multiple mock server endpoints and validating the exported data
-// (JSON, JSONL, CSV, Parquet).
-
 use serde_json::Value;
 
-// ============================================================================
-// Local helpers replicating the Python AIPerfCLI result convenience accessors.
-// ============================================================================
-
-/// Load the server-metrics JSON export as a `Value` (`Null` when absent).
 fn server_metrics_json(r: &RunResult) -> Value {
     r.artifacts.server_metrics_json()
 }
 
-/// Assert the server-metrics JSON export exists and carries a non-empty summary
-/// (at least one successful endpoint) and at least one metric.
 fn assert_server_metrics_valid(r: &RunResult) {
     let j = server_metrics_json(r);
     assert!(!j.is_null(), "server metrics JSON export should exist");
@@ -37,12 +23,10 @@ fn assert_server_metrics_valid(r: &RunResult) {
     );
 }
 
-/// True when the metric name is present in the JSON export's `metrics` map.
 fn has_server_metric(r: &RunResult, name: &str) -> bool {
     server_metrics_json(r)["metrics"].get(name).is_some()
 }
 
-/// Return the metric `Value` for `name`, if present.
 fn get_server_metric(r: &RunResult, name: &str) -> Value {
     server_metrics_json(r)["metrics"]
         .get(name)
@@ -50,7 +34,6 @@ fn get_server_metric(r: &RunResult, name: &str) -> Value {
         .unwrap_or(Value::Null)
 }
 
-/// The `summary.endpoints_successful` list as owned strings.
 fn endpoints_successful(r: &RunResult) -> Vec<String> {
     server_metrics_json(r)["summary"]["endpoints_successful"]
         .as_array()
@@ -62,22 +45,12 @@ fn endpoints_successful(r: &RunResult) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// True when a file matching the glob exists under the artifact dir.
 fn has_file(r: &RunResult, glob: &str) -> bool {
     r.artifacts.find_file(glob).is_some()
 }
 
-// ============================================================================
-// Basic Server Metrics Tests
-// ============================================================================
-
-/// Server metrics are auto-collected from base_url/metrics without --server-metrics.
-///
-/// When no --server-metrics flag is provided, AIPerf should automatically scrape
-/// server metrics from the inference endpoint's base URL + /metrics.
 #[tokio::test]
 async fn test_server_metrics_auto_collected() {
-    // Isolated mock server with workers=1 to avoid Prometheus metrics issues.
     let mut cfg = aiperf_mock_server::config::MockServerConfig::default();
     cfg.fast = true;
     cfg.workers = 1;
@@ -97,10 +70,8 @@ async fn test_server_metrics_auto_collected() {
     ));
     assert_eq!(r.artifacts.request_count() as u32, 50);
 
-    // Server metrics should be auto-collected from default /metrics endpoint.
     assert_server_metrics_valid(&r);
 
-    // Verify we collected AIPerf mock server metrics (default endpoint).
     assert!(has_server_metric(&r, "aiperf_mock_requests"));
     assert!(has_server_metric(&r, "aiperf_mock_request_latency_seconds"));
     assert!(has_server_metric(
@@ -109,7 +80,6 @@ async fn test_server_metrics_auto_collected() {
     ));
     assert!(has_server_metric(&r, "aiperf_mock_tokens_streamed"));
 
-    // Verify the auto-collected endpoint is correct.
     let expected_endpoint = format!("http://127.0.0.1:{}/metrics", h.mock.port);
     let successful = endpoints_successful(&r);
     assert!(
@@ -118,11 +88,6 @@ async fn test_server_metrics_auto_collected() {
     );
 }
 
-// ============================================================================
-// Multiple Endpoints Tests
-// ============================================================================
-
-/// Server metrics collection from multiple endpoints (vLLM + SGLang).
 #[tokio::test]
 async fn test_server_metrics_multiple_endpoints_vllm_sglang() {
     let h = AIPerfHarness::new().await;
@@ -144,29 +109,17 @@ async fn test_server_metrics_multiple_endpoints_vllm_sglang() {
     assert_eq!(r.artifacts.request_count() as u32, 50);
     assert_server_metrics_valid(&r);
 
-    // Default /metrics endpoint is always auto-collected (default + vllm + sglang).
     assert!(endpoints_successful(&r).len() >= 2);
 
-    // Verify vLLM metrics.
     assert!(has_server_metric(&r, "vllm:e2e_request_latency_seconds"));
     assert!(has_server_metric(&r, "vllm:time_to_first_token_seconds"));
 
-    // Verify SGLang metrics.
     assert!(has_server_metric(&r, "sglang:e2e_request_latency_seconds"));
     assert!(has_server_metric(&r, "sglang:time_to_first_token_seconds"));
 }
 
-// ============================================================================
-// Ultimate Full Stack Test
-// ============================================================================
-
-/// Ultimate test: Server metrics from ALL available mock endpoints.
-///
-/// Collects metrics from vLLM, SGLang, TensorRT-LLM, Dynamo frontend, Dynamo
-/// prefill, and Dynamo decode endpoints simultaneously.
 #[tokio::test]
 async fn test_server_metrics_all_endpoints() {
-    // Isolated mock server with workers=1 to avoid Prometheus metrics issues.
     let mut cfg = aiperf_mock_server::config::MockServerConfig::default();
     cfg.fast = true;
     cfg.workers = 1;
@@ -201,7 +154,6 @@ async fn test_server_metrics_all_endpoints() {
     assert_eq!(r.artifacts.request_count() as u32, 100);
     assert_server_metrics_valid(&r);
 
-    // Verify all 6+ endpoints were successful (default + 6 explicit).
     let successful = endpoints_successful(&r);
     assert!(
         successful.len() >= 6,
@@ -209,18 +161,15 @@ async fn test_server_metrics_all_endpoints() {
         successful.len()
     );
 
-    // Verify vLLM metrics.
     assert!(has_server_metric(&r, "vllm:e2e_request_latency_seconds"));
     assert!(has_server_metric(&r, "vllm:time_to_first_token_seconds"));
     assert!(has_server_metric(&r, "vllm:inter_token_latency_seconds"));
     assert!(has_server_metric(&r, "vllm:kv_cache_usage_perc"));
 
-    // Verify SGLang metrics.
     assert!(has_server_metric(&r, "sglang:e2e_request_latency_seconds"));
     assert!(has_server_metric(&r, "sglang:time_to_first_token_seconds"));
     assert!(has_server_metric(&r, "sglang:gen_throughput"));
 
-    // Verify TRT-LLM metrics.
     assert!(has_server_metric(&r, "trtllm:e2e_request_latency_seconds"));
     assert!(has_server_metric(&r, "trtllm:time_to_first_token_seconds"));
     assert!(has_server_metric(
@@ -228,8 +177,6 @@ async fn test_server_metrics_all_endpoints() {
         "trtllm:time_per_output_token_seconds"
     ));
 
-    // Verify Dynamo frontend metrics. `dynamo_frontend_request_duration_seconds`
-    // intentionally not asserted (histogram emits no rows until first .observe()).
     assert!(has_server_metric(
         &r,
         "dynamo_frontend_time_to_first_token_seconds"
@@ -239,7 +186,6 @@ async fn test_server_metrics_all_endpoints() {
         "dynamo_frontend_inter_token_latency_seconds"
     ));
 
-    // Verify Dynamo component metrics.
     assert!(has_server_metric(
         &r,
         "dynamo_component_request_duration_seconds"
@@ -247,11 +193,6 @@ async fn test_server_metrics_all_endpoints() {
     assert!(has_server_metric(&r, "dynamo_component_requests"));
 }
 
-// ============================================================================
-// Export File Validation Tests
-// ============================================================================
-
-/// Test server metrics export files (JSON, JSONL, CSV, Parquet) are valid.
 #[tokio::test]
 async fn test_server_metrics_export_files() {
     let h = AIPerfHarness::new().await;
@@ -271,25 +212,20 @@ async fn test_server_metrics_export_files() {
         h.mock.url
     ));
 
-    // Verify all export files exist.
     assert!(has_file(&r, "**/*server_metrics_export.json"));
     assert!(has_file(&r, "**/*server_metrics_export.jsonl"));
     assert!(has_file(&r, "**/*server_metrics_export.csv"));
     assert!(has_file(&r, "**/*server_metrics_export.parquet"));
 
-    // Verify JSON export structure.
     let j = server_metrics_json(&r);
     assert!(!j.is_null());
     assert!(!j["summary"].is_null());
-    // At least 2 endpoints (vllm + sglang), possibly more with auto-collected default.
     assert!(endpoints_successful(&r).len() >= 2);
     assert!(j["metrics"].as_object().map_or(false, |mm| !mm.is_empty()));
 
-    // Verify JSONL records structure.
     let records = r.artifacts.server_metrics_jsonl();
     assert!(!records.is_empty());
 
-    // Check records have expected structure.
     for record in &records {
         assert!(record["endpoint_url"].is_string());
         assert!(record["timestamp_ns"].as_i64().unwrap_or(0) > 0);
@@ -301,17 +237,15 @@ async fn test_server_metrics_export_files() {
         );
     }
 
-    // Verify CSV content.
     let csv_path = r
         .artifacts
         .find_file("**/*server_metrics_export.csv")
         .expect("csv export exists");
     let csv = std::fs::read_to_string(csv_path).unwrap();
     let csv_lines: Vec<&str> = csv.trim().split('\n').collect();
-    assert!(csv_lines.len() > 1); // Header + data rows.
+    assert!(csv_lines.len() > 1);
 }
 
-/// Config-v2 honors CLI --server-metrics-formats jsonl override.
 #[tokio::test]
 async fn test_config_file_cli_server_metrics_formats_generates_jsonl() {
     let h = AIPerfHarness::new().await;
@@ -370,7 +304,6 @@ async fn test_config_file_cli_server_metrics_formats_generates_jsonl() {
     assert!(jsonl_lines.len() >= records.len());
 }
 
-/// Test JSONL records contain expected metrics with valid data.
 #[tokio::test]
 async fn test_server_metrics_jsonl_records() {
     let h = AIPerfHarness::new().await;
@@ -402,14 +335,12 @@ async fn test_server_metrics_jsonl_records() {
         }
         timestamps.push(record["timestamp_ns"].as_i64().unwrap_or(0));
 
-        // Verify record has metrics.
         assert!(
             record["metrics"]
                 .as_object()
                 .map_or(false, |mm| !mm.is_empty())
         );
 
-        // Check for expected vLLM metrics in at least some records.
         if let Some(samples) = record["metrics"].get("vllm:kv_cache_usage_perc") {
             let arr = samples.as_array().expect("samples is array");
             assert!(!arr.is_empty());
@@ -417,21 +348,17 @@ async fn test_server_metrics_jsonl_records() {
         }
     }
 
-    // Timestamps generally increasing; multiple endpoints may interleave.
     assert!(!timestamps.is_empty(), "Should have timestamp records");
     assert!(
         timestamps.iter().min().copied().unwrap_or(0) > 0,
         "Timestamps should be positive"
     );
 
-    // Captured data from at least the expected endpoint(s).
     assert!(endpoints_seen.len() >= 1);
 }
 
-/// Test histogram metrics are properly captured and exported.
 #[tokio::test]
 async fn test_server_metrics_histogram_data() {
-    // Isolated mock server with workers=1 to avoid Prometheus metrics issues.
     let mut cfg = aiperf_mock_server::config::MockServerConfig::default();
     cfg.fast = true;
     cfg.workers = 1;
@@ -453,36 +380,27 @@ async fn test_server_metrics_histogram_data() {
     ));
     assert_server_metrics_valid(&r);
 
-    // Get histogram metric from JSON export.
     let ttft_metric = get_server_metric(&r, "vllm:time_to_first_token_seconds");
     assert!(!ttft_metric.is_null());
     assert_eq!(ttft_metric["type"].as_str(), Some("histogram"));
     let series = ttft_metric["series"].as_array().expect("series array");
     assert!(!series.is_empty());
 
-    // Verify histogram stats are computed.
     let first_series = &series[0];
     assert!(!first_series["stats"].is_null());
     let count = first_series["stats"]["count"].as_f64();
     assert!(count.is_some());
     assert!(count.unwrap() > 0.0);
 
-    // Verify JSONL records have histogram data.
     for record in r.artifacts.server_metrics_jsonl() {
         if let Some(samples) = record["metrics"].get("vllm:time_to_first_token_seconds") {
             let arr = samples.as_array().expect("samples array");
             assert!(!arr.is_empty());
-            // Histogram samples should have a buckets dict.
             assert!(arr[0]["buckets"].is_object());
         }
     }
 }
 
-// ============================================================================
-// Non-Streaming Tests
-// ============================================================================
-
-/// Server metrics collection works with non-streaming requests.
 #[tokio::test]
 async fn test_server_metrics_non_streaming() {
     let h = AIPerfHarness::new().await;
@@ -502,15 +420,9 @@ async fn test_server_metrics_non_streaming() {
     assert_eq!(r.artifacts.request_count() as u32, 50);
     assert_server_metrics_valid(&r);
 
-    // Verify metrics are collected even for non-streaming.
     assert!(has_server_metric(&r, "vllm:e2e_request_latency_seconds"));
 }
 
-// ============================================================================
-// Custom Prefix Tests
-// ============================================================================
-
-/// Test server metrics export with custom filename prefix.
 #[tokio::test]
 async fn test_server_metrics_custom_prefix() {
     let h = AIPerfHarness::new().await;
@@ -530,7 +442,6 @@ async fn test_server_metrics_custom_prefix() {
         h.mock.url
     ));
 
-    // Verify custom prefix files exist and are non-empty.
     if let Some(json_file) = r.artifacts.find_file("**/custom_test_server_metrics.json") {
         let content = std::fs::read_to_string(json_file).unwrap();
         assert!(!content.is_empty());
@@ -540,17 +451,11 @@ async fn test_server_metrics_custom_prefix() {
         let content = std::fs::read_to_string(jsonl_file).unwrap();
         let lines: Vec<&str> = content.trim().split('\n').collect();
         assert!(!lines.is_empty());
-        // Validate first record.
         let first: Value = serde_json::from_str(lines[0]).expect("valid jsonl record");
         assert!(first["timestamp_ns"].as_i64().unwrap_or(0) > 0);
     }
 }
 
-// ============================================================================
-// Server Metrics Disabled Tests
-// ============================================================================
-
-/// Server metrics collection is disabled with --no-server-metrics flag.
 #[tokio::test]
 async fn test_server_metrics_disabled() {
     let h = AIPerfHarness::new().await;
@@ -568,7 +473,6 @@ async fn test_server_metrics_disabled() {
     ));
     assert_eq!(r.artifacts.request_count() as u32, 25);
 
-    // Server metrics should NOT be collected when disabled.
     assert!(
         !has_file(&r, "**/*server_metrics*.json"),
         "JSON export should not exist"
@@ -583,15 +487,9 @@ async fn test_server_metrics_disabled() {
     );
 }
 
-/// Test Parquet export with raw time-series data and delta calculations.
-///
-/// The detailed dataframe-level validation (column schema, delta monotonicity,
-/// histogram bucket normalization) requires a Parquet reader to parse the file
-/// into a tabular form, mirroring the Python test's `pyarrow`/`pandas` usage.
 #[tokio::test]
 #[ignore] // requires: parquet reader (pyarrow/pandas parity)
 async fn test_server_metrics_parquet_export() {
-    // Isolated mock server with workers=1 to avoid Prometheus metrics issues.
     let mut cfg = aiperf_mock_server::config::MockServerConfig::default();
     cfg.fast = true;
     cfg.workers = 1;
@@ -614,8 +512,6 @@ async fn test_server_metrics_parquet_export() {
         h.mock.url
     ));
 
-    // Verify Parquet file exists (the rest of the tabular assertions require a
-    // Parquet reader and are covered by the Python integration suite).
     assert!(
         has_file(&r, "**/*server_metrics_export.parquet"),
         "Parquet file should exist"

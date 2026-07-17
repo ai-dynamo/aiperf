@@ -3,9 +3,8 @@
 
 //! Stateful conversation reconstruction and endpoint request materialization.
 //!
-//! The Python-reserved
-//! `message_array_without_responses` case is completed here by prefix-diffing
-//! successive authored snapshots and interleaving each captured live reply.
+//! `message_array_without_responses` prefix-diffs successive authored snapshots
+//! and interleaves each captured live reply.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -230,8 +229,8 @@ impl BuiltinEndpointResolver {
         }
         let endpoint_type = endpoint
             .descriptor()
-            .legacy_type()
-            .expect("legacy endpoint type");
+            .compatibility_type()
+            .expect("endpoint type");
         let endpoint: Arc<dyn Endpoint> = Arc::new(endpoint);
         self.endpoint_types
             .entry(endpoint_type)
@@ -285,10 +284,9 @@ fn normalize_endpoint_name(name: &str) -> String {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EndpointRequestMaterializer;
 
-/// Select a complete prebuilt body via the unified [`Turn::body`] handles and
-/// their segment domain (segment-unification §2): a `raw`-domain `body[0]` is a
-/// full body dispatched byte-for-byte without endpoint formatting. This is the
-/// domain lookup that replaces the `raw_payload`-wins branch; a `message`- or
+/// Select a complete prebuilt body via [`Turn::body`] and its segment domain.
+/// A `raw`-domain `body[0]` is dispatched byte-for-byte without endpoint
+/// formatting; a `message`- or
 /// `token-ids`-domain body falls through to the formatter / token-native path.
 pub(crate) fn raw_body_handle<S: SegmentStore + ?Sized>(
     current: &Turn,
@@ -300,8 +298,7 @@ pub(crate) fn raw_body_handle<S: SegmentStore + ?Sized>(
     }
 }
 
-/// The token-native handle carried in [`Turn::body`], if any
-/// (segment-unification §2/§9 stage 3). A turn holds at most one `TokenIds`
+/// The token-native handle carried in [`Turn::body`], if any. A turn holds at most one `TokenIds`
 /// segment; when a raw body coexists (`[raw, token]`) the raw body wins
 /// dispatch and this handle stays reachable for token-count validation and
 /// token-native backends.
@@ -317,9 +314,7 @@ pub(crate) fn token_ids_handle<S: SegmentStore + ?Sized>(
     Ok(None)
 }
 
-/// The ordered message handles carried in [`Turn::body`]
-/// (segment-unification §2/§9 stage 3), i.e. the `Message`-domain body segments
-/// a lowered content turn or authored message-array turn formats as an array.
+/// The ordered `Message`-domain handles carried in [`Turn::body`].
 pub(crate) fn body_message_handles<S: SegmentStore + ?Sized>(
     current: &Turn,
     store: &S,
@@ -346,11 +341,6 @@ impl RequestMaterializer for EndpointRequestMaterializer {
         let store = session.dataset.segments().as_ref();
         let (body, effective) = if let Some(raw) = raw_body_handle(current, store)? {
             (
-                // Segment-unification §4: the raw body is a one-field BodyPlan
-                // whose single `raw`-domain segment is the complete prebuilt
-                // body; the shared JSON materializer clones/tail-splices it
-                // byte-for-byte. This replaces the bespoke `raw_payload`-wins
-                // branch with the domain-driven dispatch materializer.
                 JsonBodyMaterializer::materialize(&BodyPlan::raw(raw), store, overrides)?,
                 EffectiveRequest {
                     model: effective_model(current, &model_endpoint.primary_model_name, overrides)?,
@@ -383,12 +373,6 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 x_correlation_id: None,
                 conversation_id: Some(session.conversation_id().as_str().to_string()),
             };
-            // Endpoint-body-construction stage 2: dispatch operates on a
-            // BodyPlan, not a serde_json::Value. The formatter's body object
-            // decomposes to a plan (message array spliced as wires, other fields
-            // literals); dispatch overrides fold into the plan's literal fields
-            // and effective metadata is read from them. Byte-identical to the
-            // legacy merge-then-`to_vec` path (guarded by the endpoints_* suite).
             let mut plan = endpoint.format_payload(&request_info)?;
             plan.merge_overrides(overrides);
             let effective = effective_from_plan(
@@ -449,11 +433,6 @@ impl RequestMaterializer for EndpointRequestMaterializer {
         let supports_streaming = endpoint.descriptor().supports_streaming;
         let (body, effective) = if let Some(raw) = raw_body_handle(current, store)? {
             (
-                // Segment-unification §4: the raw body is a one-field BodyPlan
-                // whose single `raw`-domain segment is the complete prebuilt
-                // body; the shared JSON materializer clones/tail-splices it
-                // byte-for-byte. This replaces the bespoke `raw_payload`-wins
-                // branch with the domain-driven dispatch materializer.
                 JsonBodyMaterializer::materialize(&BodyPlan::raw(raw), store, overrides)?,
                 EffectiveRequest {
                     model: effective_model(current, primary_model_name, overrides)?,
@@ -467,8 +446,8 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 },
             )
         } else {
-            // Segment spec §3a: reuse the cached profiling-phase plan when the
-            // dataset precomputed one for this exact `(conversation, turn)`. The
+            // Reuse the cached profiling-phase plan when the dataset precomputed
+            // one for this exact `(conversation, turn)`. The
             // cache is only populated for the default endpoint, static context
             // modes, and eligible dialects, so a hit is byte-identical to a fresh
             // `format_payload` here; anything else returns `None` and falls back.
@@ -498,9 +477,6 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                         None,
                         Some(&conversation_id),
                     );
-                    // Endpoint-body-construction stage 2: dispatch operates on a
-                    // BodyPlan (see the sibling materialize path). Byte-identical
-                    // to the legacy merge-then-`to_vec` path.
                     endpoint.format_payload(&request)?
                 }
             };
@@ -704,10 +680,8 @@ struct EffectiveRequest {
     streaming: bool,
 }
 
-/// Read effective model/max-tokens/streaming from a merged [`BodyPlan`]'s
-/// literal fields and force `stream` off when the endpoint cannot stream —
-/// the plan-side equivalent of the former `effective_from_structured_body`,
-/// byte-identical because the plan's literal fields mirror the body object.
+/// Read effective model/max-tokens/streaming from a merged [`BodyPlan`] and
+/// force `stream` off when the endpoint cannot stream.
 fn effective_from_plan(
     plan: &mut BodyPlan,
     turn: &Turn,
@@ -1107,8 +1081,8 @@ fn split_snapshot(mut turn: EndpointTurn) -> Vec<EndpointTurn> {
 }
 
 pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<EndpointTurn> {
-    // A static content turn lowered at load (segment spec §5) carries both its
-    // `content` and the pre-serialized `Message` handle(s) written onto
+    // A static content turn lowered at load carries both its `content` and the
+    // pre-serialized `Message` handle(s) written onto
     // `messages`. Its wires are routed to `lowered` for verbatim splicing rather
     // than parsed into `raw_messages` and re-serialized; the content is still
     // resolved below so the warmup first-turn re-render path stays available. An
@@ -1367,8 +1341,8 @@ mod tests {
                 .resolve_type(EndpointType::Messages)
                 .unwrap()
                 .descriptor()
-                .legacy_type()
-                .expect("legacy endpoint type"),
+                .compatibility_type()
+                .expect("endpoint type"),
             EndpointType::Messages
         );
     }
@@ -1952,8 +1926,8 @@ mod tests {
         let mut configured = model_endpoint();
         configured.endpoint.endpoint_type = endpoint
             .descriptor()
-            .legacy_type()
-            .expect("legacy endpoint type");
+            .compatibility_type()
+            .expect("endpoint type");
         let request = session
             .materialize(
                 &EndpointRequestMaterializer,
@@ -2034,7 +2008,7 @@ mod tests {
     }
 
     #[test]
-    fn lowered_dispatch_body_is_byte_identical_to_pre_lowering() {
+    fn lowered_dispatch_body_preserves_bytes() {
         let mut pool = SegmentPool::new();
         let text = pool
             .intern_text(
@@ -2058,16 +2032,12 @@ mod tests {
         let mut lowered_ds = base;
         let lowerer = ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).unwrap();
         lowered_ds.lower_messages_for_endpoint(&lowerer).unwrap();
-        // Idempotent: a second pass is a no-op.
         lowered_ds.lower_messages_for_endpoint(&lowerer).unwrap();
         let lowered = Arc::new(lowered_ds);
 
-        // The lowered turn spliced its stored wire; the pre-lowering turn rendered
-        // its content live. The dispatched bytes must be identical.
         let before = dispatch_body(unlowered, endpoint.as_ref());
         let after = dispatch_body(lowered.clone(), endpoint.as_ref());
         assert_eq!(before, after);
-        // The lowered turn actually carries a message handle now.
         assert_eq!(lowered.conversations()[0].turns[0].body.len(), 1);
     }
 
@@ -2096,11 +2066,8 @@ mod tests {
         dataset.lower_messages_for_endpoint(&lowerer).unwrap();
 
         let turns = &dataset.conversations()[0].turns;
-        // Identical rendered content dedups to a single shared segment handle.
         assert_eq!(turns[0].body[0], turns[1].body[0]);
     }
-
-    // ---- Segment spec §3a: precompute+cache endpoint BodyPlan at bind ----
 
     fn prepare_endpoint(id: &str) -> Box<dyn PreparedEndpoint> {
         EndpointRegistry::builtin()
@@ -2212,14 +2179,12 @@ mod tests {
                             let lowerer =
                                 ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).unwrap();
 
-                            // Cache-enabled dataset: lower then precompute.
                             let mut cached_ds = base.clone();
                             cached_ds.lower_messages_for_endpoint(&lowerer).unwrap();
                             cached_ds
                                 .precompute_body_plans(endpoint.as_ref(), "primary-model")
                                 .unwrap();
 
-                            // Cache-disabled dataset: lower only (empty cache → fallback).
                             let mut uncached_ds = base;
                             uncached_ds.lower_messages_for_endpoint(&lowerer).unwrap();
 
@@ -2236,7 +2201,6 @@ mod tests {
                             };
 
                             for turn_index in 0..2 {
-                                // The cache must actually be engaged for this turn.
                                 assert!(
                                     cached
                                         .cached_body_plan(&SessionId::from("session"), turn_index)
@@ -2316,7 +2280,6 @@ mod tests {
         dataset
             .precompute_body_plans(endpoint.as_ref(), "primary-model")
             .unwrap();
-        // A profiling plan was cached for turn 0.
         assert!(
             dataset
                 .cached_body_plan(&SessionId::from("session"), 0)
@@ -2347,7 +2310,6 @@ mod tests {
 
     #[test]
     fn ineligible_turns_and_endpoints_are_never_cached() {
-        // Dynamic context modes are never precomputed (live replies interleave).
         for mode in [
             ConversationContextMode::MessageArrayWithoutResponses,
             ConversationContextMode::DeltasWithoutResponses,
@@ -2369,8 +2331,6 @@ mod tests {
             );
         }
 
-        // Non-message-array / non-precomputable endpoints cache nothing at all.
-        // (`template`/`raw` are additionally gated by `precomputable_body()`.)
         for endpoint_id in ["vllm_generate", "completions", "embeddings", "raw"] {
             let mut pool = SegmentPool::new();
             let turn = text_turn(&mut pool, b"x", true, false);
@@ -2391,7 +2351,6 @@ mod tests {
             );
         }
 
-        // Per-turn endpoint override, raw body, and graph/DAG conversations fall back.
         let mut pool = SegmentPool::new();
         let raw = pool
             .intern_raw(None, Bytes::from_static(br#"{"messages":[]}"#))
@@ -2438,7 +2397,6 @@ mod tests {
             "raw body turn must not be cached"
         );
 
-        // Graph/DAG conversation is excluded wholesale.
         let mut pool = SegmentPool::new();
         let dag_turn = text_turn(&mut pool, b"graph", false, false);
         let mut conversation = Conversation::new("session");

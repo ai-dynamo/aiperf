@@ -185,35 +185,16 @@ impl Workload for FixedScheduleWorkload {
     }
 
     async fn execute(&self, runtime: Rc<ScheduledRuntime>) -> Result<()> {
-        // Warm the dispatch path before anchoring so the first authored request
-        // is not delayed relative to its scheduled time by one-time transport
-        // setup (connection, body materialization, tokenizer/JIT). This is the
-        // synchronization barrier that lets issuance start flowing on-grid; the
-        // warmup round-trip is discarded and never recorded.
+        // Prewarm before anchoring so one-time transport setup does not delay
+        // the first authored request; the round trip is not recorded.
         if let Some(entry) = self.schedule.entries.first() {
             if let Err(error) = runtime.prewarm(entry.turn.clone()).await {
                 tracing::debug!(error = %error, "fixed-schedule prewarm round-trip failed");
             }
         }
-        // Anchor the replay to the moment issuance actually begins, not the run
-        // origin (`start_ns`) captured before per-phase dataset/schedule setup.
-        // Add a small start lead so the earliest authored target sits just in
-        // the future when the scheduler begins draining: every turn is scheduled
-        // up front on this task, and that O(n) scheduling pass runs before the
-        // scheduler can fire anything, so without the lead the first target is
-        // already overdue and fires as-soon-as-possible (a few ms late relative
-        // to its grid position). The lead moves the whole grid a few ms later
-        // (negligible over a run) and lets every send land on the authored grid.
-        // Combined with the connection prewarm above, issuance starts warm and
-        // on-schedule — the Rust-native equivalent of the Python engine's
-        // ZMQ "workers ready, go" barrier.
-        //
-        // The lead compensates for REAL wall-clock scheduling cost only. Under a
-        // virtual clock the up-front pass takes zero sim-time, so the first
-        // target is never overdue and no lead is warranted; applying one would
-        // shift the whole authored grid off `auto_offset_timestamps`' "earliest
-        // turn lands at run start" contract and corrupt deterministic replay
-        // offsets. Gate it on the clock seam so simulation stays exactly on-grid.
+        // Real time needs lead for the O(n) scheduling pass before tasks can
+        // fire. Virtual scheduling consumes no clock time, so adding lead there
+        // would violate the exact authored offsets.
         const SCHEDULE_START_LEAD_NS: i64 = 25_000_000;
         let lead_ns = if runtime.clock().is_virtual() {
             0
@@ -407,8 +388,6 @@ mod tests {
         );
     }
 
-    /// A source with no conversations, exercising the empty-dataset guard
-    /// without the removed synthetic loader.
     struct EmptyConversationSource;
 
     impl ConversationSource for EmptyConversationSource {

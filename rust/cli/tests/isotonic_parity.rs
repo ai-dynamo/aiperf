@@ -1,14 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Byte-exact behavioral parity of the native [`SmoothIsotonicPlanner`] against
-//! the production `SmoothIsotonicSLAPlanner`.
-//!
-//! `tools/parity/dump_isotonic.py` drives the *real* Python planner against a
-//! deterministic linear-TTFT oracle (single-trial, so the non-deterministic
-//! bootstrap replicate branch is never reached) and records the exact `ask()`
-//! sequence + bracket + convergence reason. This test drives the native planner
-//! — which delegates the same scipy PAVA+PCHIP fit via pyo3 — over the identical
-//! oracle and asserts the sequences match exactly.
+//! Smooth-isotonic planner golden-sequence coverage.
 //!
 //! Requires the `search-pyo3` feature (embeds scipy). Run with:
 //!   LD_LIBRARY_PATH=<py libdir> cargo test -p aiperf-cli --features search-pyo3 \
@@ -26,7 +18,6 @@ fn golden() -> serde_json::Value {
     serde_json::from_slice(&bytes).expect("golden json")
 }
 
-/// Drive the native planner over the linear-TTFT oracle for one golden case.
 fn run_native(
     lo: i64,
     hi: i64,
@@ -52,10 +43,8 @@ fn run_native(
     let mut asks = Vec::new();
     while let Some(value) = planner.ask() {
         asks.push(value);
-        // Linear synthetic TTFT matching dump_isotonic.py.
         let observed = threshold + slope * (value - boundary) as f64;
         let feasible = observed < threshold;
-        // Signed margin (lt filter): observed - threshold.
         let mut margins = HashMap::new();
         margins.insert(key.clone(), observed - threshold);
         planner.tell(feasible, margins).expect("tell");

@@ -3,11 +3,9 @@
 
 //! Bounded connection management and reuse leases.
 //!
-//! Python's shared connector is bounded and queues when exhausted, while its
-//! sticky connector owns exactly one connection per correlation id. This module
-//! preserves that policy without putting synchronization on the token path:
-//! state is local `Rc`/`RefCell`, a request acquires one RAII lease, HTTP/1
-//! leases are exclusive, and HTTP/2 leases clone one live multiplexed sender.
+//! State is local `Rc`/`RefCell`: requests acquire RAII leases, HTTP/1 leases are
+//! exclusive, and HTTP/2 leases clone one live multiplexed sender. Sticky
+//! sessions own one connection per correlation ID.
 //!
 //! Waiters queue FIFO on the per-origin `Notify`. Freeing one slot (an HTTP/1
 //! lease returning, or a connect reservation rolling back) wakes exactly one
@@ -262,7 +260,7 @@ impl ConnectionPool {
                         }
                     }
                     ProtocolState::H2(shared) => {
-                        // invariant: state is H2 only after storing a multiplexed root, so the sender is always clonable.
+                        // H2 state is created only with a clonable multiplexed root.
                         let sender = shared
                             .sender
                             .clone_multiplex()
@@ -334,7 +332,6 @@ impl ConnectionPool {
 
                     let lease = match reservation {
                         ReservationKind::First if sender.is_multiplexed() => {
-                            // invariant: `is_multiplexed()` was just checked true, so the root sender is clonable.
                             let root = sender
                                 .clone_multiplex()
                                 .expect("multiplexed sender must be clonable");
@@ -380,8 +377,8 @@ impl ConnectionPool {
                         }
                     };
                     guard.disarm();
-                    // First connect can admit many waiters (multi-slot H1 / H2),
-                    // so broadcast, not a single-slot handoff.
+                    // The first connection may admit many waiters through
+                    // multi-slot HTTP/1 or multiplexed HTTP/2.
                     entry.notify.notify_waiters();
                     return Ok(lease);
                 }
@@ -500,7 +497,7 @@ impl Drop for ReservationGuard {
             _ => {}
         }
         drop(state);
-        // Rollback frees one slot: FIFO-wake one waiter (see module docs).
+        // Rollback frees one slot, so wake one FIFO waiter.
         self.entry.notify.notify_one();
     }
 }
@@ -623,7 +620,7 @@ impl Drop for ConnectionLease {
                     *state = ProtocolState::Unknown { connecting: false };
                 }
                 drop(state);
-                // One HTTP/1 slot freed: FIFO-wake one waiter (see module docs).
+                // One HTTP/1 slot freed, so wake one FIFO waiter.
                 entry.notify.notify_one();
             }
             LeaseKind::H2 {

@@ -3,18 +3,7 @@
 mod common;
 use common::*;
 
-// Config v2 -> v2 runner -> post-artifact live-worker activation proof.
-//
-// The Python original drives the orchestrator internals directly: it injects a
-// synthetic `aiperf.post_processors.native_streaming_worker` module onto
-// `PYTHONPATH`, monkeypatches `Installation.execute` to capture the exact
-// protocol-v2 request the Python orchestrator emits, spins up a hand-rolled
-// streaming `/v1/chat/completions` HTTP server, and asserts that the runner
-// reaches the live-streaming sidecar worker only after artifacts are committed.
-// None of that machinery (the fixture worker module, `Installation`
-// request capture/monkeypatch, the `live_streaming` sidecar activation proof)
-// is reachable through the black-box `AIPerfHarness` CLI surface, so the port
-// is marked `#[ignore]` and kept as a behavioral placeholder.
+// Live-worker activation requires the Python sidecar worker and request-capture harness.
 
 #[tokio::test]
 #[ignore] // requires: Python live-streaming sidecar worker + Installation execute-capture harness

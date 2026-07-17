@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Protocol-v2 proof that placement factories sit below the single dispatcher.
+//! Protocol-v2 placement-factory injection coverage.
 //!
 //! Both tests enter through [`Coordinator`]. Neither changes workload,
 //! phase, metrics, artifact, or report logic: one replaces turn placement with
@@ -12,11 +12,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use aiperf_runtime::engine::coordinator::{ResponseV2, Coordinator};
+use aiperf_runtime::engine::coordinator::{Coordinator, ResponseV2};
 use aiperf_runtime::engine::dataset_input::BuiltinRunnerDatasetInputAdapterResolver;
 use aiperf_runtime::engine::execution_factories::ExecutionFactories;
 use aiperf_runtime::engine::graph_execution::{
-    NativeRunnerGraphPlacementFactory, GraphPlacementFactory,
+    GraphPlacementFactory, NativeRunnerGraphPlacementFactory,
 };
 use aiperf_runtime::engine::graph_input::BuiltinRunnerGraphInputAdapterResolver;
 use aiperf_runtime::engine::readiness::{
@@ -151,21 +151,21 @@ fn coordinator_with_readiness(
     .unwrap()
 }
 
-fn benchmark_run(legacy: Value) -> Value {
-    let mut endpoint = legacy["resources"]["endpoints"]["profiles"][0].clone();
+fn benchmark_run(source: Value) -> Value {
+    let mut endpoint = source["resources"]["endpoints"]["profiles"][0].clone();
     endpoint.as_object_mut().unwrap().remove("id");
     json!({
-        "benchmark_id": legacy["identity"]["benchmark_id"],
-        "artifact_dir": legacy["artifact_target"],
-        "random_seed": legacy["identity"]["random_seed"],
+        "benchmark_id": source["identity"]["benchmark_id"],
+        "artifact_dir": source["artifact_target"],
+        "random_seed": source["identity"]["random_seed"],
         "cfg": {
-            "models": legacy["resources"]["models"],
+            "models": source["resources"]["models"],
             "endpoint": endpoint,
-            "datasets": [legacy["workload"]["config"]["dataset"]],
-            "phases": legacy["workload"]["config"]["phases"],
-            "tokenizer": legacy["workload"]["config"]["tokenizer"],
-            "transport": {"type": legacy["transport"]["type"]},
-            "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
+            "datasets": [source["workload"]["config"]["dataset"]],
+            "phases": source["workload"]["config"]["phases"],
+            "tokenizer": source["workload"]["config"]["tokenizer"],
+            "transport": {"type": source["transport"]["type"]},
+            "runtime": {"workers": source["workload"]["config"]["worker_count"]}
         }
     })
 }

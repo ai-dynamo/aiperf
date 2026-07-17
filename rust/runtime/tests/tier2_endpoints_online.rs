@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Real-HTTP proof for every Tier-2 endpoint family and non-JSON lifecycle.
+//! Real-HTTP tests for Tier-2 endpoint families and non-JSON lifecycles.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -95,10 +95,7 @@ fn normalize_endpoint_name(name: &str) -> String {
     name.trim().to_ascii_lowercase().replace(['-', '/'], "_")
 }
 
-/// Builtin dialects prepared for per-row `endpoint` overrides, mirroring the
-/// removed `BuiltinEndpointResolver` capability for the tests. Every dialect the
-/// tier-2 fixtures reference by name is prepared once with default config; the
-/// authored default endpoint keeps its caller-supplied configuration.
+/// Builtin dialects prepared for per-row `endpoint` overrides.
 const OVERRIDE_DIALECTS: &[&str] = &[
     "chat",
     "nim_embeddings",
@@ -167,9 +164,8 @@ fn dialect_table(
     Rc<dyn PreparedTurnEndpointResolver>,
 ) {
     let default_id = EndpointId::new(endpoint_config.endpoint_type.canonical_id()).unwrap();
-    // The base config carries per-run settings (polling, download, response
-    // field, ...) that the removed resolver applied to whichever dialect each
-    // row selected. Apply the same base config to every prepared dialect.
+    // Per-run polling, download, and response settings apply to every selected
+    // dialect.
     let base = RawEndpointConfig::from(endpoint_config);
     let mut table = PreparedEndpointTable::new();
     let mut by_name = BTreeMap::new();

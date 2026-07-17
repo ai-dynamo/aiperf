@@ -3,7 +3,7 @@
 
 //! DCGM-style custom GPU-metrics CSV loading.
 //!
-//! Ported byte-for-byte from the canonical Python loader
+//! Behavior matches the canonical Python loader
 //! `src/aiperf/gpu_telemetry/metrics_config.py::MetricsConfigLoader`
 //! (`parse_custom_metrics_csv`, `build_custom_metrics_from_csv`,
 //! `_infer_unit_from_help`, `_title_case_metric_name`) and its default
@@ -36,14 +36,12 @@ use crate::metrics_core::Unit;
 /// One custom DCGM source field resolved from a metrics CSV.
 ///
 /// Custom fields carry no collector scaling (Python's custom collector reports
-/// raw exporter values), so [`scale`](Self::scale) is always `1.0`; the field
-/// is retained for symmetry with the built-in [`GpuMetricSpec`](crate::gpu_telemetry::fields::GpuMetricSpec)
-/// and to keep a future scaled-custom-field extension open.
+/// raw exporter values), so [`scale`](Self::scale) is always `1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CustomDcgmField {
     /// Normalized telemetry name (`DCGM_FI_DEV_SM_CLOCK` -> `sm_clock`).
     pub name: String,
-    /// Multiplier applied to the raw exporter value (always `1.0` today).
+    /// Multiplier applied to the raw exporter value; custom fields use `1.0`.
     pub scale: f64,
     /// Gauge/counter accumulation policy from the CSV `metric_type` column.
     pub kind: GpuMetricKind,
@@ -184,7 +182,7 @@ pub fn parse_custom_metrics(text: &str) -> LoadedCustomMetrics {
 
 /// Infers a metric unit from a `... (in UNIT)` help message.
 ///
-/// Ports `_infer_unit_from_help`: matches `\(in\s+([^\s)]+)\)` case-insensitively,
+/// Matches `\(in\s+([^\s)]+)\)` case-insensitively,
 /// lowercases the captured token, and maps it to a native [`Unit`]. Anything
 /// unrecognized falls back to [`Unit::Count`].
 fn infer_unit_from_help(help_msg: &str) -> Unit {

@@ -70,8 +70,7 @@ impl BlockTag {
 /// tuple is a `SegmentPool` dedup no-op, so caching the resulting handle lets
 /// every shared-prefix message reuse the content-parent's segment verbatim
 /// instead of re-decoding (tokenizer) and re-hashing (blake3) it per node. This
-/// is the linear-time equivalent of the Python driver's prefix-path splice
-/// and yields byte-identical pool output.
+/// preserves byte-identical pool output in linear time.
 #[derive(PartialEq, Eq, Hash)]
 pub(super) struct PromptMessageKey {
     parent: Option<u32>,
@@ -112,11 +111,8 @@ fn geometry_from_hashes(
 
 /// One role-tagged segment of the sequential reconstruction buffer.
 ///
-/// Mirrors `weka_synth_buf.RoleSegment` reduced to what per-block tag emission
-/// needs: the role and the segment's block count. The synth-tail token overhang
-/// the Python `RoleSegment` also tracks is irrelevant to the block-level tag
-/// snapshot (it lives past `block_count` and the WEKA/Dynamo tail is emitted
-/// outside the trie), so it is intentionally dropped here.
+/// Only the role and block count affect per-block tag emission; synth-tail
+/// overhang is emitted outside the trie.
 #[derive(Clone, Copy)]
 struct PlanSegment {
     role: Role,
@@ -156,8 +152,7 @@ fn truncate_segments(segments: &mut Vec<PlanSegment>, target: usize) {
     *segments = kept;
 }
 
-/// Per-chain Pass-1 assistant block caps (port of
-/// `weka_synth_buf.compute_asst_block_caps`).
+/// Per-chain assistant block caps.
 ///
 /// `turns` is one `(hash_ids, input_tokens)` pair per turn of a single chain, in
 /// turn order. `caps[k]` bounds the assistant block count turn `k` may attribute
@@ -211,13 +206,12 @@ fn chain_assistant_caps(
 /// Plan the heuristic `(role, starts_message)` tags for one chain by replaying
 /// `weka_synth_buf.ConversationReconstructor` sequentially over its turns.
 ///
-/// This is the load-bearing parity fix: the role/message-boundary structure is
-/// derived from the **immediately preceding turn of the same chain**, NOT the
+/// Role and message boundaries derive from the immediately preceding turn of the
+/// same chain, not the
 /// LCP-trie `content_parent` (which is chosen for content dedup and may point at
 /// an earlier turn on a pull-back). On a pull-back turn the two disagree: the
-/// trie parent's larger recorded output would size a longer assistant run,
-/// mislabeling the blocks agentx hands back to the trailing user. Planning per
-/// chain against turn `k-1` reproduces agentx's exact per-block roles and its
+/// trie parent's larger recorded output would size a longer assistant run.
+/// Planning against turn `k-1` preserves exact per-block roles and
 /// segment boundaries (including two adjacent same-role messages), which the
 /// server's chat template + cross-boundary BPE weight into the ISL.
 fn plan_chain_tags(
@@ -250,9 +244,7 @@ fn plan_chain_tags(
             // becomes one `system` segment of `ceil((tool+system)/bs)` blocks
             // (clamped to covered); the remainder is the user segment. The WEKA
             // adapter does not yet plumb per-trace tool/system token counts, so
-            // they are zero here (0/0 captures are all-user, as in agentx), and
-            // this collapses to a single user segment. Plumbing the trace's
-            // tool/system counts is the follow-up that generalizes the merge.
+            // they are zero here and this collapses to a single user segment.
             let tool_system_tokens = 0_usize;
             let prefix_blocks = if tool_system_tokens > 0 {
                 tool_system_tokens.div_ceil(bs).min(covered)

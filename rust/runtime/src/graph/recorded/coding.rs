@@ -3,11 +3,11 @@
 
 //! Procedural coding corpus used by recorded production traces.
 //!
-//! The source adapter only needs a stable, structurally varied token pool. This
-//! native builder preserves the Python generator's category weights while its
+//! The source adapter needs a stable, structurally varied token pool. The
+//! builder preserves the generator's category weights while its
 //! random choices and final shuffle use AIPerf's canonical BLAKE3-derived PCG64
 //! stream. Template expansion remains behind [`templates::TemplateRenderer`],
-//! leaving the corpus vocabulary open to additional native renderers.
+//! keeping template expansion behind one renderer.
 
 mod cicd_docs;
 mod conversations;
@@ -34,13 +34,13 @@ use self::templates::{TemplateKind, TemplateRenderer};
 use super::RecordedTraceError;
 
 /// Multiplier applied to every category's block count when building the pool
-/// (the native analogue of the Python generator's `_pool_scale`). Fractional
+/// (`_pool_scale`). Fractional
 /// values scale down — `0.25` gives roughly a quarter-size pool — via truncation,
-/// like Python's `int(count * scale)`. At `1.0` the pool is ~270k tokens; the
-/// default `1.0` matches agentx's weka/trace path, which constructs
+/// like `int(count * scale)`. At `1.0` the pool is ~270k tokens; the
+/// default `1.0` matches the WEKA/trace path, which constructs
 /// `CodingContentGenerator` with no `pool_tokens_target`, so `_pool_scale` clamps
-/// to `1.0` (`max(1.0, 10_000_000 / 10_000_000)`). Byte-exact corpus parity
-/// requires the SAME scale as agentx, so this is `1.0`, not a larger pool.
+/// to `1.0` (`max(1.0, 10_000_000 / 10_000_000)`). Byte-exact corpus output
+/// requires the same scale.
 const POOL_SCALE: f64 = 1.0;
 
 const TOOL_POOL_BLOCK_COUNTS: &[(TemplateKind, usize)] = &[
@@ -83,10 +83,9 @@ fn build_scaled_corpus(
     root_seed: u64,
     scale: f64,
 ) -> Result<Vec<u32>, RecordedTraceError> {
-    // Truncating multiply, matching the Python generator's `int(count * scale)`.
+    // Truncation preserves `int(count * scale)` behavior.
     let scaled = |count: usize| (count as f64 * scale) as usize;
-    // agentx derives `_template_rng` via `rng.derive("dataset.coding_content.template")`,
-    // i.e. sha256(f"{root_seed}:{identifier}")[:8] — NOT the BLAKE3 RngRoot algebra.
+    // Template generation uses the SHA-256-derived child seed, not BLAKE3 RngRoot.
     let template_seed = PythonRandomGenerator::derive_child_seed(
         root_seed,
         namespace::DATASET_CODING_CONTENT_TEMPLATE,
@@ -137,9 +136,7 @@ mod tests {
     #[test]
     fn every_template_kind_yields_structural_variety() {
         use super::templates::{TemplateKind, TemplateRenderer};
-        // Every top-level category dispatches across its Python variant family
-        // (plus vocabulary fills), so repeated renders of one kind must differ —
-        // proving the variant dispatch actually fires rather than one fixed shape.
+        // Repeated renders verify that each category dispatches across variants.
         const KINDS: &[TemplateKind] = &[
             TemplateKind::Python,
             TemplateKind::Go,

@@ -1,15 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Typed `models` section of the native `BenchmarkConfig`.
-//!
-//! Wire shape ported from `src/aiperf/orchestrator/rust_wire.py::_authored_models`.
-//! Serializing [`Models`] yields the exact `cfg.models` subtree the runner
-//! consumes.
+//! Typed model-selection policy.
 
 use serde::{Deserialize, Serialize};
 
-/// Model-selection strategy across a multi-model item list. Closed set
-/// (`ModelSelectionStrategy`).
+/// Model-selection strategy across multiple models.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelStrategy {

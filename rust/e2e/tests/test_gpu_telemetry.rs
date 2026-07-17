@@ -1,17 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Tests for GPU telemetry collection and reporting.
-//!
-//! Ported from `tests/integration/test_gpu_telemetry.py`. DCGM telemetry
-//! requires Linux (DCGM is Linux-only); the whole suite is skipped elsewhere.
-
 mod common;
 use common::*;
 
 use serde_json::Value;
 
-/// True when the run's `*aiperf.json` carries a non-empty telemetry endpoint map.
 fn has_gpu_telemetry(json: &Value) -> bool {
     json.get("telemetry_data")
         .and_then(|t| t.get("endpoints"))
@@ -20,7 +14,6 @@ fn has_gpu_telemetry(json: &Value) -> bool {
         .unwrap_or(false)
 }
 
-/// GPU telemetry collection with DCGM endpoint.
 #[tokio::test]
 async fn test_gpu_telemetry() {
     if cfg!(target_os = "windows") || cfg!(target_os = "macos") {
@@ -66,7 +59,7 @@ async fn test_gpu_telemetry() {
                 assert!(!metric_value.is_null());
                 assert!(!metric_value["avg"].is_null());
                 assert!(!metric_value["unit"].is_null());
-                // Gauge metrics should have min/max; counter metrics only have avg.
+                // Counter summaries omit min/max.
                 if !counter_metrics.contains(&metric_name.as_str()) {
                     assert!(!metric_value["min"].is_null());
                     assert!(!metric_value["max"].is_null());
@@ -76,7 +69,6 @@ async fn test_gpu_telemetry() {
     }
 }
 
-/// Test GPU telemetry export to JSONL file with validation.
 #[tokio::test]
 async fn test_gpu_telemetry_export() {
     if cfg!(target_os = "windows") || cfg!(target_os = "macos") {
@@ -94,7 +86,6 @@ async fn test_gpu_telemetry_export() {
     assert_eq!(r.artifacts.request_count() as u32, 50);
     assert!(has_gpu_telemetry(&r.artifacts.json()));
 
-    // Verify GPU telemetry export JSONL file exists and is well-formed.
     let export = r
         .artifacts
         .find_file("**/gpu_telemetry_export.jsonl")
@@ -111,7 +102,6 @@ async fn test_gpu_telemetry_export() {
     for line in &lines {
         let record: Value = serde_json::from_str(line).expect("valid telemetry record JSON");
 
-        // Verify required fields are present.
         assert!(record["timestamp_ns"].as_i64().expect("timestamp_ns") > 0);
         assert!(!record["dcgm_url"].is_null());
         assert!(record["gpu_index"].as_i64().expect("gpu_index") >= 0);
@@ -122,14 +112,13 @@ async fn test_gpu_telemetry_export() {
         gpu_uuids.insert(record["gpu_uuid"].as_str().unwrap_or_default().to_string());
     }
 
-    // Records are not necessarily in timestamp order due to async collection.
+    // Asynchronous scrapes need not be timestamp-ordered.
     assert!(
         gpu_uuids.len() >= 2,
         "Should have records from at least two GPUs"
     );
 }
 
-/// Test GPU telemetry export with custom filename prefix.
 #[tokio::test]
 async fn test_gpu_telemetry_export_with_custom_prefix() {
     if cfg!(target_os = "windows") || cfg!(target_os = "macos") {
@@ -146,7 +135,6 @@ async fn test_gpu_telemetry_export_with_custom_prefix() {
     ));
     assert!(r.success(), "run failed: {}", r.stderr);
 
-    // Verify custom filename is used (optional: only validate if present).
     if let Some(export) = r.artifacts.find_file("**/custom_test_gpu_telemetry.jsonl") {
         let content = std::fs::read_to_string(&export).expect("read export file");
         let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -161,7 +149,6 @@ async fn test_gpu_telemetry_export_with_custom_prefix() {
     }
 }
 
-/// GPU telemetry collection is disabled with `--no-gpu-telemetry` flag.
 #[tokio::test]
 async fn test_gpu_telemetry_disabled() {
     if cfg!(target_os = "windows") || cfg!(target_os = "macos") {
@@ -177,13 +164,11 @@ async fn test_gpu_telemetry_disabled() {
     assert!(r.success(), "run failed: {}", r.stderr);
     assert_eq!(r.artifacts.request_count() as u32, 25);
 
-    // GPU telemetry should NOT be collected when disabled.
     assert!(
         !has_gpu_telemetry(&r.artifacts.json()),
         "GPU telemetry should not be collected"
     );
 
-    // Verify no GPU telemetry files were created.
     assert!(
         r.artifacts.find_file("**/*gpu_telemetry*.jsonl").is_none(),
         "Unexpected GPU telemetry files present"

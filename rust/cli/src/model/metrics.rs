@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Typed `metrics` section of the native `BenchmarkConfig`.
+//! Typed metrics policy.
 //!
-//! Wire shape ported from `src/aiperf/orchestrator/rust_wire.py::_authored_metrics`.
-//! `slos` is a caller-defined metric→threshold map (an open bag); the optional
-//! `slice_duration_seconds` and `sketch` appear only when set.
+//! `slos` is caller-defined; optional fields are omitted when unset.
 
 use serde::{Deserialize, Serialize};
 

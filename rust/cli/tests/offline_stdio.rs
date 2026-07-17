@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Process-level reachability proofs for the feature-bearing offline runner.
+//! Process-level coverage for the feature-bearing offline runner.
 
 #![cfg(feature = "dynosim")]
 
@@ -101,8 +101,6 @@ fn request(operation: &str, artifact_dir: &Path) -> Value {
 }
 
 fn run(request: &Value) -> Output {
-    // The stdin wire is the bare `run`; the operation is selected by the re-exec
-    // MODE (`--execute` / `--validate`), not a wire field.
     let flag = match request["operation"].as_str() {
         Some("validate") => "--validate",
         _ => "--execute",
@@ -140,7 +138,7 @@ fn one_line(output: &Output) -> Value {
 
 fn target(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "aiperf runner-offline-stdio-{}-{name}",
+        "aiperf-offline-stdio-{}-{name}",
         std::process::id()
     ))
 }

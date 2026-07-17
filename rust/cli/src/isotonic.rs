@@ -1,38 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Native smooth-isotonic SLA-saturation planner (default `--search-style`).
+//! Smooth-isotonic SLA-saturation planner (default `--search-style`).
 //!
-//! Pure-Rust port of `aiperf.orchestrator.search_planner.smooth_isotonic`
-//! (`SmoothIsotonicSLAPlanner`) + `_smooth_isotonic_phases`: the bracket →
-//! fit → replicate → cliff_bisect phase state machine, probe queue, verdict
-//! bracket latching, and signed-margin bookkeeping. The numerical primitives
-//! (PAVA + PCHIP fit/root, isotonic distinct-count, cliff residual, bootstrap
-//! CI) are delegated to the real scipy via [`crate::pyfit`] so the fit is
-//! byte-identical; the orchestration is Rust.
-//!
-//! `normalize_margins` and `replicate_count` are pure math, ported here from
-//! `_margin_normalize.py` / `_replicate_budget.py`. The replicate branch calls
-//! unseeded `scipy.stats.bootstrap` (non-deterministic in Python itself), so
-//! only the bracket/fit/cliff branches are byte-verifiable.
+//! The planner brackets the boundary, fits an isotonic curve, replicates
+//! uncertain candidates, and bisects cliffs. [`crate::pyfit`] provides PAVA,
+//! PCHIP root solving, cliff detection, and bootstrap confidence intervals.
+//! Bootstrap confidence intervals are unseeded and therefore nondeterministic.
 
 use std::collections::HashMap;
 
 use crate::pyfit;
 use crate::search::{SlaFilter, SlaOp};
 
-/// Relative-precision target (`Environment.SEARCH_PLANNER.SLA_PRECISION_DEFAULT`).
+/// Relative boundary-precision target.
 const SLA_PRECISION_DEFAULT: f64 = 0.05;
-/// Internal fit-step probes inside the bracket on the first fit (`_FIT_INTERNAL_PROBES`).
+/// Internal probes added before the first fit.
 const FIT_INTERNAL_PROBES: i64 = 3;
-/// Refit when PAVA collapses to <= this many distinct values (`_FIT_MIN_DISTINCT`).
+/// Refit when PAVA produces at most this many distinct values.
 const FIT_MIN_DISTINCT: usize = 3;
-/// Hard cap on fit-step refit cycles (`_MAX_REFIT_CYCLES`).
+/// Maximum fit cycles.
 const MAX_REFIT_CYCLES: i64 = 3;
 
-/// `argmax`-with-first-key-wins over `(margin / sigma_floored)`, byte-faithful to
-/// `_margin_normalize::normalize_margins`. `keys` fixes the iteration order
-/// (Python dict insertion order) so ties resolve identically. Returns the
-/// binding constraint key.
+/// Return the first key maximizing `margin / max(sigma, 0.01 * |threshold|)`.
 fn normalize_margins(
     keys: &[String],
     margins: &HashMap<String, f64>,
@@ -56,7 +45,7 @@ fn normalize_margins(
             raw / sigma_floored
         }
     };
-    // First key achieving the max wins (mirrors Python `max(dict, key=...)`).
+    // Strict comparison preserves the first key on ties.
     let mut best_key = keys
         .iter()
         .find(|k| margins.contains_key(*k))
@@ -73,8 +62,7 @@ fn normalize_margins(
     best_key
 }
 
-/// Hyperband-flavored replicate count, byte-faithful to
-/// `_replicate_budget::replicate_count`.
+/// Return the replicate budget, clamped to `[3, 20]`.
 fn replicate_count(sigma_margin: f64, threshold: f64, override_n: i64) -> i64 {
     const FLOOR: i64 = 3;
     const CEIL: i64 = 20;
@@ -98,9 +86,7 @@ enum Phase {
     CliffBisect,
 }
 
-/// Static resolution of the smooth-isotonic planner config (mirrors
-/// `MaxConcurrencyUnderSLA._build_smooth_isotonic_output`: `[1,1000]`, 30
-/// iterations, n_initial_points=1).
+/// Resolved smooth-isotonic planner configuration.
 pub struct IsotonicSpec {
     pub lo: i64,
     pub hi: i64,
@@ -111,8 +97,8 @@ pub struct IsotonicSpec {
 
 impl IsotonicSpec {
     /// Resolve from the CLI flags: `--concurrency-min/max` bounds (default
-    /// `[1,1000]`), `--search-max-iterations` (default 30, the recipe's
-    /// `_SMOOTH_ISOTONIC_MAX_ITERATIONS`), the SLA filters, `--sla-replicates`.
+    /// `[1,1000]`), `--search-max-iterations` (default 30), SLA filters, and
+    /// `--sla-replicates`.
     pub fn from_flags(flags: &crate::flags::ProfileFlags) -> anyhow::Result<Self> {
         let lo = flags.concurrency_min.unwrap_or(1);
         let hi = flags.concurrency_max.unwrap_or(1000);
@@ -131,16 +117,14 @@ impl IsotonicSpec {
             lo,
             hi,
             max_iterations: flags.search_max_iterations.unwrap_or(30),
-            // `sla_replicates` is a config-only field (no CLI flag); default 0 (auto).
+            // Zero selects the adaptive replicate budget.
             sla_replicates: 0,
             sla_filters,
         })
     }
 }
 
-/// Smooth-isotonic SLA-saturation 1D planner. Pure-Rust port of
-/// `SmoothIsotonicSLAPlanner`; the fit/root/cliff/CI numerics come from
-/// [`crate::pyfit`] (real scipy).
+/// Smooth-isotonic one-dimensional SLA-saturation planner.
 pub struct SmoothIsotonicPlanner {
     hi: i64,
     max_iterations: i64,
@@ -282,8 +266,6 @@ impl SmoothIsotonicPlanner {
         self.convergence_reason.as_deref()
     }
 
-    // --- bracket + verdict ------------------------------------------------
-
     fn absorb_verdict(&mut self, value: i64, feasible: bool) {
         if feasible {
             if self.infeasible_min.is_some_and(|m| value >= m) {
@@ -348,16 +330,14 @@ impl SmoothIsotonicPlanner {
                 self.probe_queue.push(x);
             }
         }
-        // Dedup preserving order.
+        // Probe order affects the fitted trajectory.
         let mut seen = std::collections::HashSet::new();
         self.probe_queue.retain(|x| seen.insert(*x));
     }
 
-    // --- fit phase --------------------------------------------------------
-
     fn plan_fit_step(&mut self) -> anyhow::Result<()> {
         if !self.probe_queue.is_empty() {
-            return Ok(()); // still draining internal probes
+            return Ok(());
         }
         self.fit_count += 1;
         let candidate = match self.fit_and_solve()? {
@@ -408,8 +388,6 @@ impl SmoothIsotonicPlanner {
         }
         let last_x = *xs.last().unwrap();
 
-        // Per-key margin (last y) + sigma-at-last for the binding selection, and
-        // the binding key's full series for the root solve.
         let mut margins: HashMap<String, f64> = HashMap::new();
         let mut sigmas: HashMap<String, f64> = HashMap::new();
         let mut series: HashMap<String, Vec<f64>> = HashMap::new();
@@ -502,8 +480,6 @@ impl SmoothIsotonicPlanner {
         }
         Some(fmax + gap / 2)
     }
-
-    // --- replicate / cliff / terminate -----------------------------------
 
     fn enter_replicate_or_terminate(&mut self, candidate: i64) -> anyhow::Result<()> {
         let cliff = self.check_cliff()?;
@@ -697,8 +673,7 @@ fn sample_std(samples: &[f64]) -> f64 {
     var.sqrt()
 }
 
-/// Python 3 `round()` — round-half-to-even (banker's rounding). Matches
-/// `crate::search::python_round` (duplicated to keep that one private).
+/// Round half to even.
 fn python_round(v: f64) -> f64 {
     let floor = v.floor();
     let diff = v - floor;

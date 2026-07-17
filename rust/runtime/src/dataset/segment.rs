@@ -131,10 +131,8 @@ pub enum Payload {
         /// Exact UTF-8 bytes.
         bytes: Bytes,
         /// Number of authoritative tokens produced at composition time. The token
-        /// IDs are folded into the segment identity at intern time (see
-        /// [`SegmentPool::intern_text`]) but not retained: text endpoints splice
-        /// `bytes` verbatim and input-token accounting only needs the count, so
-        /// storing the full `Box<[u32]>` per text segment was pure overhead.
+        /// IDs contribute to the segment identity but are discarded after hashing;
+        /// text endpoints splice `bytes` verbatim and accounting uses this count.
         token_count: u32,
     },
     /// Exact JSON wire for a raw body, raw message list, tools, headers, or extras.
@@ -163,9 +161,7 @@ pub enum Payload {
     },
 }
 
-/// The disjoint content domain of a segment — the discriminant the
-/// segment-unification design (§2) uses to replace the five-field body
-/// precedence with a single type-checked lookup: `Message` handles format as an
+/// The disjoint content domain of a segment. `Message` handles format as an
 /// array, one `Raw` handle is a complete body (endpoint bypass), one `TokenIds`
 /// handle is the token-native path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,9 +261,7 @@ pub trait SegmentStore: Send + Sync {
             .ok_or(DatasetError::UnknownHandle(handle))
     }
 
-    /// Resolve the type-checked [`SegmentDomain`] of a handle — the discriminant
-    /// the segment-unification design (§2) uses in place of the five-field body
-    /// precedence.
+    /// Resolve the type-checked [`SegmentDomain`] of a handle.
     fn domain(&self, handle: Handle) -> Result<SegmentDomain> {
         self.get(handle).map(Payload::domain)
     }
@@ -300,8 +294,8 @@ impl SegmentPool {
     /// existing arena so prior handle indices stay stable), then refreezes. The
     /// arena is rebuilt from each `0..len` entry through the [`SegmentStore`]
     /// trait — never a downcast — and the write-side hash map is reconstructed
-    /// from the stored ids rather than re-hashing, so pre-existing content keeps
-    /// its original identity even if the hashing scheme evolves.
+    /// from stored ids rather than re-hashing, so content keeps its supplied
+    /// identity even if the hashing scheme evolves.
     pub fn thaw(store: &dyn SegmentStore) -> Self {
         let len = store.len();
         let mut arena = Vec::with_capacity(len);
@@ -590,12 +584,9 @@ fn payload_id(parent: Option<SegmentId>, payload: &Payload) -> SegmentId {
     SegmentId(*hasher.finalize().as_bytes())
 }
 
-/// Content identity of a `text-only` segment, keyed on its authoritative token
-/// IDs exactly as the retired [`Payload::Text`] `tokens` field once was — the
-/// stored payload keeps only the count, so the IDs are hashed here at intern time
-/// and then dropped. Emits the identical byte sequence the folded-in text arm of
-/// [`payload_id`] produced, keeping segment IDs (and therefore dedup and every
-/// downstream wire) byte-for-byte stable across this storage change.
+/// Content identity of a `text-only` segment. The authoritative token IDs are
+/// hashed as little-endian `u32` values and then discarded; the stored payload
+/// retains only their count for accounting.
 fn text_payload_id(parent: Option<SegmentId>, role: &Role, tokens: &[u32]) -> SegmentId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(HASH_VERSION);
@@ -826,16 +817,13 @@ mod tests {
         let id_b = store.id(b).unwrap();
 
         let mut thawed = SegmentPool::thaw(&store);
-        // Pre-existing handles and ids are byte-for-byte preserved.
         assert_eq!(thawed.id(a).unwrap(), id_a);
         assert_eq!(thawed.id(b).unwrap(), id_b);
         assert_eq!(thawed.len(), 2);
-        // Re-interning existing content dedups back to the original handle.
         let b_again = thawed
             .intern_message(Some(a), "user", Bytes::from_static(b"{}"), vec![1_u32])
             .unwrap();
         assert_eq!(b_again, b);
-        // New content appends after the preserved arena.
         let c = thawed
             .intern_raw(None, Bytes::from_static(b"{\"c\":3}"))
             .unwrap();

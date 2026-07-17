@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end integration tests for aiperf-mock-server.
-//!
-//! These spin up a real axum server on a random port, hit it via reqwest, and
-//! validate responses, streaming behaviour, and Prometheus exposition.
+//! HTTP wire tests for responses, streaming, and Prometheus exposition.
 
 use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
@@ -16,7 +13,6 @@ use serde_json::{Value, json};
 
 async fn spawn_server(cfg: MockServerConfig) -> (SocketAddr, tokio::task::JoinHandle<()>) {
     let cfg = cfg.apply_flags();
-    // Pick a free port by opening a 0 port, reading, then releasing.
     let std_listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr: SocketAddr = std_listener.local_addr().unwrap();
     drop(std_listener);
@@ -28,7 +24,6 @@ async fn spawn_server(cfg: MockServerConfig) -> (SocketAddr, tokio::task::JoinHa
     let handle = tokio::spawn(async move {
         axum::serve(tcp, app.into_make_service()).await.unwrap();
     });
-    // Give the server a moment to accept connections.
     tokio::time::sleep(Duration::from_millis(50)).await;
     (bound, handle)
 }
@@ -49,8 +44,6 @@ fn client() -> reqwest::Client {
         .build()
         .unwrap()
 }
-
-// ============================================================================
 
 #[tokio::test]
 async fn health_returns_healthy() {
@@ -250,7 +243,6 @@ async fn embeddings_returns_768_dim() {
     let data = body["data"].as_array().unwrap();
     assert_eq!(data.len(), 2);
     assert_eq!(data[0]["embedding"].as_array().unwrap().len(), 768);
-    // Deterministic embeddings: same text => same embedding
     let resp2 = client()
         .post(format!("http://{addr}/v1/embeddings"))
         .json(&json!({ "model": "emb", "input": ["hello"] }))
@@ -282,7 +274,6 @@ async fn nim_ranking_sorts_by_score() {
         .iter()
         .map(|r| r["relevance_score"].as_f64().unwrap())
         .collect();
-    // Non-increasing
     assert!(scores.windows(2).all(|w| w[0] >= w[1]));
 }
 
@@ -437,7 +428,6 @@ async fn solido_rag() {
 #[tokio::test]
 async fn prometheus_metrics_endpoints_all_return_text() {
     let (addr, _h) = spawn_server(fast_cfg()).await;
-    // Fire one chat request so counters are non-zero.
     let _ = client()
         .post(format!("http://{addr}/v1/chat/completions"))
         .json(&json!({"model": "m1", "messages": [{"role":"user","content":"hi"}]}))
@@ -491,7 +481,6 @@ async fn dcgm_metrics_endpoints() {
         assert!(body.contains("DCGM_FI_DEV_GPU_UTIL"));
         assert!(body.contains("DCGM_FI_DEV_POWER_USAGE"));
     }
-    // 3 is out-of-range - only 2 fakers.
     let r = client()
         .get(format!("http://{addr}/dcgm3/metrics"))
         .send()
@@ -518,13 +507,9 @@ async fn error_injection() {
         .unwrap();
     assert_eq!(r.status(), 500);
     let body: Value = r.json().await.unwrap();
-    // Default menu is the single historical `500` code, echoed in the detail.
     assert_eq!(body["detail"], "Simulated error (status 500)");
 }
 
-/// The status-code menu is honored: with `--error-status-codes 429` every
-/// injected error is a 429 carrying a `Retry-After` backoff header, not the
-/// hardcoded 500.
 #[tokio::test]
 async fn error_injection_status_code_menu_and_retry_after() {
     let cfg = MockServerConfig {
@@ -553,9 +538,6 @@ async fn error_injection_status_code_menu_and_retry_after() {
     assert_eq!(body["detail"], "Simulated error (status 429)");
 }
 
-/// A mid-stream SSE error emits a few normal token frames and then a terminal
-/// `event: error` frame, with no `[DONE]` sentinel — the shape the runner
-/// classifies as a transport SSE error.
 #[tokio::test]
 async fn error_injection_midstream_sse() {
     let cfg = MockServerConfig {
@@ -579,7 +561,6 @@ async fn error_injection_midstream_sse() {
         .text()
         .await
         .unwrap();
-    // The stream terminates with an `event: error` frame and never emits [DONE].
     assert!(
         body.contains("event: error"),
         "mid-stream body must carry an SSE error frame, got: {body:?}"
@@ -588,7 +569,6 @@ async fn error_injection_midstream_sse() {
         !body.contains("[DONE]"),
         "mid-stream error must not send the [DONE] sentinel, got: {body:?}"
     );
-    // Some normal content frames precede the error (partial content).
     assert!(
         body.contains("chat.completion.chunk"),
         "mid-stream body should include partial token frames, got: {body:?}"
@@ -680,13 +660,11 @@ async fn fast_mode_has_near_zero_ttft() {
         .unwrap();
     let elapsed = start.elapsed();
     assert_eq!(r.status(), 200);
-    // Fast mode should keep total latency below 100 ms in local runs.
     assert!(elapsed < Duration::from_millis(500), "elapsed={elapsed:?}");
 }
 
 #[tokio::test]
 async fn dcgm_load_updates_on_completions() {
-    // Ensure scraping DCGM after chat requests doesn't fail.
     let (addr, _h) = spawn_server(fast_cfg()).await;
     for _ in 0..3 {
         let _ = client()
@@ -724,7 +702,6 @@ async fn empty_prompt_yields_zero_completion() {
 
 #[tokio::test]
 async fn chat_streaming_records_streaming_metric() {
-    // spawn, stream, then scrape /metrics and confirm streaming counter incremented.
     let (addr, _h) = spawn_server(fast_cfg()).await;
     let resp = client()
         .post(format!("http://{addr}/v1/chat/completions"))
@@ -756,10 +733,6 @@ async fn fast_cfg_zeroes_latency() {
     let _state = Arc::new(cfg);
 }
 
-// ============================================================================
-// /v1/models
-// ============================================================================
-
 #[tokio::test]
 async fn list_models_returns_defaults() {
     let (addr, _h) = spawn_server(fast_cfg()).await;
@@ -773,13 +746,11 @@ async fn list_models_returns_defaults() {
     assert_eq!(body["object"], "list");
     let data = body["data"].as_array().unwrap();
     assert!(!data.is_empty(), "default model list should be non-empty");
-    // Shape check on the first entry.
     let first = &data[0];
     assert_eq!(first["object"], "model");
     assert!(first["id"].is_string());
     assert!(first["created"].is_number());
     assert_eq!(first["owned_by"], "aiperf-mock");
-    // Sorted (BTreeSet) — alphabetical order.
     let ids: Vec<&str> = data.iter().map(|m| m["id"].as_str().unwrap()).collect();
     let mut sorted = ids.clone();
     sorted.sort();
@@ -814,15 +785,12 @@ async fn list_models_honors_explicit_config() {
         .collect();
     assert!(ids.contains(&"my-custom-model".to_string()));
     assert!(ids.contains(&"another/model-v2".to_string()));
-    // Defaults should NOT be present when the caller specifies an explicit list.
     assert!(!ids.contains(&"gpt-4".to_string()));
 }
 
 #[tokio::test]
 async fn list_models_includes_models_seen_via_traffic() {
     let (addr, _h) = spawn_server(fast_cfg()).await;
-    // Fire a request with a custom model name; init_model_config fires inside
-    // the chat handler, which should add it to the seen set.
     let _ = client()
         .post(format!("http://{addr}/v1/chat/completions"))
         .json(&json!({"model": "dynamic-model-1", "messages":[{"role":"user","content":"hi"}]}))
@@ -896,10 +864,6 @@ async fn get_model_404_for_unknown() {
     );
 }
 
-// ============================================================================
-// Extended usage-accounting fields (--usage-* knobs)
-// ============================================================================
-
 /// A `--fast` config with every extended usage knob pinned to a distinct
 /// nonzero value, so each emitted `usage` sub-field is individually assertable.
 fn usage_fields_cfg() -> MockServerConfig {
@@ -934,12 +898,10 @@ async fn chat_non_streaming_emits_extended_usage_fields() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
     let u = &body["usage"];
-    // Top-level OpenAI keys read by aiperf_runtime::endpoints::usage.
     assert_eq!(u["cache_creation_input_tokens"], 11);
     assert_eq!(u["prompt_cache_miss_tokens"], 22);
     assert_eq!(u["toolUsePromptTokenCount"], 99);
     assert_eq!(u["prompt_audio_seconds"], 6.5);
-    // Nested detail keys.
     assert_eq!(u["prompt_tokens_details"]["audio_tokens"], 44);
     assert_eq!(u["completion_tokens_details"]["audio_tokens"], 55);
     assert_eq!(
@@ -950,7 +912,6 @@ async fn chat_non_streaming_emits_extended_usage_fields() {
         u["completion_tokens_details"]["rejected_prediction_tokens"],
         88
     );
-    // Anthropic-only cache-read is NOT serialized on the OpenAI usage.
     assert!(u.get("cache_read_input_tokens").is_none());
 }
 
@@ -970,7 +931,6 @@ async fn chat_streaming_usage_chunk_carries_extended_fields() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let text = resp.text().await.unwrap();
-    // Locate the terminal usage frame (the only SSE data line with a "usage" key).
     let usage_frame = text
         .lines()
         .filter_map(|l| l.strip_prefix("data: "))
@@ -1015,13 +975,10 @@ async fn messages_usage_carries_anthropic_cache_fields() {
     let u = &body["usage"];
     assert!(u["input_tokens"].as_u64().unwrap() > 0);
     assert!(u["output_tokens"].as_u64().unwrap() > 0);
-    // Disjoint cache accounting the runner re-totals into prompt_tokens.
     assert_eq!(u["cache_read_input_tokens"], 33);
     assert_eq!(u["cache_creation_input_tokens"], 11);
 }
 
-/// Without the knobs, none of the extended sub-fields appear — a normal run's
-/// usage payload is unchanged.
 #[tokio::test]
 async fn default_usage_omits_extended_fields() {
     let (addr, _h) = spawn_server(fast_cfg()).await;
@@ -1041,13 +998,8 @@ async fn default_usage_omits_extended_fields() {
     assert!(u.get("toolUsePromptTokenCount").is_none());
     assert!(u.get("prompt_audio_seconds").is_none());
     assert!(u["prompt_tokens_details"].get("audio_tokens").is_none());
-    // completion_tokens_details is absent entirely for a non-reasoning model.
     assert!(u.get("completion_tokens_details").is_none());
 }
-
-// ============================================================================
-// Tool-call / function-call emission (`--tool-call-rate`).
-// ============================================================================
 
 fn tool_call_cfg() -> MockServerConfig {
     MockServerConfig {
@@ -1059,10 +1011,6 @@ fn tool_call_cfg() -> MockServerConfig {
     }
 }
 
-/// Non-streaming: at rate 1.0 the assistant message carries a single
-/// `tool_calls` entry with the configured function name and argument string,
-/// the finish reason is `tool_calls`, and the usage reports
-/// `toolUsePromptTokenCount`.
 #[tokio::test]
 async fn tool_call_non_streaming_emits_message_tool_calls() {
     let (addr, _h) = spawn_server(tool_call_cfg()).await;
@@ -1084,13 +1032,9 @@ async fn tool_call_non_streaming_emits_message_tool_calls() {
     assert!(tc["id"].as_str().unwrap().starts_with("call_"));
     assert_eq!(tc["function"]["name"], "get_weather");
     assert_eq!(tc["function"]["arguments"], r#"{"location":"NYC"}"#);
-    // Tool-definition prompt tokens are reported under the exact key AIPerf reads.
     assert!(body["usage"]["toolUsePromptTokenCount"].as_u64().unwrap() > 0);
 }
 
-/// Streaming: the argument string is split across two `delta.tool_calls`
-/// frames; merging them by `index` reconstructs the full function name and
-/// arguments, and the terminal frame carries `finish_reason: "tool_calls"`.
 #[tokio::test]
 async fn tool_call_streaming_emits_delta_tool_calls() {
     let (addr, _h) = spawn_server(tool_call_cfg()).await;
@@ -1150,7 +1094,6 @@ async fn tool_call_streaming_emits_delta_tool_calls() {
     assert!(text.contains("toolUsePromptTokenCount"));
 }
 
-/// Rate 0.0 (the default) never emits tool calls: a normal assistant turn.
 #[tokio::test]
 async fn tool_call_disabled_by_default() {
     let (addr, _h) = spawn_server(fast_cfg()).await;
@@ -1169,15 +1112,8 @@ async fn tool_call_disabled_by_default() {
     assert!(body["usage"].get("toolUsePromptTokenCount").is_none());
 }
 
-// ============================================================================
-// vLLM / Dynamo token-native Generate + Responses API + /openai/v1 aliases
-// ============================================================================
-
 #[tokio::test]
 async fn vllm_generate_returns_token_ids_and_usage() {
-    // A fast (jitter-free) mock still honors the token-native budget: a long
-    // token prompt (ISL=64) with sampling_params.max_tokens=8 yields exactly 8
-    // output token IDs, and usage carries the input/output counts.
     let (addr, _h) = spawn_server(fast_cfg()).await;
     let input: Vec<u32> = (100..164).collect();
     let resp = client()
@@ -1205,7 +1141,7 @@ async fn vllm_generate_returns_token_ids_and_usage() {
 #[tokio::test]
 async fn vllm_generate_ignore_eos_fills_max_tokens() {
     let (addr, _h) = spawn_server(fast_cfg()).await;
-    let input: Vec<u32> = (1..5).collect(); // short prompt
+    let input: Vec<u32> = (1..5).collect();
     let resp = client()
         .post(format!("http://{addr}/inference/v1/generate"))
         .json(&json!({

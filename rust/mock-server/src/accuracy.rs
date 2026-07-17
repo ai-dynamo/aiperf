@@ -3,16 +3,10 @@
 
 //! Accuracy-dataset response mode.
 //!
-//! AIPerf deliberately never sends ground truth to any inference server — it
-//! lives only in the Python accuracy worker
-//! (`src/aiperf/accuracy/worker.py`) and the Rust evaluator protocol strips it
-//! (`aiperf_runtime::accuracy_core::protocol`). So to make the mock return *correct*
-//! answers it must load the dataset itself and key on the request prompt. This
-//! module owns that: it loads a JSONL `{prompt, ground_truth}` dataset, decides
-//! (deterministically, from a per-prompt seed) whether a given request gets the
-//! correct answer or a plausible wrong one, formats the answer to satisfy the
-//! benchmark's real grader, and optionally renders chain-of-thought or one of
-//! the parser-choking adversarial shapes drawn from real bug reports.
+//! AIPerf does not send ground truth to inference servers, so the mock loads a
+//! JSONL `{prompt, ground_truth}` dataset and matches requests by prompt. Seeded
+//! decisions produce grader-compatible correct, incorrect, chain-of-thought,
+//! and adversarial responses.
 //!
 //! ## Answer formats — must match `src/aiperf/accuracy/graders/`
 //! - [`AccuracyFormat::Mmlu`]/[`AccuracyFormat::MmluPro`]: `multiple_choice.py`
@@ -24,20 +18,17 @@
 //!   `pred.strip() == gold.strip()`; any prefix or case change fails.
 //! - [`AccuracyFormat::Passthrough`]: gold verbatim.
 //!
-//! ## Adversarial catalog — reproduce real parser chokes
+//! ## Adversarial response shapes
 //! - [`Adversarial::ReasoningOnly`] — answer only in `reasoning_content`, empty
-//!   `content` (github #1136: `get_text()` concatenates reasoning+content and
-//!   the strict grader sees the whole CoT blob → 0%).
-//! - [`Adversarial::LeadingWhitespace`] — `"\n\nThe answer is (B)"` (real
-//!   content was `"\n\nTrue"`).
+//!   `content`.
+//! - [`Adversarial::LeadingWhitespace`] — `"\n\nThe answer is (B)"`.
 //! - [`Adversarial::WrongCase`] — lowercased vs a case-sensitive grader.
 //! - [`Adversarial::TrailingProse`] — answer then hedging prose.
 //! - [`Adversarial::BoxedWrap`] — `\boxed{}` wrap chokes exact-match.
 //! - [`Adversarial::MultipleConflicting`] — two answers (tests take-LAST-match).
 //! - [`Adversarial::Unicode`] — unicode suffix (SSE UTF-8 line-buffer path).
 //! - [`Adversarial::NullObjectChunk`] — streaming-only final SSE frame with
-//!   `"object": null` before `[DONE]` (github #1010: crashed
-//!   `extract_chat_response_data`). The run must SURVIVE this, not crash.
+//!   `"object": null` before `[DONE]`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -107,15 +98,13 @@ impl AccuracyMatch {
     }
 }
 
-/// Whitespace-normalize, then case-fold when `ci`. This is the single key
-/// transform applied to both dataset keys (at load) and request text (at
-/// lookup), so the two are always compared under identical rules.
+/// Apply the same normalization rules to dataset and request keys.
 fn norm_key(s: &str, ci: bool) -> String {
     let n = normalize(s);
     if ci { n.to_lowercase() } else { n }
 }
 
-/// The adversarial response shapes, one per known parser failure mode.
+/// Adversarial response shapes used to exercise parser behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Adversarial {
     LeadingWhitespace,
@@ -141,14 +130,10 @@ impl Adversarial {
     ];
 }
 
-/// One dataset row: a prompt and its gold answer, plus optional per-row grader
-/// format and multiple-choice option set.
+/// A normalized dataset row and its grader metadata.
 #[derive(Debug, Clone)]
 pub struct Entry {
-    /// The normalized (and case-folded, in `_ci` modes) match key — the row's
-    /// `match_key`/`id`/`key` if present, else its prompt. Also the stable
-    /// identity the seeded verdict is derived from, so a row's correct/wrong
-    /// outcome is independent of how the prompt was wrapped on the wire.
+    /// Stable normalized identity used for matching and seeded verdicts.
     pub key_norm: String,
     /// The clean gold answer (`B`, `42`, a latex string, …).
     pub gold: String,
@@ -183,7 +168,7 @@ pub struct AccuracyDecision {
     /// Assistant `reasoning_content`, when CoT is rendered in the separate field.
     pub reasoning_content: Option<String>,
     /// When true, the streaming path emits one `{"object": null}` SSE frame
-    /// before `[DONE]` (github #1010).
+    /// before `[DONE]`.
     pub null_object_chunk: bool,
     /// Whether this request was decided correct (for tests/introspection).
     pub correct: bool,
@@ -193,13 +178,10 @@ pub struct AccuracyDecision {
     pub adversarial: Option<Adversarial>,
 }
 
-/// Collapse all runs of whitespace to single spaces and trim, so lookup is
-/// robust to formatting differences between the dataset and the wire prompt.
 fn normalize(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Read a string field trying each alias in order.
 fn field<'a>(obj: &'a serde_json::Map<String, Value>, aliases: &[&str]) -> Option<&'a Value> {
     aliases.iter().find_map(|k| obj.get(*k))
 }
@@ -259,9 +241,7 @@ impl AccuracyDataset {
                 .and_then(Value::as_array)
                 .map(|a| a.iter().filter_map(value_to_string).collect())
                 .unwrap_or_default();
-            // A dedicated match key (a stable fragment guaranteed to appear in
-            // the wire prompt) takes precedence over the prompt itself; this is
-            // the robust way to match few-shot-wrapped or re-templated prompts.
+            // A dedicated key remains stable when prompts are wrapped or templated.
             let match_base = field(obj, &["match_key", "match", "key", "id"])
                 .and_then(value_to_string)
                 .unwrap_or(prompt);
@@ -299,7 +279,6 @@ impl AccuracyDataset {
         })
     }
 
-    /// Number of loaded rows.
     pub fn len(&self) -> usize {
         self.exact.len()
     }
@@ -354,7 +333,6 @@ impl AccuracyDataset {
             None
         };
 
-        // Compose base (content, reasoning_content) honoring CoT placement.
         let (mut content, mut reasoning_content) = match &reasoning_prose {
             None => (answer.clone(), None),
             Some(prose) => {
@@ -363,8 +341,7 @@ impl AccuracyDataset {
                 } else if fmt.tolerates_inline_prefix() {
                     (format!("{prose}\n{answer}"), None)
                 } else {
-                    // Exact-match/passthrough can't take an inline prefix
-                    // without breaking; keep content clean, reasoning aside.
+                    // Exact-match graders require content to contain only the answer.
                     (answer.clone(), Some(prose.clone()))
                 }
             }
@@ -409,7 +386,6 @@ fn parse_format(s: &str) -> Option<AccuracyFormat> {
     }
 }
 
-/// Format the correct answer in the grader's clean form.
 fn format_correct(fmt: AccuracyFormat, gold: &str) -> String {
     let g = gold.trim();
     match fmt {
@@ -420,7 +396,6 @@ fn format_correct(fmt: AccuracyFormat, gold: &str) -> String {
     }
 }
 
-/// Format a plausible *wrong* answer that the grader will score incorrect.
 fn format_wrong(fmt: AccuracyFormat, entry: &Entry, rng: &mut RandomGenerator) -> String {
     let g = entry.gold.trim();
     match fmt {
@@ -434,7 +409,6 @@ fn format_wrong(fmt: AccuracyFormat, entry: &Entry, rng: &mut RandomGenerator) -
     }
 }
 
-/// Pick a choice letter different from the gold letter.
 fn wrong_letter(fmt: AccuracyFormat, entry: &Entry, rng: &mut RandomGenerator) -> String {
     let gold = entry.gold.trim().to_ascii_uppercase();
     let pool: Vec<String> = if !entry.choices.is_empty() {
@@ -452,7 +426,6 @@ fn wrong_letter(fmt: AccuracyFormat, entry: &Entry, rng: &mut RandomGenerator) -
         .filter(|c| c.to_ascii_uppercase() != gold)
         .collect();
     if alternatives.is_empty() {
-        // Degenerate single-option set: shift the letter deterministically.
         let next = gold
             .chars()
             .next()
@@ -463,8 +436,6 @@ fn wrong_letter(fmt: AccuracyFormat, entry: &Entry, rng: &mut RandomGenerator) -
     (*rng.choice(&alternatives).expect("non-empty alternatives")).clone()
 }
 
-/// Return a numeric string one greater than `s`, or a guaranteed-different
-/// string when `s` isn't numeric.
 fn bump_number(s: &str) -> String {
     let cleaned = s.replace(',', "");
     if let Ok(n) = cleaned.parse::<i64>() {
@@ -476,7 +447,6 @@ fn bump_number(s: &str) -> String {
     }
 }
 
-/// A short, deterministic chain-of-thought whose last line points at `answer`.
 fn generate_cot(rng: &mut RandomGenerator, answer: &str) -> String {
     let openers = [
         "Let me work through this step by step.",
@@ -495,7 +465,6 @@ fn generate_cot(rng: &mut RandomGenerator, answer: &str) -> String {
     format!("{opener} {middle} Therefore, {answer}")
 }
 
-/// Mutate the composed response into an adversarial shape in place.
 fn apply_adversarial(
     variant: Adversarial,
     answer: &str,
@@ -515,7 +484,6 @@ fn apply_adversarial(
             *content = content.to_lowercase();
         }
         Adversarial::ReasoningOnly => {
-            // Answer only in reasoning_content, empty content (github #1136).
             let prose = reasoning_prose.unwrap_or("");
             *reasoning_content = Some(if prose.is_empty() {
                 answer.to_string()
@@ -528,7 +496,7 @@ fn apply_adversarial(
             *content = format!("\\boxed{{{content}}}");
         }
         Adversarial::MultipleConflicting => {
-            // A decoy answer first; the real one last (tests take-LAST-match).
+            // The parser contract selects the last answer.
             *content = format!("The answer is (Z). Wait, reconsidering — {content}");
         }
         Adversarial::Unicode => {
@@ -540,12 +508,7 @@ fn apply_adversarial(
     }
 }
 
-/// Live tally of what the mock has actually answered so far this run. Updated
-/// once per served, prompt-matched request (in `RequestCtx::build`), so
-/// `correct / matched` is the accuracy the run is really achieving as it
-/// progresses — an oracle to compare against what AIPerf's grader reports. This
-/// is observed, not pre-computed: it counts real responses, including recycled
-/// prompts and whatever subset of the dataset the run actually hit.
+/// Live tally of served responses for comparison with reported accuracy.
 #[derive(Default)]
 pub struct AccuracyLive {
     matched: AtomicU64,
@@ -562,7 +525,6 @@ struct TaskCounts {
     correct: u64,
 }
 
-/// Per-task slice of the live tally.
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskAccuracy {
     pub matched: u64,
@@ -701,19 +663,15 @@ mod tests {
         let body = r#"{"prompt": "Capital of France?", "answer": "Paris"}"#;
         let ds = dataset(body, |c| c.accuracy_match = AccuracyMatch::Exact);
         assert!(ds.lookup("Capital of France?").is_some());
-        // Substring wrapping no longer matches under exact mode.
         assert!(ds.lookup("You are an expert. Capital of France?").is_none());
-        // Whitespace is still normalized in exact mode.
         assert!(ds.lookup("  Capital   of   France?  ").is_some());
     }
 
     #[test]
     fn case_insensitive_modes_fold_case() {
         let body = r#"{"prompt": "Capital of France?", "answer": "Paris"}"#;
-        // Case-sensitive default misses a different-case request.
         let cs = dataset(body, |_| {});
         assert!(cs.lookup("CAPITAL OF FRANCE?").is_none());
-        // exact_ci and substring_ci both match.
         let ci = dataset(body, |c| c.accuracy_match = AccuracyMatch::ExactCi);
         assert!(ci.lookup("CAPITAL OF FRANCE?").is_some());
         let sci = dataset(body, |c| c.accuracy_match = AccuracyMatch::SubstringCi);
@@ -722,15 +680,12 @@ mod tests {
 
     #[test]
     fn dedicated_match_key_matches_a_stable_fragment() {
-        // The prompt is a big formatted blob; the row keys on a stable marker.
         let body =
             r#"{"prompt": "irrelevant", "match_key": "q_id_4217", "answer": "C", "task": "t"}"#;
         let ds = dataset(body, |c| c.accuracy_match = AccuracyMatch::Substring);
         let wire = "Few-shot examples...\nQuestion [q_id_4217]: pick one.\nAnswer:";
         let e = ds.lookup(wire).expect("match on the embedded key");
         assert_eq!(e.gold, "C");
-        // The verdict is keyed on the stable key, not the wire text.
-        // Default correct_rate is 1.0, default format passthrough → "C".
         let d = ds.decide(e);
         assert!(d.correct);
         assert_eq!(d.content, "C");
@@ -738,7 +693,6 @@ mod tests {
 
     #[test]
     fn verdict_is_stable_across_prompt_wrappings() {
-        // Same row reached via two different wrappings yields the same verdict.
         let body = r#"{"prompt": "the q", "answer": "B"}"#;
         let ds = dataset(body, |c| {
             c.accuracy_match = AccuracyMatch::Substring;
@@ -771,7 +725,6 @@ mod tests {
         assert_eq!(g(AccuracyFormat::Math, "42"), "\\boxed{42}");
         assert_eq!(g(AccuracyFormat::ExactMatch, "True"), "True");
         assert_eq!(g(AccuracyFormat::Passthrough, "hi"), "hi");
-        // and correctness flows through decide()
         let ds = dataset(body, |c| {
             c.accuracy_format = AccuracyFormat::Mmlu;
             c.accuracy_correct_rate = 1.0;
@@ -818,7 +771,6 @@ mod tests {
 
     #[test]
     fn correct_rate_is_honored_across_prompts() {
-        // 400 distinct prompts, rate 0.25 -> ~100 correct.
         let mut body = String::new();
         for i in 0..400 {
             body.push_str(&format!("{{\"prompt\":\"q{i}\",\"answer\":\"B\"}}\n"));
@@ -874,7 +826,6 @@ mod tests {
 
     #[test]
     fn exact_match_cot_never_pollutes_content_inline() {
-        // Even with reasoning_field=false, exact-match content stays clean.
         let body = r#"{"prompt":"q","answer":"True"}"#;
         let ds = dataset(body, |c| {
             c.accuracy_format = AccuracyFormat::ExactMatch;
@@ -890,7 +841,6 @@ mod tests {
 
     #[test]
     fn adversarial_reasoning_only_empties_content() {
-        // Force adversarial and find the ReasoningOnly draw across prompts.
         let mut found = false;
         for i in 0..64 {
             let key = format!("q{i}");
@@ -983,7 +933,7 @@ mod tests {
     fn per_entry_format_overrides_default() {
         let body = r#"{"prompt":"q","answer":"42","format":"gsm8k"}"#;
         let ds = dataset(body, |c| {
-            c.accuracy_format = AccuracyFormat::Mmlu; // default differs
+            c.accuracy_format = AccuracyFormat::Mmlu;
             c.accuracy_correct_rate = 1.0;
         });
         let e = ds.lookup("q").unwrap();

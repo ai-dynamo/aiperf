@@ -858,10 +858,7 @@ pub(super) const CUDA_ERRORS: &[&str] = &[
     "CUDA error: device-side assert triggered",
 ];
 
-// The per-language file-path pools (`_LANG_FILE_PATHS` in Python) are consumed
-// only on the language-specific tool-transcript path; the current renderers drive
-// the language-agnostic (`language=None`) path, which draws from `FILES`. Retained
-// verbatim so a future language-aware pass can wire them in.
+// Language-specific tool transcripts select their matching file-path pool.
 #[allow(dead_code)]
 pub(super) const PYTHON_FILE_PATHS: &[&str] = &[
     "src/main.py",

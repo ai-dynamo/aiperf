@@ -3,7 +3,6 @@
 mod common;
 use common::*;
 
-/// Check that all streaming metrics exist in the aiperf.json output.
 fn has_streaming_metrics(json: &serde_json::Value) -> bool {
     [
         "time_to_first_token",
@@ -15,7 +14,6 @@ fn has_streaming_metrics(json: &serde_json::Value) -> bool {
     .all(|k| json.get(k).map(|v| !v.is_null()).unwrap_or(false))
 }
 
-/// huggingface_generate endpoint, non-streaming mode.
 #[tokio::test]
 async fn test_huggingface_generate_non_streaming() {
     let h = AIPerfHarness::new().await;
@@ -29,7 +27,6 @@ async fn test_huggingface_generate_non_streaming() {
     assert!(!has_streaming_metrics(&r.artifacts.json()));
 }
 
-/// huggingface_generate endpoint, streaming mode.
 #[tokio::test]
 async fn test_huggingface_generate_streaming() {
     let h = AIPerfHarness::new().await;

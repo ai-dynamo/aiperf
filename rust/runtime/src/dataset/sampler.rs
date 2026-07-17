@@ -3,8 +3,8 @@
 
 //! Conversation sampling strategies.
 //!
-//! These preserve Python AIPerf's replacement and wraparound semantics while
-//! consuming the native BLAKE3-derived [`crate::rng`] streams.
+//! Sampling preserves replacement and wraparound semantics while consuming
+//! BLAKE3-derived [`crate::rng`] streams.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -266,16 +266,14 @@ impl Sampler for ShuffleSampler {
     }
 }
 
-/// Wraps a sampler so this cell yields only the positions it owns — `N` cells
-/// partition one deterministic instance space by ownership (roadmap S4).
+/// Wraps a sampler so this cell yields only the positions it owns.
 ///
 /// Over a sequential inner sampler the draw position is the instance index, so cell
 /// `k` yields instances `{k, k+N, k+2N, …}`; paired with the autonomous issuer's
 /// `global_ordinal = position`, a merged `N`-cell run lands each instance at the
 /// same ordinal a single cell would — a byte-identical trace set. (Over a random
 /// inner sampler it partitions draw order rather than instance index; a merge stays
-/// well-formed but is not one-cell-identical, matching the roadmap's determinism
-/// scope.)
+/// well-formed but is not one-cell-identical.)
 pub struct PartitionedSampler {
     inner: Box<dyn Sampler>,
     partition: ModuloCellPartition,

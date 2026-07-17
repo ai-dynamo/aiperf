@@ -1,23 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Integration tests for --use-server-token-count flag behavior.
 mod common;
 use common::*;
 
-/// Fetch a `metric[key]` value as f64 from the aiperf.json summary.
 fn metric(json: &serde_json::Value, metric: &str, key: &str) -> f64 {
     json[metric][key]
         .as_f64()
         .unwrap_or_else(|| panic!("missing numeric {metric}.{key} in aiperf.json"))
 }
 
-/// Verify primary metrics use server-reported token counts when the flag is enabled.
-///
-/// When --use-server-token-count is set:
-/// - input_sequence_length should equal usage_prompt_tokens
-/// - output_token_count should equal usage_completion_tokens - usage_reasoning_tokens
-/// - reasoning_token_count should equal usage_reasoning_tokens
-/// - Usage diff metrics should NOT be present (they compare client vs server)
 async fn run_server_token_counts_case(streaming: bool, extra_inputs: &str) {
     let h = AIPerfHarness::new_with(MockServerConfig {
         fast: true,
@@ -69,8 +60,6 @@ async fn run_server_token_counts_case(streaming: bool, extra_inputs: &str) {
         );
     }
 
-    // Usage diff metrics compare client vs server counts, so they should
-    // not be present when using server token counts exclusively.
     assert!(
         json.get("usage_prompt_tokens_diff_pct").is_none(),
         "usage_prompt_tokens_diff_pct should not be present"

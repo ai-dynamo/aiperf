@@ -5,11 +5,7 @@
 //!
 //! The runner commits the authoritative native-v2 report (`aiperf_runtime::report`) and
 //! then hands the finalized [`NativeReport`] to this plane, which fans it out to
-//! a static set of [`Exporter`] impls behind one trait. This replaces the legacy
-//! Python exporter machinery (plugins.yaml registry, exception-as-disable
-//! constructors, `asyncio` fan-out, subprocess uploaders) with a single-process
-//! Rust sink list — see `specs/2026-07-11-aiperf-rust-exporters-overhaul-design.md`
-//! §5 for the design and §4 for the accidental complexity deleted.
+//! a static set of [`Exporter`] impls behind one trait.
 //!
 //! # The seam (extend here)
 //! Every output format / destination is an [`Exporter`]: a byte-exact
@@ -226,8 +222,7 @@ pub trait Exporter {
     /// Stable identifier for logs and error context.
     fn name(&self) -> &'static str;
 
-    /// Whether this sink runs for the given export policy. Replaces the Python
-    /// exception-as-disable constructor with an explicit predicate.
+    /// Whether this sink runs for the given export policy.
     fn enabled(&self, cfg: &ExportConfig) -> bool;
 
     /// Emit the report to this sink's format/destination. `artifact_dir` is the
@@ -376,7 +371,7 @@ impl ExporterRegistry {
     /// Run every enabled exporter over the finalized report in emit order.
     /// Best-effort: an exporter error is logged and does not abort the run (the
     /// native-v2 report is the committed authority). Returns the number of
-    /// exporters that ran without error, for provenance/telemetry.
+    /// exporters that ran without error, for auditing and telemetry.
     pub fn run(&self, report: &NativeReport, artifact_dir: &Path, cfg: &ExportConfig) -> usize {
         let mut succeeded = 0usize;
         for exporter in self.iter() {

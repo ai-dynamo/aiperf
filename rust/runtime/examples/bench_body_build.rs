@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Microbench for the graph dispatch body-build hot path (Opt 1 + Opt 4).
+//! Microbenchmark comparing validated and pre-serialized request-body assembly.
 //!
-//! Baseline = the pre-optimization path: rebuild `Overrides` and re-`serde_json`
-//! the model/stream/include_usage/max_tokens tail on *every* request, validating
-//! each message slice. Optimized = pre-serialize the tail once (per distinct
-//! `max_tokens`) and byte-splice with no validation.
+//! The validated strategy rebuilds `Overrides` and serializes the request tail
+//! per request. The pre-serialized strategy builds the tail once per distinct
+//! `max_tokens` value and byte-splices it without validation.
 //!
-//! Run: `cargo run --release -p aiperf --example bench_body_build`
+//! Run: `cargo run --release -p aiperf-runtime --example bench_body_build`
 
 use std::hint::black_box;
 use std::time::Instant;
@@ -38,7 +37,7 @@ fn main() {
     let iters: u64 = 5_000_000;
     let max_tokens = 1_u32;
 
-    // --- Baseline: Overrides rebuilt + serde + validation per request. ---
+    // Rebuild overrides and validate each request.
     let t0 = Instant::now();
     let mut sink = 0usize;
     for _ in 0..iters {
@@ -48,7 +47,7 @@ fn main() {
     }
     let base_ns = t0.elapsed().as_nanos() as f64 / iters as f64;
 
-    // --- Optimized: pre-serialize the tail once, byte-splice per request. ---
+    // Reuse one serialized tail for every request.
     let tail = Bytes::from(overrides_for(max_tokens).inner_bytes().unwrap());
     let t1 = Instant::now();
     let mut sink2 = 0usize;
@@ -62,14 +61,13 @@ fn main() {
         sink, sink2,
         "byte lengths must match — outputs are identical"
     );
-    // Prove byte-identical output, not just equal length.
     let a = build_message_body_from_wires(&messages, &overrides_for(max_tokens)).unwrap();
     let b = build_message_body_from_wire_parts(&messages, &tail);
-    assert_eq!(a, b, "optimized body must be byte-identical to baseline");
+    assert_eq!(a, b, "body strategies must be byte-identical");
 
     println!("body-build hot path ({iters} iters, 2 messages, OSL cap):");
-    println!("  baseline  (Overrides+serde+validate/req): {base_ns:8.1} ns/op");
-    println!("  optimized (pre-serialized tail, no valid): {opt_ns:8.1} ns/op");
+    println!("  validated      (Overrides+serde/req): {base_ns:8.1} ns/op");
+    println!("  pre-serialized (tail splice):         {opt_ns:8.1} ns/op");
     println!(
         "  speedup: {:.2}x  ({:.1}% less time)  [sink={sink}]",
         base_ns / opt_ns,

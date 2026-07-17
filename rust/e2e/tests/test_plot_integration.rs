@@ -3,17 +3,9 @@
 mod common;
 use common::*;
 
-// Integration tests for AIPerf plot functionality.
-//
-// Tests the end-to-end workflow of:
-// 1. Running aiperf profile to generate artifacts
-// 2. Running aiperf plot to generate PNG visualizations
-// 3. Validating the generated PNG files
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Validate that a file is a valid PNG by checking its 8-byte header.
 fn is_valid_png(path: &Path) -> bool {
     let bytes = match fs::read(path) {
         Ok(b) => b,
@@ -26,14 +18,12 @@ fn is_valid_png(path: &Path) -> bool {
     bytes[..8] == PNG_SIGNATURE
 }
 
-/// Validate PNG IHDR chunk and extract `(width, height)`; `None` if invalid.
 fn validate_png_ihdr_chunk(path: &Path) -> Option<(u32, u32)> {
     let bytes = fs::read(path).ok()?;
-    // Signature(8) + chunk length(4) + chunk type(4) + at least 8 bytes of IHDR data.
     if bytes.len() < 8 + 4 + 4 + 8 {
         return None;
     }
-    let mut cursor = 8usize; // skip PNG signature
+    let mut cursor = 8usize;
 
     let chunk_length = u32::from_be_bytes([
         bytes[cursor],
@@ -58,7 +48,6 @@ fn validate_png_ihdr_chunk(path: &Path) -> Option<(u32, u32)> {
     Some((width, height))
 }
 
-/// Collect every `*.png` file in a directory (non-recursive).
 fn png_files(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(entries) = fs::read_dir(dir) {
@@ -77,7 +66,6 @@ fn png_files(dir: &Path) -> Vec<PathBuf> {
 async fn test_profile_then_plot_single_run() {
     let h = AIPerfHarness::new().await;
 
-    // Step 1: Run profile.
     let profile_result = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --request-count {DEFAULT_REQUEST_COUNT} \
          --concurrency {DEFAULT_CONCURRENCY} --streaming",
@@ -91,11 +79,9 @@ async fn test_profile_then_plot_single_run() {
 
     let artifacts_dir = h.artifact_path().to_path_buf();
 
-    // Step 2: Run plot to generate PNGs.
     let plot_result = h.run_no_server(&format!("plot --paths {}", artifacts_dir.display()));
     assert_eq!(plot_result.exit_code, 0);
 
-    // Step 3: Validate PNG files were created.
     let plot_dir = artifacts_dir.join("plots");
     assert!(
         plot_dir.exists(),
@@ -125,7 +111,6 @@ async fn test_profile_then_plot_single_run() {
         );
     }
 
-    // Check summary file was created.
     let summary_path = plot_dir.join("summary.txt");
     assert!(summary_path.exists(), "Plot summary.txt was not created");
     let summary_content = fs::read_to_string(&summary_path).expect("read summary.txt");
@@ -138,7 +123,6 @@ async fn test_profile_then_plot_single_run() {
 async fn test_profile_then_plot_with_timeslices() {
     let h = AIPerfHarness::new().await;
 
-    // Step 1: Run profile with timeslices.
     let profile_result = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --concurrency {DEFAULT_CONCURRENCY} --streaming \
          --benchmark-duration 3 --benchmark-grace-period 0 --slice-duration 1",
@@ -148,11 +132,9 @@ async fn test_profile_then_plot_with_timeslices() {
 
     let artifacts_dir = h.artifact_path().to_path_buf();
 
-    // Step 2: Run plot.
     let plot_result = h.run_no_server(&format!("plot --paths {}", artifacts_dir.display()));
     assert_eq!(plot_result.exit_code, 0);
 
-    // Step 3: Validate timeslice plots were created.
     let plot_dir = artifacts_dir.join("plots");
     assert!(plot_dir.exists(), "Plot directory not created");
 
@@ -177,17 +159,12 @@ async fn test_plot_with_nonexistent_directory_fails() {
     assert_ne!(plot_result.exit_code, 0);
 }
 
-// ========================================================================
-// Server Metrics Plotting Tests
-// ========================================================================
-
 #[tokio::test]
 #[ignore] // requires: matplotlib plotting backend
 async fn test_plot_with_server_metrics_parquet_and_json() {
     let h = AIPerfHarness::new().await;
     let vllm_url = h.mock.server_metrics_urls()["vllm"].clone();
 
-    // Step 1: Profile with server metrics, export both Parquet and JSON.
     let profile_result = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --request-count 50 --concurrency 2 --streaming \
          --server-metrics {vllm_url} --server-metrics-formats parquet json",
@@ -198,17 +175,14 @@ async fn test_plot_with_server_metrics_parquet_and_json() {
 
     let artifacts_dir = h.artifact_path().to_path_buf();
 
-    // Step 2: Verify both Parquet and JSON files exist.
     let parquet_file = artifacts_dir.join("server_metrics_export.parquet");
     let json_file = artifacts_dir.join("server_metrics_export.json");
     assert!(parquet_file.exists(), "Parquet file should exist");
     assert!(json_file.exists(), "JSON file should exist");
 
-    // Step 3: Generate plots.
     let plot_result = h.run_no_server(&format!("plot --paths {}", artifacts_dir.display()));
     assert_eq!(plot_result.exit_code, 0);
 
-    // Step 4: Validate plots were created.
     let plot_dir = artifacts_dir.join("plots");
     assert!(plot_dir.exists(), "Plot directory should exist");
 
@@ -242,7 +216,6 @@ async fn test_plot_with_server_metrics_parquet_only() {
     let h = AIPerfHarness::new().await;
     let vllm_url = h.mock.server_metrics_urls()["vllm"].clone();
 
-    // Step 1: Profile with only Parquet export.
     let profile_result = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --request-count 50 --concurrency 2 --streaming \
          --server-metrics {vllm_url} --server-metrics-formats parquet",
@@ -252,7 +225,6 @@ async fn test_plot_with_server_metrics_parquet_only() {
 
     let artifacts_dir = h.artifact_path().to_path_buf();
 
-    // Verify only Parquet exists (no JSON).
     let parquet_file = artifacts_dir.join("server_metrics_export.parquet");
     let json_file = artifacts_dir.join("server_metrics_export.json");
     assert!(parquet_file.exists(), "Parquet file should exist");
@@ -261,11 +233,9 @@ async fn test_plot_with_server_metrics_parquet_only() {
         "JSON file should NOT exist (Parquet-only test)"
     );
 
-    // Step 2: Generate plots (should work without JSON).
     let plot_result = h.run_no_server(&format!("plot --paths {}", artifacts_dir.display()));
     assert_eq!(plot_result.exit_code, 0);
 
-    // Step 3: Validate plots were generated successfully.
     let plot_dir = artifacts_dir.join("plots");
     let pngs = png_files(&plot_dir);
     assert!(

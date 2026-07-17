@@ -3,11 +3,9 @@
 
 //! Clock-native load-generation timing plane.
 //!
-//! The Rust home for the Python `src/aiperf/timing/` subsystem, built clock-first
-//! rather than retrofitted. Time is either injected as integer nanoseconds or read
-//! through an injected [`crate::clock::Clock`] by an async policy driver. Nothing
-//! here reads a wall clock directly, so the identical policy drives a `RealClock`
-//! (online) or a `SimClock` (offline) run.
+//! Time is injected as integer nanoseconds or read through
+//! [`crate::clock::Clock`]. No policy reads wall time directly, so the same code
+//! drives online and virtual execution.
 //!
 //! The seam is eight trait families, each with at least one concrete impl:
 //! - [`intervals`] — inter-arrival distribution ([`IntervalGenerator`]),

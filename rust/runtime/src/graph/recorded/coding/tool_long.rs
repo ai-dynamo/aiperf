@@ -4,9 +4,9 @@
 //! Long-form tool generators (read-long, search-verbose, bash-verbose).
 //!
 //! Each takes a `lang: Option<usize>` selector (`Some(0..=3)` =
-//! python/go/rust/typescript). The conversation renderers pass the
+//! Python, Go, Rust, and TypeScript. Conversation renderers pass the
 //! conversation's language; the code body, file pool, and per-language draw
-//! sequence must reproduce agentx exactly.
+//! sequence is byte-exact.
 
 use super::templates::TemplateRenderer;
 use super::vocab::*;

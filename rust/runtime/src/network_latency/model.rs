@@ -21,7 +21,7 @@ pub struct NetworkLatencyTarget {
 }
 
 impl NetworkLatencyTarget {
-    /// Parse an endpoint using the Python manager's scheme/default-port rules.
+    /// Parse an endpoint using the compatibility scheme and default-port rules.
     ///
     /// Sources without a host, such as Unix-domain socket URLs, return `None`
     /// and are not probe targets.
@@ -55,7 +55,7 @@ impl NetworkLatencyTarget {
         }))
     }
 
-    /// Stable Python-compatible deduplication key.
+    /// Stable compatibility deduplication key.
     pub fn key(&self) -> String {
         format!("{}:{}", self.target_host, self.target_port)
     }
@@ -104,7 +104,7 @@ impl fmt::Display for NetworkLatencyTargetParseError {
 
 impl Error for NetworkLatencyTargetParseError {}
 
-/// Python-compatible structured details for a failed connect probe.
+/// Compatibility details for a failed connect probe.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct NetworkLatencyErrorDetails {
     /// Optional platform error number.
@@ -125,8 +125,7 @@ pub struct NetworkLatencyErrorDetails {
 
 /// One fresh TCP-handshake RTT observation.
 ///
-/// Optional fields are omitted to match the Python buffered JSONL writer's
-/// `exclude_none=True` behavior.
+/// Optional fields are omitted from the buffered JSONL shape.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct NetworkLatencySample {
     /// Clock timestamp immediately before connect issuance.

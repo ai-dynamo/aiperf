@@ -4,16 +4,18 @@
 //! The velo-backed cell↔controller transport.
 //!
 //! Realizes the [`CellClient`] / [`ControllerTransport`] seam over the official
-//! `ai-dynamo/velo` messaging framework (v0.5.0). Three named handlers on the
+//! `ai-dynamo/velo` messaging framework (v0.5.0). Four named handlers on the
 //! controller carry the whole protocol:
 //!
 //! - [`HANDLER_REGISTER`] (unary): a cell sends its [`CellRegister`] (its own
 //!   `PeerInfo` + `cell_id`); the controller `register_peer`s it (so replies and
 //!   later messages route back) and returns that cell's serialized `CellLaunchSpec`.
-//!   This replaces the stdin spec pipe of the process launcher.
 //! - [`HANDLER_HEARTBEAT`] (fire-and-forget): a cell's periodic
 //!   [`CellMessage::Heartbeat`].
 //! - [`HANDLER_PARTITION`] (unary): a cell's final [`RecordsShardPartition`]; the
+//!   reply is a [`CellAck`].
+//! - [`HANDLER_STORE_PARTITION`] (unary): a cell's final
+//!   [`ColumnStorePartition`](crate::cellular::shard::ColumnStorePartition); the
 //!   reply is a [`CellAck`].
 //!
 //! All bodies are `rmp-serde` carried as velo **raw** payloads (see the module
@@ -180,7 +182,7 @@ impl VeloControllerTransport {
         )
         .map_err(io)?;
 
-        // store_partition (unary): the Stage-C exact-fold sibling of `partition` — push
+        // store_partition is the exact-fold sibling of `partition`; push
         // the decoded folded column-store partition, reply with an ack.
         let store_partition_sender = sender;
         velo.register_handler(
@@ -464,7 +466,7 @@ mod tests {
         }
     }
 
-    /// Stage C: a metrics-only cell ships a folded `StorePartition` over the new
+    /// A metrics-only cell ships a folded `StorePartition` over the
     /// store handler; the controller decodes it, acks, and surfaces it on the merged
     /// stream. Proves the wire path (`CellMessage::StorePartition` → rmp raw payload →
     /// `HANDLER_STORE_PARTITION` → ack) works over real velo, preserving the store's

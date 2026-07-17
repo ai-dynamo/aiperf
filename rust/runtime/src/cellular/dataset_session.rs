@@ -1,31 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! The dataset **data plane** — SPMC add-only broadcast of dataset chunks
-//! (`specs/2026-07-15-ultimate-cellular-velo-runtime-design.md` §3).
+//! SPMC add-only broadcast of dataset chunks.
 //!
-//! Replaces "every cell regenerates the dataset from a shared seed" / "the controller
-//! serves the whole file to every cell (Stage G, O(N × size))" with: the controller
-//! generates the dataset once, chunks it, and **broadcasts the chunks add-only** over
-//! the [`Broadcast`](super::broadcast::Broadcast) primitive; each cell attaches (with
-//! replay-on-attach, so a late cell still gets every prior chunk), pulls the chunks, and
-//! builds a **local index keyed by stable `request_id`** — never by arrival position
-//! (§3.3, the kvbm "arrival-ordered ≠ position-ordered" gotcha).
-//!
-//! - **Add-only + finalize (§3.2):** the producer `add_chunk`s as it generates, then
-//!   `finalize`s. No commit/available split — a chunk's requests exist at add time.
-//! - **Routed fan-out via consumer-side owned-filter (§3.4):** cellular exists for
-//!   memory scaling, so a cell indexes **only the requests it owns** (its round-robin
-//!   positions), making per-cell RAM O(1/N) of the dataset even though every cell
-//!   observes every chunk. (Server-side routing — a `target_cell` on the frame — is the
-//!   later bandwidth optimization; the correctness-complete v1 is the owned-filter.)
-//! - **Availability interlock (§4):** the controller advances the phaser
-//!   `ShardsAvailable(k)` as chunk `k` lands, so a streaming run can gate dispatch behind
-//!   availability; a bounded run distributes fully, `finalize`s, then dispatches.
-//!
-//! The in-process publisher/index here is the data structure; the cross-process
-//! distribution mirrors `transport::phaser_velo` (broadcast the chunk *handles*, not
-//! megabytes — §3.5 — and pull the bulk over the existing HTTP+zstd/rendezvous plane).
+//! The controller broadcasts each generated chunk once. Late cells replay prior
+//! chunks, and every cell indexes only its owned requests by stable `request_id`,
+//! independent of chunk arrival order.
 
 use std::collections::HashMap;
 
@@ -37,8 +17,8 @@ use super::broadcast::{Broadcast, Subscription};
 /// single-cell run would assign). `R` is the dataset payload (a compiled request / turn).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatasetRequest<R> {
-    /// Stable global position — the index the consumer keys its local index by, and the
-    /// id the phaser "issue request R" control (§4.5) references. Never the arrival order.
+    /// Stable global position used by the local index and issue commands, never
+    /// the arrival order.
     pub request_id: u64,
     /// The compiled request payload.
     pub payload: R,
@@ -49,7 +29,7 @@ pub struct DatasetRequest<R> {
 /// depends on chunk or arrival order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatasetChunk<R> {
-    /// Monotonic chunk sequence (diagnostics / the phaser `ShardsAvailable` counter).
+    /// Monotonic chunk sequence used for diagnostics and shard availability.
     pub chunk_id: u64,
     /// The requests in this chunk.
     pub requests: Vec<DatasetRequest<R>>,
@@ -78,9 +58,7 @@ impl<R: Clone> DatasetPublisher<R> {
         }
     }
 
-    /// Add one chunk of requests, assigning the next `chunk_id`. Returns the `chunk_id`
-    /// (which a streaming controller passes to `phaser.advance(ShardsAvailable(chunk_id
-    /// + 1))` so cells learn shards `[0, chunk_id]` are available).
+    /// Add one chunk and return its assigned `chunk_id`.
     pub fn add(&self, requests: Vec<DatasetRequest<R>>) -> u64 {
         let chunk_id = self
             .next_chunk
@@ -108,8 +86,7 @@ impl<R: Clone> DatasetPublisher<R> {
 }
 
 /// Consumer side (a cell): the local index of the requests this cell owns, keyed by
-/// `request_id`. Built by draining a subscription to `Finalized`, keeping only owned
-/// requests (§3.4 owned-filter → O(1/N) RAM).
+/// `request_id`. Draining through `Finalized` retains only owned requests.
 pub struct DatasetIndex<R> {
     owned: HashMap<u64, R>,
 }
@@ -135,14 +112,12 @@ impl<R: Clone> DatasetIndex<R> {
         Self { owned }
     }
 
-    /// Look up an owned request by its stable `request_id` (the §4.5 "issue request R"
-    /// lookup). `None` if this cell does not own it (or it was never indexed).
+    /// Look up an owned request by stable `request_id`.
     pub fn get(&self, request_id: u64) -> Option<&R> {
         self.owned.get(&request_id)
     }
 
-    /// Whether this cell has indexed the given `request_id` (owned + present) — the
-    /// `Indexed` vs `Unknown` distinction the §4.5 dispatch state machine gates on.
+    /// Whether this cell owns and has indexed the given `request_id`.
     pub fn is_indexed(&self, request_id: u64) -> bool {
         self.owned.contains_key(&request_id)
     }

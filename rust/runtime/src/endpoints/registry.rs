@@ -49,7 +49,9 @@ use crate::endpoints::tier2::{
     RawEndpointFactory, SolidoRagEndpoint, TemplateEndpointFactory, VideoGenerationEndpoint,
 };
 
-pub(crate) fn legacy_descriptor_for(endpoint_type: EndpointType) -> &'static EndpointDescriptor {
+pub(crate) fn compatibility_descriptor_for(
+    endpoint_type: EndpointType,
+) -> &'static EndpointDescriptor {
     match endpoint_type {
         EndpointType::Chat => ChatEndpoint.descriptor(),
         EndpointType::Completions => CompletionsEndpoint.descriptor(),
@@ -188,8 +190,8 @@ pub enum EndpointRegistryError {
     TooManyPreparedEndpoints,
     /// A dense endpoint key is outside the worker-local table.
     UnknownEndpointKey(EndpointKey),
-    /// A legacy caller selected a factory with no old [`Endpoint`] adapter.
-    NoLegacyAdapter(EndpointId),
+    /// A protocol-v1 caller selected a factory without an [`Endpoint`] adapter.
+    NoCompatibilityAdapter(EndpointId),
 }
 
 impl Display for EndpointRegistryError {
@@ -223,7 +225,7 @@ impl Display for EndpointRegistryError {
             Self::UnknownEndpointKey(key) => {
                 write!(formatter, "endpoint key {} is not prepared", key.index())
             }
-            Self::NoLegacyAdapter(id) => write!(
+            Self::NoCompatibilityAdapter(id) => write!(
                 formatter,
                 "endpoint {id:?} has no protocol-v1 Endpoint compatibility adapter"
             ),
@@ -240,7 +242,7 @@ impl Error for EndpointRegistryError {
             | Self::UnknownEndpoint { .. }
             | Self::TooManyPreparedEndpoints
             | Self::UnknownEndpointKey(_)
-            | Self::NoLegacyAdapter(_) => None,
+            | Self::NoCompatibilityAdapter(_) => None,
         }
     }
 }
@@ -274,11 +276,8 @@ pub trait EndpointFactory: fmt::Debug + Send + Sync {
     fn prepare(&self, config: EffectiveEndpointConfig)
     -> EndpointResult<Box<dyn PreparedEndpoint>>;
 
-    /// Return the old decoded-JSON adapter for protocol-v1 callers.
-    ///
-    /// New endpoint factories are not required to implement this compatibility
-    /// hook and remain selectable through the prepared endpoint path.
-    fn legacy_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
+    /// Return the decoded-JSON adapter for protocol-v1 callers.
+    fn compatibility_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
         None
     }
 }
@@ -382,7 +381,7 @@ impl<'a> From<&'a RequestInfo> for PreparedRequest<'a> {
     }
 }
 
-/// Allocation-free formatter seam implemented by built-in legacy adapters.
+/// Allocation-free formatter seam for protocol-v1 endpoint adapters.
 pub trait PreparedEndpointBehavior: Endpoint {
     /// Format through a borrowed request and identity-free validated policy.
     fn format_prepared_payload(
@@ -392,7 +391,7 @@ pub trait PreparedEndpointBehavior: Endpoint {
     ) -> EndpointResult<BodyPlan>;
 }
 
-pub(crate) fn format_legacy_payload<E>(
+pub(crate) fn format_compatibility_payload<E>(
     endpoint: &E,
     request: &RequestInfo,
 ) -> EndpointResult<BodyPlan>
@@ -463,18 +462,11 @@ pub trait PreparedEndpoint: fmt::Debug {
     /// Build a request-body plan the shared materializer splices into wire bytes.
     fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan>;
 
-    /// Whether this endpoint's [`format_payload`](Self::format_payload) output is a
-    /// pure function of bind-time inputs for a static-context turn, so its
-    /// [`BodyPlan`] can be built once at endpoint-bind and cached rather than
-    /// rebuilt per dispatch (segment spec §3a).
+    /// Whether static bind-time inputs fully determine the body, allowing the
+    /// [`BodyPlan`] to be cached (segment spec §3a).
     ///
-    /// Defaults to `true`: the message-array dialects (chat/responses/messages)
-    /// derive their whole body from the frozen turns, model, and endpoint config.
-    /// Overridden to `false` by dialects whose body depends on per-dispatch state
-    /// the cache cannot capture — template rendering (`x_request_id` and friends),
-    /// raw passthrough (authored per-turn `raw_payload`), and token-native
-    /// composition. This is a trait method, never an [`EndpointDescriptor`] field,
-    /// so it stays off the serialized `--capabilities` catalog wire.
+    /// Dialects using dispatch identity, raw payloads, or token IDs return
+    /// `false`. This runtime property is absent from the capability wire.
     fn precomputable_body(&self) -> bool {
         true
     }
@@ -528,23 +520,23 @@ where
         &self,
         config: EffectiveEndpointConfig,
     ) -> EndpointResult<Box<dyn PreparedEndpoint>> {
-        let legacy_config = EndpointConfig::from_raw(
+        let compatibility_config = EndpointConfig::from_raw(
             self.endpoint
                 .descriptor()
-                .legacy_type()
-                .expect("legacy Endpoint factory must map to EndpointType"),
+                .compatibility_type()
+                .expect("protocol-v1 Endpoint factory must map to EndpointType"),
             config.to_raw(),
         );
-        let headers = self.endpoint.format_headers(&legacy_config);
+        let headers = self.endpoint.format_headers(&compatibility_config);
         Ok(Box::new(StatelessPreparedEndpoint {
             endpoint: self.endpoint.clone(),
             config,
-            legacy_config,
+            compatibility_config,
             headers,
         }))
     }
 
-    fn legacy_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
+    fn compatibility_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
         Some(self.endpoint.clone())
     }
 }
@@ -553,7 +545,7 @@ where
 struct StatelessPreparedEndpoint<E> {
     endpoint: Arc<E>,
     config: EffectiveEndpointConfig,
-    legacy_config: EndpointConfig,
+    compatibility_config: EndpointConfig,
     headers: BTreeMap<String, String>,
 }
 
@@ -579,12 +571,13 @@ where
     }
 
     fn readiness_policy(&self, model: &str) -> EndpointResult<ReadinessPolicy> {
-        self.endpoint.readiness_policy(&self.legacy_config, model)
+        self.endpoint
+            .readiness_policy(&self.compatibility_config, model)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
         self.endpoint
-            .parse_response_with_config(response, &self.legacy_config)
+            .parse_response_with_config(response, &self.compatibility_config)
     }
 
     fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
@@ -593,7 +586,7 @@ where
 
     fn extract_response_data(&self, record: &RequestRecord) -> EndpointResult<Vec<ParsedResponse>> {
         self.endpoint
-            .extract_response_data_with_config(record, &self.legacy_config)
+            .extract_response_data_with_config(record, &self.compatibility_config)
     }
 
     fn build_assistant_turn(&self, record: &RequestRecord) -> EndpointResult<Option<Turn>> {
@@ -634,12 +627,7 @@ impl EndpointRegistryBuilder {
         Ok(builder)
     }
 
-    /// Register the stock built-in endpoint dialects into an existing builder.
-    ///
-    /// Shared by [`Self::with_builtins`] and the built-in endpoint
-    /// `AIPerfExtension` so both compose the identical frozen catalog (the
-    /// builder keys entries in a `BTreeMap`, so registration order does not
-    /// affect the frozen result).
+    /// Register the stock endpoint dialects into an existing builder.
     pub fn register_builtins(&mut self) -> Result<(), EndpointRegistryError> {
         let builder = self;
         builder.register_endpoint(ChatEndpoint)?;
@@ -683,7 +671,7 @@ impl EndpointRegistryBuilder {
         Ok(())
     }
 
-    /// Register an immutable legacy endpoint through the stateless factory.
+    /// Register an immutable protocol-v1 endpoint through the stateless factory.
     pub fn register_endpoint<E>(&mut self, endpoint: E) -> Result<(), EndpointRegistryError>
     where
         E: PreparedEndpointBehavior + 'static,
@@ -794,8 +782,7 @@ impl EndpointRegistry {
         Ok(EndpointRegistryBuilder::with_builtins()?.freeze())
     }
 
-    /// Clone startup factories into a new builder for transactional extension
-    /// composition; the frozen source remains immutable.
+    /// Clone startup factories into a mutable extension builder.
     pub fn to_builder(&self) -> EndpointRegistryBuilder {
         EndpointRegistryBuilder {
             entries: self
@@ -862,15 +849,15 @@ impl EndpointRegistry {
             .map_err(EndpointRegistryError::from)
     }
 
-    /// Resolve the old adapter used by protocol-v1 materializers.
-    pub fn legacy_endpoint(
+    /// Resolve the adapter used by protocol-v1 materializers.
+    pub fn compatibility_endpoint(
         &self,
         id: &EndpointId,
     ) -> Result<Arc<dyn Endpoint>, EndpointRegistryError> {
         let canonical = self.canonical_id(id)?.clone();
         self.resolve_factory(&canonical)?
-            .legacy_endpoint()
-            .ok_or(EndpointRegistryError::NoLegacyAdapter(canonical))
+            .compatibility_endpoint()
+            .ok_or(EndpointRegistryError::NoCompatibilityAdapter(canonical))
     }
 
     fn unknown(&self, id: &EndpointId) -> EndpointRegistryError {

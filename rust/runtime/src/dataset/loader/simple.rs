@@ -844,8 +844,8 @@ mod tests {
         };
         endpoint_config.endpoint_type = endpoint
             .descriptor()
-            .legacy_type()
-            .expect("legacy endpoint type");
+            .compatibility_type()
+            .expect("endpoint type");
         let request = EndpointRequestMaterializer
             .materialize(
                 &session,

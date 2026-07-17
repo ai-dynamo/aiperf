@@ -3,24 +3,14 @@
 mod common;
 use common::*;
 
-// Integration tests for API key redaction with real HTTP transport.
-//
-// These tests run a full benchmark against a real mock server over HTTP with
-// `--extra-verbose` (TRACE level logging) enabled, verifying that API keys are
-// redacted in all exported artifacts AND log files, including HTTP trace data,
-// while the server still receives the real credentials.
-
 use std::path::Path;
 
 const API_KEY: &str = "sk-integration-secret-REDACT-12345";
 const REDACTED_VALUE: &str = "<redacted>";
 
-/// Common CLI flags used by all tests: `--extra-verbose` enables TRACE logging.
-/// Mirrors `IntegrationTestDefaults`: concurrency=2, workers_max=1.
 const COMMON_FLAGS: &str = "--endpoint-type chat --streaming --request-count 5 --concurrency 2 \
      --workers-max 1 --extra-verbose";
 
-/// Scan all `.log` files in the artifact directory for the API key.
 fn assert_api_key_not_in_logs(dir: &Path) {
     walk_files(dir, &|path| {
         if path.extension().and_then(|e| e.to_str()) == Some("log") {
@@ -34,7 +24,6 @@ fn assert_api_key_not_in_logs(dir: &Path) {
     });
 }
 
-/// Scan every text file in the artifact directory for the API key.
 fn assert_api_key_not_in_any_artifact(dir: &Path) {
     let text_exts = ["json", "jsonl", "csv", "log", "yaml", "yml", "txt"];
     walk_files(dir, &|path| {
@@ -51,7 +40,6 @@ fn assert_api_key_not_in_any_artifact(dir: &Path) {
     });
 }
 
-/// Recursively visit every regular file under `dir`.
 fn walk_files(dir: &Path, f: &dyn Fn(&Path)) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -72,8 +60,6 @@ fn read_lossy(path: &Path) -> String {
         Err(_) => String::new(),
     }
 }
-
-// TestApiKeyRedactionRawExportHTTP
 
 #[tokio::test]
 async fn test_api_key_redacted_in_raw_records_http() {
@@ -120,8 +106,6 @@ async fn test_raw_file_and_logs_do_not_contain_api_key_http() {
 
     assert_api_key_not_in_logs(&r.artifacts.dir);
 }
-
-// TestApiKeyRedactionHttpTrace
 
 #[tokio::test]
 async fn test_api_key_redacted_in_http_trace() {
@@ -170,8 +154,6 @@ async fn test_jsonl_file_and_logs_do_not_contain_api_key_with_trace() {
     assert_api_key_not_in_logs(&r.artifacts.dir);
 }
 
-// TestApiKeyRedactionRawAndTraceCombo
-
 #[tokio::test]
 async fn test_combined_raw_and_trace_redaction() {
     let h = AIPerfHarness::new().await;
@@ -200,8 +182,6 @@ async fn test_combined_raw_and_trace_redaction() {
     assert_api_key_not_in_any_artifact(&r.artifacts.dir);
 }
 
-// TestApiKeyRedactionAllArtifacts
-
 #[tokio::test]
 async fn test_no_artifact_contains_api_key() {
     let h = AIPerfHarness::new().await;
@@ -213,8 +193,6 @@ async fn test_no_artifact_contains_api_key() {
 
     assert_api_key_not_in_any_artifact(&r.artifacts.dir);
 }
-
-// TestApiKeyStillFunctionalHTTP
 
 #[tokio::test]
 async fn test_benchmark_succeeds_with_api_key_http() {

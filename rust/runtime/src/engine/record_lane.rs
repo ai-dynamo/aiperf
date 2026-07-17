@@ -4,16 +4,16 @@
 //! Streaming per-record artifact lane: `records.jsonl`, `raw.jsonl`, and the
 //! per-record CSV, written one row per record at completion.
 //!
-//! The exact-fold path (`execute::RunCapture`, task S1) folds each completed
+//! The exact-fold path (`execute::RunCapture`) folds each completed
 //! record's metric scalars into the exact accumulator and drops the heavy
 //! per-record data mid-run, so it cannot hold every record until end-of-run for the
-//! legacy batch writers ([`crate::engine::records::write_records_jsonl`] /
+//! batch writers ([`crate::engine::records::write_records_jsonl`] /
 //! `write_raw_records_jsonl` / `write_records_csv`). This lane holds each enabled
 //! writer open for the whole run and appends one row per record as it completes,
 //! then the fold drops the record — bounding peak memory while still emitting the
 //! artifacts.
 //!
-//! Byte-parity contract: every row is produced by the exact same shared builders the
+//! Byte-parity contract: every row is produced by the same shared builders the
 //! batch writers use ([`crate::engine::records::write_record_jsonl_row`],
 //! `write_raw_record_jsonl_row`, `record_csv_header`, `record_csv_row`), so a lane
 //! that sees the same record sequence emits byte-identical files. The CSV keeps the
@@ -21,13 +21,10 @@
 //! non-skipped row) and **skip-empty** rule (a record with no projected metric and no
 //! error contributes no row; an all-skipped run writes no file at all).
 //!
-//! Modeled on [`crate::engine::heartbeat_lane::HeartbeatLane`]: a held-open `BufWriter` fed
-//! one line per event and flushed at the end.
-//!
 //! Ordering note: the batch writers emit `captured` in dispatch (identity) order,
 //! whereas the lane appends in the order records **complete**. For a serial / low-
 //! concurrency run (e.g. the canonical single-turn parity scenario) completion order
-//! equals dispatch order and the files are byte-identical to the legacy retain path;
+//! equals dispatch order and the files are byte-identical to the retained-record path;
 //! under real concurrency the lane streams in completion (arrival) order, which the
 //! order-independent exact-fold accumulator absorbs for the report but which the row
 //! stream cannot reorder without reintroducing the O(records) buffer this lane exists
@@ -104,7 +101,7 @@ impl CsvLaneWriter {
     }
 }
 
-/// The held-open `outputs.json` streaming sub-writer (task S4). It writes the pretty
+/// The held-open `outputs.json` streaming sub-writer. It writes the pretty
 /// document prefix eagerly (so an all-warmup / empty run still leaves a valid
 /// `{"schema_version":"1.1","data":[]}`, matching the batch
 /// [`crate::engine::records::write_outputs_json`]), appends each PROFILING record's pretty
@@ -168,11 +165,11 @@ pub(crate) struct RecordArtifactLane {
     records: Option<RefCell<BufWriter<File>>>,
     raw: Option<RefCell<BufWriter<File>>>,
     csv: Option<RefCell<CsvLaneWriter>>,
-    /// Held-open `outputs.json` streaming writer (task S4): each completed profiling
+    /// Held-open `outputs.json` streaming writer: each completed profiling
     /// record's pretty entry is appended in completion order, then the fold drops its
     /// response text. `None` when no `outputs.json` artifact is requested.
     outputs: Option<RefCell<OutputsLaneWriter>>,
-    /// Held-open incremental Parquet writer (task S3): each completed record's wide
+    /// Held-open incremental Parquet writer: each completed record's wide
     /// row is buffered and flushed as a bounded row group, so the columnar sidecar
     /// streams without retaining every record. `None` when no Parquet artifact is
     /// requested. Only compiled under the `parquet` feature — a lite runner never
@@ -422,7 +419,7 @@ mod tests {
         lane.finish().unwrap();
     }
 
-    /// Write the same slice through the legacy batch writers.
+    /// Write the same slice through the batch writers.
     fn drive_batch(
         dir: &Path,
         records: &[CapturedRecord],
@@ -549,7 +546,7 @@ mod tests {
         assert!(!dir.path().join("profile_export_raw.jsonl").exists());
     }
 
-    /// The lane wires the streaming Parquet sidecar (task S3): a parquet-only lane
+    /// The lane wires the streaming Parquet sidecar: a parquet-only lane
     /// pushes each record's wide row and, on finish, materializes a non-empty file
     /// while emitting none of the other artifacts. The columnar row-set parity vs the
     /// batch writer is proven in `crate::export::per_record_parquet` (the runner crate

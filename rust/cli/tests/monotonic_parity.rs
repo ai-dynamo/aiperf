@@ -1,15 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Byte-exact behavioral parity of the native [`MonotonicPlanner`] against the
-//! production `MonotonicSLASearchPlanner`.
-//!
-//! The monotonic SLA planner is a dynamic ask-tell loop, so its probe sequence
-//! is metric-dependent and cannot be golden-gated against `dump_sweep`. Instead
-//! `tools/parity/dump_monotonic.py` drives the *real* Python planner against a
-//! synthetic, deterministic feasibility oracle (`feasible iff concurrency <=
-//! boundary`) and records the exact `ask()` sequence plus the final bracket and
-//! convergence reason. This test drives the native planner over the identical
-//! oracle and asserts the sequences match exactly.
+//! Monotonic SLA planner golden-sequence coverage.
 
 use aiperf_cli::search::{MonotonicPlanner, MonotonicSpec, SlaFilter, SlaOp};
 
@@ -19,8 +10,6 @@ fn golden() -> serde_json::Value {
     serde_json::from_slice(&bytes).expect("golden json")
 }
 
-/// Drive the native planner over the synthetic oracle for one golden case and
-/// return `(asks, feasible_max, infeasible_min, convergence_reason)`.
 fn run_native(
     lo: i64,
     hi: i64,
@@ -46,8 +35,6 @@ fn run_native(
     let mut asks = Vec::new();
     while let Some(value) = planner.ask() {
         asks.push(value);
-        // Synthetic oracle mirroring dump_monotonic.py: report a TTFT p95 that
-        // satisfies (threshold-1) or breaches (threshold+1) the single filter.
         let observed = if value <= boundary {
             threshold - 1.0
         } else {

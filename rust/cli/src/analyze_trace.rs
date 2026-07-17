@@ -1,22 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Native `aiperf analyze-trace` — pure-Rust port of
-//! `aiperf.dataset.synthesis.prefix_analyzer::PrefixAnalyzer` +
-//! `cli.analyze_trace`. No Python: reads a mooncake trace JSONL and computes
-//! ISL/OSL distributions, unique-prefix counts, and theoretical cache hit rates,
-//! writing a byte-exact `AnalysisStats` JSON (`--output-file`) and a console
-//! summary.
+//! Mooncake trace analysis for `aiperf analyze-trace`.
 //!
-//! The `MetricStats` percentiles reproduce NumPy's linear-interpolation
-//! `np.percentile` and population `np.std` (ddof=0) exactly so the emitted JSON
-//! matches the Python oracle byte-for-byte (see `tests/analyze_trace.rs`).
+//! Percentiles use linear interpolation and standard deviation uses the
+//! population formula to preserve the command's JSON contract.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use serde::Serialize;
 
-/// Full statistics for one metric (`MetricStats`).
 #[derive(Serialize)]
 struct MetricStats {
     mean: f64,
@@ -28,8 +21,7 @@ struct MetricStats {
     max: f64,
 }
 
-/// The analysis report (`AnalysisStats`); field order matches the Python model
-/// so `serde_json` pretty output equals `model_dump_json(indent=2)`.
+/// Field order is part of the serialized report contract.
 #[derive(Serialize)]
 struct AnalysisStats {
     total_requests: usize,
@@ -50,7 +42,6 @@ struct AnalysisStats {
     hit_rate_stats: Option<MetricStats>,
 }
 
-/// One trace record (unknown fields ignored, mirroring `trace.get(...)`).
 #[derive(serde::Deserialize)]
 struct TraceRecord {
     #[serde(default)]
@@ -61,7 +52,6 @@ struct TraceRecord {
     hash_ids: Vec<i64>,
 }
 
-/// NumPy linear-interpolation percentile (`np.percentile`, method="linear").
 fn percentile(sorted: &[f64], q: f64) -> f64 {
     let n = sorted.len();
     if n == 1 {
@@ -74,7 +64,6 @@ fn percentile(sorted: &[f64], q: f64) -> f64 {
     sorted[lo] * (1.0 - frac) + sorted[hi] * frac
 }
 
-/// Population std (`np.std`, ddof=0).
 fn metric_stats(values: &[f64]) -> Option<MetricStats> {
     if values.is_empty() {
         return None;
@@ -95,13 +84,11 @@ fn metric_stats(values: &[f64]) -> Option<MetricStats> {
     })
 }
 
-/// Compute the analysis from parsed trace records (port of `PrefixAnalyzer`).
 fn analyze(records: &[TraceRecord], block_size: i64) -> AnalysisStats {
     let isls: Vec<i64> = records.iter().map(|r| r.input_length).collect();
     let osls: Vec<i64> = records.iter().map(|r| r.output_length).collect();
     let hash_ids_per_trace: Vec<&[i64]> = records.iter().map(|r| r.hash_ids.as_slice()).collect();
 
-    // Prefix + position counters (first pass).
     let mut prefix_counter: HashMap<Vec<i64>, u64> = HashMap::new();
     let mut hash_position_counter: HashMap<(usize, i64), u64> = HashMap::new();
     for hash_ids in &hash_ids_per_trace {
@@ -113,7 +100,6 @@ fn analyze(records: &[TraceRecord], block_size: i64) -> AnalysisStats {
         }
     }
 
-    // Context / unique-prompt lengths (second pass).
     let repeated: HashSet<(usize, i64)> = hash_position_counter
         .iter()
         .filter(|(_, c)| **c > 1)
@@ -146,7 +132,7 @@ fn analyze(records: &[TraceRecord], block_size: i64) -> AnalysisStats {
         unique_prompt_lengths.push(unique_len);
     }
 
-    // Per-request hit rates (infinite cache; first-unseen-index algorithm).
+    // The first unseen block defines the hit fraction for an infinite cache.
     let mut seen: HashSet<i64> = HashSet::new();
     let mut hit_rates: Vec<f64> = Vec::new();
     for hash_ids in &hash_ids_per_trace {
@@ -161,7 +147,6 @@ fn analyze(records: &[TraceRecord], block_size: i64) -> AnalysisStats {
         seen.extend(hash_ids.iter().copied());
     }
 
-    // num_prefix_groups: distinct first-blocks appearing in 2+ sequences.
     let mut first_block_counts: HashMap<i64, u64> = HashMap::new();
     for hash_ids in &hash_ids_per_trace {
         if let Some(&first) = hash_ids.first() {
@@ -170,7 +155,6 @@ fn analyze(records: &[TraceRecord], block_size: i64) -> AnalysisStats {
     }
     let num_prefix_groups = first_block_counts.values().filter(|&&c| c > 1).count();
 
-    // prefix reuse ratio.
     let total_prefix: u64 = prefix_counter.values().sum();
     let reused_prefix: u64 = prefix_counter.values().filter(|&&c| c > 1).sum();
     let prefix_reuse_ratio = if total_prefix > 0 {
@@ -214,7 +198,6 @@ fn analyze(records: &[TraceRecord], block_size: i64) -> AnalysisStats {
     }
 }
 
-/// Parse the JSONL trace file into records (blank lines skipped).
 fn read_trace(path: &std::path::Path) -> anyhow::Result<Vec<TraceRecord>> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
@@ -231,8 +214,6 @@ fn read_trace(path: &std::path::Path) -> anyhow::Result<Vec<TraceRecord>> {
     Ok(records)
 }
 
-/// Serialize `AnalysisStats` to match pydantic `model_dump_json(indent=2)`
-/// (2-space indent, `": "` separators, shortest-round-trip floats).
 fn to_pretty_json(stats: &AnalysisStats) -> anyhow::Result<String> {
     Ok(serde_json::to_string_pretty(stats)?)
 }

@@ -99,18 +99,13 @@ pub(crate) struct RequestCtx {
     pub(crate) usage: Usage,
     pub(crate) latency_sim: LatencySimulator,
     pub(crate) start: Instant,
-    /// When true (accuracy adversarial `NullObjectChunk`), the streaming path
-    /// emits one `{"object": null}` SSE frame before `[DONE]` (github #1010).
+    /// Emits one `{"object": null}` SSE frame before `[DONE]` (github #1010).
     pub(crate) null_object_chunk: bool,
-    /// Present when the seeded `--tool-call-rate` draw fires for this request:
-    /// the chat response answers with this function tool call. Set only on the
-    /// chat endpoint (see [`chat_completions`]); every other entry point leaves
-    /// it `None`, so their payloads are unchanged.
+    /// Function call selected by the seeded `--tool-call-rate` draw.
     pub(crate) tool_call: Option<ToolCallSpec>,
 }
 
-/// A single deterministic function tool call the mock emits when
-/// `--tool-call-rate` fires. Mirrors the OpenAI wire shape: `arguments` is a
+/// Deterministic OpenAI-compatible function call. `arguments` is a
 /// JSON-encoded *string* (not an object), and `id`/`type` identify the call.
 pub(crate) struct ToolCallSpec {
     pub(crate) id: String,
@@ -119,18 +114,14 @@ pub(crate) struct ToolCallSpec {
 }
 
 impl ToolCallSpec {
-    /// Build the deterministic tool call from config, and report the count of
-    /// tool-definition prompt tokens to attribute to it (`toolUsePromptTokenCount`
-    /// in the emitted usage). The count is the mock-tokenized length of
-    /// `name + arguments`, so it is deterministic in the configured knobs.
+    /// Returns the call and its deterministic `toolUsePromptTokenCount`.
     fn from_config(cfg: &crate::config::MockServerConfig) -> (Self, usize) {
         let name = cfg.tool_call_name.clone();
         let arguments = cfg.tool_call_arguments.clone();
         let tool_use_tokens = crate::tokens::tokenize(&format!("{name}{arguments}")).len();
         let spec = Self {
-            // Stable-per-request id derived off the request id at the callsite is
-            // overkill; a fresh uuid matches real APIs and is opaque to the runner
-            // (which keys tool calls by streamed `index`, not id).
+            // The runner keys streamed calls by `index`; the opaque ID need not
+            // be stable.
             id: format!("call_{}", uuid::Uuid::new_v4()),
             name,
             arguments,
@@ -138,10 +129,7 @@ impl ToolCallSpec {
         (spec, tool_use_tokens)
     }
 
-    /// Split `arguments` into two contiguous halves on a char boundary, so the
-    /// streaming path can emit the argument string across two `delta.tool_calls`
-    /// frames and exercise the runner's argument-concatenation merge. Returns
-    /// `(first, second)`; `second` is empty for a one-or-zero-char argument.
+    /// Splits arguments on a character boundary for streamed delta merging.
     fn split_arguments(&self) -> (&str, &str) {
         let mid = self.arguments.len() / 2;
         let boundary = (mid..=self.arguments.len())
@@ -160,18 +148,12 @@ impl RequestCtx {
         state: &AppState,
     ) -> Self {
         let mut tokenized = tokenize_request(req_gen);
-        // Ground-truth-aware override: when an accuracy dataset is loaded and the
-        // request's user text matches a row, replace the corpus-generated tokens
-        // with the (seeded) correct-or-wrong answer, formatted for the grader,
-        // optionally as CoT or an adversarial parser-choke shape. All endpoints
-        // and both streaming and non-streaming paths serialize
-        // `tokenized.content()`, so this single seam covers every entry point.
+        // Apply the accuracy decision here so every endpoint and streaming mode
+        // serializes the same deterministic answer.
         let mut null_object_chunk = false;
         if let Some(ds) = &state.accuracy {
             if let Some(entry) = ds.lookup(&tokenized.text) {
                 let decision = ds.decide(entry);
-                // Live tally: count this real, prompt-matched response so
-                // `correct / matched` reflects the run's actual accuracy.
                 state.accuracy_live.record(&decision, entry.task.as_deref());
                 tokenized.tokens = crate::tokens::tokenize(&decision.content);
                 tokenized.reasoning_content_tokens = decision
@@ -189,26 +171,18 @@ impl RequestCtx {
         let mut usage = tokenized.usage();
         let model = req_gen.model().to_string();
         let request_id = make_request_id(request_id_prefix);
-        // KV-cache prefix reuse: cached prefix tokens are always REPORTED in
-        // usage (AIPerf reads usage_prompt_cache_read_tokens). Whether they also
-        // reduce prefill work / TTFT is gated by --prefix-cache-latency-aware,
-        // because in a saturated queue-bound regime TTFT is contention-bound and
-        // empirically independent of cache hits.
+        // Cache hits are always reported, but only reduce TTFT when
+        // `--prefix-cache-latency-aware` is enabled.
         let cached_tokens = match &state.prefix_cache {
             Some(pc) => pc.cached_tokens(&tokenized.text, usage.prompt_tokens, req_gen.priority()),
             None => 0,
         };
-        // Always emit prompt_tokens_details so callers can observe cache-read
-        // counts even when the prefix cache is disabled (cached_tokens == 0).
-        // The Python mock server always includes this field.
+        // Always expose cache-read counts, including zero when caching is off.
         usage.prompt_tokens_details = Some(crate::models::PromptTokensDetails {
             cached_tokens,
             audio_tokens: None,
         });
-        // Extended usage-accounting fields (deterministic, driven by the
-        // `--usage-*` knobs). Skipped wholesale unless at least one is set, so a
-        // normal run's usage payload is byte-identical. Every field maps to a
-        // specific key AIPerf's `UsageView` reads (see models.rs doc comments).
+        // Optional `--usage-*` fields stay absent unless explicitly configured.
         if state.config.usage_fields_enabled() {
             apply_usage_fields(&mut usage, &state.config);
         }
@@ -217,9 +191,7 @@ impl RequestCtx {
         } else {
             0
         };
-        // +1 counts this request alongside those already in flight. The
-        // LatencySimulator derives effective TTFT/ITL from the ISL/OSL and
-        // concurrency knobs, or routes through the scheduler when enabled.
+        // Include this request in concurrency-dependent latency.
         let active_inflight = (state.recorder.inflight_count().max(0) as usize) + 1;
         let latency_sim = LatencySimulator::new(
             state.clock_anchor,
@@ -244,10 +216,6 @@ impl RequestCtx {
     }
 }
 
-// ============================================================================
-// Root / health
-// ============================================================================
-
 pub async fn root_info(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let cfg = serde_json::to_value(&state.config).unwrap_or(Value::Null);
     Json(json!({
@@ -265,17 +233,7 @@ pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     }))
 }
 
-// ============================================================================
-// /v1/models — OpenAI-style model listing.
-//
-// Returns the configured `--models` list (or a builtin default set) unioned
-// with every model name that has been observed via real traffic, so a client
-// that just issued a request against `mymodel` will also see `mymodel` in the
-// listing. `owned_by` is constant; `created` is the server start time so the
-// output is stable across scrapes.
-// ============================================================================
-
-/// Default list advertised when no `--models` flag / env var was supplied.
+/// Models advertised when `--models` is empty.
 const DEFAULT_MODELS: &[&str] = &[
     "gpt-4",
     "gpt-4o",
@@ -355,10 +313,6 @@ pub async fn get_model(
     Ok(Json(model_object(&id, created)).into_response())
 }
 
-// ============================================================================
-// Chat completions
-// ============================================================================
-
 pub async fn chat_completions(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ChatCompletionRequest>,
@@ -371,10 +325,6 @@ pub async fn chat_completions(
     state.recorder.init_model_config(&req.model);
     let req_gen = GenRequest::Chat(&req);
     let mut ctx = RequestCtx::build("chatcmpl", &req_gen, endpoint, start, &state);
-    // Seeded per-request tool-call decision (chat endpoint only). When it fires,
-    // attach the deterministic tool call and report its tool-definition prompt
-    // tokens as `toolUsePromptTokenCount`, which the runner reads into
-    // `usage_tool_use_prompt_tokens`.
     if state.inject_tool_call() {
         let (spec, tool_use_tokens) = ToolCallSpec::from_config(&state.config);
         ctx.usage.tool_use_prompt_token_count = Some(tool_use_tokens);
@@ -438,10 +388,7 @@ fn build_chat_response(ctx: &RequestCtx) -> Value {
     if let Some(reasoning) = ctx.tokenized.reasoning_content() {
         message["reasoning_content"] = Value::String(reasoning);
     }
-    // When a tool call fires, emit the OpenAI `message.tool_calls` array and
-    // switch the finish reason to `tool_calls`. The generated content stays
-    // alongside it (the mock's token/latency model is unchanged); the runner
-    // parses `function.name` + `function.arguments` into the record.
+    // Tool-call turns terminate with the OpenAI `tool_calls` finish reason.
     let finish_reason: Value = if let Some(tc) = &ctx.tool_call {
         message["tool_calls"] = json!([{
             "id": tc.id,
@@ -469,11 +416,6 @@ fn build_chat_response(ctx: &RequestCtx) -> Value {
     })
 }
 
-// ============================================================================
-// Anthropic Messages
-// ============================================================================
-
-/// Handle an Anthropic Messages request with the mock's shared token and latency model.
 pub async fn messages(
     State(state): State<Arc<AppState>>,
     Json(req): Json<MessagesRequest>,
@@ -530,11 +472,7 @@ pub async fn messages(
     }
 }
 
-/// Inject the deterministic `--usage-*` extended-accounting fields into a usage
-/// object. Each `0` (or `0.0`) knob leaves its field absent, so only explicitly
-/// requested sub-fields appear. Nested details (`prompt_tokens_details`,
-/// `completion_tokens_details`) are created on demand when only an extended
-/// field needs them (e.g. a non-reasoning model with prediction tokens).
+/// Adds configured `--usage-*` fields, leaving zero-valued fields absent.
 fn apply_usage_fields(usage: &mut Usage, cfg: &crate::config::MockServerConfig) {
     if cfg.usage_cache_write_tokens != 0 {
         usage.cache_creation_input_tokens = Some(cfg.usage_cache_write_tokens);
@@ -577,8 +515,7 @@ fn apply_usage_fields(usage: &mut Usage, cfg: &crate::config::MockServerConfig) 
 }
 
 /// Anthropic `messages` usage object. Adds the disjoint cache-read/write fields
-/// AIPerf's `UsageView` re-totals (`aiperf_runtime::endpoints::usage` lines 37-45,
-/// 206-211) when the corresponding `--usage-*` knobs are set.
+/// that AIPerf re-totals when the corresponding `--usage-*` knobs are set.
 fn anthropic_usage(usage: &Usage) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("input_tokens".into(), json!(usage.prompt_tokens));
@@ -604,10 +541,6 @@ fn build_messages_response(ctx: &RequestCtx) -> Value {
         "usage": anthropic_usage(&ctx.usage),
     })
 }
-
-// ============================================================================
-// Text completions
-// ============================================================================
 
 pub async fn text_completions(
     State(state): State<Arc<AppState>>,
@@ -677,12 +610,7 @@ fn build_completion_response(ctx: &RequestCtx) -> Value {
     })
 }
 
-// ============================================================================
-// vLLM / Dynamo token-native Generate (`POST /inference/v1/generate`)
-// ============================================================================
-
-/// Build the usage block for a token-native generate response. Token-native has
-/// no reasoning split, so the completion count is simply the output ID count.
+/// Token-native usage has no reasoning split.
 fn token_native_usage(isl: usize, osl: usize) -> Usage {
     Usage {
         prompt_tokens: isl,
@@ -701,10 +629,7 @@ fn token_native_usage(isl: usize, osl: usize) -> Usage {
 /// vLLM/Dynamo token-in / token-out Generate. Consumes the request's raw
 /// `token_ids` as the prompt (ISL = its length), derives the output length from
 /// `sampling_params` with the shared budget logic, and returns integer
-/// `choices[].token_ids` the runner parses into `ResponseData::TokenIds`
-/// (`aiperf_runtime::endpoints::vllm_generate`, vllm_generate.rs:259-303). Non-streaming:
-/// the runner's descriptor pins `supports_streaming: false` and always sends
-/// `stream: false`.
+/// `choices[].token_ids`. The endpoint accepts only `stream: false`.
 pub async fn vllm_generate(
     State(state): State<Arc<AppState>>,
     Json(req): Json<VllmGenerateRequest>,
@@ -781,13 +706,7 @@ pub async fn vllm_generate(
         .map_err(internal_error)
 }
 
-// ============================================================================
-// OpenAI Responses API (`POST /v1/responses`)
-// ============================================================================
-
-/// Build a mock `ChatCompletionRequest` carrying the flattened Responses prompt
-/// so the shared tokenize / latency / budget machinery ([`RequestCtx::build`])
-/// applies unchanged — the same delegation `image_generation` / `solido_rag` use.
+/// Projects a Responses request onto the shared token and latency machinery.
 fn responses_as_chat(req: &ResponsesRequest) -> ChatCompletionRequest {
     ChatCompletionRequest {
         model: req.model.clone(),
@@ -808,11 +727,10 @@ fn responses_as_chat(req: &ResponsesRequest) -> ChatCompletionRequest {
 
 /// OpenAI Responses API. Recovers the prompt from `input`/`instructions`, runs it
 /// through the shared token/latency model, and emits the Responses wire shape the
-/// runner's `responses` parser consumes: non-streaming `{object:"response",
-/// status:"completed", output:[{type:"message", content:[{type:"output_text",
-/// text}]}], usage}` (endpoints.rs:404-415) or the streaming
+/// runner consumes: non-streaming `{object:"response", status:"completed",
+/// output:[{type:"message", content:[{type:"output_text", text}]}], usage}` or the streaming
 /// `response.created` / `response.output_text.delta` / `response.completed`
-/// event sequence (endpoints.rs:1334-1391).
+/// event sequence.
 pub async fn responses(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ResponsesRequest>,
@@ -870,8 +788,7 @@ pub async fn responses(
     }
 }
 
-/// Responses usage block: the API uses `input_tokens`/`output_tokens` (the
-/// runner's `UsageView` maps both to prompt/completion, usage.rs:25-79).
+/// Responses uses `input_tokens` and `output_tokens` for prompt and completion.
 fn responses_usage(ctx: &RequestCtx) -> Value {
     json!({
         "input_tokens": ctx.usage.prompt_tokens,
@@ -1001,10 +918,6 @@ fn responses_stream(
     }
 }
 
-// ============================================================================
-// Embeddings
-// ============================================================================
-
 pub async fn embeddings(
     State(state): State<Arc<AppState>>,
     Json(req): Json<EmbeddingRequest>,
@@ -1070,18 +983,13 @@ pub fn generate_embedding(text: &str, dim: usize) -> Vec<f64> {
     (0..dim).map(|_| rng.random() - 0.5).collect()
 }
 
-// ============================================================================
-// Rankings
-// ============================================================================
-
 pub(crate) fn compute_mock_score(query: &str, passage: &str) -> f64 {
     let mut hasher = Blake2s256::new();
     hasher.update(query.as_bytes());
     hasher.update(b"|");
     hasher.update(passage.as_bytes());
     let digest = hasher.finalize();
-    // Mimic Python: int_digest = int.from_bytes(digest, byteorder='big'); (int_digest % 1000) / 1000.0
-    // 8 bytes of prefix is enough for deterministic modulo.
+    // Eight digest bytes are sufficient for the deterministic score.
     let prefix = u64::from_be_bytes(digest[0..8].try_into().unwrap());
     (prefix % 1000) as f64 / 1000.0
 }
@@ -1213,10 +1121,6 @@ pub async fn cohere_rerank(
     Ok(Json(json!({ "results": results })).into_response())
 }
 
-// ============================================================================
-// NIM Image Retrieval
-// ============================================================================
-
 const BOUNDING_BOX_CATEGORIES: &[&str] = &["title", "table", "figure", "text", "header", "footer"];
 
 fn generate_bounding_boxes(url: &str) -> serde_json::Map<String, Value> {
@@ -1301,17 +1205,8 @@ pub async fn image_retrieval(
     .into_response())
 }
 
-// ============================================================================
-// KServe Open Inference Protocol (v1 predict + v2 infer) over HTTP
-//
-// The runner drives these dialects over EITHER transport; the gRPC target lives
-// in `crate::grpc`, and these HTTP routes mirror the same lowering so a run with
-// `transport.type: http` against a `kserve_v*` endpoint has a target. The v2
-// route auto-detects text / rankings / images from the request's input tensor
-// names (matching `aiperf_runtime::endpoints::kserve`'s factories: `text_input`,
-// `query`+`passages`, `prompt`), overridable with `--grpc-behavior`. Text is
-// non-streaming JSON here (the streaming KServe path is exercised over gRPC).
-// ============================================================================
+// KServe HTTP and gRPC share tensor names and behavior selection. HTTP text
+// responses are non-streaming; KServe streaming is available over gRPC.
 
 const KSERVE_V2_TEXT_INPUT: &str = "text_input";
 const KSERVE_V2_QUERY: &str = "query";
@@ -1455,8 +1350,7 @@ pub async fn kserve_v2_infer(
             state.recorder.record_request_end(endpoint);
             Ok(Json(v2_response(&model, &req_id, outputs)).into_response())
         }
-        // Text / VLM: `text_input` prompt (any `image` tensor is consumed but
-        // ignored), optional `max_tokens` cap, generated `text_output`.
+        // Image tensors do not affect the generated `text_output`.
         crate::grpc::GrpcBehavior::Text | crate::grpc::GrpcBehavior::Auto => {
             let prompt = v2_tensor_texts(&body, KSERVE_V2_TEXT_INPUT)
                 .into_iter()
@@ -1603,10 +1497,6 @@ pub async fn kserve_v2_health_ready() -> impl IntoResponse {
     Json(json!({"ready": true}))
 }
 
-// ============================================================================
-// Custom multimodal
-// ============================================================================
-
 pub async fn custom_multimodal(
     State(state): State<Arc<AppState>>,
     Json(req): Json<Value>,
@@ -1719,10 +1609,6 @@ pub async fn custom_multimodal(
     .into_response())
 }
 
-// ============================================================================
-// TGI (HuggingFace)
-// ============================================================================
-
 pub async fn tgi_generate(
     State(state): State<Arc<AppState>>,
     Json(req): Json<TGIGenerateRequest>,
@@ -1763,19 +1649,13 @@ pub async fn tgi_generate_stream(
     Ok(sse_response(body))
 }
 
-// ============================================================================
-// Image generation
-// ============================================================================
-
 pub(crate) fn mock_jpeg_b64(prompt: &str, index: u32) -> String {
     let combined = format!("{prompt}|{index}");
     let mut hasher = Blake2s256::new();
     hasher.update(combined.as_bytes());
     let digest = hasher.finalize();
 
-    // Blake2s-256 produces 32 bytes. The Python source uses `digest[:64]` and
-    // `digest[64:80]` which Python slices silently saturate/empty — we replicate
-    // that by clamping to the digest length.
+    // Clamp ranges because the digest is 32 bytes.
     let slice_safe = |start: usize, end: usize| -> &[u8] {
         let s = start.min(digest.len());
         let e = end.min(digest.len()).max(s);
@@ -1882,10 +1762,6 @@ pub async fn image_generation(
     }
 }
 
-// ============================================================================
-// SOLIDO RAG
-// ============================================================================
-
 pub async fn solido_rag(
     State(state): State<Arc<AppState>>,
     Json(req): Json<SolidoRAGRequest>,
@@ -1965,10 +1841,6 @@ pub async fn solido_rag(
     .into_response())
 }
 
-// ============================================================================
-// Streaming helpers
-// ============================================================================
-
 fn sse_chunk(value: &Value) -> Bytes {
     let mut out = Vec::with_capacity(256);
     out.extend_from_slice(b"data: ");
@@ -1977,8 +1849,7 @@ fn sse_chunk(value: &Value) -> Bytes {
     Bytes::from(out)
 }
 
-/// Serialize any serde-serializable value directly as an SSE chunk. Avoids the
-/// intermediate serde_json::Value / HashMap allocation that `json!({...})` does.
+/// Serializes directly into an SSE frame without an intermediate JSON map.
 fn sse_chunk_ser<T: serde::Serialize>(value: &T) -> Bytes {
     let mut out = Vec::with_capacity(256);
     out.extend_from_slice(b"data: ");
@@ -1987,19 +1858,11 @@ fn sse_chunk_ser<T: serde::Serialize>(value: &T) -> Bytes {
     Bytes::from(out)
 }
 
-/// Append an SSE chunk (`data: {json}\n\n`) directly onto a shared buffer.
-/// Used by the fast-mode pre-render path to build the whole response into
-/// one allocation.
 fn write_sse_into<T: serde::Serialize>(buf: &mut Vec<u8>, value: &T) {
     buf.extend_from_slice(b"data: ");
     serde_json::to_writer(&mut *buf, value).expect("serialize");
     buf.extend_from_slice(b"\n\n");
 }
-
-// ---------------------------------------------------------------------------
-// Streaming chunk payloads — plain structs serialize faster than `json!({…})`
-// because they skip the intermediate serde_json::Map allocation.
-// ---------------------------------------------------------------------------
 
 #[derive(serde::Serialize)]
 struct ChatChoiceDelta<'a> {
@@ -2132,9 +1995,8 @@ fn anthropic_sse_event(event: &str, value: &Value) -> Bytes {
 }
 
 /// A named SSE event frame (`event: <name>\ndata: <json>\n\n`) for the OpenAI
-/// Responses streaming shape. The runner's SSE reader keys off the JSON `type`
-/// field, so the `event:` line mirrors real OpenAI output without affecting
-/// parsing.
+/// Responses streaming shape. The runner keys off the JSON `type` field, so
+/// the OpenAI-compatible `event:` line does not affect parsing.
 fn sse_event(event: &str, value: &Value) -> Bytes {
     let data = serde_json::to_string(value).expect("SSE event must serialize");
     Bytes::from(format!("event: {event}\ndata: {data}\n\n"))
@@ -2152,8 +2014,7 @@ where
         .expect("body ok")
 }
 
-/// Single-Bytes pre-rendered SSE body for fast mode. Renders all chat chunks,
-/// the optional usage chunk, and the terminal `[DONE]` into one allocation.
+/// Renders the complete fast-mode chat stream into one allocation.
 fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
     let created = now_secs();
     let has_reasoning = !ctx.tokenized.reasoning_content_tokens.is_empty();
@@ -2184,9 +2045,7 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
         write_sse_into(&mut buf, &chunk);
     }
 
-    // When a tool call follows, the terminal `finish_reason` rides its final
-    // frame, so content tokens never carry it (real APIs finish once, on the
-    // last delta of the whole turn).
+    // Only the final tool-call delta carries the terminal finish reason.
     let has_tool_call = ctx.tool_call.is_some();
     let num = ctx.tokenized.tokens.len();
     for (i, token) in ctx.tokenized.tokens.iter().enumerate() {
@@ -2307,13 +2166,8 @@ fn render_tgi_fast_body(ctx: &RequestCtx) -> Bytes {
     Bytes::from(buf)
 }
 
-/// Build the two streamed tool-call frames for a fired `--tool-call-rate` chat
-/// request. Frame 1 opens the call (`id`, `type`, `function.name`, and the first
-/// half of the arguments); frame 2 carries the second half plus the terminal
-/// `finish_reason: "tool_calls"`. Splitting the arguments across two frames
-/// exercises the runner's argument-concatenation merge. `lead_role` stamps
-/// `role: assistant` on the first frame when no content/reasoning token preceded
-/// it (so a tool-call-only stream still opens the assistant turn).
+/// Emits two deltas whose argument fragments concatenate to the configured
+/// string; the second carries `finish_reason: "tool_calls"`.
 fn tool_call_frames<'a>(
     ctx: &'a RequestCtx,
     created: i64,
@@ -2384,19 +2238,14 @@ fn chat_stream(
         state.recorder.record_request_start(&endpoint, &ctx.model);
         state.recorder.record_llm_inflight_start(&ctx.model);
 
-        // Mid-stream failure: emit a few real token frames, then a terminal
-        // `event: error` SSE frame and close — no usage chunk, no `[DONE]`.
-        // This is the only path that exercises the runner's mid-stream SSE
-        // error classification (pre-stream injection fails at handler entry
-        // before any bytes are sent). Runs even in fast mode, and never draws
-        // the adversarial null-object path.
+        // Mid-stream failures close after `event: error`, without usage or
+        // `[DONE]`, after emitting up to three token frames.
         if midstream_error {
             let created = now_secs();
             let has_reasoning = !ctx.tokenized.reasoning_content_tokens.is_empty();
             let num = ctx.tokenized.tokens.len();
             let emit = num.min(MIDSTREAM_TOKENS_BEFORE_ERROR);
             for (i, token) in ctx.tokenized.tokens.iter().take(emit).enumerate() {
-                // Pace real (non-fast) streams so partial timing is realistic.
                 if !ctx.latency_sim.is_fast() {
                     let _ = ctx.latency_sim.wait_for_index(i).await;
                 }
@@ -2422,18 +2271,14 @@ fn chat_stream(
             yield Ok::<Bytes, Infallible>(sse_error_frame(
                 "Simulated mid-stream error injected by aiperf-mock-server",
             ));
-            // Count as a failed request so the mock's own metrics reflect it.
             state.recorder.record_error(&endpoint, "midstream_sse_error");
             state.recorder.record_llm_inflight_end(&ctx.model);
             state.recorder.record_request_end(&endpoint);
             return;
         }
 
-        // Fast-mode short-circuit: ttft==itl==0. Pre-render the entire SSE
-        // body into one Bytes and yield it in a single HTTP frame. The
-        // adversarial null-object frame must land *before* `[DONE]`, which the
-        // pre-rendered body already contains, so skip the short-circuit when it
-        // is requested and run the (still instant) token loop instead.
+        // Null-object injection cannot use the pre-rendered body because its
+        // frame must precede `[DONE]`.
         if ctx.latency_sim.is_fast() && !ctx.null_object_chunk {
             let total_tokens = ctx.tokenized.reasoning_content_tokens.len()
                 + ctx.tokenized.tokens.len();
@@ -2462,8 +2307,7 @@ fn chat_stream(
 
         let has_reasoning = !ctx.tokenized.reasoning_content_tokens.is_empty();
 
-        // OpenAI holds `created` constant across a stream (the fast path samples
-        // once too); sample once here rather than per token.
+        // OpenAI requires a constant `created` value across one stream.
         let created = now_secs();
 
         let mut idx = 0usize;
@@ -2502,20 +2346,11 @@ fn chat_stream(
             yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
         }
 
-        // A pending tool call takes the terminal `finish_reason` on its own final
-        // frame, so no content token carries it (real APIs finish once).
+        // A tool-call turn carries its finish reason on the final call delta.
         let has_tool_call = ctx.tool_call.is_some();
         let num = ctx.tokenized.tokens.len();
-        // Pre-serialize the constant per-request frame envelope once. Every
-        // middle token's chunk is byte-for-byte `<prefix>"<escaped token>"<suffix>`
-        // — only the token string varies — so we serialize just that string and
-        // splice, instead of re-serializing the whole `ChatStreamChunk` struct
-        // once per token (the profiled hot path: e.g. 254 serializes/request ×
-        // millions of requests). Each token is still emitted as its own SSE
-        // frame (one `yield` = one packet on the wire); this only removes the
-        // redundant per-token struct traversal, byte-identical to `sse_chunk_ser`.
-        // The first frame carries `role` and the last carries `finish_reason`, so
-        // those two boundary frames fall back to the full serializer.
+        // Middle-token frames share a byte-identical envelope. Boundary frames
+        // use full serialization because they carry role or finish metadata.
         let mid_prefix: Vec<u8> = {
             let mut p = Vec::with_capacity(96);
             p.extend_from_slice(b"data: {\"id\":");
@@ -2543,8 +2378,6 @@ fn chat_stream(
             let role = if i == 0 && !has_reasoning { Some("assistant") } else { None };
             let finish = if i + 1 == num && !has_tool_call { Some(ctx.tokenized.finish_reason) } else { None };
             if role.is_none() && finish.is_none() {
-                // Common middle token: splice the pre-serialized envelope with the
-                // token's own escaped JSON string. Still one frame per token.
                 let mut out = Vec::with_capacity(mid_prefix.len() + token.len() + 8);
                 out.extend_from_slice(&mid_prefix);
                 serde_json::to_writer(&mut out, token.as_str()).expect("serialize token");
@@ -2591,10 +2424,8 @@ fn chat_stream(
         }
 
         if ctx.null_object_chunk {
-            // github #1010: a terminal chunk with `object: null` arriving before
-            // `[DONE]`. A robust parser treats it as an end-of-stream marker; a
-            // brittle one raises `Unsupported OpenAI object type: None`. Emitted
-            // as a standalone frame so the run's parser is genuinely exercised.
+            // github #1010 requires `object: null` in a standalone frame before
+            // `[DONE]`.
             yield Ok::<Bytes, Infallible>(Bytes::from_static(
                 b"data: {\"id\":\"adversarial-null\",\"object\":null,\"created\":0,\"choices\":[]}\n\n",
             ));
@@ -2769,8 +2600,7 @@ fn text_stream(
         }
 
         let num = ctx.tokenized.tokens.len();
-        // OpenAI holds `created` constant across a stream (the fast path samples
-        // once too); sample once here rather than per token.
+        // OpenAI requires a constant `created` value across one stream.
         let created = now_secs();
         let mut first_emit: Option<Instant> = None;
         let mut last_emit: Option<Instant> = None;
@@ -2932,10 +2762,6 @@ fn image_stream(
     }
 }
 
-// ============================================================================
-// Metrics endpoints
-// ============================================================================
-
 fn prom_response(body: Vec<u8>) -> Response {
     Response::builder()
         .status(StatusCode::OK)
@@ -2945,7 +2771,6 @@ fn prom_response(body: Vec<u8>) -> Response {
 }
 
 pub async fn aiperf_mock_metrics(State(state): State<Arc<AppState>>) -> Response {
-    // Update uptime on each scrape.
     state
         .recorder
         .metrics
@@ -2953,9 +2778,8 @@ pub async fn aiperf_mock_metrics(State(state): State<Arc<AppState>>) -> Response
         .SERVER_UPTIME_SECONDS
         .set(state.uptime_secs());
     let mut body = crate::prom::encode(&state.recorder.metrics.aiperf.registry);
-    // Append the live accuracy tally (computed from atomics at scrape time) when
-    // the accuracy dataset mode is active. These names are not in the registry,
-    // so appending them to the exposition text is valid.
+    // Accuracy metrics are not registered collectors, so append them to the
+    // Prometheus exposition after encoding the registry.
     if state.accuracy.is_some() {
         crate::prom::append_accuracy_metrics(&mut body, &state.accuracy_live.snapshot());
     }
@@ -3024,10 +2848,6 @@ pub async fn dynamo_decode_metrics(State(state): State<Arc<AppState>>) -> Respon
     ))
 }
 
-// ============================================================================
-// DCGM
-// ============================================================================
-
 fn dcgm_response(state: &AppState, idx: usize) -> Result<Response, AppError> {
     let faker = state.dcgm.get(idx).ok_or(AppError {
         status: StatusCode::NOT_FOUND,
@@ -3050,11 +2870,7 @@ pub async fn dcgm_metrics_2(State(state): State<Arc<AppState>>) -> AppResult<Res
     dcgm_response(&state, 1)
 }
 
-/// Mock `/v1/images/edits` — drain multipart body, return a synthetic JPEG.
-///
-/// Accepts multipart/form-data with optional `image` file and `prompt` text
-/// fields (same surface as the Python mock). Mirrors `image_generation` in
-/// response shape so the Rust runner receives a valid response.
+/// Accepts OpenAI-compatible multipart image edits and returns synthetic JPEGs.
 pub async fn image_edit(
     State(state): State<Arc<AppState>>,
     mut multipart: axum::extract::Multipart,
@@ -3069,7 +2885,6 @@ pub async fn image_edit(
     let mut model = String::from("mock-model");
     let mut n: u32 = 1;
 
-    // Drain all multipart fields; capture the ones we care about.
     while let Ok(Some(field)) = multipart.next_field().await {
         match field.name() {
             Some("prompt") => {
@@ -3088,7 +2903,7 @@ pub async fn image_edit(
                 }
             }
             _ => {
-                // Drain unknown / binary fields (e.g. image upload).
+                // Multipart fields must be consumed before advancing.
                 let _ = field.bytes().await;
             }
         }
@@ -3145,7 +2960,6 @@ pub async fn image_edit(
 mod stream_frame_tests {
     use super::*;
 
-    // The full-serialize form the streaming loop falls back to for boundary frames.
     fn full_serde(id: &str, model: &str, created: i64, token: &str) -> Vec<u8> {
         let chunk = ChatStreamChunk {
             id,
@@ -3166,7 +2980,6 @@ mod stream_frame_tests {
         sse_chunk_ser(&chunk).to_vec()
     }
 
-    // The pre-serialized-envelope splice used for middle tokens.
     fn templated(id: &str, model: &str, created: i64, token: &str) -> Vec<u8> {
         let mut p = Vec::new();
         p.extend_from_slice(b"data: {\"id\":");
@@ -3223,7 +3036,6 @@ mod stream_frame_tests {
 
     #[test]
     fn tool_call_arguments_split_reconstructs_and_respects_char_boundaries() {
-        // ASCII arguments split into two non-empty contiguous halves.
         let spec = ToolCallSpec {
             id: "call_x".into(),
             name: "get_weather".into(),
@@ -3233,7 +3045,6 @@ mod stream_frame_tests {
         assert!(!head.is_empty() && !tail.is_empty());
         assert_eq!(format!("{head}{tail}"), spec.arguments);
 
-        // Multibyte arguments never split mid-codepoint.
         let spec = ToolCallSpec {
             id: "call_y".into(),
             name: "f".into(),
@@ -3380,7 +3191,6 @@ mod kserve_http_tests {
         assert!(!output.is_empty());
     }
 
-    /// Collect an axum `Response` body and parse it as JSON.
     async fn response_json(resp: Response) -> Value {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await

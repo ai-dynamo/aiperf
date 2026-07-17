@@ -1,37 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Fine-grained connection/request trace timing. Behavioral port of
-//! `AioHttpTraceData` — all timestamps are `Clock::now_ns()` clock-nanoseconds.
+//! Fine-grained connection and request trace timing.
 //!
-//! Per-chunk vectors are opt-in at collection time.
+//! All timestamps use `Clock::now_ns()`. Per-chunk vectors are opt-in.
 
 /// Per-request trace timing. All `_ns` fields are clock-nanoseconds.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TraceData {
-    // Connection pool
     pub connection_pool_wait_start_ns: Option<i64>,
     pub connection_pool_wait_end_ns: Option<i64>,
-    // TCP connect (pure socket connect)
     pub tcp_connect_start_ns: Option<i64>,
     pub tcp_connect_end_ns: Option<i64>,
-    // TLS handshake (None for cleartext)
     pub tls_connect_start_ns: Option<i64>,
     pub tls_connect_end_ns: Option<i64>,
     pub connection_reused_ns: Option<i64>,
-    // DNS
     pub dns_cache_hit_ns: Option<i64>,
     pub dns_cache_miss_ns: Option<i64>,
     pub dns_lookup_start_ns: Option<i64>,
     pub dns_lookup_end_ns: Option<i64>,
-    // Request send
     pub request_send_start_ns: Option<i64>,
     pub request_headers_sent_ns: Option<i64>,
     pub request_send_end_ns: Option<i64>,
     pub request_chunks_count: u32,
     pub request_bytes_total: u64,
     pub request_chunks: Vec<(i64, u64)>,
-    // Response receive
     pub response_status_code: Option<u16>,
     pub response_reason: Option<String>,
     pub response_receive_start_ns: Option<i64>,
@@ -40,9 +33,7 @@ pub struct TraceData {
     pub response_bytes_total: u64,
     pub response_chunks: Vec<(i64, u64)>,
     pub response_receive_end_ns: Option<i64>,
-    // Error
     pub error_timestamp_ns: Option<i64>,
-    // Socket info
     pub local_ip: Option<String>,
     pub local_port: Option<u16>,
     pub remote_ip: Option<String>,
@@ -212,10 +203,10 @@ mod tests {
     #[test]
     fn durations_match_k6_har_math() {
         let t = td();
-        assert_eq!(t.sending(), Some(200)); // send_end - send_start
-        assert_eq!(t.waiting(), Some(300)); // recv_start - send_end
-        assert_eq!(t.receiving(), Some(500)); // recv_end - recv_start (count>1)
-        assert_eq!(t.duration(), Some(1_000)); // recv_end - send_start
+        assert_eq!(t.sending(), Some(200));
+        assert_eq!(t.waiting(), Some(300));
+        assert_eq!(t.receiving(), Some(500));
+        assert_eq!(t.duration(), Some(1_000));
         assert_eq!(t.blocked(), Some(50));
         assert_eq!(t.dns_lookup(), Some(60));
         assert_eq!(t.connecting(), Some(200));
@@ -238,13 +229,12 @@ mod tests {
     #[test]
     fn export_converts_perf_to_wall() {
         let t = td();
-        // reference: clock 1_000 == wall 10_000
         let exp = t.to_export(TraceReference {
             clock_ns: 1_000,
             wall_ns: 10_000,
         });
-        assert_eq!(exp.request_send_start_ns, Some(10_000)); // 10_000 + (1_000-1_000)
-        assert_eq!(exp.response_receive_end_ns, Some(11_000)); // 10_000 + (2_000-1_000)
+        assert_eq!(exp.request_send_start_ns, Some(10_000));
+        assert_eq!(exp.response_receive_end_ns, Some(11_000));
         assert_eq!(exp.duration_ns, Some(1_000));
         assert_eq!(exp.dns_cache_miss_ns, Some(9_190));
         assert_eq!(exp.request_chunks, vec![(10_200, 12)]);

@@ -83,9 +83,9 @@ pub enum TiktokenEncoding {
     Cl100kBase,
     /// Codex/text-davinci encoding.
     P50kBase,
-    /// Legacy edit-model encoding.
+    /// Edit-model encoding.
     P50kEdit,
-    /// GPT-2 / legacy GPT-3 encoding.
+    /// GPT-2 / GPT-3 encoding.
     R50kBase,
 }
 
@@ -368,7 +368,7 @@ fn special_token_id(
 ///
 /// Shared by the raw-token composition/generation tests (in `dataset::prompt`
 /// and `dataset::loader::synthetic`) that must never fall back through a decode
-/// path — both wanted the identical fixture, so it lives here once.
+/// path.
 #[cfg(test)]
 pub(crate) struct NoDecodeTokenizer;
 

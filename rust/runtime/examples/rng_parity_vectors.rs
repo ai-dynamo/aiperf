@@ -11,8 +11,8 @@
 //!
 //! Regenerate the committed golden with:
 //! ```bash
-//! cargo run -p aiperf --example rng_parity_vectors \
-//!   > rust/aiperf/tests/data/rng_parity_vectors.json
+//! cargo run -p aiperf-runtime --example rng_parity_vectors \
+//!   > rust/runtime/tests/data/rng_parity_vectors.json
 //! ```
 
 use aiperf_runtime::rng::{HashIdRandomGenerator, RandomGenerator, RngRoot, namespace};

@@ -1,27 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Crate-level TLS proofs for the mock server's HTTPS and `grpcs` listeners.
+//! TLS wire tests for HTTPS streaming and gRPC h2 ALPN negotiation.
 //!
-//! These exercise the exact server-side code `--tls-cert`/`--tls-key`/
-//! `--tls-self-signed` stand up ([`aiperf_mock_server::tls`] +
-//! [`aiperf_mock_server::grpc::serve_grpc_with_tls`]) with real TLS clients:
-//!
-//!   * `https_serves_streamed_chat_over_tls` — a native-TLS reqwest client with
-//!     verification disabled (`danger_accept_invalid_certs`, the client-side
-//!     analogue of the runner's `ssl_verify=false`) POSTs a streaming chat
-//!     completion over HTTPS and reads back SSE content. This proves the HTTPS
-//!     path the `aiperf profile` e2e (`rust/e2e/tests/test_tls.rs`) also drives.
-//!
-//!   * `grpcs_listener_negotiates_h2_alpn` — a raw rustls client with a
-//!     no-verify verifier completes the TLS handshake against the `grpcs`
-//!     listener and asserts the negotiated ALPN is `h2`. This is the ONLY TLS
-//!     coverage the `grpcs` listener can get from a fresh self-signed cert: the
-//!     runner's tonic `grpcs` client verifies against the system trust roots
-//!     with no accept-invalid toggle
-//!     (`rust/aiperf/src/transport::grpc/transport.rs:783-793`), so a self-signed
-//!     mock is unreachable through `aiperf profile` `grpcs://` by design — hence
-//!     this direct-handshake proof of the listener's TLS termination + h2 ALPN.
+//! The gRPC client verifies system roots without an accept-invalid option, so
+//! self-signed listener coverage uses a direct rustls handshake.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -31,8 +14,6 @@ use aiperf_mock_server::grpc::serve_grpc_with_tls;
 use aiperf_mock_server::{AppState, build_router, tls};
 use tokio::net::{TcpListener, TcpStream};
 
-/// A fast, tokenizer-free config for TLS coverage — latency and tokenizer are
-/// irrelevant to the handshake/transport assertions here.
 fn fast_state() -> Arc<AppState> {
     let cfg = MockServerConfig {
         fast: true,
@@ -43,7 +24,6 @@ fn fast_state() -> Arc<AppState> {
     AppState::build(cfg)
 }
 
-/// Bind an ephemeral loopback port and return the listener + its address.
 async fn bind_ephemeral() -> (TcpListener, SocketAddr) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -52,8 +32,7 @@ async fn bind_ephemeral() -> (TcpListener, SocketAddr) {
     (listener, addr)
 }
 
-/// A native-TLS reqwest client (HTTP/1+2) that accepts any certificate — the
-/// client analogue of the runner's `ssl_verify=false`.
+/// Accept invalid certificates only for the self-signed test listener.
 fn insecure_https_client() -> reqwest::Client {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
@@ -61,8 +40,6 @@ fn insecure_https_client() -> reqwest::Client {
         .expect("build insecure https client")
 }
 
-/// HTTPS: a streaming chat completion over the self-signed TLS frontend returns
-/// 200 and streamed SSE content.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn https_serves_streamed_chat_over_tls() {
     let (listener, addr) = bind_ephemeral().await;
@@ -100,8 +77,6 @@ async fn https_serves_streamed_chat_over_tls() {
     );
 }
 
-/// HTTPS: a non-streaming health check confirms the plain GET path is also
-/// served over TLS (not just the streaming POST).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn https_serves_health_over_tls() {
     let (listener, addr) = bind_ephemeral().await;
@@ -117,21 +92,16 @@ async fn https_serves_health_over_tls() {
     assert_eq!(resp.status().as_u16(), 200, "HTTPS /health must be 200");
 }
 
-/// `grpcs`: the TLS-wrapped gRPC listener completes a handshake and negotiates
-/// the `h2` ALPN protocol tonic clients require. See the module docs for why
-/// this is a raw-handshake proof rather than an `aiperf profile` run.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn grpcs_listener_negotiates_h2_alpn() {
     let (listener, addr) = bind_ephemeral().await;
-    // `serve_grpc_with_tls` binds its own listener from the addr; drop ours so
-    // the port is free for it to re-bind (SO_REUSEADDR/REUSEPORT).
+    // `serve_grpc_with_tls` binds its own listener.
     drop(listener);
     let acceptor = tls::self_signed_acceptor().expect("self-signed acceptor");
     tokio::spawn(async move {
         let _ = serve_grpc_with_tls(addr, fast_state(), Some(acceptor)).await;
     });
 
-    // Wait for the grpcs listener to accept.
     for _ in 0..50 {
         if TcpStream::connect(addr).await.is_ok() {
             break;
@@ -147,8 +117,6 @@ async fn grpcs_listener_negotiates_h2_alpn() {
     );
 }
 
-/// Complete a rustls client handshake (verification disabled, requesting ALPN
-/// `h2` then `http/1.1`) against `addr` and return the negotiated ALPN protocol.
 async fn tls_handshake_alpn(addr: SocketAddr) -> Option<Vec<u8>> {
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let mut config = rustls::ClientConfig::builder_with_provider(provider.clone())
@@ -174,9 +142,7 @@ async fn tls_handshake_alpn(addr: SocketAddr) -> Option<Vec<u8>> {
     conn.alpn_protocol().map(|p| p.to_vec())
 }
 
-/// A `ServerCertVerifier` that accepts any certificate, mirroring the runner's
-/// `ssl_verify=false` (`aiperf_runtime::transport::http::client::connection`) — used only
-/// to reach the ALPN result of the handshake against a self-signed listener.
+/// Certificate verification bypass scoped to self-signed listener tests.
 #[derive(Debug)]
 struct NoVerify {
     provider: Arc<rustls::crypto::CryptoProvider>,

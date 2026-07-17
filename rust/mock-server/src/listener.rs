@@ -3,10 +3,7 @@
 
 //! Shared TCP listener construction.
 //!
-//! Both the single-process server (`main::serve`) and the multi-process
-//! round-robin balancer (`balancer`) need a listener tuned identically —
-//! `SO_REUSEADDR` + `SO_REUSEPORT` and a deep accept backlog — so the socket
-//! setup lives here rather than being duplicated at each bind site.
+//! HTTP, gRPC, and the process balancer share socket tuning here.
 
 use std::net::SocketAddr;
 
@@ -17,12 +14,8 @@ use socket2::{Domain, Protocol, Socket, Type};
 /// Linux).
 pub const LISTEN_BACKLOG: i32 = 16_384;
 
-/// Build a non-blocking, `SO_REUSEADDR`/`SO_REUSEPORT` TCP listener bound to
-/// `addr` with a deep backlog, returned as a tokio `TcpListener`.
-///
-/// `SO_REUSEPORT` (Linux) lets several independent processes bind the *same*
-/// port — the balancer relies on it only as a defensive fallback; its backends
-/// each own a distinct loopback port and it round-robins across them itself.
+/// Build a non-blocking TCP listener with `SO_REUSEADDR`, a deep backlog, and
+/// best-effort `SO_REUSEPORT` on Linux.
 pub fn build_listener(addr: SocketAddr) -> anyhow::Result<tokio::net::TcpListener> {
     let domain = if addr.is_ipv4() {
         Domain::IPV4
@@ -32,8 +25,7 @@ pub fn build_listener(addr: SocketAddr) -> anyhow::Result<tokio::net::TcpListene
     let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
     socket.set_nonblocking(true)?;
     socket.set_reuse_address(true)?;
-    // SO_REUSEPORT on Linux lets multiple sockets bind the same port so the
-    // kernel load-balances accepts across them. Safe fallback if unsupported.
+    // Linux can distribute accepts among sockets bound to the same port.
     #[cfg(target_os = "linux")]
     let _ = socket.set_reuse_port(true);
     socket.bind(&addr.into())?;
@@ -43,10 +35,9 @@ pub fn build_listener(addr: SocketAddr) -> anyhow::Result<tokio::net::TcpListene
     Ok(listener)
 }
 
-/// Bind a `UnixListener` at `path`, first unlinking any stale socket file left
-/// by a previous (crashed or un-cleaned) run so the `bind(2)` does not fail with
-/// `EADDRINUSE`. Only a pre-existing *socket* is removed; a non-socket file at
-/// the path is left in place so the bind fails loudly rather than clobbering an
+/// Bind a `UnixListener` at `path`, first unlinking a stale socket file so
+/// `bind(2)` does not fail with `EADDRINUSE`. Only an existing *socket* is removed;
+/// a non-socket file is left in place so the bind fails rather than clobbering an
 /// unrelated file. The runner's UDS transport speaks HTTP/1.1 over this socket
 /// (`transport::http/client/connection.rs` -> `UnixStream::connect` + h1
 /// handshake), so callers serve the axum router over it with an HTTP/1-capable
@@ -62,7 +53,6 @@ pub fn bind_unix_listener(path: &str) -> anyhow::Result<tokio::net::UnixListener
         Ok(_) => {
             anyhow::bail!("--uds path {path} exists and is not a socket; refusing to remove it");
         }
-        // Nothing at the path (the common case) — nothing to unlink.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.into()),
     }
@@ -73,10 +63,7 @@ pub fn bind_unix_listener(path: &str) -> anyhow::Result<tokio::net::UnixListener
 /// Bind a Unix-domain socket at `path` and serve `router` over it as HTTP/1.1
 /// until the process exits (the accept loop never returns `Ok`).
 ///
-/// This is the shipped UDS serve path — the single-process binary spawns it as
-/// a background task alongside the TCP frontend, and the e2e suite drives it
-/// directly. One tokio task per accepted connection runs hyper's HTTP/1
-/// handshake: the runner's UDS transport
+/// One task per accepted connection runs hyper's HTTP/1 handshake. The UDS transport
 /// (`transport::http/client/connection.rs`) negotiates HTTP/1.1 only, so no h2
 /// upgrade is offered. There is no `TCP_NODELAY` / `SO_REUSEPORT` tuning — those
 /// are TCP socket options with no Unix-domain analogue.
@@ -88,8 +75,6 @@ pub async fn serve_router_uds(router: axum::Router, path: &str) -> anyhow::Resul
     let listener = bind_unix_listener(path)?;
     tracing::info!(uds_path = %path, "Listening (Unix domain socket, HTTP/1.1)");
 
-    // `into_make_service` (no connect-info) accepts any target, so the unnamed
-    // UDS peer address is passed through unchanged.
     let make_service = router.into_make_service();
     loop {
         let (stream, _peer) = match listener.accept().await {
@@ -132,9 +117,6 @@ mod tests {
 
     use super::*;
 
-    /// A collision-free temp path under the system temp dir (no `tempfile`
-    /// dependency in this crate). The caller removes it; parent dir is the OS
-    /// temp dir, which always exists.
     fn temp_socket_path(tag: &str) -> PathBuf {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -148,27 +130,21 @@ mod tests {
         ))
     }
 
-    /// A stale socket file at the path is unlinked so a fresh bind succeeds.
     #[tokio::test]
     async fn bind_unix_listener_unlinks_stale_socket() {
         let path = temp_socket_path("stale");
         let path_str = path.to_str().unwrap().to_owned();
 
-        // First bind creates the socket file.
         let first = bind_unix_listener(&path_str).expect("first bind");
         assert!(path.exists(), "socket file should exist after bind");
         drop(first);
-        // Dropping the tokio listener does not remove the socket file on disk,
-        // so it is genuinely stale for the second bind.
         assert!(path.exists(), "stale socket file remains after drop");
 
-        // Second bind must succeed by unlinking the stale socket first.
         let second = bind_unix_listener(&path_str).expect("second bind unlinks stale socket");
         drop(second);
         let _ = std::fs::remove_file(&path);
     }
 
-    /// A non-socket file at the path is refused rather than clobbered.
     #[tokio::test]
     async fn bind_unix_listener_refuses_non_socket() {
         let path = temp_socket_path("regular");
@@ -180,7 +156,6 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// End-to-end: the shipped serve loop answers an HTTP/1.1 request over UDS.
     #[tokio::test]
     async fn serve_router_uds_answers_over_unix_socket() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -202,7 +177,6 @@ mod tests {
             let _ = serve_router_uds(router, &serve_path).await;
         });
 
-        // Wait for the socket to appear.
         for _ in 0..50 {
             if path.exists() {
                 break;

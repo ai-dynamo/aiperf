@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Real-HTTP proofs for ancillary cancellation and multi-endpoint policy.
+//! Real-HTTP tests for ancillary cancellation and multi-endpoint policy.
 
 use std::rc::Rc;
 use std::sync::Arc;

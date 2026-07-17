@@ -1,28 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Native `aiperf chat` — pure-Rust port of `aiperf.cli_commands.chat` +
-//! `_chat_stats`. No Python: an interactive (or `--quick` single-shot)
-//! OpenAI-compatible chat client that streams the reply live and prints the same
-//! per-turn stats block (TTFT / TPS / ITL / cache) after each turn.
+//! OpenAI-compatible interactive and single-shot chat client.
 //!
-//! Reuses runner infrastructure rather than re-implementing it: the tiktoken/HF
-//! tokenizer (`aiperf_runtime::dataset::tokenizer`) for client-side token counts, the
-//! canonical SSE reader (`aiperf_runtime::transport::http::sse::read_sse`, the behavioral
-//! port of the same `AsyncSSEStreamReader` Python's `chat` uses — it owns the
-//! multibyte-across-TCP-chunk + JSON-continuation edge cases), and a single
-//! **injected `Clock`** for all timing (the runner's `RealClock`, substitutable
-//! by a `SimClock`) — never `Instant::now`/`SystemTime::now`. Only the
-//! connection itself is a lightweight direct hyper client (the full
-//! `transport::http` client is a Clock-injected, connection-pooled, cancellation-
-//! aware *measured-dispatch* engine — overkill for a sequential REPL); no
-//! reqwest, so loopback is never proxied.
-//!
-//! Per-turn metric formulas mirror the aiperf metric classes exactly (`TTFT =
-//! first content ts − start`, `RequestLatency = last content ts − start`, `ITL =
-//! (latency − ttft)/(osl−1)`); the wall-clock ms are non-deterministic but
-//! OSL/ISL/cache and the line format are byte-exact vs Python. Supports
-//! `http://` and `https://` (TLS via tokio-rustls + webpki roots, the same
-//! crypto stack the runner's transport / exporters use).
+//! Token counting uses the runtime tokenizer and streaming uses the shared SSE
+//! reader so split UTF-8 and continued JSON frames follow the runtime contract.
+//! All measurements use one injected [`aiperf_runtime::clock::Clock`].
 
 use std::io::Write as _;
 use std::sync::Arc;
@@ -36,16 +18,12 @@ use serde_json::{Value, json};
 const NANOS_PER_MILLIS: f64 = 1_000_000.0;
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
-/// One arrived content/reasoning chunk with its perf timestamp (`ParsedResponse`).
 struct Chunk {
     perf_ns: u128,
     content: String,
     reasoning: String,
 }
 
-/// Resolve a base URL to a chat-completions endpoint (`_chat_completions_url` +
-/// `normalize_http_url`): prepend `http://` when scheme-less, strip a trailing
-/// slash, then append `/v1/chat/completions` unless already a chat/`/v1` path.
 fn chat_completions_url(url: &str) -> String {
     let with_scheme = if url.contains("://") {
         url.to_string()
@@ -62,7 +40,6 @@ fn chat_completions_url(url: &str) -> String {
     }
 }
 
-/// A loaded tokenizer for client-side counts.
 enum ChatTokenizer {
     Builtin(aiperf_runtime::dataset::tokenizer::TiktokenTokenizer),
     Hf(aiperf_runtime::dataset::tokenizer::HuggingFaceTokenizer),
@@ -82,14 +59,11 @@ impl ChatTokenizer {
     }
 }
 
-/// Load the tokenizer (`builtin` → tiktoken o200k; else an HF repo/dir, matching
-/// `Tokenizer.from_pretrained(tokenizer or model)`).
 async fn load_tokenizer(name: &str) -> anyhow::Result<ChatTokenizer> {
     use aiperf_runtime::dataset::tokenizer::{HuggingFaceTokenizer, TiktokenTokenizer};
     if name == "builtin" || name == "o200k_base" {
         return Ok(ChatTokenizer::Builtin(TiktokenTokenizer::builtin()));
     }
-    // A local path is loaded directly; a bare repo id is downloaded then loaded.
     let path = std::path::Path::new(name);
     if path.is_dir() {
         return Ok(ChatTokenizer::Hf(HuggingFaceTokenizer::from_directory(
@@ -107,8 +81,6 @@ async fn load_tokenizer(name: &str) -> anyhow::Result<ChatTokenizer> {
     )?))
 }
 
-/// Extract a usage integer from the first matching alias key (top-level or under
-/// a `*_details` sub-object), mirroring the `Usage` model's alias set.
 fn usage_int(usage: &Value, top: &[&str], nested: &[(&str, &str)]) -> Option<i64> {
     for k in top {
         if let Some(v) = usage.get(k).and_then(Value::as_i64) {
@@ -151,7 +123,6 @@ fn cache_read_tokens(usage: &Value) -> Option<i64> {
     )
 }
 
-/// Render the per-turn stats block (`format_stats`).
 fn format_stats(
     ttft_ns: Option<u128>,
     latency_ns: Option<u128>,
@@ -202,8 +173,6 @@ fn format_stats(
     lines.join("\n")
 }
 
-/// Build a tokio-rustls TLS connector with webpki roots (mirrors
-/// `aiperf_runtime::export::otel` / `transport::http`).
 fn tls_connector() -> anyhow::Result<tokio_rustls::TlsConnector> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -213,7 +182,6 @@ fn tls_connector() -> anyhow::Result<tokio_rustls::TlsConnector> {
     Ok(tokio_rustls::TlsConnector::from(Arc::new(config)))
 }
 
-/// Split a streaming `delta` into `(content, reasoning)` (`split_delta`).
 fn split_delta(delta: &Value) -> (String, String) {
     let content = delta
         .get("content")
@@ -229,9 +197,6 @@ fn split_delta(delta: &Value) -> (String, String) {
     (content, reasoning)
 }
 
-/// Stream one chat completion: POST, read SSE, print live, return
-/// `(chunks, last_usage)`. Supports `http://` and `https://` (TLS via
-/// tokio-rustls + webpki roots, mirroring the runner's transport).
 async fn stream_turn(
     url: &str,
     headers: &[(String, String)],
@@ -248,18 +213,13 @@ async fn stream_turn(
     let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
     let authority = format!("{host}:{port}");
 
-    // All timing flows through the INJECTED clock (never `Instant::now` /
-    // `SystemTime::now`): `start_ns` is captured before the connect (matching
-    // Python, whose `start_ns` precedes `session.post` opening the connection),
-    // and SSE arrival timestamps come from the same clock via `read_sse`.
+    // Include connection setup in TTFT and timestamp SSE arrivals on this clock.
     let start_ns = clock.now_ns();
 
     let tcp = tokio::net::TcpStream::connect((host.as_str(), port))
         .await
         .with_context(|| format!("connect {authority}"))?;
 
-    // http1 SendRequest is the same type regardless of the underlying IO, so the
-    // request-send + SSE-read path is shared across the http / TLS branches.
     let mut sender = if https {
         let connector = tls_connector()?;
         let dnsname = rustls::pki_types::ServerName::try_from(host.clone())
@@ -313,10 +273,6 @@ async fn stream_turn(
         );
     }
 
-    // Reuse the runner's canonical SSE reader (`read_sse`, the behavioral port of
-    // Python's `AsyncSSEStreamReader` that `chat` uses) rather than re-parsing SSE
-    // by hand — it owns the multibyte-across-TCP-chunk + JSON-continuation edge
-    // cases and timestamps each message off the injected clock.
     let body_stream = http_body_util::BodyStream::new(resp.into_body())
         .filter_map(|frame| async move {
             match frame {
@@ -373,7 +329,6 @@ async fn stream_turn(
     Ok((chunks, last_usage))
 }
 
-/// Run one turn: stream, print live + stats, return the assistant text.
 async fn run_turn(
     url: &str,
     headers: &[(String, String)],
@@ -456,8 +411,6 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         .context("tokio runtime")?;
 
     rt.block_on(async move {
-        // One injected clock for the whole session (the runner's RealClock; a
-        // SimClock can be substituted). All chat timing flows through it.
         let clock: std::rc::Rc<dyn aiperf_runtime::clock::Clock> =
             aiperf_runtime::clock::RealClock::new();
         let tok = load_tokenizer(tokenizer.as_deref().unwrap_or(&model)).await?;
@@ -498,7 +451,6 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     })
 }
 
-/// Assemble one turn's messages: system, history, then the new user message.
 fn build_messages(system: &[Value], history: &[Value], user: &str) -> Value {
     let mut msgs: Vec<Value> = system.to_vec();
     msgs.extend(history.iter().cloned());
@@ -511,7 +463,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn url_resolution_matches_python() {
+    fn resolves_chat_completion_urls() {
         assert_eq!(
             chat_completions_url("localhost:8000"),
             "http://localhost:8000/v1/chat/completions"
@@ -531,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn stats_block_format_matches_python() {
+    fn formats_stats_block() {
         // TTFT 21.00 ms, latency 31.00 ms, osl 2 → ITL = (31−21)/1 = 10.00 ms.
         let s = format_stats(
             Some(21_000_000),
@@ -552,7 +504,6 @@ mod tests {
 
     #[test]
     fn stats_block_omits_itl_and_cache_when_absent() {
-        // Single token → no ITL; no usage → no Cache line.
         let s = format_stats(
             Some(20_000_000),
             Some(20_000_000),
@@ -580,7 +531,6 @@ mod tests {
         let u = json!({"prompt_tokens": 42, "prompt_tokens_details": {"cached_tokens": 7}});
         assert_eq!(prompt_tokens(&u), Some(42));
         assert_eq!(cache_read_tokens(&u), Some(7));
-        // Anthropic-style aliases.
         let a = json!({"input_tokens": 10, "cache_read_input_tokens": 4});
         assert_eq!(prompt_tokens(&a), Some(10));
         assert_eq!(cache_read_tokens(&a), Some(4));

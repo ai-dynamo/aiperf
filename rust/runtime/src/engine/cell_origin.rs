@@ -2,34 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Barrier-synchronized cross-cell timing origin.
 //!
-//! In cellular mode every cell independently captures its run origin
-//! (`start_ns = clock.now_ns()`) inside [`execute`](super::execute) — but that
-//! reading happens AFTER the velo START barrier releases AND after each cell's
-//! own dataset download + run setup. Cells with a larger shard (slower download)
-//! or slower setup therefore zero their record timeline at a LATER instant than
-//! their peers, so cross-cell timing (per-request timestamps, benchmark
-//! duration, the realtime block's elapsed) references a different `t0` per cell.
-//!
-//! This module makes the origin shareable via the barrier itself (opt-in behind
-//! [`CELL_SHARED_ORIGIN_ENV`]): the moment the cell's velo START barrier releases
-//! (inside [`fetch_cell_envelope`](super::cellular_cell::fetch_cell_envelope)) it
-//! captures a [`RealClockAnchor`] — the shared logical instant every cell reaches
-//! together. Later, [`run_origin_now_ns`] returns the barrier's reading on the
-//! execute clock's own timeline instead of the post-setup `now`, so every cell
-//! zeroes its record timeline at the SAME barrier event regardless of per-cell
-//! setup time.
-//!
-//! **Cross-host semantics (deliberate).** Cells may run on different hosts with
-//! unsynchronized wall clocks, so this does NOT adopt an absolute controller `t0`
-//! (which would import clock skew). Each cell zeroes at its OWN clock reading of
-//! the barrier-release instant; the barrier guarantees those instants coincide
-//! within network latency, so "elapsed since START" stays coherent across hosts
-//! without any clock-sync assumption. See the design decision recorded in
+//! Each host uses its own clock reading at barrier release, avoiding dependence on
+//! synchronized wall clocks while aligning elapsed time within network latency. See
 //! `specs/2026-07-15-ultimate-cellular-velo-runtime-design.md` §4.
-//!
-//! Default off: a single-process run never calls
-//! [`capture_cell_shared_origin`], so [`run_origin_now_ns`] returns
-//! `clock.now_ns()` unchanged and the byte-parity / timing tests are untouched.
 
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -66,7 +41,7 @@ fn shared_origin_enabled() -> bool {
 /// no-op unless [`CELL_SHARED_ORIGIN_ENV`] is truthy.
 pub fn capture_cell_shared_origin() {
     let anchor = shared_origin_enabled().then(RealClockAnchor::now);
-    // First set wins; a redundant call (e.g. a retry) keeps the earliest instant.
+    // First set wins so repeated capture cannot move the origin.
     let _ = CELL_SHARED_ORIGIN.set(anchor);
 }
 
@@ -84,8 +59,7 @@ pub fn capture_cell_shared_origin() {
 pub fn run_origin_now_ns(clock: &Rc<dyn Clock>) -> i64 {
     let now = clock.now_ns();
     match CELL_SHARED_ORIGIN.get().copied().flatten() {
-        // Read the barrier elapsed right after `now`; the sub-microsecond skew
-        // between the two reads is immaterial to a run-length timeline.
+        // The adjacent reads bound skew to the local call interval.
         Some(barrier) => shifted_origin(now, barrier.now_ns()),
         None => now,
     }

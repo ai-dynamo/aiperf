@@ -3,7 +3,8 @@
 
 //! LevelDB-style block framing for the W&B `.wandb` transaction log.
 //!
-//! Byte-exact port of `wandb/sdk/internal/datastore.py` (wandb 0.28.0):
+//! Byte-exact framing contract from `wandb/sdk/internal/datastore.py`
+//! (W&B 0.28.0):
 //!
 //! - Header: `":W&B"` (4 bytes) + magic `0xBEE1` (u16 LE) + version `0` (u8).
 //! - Records live in fixed 32768-byte blocks. Each record is a 7-byte header

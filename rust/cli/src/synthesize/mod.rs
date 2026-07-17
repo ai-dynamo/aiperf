@@ -1,16 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Native `aiperf synthesize agentic-code` — pure-Rust port (no pyo3, no
-//! subprocess) of `aiperf.dataset.agentic_code_gen.cli::synthesize` +
-//! `writer::write_dataset` + `_write_jsonl`.
+//! Native `aiperf synthesize agentic-code`.
 //!
-//! Byte-exact vs Python for `dataset.jsonl`: same numpy-seeded sampling stream
-//! (see [`synth`]), same Mooncake row schema/key-order (`writer.py:67-111`), and
-//! the same orjson-compact float formatting (`round(x, 1)` -> shortest repr,
-//! reproduced with Rust's round-half-to-even `{:.1}` formatting). The run-dir
-//! name carries a non-deterministic timestamp, so only the JSONL bytes are the
-//! parity contract. `manifest.json` is emitted for downstream tooling; the
-//! HTML/quality reports (rich/matplotlib-only) are not reproduced.
+//! `dataset.jsonl` preserves seeded draw order, Mooncake field order, compact
+//! separators, and one-decimal float formatting. Run-directory timestamps are
+//! intentionally outside the deterministic contract.
 
 pub mod config;
 pub mod dist;
@@ -110,7 +104,6 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     })
 }
 
-/// Port of `cli.py::synthesize`.
 fn synthesize(opts: Options) -> anyhow::Result<i32> {
     let (mut cfg, config_name) = match &opts.config {
         Some(path) => {
@@ -121,7 +114,6 @@ fn synthesize(opts: Options) -> anyhow::Result<i32> {
         None => (SessionDistributionConfig::default(), "default".to_string()),
     };
 
-    // `_apply_cli_overrides` (`cli.py:126-142`).
     if let Some(isl) = opts.max_isl {
         cfg.max_prompt_tokens = isl;
     }
@@ -171,9 +163,7 @@ fn synthesize(opts: Options) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-/// Mooncake JSONL writer (`writer.py:67-111`). Byte-exact key order and
-/// compact orjson-style separators; turn-0 rows carry `timestamp`/`group_id`
-/// (+`is_restart`), later rows carry `delay`.
+/// Write Mooncake JSONL with contract-defined field order and compact separators.
 fn write_jsonl(
     sessions: &[SynthesizedSession],
     path: &Path,
@@ -231,8 +221,6 @@ fn write_jsonl(
     Ok(())
 }
 
-/// Serialize a JSON string with the minimal escaping orjson uses for these
-/// ASCII session ids (`sess-<hex>` never needs escaping).
 fn push_json_str(buf: &mut String, s: &str) {
     buf.push('"');
     for c in s.chars() {
@@ -245,7 +233,6 @@ fn push_json_str(buf: &mut String, s: &str) {
     buf.push('"');
 }
 
-/// A compact `[a,b,c]` int array with no interior spaces (orjson style).
 fn push_int_array(buf: &mut String, ids: &[i64]) {
     buf.push('[');
     for (i, id) in ids.iter().enumerate() {
@@ -257,15 +244,12 @@ fn push_int_array(buf: &mut String, ids: &[i64]) {
     buf.push(']');
 }
 
-/// `round(x, 1)` then orjson shortest-repr, reproduced as Rust's
-/// round-half-to-even `{:.1}` fixed formatting (agrees for all non-tie values;
-/// ties are effectively unreachable from lognormal products).
+/// Format one decimal using round-half-to-even.
 fn fmt_round1(x: f64) -> String {
     format!("{x:.1}")
 }
 
-/// Emit `manifest.json` (structure mirrors `DatasetManifest.model_dump`; not a
-/// byte-exact parity target — only `dataset.jsonl` is).
+/// Emit `manifest.json`; only `dataset.jsonl` is byte-exact.
 fn write_manifest(
     path: &Path,
     cfg: &SessionDistributionConfig,
@@ -285,7 +269,6 @@ fn write_manifest(
     Ok(())
 }
 
-/// A readable dump of the resolved config for the manifest.
 fn generation_params_json(cfg: &SessionDistributionConfig) -> serde_json::Value {
     let ln = |p: &config::LognormalParams| {
         serde_json::json!({
@@ -330,7 +313,6 @@ fn generation_params_json(cfg: &SessionDistributionConfig) -> serde_json::Value 
     })
 }
 
-/// Run Mooncake validation on the generated JSONL (`cli.py:145-153`).
 fn validate_or_exit(path: &Path) -> anyhow::Result<usize> {
     let (line_count, errors) = crate::validate::validate_mooncake_public(path)?;
     if !errors.is_empty() {
@@ -343,7 +325,6 @@ fn validate_or_exit(path: &Path) -> anyhow::Result<usize> {
     Ok(line_count)
 }
 
-/// `Path(config).stem if is_file else config` (`cli.py:57`).
 fn config_stem(path: &str) -> String {
     let p = Path::new(path);
     if p.is_file() {
@@ -355,7 +336,6 @@ fn config_stem(path: &str) -> String {
     }
 }
 
-/// `math.ceil(a / b)` for positive `b`.
 fn div_ceil(a: i64, b: i64) -> i64 {
     if a <= 0 { 0 } else { (a + b - 1) / b }
 }

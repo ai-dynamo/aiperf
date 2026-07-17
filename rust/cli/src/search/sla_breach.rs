@@ -1,22 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The `sla_breach_knee` post-process handler for the grid recipe.
+//! `sla_breach_knee` handler for the grid recipe.
 //!
-//! Pure-Rust port of `aiperf.search_recipes._sla_breach_knee::SLABreachKnee.process`
-//! (`src/aiperf/search_recipes/_sla_breach_knee.py:103-249`) driven by
-//! `aiperf.orchestrator.aggregation.sweep_sla_filter::read_metric_value`
-//! (`src/aiperf/orchestrator/aggregation/sweep_sla_filter.py:113-155`). Walks the
-//! sweep aggregate's `per_combination_metrics` in swept-value order, evaluates
-//! every SLA filter per row, collapses same-x rows (all-pass-required), and
-//! reports the SLA-feasibility boundary along the swept parameter as
-//! `sla_breach.json`.
+//! Evaluates every SLA filter in swept-value order, collapses equal-axis rows
+//! with all-pass semantics, and writes the boundary to `sla_breach.json`.
 
 use serde_json::{Map, Value};
 
 use crate::search::{SlaFilter, op_str};
 
-/// Read one metric value from a per-combination row's `metrics` block, tolerating
-/// both sweep-aggregate layouts (byte-exact port of `read_metric_value`):
+/// Read one metric value from either sweep-aggregate layout:
 ///
 /// 1. Multi-trial flat key `"<metric_tag>_<stat>"` → read `mean`.
 /// 2. Single-trial tag-only block + direct `stat` field.
@@ -47,8 +40,8 @@ fn num(v: f64) -> Value {
         .unwrap_or(Value::Null)
 }
 
-/// Per-filter breach records for one row, preserving filter order
-/// (`_evaluate_breaches`). A filter breaches when the metric is missing or the
+/// Per-filter breach records for one row, preserving filter order. A filter
+/// breaches when the metric is missing or the
 /// comparison fails; the breach record carries the raw observation (`null` when
 /// missing).
 fn evaluate_breaches(metrics: Option<&Map<String, Value>>, filters: &[SlaFilter]) -> Vec<Value> {
@@ -93,8 +86,7 @@ pub fn process(sweep_json: &Value, swept_param: &str, filters: &[SlaFilter]) -> 
         .and_then(Value::as_array)
         .unwrap_or(&empty);
 
-    // Rows can key the swept parameter by its full dotted path or its leaf name;
-    // accept whichever the first row uses (recipes stamp the leaf display name).
+    // Recipes may stamp either the dotted path or its leaf display name.
     let param_key: &str = rows
         .first()
         .and_then(|r| r.get("parameters"))
@@ -117,8 +109,7 @@ pub fn process(sweep_json: &Value, swept_param: &str, filters: &[SlaFilter]) -> 
         av.partial_cmp(&bv).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    // Collapse same-x rows: all-pass-required (a group is feasible only if EVERY
-    // underlying row passed every filter). First-seen x order preserved.
+    // A repeated axis value is feasible only when every row passes every filter.
     let mut points: Vec<Point> = Vec::new();
     for r in &kept {
         let raw = r
@@ -244,8 +235,6 @@ mod tests {
 
     #[test]
     fn mean_fallback_when_percentile_absent() {
-        // Single-trial rows may omit per-percentile keys; read_metric_value
-        // falls back to `mean`.
         let sweep = serde_json::json!({
             "per_combination_metrics": [
                 {"parameters": {"concurrency": 1}, "metrics": {"inter_token_latency": {"mean": 5.0}}},

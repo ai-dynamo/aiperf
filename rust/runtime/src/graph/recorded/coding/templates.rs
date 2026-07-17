@@ -4,10 +4,8 @@
 //! Seeded structural renderer for the native coding corpus.
 //!
 //! [`TemplateRenderer`] owns the canonical [`RandomGenerator`] stream and the
-//! shared draw helpers (`pick`/`number`/`sample`/`title_case`/`index`). Each
-//! [`TemplateKind`] dispatches to a per-mixin submodule that ports the Python
-//! `_coding_*` generators — every top-level category fans out across its full
-//! family of structural variants (mirroring the Python `choice([...])()`).
+//! shared draw helpers (`pick`/`number`/`sample`/`title_case`/`index`).
+//! [`TemplateKind`] dispatches each category across its structural variants.
 
 use crate::rng::PythonRandomGenerator;
 
@@ -47,9 +45,8 @@ pub(super) struct TemplateRenderer {
 }
 
 impl TemplateRenderer {
-    /// Build a renderer over the CPython-MT + numpy child stream `seed` (the
-    /// `dataset.coding_content.template` derivation), matching agentx's
-    /// `_template_rng`.
+    /// Build a renderer over the CPython-MT and NumPy child stream seed from
+    /// `dataset.coding_content.template`.
     pub(super) fn new(seed: u64) -> Self {
         Self {
             random: PythonRandomGenerator::from_child_seed(seed),
@@ -89,8 +86,6 @@ impl TemplateRenderer {
             TemplateKind::TestOutput => cicd_docs::test_output(self),
         }
     }
-
-    // -- shared draw helpers used by every submodule renderer --
 
     /// Uniformly pick one `&'static str` from a vocabulary slice.
     pub(super) fn pick(

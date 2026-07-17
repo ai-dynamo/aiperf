@@ -465,9 +465,8 @@ mod tests {
 
     #[test]
     fn multi_record_icl_curves_match_independent_reference_enumeration() {
-        // This is the native twin of the brute-force oracle. It deliberately
-        // uses overlapping records, unequal gaps, and a zero-duration gap so the
-        // reference does not merely restate the event-generation loop.
+        // Overlapping records, unequal gaps, and a zero-duration gap keep the
+        // independent reference from restating the event-generation loop.
         let start = [0.0, 17.0, 53.0];
         let generation_start = [10.0, 30.0, 70.0];
         let end = [70.0, 90.0, 140.0];

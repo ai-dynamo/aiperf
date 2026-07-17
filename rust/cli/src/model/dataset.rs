@@ -1,30 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Typed `datasets` section of the native `BenchmarkConfig`.
+//! Typed dataset configuration.
 //!
-//! Wire shape ported from `src/aiperf/orchestrator/rust_wire.py::_authored_dataset_v2`
-//! and `_distribution`. `cfg.datasets` is a one-element list on the single-run
-//! path. Synthetic is fully modeled here; `file`/`public` variants are added as
-//! those paths are exercised. Optional fields use `exclude_none` semantics
-//! (`_authored_model_dump`), i.e. absent when unset.
+//! Optional fields are absent when unset.
 
 use serde::{Deserialize, Serialize};
 
-/// Dataset sampling order. Open-ish (varies by dataset kind), kept as a
-/// transparent newtype rather than guessing a closed variant set.
+/// Dataset sampling order, which is extensible by dataset kind.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Sampling(pub String);
 
-/// A numeric distribution (`_distribution`): either a scalar `{value}` or a
-/// parametric spec (`{mean,stddev,...}` / `{peaks:[...]}`). All fields optional
-/// so any one shape round-trips; only the present ones serialize.
+/// A scalar or parametric numeric distribution.
+///
+/// Only present fields serialize.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Distribution {
     /// Scalar value (mutually exclusive with the parametric fields).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<f64>,
-    /// Mean of a normal/uniform distribution.
+    /// Mean of a normal or uniform distribution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mean: Option<f64>,
     /// Standard deviation.
@@ -179,9 +174,10 @@ pub struct PrefixPrompts {
     pub pool_size: Option<u32>,
 }
 
-/// Rankings/rerank query-passage generation policy (`RankingsConfig`). Every
-/// sub-field is always serialized; unset ones carry their config default
-/// (`passages`→`{value:10}`, `passage_tokens`→`{value:128}`, `query_tokens`→`{value:32}`).
+/// Rankings query-passage generation policy.
+///
+/// All fields are always serialized. Default values are 10 passages, 128
+/// tokens per passage, and 32 query tokens.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Rankings {
     /// Number of passages per ranking request.
@@ -225,20 +221,15 @@ pub struct Synthetic {
     /// Number of conversation sessions (present when set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub num_conversations: Option<u32>,
-    /// Per-turn fixed delay distribution, milliseconds (present when set;
-    /// renamed from `turn_delay` by the projection).
+    /// Per-turn fixed delay distribution in milliseconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_delay_ms: Option<Distribution>,
 }
 
-/// A file-backed dataset (trace/replay). Ported from `_authored_dataset_v2`'s
-/// `FileDataset` branch.
+/// A file-backed trace or replay dataset.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileDataset {
-    /// Native file format id (e.g. `single_turn`, `mooncake_trace`). Omitted from
-    /// the wire request when `--custom-dataset-type` was not supplied (so the
-    /// runtime auto-detects the loader structurally), mirroring Python's converter
-    /// which only emits `format` when the user set it.
+    /// Native file format id, omitted when the runtime should auto-detect it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
     /// Sampling order.
@@ -257,19 +248,15 @@ pub struct FileDataset {
     /// Output sequence length distribution (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub osl: Option<Distribution>,
-    /// Inline dataset records (present instead of `path` for an in-YAML dataset;
-    /// passed through verbatim, matching Python's `_authored_dataset_v2` which
-    /// emits `records` when `path` is absent).
+    /// Inline records, passed through verbatim when `path` is absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub records: Option<serde_json::Value>,
-    /// Recorded-graph synthesis block (present when a `--synthesis-*` flag is set;
-    /// the full `SynthesisConfig` + trajectory/t* knobs, built in `load`).
+    /// Recorded-graph synthesis block set by `--synthesis-*` flags.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub synthesis: Option<serde_json::Value>,
 }
 
-/// A named public dataset expanded to explicit source coordinates. Ported from
-/// `_authored_dataset_v2`'s `PublicDataset` branch.
+/// A named public dataset with explicit source coordinates.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PublicDataset {
     /// Catalog name (e.g. `sharegpt`).

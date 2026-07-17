@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Transport-neutral SSE message model and parser. Behavioral port of Python
-//! `SSEMessage.parse`.
+//! Transport-neutral SSE message model and parser.
 //!
 //! These are the SSE *data* types (the parsed message and its fields), not the
 //! streaming reader. They live in `transport::core` so [`super::response::Response`]
@@ -52,10 +51,9 @@ pub struct SseMessage {
 impl SseMessage {
     /// Parse a raw (already delimiter-stripped) SSE message.
     ///
-    /// Mirrors Python `SSEMessage.parse`: per-line `name: value` split on the
-    /// first colon, empty name => comment, colon-less line => name-only field,
-    /// and JSON-continuation handling for a `data:` value that opens `{` without
-    /// closing `}` (a literal newline embedded in the JSON, appended as `\n`).
+    /// Splits each line at the first colon. An empty name denotes a comment and
+    /// a colon-less line is name-only. A continuation after an unterminated
+    /// `data: {` value is appended with a literal `\n`.
     pub fn parse(raw: &str, perf_ns: i64) -> Self {
         let mut packets: Vec<SseField> = Vec::new();
         for line in raw.lines() {
@@ -98,8 +96,7 @@ impl SseMessage {
             .any(|p| p.name == SseFieldName::Data && p.value.as_deref() == Some("[DONE]"))
     }
 
-    /// If this is an `event: error` message, return the comment message (or a
-    /// fallback). Mirrors `AsyncSSEStreamReader.inspect_message_for_error`.
+    /// Return an `event: error` comment or a fallback message.
     pub fn error_message(&self) -> Option<String> {
         let is_error = self
             .packets
@@ -154,7 +151,6 @@ mod tests {
 
     #[test]
     fn json_continuation_line_is_appended_with_escaped_newline() {
-        // prev value starts with '{' but does not end with '}', next line is not `data:`
         let m = SseMessage::parse("data: {\"x\":\n1}", 1);
         assert_eq!(m.packets.len(), 1);
         assert_eq!(m.packets[0].value.as_deref(), Some("{\"x\":\\n1}"));

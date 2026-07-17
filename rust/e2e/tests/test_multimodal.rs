@@ -1,19 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Tests for multimodal inputs (images, audio).
 mod common;
 use common::*;
 
 use serde_json::Value;
 
-/// Default request count for integration tests.
 const REQUEST_COUNT: u32 = 10;
-/// Default concurrency for integration tests.
 const CONCURRENCY: u32 = 2;
-/// Default max workers for integration tests.
 const WORKERS_MAX: u32 = 1;
 
-/// Check whether the OpenAI message content list contains an item of `content_type`.
 fn has_openai_media(payload: &Value, content_type: &str) -> bool {
     if let Some(messages) = payload.get("messages").and_then(|m| m.as_array()) {
         for message in messages {
@@ -29,7 +24,6 @@ fn has_openai_media(payload: &Value, content_type: &str) -> bool {
     false
 }
 
-/// Check whether the payload has a non-empty top-level media list.
 fn has_top_level_media(payload: &Value, media_attr: &str) -> bool {
     payload
         .get(media_attr)
@@ -38,7 +32,6 @@ fn has_top_level_media(payload: &Value, media_attr: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Check if inputs contain media of the specified type (mirrors the Python harness).
 fn has_input_media(inputs: &Value, media_attr: &str) -> bool {
     let content_type = match media_attr {
         "images" => "image_url",

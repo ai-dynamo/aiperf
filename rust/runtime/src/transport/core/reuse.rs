@@ -6,15 +6,14 @@
 
 use serde::{Deserialize, Serialize};
 
-/// How connections are reused across requests. Port of Python
-/// `ConnectionReuseStrategy`.
+/// How connections are reused across requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ConnectionReuseStrategy {
-    /// Shared connection pool (default aiohttp behavior).
+    /// Shared connection pool.
     #[default]
     Pooled,
-    /// A fresh connection per request, closed after.
+    /// A fresh connection per request, closed afterward.
     Never,
     /// One connection per user session (correlation id), released on final turn.
     StickyUserSessions,

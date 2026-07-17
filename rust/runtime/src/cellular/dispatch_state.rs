@@ -1,28 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Per-request dispatch state machine + `DistributionMiss`
-//! (`specs/2026-07-15-ultimate-cellular-velo-runtime-design.md` §4.5).
+//! Per-request dispatch state and distribution-miss accounting.
 //!
-//! When the control plane (the phaser §4) says "issue request R now", the data plane
-//! (the dataset index §3) may or may not have R local yet. The dispatch is therefore a
-//! **state machine per `request_id`**, `Unknown → Indexed → InFlight → Done`, that
-//! handles both halves of the interlock:
-//!
-//! - `Indexed`  → issue, transition to `InFlight`.  (the happy path)
-//! - `InFlight` / `Done` → **no-op** ([`DispatchDecision::Duplicate`]). A duplicate or
-//!   retransmitted "issue R" must not double-issue — **exactly-once-issue** per id.
-//! - `Unknown`  → the race: R was commanded before its chunk was pulled/indexed. This is
-//!   made rare/impossible upstream (a bounded run distributes → barrier → dispatch; a
-//!   streaming run keeps the phaser generation causally downstream of availability), so
-//!   at this layer it is a **counted, surfaced [`DispatchDecision::Miss`]** — never a
-//!   silent skip (the "no silent caps" rule). The caller may bounded-await the index and
-//!   retry before accepting the miss; the tracker counts only the accepted misses.
-//!
-//! The state lives here; the [`DatasetIndex`](super::dataset_session::DatasetIndex)
-//! supplies `Indexed` vs `Unknown` and the payload. A `ControlledIssuer` workload wires
-//! this to the runner's `TurnLifecycleObserver::on_issue` + `SlotPool` admission — the
-//! seams already exist; this is the decision core.
+//! Each `request_id` transitions from indexed to in-flight to done. Duplicate
+//! issue commands are no-ops, and commands for unavailable requests are counted
+//! and surfaced rather than silently skipped.
 
 use std::collections::HashMap;
 
@@ -31,9 +14,8 @@ use serde::{Deserialize, Serialize};
 use super::dataset_session::DatasetIndex;
 
 /// An endpoint-ready request the `ControlledIssuer` dispatches from the fan-out index:
-/// the target URL and the exact body bytes to POST. The controller builds these once
-/// (from the compiled dataset) and broadcasts them (§3); a cell POSTs each owned one to
-/// the endpoint (§4.5) — so the fan-out is the actual dispatch source, not a marker.
+/// the target URL and exact body bytes to POST. The controller broadcasts compiled
+/// requests, and each cell dispatches its owned requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireRequest {
     /// The endpoint URL to POST to (e.g. `http://host:port/v1/chat/completions`).

@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Anthropic Messages request, response, usage, and replay dialect.
-//!
-//! This dialect is guarded against a byte and behavior test contract. The
-//! adapter stays behind [`Endpoint`], so additional Messages-compatible
-//! providers can replace the dialect without changing scheduling or transport.
 
 use std::collections::BTreeMap;
 
@@ -23,7 +19,7 @@ use crate::endpoints::models::{
     ServerResponse, Turn,
 };
 use crate::endpoints::registry::{
-    PreparedEndpointBehavior, PreparedRequest, format_legacy_payload,
+    PreparedEndpointBehavior, PreparedRequest, format_compatibility_payload,
 };
 use crate::endpoints::{Endpoint, EndpointConfig, RawEndpointConfig};
 
@@ -87,7 +83,7 @@ impl Endpoint for MessagesEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {

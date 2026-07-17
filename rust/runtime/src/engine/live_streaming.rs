@@ -607,7 +607,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_endpoint_projects_open_identity_without_legacy_conversion() {
+    fn prepared_endpoint_projects_open_identity_directly() {
         let endpoint = NativeEndpointPlan::Prepared(Arc::new(vec![
             crate::engine::registry::ValidatedEndpointProfileV2 {
                 profile_id: "default".into(),

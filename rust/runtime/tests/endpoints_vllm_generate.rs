@@ -7,8 +7,6 @@ use aiperf_runtime::endpoints::{
 };
 use serde_json::{Value, json};
 
-/// Materialize a prepared endpoint's [`BodyPlan`] into a decoded JSON value so
-/// the structural assertions below keep comparing against `json!` objects.
 fn plan_body(plan: aiperf_runtime::body_plan::BodyPlan) -> Value {
     serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
 }

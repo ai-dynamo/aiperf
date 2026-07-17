@@ -10,8 +10,6 @@ use aiperf_runtime::endpoints::{
 };
 use serde_json::{Map, Value, json};
 
-/// Materialize a formatter's [`BodyPlan`] into a decoded JSON value so the
-/// structural assertions below keep inspecting fields as before stage B.
 fn plan_body(plan: aiperf_runtime::body_plan::BodyPlan) -> Value {
     serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
 }

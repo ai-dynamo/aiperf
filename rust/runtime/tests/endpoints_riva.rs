@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native endpoint parity tests for NVIDIA Riva ASR, TTS, and NLP.
+//! NVIDIA Riva ASR, TTS, and NLP endpoint contracts.
 
 use std::collections::BTreeSet;
 
@@ -14,8 +14,6 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::{Map, Value, json};
 
-/// Materialize a prepared endpoint's [`BodyPlan`] into a decoded JSON value so
-/// the structural assertions below keep comparing against `json!` objects.
 fn plan_body(plan: aiperf_runtime::body_plan::BodyPlan) -> Value {
     serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
 }
@@ -95,8 +93,8 @@ fn all_nine_riva_endpoints_are_open_protocol_v2_dialects() {
                 if reason == "Riva endpoints do not define a model-readiness RPC"
         ));
         assert!(matches!(
-            registry.legacy_endpoint(&EndpointId::new(id).unwrap()),
-            Err(EndpointRegistryError::NoLegacyAdapter(_))
+            registry.compatibility_endpoint(&EndpointId::new(id).unwrap()),
+            Err(EndpointRegistryError::NoCompatibilityAdapter(_))
         ));
     }
 
@@ -252,8 +250,6 @@ fn tts_joins_first_turn_text_and_preserves_audio_geometry() {
             "sample_rate_hz": 8000,
         })
     );
-    // Golden-byte gate (stage B): materialized Riva plan bytes are identical to
-    // `to_vec` of the equivalent hand-built object.
     let expected = json!({
         "text": "hello world",
         "voice_name": "English-US.Female-1",

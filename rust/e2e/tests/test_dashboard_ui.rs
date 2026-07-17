@@ -1,23 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Tests for dashboard UI mode with duration-based termination.
-//!
-//! Dashboard mode with request-count termination is tested elsewhere:
-//! - test_stress.rs::test_high_worker_count_streaming
-//! - test_gpu_telemetry.rs
-//! - test_server_metrics.rs
-
 mod common;
 use common::*;
 
 use aiperf_mock_server::config::MockServerConfig;
 
-/// Dashboard UI with duration-based benchmark termination produces correct output.
 #[tokio::test]
 #[ignore = "dashboard UI not supported in Rust runner"]
 async fn test_duration_based_termination() {
-    // Use faster mock server settings for reliability
     let mut cfg = MockServerConfig::default();
     cfg.ttft = 10.0;
     cfg.itl = 5.0;
@@ -38,7 +29,6 @@ async fn test_duration_based_termination() {
         h.mock.url
     ));
 
-    // Verify benchmark completed and CSV contains duration config
     assert!(r.artifacts.request_count() >= 1.0);
     assert!(r.artifacts.csv().contains("Benchmark Duration"));
 }

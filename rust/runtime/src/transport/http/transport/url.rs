@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! URL construction. Port of `AioHttpTransport.get_url` / `_dedup_path_overlap`
-//! and `BaseTransport.build_url` query merge.
+//! HTTP URL construction and query merging.
 
 use std::collections::BTreeMap;
 
@@ -107,7 +106,6 @@ mod tests {
         let mut p = BTreeMap::new();
         p.insert("b".to_string(), "2".to_string());
         let url = build_url("http://h/base?a=1", "sub", &p).unwrap();
-        // existing a=1 preserved, endpoint b=2 added
         assert!(url.starts_with("http://h/base/sub?"));
         assert!(url.contains("a=1"));
         assert!(url.contains("b=2"));

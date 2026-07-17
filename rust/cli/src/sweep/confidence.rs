@@ -1,24 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Multi-run confidence statistics — the native port of Python's
-//! `ConfidenceAggregation` (`src/aiperf/orchestrator/aggregation/confidence.py`).
+//! Multi-run confidence statistics.
 //!
 //! For a set of successful runs of the same configuration, pool each
 //! `(metric_tag, stat_key)` scalar across runs and compute a
 //! [`ConfidenceMetric`] (mean / sample-std / CV / SE / t-distribution CI). The
-//! Student-t inverse CDF ([`t_ppf`]) is a pure-Rust implementation (regularized
-//! incomplete beta + bisection, ~1e-10) — scipy's `stats.t.ppf` is NOT invoked,
-//! so nothing here needs pyo3 and the CI bounds are close-but-not-bit-exact to
-//! scipy (no test pins them numerically; the invariants
+//! Student-t inverse CDF ([`t_ppf`]) uses regularized incomplete beta and
+//! bisection to approximately `1e-10`. The invariants
 //! `ci_low <= mean <= ci_high`, `t_critical > 0`, `cv == std/mean` are what
-//! matter).
-//!
-//! Ground truth ported here:
-//! - `_compute_confidence_stats` (`confidence.py:293-357`): mean / std(ddof=1) /
-//!   cv / se / t-CI.
-//! - `_aggregate_metrics_single_run` (`confidence.py:215-251`): the n==1 degraded
-//!   record (std=cv=se=0, CI collapsed to the mean, `t_critical=NaN`).
-//! - `STAT_KEYS` (`src/aiperf/common/constants.py:23`).
+//! define the numerical contract.
 
 use std::path::Path;
 
@@ -26,8 +16,7 @@ use serde_json::{Map, Value};
 
 use crate::model::export::AIPERF_V1_VERSION;
 
-/// The per-metric statistic keys pooled across runs, in the Python
-/// `STAT_KEYS` order (`src/aiperf/common/constants.py:23`). In the native v1
+/// Per-metric statistic keys pooled across runs in artifact order. In the native v1
 /// summary (`profile_export_aiperf.json`) every one of these is a flat key on a
 /// metric object (percentiles are NOT nested under `percentiles`).
 pub const STAT_KEYS: &[&str] = &[
@@ -35,7 +24,7 @@ pub const STAT_KEYS: &[&str] = &[
 ];
 
 /// Confidence statistics for one flattened `{metric_tag}_{stat_key}` series
-/// across runs (`ConfidenceMetric`, `confidence.py:19-51`).
+/// across runs.
 #[derive(Clone, Debug)]
 pub struct ConfidenceMetric {
     /// Sample mean of the run-level values.
@@ -62,8 +51,7 @@ pub struct ConfidenceMetric {
 
 impl ConfidenceMetric {
     /// The full 10-field confidence projection used by the confidence JSON
-    /// exporter (`aggregate_confidence_json_exporter.py:98-113`). Non-finite
-    /// floats render as JSON `null` (the "absent" contract via `scrub_non_finite`).
+    /// exporter. Non-finite floats render as JSON `null`.
     fn to_full_json(&self) -> Value {
         let mut m = Map::new();
         m.insert("mean".into(), scrub(self.mean));
@@ -81,7 +69,6 @@ impl ConfidenceMetric {
 }
 
 /// Wrap an `f64` as a JSON number, coercing non-finite (NaN/±inf) to `null`
-/// (`scrub_non_finite`).
 fn scrub(v: f64) -> Value {
     serde_json::Number::from_f64(v)
         .map(Value::Number)
@@ -91,8 +78,7 @@ fn scrub(v: f64) -> Value {
 /// Compute the confidence statistics for one metric's run-level values.
 ///
 /// `values` must be non-empty. `n == 1` produces the degraded single-run record
-/// (`_aggregate_metrics_single_run`); `n >= 2` the full t-distribution CI
-/// (`_compute_confidence_stats`).
+/// with a collapsed CI; `n >= 2` uses the Student-t interval.
 pub fn compute_confidence_stats(values: &[f64], unit: &str, confidence: f64) -> ConfidenceMetric {
     let n = values.len();
     let mean = values.iter().sum::<f64>() / n as f64;
@@ -141,13 +127,7 @@ pub fn compute_confidence_stats(values: &[f64], unit: &str, confidence: f64) -> 
     }
 }
 
-// ---------------------------------------------------------------------------
-// Summary reading + metric pooling.
-// ---------------------------------------------------------------------------
-
-/// Read a cell's Python-shaped `profile_export_aiperf.json` summary from its
-/// artifact directory (the top-level map of `{metric_tag: {avg, min, ...,
-/// unit}}` alongside `schema_version` / `input_config` / … scalars).
+/// Read `profile_export_aiperf.json` from a cell's artifact directory.
 pub fn read_summary(dir: &Path) -> Option<Value> {
     let bytes = std::fs::read(dir.join("profile_export_aiperf.json")).ok()?;
     serde_json::from_slice(&bytes).ok()
@@ -160,10 +140,7 @@ fn is_metric_object(v: &Value) -> bool {
     v.get("unit").and_then(Value::as_str).is_some()
 }
 
-/// Classify a cell as a completed benchmark from its summary, mirroring
-/// `native_execution._classify` (`native_execution.py:417-436`): a run is FAILED
-/// when `request_count` is absent or `request_count.avg` is `None`/`0`. Returns
-/// the failure error string on failure.
+/// Classify a summary as complete when `request_count.avg` is nonzero.
 pub fn classify_summary(summary: &Value) -> Result<(), String> {
     let request_avg = summary
         .get("request_count")
@@ -184,8 +161,7 @@ pub fn classify_summary(summary: &Value) -> Result<(), String> {
 
 /// Pool every `(metric_tag, stat_key)` scalar across the given run summaries and
 /// compute a [`ConfidenceMetric`] for each. Tags iterate in first-seen order,
-/// stats in [`STAT_KEYS`] order — deterministic output. Ports
-/// `_aggregate_metrics` + `_collect_metric_stat_pairs` + `_extract_values_for_pair`.
+/// stats in [`STAT_KEYS`] order.
 pub fn collect_confidence_metrics(
     summaries: &[&Value],
     confidence: f64,
@@ -236,10 +212,6 @@ pub fn collect_confidence_metrics(
     }
     out
 }
-
-// ---------------------------------------------------------------------------
-// Confidence aggregate writers (JSON + CSV).
-// ---------------------------------------------------------------------------
 
 /// One failed run's `{label, error}` record (`failed_runs`).
 pub struct FailedRun {
@@ -323,13 +295,11 @@ pub fn write_confidence_aggregate(
     std::fs::write(
         dir.join("profile_export_aiperf_aggregate.csv"),
         confidence_csv(num_runs, num_successful, confidence, cooldown, metrics),
-        // metadata rows below
     )?;
     Ok(())
 }
 
-/// Build the confidence aggregate CSV (metrics section, blank line, metadata),
-/// porting `AggregateConfidenceCsvExporter._generate_content`.
+/// Build the confidence aggregate CSV with metrics and metadata sections.
 fn confidence_csv(
     num_runs: usize,
     num_successful: usize,
@@ -375,8 +345,7 @@ fn confidence_csv(
     w.finish()
 }
 
-/// `_format_number` for the confidence CSV: `inf`/`-inf`/`nan` literal, else
-/// fixed decimals (`aggregate_confidence_csv_exporter.py:114-135`).
+/// Render `inf`, `-inf`, and `nan` literally; otherwise use fixed decimals.
 fn fmt_csv(v: f64, decimals: usize) -> String {
     if v == f64::INFINITY {
         "inf".to_string()
@@ -389,7 +358,7 @@ fn fmt_csv(v: f64, decimals: usize) -> String {
     }
 }
 
-/// Python `str(float)` for a metadata scalar (`0.95`, `0.0`).
+/// Render integral metadata floats with one decimal place.
 fn py_float_str(v: f64) -> String {
     if v.fract() == 0.0 && v.is_finite() {
         format!("{v:.1}")
@@ -397,10 +366,6 @@ fn py_float_str(v: f64) -> String {
         format!("{v}")
     }
 }
-
-// ---------------------------------------------------------------------------
-// Student-t inverse CDF (pure Rust).
-// ---------------------------------------------------------------------------
 
 /// Lanczos approximation of `ln Γ(x)` for `x > 0`.
 fn ln_gamma(x: f64) -> f64 {
@@ -504,7 +469,6 @@ fn t_cdf(t: f64, df: f64) -> f64 {
 
 /// Inverse CDF (quantile) of the Student-t distribution: the `t` with
 /// `P(T <= t) = p` for `df` degrees of freedom. Bisection on the CDF to ~1e-10.
-/// Not scipy-exact, but no test pins the value numerically.
 pub fn t_ppf(p: f64, df: f64) -> f64 {
     if p <= 0.0 {
         return f64::NEG_INFINITY;
@@ -531,11 +495,9 @@ mod tests {
 
     #[test]
     fn t_ppf_matches_known_values() {
-        // scipy.stats.t.ppf(0.975, df)
         assert!((t_ppf(0.975, 2.0) - 4.302_653).abs() < 1e-4);
         assert!((t_ppf(0.975, 4.0) - 2.776_445).abs() < 1e-4);
         assert!((t_ppf(0.975, 9.0) - 2.262_157).abs() < 1e-4);
-        // Symmetry about zero.
         assert!((t_ppf(0.5, 5.0)).abs() < 1e-6);
     }
 

@@ -3,24 +3,14 @@
 
 //! Shared transactional registration primitive.
 //!
-//! Both the [`AIPerfRegistry`](crate::extensions::AIPerfRegistry) aggregate and
-//! its name-keyed sub-registries (endpoints, transports, workloads) register on
-//! a staged clone and commit atomically: a batch that fails partway — for
-//! example because a later entry duplicates a name — leaves the target untouched
-//! rather than half-populated. Factoring the "stage on a clone, reject a
-//! duplicate name, commit atomically" logic here keeps that guarantee identical
-//! everywhere it is applied instead of re-deriving it per registry.
+//! Registry batches mutate a clone and replace the target only on success.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::{Keys, Values};
 use std::error::Error;
 use std::fmt::{self, Display};
 
-/// Stage a mutation on a clone and commit it atomically only when it succeeds.
-///
-/// The mutation runs against a throwaway clone of `target`. On success the clone
-/// replaces `target`; on error the clone is dropped and `target` is left exactly
-/// as it was, so no partially applied change can leak out of a failed batch.
+/// Apply a mutation atomically, leaving `target` unchanged on error.
 pub(crate) fn commit_on_clone<S, E>(
     target: &mut S,
     mutate: impl FnOnce(&mut S) -> Result<(), E>,

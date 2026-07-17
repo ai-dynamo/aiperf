@@ -3,18 +3,9 @@
 mod common;
 use common::*;
 
-// Full-stack e2e for the mock server's KServe OIP v2 gRPC target.
-//
-// Runs the real `python -m aiperf profile` CLI (native runner + its production
-// gRPC KServe client) against `aiperf-mock-server`'s own `serve_grpc` listener,
-// selected via `transport.type: grpc` + a `grpc://` URL + the `kserve_v2_infer`
-// endpoint. Proves the whole product path — Python frontend → runner gRPC
-// client → mock gRPC server — works for both unary and streaming.
-
 const CONCURRENCY: u32 = 2;
 const REQUEST_COUNT: u32 = 8;
 
-/// A Config-v2 YAML selecting the native gRPC KServe transport against `grpc_url`.
 /// The harness appends `--artifact-dir` and `--tokenizer`, which override the
 /// corresponding config fields.
 fn grpc_config(grpc_url: &str, streaming: bool) -> String {
@@ -47,12 +38,8 @@ fn grpc_config(grpc_url: &str, streaming: bool) -> String {
     )
 }
 
-/// Start a gRPC-enabled harness and run one config against it. Returns the
-/// harness (kept alive by the caller so its `TempDir` artifact tree survives the
-/// assertions) and the run result.
+/// Returns the harness to keep its artifact `TempDir` alive for assertions.
 async fn run_grpc(streaming: bool) -> (AIPerfHarness, RunResult) {
-    // The harness runs the real Python CLI, so it needs the venv; the mock now
-    // also serves the KServe gRPC listener the run targets.
     let h = AIPerfHarness::new_with_grpc().await;
     let grpc_url = h
         .mock
@@ -74,14 +61,12 @@ async fn run_grpc(streaming: bool) -> (AIPerfHarness, RunResult) {
     (h, r)
 }
 
-/// Unary `ModelInfer` over gRPC through the full product path.
 #[tokio::test]
 async fn test_kserve_grpc_unary() {
     let (_h, r) = run_grpc(false).await;
     assert_eq!(r.artifacts.request_count() as u32, REQUEST_COUNT);
 }
 
-/// Server-streaming `ModelStreamInfer` over gRPC, with streaming metrics.
 #[tokio::test]
 async fn test_kserve_grpc_streaming() {
     let (_h, r) = run_grpc(true).await;

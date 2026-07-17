@@ -1,5 +1,7 @@
-// rust/transport-http/tests/no_direct_time.rs
-//! Enforces the Global Constraint: no direct time access in `src/`.
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Enforces clock-only time access in the HTTP transport.
 
 use std::fs;
 use std::path::Path;
@@ -21,7 +23,6 @@ fn scan(dir: &Path, hits: &mut Vec<String>) {
         } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
             let src = fs::read_to_string(&path).unwrap();
             for line in src.lines() {
-                // Skip comments so docs may mention the forbidden APIs.
                 let code = line.split("//").next().unwrap_or("");
                 for pat in FORBIDDEN {
                     if code.contains(pat) {
@@ -35,10 +36,8 @@ fn scan(dir: &Path, hits: &mut Vec<String>) {
 
 #[test]
 fn no_direct_time_access_in_src() {
-    // After the monocrate collapse this test lives in `rust/aiperf`, whose
-    // `src/` legitimately contains non-transport code that uses wall-clock APIs
-    // (RealClock fallback, dynosim). The Global Constraint it enforces applies
-    // to the HTTP transport source, so scope the scan to that module only.
+    // Other runtime modules legitimately use wall-clock APIs, so scope this
+    // constraint to the HTTP transport.
     let mut hits = Vec::new();
     scan(Path::new("src/transport::http"), &mut hits);
     assert!(

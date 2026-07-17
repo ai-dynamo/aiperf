@@ -1,26 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Shared sweep-aggregate point extraction for the curve/surface post-process
-//! handlers.
-//!
-//! Pure-Rust port of `aiperf.search_recipes._sweep_extract::_extract_points`
-//! (`src/aiperf/search_recipes/_sweep_extract.py:19-74`) and
-//! `aiperf.search_recipes._itl_surface_fit::_extract_2d_points`
-//! (`src/aiperf/search_recipes/_itl_surface_fit.py:22-107`).
+//! Sweep-aggregate point extraction for curve and surface handlers.
 //!
 //! Both walk the sweep aggregate's `per_combination_metrics` rows and pull
 //! `(swept_value, metric_mean)` pairs (or `(concurrency, osl, metric_mean)`
-//! triples), tolerating the two layouts `SweepAnalyzer.compute` produces: the
-//! multi-trial flat key `"<metric_tag>_<stat>"` block and the single-trial
-//! tag-only block. In BOTH cases the value read is the block's `mean` — the
-//! requested `stat` is never read here (single-trial blocks carry no per-stat
-//! percentiles), matching the Python contract exactly.
+//! triples), tolerating two layouts: a multi-trial
+//! `"<metric_tag>_<stat>"` block and a single-trial tag-only block. In both
+//! cases the value read is the block's `mean`; the
+//! requested `stat` is never read here because single-trial blocks carry no
+//! per-stat percentiles.
 
 use serde_json::Value;
 
-/// A row's swept-parameter value keyed by either the full dotted path or the
-/// leaf display name (`_extract_points`: `swept_param in params` else
-/// `short_key in params`). Returns `None` when neither key is present.
+/// A row's swept-parameter value under either the dotted path or leaf name.
 fn param_value<'a>(params: &'a Value, dotted: &str, leaf: &str) -> Option<&'a Value> {
     let obj = params.as_object()?;
     obj.get(dotted).or_else(|| obj.get(leaf))
@@ -45,8 +37,7 @@ fn metric_mean(metrics: &Value, metric_tag: &str, stat: &str) -> Option<f64> {
 }
 
 /// Pull `(swept_value, metric_mean)` pairs from the sweep aggregate, ascending by
-/// swept value. Byte-faithful to `_extract_points`: skips rows missing the swept
-/// key or the metric block; errors when nothing survives.
+/// swept value. Rows missing the swept key or metric block are skipped.
 pub fn extract_points(
     sweep_aggregate: &Value,
     swept_param: &str,
@@ -87,9 +78,8 @@ pub fn extract_points(
 }
 
 /// Pull `(concurrency, osl, metric_mean)` triples, sorted ascending by
-/// `(concurrency, osl)`. Byte-faithful to `_extract_2d_points`: non-finite and
-/// negative metric cells are dropped (returned as counts); errors only when the
-/// aggregate had zero candidate rows.
+/// `(concurrency, osl)`. Non-finite and negative metric cells are dropped and
+/// counted; an aggregate with no candidate rows is invalid.
 pub fn extract_2d_points(
     sweep_aggregate: &Value,
     concurrency_param: &str,
@@ -153,8 +143,7 @@ pub fn extract_2d_points(
     Ok((triples, dropped_non_finite, dropped_negative))
 }
 
-/// Emit an integral `f64` as a JSON integer, else as a JSON float — mirrors the
-/// Python `int(x) if x == int(x) else x` coercion used across the handlers.
+/// Emit an integral `f64` as a JSON integer, otherwise as a JSON float.
 pub fn int_or_float(x: f64) -> Value {
     if x.is_finite() && x == x.trunc() && x.abs() < 9.007_199_254_740_992e15 {
         Value::from(x as i64)

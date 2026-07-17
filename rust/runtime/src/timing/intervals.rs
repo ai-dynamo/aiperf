@@ -16,10 +16,8 @@ use crate::rng::RandomGenerator;
 
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
-/// Convert a non-negative interval in seconds to integer nanoseconds, rounding
-/// to the nearest nanosecond with ties away from zero (`f64::round`; not Python
-/// `round`'s half-to-even). Non-finite or negative inputs clamp to 0 (an
-/// immediate arrival).
+/// Convert a non-negative interval in seconds to integer nanoseconds with
+/// ties-away-from-zero rounding. Non-finite or negative inputs clamp to 0.
 fn secs_to_ns(secs: f64) -> i64 {
     if !secs.is_finite() || secs <= 0.0 {
         return 0;

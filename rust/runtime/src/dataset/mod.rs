@@ -24,10 +24,6 @@ pub mod segment;
 pub mod synthesis;
 pub mod tokenizer;
 
-// `BodyPlan` and its materializer moved to the top-level `crate::body_plan`
-// module so endpoint formatters (which sit *above* `dataset`) can build a plan
-// without a `dataset -> endpoints` cycle. Re-exported here so existing
-// `crate::dataset::body_plan::*` callers keep resolving.
 pub use crate::body_plan::{BodyPlan, FieldName, FieldValue, JsonBodyMaterializer};
 pub use corpus::{
     MAX_CHARS_PER_CHUNK, SHAKESPEARE_CORPUS, tokenize_corpus_chunked, tokenize_sonnet_corpus,

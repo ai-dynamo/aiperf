@@ -3,25 +3,12 @@
 mod common;
 use common::*;
 
-// Real end-to-end integration test for a full two-branch DAG topology.
-//
-// This test spins up the full aiperf subprocess against the shared mock server,
-// runs a single root conversation through the DAG loader, and validates:
-//
-// 1. Count + session identity (5 requests, correlation ids line up with the
-//    topology: root, branch-a sibling, branch-b sibling).
-// 2. Ordering: root completes before either child starts; siblings fire in
-//    parallel after the root.
-// 3. Payload merge correctness under the pure-append + one-system-at-root rule.
-// 4. `branch_stats` lands in `profile_export_aiperf.json`.
-// 5. Sticky routing: all 5 requests land on the same worker.
+// Full two-branch DAG topology coverage.
 
 use serde_json::Value;
 
 const FIXTURE: &str =
     "/home/anthony/nvidia/projects/aiperf/ajc/rust/tests/fixtures/dag/full.dag.jsonl";
-
-// --- Fixture content (literal strings the assertions grep for) -------------
 
 const ROOT_SYS: &str = "root system prompt";
 const ROOT_USER: &str = "root user prompt";
@@ -34,8 +21,6 @@ const A1_USER_B: &str = "branch-a turn-1 user message B";
 
 const B0_USER: &str = "branch-b turn-0 user message";
 const B1_USER: &str = "branch-b turn-1 user message";
-
-// --- Helpers ---------------------------------------------------------------
 
 /// Extract a string representation of a message content.
 fn text_of(msg: &Value) -> Option<String> {
@@ -168,9 +153,6 @@ async fn test_full_dag_payload_merge_and_stats() {
 
     assert!(r.success(), "run failed: {}", r.stderr);
 
-    // -------------------------------------------------------------------
-    // A. Count + session identity
-    // -------------------------------------------------------------------
     let raw = r.artifacts.raw_records();
     assert_eq!(raw.len(), 5, "Expected 5 raw records, got {}", raw.len());
 
@@ -226,9 +208,6 @@ async fn test_full_dag_payload_merge_and_stats() {
         assert_eq!(rec["metadata"]["agent_depth"], 1);
     }
 
-    // -------------------------------------------------------------------
-    // B. Ordering (fork after root)
-    // -------------------------------------------------------------------
     assert!(ns(&root_rec["metadata"], "request_end_ns") <= ns(&a0["metadata"], "request_start_ns"));
     assert!(ns(&root_rec["metadata"], "request_end_ns") <= ns(&b0["metadata"], "request_start_ns"));
     assert!(ns(&a0["metadata"], "request_end_ns") <= ns(&a1["metadata"], "request_start_ns"));
@@ -238,17 +217,12 @@ async fn test_full_dag_payload_merge_and_stats() {
         (ns(&a0["metadata"], "request_start_ns") - ns(&b0["metadata"], "request_start_ns")).abs();
     assert!(sibling_skew_ns < 2_000_000_000);
 
-    // -------------------------------------------------------------------
-    // C. Payload merge correctness — pure append, one system at root
-    // -------------------------------------------------------------------
-    // Root: verbatim from fixture (accumulator is empty).
     assert_messages(
         root_rec,
         &[("system", Some(ROOT_SYS)), ("user", Some(ROOT_USER))],
         "root",
     );
 
-    // branch-a turn 0: root accumulator + captured root response + A0 users.
     assert_messages(
         a0,
         &[
@@ -261,7 +235,6 @@ async fn test_full_dag_payload_merge_and_stats() {
         "branch-a turn 0",
     );
 
-    // branch-a turn 1: a0 accumulator + captured a0 response + A1 users.
     assert_messages(
         a1,
         &[
@@ -277,7 +250,6 @@ async fn test_full_dag_payload_merge_and_stats() {
         "branch-a turn 1",
     );
 
-    // branch-b turn 0: root accumulator + captured root response + B0 user.
     assert_messages(
         b0,
         &[
@@ -289,7 +261,6 @@ async fn test_full_dag_payload_merge_and_stats() {
         "branch-b turn 0",
     );
 
-    // branch-b turn 1: b0 accumulator + captured b0 response + B1 user.
     assert_messages(
         b1,
         &[
@@ -303,9 +274,6 @@ async fn test_full_dag_payload_merge_and_stats() {
         "branch-b turn 1",
     );
 
-    // -------------------------------------------------------------------
-    // D. BranchStats in profile_export_aiperf.json
-    // -------------------------------------------------------------------
     let json = r.artifacts.json();
     let branch_stats = &json["branch_stats"];
     assert!(!branch_stats.is_null(), "branch_stats must exist");
@@ -313,9 +281,6 @@ async fn test_full_dag_payload_merge_and_stats() {
     assert_eq!(branch_stats["children_completed"], 2);
     assert_eq!(branch_stats["children_errored"], 0);
 
-    // -------------------------------------------------------------------
-    // E. Sticky routing: all 5 requests land on the same worker.
-    // -------------------------------------------------------------------
     let worker_ids: std::collections::HashSet<String> = raw
         .iter()
         .map(|rec| rec["metadata"]["worker_id"].to_string())

@@ -7,33 +7,11 @@ use aiperf_mock_server::grpc_riva::{
     RIVA_ASR_TRANSCRIPT, RIVA_NATURAL_QUERY_ANSWER, RIVA_SENTIMENT_CLASS,
 };
 
-// Full-stack e2e for the mock server's NVIDIA Riva ASR/TTS/NLP gRPC services.
-//
-// Runs the real `python -m aiperf profile` CLI (native runner + its production
-// gRPC Riva client `aiperf_runtime::endpoints::riva`) against `aiperf-mock-server`'s own
-// `serve_grpc` listener, selected via `transport.type: grpc` + a `grpc://` URL +
-// a `riva_*` endpoint. Proves the whole product path — Python frontend → runner
-// gRPC Riva client → mock gRPC Riva server — works for unary, server-streaming,
-// and bidirectional-streaming RPCs, and verifies the raw per-record JSONL
-// (`--export-level raw`) carries the exact transcript / audio / NLP result the
-// mock returned.
-//
-// Determinism: the mock returns fixed content (a canned transcript, a fixed PCM
-// ramp, canned classification/answer results), so each raw record's decoded
-// gRPC response — surfaced in the raw record as `responses[].text` (the codec's
-// canonical JSON) — is exactly predictable and asserted against the mock's
-// public content constants.
-
 const CONCURRENCY: u32 = 2;
 const REQUEST_COUNT: u32 = 6;
 
-/// A Config-v2 YAML selecting a native gRPC Riva endpoint against `grpc_url`.
-///
 /// `audio` is included only when the endpoint consumes audio (ASR): the synthetic
-/// composer attaches one audio clip per turn, which the runner's ASR endpoint
-/// lowers into the `Recognize`/`StreamingRecognize` request. TTS and NLP consume
-/// the synthetic text prompt instead. The harness appends `--artifact-dir` and
-/// `--tokenizer`, which override the corresponding config fields.
+/// composer attaches one clip per turn. TTS and NLP consume text.
 fn riva_config(grpc_url: &str, endpoint_type: &str, streaming: bool, with_audio: bool) -> String {
     let audio_block = if with_audio {
         "\x20   audio:\n\
@@ -76,10 +54,7 @@ fn riva_config(grpc_url: &str, endpoint_type: &str, streaming: bool, with_audio:
     )
 }
 
-/// Start a gRPC-enabled harness and run one Riva config against it. Returns the
-/// harness (kept alive by the caller so its artifact `TempDir` survives the
-/// assertions) and the run result. Panics with the captured stdout/stderr if the
-/// run fails.
+/// Returns the harness to keep its artifact `TempDir` alive for assertions.
 async fn run_riva(
     endpoint_type: &str,
     streaming: bool,
@@ -113,8 +88,7 @@ async fn run_riva(
     (h, r)
 }
 
-/// The concatenated `responses[].text` (each a decoded gRPC response as canonical
-/// JSON) of the first raw record, plus the total raw-record count.
+/// Decoded gRPC responses are canonical JSON in `responses[].text`.
 fn first_record_text(r: &RunResult) -> (usize, String) {
     let records = r.artifacts.raw_records();
     assert!(
@@ -137,7 +111,6 @@ fn first_record_text(r: &RunResult) -> (usize, String) {
     (records.len(), joined)
 }
 
-/// Assert every raw record reports a 200 status (successful gRPC RPC).
 fn assert_all_ok(r: &RunResult) {
     for (index, record) in r.artifacts.raw_records().iter().enumerate() {
         let status = record.get("status").and_then(|v| v.as_i64());
@@ -170,7 +143,6 @@ async fn test_riva_asr_streaming_recognize_bidi() {
     let (_h, r) = run_riva("riva_asr", true, true).await;
     assert_eq!(r.artifacts.request_count() as u32, REQUEST_COUNT);
     assert_all_ok(&r);
-    // The bidi handler emits one interim + one final response per request.
     let responses = r.artifacts.raw_records()[0]
         .get("responses")
         .and_then(|v| v.as_array())

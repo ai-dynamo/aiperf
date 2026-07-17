@@ -17,7 +17,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(handlers::root_info))
         .route("/health", get(handlers::health))
-        // OpenAI-compatible model listing.
         .route("/v1/models", get(handlers::list_models))
         // GET is the OpenAI model-info / KServe v1 readiness route; POST on the
         // same path is the KServe v1 `:predict` inference verb (the model name
@@ -26,19 +25,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/v1/models/{id}",
             get(handlers::get_model).post(handlers::kserve_v1_predict),
         )
-        // KServe Open Inference Protocol v2 (HTTP) + readiness.
         .route("/v2/models/{model}/infer", post(handlers::kserve_v2_infer))
         .route(
             "/v2/models/{model}/ready",
             get(handlers::kserve_v2_model_ready),
         )
         .route("/v2/health/ready", get(handlers::kserve_v2_health_ready))
-        // LLM endpoints
         .route("/v1/chat/completions", post(handlers::chat_completions))
         .route("/v1/messages", post(handlers::messages))
         .route("/v1/completions", post(handlers::text_completions))
         .route("/v1/embeddings", post(handlers::embeddings))
-        // OpenAI Responses API
         .route("/v1/responses", post(handlers::responses))
         // vLLM / Dynamo token-native Generate (token-in / token-out)
         .route("/inference/v1/generate", post(handlers::vllm_generate))
@@ -52,25 +48,19 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/openai/v1/completions", post(handlers::text_completions))
         .route("/openai/v1/embeddings", post(handlers::embeddings))
         .route("/openai/v1/models", get(handlers::list_models))
-        // Rerank / ranking endpoints
         .route("/v1/ranking", post(handlers::nim_ranking))
         .route("/rerank", post(handlers::hf_tei_rerank))
         .route("/v2/rerank", post(handlers::cohere_rerank))
-        // TGI
         .route("/generate", post(handlers::tgi_generate))
         .route("/generate_stream", post(handlers::tgi_generate_stream))
-        // Image endpoints
         .route("/v1/images/generations", post(handlers::image_generation))
         .route("/v1/images/edits", post(handlers::image_edit))
         .route("/v1/image/infer", post(handlers::image_retrieval))
-        // Alias: the runner's `image_retrieval` endpoint defaults to `/v1/infer`.
+        // `image_retrieval` defaults to this alias.
         .route("/v1/infer", post(handlers::image_retrieval))
-        // Custom endpoints
         .route("/v1/custom-multimodal", post(handlers::custom_multimodal))
         .route("/rag/api/prompt", post(handlers::solido_rag))
-        // Live accuracy tally for `--accuracy-dataset` runs.
         .route("/accuracy", get(handlers::accuracy_status))
-        // Metrics
         .route("/metrics", get(handlers::aiperf_mock_metrics))
         .route("/vllm/metrics", get(handlers::vllm_metrics))
         .route("/sglang/metrics", get(handlers::sglang_metrics))
@@ -87,14 +77,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/dynamo_component/decode/metrics",
             get(handlers::dynamo_decode_metrics),
         )
-        // DCGM - two explicit routes (Python's FastAPI regex pattern isn't idiomatic in axum
-        // and would conflict with the other `/xxx/metrics` routes above).
+        // Explicit DCGM routes avoid conflicts with the other metrics paths.
         .route("/dcgm1/metrics", get(handlers::dcgm_metrics_1))
         .route("/dcgm2/metrics", get(handlers::dcgm_metrics_2))
-        // This is a load-test mock: accept arbitrarily large request bodies.
-        // axum's Json/Bytes extractors otherwise cap bodies at a 2 MiB default,
-        // which rejects large-ISL prompts (a 1M-token prompt is several MB of
-        // JSON) with `413 Payload Too Large` before the handler ever runs.
+        // Large prompts can exceed axum's 2 MiB default before reaching a handler.
         .layer(DefaultBodyLimit::disable())
         .with_state(state)
 }

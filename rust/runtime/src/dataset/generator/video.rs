@@ -440,7 +440,7 @@ mod tests {
             .decode(generated.wire.split(|byte| *byte == b',').nth(1).unwrap())
             .unwrap();
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("proof.webm");
+        let path = directory.path().join("generated.webm");
         fs::write(&path, video).unwrap();
         let output = Command::new("ffprobe")
             .args([

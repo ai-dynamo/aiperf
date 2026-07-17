@@ -1,6 +1,8 @@
-// rust/transport-http/examples/k6_trace.rs
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Dump the full k6/HAR-style per-request trace for real requests via
-//! `aiperf-transport-http`. Prints every connection/request phase the transport
+//! `aiperf_runtime::transport::http`. Prints every connection/request phase the transport
 //! timestamps off the Clock: blocked (conn-pool wait), DNS, connecting
 //! (TCP+TLS), sending, waiting (TTFB), receiving, and total duration — plus
 //! bytes/chunks, status, and socket endpoints.

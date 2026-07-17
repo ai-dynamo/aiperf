@@ -1,27 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The native, fully-typed `BenchmarkRun` — simultaneously the CLI's domain
-//! object AND the runner wire request.
+//! Typed benchmark domain object and protocol-v2 wire request.
 //!
-//! Architecture (per the user's directive: "one native BenchmarkRun IS the
-//! domain+wire"): unlike Python — which keeps a rich `BenchmarkConfig` domain
-//! and a separate `rust_wire` projection into a JSON request — the Rust CLI has
-//! ONE typed object. The pre-translation layer parses CLI flags + YAML *into*
-//! this object (see `crate::flags` / the loader), and serializing it *is* the
-//! protocol-v2 request the unchanged `aiperf` consumes. There is no
-//! separate wire DTO and no config→wire projection step.
-//!
-//! Typing discipline (maximal): every closed string set is an `enum`, units are
-//! newtypes, optional-vs-absent is `Option`. `serde_json::Value` appears ONLY
-//! for genuinely open bags whose schema is caller-defined (`resolved` facts,
-//! `variables`, `endpoint.extra`, `headers`). Each `cfg` section is added as a
-//! fully-typed struct as it is ported; [`BenchmarkConfig`] intentionally omits
-//! `deny_unknown_fields` so a Python golden deserialized through it drops the
-//! not-yet-ported sections symmetrically (the parity filter).
-//!
-//! Byte-exact serialization: fields use serde defaults that EMIT `null` for
-//! `None` (Python dumps with `exclude_none=False`), so we never add
-//! `skip_serializing_if` on wire-present optionals.
+//! Closed string sets use enums; caller-defined bags remain JSON values.
+//! Wire-present optional fields serialize as explicit nulls.
 
 use std::path::PathBuf;
 
@@ -45,11 +27,9 @@ pub mod transport;
 pub use config::BenchmarkConfig;
 pub use resolved::Resolved;
 
-/// One fully-typed native benchmark run (domain object == wire request body).
+/// A benchmark run serialized directly as the runner request body.
 ///
-/// Mirrors the runner-consumed shape of `BenchmarkRunWireV2`, fully typed. Open
-/// bags (`resolved`, `variables`, `variation`) stay as `Value` because their
-/// schema is computed/caller-defined rather than a closed set.
+/// Computed or caller-defined open bags remain JSON values.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BenchmarkRun {
     /// Stable benchmark identifier.
@@ -90,8 +70,6 @@ mod tests {
 
     #[test]
     fn none_optionals_emit_null_not_absent() {
-        // Python dumps with exclude_none=False; wire-present optionals must
-        // serialize as explicit null so the runner sees the same shape.
         let run = BenchmarkRun {
             benchmark_id: "b".into(),
             artifact_dir: "/tmp/x".into(),

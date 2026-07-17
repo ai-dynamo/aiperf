@@ -3,9 +3,8 @@
 
 //! Clock-injected DNS resolution and caching.
 //!
-//! This preserves the aiohttp event contract: a cache hit skips
-//! lookup timing, while a miss records both the cache event and the resolver
-//! bracket.
+//! Cache hits skip lookup timing; misses record both the cache event and the
+//! resolver bracket.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

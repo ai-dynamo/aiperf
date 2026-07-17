@@ -3,10 +3,10 @@
 
 //! OpenTelemetry OTLP/HTTP metrics emitter (native Rust).
 //!
-//! Ports the GenAI-semconv metric surface of the Python OTel plane
-//! (`post_processors/otel_metrics_results_processor.py`,
+//! Emits the GenAI-semconv metric surface defined by
+//! `post_processors/otel_metrics_results_processor.py`,
 //! `otel_streaming_fanout.py`, `strategies/genai_semconv.py`,
-//! `strategies/metric_results.py`) to the runner: emits the GenAI client
+//! and `strategies/metric_results.py`: the GenAI client
 //! histograms (`gen_ai.client.operation.duration`,
 //! `gen_ai.client.operation.time_to_first_chunk`,
 //! `gen_ai.client.operation.time_per_output_chunk`,
@@ -48,10 +48,9 @@
 //! (design §6). Time fields use the report's own run-timeline timestamps; the
 //! sink never calls `SystemTime::now`.
 //!
-//! # Config projection owed by the Python frontend
+//! # Config projection
 //! The runner decodes [`OtelExportConfig`] from the `cfg.export.otel` wire block.
-//! The foundation's `_export` projection in `rust_wire.py` does **not yet**
-//! project `otel`; the integration owner must project, from `cfg.otel`:
+//! The frontend projects these fields from `cfg.otel`:
 //! - `enabled`  = `cfg.otel.metrics_url is not None`
 //! - `endpoint` = the normalized OTLP/HTTP metrics URL (`…/v1/metrics`)
 //! - `provider` = `cfg.otel.gen_ai_provider` (else omit → inferred `_OTHER`)

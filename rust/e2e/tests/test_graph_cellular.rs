@@ -8,8 +8,7 @@
 //! spawns three `aiperf --cell` children; each partitions the trace instances by
 //! `instance_ordinal % cell_count` (PartitionedGraphTraceSource), runs its interleaved
 //! slice, and ships its graph records; the controller concatenation-merges them (records
-//! carry local per-cell indices, wall-clock ordered) into one report. This proves the
-//! whole graph-cellular path from `aiperf profile`, not just the Rust internals.
+//! carry local per-cell indices, wall-clock ordered) into one report.
 
 mod common;
 use arrow::array::{Array, Float64Array, StringArray};
@@ -40,9 +39,7 @@ async fn test_graph_cellular_from_python_frontend() {
     );
     assert!(r.success(), "graph cellular run failed: {}", r.stderr);
 
-    // Non-vacuous proof the CONTROLLER (multi-cell) path ran: only the controller emits
-    // the cellular-heartbeat.json sidecar (after aggregating the cells' heartbeats). If
-    // `--cells` were inert this would be a single-process graph run and the sidecar absent.
+    // Only the controller emits the heartbeat after aggregating cell heartbeats.
     assert!(
         r.artifacts
             .find_file("**/cellular-heartbeat.json")
@@ -58,8 +55,7 @@ async fn test_graph_cellular_from_python_frontend() {
         "merged graph report must carry records from the cells"
     );
 
-    // Prove the partition covers the FULL trace set (not a subset stuck on one cell):
-    // a 1-cell run of the same seeded config dispatches the same conversations, so its
+    // A 1-cell run of the same seeded config dispatches the same conversations, so its
     // total record count and input-token distribution must match the 3-cell run
     // (deterministic-per-topology — the trace set is identical, only cell ownership and
     // merge order differ). The 1-cell run takes the single-process path (no controller
@@ -104,18 +100,17 @@ async fn test_graph_cellular_from_python_frontend() {
     );
 }
 
-/// Stage G for GRAPH: a cross-host (forced-HTTP) `--cells N` graph run ships its
-/// SINGLE-FILE `dag_jsonl` trace controller->cell over the SAME HTTP+zstd dataset plane
-/// the scheduled `file`/`path` datasets use (proving `cellular_file_dataset_path` is
-/// format-blind end-to-end), and each cell recompiles the trace and reproduces the
+/// A forced-HTTP `--cells N` graph run ships its single-file `dag_jsonl` trace
+/// from controller to cells over the HTTP+zstd dataset plane, and each cell
+/// recompiles the trace and reproduces the
 /// 1-cell trace set.
 ///
 /// Drives the real cross-host mechanism same-host via the `AIPERF_CELL_ARTIFACT_HTTP_FORCE`
 /// seam (true multi-host k8s cannot run in-sandbox): the controller binds its artifact
 /// server on loopback, registers the single-file trace source, injects the authority into
 /// each locally-launched cell, and the cells `GET /dataset/{name}` it back over real TCP +
-/// zstd. The load-bearing proof is the controller's `served dataset source over HTTP …
-/// content_encoding=zstd` log line (target `aiperf_cellular_artifact`, surfaced at `info`).
+/// zstd. The controller logs `served dataset source over HTTP …
+/// content_encoding=zstd` for each transfer.
 #[tokio::test]
 async fn test_graph_cellular_single_file_dataset_shipping() {
     // Flaky on macOS CI like the other artifact e2es; skip there.
@@ -177,7 +172,6 @@ async fn test_graph_cellular_single_file_dataset_shipping() {
         "graph --cells 3 must go through the controller (cellular-heartbeat.json sidecar)"
     );
 
-    // --- THE HTTP+zstd GRAPH DATASET-SHIP PROOF -----------------------------------
     let observables = dataset_serve_observables(&cellular);
     assert!(
         !observables.is_empty(),
@@ -202,7 +196,6 @@ async fn test_graph_cellular_single_file_dataset_shipping() {
         observables.join("\n")
     );
 
-    // --- TRACE-SET PARITY vs the 1-cell baseline over the shipped trace -----------
     assert_eq!(
         cellular.artifacts.request_count() as u64,
         baseline.artifacts.request_count() as u64,
@@ -222,18 +215,15 @@ async fn test_graph_cellular_single_file_dataset_shipping() {
 }
 
 /// A METRICS-ONLY (`--export-level summary`, no per-record artifacts) `--cells N` graph
-/// run takes the exact-fold path (task G1): each cell folds every record into its own
+/// run uses exact folding: each cell folds every record into its own
 /// exact accumulator, DROPS it, and ships the folded EXACT STORE (`StorePartition`)
-/// instead of the full record `Vec`; the controller `merge_store_partitions`-merges the
-/// cells' stores into one report. This proves (1) the store-shipping path runs end-to-end
-/// through the Python frontend, and (2) its merged summary matches a 1-cell metrics-only
-/// graph run within tolerance (counts/min/max/percentiles exact; sums/means a few ULPs).
+/// instead of the full record `Vec`; the controller merges the cells' stores into
+/// one report matching a 1-cell metrics-only graph run within tolerance.
 ///
 /// The store-vs-records observable is the controller's `cellular-heartbeat.json`: a cell
 /// shipping a folded store ships EMPTY latency sketches (the fold dropped the per-record
 /// samples) but EXACT counters, so the merged heartbeat has `latency_ms.count == 0` with
-/// `counters.issued > 0`. A retain-path (records-shipping) run would carry populated
-/// sketches (`latency_ms.count > 0`) — so `count == 0` uniquely proves the store path.
+/// `counters.issued > 0`. Records shipping would populate the latency sketches.
 #[tokio::test]
 async fn test_graph_cellular_metrics_only_exact_fold_ships_store() {
     let h = AIPerfHarness::new().await;
@@ -252,15 +242,13 @@ async fn test_graph_cellular_metrics_only_exact_fold_ships_store() {
         r.stderr
     );
 
-    // The controller ran (only it writes the cellular-heartbeat.json sidecar).
     let heartbeat = r.artifacts.read_json_file("**/cellular-heartbeat.json");
     assert!(
         !heartbeat.is_null(),
         "metrics-only graph --cells 3 must go through the controller (cellular-heartbeat.json)"
     );
 
-    // STORE-path proof: exact counters but EMPTY latency sketches (the fold dropped the
-    // per-record samples). A records-shipping (retain) run would have `latency_ms.count > 0`.
+    // Folded stores carry counters but no per-record latency samples.
     let issued = heartbeat["counters"]["issued"].as_u64().unwrap_or(0);
     assert!(
         issued > 0,
@@ -271,10 +259,9 @@ async fn test_graph_cellular_metrics_only_exact_fold_ships_store() {
         latency_count,
         Some(0),
         "a folded-store (exact-fold) cell ships EMPTY latency sketches, so the merged \
-         heartbeat latency count must be 0 (proving StorePartition, not records); got {heartbeat}"
+         heartbeat latency count must be 0; got {heartbeat}"
     );
 
-    // The merged summary report exists and carries the cells' folded records.
     let json = r.artifacts.json();
     assert!(!json.is_null(), "metrics-only merged report must exist");
     assert!(
@@ -282,10 +269,6 @@ async fn test_graph_cellular_metrics_only_exact_fold_ships_store() {
         "merged metrics-only report must carry records folded from the cells"
     );
 
-    // Parity vs a 1-cell metrics-only graph run (also exact-fold, single-process — no
-    // controller sidecar): the same seeded trace set, so summary metrics match within
-    // tolerance (min/max/percentiles exact; the integer sequence-length averages exact
-    // under the order-independent store concat).
     let h1 = AIPerfHarness::new().await;
     let baseline = h1.run_timeout(
         &format!(
@@ -341,11 +324,8 @@ async fn test_graph_cellular_metrics_only_exact_fold_ships_store() {
 /// (`graph_fold = graph_exact_fold || sketch`). Counts/sums/min/max stay EXACT; only
 /// percentiles are approximate.
 ///
-/// Before the unification a sketch graph cellular cell fell to the retain path and
-/// shipped raw records (defeating bounded memory, and rebuilding an EXACT accumulator in
-/// the controller). This test proves it now ships a store: the merged heartbeat carries
-/// exact counters but EMPTY latency sketches (the fold dropped the samples), the same
-/// StorePartition signal the exact-fold test asserts.
+/// The merged heartbeat carries exact counters but no retained latency samples,
+/// identifying the folded-store path.
 #[tokio::test]
 async fn test_graph_cellular_sketch_ships_store() {
     let h = AIPerfHarness::new().await;
@@ -364,16 +344,13 @@ async fn test_graph_cellular_sketch_ships_store() {
         r.stderr
     );
 
-    // The controller ran (only it writes the cellular-heartbeat.json sidecar).
     let heartbeat = r.artifacts.read_json_file("**/cellular-heartbeat.json");
     assert!(
         !heartbeat.is_null(),
         "sketch graph --cells 3 must go through the controller (cellular-heartbeat.json)"
     );
 
-    // STORE-path proof: exact counters, EMPTY latency sketches. A retain (records) cell
-    // would carry `latency_ms.count > 0`; a folded-store (sketch) cell ships empty
-    // sketches, so the merged heartbeat latency count must be 0.
+    // Folded sketch stores carry counters but no per-record latency samples.
     let issued = heartbeat["counters"]["issued"].as_u64().unwrap_or(0);
     assert!(
         issued > 0,
@@ -383,12 +360,9 @@ async fn test_graph_cellular_sketch_ships_store() {
         heartbeat["latency_ms"]["count"].as_u64(),
         Some(0),
         "a folded-store (sketch) cell ships EMPTY latency sketches, so the merged heartbeat \
-         latency count must be 0 (proving StorePartition, not raw records); got {heartbeat}"
+         latency count must be 0; got {heartbeat}"
     );
 
-    // The merged sketch report exists and carries the folded total. `request_count` and
-    // the sequence-length count/min/max are EXACT under sketch (only percentiles are
-    // approximate), so they match a 1-cell sketch baseline exactly.
     let json = r.artifacts.json();
     assert!(!json.is_null(), "sketch merged report must exist");
     assert!(
@@ -421,8 +395,6 @@ async fn test_graph_cellular_sketch_ships_store() {
         let base = &base_json[metric];
         let cell = &json[metric];
         assert!(!base.is_null(), "sketch baseline missing metric {metric}");
-        // Sketch keeps count/min/max EXACT (order-independent set ops); percentiles are
-        // approximate, so only the exact stats are compared.
         for stat in ["min", "max", "avg"] {
             if let (Some(b), Some(c)) = (base[stat].as_f64(), cell[stat].as_f64()) {
                 assert!(
@@ -459,19 +431,19 @@ fn graph_record_isl_osl_multiset(r: &RunResult) -> Vec<(i64, i64)> {
     rows
 }
 
-/// Task G2: a `--cells N` graph run WITH per-record artifacts (`--export-level raw`)
+/// A `--cells N` graph run with per-record artifacts (`--export-level raw`)
 /// takes the exact-fold STREAMING LANE path — each cell folds each record into its exact
 /// accumulator and DROPS it while STREAMING that record's artifact rows to its cell dir
 /// (records/raw via `RecordArtifactLane`), then ships the folded EXACT STORE
 /// (`StorePartition`: empty heartbeat sketches, exact counters) instead of the full
 /// record `Vec`. The controller concatenates the per-cell artifact files into the run
-/// dir (Stage D concat) and `merge_store_partitions`-merges the stores.
+/// dir and merges the store partitions.
 ///
-/// Proof it was EXACT-FOLD (not the legacy retain path) WITH artifacts present: the
-/// merged `cellular-heartbeat.json` has `latency_ms.count == 0` (a folded store ships
+/// Exact-fold execution with artifacts has `latency_ms.count == 0` in the merged
+/// `cellular-heartbeat.json` (a folded store ships
 /// empty sketches; a records-shipping retain cell would populate them) with
 /// `counters.issued > 0`, AND the per-record `profile_export.jsonl`/`_raw.jsonl` are
-/// emitted anyway. Its merged per-record row SET equals a 1-cell run's for the same
+/// emitted anyway. Its merged per-record row set equals a 1-cell run's for the same
 /// seed, and the summary matches within tolerance.
 #[tokio::test]
 async fn test_graph_cellular_exact_fold_streams_per_record_artifacts() {
@@ -491,7 +463,6 @@ async fn test_graph_cellular_exact_fold_streams_per_record_artifacts() {
         cellular.stderr
     );
 
-    // Topology guard: the 3-cell run went through the controller.
     let heartbeat = cellular
         .artifacts
         .read_json_file("**/cellular-heartbeat.json");
@@ -500,10 +471,7 @@ async fn test_graph_cellular_exact_fold_streams_per_record_artifacts() {
         "graph --cells 3 with artifacts must go through the controller (cellular-heartbeat.json)"
     );
 
-    // EXACT-FOLD-WITH-ARTIFACTS proof: a folded store ships EMPTY latency sketches
-    // (count 0) but EXACT counters. A retain (records-shipping) cell would carry
-    // populated sketches — so count == 0 with issued > 0 uniquely proves the store path
-    // was taken even though per-record files were requested (task G2 relaxed the gate).
+    // Folded stores carry counters but no per-record latency samples.
     let issued = heartbeat["counters"]["issued"].as_u64().unwrap_or(0);
     assert!(
         issued > 0,
@@ -513,29 +481,26 @@ async fn test_graph_cellular_exact_fold_streams_per_record_artifacts() {
         heartbeat["latency_ms"]["count"].as_u64(),
         Some(0),
         "an exact-fold (folded-store) graph cell ships EMPTY latency sketches, so the merged \
-         heartbeat latency count must be 0 (proving StorePartition, not records) even with \
+         heartbeat latency count must be 0 even with \
          per-record artifacts requested; got {heartbeat}"
     );
 
-    // The controller emitted the merged per-record files (Stage D concat over the cells'
-    // streaming-lane output) — the whole point of G2: exact-fold no longer drops them.
+    // The controller concatenates the cells' streaming-lane output.
     assert!(
         cellular
             .artifacts
             .find_file("**/profile_export.jsonl")
             .is_some(),
-        "graph --cells 3 must emit the merged profile_export.jsonl (lane + Stage D concat)"
+        "graph --cells 3 must emit the merged profile_export.jsonl"
     );
     assert!(
         cellular
             .artifacts
             .find_file("**/profile_export_raw.jsonl")
             .is_some(),
-        "graph --cells 3 must emit the merged profile_export_raw.jsonl (lane + Stage D concat)"
+        "graph --cells 3 must emit the merged profile_export_raw.jsonl"
     );
 
-    // A 1-cell graph run over the same seed also takes the single-process exact-fold lane
-    // path (no controller sidecar) and writes its records directly.
     let h1 = AIPerfHarness::new().await;
     let baseline = h1.run_timeout(
         &format!(
@@ -559,8 +524,6 @@ async fn test_graph_cellular_exact_fold_streams_per_record_artifacts() {
         "a 1-cell graph run must take the single-process path (no controller sidecar)"
     );
 
-    // Row-SET parity: the 3-cell merged per-record rows equal the 1-cell run's (same
-    // seeded trace set; completion order accepted, so SET — not byte order — is compared).
     let base_records = graph_record_isl_osl_multiset(&baseline);
     let cell_records = graph_record_isl_osl_multiset(&cellular);
     assert!(
@@ -577,7 +540,6 @@ async fn test_graph_cellular_exact_fold_streams_per_record_artifacts() {
         "1-cell and 3-cell graph runs must emit the same number of raw per-record rows"
     );
 
-    // Summary parity within tolerance (counts/min/max/percentiles exact; sums/means ULPs).
     let base_json = baseline.artifacts.json();
     let cell_json = cellular.artifacts.json();
     assert_eq!(
@@ -626,10 +588,8 @@ fn strip_instance(conversation_id: &str) -> &str {
 /// topology-independent record content. `--cells` is supplied on the CLI (a runtime
 /// axis), so this config is identical across the two arms.
 ///
-/// The CLI-flag graph tests above cannot select CSV/parquet (those formats are only
-/// selectable through the YAML `records` list — `_converter_runtime.py` wires only
-/// JSONL for `--export-level`), so this mirrors the scheduled `test_exact_fold_ab_parity`
-/// config path instead: a full YAML with the graph dataset + the artifact selection.
+/// CLI `--export-level` does not select CSV or Parquet, so the artifact formats
+/// are configured through the YAML `records` list.
 fn graph_artifact_config(url: &str) -> String {
     format!(
         "schemaVersion: \"2.0\"\n\
@@ -659,11 +619,7 @@ fn graph_artifact_config(url: &str) -> String {
     )
 }
 
-/// Split one RFC4180 CSV line into fields, honoring the runner's `csv_escape` quoting
-/// (`rust/runner/src/records.rs`): a field is double-quoted when it contains a
-/// comma/quote/newline, and an embedded quote is doubled (`""`). Copied from
-/// `test_exact_fold_ab_parity` so a serialization regression that pushed a comma into a
-/// cell cannot silently pass a naive `split(',')`.
+/// Split one RFC4180 CSV line into fields, including quoted delimiters and quotes.
 fn parse_csv_line(line: &str) -> Vec<String> {
     let mut fields = Vec::new();
     let mut cur = String::new();
@@ -761,9 +717,8 @@ fn read_graph_records_csv_projection(r: &RunResult) -> (String, Vec<String>) {
 
 /// Read a graph `profile_export.parquet` as (schema column names, sorted
 /// topology-independent projection multiset). The projection is the base conversation id
-/// + the seeded ISL/OSL — the graph-deterministic columns, mirroring the scheduled
-/// `test_exact_fold_ab_parity` parquet check but keyed on the base id (dense per-cell
-/// renumbering makes `session_num`/instance ordinals topology-dependent).
+/// plus seeded ISL/OSL. Dense per-cell renumbering makes `session_num` and instance
+/// ordinals topology-dependent.
 fn read_graph_parquet_projection(path: &std::path::Path) -> (Vec<String>, Vec<String>) {
     let file = std::fs::File::open(path).expect("open parquet");
     let builder = ParquetRecordBatchReaderBuilder::try_new(file).expect("parquet reader builder");
@@ -829,14 +784,13 @@ fn read_graph_parquet_projection(path: &std::path::Path) -> (Vec<String>, Vec<St
 /// turn index + the mock's deterministic generated text. Excludes `session_num` /
 /// `x_request_id` and the timing block. This JSON-MERGE concat (`data`-array merge, not a
 /// line append — `shard_artifacts.rs::concat_outputs_json`) is the highest-value graph
-/// concat to prove end-to-end.
+/// concatenation path to exercise end to end.
 fn outputs_json_projection(r: &RunResult) -> Vec<String> {
     let p = r
         .artifacts
         .find_file("**/outputs.json")
         .expect("outputs.json");
     let doc: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
-    // The concat writes the shared schema_version verbatim; assert it survived.
     assert!(
         !doc["schema_version"].is_null(),
         "merged outputs.json must carry schema_version; got {doc}"
@@ -859,15 +813,12 @@ fn outputs_json_projection(r: &RunResult) -> Vec<String> {
     rows
 }
 
-/// Task G2 (follow-up B): a `--cells N` graph run with the CSV + Parquet + outputs.json
+/// A `--cells N` graph run with CSV, Parquet, and `outputs.json`
 /// per-record artifacts enabled takes the exact-fold STREAMING LANE, and the controller
-/// concatenates each lane's per-cell file into the run dir (Stage D
-/// `concatenate_cell_artifacts`): header-once + data-append CSV, row-group-concat Parquet,
+/// concatenates each lane's per-cell file into the run dir: header-once +
+/// data-append CSV, row-group-concat Parquet,
 /// and — the highest-value path — a `data`-array JSON MERGE for `outputs.json`
-/// (`shard_artifacts.rs::concat_outputs_json`, NOT a line concat). The existing
-/// `test_graph_cellular_exact_fold_streams_per_record_artifacts` covers only the
-/// JSONL/raw lanes (`--export-level raw`); this closes the CSV/parquet/outputs gap that
-/// was unit-only.
+/// (`shard_artifacts.rs::concat_outputs_json`, not a line concat).
 ///
 /// A 1-cell run over the same seeded trace takes the single-process lane path (no
 /// controller sidecar) and writes each file directly. Each merged file must equal the
@@ -892,7 +843,7 @@ async fn test_graph_cellular_exact_fold_concats_csv_parquet_outputs() {
         )
     };
 
-    // 3-cell run through the controller (Stage D concat over the cells' streaming lanes).
+    // The controller concatenates the three cells' streaming lanes.
     let h3 = AIPerfHarness::new().await;
     let cellular = run(&h3, 3);
     assert!(
@@ -903,10 +854,7 @@ async fn test_graph_cellular_exact_fold_concats_csv_parquet_outputs() {
         cellular.stderr
     );
 
-    // Topology guard: only the controller emits the cellular-heartbeat.json sidecar. Its
-    // empty latency sketches with a nonzero issued counter also re-prove the exact-fold
-    // (folded-store) path was taken WITH per-record artifacts requested (task G2 relaxed
-    // the gate) — a retain cell would populate the sketches.
+    // Only the controller emits the heartbeat; folded stores contain no latency samples.
     let heartbeat = cellular
         .artifacts
         .read_json_file("**/cellular-heartbeat.json");
@@ -925,7 +873,6 @@ async fn test_graph_cellular_exact_fold_concats_csv_parquet_outputs() {
          latency count must be 0 even with per-record artifacts requested; got {heartbeat}"
     );
 
-    // The controller emitted all three merged per-record artifacts (Stage D concat).
     for glob in [
         "**/profile_export_records.csv",
         "**/profile_export.parquet",
@@ -933,7 +880,7 @@ async fn test_graph_cellular_exact_fold_concats_csv_parquet_outputs() {
     ] {
         assert!(
             cellular.artifacts.find_file(glob).is_some(),
-            "graph --cells 3 must emit the merged {glob} (streaming lane + Stage D concat)"
+            "graph --cells 3 must emit the merged {glob}"
         );
     }
 
@@ -955,7 +902,6 @@ async fn test_graph_cellular_exact_fold_concats_csv_parquet_outputs() {
         "a 1-cell graph run must take the single-process path (no controller sidecar)"
     );
 
-    // --- CSV: identical header, identical topology-independent content SET ------------
     let (base_csv_header, base_csv) = read_graph_records_csv_projection(&baseline);
     let (cell_csv_header, cell_csv) = read_graph_records_csv_projection(&cellular);
     assert!(
@@ -979,7 +925,6 @@ async fn test_graph_cellular_exact_fold_concats_csv_parquet_outputs() {
          diverged from the 1-cell run"
     );
 
-    // --- outputs.json: JSON-merge concat, deterministic (text) SET -------------------
     let base_out = outputs_json_projection(&baseline);
     let cell_out = outputs_json_projection(&cellular);
     assert!(
@@ -999,7 +944,6 @@ async fn test_graph_cellular_exact_fold_concats_csv_parquet_outputs() {
          diverged from the 1-cell run — the data-array JSON-merge concat is broken"
     );
 
-    // --- parquet: identical schema, identical topology-independent projection SET -----
     let (base_pq_cols, base_pq) = read_graph_parquet_projection(
         &baseline
             .artifacts
@@ -1084,17 +1028,14 @@ fn write_weka_dir_fixture(count: usize) -> (tempfile::TempDir, String) {
     (dir, path)
 }
 
-/// Stage G (multi-file): a cross-host (force-HTTP) `--cells N` GRAPH run over a
+/// A forced-HTTP `--cells N` graph run over a
 /// DIRECTORY multi-shard `weka_trace` must ship EVERY shard the loader reads over
 /// the HTTP+zstd plane (one `served dataset source over HTTP` per shard), each cell
 /// reconstructs the whole directory from the manifest, and the merged record SET
 /// matches a 1-cell run over the same directory.
 ///
-/// This exercises the follow-up multi-file trace-shipping path end-to-end through
-/// the Python frontend: a directory graph trace was previously fail-closed for a
-/// cross-host cellular run; now the controller enumerates the shard set, serves it
-/// plus a manifest, and the cells rebuild the tree. Same force-HTTP loopback seam as
-/// the single-file test (true multi-host k8s cannot run in-sandbox).
+/// The controller enumerates the shard set, serves it with a manifest, and cells
+/// rebuild the directory tree through the force-HTTP loopback seam.
 #[tokio::test]
 async fn test_graph_cellular_directory_multi_file_dataset_shipping() {
     // Flaky on macOS CI like the other artifact e2es; skip there.
@@ -1166,8 +1107,7 @@ async fn test_graph_cellular_directory_multi_file_dataset_shipping() {
         "weka directory --cells 3 must go through the controller (cellular-heartbeat.json sidecar)"
     );
 
-    // --- THE MULTI-FILE HTTP+zstd SHIP PROOF --------------------------------------
-    // Every shard must be served over HTTP+zstd, and enough serves to cover the whole
+    // Every shard must be served over HTTP+zstd, and enough serves must cover the whole
     // shard set across cells (3 cells x 6 shards, minus any empty-slice cells). Assert
     // at least one serve per distinct shard name so no shard was under-shipped.
     let observables = dataset_serve_observables(&cellular);
@@ -1201,7 +1141,6 @@ async fn test_graph_cellular_directory_multi_file_dataset_shipping() {
         observables.join("\n")
     );
 
-    // --- RECORD-SET PARITY vs the 1-cell baseline over the shipped directory ------
     assert_eq!(
         cellular.artifacts.request_count() as u64,
         baseline.artifacts.request_count() as u64,
@@ -1236,8 +1175,7 @@ fn aiperf_log(r: &RunResult) -> String {
 }
 
 /// The HTTP+zstd dataset-serve observable lines: one per served source, naming the
-/// dataset and the encoding. The load-bearing proof the trace crossed a real HTTP
-/// socket compressed, not a shared filesystem.
+/// dataset and encoding.
 fn dataset_serve_observables(r: &RunResult) -> Vec<String> {
     aiperf_log(r)
         .lines()

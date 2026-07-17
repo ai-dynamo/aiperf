@@ -1,23 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end tool-call / function-call tests: drive `aiperf profile` against a
-//! mock server configured with `--tool-call-rate 1.0` and verify the raw
-//! per-record export carries the function tool call the runner parses.
-//!
-//! Both wire shapes are covered at the raw-record level:
+//! Tool-call wire contracts:
 //!   - streaming: the argument string is split across two `delta.tool_calls`
-//!     frames; merging them by `index` reconstructs the full function name and
-//!     arguments (this is exactly the runner's streamed tool-call merge in
-//!     `aiperf_runtime::endpoints::endpoints::merge_tool_call_delta`). A frame carries
-//!     `finish_reason: "tool_calls"`.
+//!     frames and merged by `index`; a frame carries `finish_reason: "tool_calls"`.
 //!   - non-streaming: the single response body carries `message.tool_calls` with
 //!     the same function name/arguments and `finish_reason: "tool_calls"`.
 //!
 //! The tool-definition prompt tokens are reported as `toolUsePromptTokenCount`
-//! (the exact key `aiperf_runtime::endpoints::usage::UsageView` reads into
-//! `usage_tool_use_prompt_tokens`), which the streaming path exposes in the
-//! terminal usage frame and the summary export surfaces as a derived metric.
+//! and exported as `usage_tool_use_prompt_tokens`.
 
 mod common;
 use common::*;
@@ -29,9 +20,7 @@ const REQUESTS: usize = 6;
 const TOOL_NAME: &str = "get_weather";
 const TOOL_ARGS: &str = r#"{"location":"NYC"}"#;
 
-/// Write a tiny `single_turn` input file (the `text` field becomes the user
-/// prompt). Nothing about the prompt drives tool emission — that is the seeded
-/// `--tool-call-rate` draw — so any prompt works.
+/// Tool emission depends on the seeded rate draw, not prompt content.
 fn write_prompts(dir: &std::path::Path) -> std::path::PathBuf {
     let records: Vec<Value> = (0..REQUESTS)
         .map(|i| json!({ "text": format!("Tool probe {i}: what is the weather?") }))
@@ -39,8 +28,6 @@ fn write_prompts(dir: &std::path::Path) -> std::path::PathBuf {
     write_jsonl(dir, "prompts.jsonl", &records)
 }
 
-/// A `--fast` mock config that answers every chat request with a function tool
-/// call (`--tool-call-rate 1.0`).
 fn tool_call_cfg() -> MockServerConfig {
     MockServerConfig {
         fast: true,
@@ -53,7 +40,7 @@ fn tool_call_cfg() -> MockServerConfig {
     }
 }
 
-/// Every `data:` SSE packet in a raw record, parsed as JSON (skipping `[DONE]`).
+/// Parses JSON SSE data packets and excludes `[DONE]`.
 fn record_data_frames(record: &Value) -> Vec<Value> {
     let mut out = Vec::new();
     let Some(responses) = record.get("responses").and_then(Value::as_array) else {
@@ -82,11 +69,7 @@ fn record_data_frames(record: &Value) -> Vec<Value> {
     out
 }
 
-/// Reconstruct the streamed tool call (index 0) from one raw record by merging
-/// `choices[0].delta.tool_calls` across every frame: `function.name` is set on
-/// the opening frame, and `function.arguments` fragments concatenate — exactly
-/// what the runner does. Also reports whether any frame carried
-/// `finish_reason: "tool_calls"`.
+/// Merges index-zero tool-call name and argument fragments across frames.
 fn reconstruct_streamed_tool_call(record: &Value) -> (String, String, bool) {
     let mut name = String::new();
     let mut arguments = String::new();
@@ -113,8 +96,6 @@ fn reconstruct_streamed_tool_call(record: &Value) -> (String, String, bool) {
     (name, arguments, saw_finish)
 }
 
-/// Reconstruct the streamed assistant `content` (generated tokens) from one raw
-/// record — proves the tool-call stream still carries observable output tokens.
 fn reconstruct_streamed_content(record: &Value) -> String {
     let mut out = String::new();
     for obj in record_data_frames(record) {
@@ -128,10 +109,7 @@ fn reconstruct_streamed_content(record: &Value) -> String {
     out
 }
 
-/// Pull the non-streaming response body (the frame that carries
-/// `choices[0].message`) from a raw record. A non-streaming response is captured
-/// as `responses[].text` (the whole JSON body), not as SSE `data:` packets, so
-/// parse that; fall back to any `data:` frame that carries a message.
+/// Non-streaming bodies use `responses[].text`, with data packets as fallback.
 fn record_message_body(record: &Value) -> Value {
     if let Some(responses) = record.get("responses").and_then(Value::as_array) {
         for resp in responses {
@@ -152,11 +130,6 @@ fn record_message_body(record: &Value) -> Value {
     panic!("no non-streaming message body found in record: {record}");
 }
 
-/// Streaming: at rate 1.0 every raw record's SSE frames carry `delta.tool_calls`
-/// deltas that reconstruct the configured function name + arguments, a frame
-/// carries `finish_reason: "tool_calls"`, generated content tokens are still
-/// present (observable output), and the terminal usage frame reports
-/// `toolUsePromptTokenCount`.
 #[tokio::test]
 async fn tool_calls_streamed_in_raw_records() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -192,15 +165,12 @@ async fn tool_calls_streamed_in_raw_records() {
             "a streamed frame must carry finish_reason=tool_calls"
         );
 
-        // The generated content tokens still stream (the tool call is emitted in
-        // addition to output content, so the token/latency model is intact).
         let content = reconstruct_streamed_content(rec);
         assert!(
             !content.is_empty(),
             "tool-call stream should still carry generated output tokens"
         );
 
-        // toolUsePromptTokenCount is observable in the terminal usage frame.
         let usage_frame = record_data_frames(rec)
             .into_iter()
             .find(|o| o.get("usage").map(|u| !u.is_null()).unwrap_or(false))
@@ -215,9 +185,6 @@ async fn tool_calls_streamed_in_raw_records() {
     }
 }
 
-/// Non-streaming: the single response body carries `message.tool_calls` with the
-/// configured function name/arguments, `finish_reason: "tool_calls"`, and the
-/// usage object reports `toolUsePromptTokenCount`.
 #[tokio::test]
 async fn tool_calls_non_streaming_in_raw_records() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -262,9 +229,6 @@ async fn tool_calls_non_streaming_in_raw_records() {
     }
 }
 
-/// The derived `usage_tool_use_prompt_tokens` metric lands in the summary export
-/// when tool calls are emitted (proves the count flows all the way through the
-/// runner's usage accounting, not just the raw frame).
 #[tokio::test]
 async fn tool_use_prompt_tokens_metric_in_summary() {
     let dir = tempfile::TempDir::new().unwrap();

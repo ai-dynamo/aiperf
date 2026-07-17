@@ -3,13 +3,9 @@
 
 //! Transport-neutral dispatch vocabulary.
 //!
-//! These types carry no transport-specific state and are reused verbatim by
-//! every transport (http, grpc, dynosim, dry_run) plus the metrics plane. They
-//! were extracted out of `transport::http` so a non-HTTP transport can depend on
-//! the shared request/record/response/trace/error vocabulary without pulling in
-//! the hyper client. The module is ungated (generic); gRPC maps
-//! [`ConnectionReuseStrategy`] and consumes [`RequestRecord`]/[`Response`]/
-//! [`TraceData`]/[`ErrorDetails`] with no HTTP dependency.
+//! These types carry no wire-client state. The module is ungated so every
+//! transport and the metrics plane can share request, record, response, trace,
+//! error, and connection-reuse contracts.
 
 pub mod dispatch;
 pub mod error;

@@ -1,13 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shared OpenAI chat-completions request-body construction, so every live HTTP
-//! sink emits the identical streaming wire contract in one place.
-//!
-//! This is the standalone body builder consumed by the runner-library online
-//! path's legacy turn binding; the dialect-driven convergence target is
-//! [`ChatEndpoint`](crate::endpoints::ChatEndpoint), which owns the full prepared-endpoint
-//! request pipeline.
+//! Shared OpenAI chat-completions streaming request-body construction.
 
 use serde_json::{Value, json};
 

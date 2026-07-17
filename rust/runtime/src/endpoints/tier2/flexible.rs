@@ -24,7 +24,7 @@ use crate::endpoints::models::{
 };
 use crate::endpoints::registry::{
     EndpointFactory, PreparedEndpoint, PreparedEndpointBehavior, PreparedRequest, ReadinessPolicy,
-    format_legacy_payload,
+    format_compatibility_payload,
 };
 
 const NV_EMBEDQA: &str = r#"{"text": {{ texts|tojson }}}"#;
@@ -99,7 +99,7 @@ impl Endpoint for RawEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -125,7 +125,7 @@ impl Endpoint for TemplateEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -157,9 +157,8 @@ impl PreparedEndpointBehavior for RawEndpoint {
                     "raw endpoint requires raw_payload on the dispatching turn".into(),
                 )
             })?;
-        // The raw body may be any authored JSON value; the plan model only splices
-        // named-field objects, so a non-object body is the hard error the legacy
-        // `structured_plan` bridge produced (moved here off the dispatch path).
+        // Body plans splice named object fields, so raw scalar and array bodies
+        // cannot be represented.
         let object = payload.as_object().ok_or_else(|| {
             EndpointError::InvalidRequest("endpoint body must be a JSON object".into())
         })?;
@@ -173,7 +172,7 @@ impl PreparedEndpointBehavior for TemplateEndpoint {
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
     ) -> EndpointResult<BodyPlan> {
-        let (source, legacy_extra_config) = template_source(config)?;
+        let (source, uses_extra_config) = template_source(config)?;
         let mut environment = Environment::new();
         environment.set_auto_escape_callback(|_| AutoEscape::Html);
         environment
@@ -181,7 +180,7 @@ impl PreparedEndpointBehavior for TemplateEndpoint {
             .map_err(|error| {
                 EndpointError::InvalidConfig(format!("compile payload template: {error}"))
             })?;
-        render_template_payload(&environment, request, config, legacy_extra_config)
+        render_template_payload(&environment, request, config, uses_extra_config)
     }
 }
 
@@ -195,17 +194,17 @@ impl EndpointFactory for RawEndpointFactory {
         config: EffectiveEndpointConfig,
     ) -> EndpointResult<Box<dyn PreparedEndpoint>> {
         let selector = PreparedSelector::compile(response_field_raw(config.as_raw()));
-        let legacy_config = EndpointConfig::from_raw(EndpointType::Raw, config.to_raw());
-        let headers = RawEndpoint.format_headers(&legacy_config);
+        let compatibility_config = EndpointConfig::from_raw(EndpointType::Raw, config.to_raw());
+        let headers = RawEndpoint.format_headers(&compatibility_config);
         Ok(Box::new(PreparedRawEndpoint {
             config,
-            legacy_config,
+            compatibility_config,
             headers,
             selector,
         }))
     }
 
-    fn legacy_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
+    fn compatibility_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
         Some(Arc::new(RawEndpoint))
     }
 }
@@ -223,7 +222,7 @@ impl EndpointFactory for TemplateEndpointFactory {
         &self,
         config: EffectiveEndpointConfig,
     ) -> EndpointResult<Box<dyn PreparedEndpoint>> {
-        let (source, legacy_extra_config) = template_source(config.as_raw())?;
+        let (source, uses_extra_config) = template_source(config.as_raw())?;
         let mut environment = Environment::new();
         environment.set_auto_escape_callback(|_| AutoEscape::Html);
         environment
@@ -234,19 +233,20 @@ impl EndpointFactory for TemplateEndpointFactory {
         let selector = PreparedSelector::compile(
             response_field_raw(config.as_raw()).filter(|field| *field != "text"),
         );
-        let legacy_config = EndpointConfig::from_raw(EndpointType::Template, config.to_raw());
-        let headers = TemplateEndpoint.format_headers(&legacy_config);
+        let compatibility_config =
+            EndpointConfig::from_raw(EndpointType::Template, config.to_raw());
+        let headers = TemplateEndpoint.format_headers(&compatibility_config);
         Ok(Box::new(PreparedTemplateEndpoint {
             config,
-            legacy_config,
+            compatibility_config,
             headers,
             environment,
             selector,
-            legacy_extra_config,
+            uses_extra_config,
         }))
     }
 
-    fn legacy_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
+    fn compatibility_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
         Some(Arc::new(TemplateEndpoint))
     }
 }
@@ -254,7 +254,7 @@ impl EndpointFactory for TemplateEndpointFactory {
 #[derive(Debug)]
 struct PreparedRawEndpoint {
     config: EffectiveEndpointConfig,
-    legacy_config: EndpointConfig,
+    compatibility_config: EndpointConfig,
     headers: BTreeMap<String, String>,
     selector: PreparedSelector,
 }
@@ -283,7 +283,7 @@ impl PreparedEndpoint for PreparedRawEndpoint {
     }
 
     fn readiness_policy(&self, model: &str) -> EndpointResult<ReadinessPolicy> {
-        RawEndpoint.readiness_policy(&self.legacy_config, model)
+        RawEndpoint.readiness_policy(&self.compatibility_config, model)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -310,11 +310,11 @@ impl PreparedEndpoint for PreparedRawEndpoint {
 #[derive(Debug)]
 struct PreparedTemplateEndpoint {
     config: EffectiveEndpointConfig,
-    legacy_config: EndpointConfig,
+    compatibility_config: EndpointConfig,
     headers: BTreeMap<String, String>,
     environment: Environment<'static>,
     selector: PreparedSelector,
-    legacy_extra_config: bool,
+    uses_extra_config: bool,
 }
 
 impl PreparedEndpoint for PreparedTemplateEndpoint {
@@ -331,7 +331,7 @@ impl PreparedEndpoint for PreparedTemplateEndpoint {
             &self.environment,
             request,
             self.config.as_raw(),
-            self.legacy_extra_config,
+            self.uses_extra_config,
         )
     }
 
@@ -346,7 +346,7 @@ impl PreparedEndpoint for PreparedTemplateEndpoint {
     }
 
     fn readiness_policy(&self, model: &str) -> EndpointResult<ReadinessPolicy> {
-        TemplateEndpoint.readiness_policy(&self.legacy_config, model)
+        TemplateEndpoint.readiness_policy(&self.compatibility_config, model)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -423,7 +423,7 @@ fn render_template_payload(
     environment: &Environment<'_>,
     request: &PreparedRequest<'_>,
     config: &RawEndpointConfig,
-    legacy_extra_config: bool,
+    uses_extra_config: bool,
 ) -> EndpointResult<BodyPlan> {
     let turn = request.turns().last().ok_or_else(|| {
         EndpointError::InvalidRequest("Template endpoint requires at least one turn".into())
@@ -517,8 +517,7 @@ fn render_template_payload(
     })?;
     if let Some(extra) = config.extra.as_ref() {
         for (key, value) in extra {
-            if legacy_extra_config && matches!(key.as_str(), "payload_template" | "response_field")
-            {
+            if uses_extra_config && matches!(key.as_str(), "payload_template" | "response_field") {
                 continue;
             }
             payload.insert(key.clone(), value.clone());

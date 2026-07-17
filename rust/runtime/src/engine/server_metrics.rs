@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Phase-bounded inference-server Prometheus collection.
-//!
-//! The native telemetry design addendum replaces
-//! the inherited asynchronous scrape races with one sequential Clock-driven
-//! loop and forces exact snapshots at every warmup/profiling barrier.
+//! Phase-bounded Prometheus collection with Clock-driven barrier snapshots.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -278,14 +274,8 @@ impl ServerMetricsPhaseSidecar {
     }
 
     async fn collect_continuously(self) {
-        // Take one ordinary cadence scrape immediately, just after the common
-        // phase-start barrier (before the first sleep), mirroring the GPU
-        // telemetry sidecar. The forced baseline in `start_inner` is captured
-        // *before* the phase officially starts, so its timestamp falls just
-        // outside `[phase_start_ns, phase_end_ns]`; without this first in-window
-        // scrape a phase shorter than the collection interval (common in fast
-        // e2e runs) produces no record inside the profiling window, and the
-        // window-filtered Parquet export emits zero rows.
+        // Scrape immediately after the start barrier so short phases retain an
+        // in-window record.
         self.collect_cadence_once().await;
         loop {
             let sleep = self
@@ -370,15 +360,8 @@ impl ServerMetricsPhaseSidecar {
         let start_ns = self.phase_start_ns.get();
         let end_ns = self.phase_end_ns.get();
         if let (Some(start_ns), Some(end_ns)) = (start_ns, end_ns) {
-            // Widen the phase window to bracket the boundary scrapes. The forced
-            // baseline scrape is taken just *before* the phase-start barrier and
-            // the final scrape just *after* phase end, so on a phase shorter than
-            // the collection interval (common in fast e2e runs) every scrape lands
-            // outside `[phase_start_ns, phase_end_ns]`. Both the JSON summary
-            // (window-filtered `gauge_series`) and the Parquet sink (which reads
-            // the raw wire records and filters by this reported profiling range)
-            // would then emit nothing. Extending the bounds to the actual scrape
-            // timestamps keeps every phase's scrapes inside its own window.
+            // Include boundary scrapes in the reported phase window so short
+            // phases remain visible to summary and Parquet filtering.
             let start_ns = start_records
                 .values()
                 .map(|record| record.timestamp_ns)

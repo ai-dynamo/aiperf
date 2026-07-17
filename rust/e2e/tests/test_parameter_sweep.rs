@@ -8,22 +8,18 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-// Defaults mirrored from `tests/integration/conftest.py::IntegrationTestDefaults`.
 const WORKERS_MAX: u32 = 1;
 const UI: &str = "simple";
 
-/// Read and parse a JSON file, panicking with a helpful message on failure.
 fn jload(path: &Path) -> Value {
     let bytes = fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
 }
 
-/// Read a text file, panicking with a helpful message on failure.
 fn read_text(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
-/// Directories directly under `dir` whose file name begins with `prefix`, sorted.
 fn sorted_dirs(dir: &Path, prefix: &str) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = match fs::read_dir(dir) {
         Ok(rd) => rd
@@ -41,12 +37,10 @@ fn sorted_dirs(dir: &Path, prefix: &str) -> Vec<PathBuf> {
     v
 }
 
-/// The last path component as an owned `String`.
 fn name_of(p: &Path) -> String {
     p.file_name().unwrap().to_string_lossy().to_string()
 }
 
-/// Metric keys (case-insensitively) containing `needle`.
 fn metric_keys_with(metrics: &Value, needle: &str) -> Vec<String> {
     metrics
         .as_object()
@@ -59,14 +53,12 @@ fn metric_keys_with(metrics: &Value, needle: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Assert that every field in `fields` is present on the object `m`.
 fn assert_fields(m: &Value, fields: &[&str], ctx: &str) {
     for f in fields {
         assert!(m.get(f).is_some(), "{ctx}: should have {f} field");
     }
 }
 
-/// `run_data["request_count"]["avg"]` as f64.
 fn request_count_avg(json_file: &Path) -> f64 {
     jload(json_file)["request_count"]["avg"]
         .as_f64()
@@ -86,7 +78,6 @@ const CONFIDENCE_METRIC_FIELDS: &[&str] = &[
     "unit",
 ];
 
-/// Requirement 4.1/4.2/4.5: repeated-mode sweep + confidence reporting.
 #[tokio::test]
 async fn test_sweep_with_confidence_repeated_mode() {
     let h = AIPerfHarness::new().await;
@@ -99,7 +90,6 @@ async fn test_sweep_with_confidence_repeated_mode() {
     ));
     assert_eq!(r.exit_code, 0);
 
-    // Hierarchical structure for repeated mode.
     let profile_runs_dir = root.join("profile_runs");
     assert!(
         profile_runs_dir.exists(),
@@ -129,7 +119,6 @@ async fn test_sweep_with_confidence_repeated_mode() {
         }
     }
 
-    // Aggregate directory structure.
     let aggregate_dir = root.join("aggregate");
     assert!(aggregate_dir.exists(), "aggregate directory should exist");
 
@@ -158,7 +147,6 @@ async fn test_sweep_with_confidence_repeated_mode() {
         assert_fields(&metrics[&throughput[0]], CONFIDENCE_METRIC_FIELDS, "metric");
     }
 
-    // Sweep aggregate directory.
     let sweep_agg_dir = aggregate_dir.join("sweep_aggregate");
     assert!(
         sweep_agg_dir.exists(),
@@ -173,7 +161,6 @@ async fn test_sweep_with_confidence_repeated_mode() {
     assert_sweep_csv_shape(&sweep_csv, &[2, 4, 6]);
 }
 
-/// Requirement 4.3/4.4/4.5: independent-mode sweep + confidence reporting.
 #[tokio::test]
 async fn test_sweep_with_confidence_independent_mode() {
     let h = AIPerfHarness::new().await;
@@ -253,7 +240,6 @@ async fn test_sweep_with_confidence_independent_mode() {
     assert_sweep_csv_shape(&sweep_csv, &[2, 4, 6]);
 }
 
-/// Requirement 3.1/3.2/3.4: repeated-mode directory structure.
 #[tokio::test]
 async fn test_artifact_directory_structure_repeated_mode() {
     let h = AIPerfHarness::new().await;
@@ -332,7 +318,6 @@ async fn test_artifact_directory_structure_repeated_mode() {
             .exists()
     );
 
-    // Structure integrity.
     for d in sorted_dirs(&profile_runs_dir, "") {
         assert!(d.is_dir());
         assert!(name_of(&d).starts_with("trial_"));
@@ -345,7 +330,6 @@ async fn test_artifact_directory_structure_repeated_mode() {
     }
 }
 
-/// Requirement 3.1/3.2/3.4: independent-mode directory structure.
 #[tokio::test]
 async fn test_artifact_directory_structure_independent_mode() {
     let h = AIPerfHarness::new().await;
@@ -423,7 +407,6 @@ async fn test_artifact_directory_structure_independent_mode() {
             .exists()
     );
 
-    // Structure integrity.
     let concurrency_dirs = sorted_dirs(&root, "concurrency_");
     assert_eq!(
         concurrency_dirs.len(),
@@ -441,7 +424,6 @@ async fn test_artifact_directory_structure_independent_mode() {
         }
     }
 
-    // Independent mode differs from repeated mode.
     assert!(
         !root.join("profile_runs").exists(),
         "Independent mode should NOT have profile_runs at top level"
@@ -452,7 +434,6 @@ async fn test_artifact_directory_structure_independent_mode() {
     );
 }
 
-/// Requirement 2.3/8.3/8.4: partial-failure infrastructure (successful run).
 #[tokio::test]
 async fn test_partial_failure_scenarios() {
     let h = AIPerfHarness::new().await;
@@ -529,13 +510,11 @@ async fn test_partial_failure_scenarios() {
     }
 }
 
-/// Requirement 6.1/6.2/6.4: single-concurrency backward compatibility.
 #[tokio::test]
-async fn test_backward_compatibility_single_concurrency() {
+async fn test_single_concurrency_artifact_layout() {
     let h = AIPerfHarness::new().await;
     let root = h.artifact_path().to_path_buf();
 
-    // Test 1: single concurrency without confidence runs.
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
          --concurrency 5 --request-count 10 \
@@ -559,7 +538,6 @@ async fn test_backward_compatibility_single_concurrency() {
     assert!(meta.get("sweep_index").is_none());
     assert!(meta.get("sweep_mode").is_none());
 
-    // Test 2: single concurrency WITH confidence runs.
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
          --concurrency 5 --num-profile-runs 3 --request-count 10 \
@@ -620,13 +598,11 @@ async fn test_backward_compatibility_single_concurrency() {
     assert_fields(&metrics[&throughput[0]], CONFIDENCE_METRIC_FIELDS, "metric");
 }
 
-/// Requirement 5.1/5.5/11.1/11.5: comprehensive aggregate file generation.
 #[tokio::test]
 async fn test_aggregate_file_generation() {
     let h = AIPerfHarness::new().await;
     let root = h.artifact_path().to_path_buf();
 
-    // Test 1: repeated mode.
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
          --concurrency 2,4,6 --num-profile-runs 3 \
@@ -708,7 +684,6 @@ async fn test_aggregate_file_generation() {
     assert_sweep_json_full(&sweep_json, "repeated", &[2, 4, 6]);
     assert_sweep_csv_shape(&sweep_csv, &[2, 4, 6]);
 
-    // Test 2: independent mode.
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
          --concurrency 2,4,6 --num-profile-runs 3 \
@@ -760,7 +735,6 @@ async fn test_aggregate_file_generation() {
     assert_sweep_csv_shape(&sweep_csv, &[2, 4, 6]);
 }
 
-/// Requirement 4.5/5.2: per-value confidence statistics correctness.
 #[tokio::test]
 async fn test_per_value_confidence_statistics() {
     use std::collections::HashMap;
@@ -768,7 +742,6 @@ async fn test_per_value_confidence_statistics() {
     let h = AIPerfHarness::new().await;
     let root = h.artifact_path().to_path_buf();
 
-    // Test 1: repeated mode.
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
          --concurrency 2,4,6 --num-profile-runs 3 \
@@ -782,7 +755,6 @@ async fn test_per_value_confidence_statistics() {
     assert!(aggregate_dir.exists());
     let concurrency_values = [2, 4, 6];
 
-    // Collect raw per-trial metric avg values.
     let mut raw: HashMap<i64, HashMap<String, Vec<f64>>> = HashMap::new();
     for c in concurrency_values {
         raw.insert(c, HashMap::new());
@@ -871,7 +843,6 @@ async fn test_per_value_confidence_statistics() {
         }
     }
 
-    // Sweep aggregate per-combination confidence stats.
     let sweep_json = aggregate_dir
         .join("sweep_aggregate")
         .join("profile_export_aiperf_sweep.json");
@@ -913,7 +884,6 @@ async fn test_per_value_confidence_statistics() {
         }
     }
 
-    // Test 2: independent mode.
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
          --concurrency 2,4,6 --num-profile-runs 3 \
@@ -991,10 +961,6 @@ async fn test_per_value_confidence_statistics() {
     }
 }
 
-/// Requirement 5.3/5.4/5.6/5.7: sweep-level statistics (best/pareto).
-///
-/// Marked `#[ignore]` because it is a `@pytest.mark.slow` test that runs two
-/// four-value sweeps × three trials; run explicitly with `--ignored`.
 #[tokio::test]
 #[ignore = "slow: two 4-value x 3-trial sweeps"]
 async fn test_sweep_level_statistics() {
@@ -1003,7 +969,6 @@ async fn test_sweep_level_statistics() {
     let h = AIPerfHarness::new().await;
     let root = h.artifact_path().to_path_buf();
 
-    // Test 1: repeated mode.
     let r = h.run_timeout(
         &format!(
             "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
@@ -1056,7 +1021,6 @@ async fn test_sweep_level_statistics() {
     let bl_unit = best_latency["unit"].as_str().unwrap().to_lowercase();
     assert!(bl_unit.contains("ms") || bl_unit.contains("sec"));
 
-    // Verify best configs actually optimal.
     let per_combo = sweep_data["per_combination_metrics"].as_array().unwrap();
     let mut throughput_values: HashMap<i64, f64> = HashMap::new();
     let mut latency_values: HashMap<i64, f64> = HashMap::new();
@@ -1156,7 +1120,6 @@ async fn test_sweep_level_statistics() {
         );
     }
 
-    // Test 2: independent mode.
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
          --concurrency 2,4,6,8 --num-profile-runs 3 \
@@ -1208,7 +1171,6 @@ async fn test_sweep_level_statistics() {
     assert_eq!(pareto_c, sorted_pc);
 }
 
-/// Sweep-only mode without confidence aggregation (single run per value).
 #[tokio::test]
 async fn test_sweep_only_mode_without_confidence() {
     let h = AIPerfHarness::new().await;
@@ -1238,11 +1200,9 @@ async fn test_sweep_only_mode_without_confidence() {
         assert!(cdir.join("profile_export_aiperf.csv").exists());
         assert_eq!(request_count_avg(&json_file), 10.0);
     }
-    // Top-level aggregate / sweep_aggregate MAY or MAY NOT exist for single-trial
-    // sweeps; both are acceptable, so nothing more is asserted here.
+    // Single-trial sweeps may omit or emit top-level aggregate directories.
 }
 
-/// Sweep directory structure is consumable by the `plot` command.
 #[tokio::test]
 async fn test_sweep_directory_structure_consumable_by_plot() {
     let h = AIPerfHarness::new().await;
@@ -1291,7 +1251,6 @@ async fn test_sweep_directory_structure_consumable_by_plot() {
     );
 }
 
-/// Sweep aggregate uses the new coordinate-based multi-parameter format.
 #[tokio::test]
 async fn test_sweep_aggregate_structure_validation() {
     let h = AIPerfHarness::new().await;
@@ -1345,7 +1304,6 @@ async fn test_sweep_aggregate_structure_validation() {
     }
 }
 
-/// `--parameter-sweep-cooldown-seconds` must not break sweep runs.
 #[tokio::test]
 async fn test_sweep_with_cooldown_flag_succeeds() {
     let h = AIPerfHarness::new().await;
@@ -1369,7 +1327,6 @@ async fn test_sweep_with_cooldown_flag_succeeds() {
     }
 }
 
-/// `--parameter-sweep-same-seed` must not break sweep runs.
 #[tokio::test]
 async fn test_sweep_with_same_seed_flag_succeeds() {
     let h = AIPerfHarness::new().await;
@@ -1393,10 +1350,6 @@ async fn test_sweep_with_same_seed_flag_succeeds() {
     }
 }
 
-// --- Shared sweep-aggregate shape assertions ---------------------------------
-
-/// Assert the common sweep-aggregate JSON shape (metadata + per-combination +
-/// best/pareto) for the given `mode` and expected concurrency `values`.
 fn assert_sweep_json_shape(sweep_json: &Path, mode: &str, values: &[i64]) {
     let sweep_data = jload(sweep_json);
     let metadata = &sweep_data["metadata"];
@@ -1455,8 +1408,6 @@ fn assert_sweep_json_shape(sweep_json: &Path, mode: &str, values: &[i64]) {
     }
 }
 
-/// Like [`assert_sweep_json_shape`] plus the extra top-level key / unit / field
-/// assertions exercised by `test_aggregate_file_generation`.
 fn assert_sweep_json_full(sweep_json: &Path, mode: &str, values: &[i64]) {
     let sweep_data = jload(sweep_json);
     let required_top_level = [
@@ -1482,7 +1433,6 @@ fn assert_sweep_json_full(sweep_json: &Path, mode: &str, values: &[i64]) {
 
     assert_sweep_json_shape(sweep_json, mode, values);
 
-    // Per-combination metrics carry a unit field in the full check.
     let per_combo = sweep_data["per_combination_metrics"].as_array().unwrap();
     for combo in per_combo {
         for (name, m) in combo["metrics"].as_object().unwrap() {
@@ -1493,8 +1443,6 @@ fn assert_sweep_json_full(sweep_json: &Path, mode: &str, values: &[i64]) {
     }
 }
 
-/// Assert the wide-format sweep CSV: a `concurrency` column, at least one
-/// statistical-suffix metric column, data rows, and each value present.
 fn assert_sweep_csv_shape(sweep_csv: &Path, values: &[i64]) {
     let csv = read_text(sweep_csv);
     let lines: Vec<&str> = csv.trim().split('\n').collect();

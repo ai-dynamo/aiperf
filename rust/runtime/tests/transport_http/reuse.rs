@@ -1,4 +1,6 @@
-// rust/transport-http/tests/reuse.rs
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 mod common;
 use common::{MockServer, run_local};
 
@@ -12,8 +14,6 @@ use aiperf_runtime::transport::http::config::ClientConfig;
 use bytes::Bytes;
 use http_body_util::BodyExt;
 
-/// Send a real non-streaming chat request over `sender`, drain the body, and
-/// return the HTTP status. Proves the connection actually carries traffic.
 async fn send_chat(sender: &mut Sender, base: &str) -> u16 {
     let url = url::Url::parse(base).unwrap();
     let authority = url.authority();
@@ -34,7 +34,8 @@ async fn send_chat(sender: &mut Sender, base: &str) -> u16 {
         .unwrap();
     let resp = sender.send(req).await.expect("send over pooled connection");
     let status = resp.status().as_u16();
-    let _ = resp.into_body().collect().await; // drain so the connection is reusable
+    // Drain the body so the HTTP/1 connection can be reused.
+    let _ = resp.into_body().collect().await;
     status
 }
 
@@ -93,7 +94,6 @@ fn pooled_reuses_connection_and_records_reuse() {
         let cfg = ClientConfig::default();
         let pool = ConnectionPool::new();
 
-        // First acquire establishes a real connection; send a real request over it.
         let mut t1 = TraceData::default();
         let mut lease1 = pool
             .acquire(
@@ -114,7 +114,6 @@ fn pooled_reuses_connection_and_records_reuse() {
         );
         assert_eq!(send_chat(lease1.sender_mut(), &mock.base_url).await, 200);
 
-        // Return it to the pool, then re-acquire: should reuse (no new connect).
         lease1.mark_reusable();
         drop(lease1);
         let mut t2 = TraceData::default();
@@ -137,7 +136,6 @@ fn pooled_reuses_connection_and_records_reuse() {
             t2.tcp_connect_start_ns.is_none(),
             "reuse must not open a new socket"
         );
-        // The reused connection still carries traffic to the same server.
         assert_eq!(send_chat(lease2.sender_mut(), &mock.base_url).await, 200);
     });
 }

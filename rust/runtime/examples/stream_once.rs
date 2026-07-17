@@ -1,4 +1,6 @@
-// rust/transport-http/examples/stream_once.rs
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Minimal driver: one streaming chat request against a server, printing the
 //! record. Usage: aiperf-mock-server --no-tokenizer & then run with BASE_URL set.
 

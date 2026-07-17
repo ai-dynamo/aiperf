@@ -14,15 +14,9 @@ pub struct TraceSimulationReport {
     pub prefix_cache_reused_ratio: f64,
     pub first_admission_prefix_cache_reused_ratio: f64,
     pub latency: TraceLatencyStats,
-    /// SLA-goodput stats. `Some` only when an SLA was supplied to the collector
-    /// (via `set_sla_thresholds`); `None` otherwise — goodput is undefined
-    /// without an SLA, so the `goodput_*` keys are omitted from the report.
+    /// SLA-goodput statistics, or `None` when no SLA was supplied.
     pub goodput: Option<TraceGoodputStats>,
-    /// Per-request records, one per admitted request. Populated by
-    /// `TraceCollector::finish`. Intentionally NOT serialized into the summary
-    /// JSON (see custom `Serialize` impl below) — consumers that want per-
-    /// request granularity should access this field directly and serialize
-    /// it themselves (e.g., the `--report-jsonl` CLI path).
+    /// Per-request records omitted from summary serialization.
     pub per_request: Vec<PerRequestRecord>,
 }
 
@@ -42,35 +36,21 @@ pub struct TraceThroughputStats {
     pub input_throughput_tok_s: f64,
     pub output_throughput_tok_s: f64,
     pub total_throughput_tok_s: f64,
-    /// Provisioned worker-time per role, in **worker-seconds**: the time-integral
-    /// of the *provisioned* worker count over the whole simulated run. The
-    /// provisioned count is every worker physically holding a GPU (active +
-    /// starting-up + draining), so this captures the startup ramp and the
-    /// scale-down drain tail, unlike a snapshot of the active/serving count.
-    /// Populated on the collector by the runtime: `add_worker_seconds` accrues
-    /// the integral each clock advance (agg / disagg), and
-    /// `set_static_worker_count` covers the single-worker path; 0.0 otherwise.
+    /// Time-integral of provisioned workers, including startup and drain, in
+    /// worker-seconds.
     /// Multiply by GPUs-per-worker for GPU-seconds (/3600 for GPU-hours).
     /// Aggregated replay reports through `decode_worker_seconds`, leaving
     /// `prefill_worker_seconds` at 0.0.
     pub prefill_worker_seconds: f64,
     pub decode_worker_seconds: f64,
-    /// GPUs per worker per role, derived from the mocker engine parallelism
-    /// (`MockEngineArgs::aic_gpus_per_worker` = aic_tp × aic_attention_dp); the
-    /// runtime sets it on the collector. 0 when not set (e.g. the online path).
+    /// GPUs per worker per role; 0 when unavailable.
     pub prefill_gpus_per_worker: usize,
     pub decode_gpus_per_worker: usize,
-    /// GPU-hours = Σ_role `worker_seconds × gpus_per_worker / 3600` — the
-    /// deployment's provisioned GPU-time (already including the startup ramp and
-    /// drain tail, since `*_worker_seconds` do). Computed in `finish()` straight
-    /// from the mocker's own worker parallelism, so it needs no external config.
+    /// Provisioned GPU-hours: Σ_role `worker_seconds × gpus_per_worker / 3600`.
     pub gpu_hours: f64,
 }
 
-/// Goodput: throughput restricted to the requests that satisfy the SLA. Present
-/// on the report only when an SLA was supplied to the collector (goodput is
-/// undefined without one). A completed request counts as "good" per
-/// `SlaThresholds::is_good` (a private method on this crate's collector).
+/// Throughput restricted to completed requests that satisfy the SLA.
 #[derive(Debug, Clone)]
 pub struct TraceGoodputStats {
     /// Completed requests that satisfied the SLA.
@@ -193,9 +173,7 @@ impl Serialize for TraceSimulationReport {
     where
         S: Serializer,
     {
-        // No length hint: the entry count is variable (the `goodput_*` keys are
-        // conditional) and JSON serialization ignores it anyway. `None` avoids a
-        // stale magic number that drifts as keys are added/removed.
+        // `goodput_*` entries are conditional, so the map has no fixed length.
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("num_requests", &self.request_counts.num_requests)?;
         map.serialize_entry(
@@ -316,24 +294,13 @@ struct TraceRequestStats {
     requested_output_length: usize,
     reused_input_tokens: usize,
     first_admission_reused_input_tokens: usize,
-    /// Index of the prefill worker that handled this request, if any.
-    /// `None` in two situations:
-    ///   - Aggregated replay (no separate prefill pool) — meaningless field.
-    ///   - Offline disagg with conditional-prefill bypass — request was
-    ///     routed directly to a decode worker without going through prefill.
-    ///
-    /// Downstream tooling derives "was_bypassed" as `prefill_worker_idx is None`
-    /// in disagg mode.
+    /// Prefill worker index. In disaggregated mode, `None` denotes bypass.
     prefill_worker_idx: Option<usize>,
-    /// Index of the decode worker that handled this request, if any.
     decode_worker_idx: Option<usize>,
-    /// Session / turn metadata copied from the workload driver, when the
-    /// trace source carries it (e.g., multi-turn Mooncake). `None` for raw
-    /// single-shot request lists.
     session_id: Option<String>,
     turn_index: Option<usize>,
-    /// Terminal classification is retained even when per-request export is
-    /// disabled so canceled/failed partial streams never become completions.
+    // Retained without export detail so partial terminal streams never count as
+    // completed.
     terminal_status: Option<ReplayTerminalStatus>,
     detail: Option<Box<PerRequestDetail>>,
 }
@@ -362,17 +329,10 @@ pub enum ReplayTerminalStatus {
     Failed,
 }
 
-/// Flat per-request record for `--report-jsonl` emission. One JSON line per
-/// request in the JSONL output; consumed by external analysis tools that want
-/// per-request granularity (TTFT vs. ISL scatter, worker-residency analysis,
-/// bypass classification, etc.).
+/// Flat record emitted by `--report-jsonl`.
 #[derive(Debug, Clone, Serialize)]
 pub struct PerRequestRecord {
-    /// Session identifier from the trace, when present. Mirrors AIPerf's
-    /// `conversation_id` field for the same purpose: bucket per-request
-    /// records by multi-turn session. Placed first in the serialized output
-    /// so each JSONL row leads with its session/turn identity, matching
-    /// AIPerf's `profile_export.jsonl` layout.
+    /// Session identifier, serialized first with `turn_index`.
     pub session_id: Option<String>,
     /// Zero-based turn index within `session_id`, when present.
     pub turn_index: Option<usize>,
@@ -390,7 +350,7 @@ pub struct PerRequestRecord {
     pub input_length: usize,
     /// Number of output tokens requested by the workload trace.
     pub requested_output_length: usize,
-    /// Number of output tokens actually emitted by the mock engine.
+    /// Number of output-token observations recorded for the request.
     pub output_length: usize,
     pub reused_input_tokens: usize,
     pub prefill_worker_idx: Option<usize>,
@@ -407,8 +367,7 @@ pub struct PerRequestRecord {
     pub terminal_status: ReplayTerminalStatus,
 }
 
-/// SLA thresholds used to classify requests for goodput. Mirrors Spica's
-/// `SLATarget` shape: set `ttft_ms` + `itl_ms` together, or `e2e_ms` alone.
+/// SLA thresholds used to classify requests for goodput.
 /// Only the thresholds that are set are checked, so an e2e-only SLA gates on
 /// e2e and a ttft+itl SLA gates on both. All-`None` (the default) means "no
 /// SLA", which suppresses goodput entirely.
@@ -457,34 +416,21 @@ impl SlaThresholds {
     }
 }
 
-/// Accumulates per-request measurement events (arrival, admit, tokens,
-/// terminal) and produces a [`TraceSimulationReport`]. Shared by the simulated
-/// engine and live HTTP load generators via the [`RequestObserver`] hook.
+/// Accumulates per-request measurement events received through
+/// [`RequestObserver`] and produces a [`TraceSimulationReport`].
 ///
 /// [`RequestObserver`]: crate::sink::RequestObserver
 #[derive(Debug, Default)]
 pub struct TraceCollector {
     requests: FxHashMap<Uuid, TraceRequestStats>,
-    /// When `true`, `finish()` populates `TraceSimulationReport::per_request`.
-    /// Default `false` to skip the ~100ms terminal pass + ~30MB allocation
-    /// when the caller doesn't need per-request granularity.
+    // Disabled by default to avoid the record pass and allocation.
     capture_per_request: bool,
-    /// SLA thresholds for goodput classification. All-`None` by default, in
-    /// which case `finish()` leaves `TraceSimulationReport::goodput` as `None`.
     sla: SlaThresholds,
-    /// Accumulated provisioned worker-seconds per role, integrated by the
-    /// runtime over the sim clock (see `add_worker_seconds`). Used for the
-    /// runtimes that have an event loop (agg / disagg), where the provisioned
-    /// count varies with startup / drain / scaling.
+    // Integrated over the simulation clock for variable worker counts.
     prefill_worker_seconds: f64,
     decode_worker_seconds: f64,
-    /// Static provisioned worker counts `(prefill, decode)` for runtimes with a
-    /// fixed worker (the single-worker path, which has no event loop to
-    /// integrate). When `Some`, `finish()` derives worker-seconds as
-    /// `count × duration_s` instead of using the accumulator.
+    // Fixed counts use `count × duration_s` instead of the accumulator.
     static_worker_count: Option<(usize, usize)>,
-    /// GPUs per worker per role, from the mocker engine parallelism. Used in
-    /// `finish()` to turn worker-seconds into gpu_hours.
     prefill_gpus_per_worker: usize,
     decode_gpus_per_worker: usize,
 }
@@ -528,46 +474,32 @@ impl TraceRequestStats {
 }
 
 impl TraceCollector {
-    /// Toggle whether `finish()` should build per-request records. Off by
-    /// default; the runtimes flip it on when the caller asks for JSONL output.
+    /// Configure whether `finish()` builds per-request records.
     pub fn set_capture_per_request(&mut self, value: bool) {
         self.capture_per_request = value;
     }
 
-    /// Set the SLA thresholds used to classify goodput in `finish()`. With no
-    /// SLA set (the default), the report's `goodput` field stays `None`.
-    // Exercised only by tests today; wired into the live driver once SLA-aware
-    // goodput classification is turned on.
+    /// Set SLA thresholds used to classify goodput.
     #[allow(dead_code)]
     pub(crate) fn set_sla_thresholds(&mut self, sla: SlaThresholds) {
         self.sla = sla;
     }
 
-    /// Add provisioned worker-seconds for the interval just elapsed. The runtime
-    /// calls this each time it advances the sim clock, with
-    /// `provisioned_count × dt_ms / 1000` per role — the time-integral of the
-    /// *provisioned* worker count (active + starting-up + draining), so the
-    /// startup ramp and drain tail are included. Agg replay passes `prefill = 0`
-    /// and reports through `decode`.
-    // Worker-provisioning / assignment instrumentation: fed by the offline replay
-    // driver to derive worker-seconds and gpu-hours; test-only today, pending live
-    // wiring, hence the `#[allow(dead_code)]` on this group.
+    /// Add provisioned worker-seconds for an elapsed interval, including
+    /// starting and draining workers. Aggregated replay uses only `decode`.
     #[allow(dead_code)]
     pub(crate) fn add_worker_seconds(&mut self, prefill: f64, decode: f64) {
         self.prefill_worker_seconds += prefill;
         self.decode_worker_seconds += decode;
     }
 
-    /// Declare a fixed `(prefill, decode)` provisioned worker count for a runtime
-    /// with no event loop to integrate (the single-worker path). `finish()` then
-    /// reports `count × duration_s` worker-seconds.
+    /// Set fixed provisioned worker counts when no event loop integrates them.
     #[allow(dead_code)]
     pub(crate) fn set_static_worker_count(&mut self, prefill: usize, decode: usize) {
         self.static_worker_count = Some((prefill, decode));
     }
 
-    /// Set GPUs-per-worker per role (from the mocker engine parallelism). Used
-    /// in `finish()` to derive gpu_hours from the worker-seconds.
+    /// Set GPUs per worker for GPU-hour accounting.
     #[allow(dead_code)]
     pub(crate) fn set_gpus_per_worker(&mut self, prefill: usize, decode: usize) {
         self.prefill_gpus_per_worker = prefill;
@@ -638,11 +570,6 @@ impl TraceCollector {
         }
     }
 
-    // KV-router / disaggregated-serving instrumentation API. These per-phase
-    // lifecycle events (admit, source-held, destination-reserved/activated,
-    // route-overlap) are recorded by the offline replay driver; they are
-    // currently exercised only by tests, pending live wiring, hence the
-    // `#[allow(dead_code)]` on each.
     #[allow(dead_code)]
     pub(crate) fn on_prefill_admit(
         &mut self,
@@ -746,11 +673,8 @@ impl TraceCollector {
     }
 
     pub fn finish(self) -> TraceSimulationReport {
-        // Build per-request records before we move `self.requests` into the
-        // summary aggregation below. Gated on `capture_per_request` — the
-        // ~100ms terminal pass + ~30MB allocation only runs when a caller
-        // (e.g. CLI `--report-jsonl`) asked for it. The summary report is
-        // unaffected either way (custom Serialize impl skips `per_request`).
+        // Build records before moving requests into aggregation. This avoids the
+        // record pass and allocation unless `--report-jsonl` requested them.
         let per_request = if self.capture_per_request {
             self.per_request_records()
         } else {
@@ -765,15 +689,10 @@ impl TraceCollector {
         let requests = self.requests;
         let request_count = requests.len();
 
-        // Single pass over the retained requests, accumulating every summary
-        // series and running total in the exact iteration/float-sum order the
-        // report depends on. Kept in its own helper so `finish()` composes
-        // rather than computes.
+        // Float accumulation order affects report values.
         let agg = accumulate_requests(&requests, sla);
 
         let duration_s = (agg.duration_ms / 1000.0).max(1e-9);
-        // Provisioned worker-seconds, GPU-hours, and SLA goodput, all derived
-        // from the per-request aggregate plus the collector's resource config.
         let resources = derive_resource_stats(
             &agg,
             duration_s,
@@ -835,9 +754,7 @@ impl TraceCollector {
         }
     }
 
-    /// Flatten each retained request into a serializable `PerRequestRecord`.
-    /// Used by the `--report-jsonl` CLI path to emit one JSON object per
-    /// request to the JSONL file, mirroring AIPerf's per-request output shape.
+    /// Flatten retained requests for `--report-jsonl`.
     ///
     /// Only requests with a terminal outcome are emitted. Requests truncated
     /// by a simulation-time cap have no terminal outcome and remain omitted.
@@ -863,9 +780,6 @@ impl TraceCollector {
                 ttft_ms: first_token_ms.map(|time| (time - stats.arrival_time_ms).max(0.0)),
                 ttst_ms: stats.ttst_ms(),
                 e2e_latency_ms: last_token_ms.map(|time| (time - stats.arrival_time_ms).max(0.0)),
-                // `mean_tpot_ms()` is the mean per-output-token gap, which is the
-                // mean inter-token latency (ITL) — the two are the same quantity
-                // here, so it is the correct source for the `itl_ms` field.
                 itl_ms: stats.mean_tpot_ms(),
                 input_length: stats.input_length,
                 requested_output_length: stats.requested_output_length,
@@ -887,9 +801,7 @@ impl TraceCollector {
                 terminal_status,
             });
         }
-        // Stable ordering: by arrival_time_ms (with uuid as tiebreaker) so the
-        // JSONL file is reproducible across runs and matches the order
-        // analysis tools usually expect.
+        // Stable ordering makes JSONL reproducible across hash-map iteration.
         records.sort_by(|a, b| {
             a.arrival_time_ms
                 .total_cmp(&b.arrival_time_ms)
@@ -899,10 +811,7 @@ impl TraceCollector {
     }
 }
 
-/// Per-request accumulation output of [`accumulate_requests`]: the summary
-/// latency/throughput series plus the running totals `finish()` composes the
-/// final report from. Field order and the order in which each series is pushed
-/// are load-bearing — the downstream stats and float sums depend on it.
+/// Summary series and totals produced by [`accumulate_requests`].
 struct RequestAggregate {
     ttfts: Vec<f64>,
     ttsts: Vec<f64>,
@@ -916,15 +825,11 @@ struct RequestAggregate {
     completed_requests: usize,
     total_reused_tokens: usize,
     total_first_admission_reused_tokens: usize,
-    // Goodput: completed requests (and their output tokens) that satisfy the SLA.
     goodput_requests: usize,
     goodput_output_tokens: usize,
 }
 
-/// Single pass over the retained requests. The iteration order (map order),
-/// the float accumulation order, and the per-series push order MUST stay
-/// byte-identical to the original inline loop — reordering any sum perturbs
-/// the reported statistics.
+/// Accumulate requests without changing map iteration or floating-point sum order.
 fn accumulate_requests(
     requests: &FxHashMap<Uuid, TraceRequestStats>,
     sla: SlaThresholds,
@@ -942,7 +847,6 @@ fn accumulate_requests(
     let mut completed_requests = 0usize;
     let mut total_reused_tokens = 0usize;
     let mut total_first_admission_reused_tokens = 0usize;
-    // Goodput: completed requests (and their output tokens) that satisfy the SLA.
     let mut goodput_requests = 0usize;
     let mut goodput_output_tokens = 0usize;
 
@@ -973,7 +877,6 @@ fn accumulate_requests(
         ttfts.push(ttft_ms);
         e2e_latencies.push(e2e_ms);
 
-        // Goodput classification (aiperf avg-ITL; see SlaThresholds::is_good).
         if sla.is_set() && sla.is_good(ttft_ms, e2e_ms, output_length) {
             goodput_requests += 1;
             goodput_output_tokens += output_length;
@@ -1012,10 +915,6 @@ fn accumulate_requests(
     }
 }
 
-/// Derived resource accounting: provisioned worker-seconds per role, the
-/// GPU-hours they imply, and SLA goodput. Split out of `finish()` so the
-/// report assembly stays compose-not-compute; arithmetic is byte-identical to
-/// the original inline derivation.
 struct ResourceStats {
     prefill_worker_seconds: f64,
     decode_worker_seconds: f64,
@@ -1034,8 +933,6 @@ fn derive_resource_stats(
     decode_gpus_per_worker: usize,
     sla: SlaThresholds,
 ) -> ResourceStats {
-    // Provisioned worker-seconds: static count × duration for the
-    // single-worker path, else the runtime-integrated accumulator.
     let (prefill_worker_seconds, decode_worker_seconds) = match static_worker_count {
         Some((prefill, decode)) => (prefill as f64 * duration_s, decode as f64 * duration_s),
         None => (
@@ -1043,12 +940,9 @@ fn derive_resource_stats(
             accumulated_decode_worker_seconds,
         ),
     };
-    // GPU-hours straight from the mocker's own worker parallelism (no
-    // external GPU-count config). 0 when gpus_per_worker was not set.
     let gpu_hours = (prefill_worker_seconds * prefill_gpus_per_worker as f64
         + decode_worker_seconds * decode_gpus_per_worker as f64)
         / 3600.0;
-    // Goodput only when an SLA was supplied; otherwise it is undefined.
     let goodput = sla.is_set().then(|| TraceGoodputStats {
         completed_requests: agg.goodput_requests,
         request_throughput_rps: agg.goodput_requests as f64 / duration_s,
@@ -1062,9 +956,6 @@ fn derive_resource_stats(
     }
 }
 
-/// Record a role's admit time (set-once, first wins) and running max reused
-/// input tokens into the shared per-request detail slots. Shared by the prefill
-/// and decode admit hooks, which differ only in which detail fields they target.
 fn record_role_admit(
     admit_ms: &mut Option<f64>,
     reused_input_tokens_slot: &mut Option<usize>,
@@ -1192,9 +1083,6 @@ mod tests {
         assert_eq!(actual.std_ms, expected.std_ms);
     }
 
-    /// With per-request capture on, a standard disagg-style request lifecycle
-    /// (arrival → admit → prefill_assigned → decode_assigned → tokens) yields
-    /// exactly one record with all fields populated correctly.
     #[test]
     fn per_request_disagg_record_populates_all_fields() {
         let mut collector = TraceCollector::default();
@@ -1228,7 +1116,6 @@ mod tests {
         assert_eq!(rec.ttft_ms, Some(50.0));
         assert_eq!(rec.ttst_ms, Some(10.0));
         assert_eq!(rec.e2e_latency_ms, Some(95.0));
-        // Mean per-token gap across 4 tokens: (10 + 15 + 20) / 3 = 15.0
         assert_eq!(rec.itl_ms, Some(15.0));
         assert_eq!(rec.input_length, 100);
         assert_eq!(rec.output_length, 4);
@@ -1247,9 +1134,6 @@ mod tests {
         assert_eq!(rec.terminal_status, ReplayTerminalStatus::Completed);
     }
 
-    /// A conditional-prefill bypass is reflected by `prefill_worker_idx ==
-    /// None` while `decode_worker_idx` is set. This is how downstream tooling
-    /// distinguishes bypassed requests from standard disagg flow.
     #[test]
     fn per_request_bypass_leaves_prefill_worker_idx_none() {
         let mut collector = TraceCollector::default();
@@ -1257,7 +1141,6 @@ mod tests {
         let uuid = Uuid::from_u128(42);
         collector.on_arrival(uuid, 0.0, 100, 2);
         collector.on_admit(uuid, 5.0, 0);
-        // No on_prefill_assigned call — request bypassed remote prefill.
         collector.on_decode_assigned(uuid, 1);
         collector.on_token(uuid, 30.0);
         collector.on_token(uuid, 45.0);
@@ -1273,12 +1156,9 @@ mod tests {
         assert_eq!(rec.decode_worker_idx, Some(1));
     }
 
-    /// Default: capture is off, so `per_request` is empty and the ~100ms
-    /// terminal pass is skipped. The summary report is otherwise identical.
     #[test]
     fn per_request_default_off() {
         let mut collector = TraceCollector::default();
-        // Note: NOT calling set_capture_per_request — capture stays false.
         let uuid = Uuid::from_u128(1);
         collector.on_arrival(uuid, 0.0, 100, 2);
         collector.on_admit(uuid, 5.0, 0);
@@ -1291,12 +1171,9 @@ mod tests {
 
         let report = collector.finish();
         assert!(report.per_request.is_empty());
-        // Summary stats still work.
         assert_eq!(report.request_counts.completed_requests, 1);
     }
 
-    /// Register a completed request: arrival, output length (osl), and the
-    /// explicit per-output-token timestamps (first → ttft, last → e2e).
     fn add_completed(
         collector: &mut TraceCollector,
         uuid_n: u128,
@@ -1314,9 +1191,6 @@ mod tests {
         collector.on_terminal(uuid, ReplayTerminalStatus::Completed);
     }
 
-    /// Goodput classifies a request "good" using aiperf's average ITL,
-    /// `avg_itl = (e2e − ttft) / (osl − 1)`, and skips the ITL check when
-    /// `osl ≤ 1`.
     #[test]
     fn goodput_classifies_by_aiperf_avg_itl() {
         let mut collector = TraceCollector::default();
@@ -1325,24 +1199,19 @@ mod tests {
             itl_ms: Some(30.0),
             e2e_ms: None,
         });
-        // A: ttft=100, e2e=200, osl=3 → avg_itl=(200−100)/2=50 > 30 → BAD.
         add_completed(&mut collector, 1, 0.0, 3, &[100.0, 150.0, 200.0]);
-        // B: ttft=100, e2e=140, osl=3 → avg_itl=20 ≤ 30, ttft ok → GOOD.
         add_completed(&mut collector, 2, 0.0, 3, &[100.0, 120.0, 140.0]);
-        // C: osl=1 → ITL check skipped; ttft=100 ≤ 150 → GOOD.
         add_completed(&mut collector, 3, 0.0, 1, &[100.0]);
 
         let goodput = collector
             .finish()
             .goodput
             .expect("SLA set → goodput present");
-        assert_eq!(goodput.completed_requests, 2); // B and C
-        // duration = max last token = 200ms → 0.2s; good output tokens = 3 (B) + 1 (C) = 4.
+        assert_eq!(goodput.completed_requests, 2);
         assert!((goodput.output_throughput_tok_s - 4.0 / 0.2).abs() < 1e-6);
         assert!((goodput.request_throughput_rps - 2.0 / 0.2).abs() < 1e-6);
     }
 
-    /// A request straddling the ITL bound flips good↔bad at the boundary.
     #[test]
     fn goodput_itl_boundary_is_inclusive() {
         let sla = SlaThresholds {
@@ -1350,19 +1219,16 @@ mod tests {
             itl_ms: Some(50.0),
             e2e_ms: None,
         };
-        // avg_itl = (200−100)/(3−1) = 50.0, exactly the bound → good (≤).
         let mut at_bound = TraceCollector::default();
         at_bound.set_sla_thresholds(sla);
         add_completed(&mut at_bound, 1, 0.0, 3, &[100.0, 150.0, 200.0]);
         assert_eq!(at_bound.finish().goodput.unwrap().completed_requests, 1);
-        // avg_itl = (201−100)/2 = 50.5 > 50 → bad.
         let mut over = TraceCollector::default();
         over.set_sla_thresholds(sla);
         add_completed(&mut over, 1, 0.0, 3, &[100.0, 150.0, 201.0]);
         assert_eq!(over.finish().goodput.unwrap().completed_requests, 0);
     }
 
-    /// An e2e-only SLA gates on end-to-end latency alone.
     #[test]
     fn goodput_e2e_only_sla() {
         let mut collector = TraceCollector::default();
@@ -1371,12 +1237,11 @@ mod tests {
             itl_ms: None,
             e2e_ms: Some(150.0),
         });
-        add_completed(&mut collector, 1, 0.0, 2, &[100.0, 200.0]); // e2e=200 > 150 → BAD
-        add_completed(&mut collector, 2, 0.0, 2, &[60.0, 120.0]); // e2e=120 ≤ 150 → GOOD
+        add_completed(&mut collector, 1, 0.0, 2, &[100.0, 200.0]);
+        add_completed(&mut collector, 2, 0.0, 2, &[60.0, 120.0]);
         assert_eq!(collector.finish().goodput.unwrap().completed_requests, 1);
     }
 
-    /// No SLA → goodput is omitted entirely.
     #[test]
     fn goodput_absent_without_sla() {
         let mut collector = TraceCollector::default();
@@ -1384,8 +1249,6 @@ mod tests {
         assert!(collector.finish().goodput.is_none());
     }
 
-    /// Worker-seconds: the accumulator (agg/disagg) sums runtime contributions;
-    /// the static path (single worker) reports `count × duration_s`.
     #[test]
     fn worker_seconds_accumulated_and_static() {
         let mut accumulated = TraceCollector::default();
@@ -1398,34 +1261,28 @@ mod tests {
 
         let mut static_single = TraceCollector::default();
         static_single.set_static_worker_count(0, 1);
-        add_completed(&mut static_single, 1, 0.0, 2, &[100.0, 200.0]); // duration = 0.2s
+        add_completed(&mut static_single, 1, 0.0, 2, &[100.0, 200.0]);
         let report = static_single.finish();
         assert!(report.throughput.prefill_worker_seconds.abs() < 1e-9);
         assert!((report.throughput.decode_worker_seconds - 0.2).abs() < 1e-9);
     }
 
-    /// gpu_hours derives from worker-seconds x the per-role GPUs/worker that the
-    /// runtime records from the mocker's own parallelism.
     #[test]
     fn gpu_hours_from_worker_seconds_and_gpus_per_worker() {
         let mut collector = TraceCollector::default();
-        collector.set_gpus_per_worker(2, 4); // prefill 2 GPUs/worker, decode 4
+        collector.set_gpus_per_worker(2, 4);
         add_completed(&mut collector, 1, 0.0, 2, &[100.0, 200.0]);
-        collector.add_worker_seconds(10.0, 5.0); // prefill_ws=10, decode_ws=5
+        collector.add_worker_seconds(10.0, 5.0);
         let report = collector.finish();
         assert_eq!(report.throughput.prefill_gpus_per_worker, 2);
         assert_eq!(report.throughput.decode_gpus_per_worker, 4);
-        // gpu_hours = (10*2 + 5*4) / 3600 = 40 / 3600
         assert!((report.throughput.gpu_hours - 40.0 / 3600.0).abs() < 1e-9);
     }
 
-    /// Records emerge in arrival-time order, so the JSONL file produced from
-    /// them is deterministic across runs (important for diff-friendly CI).
     #[test]
     fn per_request_records_are_sorted_by_arrival_time() {
         let mut collector = TraceCollector::default();
         collector.set_capture_per_request(true);
-        // Insert out of order on purpose.
         for (uuid_n, arrival) in [(3u128, 30.0), (1, 0.0), (2, 10.0)] {
             let uuid = Uuid::from_u128(uuid_n);
             collector.on_arrival(uuid, arrival, 100, 1);
@@ -1443,9 +1300,6 @@ mod tests {
         assert_eq!(arrivals, vec![0.0, 10.0, 30.0]);
     }
 
-    /// Each record must round-trip cleanly to JSON — this is the format we
-    /// emit to `--report-jsonl`. Guards against accidental serde regressions
-    /// (e.g., adding a non-serializable field to `PerRequestRecord`).
     #[test]
     fn per_request_record_serializes_to_json_object() {
         let mut collector = TraceCollector::default();
@@ -1462,7 +1316,6 @@ mod tests {
         let report = collector.finish();
         let line = serde_json::to_string(&report.per_request[0])
             .expect("PerRequestRecord must serialize cleanly");
-        // Parse it back and spot-check a few keys to confirm shape.
         let parsed: serde_json::Value =
             serde_json::from_str(&line).expect("emitted JSON must parse");
         assert!(parsed.is_object());

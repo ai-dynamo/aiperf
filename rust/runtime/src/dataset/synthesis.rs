@@ -109,7 +109,7 @@ pub trait TraceSynthesizer {
     fn synthesize(&mut self, records: &mut [TraceSynthesisRecord]) -> Result<()>;
 }
 
-/// Prefix-pattern synthesizer matching the inherited Python algorithm.
+/// Prefix-pattern synthesizer matching Python AIPerf semantics.
 pub struct PrefixTraceSynthesizer {
     config: TraceSynthesisConfig,
     rng: RandomGenerator,

@@ -452,8 +452,7 @@ where
 // `codes_by_hash` index is a rebuildable acceleration structure, not primary
 // state. Re-interning the values in order reproduces byte-identical dense codes
 // (code = insertion position) and an equal index, so the wire form is lossless
-// while carrying no redundant hash table (roadmap S2: "codes_by_hash is
-// rebuildable on deserialize").
+// while carrying no redundant hash table.
 impl<T> Serialize for CategoryInterner<T>
 where
     T: Eq + Hash + Serialize,
@@ -625,8 +624,9 @@ impl TagSketch {
     }
 }
 
-/// Per-`(phase, tag)` streaming sketches — the bounded-memory replacement for the
-/// exact numeric columns. Phase separation preserves the warmup/profiling phase
+/// Per-`(phase, tag)` bounded-memory streaming sketches.
+///
+/// Phase separation preserves the warmup/profiling phase
 /// mask the exact path applies over rows, and the whole structure merges
 /// associatively so cell partitions combine the same way single-process workers do.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -694,9 +694,8 @@ impl SketchColumns {
 
 /// Absolute-request-index-aligned metric and metadata columns.
 ///
-/// Derives `Clone`/serde so a worker's store can be exported as a serializable,
-/// mergeable [`ColumnStorePartition`] (roadmap S2): the store already *is* the
-/// partition. Serde bounds are conditional on the list backend `B`, so the trait
+/// A worker's store is directly serializable and mergeable as a
+/// [`ColumnStorePartition`]. Serde bounds are conditional on the list backend `B`, so the trait
 /// [`ListMetricBackend`] stays serde-free and only stores whose `B` is
 /// serializable gain the wire form. Use a binary serde format — the NaN-sparse
 /// numeric columns are not JSON-representable.
@@ -724,10 +723,8 @@ pub struct ColumnStore<B: ListMetricBackend = RaggedSeries> {
     dimensions: CategoryInterner<InferenceDimensions>,
     workers: CategoryInterner<String>,
     conversations: CategoryInterner<String>,
-    // Dense columns indexed by `MetricTag::index()`. The tag set is a small
-    // fixed enum, so a direct array slot replaces the per-`set_metric_f64` hash
-    // probe that profiled as an export hot spot; the `*_present` lists preserve
-    // cheap iteration over only the populated tags.
+    // Dense columns use `MetricTag::index()` because the tag set is a small fixed
+    // enum; the `*_present` lists keep iteration limited to populated tags.
     numeric: Vec<Option<NumericColumn>>,
     numeric_present: Vec<MetricTag>,
     ragged: Vec<Option<B>>,

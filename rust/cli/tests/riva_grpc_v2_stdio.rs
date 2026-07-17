@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Rust-process proof for protocol-v2 Riva ASR over native bidi gRPC.
+//! Protocol-v2 Riva ASR process coverage over native bidirectional gRPC.
 
 use std::convert::Infallible;
 use std::io::Write;
@@ -62,35 +62,32 @@ fn one_json_line(output: &Output) -> Value {
 }
 
 fn capabilities() -> Value {
-    // Capabilities is an in-process call now — one binary, no subprocess.
     serde_json::to_value(
         aiperf_cli::execute_mode::capabilities_catalog().expect("capabilities catalog"),
     )
     .expect("catalog to Value")
 }
 
-fn benchmark_run(legacy: Value) -> Value {
-    let mut endpoint = legacy["resources"]["endpoints"]["profiles"][0].clone();
+fn benchmark_run(source: Value) -> Value {
+    let mut endpoint = source["resources"]["endpoints"]["profiles"][0].clone();
     endpoint.as_object_mut().unwrap().remove("id");
     json!({
-        "benchmark_id": legacy["identity"]["benchmark_id"],
-        "artifact_dir": legacy["artifact_target"],
-        "random_seed": legacy["identity"]["random_seed"],
+        "benchmark_id": source["identity"]["benchmark_id"],
+        "artifact_dir": source["artifact_target"],
+        "random_seed": source["identity"]["random_seed"],
         "cfg": {
-            "models": legacy["resources"]["models"],
+            "models": source["resources"]["models"],
             "endpoint": endpoint,
-            "datasets": [legacy["workload"]["config"]["dataset"]],
-            "phases": legacy["workload"]["config"]["phases"],
-            "tokenizer": legacy["workload"]["config"]["tokenizer"],
-            "transport": {"type": legacy["transport"]["type"]},
-            "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
+            "datasets": [source["workload"]["config"]["dataset"]],
+            "phases": source["workload"]["config"]["phases"],
+            "tokenizer": source["workload"]["config"]["tokenizer"],
+            "transport": {"type": source["transport"]["type"]},
+            "runtime": {"workers": source["workload"]["config"]["worker_count"]}
         }
     })
 }
 
 fn run_child(request: &Value) -> Output {
-    // The stdin wire is the bare `run`; the operation is selected by the re-exec
-    // MODE (`--execute` / `--validate`), not a wire field.
     let flag = match request["operation"].as_str() {
         Some("validate") => "--validate",
         _ => "--execute",
@@ -359,7 +356,7 @@ async fn runner_capabilities_validate_and_execute_native_riva_asr_bidi() {
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["success"], true);
     assert_eq!(terminal["provenance"]["transport"], "grpc");
-    assert_eq!(terminal["provenance"]["transport"], "grpc");
+    assert_eq!(terminal["provenance"]["workload"], "scheduled");
 
     {
         let requests = captured.lock().unwrap();

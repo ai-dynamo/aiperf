@@ -9,9 +9,8 @@
 //! trace. Strategy modules decide only when to call
 //! [`issue_turn`](ScheduledRuntime::issue_turn) and what continuation to
 //! schedule when the dispatch completes. Its synchronous counter mutation and
-//! asynchronous return callback preserve the credit policy without any IPC
-//! routing. Ancillary cancellation and URL issuance are preserved, and the
-//! per-session endpoint pin replaces the Python worker/session split.
+//! asynchronous return callback preserve credit ordering. Ancillary
+//! cancellation and URL issuance remain session-pinned.
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -59,8 +58,8 @@ pub type FirstTokenHandler = Box<dyn Fn(i64) + 'static>;
 /// The issuer selects this future against the ordinary backend dispatch. A
 /// cancellation winner drops that dispatch future, emits exactly one cancelled
 /// observer terminal, and still invokes the normal completion callback. This
-/// keeps evaluator, proxy, phase, and future cancellation sources outside the
-/// transport-neutral [`TurnDispatcher`] seam.
+/// keeps cancellation ownership outside the transport-neutral
+/// [`TurnDispatcher`] seam.
 pub trait DispatchCancellation {
     /// Whether cancellation was requested before dispatch received its first poll.
     fn is_cancelled(&self) -> bool;
@@ -216,9 +215,7 @@ pub trait TurnDispatcher {
 
 /// Post-dispatch record-processing seam shared by ordinary workloads.
 ///
-/// Python AIPerf routes parsed inference records through record processors after
-/// workers return them. Native consumers such as accuracy grading attach here;
-/// they never own transport or
+/// Consumers such as accuracy grading attach here without owning transport or
 /// issuance policy.
 #[async_trait(?Send)]
 pub trait TurnRecordProcessor {
@@ -1346,8 +1343,8 @@ pub async fn run_scheduled_workload_with_processors(
 ) -> Result<ScheduledRunReport> {
     let config =
         crate::timing::PhaseConfig::new("profiling", crate::timing::PhaseKind::Profiling, stop)
-            // The legacy single-phase helper always drained admitted work. Explicit
-            // multi-phase callers choose Disabled/Finite/Infinite grace per phase.
+            // Single-phase callers drain admitted work; multi-phase callers
+            // choose grace policy explicitly.
             .with_grace_period(crate::timing::GracePeriod::Infinite);
     let plan = crate::phase_runtime::ScheduledPhasePlan::new(config, workload, policies)
         .with_enforce_stop(enforce_stop)

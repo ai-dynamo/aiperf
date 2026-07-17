@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! `aiperf-mock-server` binary - Rust rewrite of the Python mock server.
+//! `aiperf-mock-server` process entry point.
 
 use std::net::SocketAddr;
 
@@ -16,16 +16,14 @@ fn main() -> anyhow::Result<()> {
 
     init_tracing(&config.log_level);
 
-    // Multi-process mode: become a round-robin balancer over `processes` child
-    // servers. `0` = auto = nproc; `1` falls through to the single-process path.
+    // `0` selects one child per available CPU; `1` serves directly.
     let processes = if config.processes == 0 {
         num_cpus::get().max(1)
     } else {
         config.processes
     };
     if processes > 1 {
-        // The L4 balancer is HTTP-only; the KServe gRPC listener is not spliced
-        // across children (each would bind the same port). Warn and skip it.
+        // The HTTP-only balancer cannot splice the separate gRPC or UDS listeners.
         if config.grpc_port.is_some() {
             tracing::warn!(
                 "--grpc-port is ignored with --processes > 1 (the balancer is HTTP-only); \
@@ -41,10 +39,6 @@ fn main() -> anyhow::Result<()> {
         return balancer::run(config, processes);
     }
 
-    // Build a tuned multi-threaded tokio runtime:
-    //   - worker_threads = nproc by default (override via --workers)
-    //   - max_blocking_threads large enough for bursty I/O
-    //   - enable_all: timers + I/O drivers
     let worker_threads = if config.workers > 0 {
         config.workers
     } else {
@@ -80,8 +74,7 @@ async fn serve(config: MockServerConfig, worker_threads: usize) -> anyhow::Resul
     let addr = SocketAddr::new(host, config.port);
     let state = aiperf_mock_server::app::build_state(config.clone());
 
-    // Optional TLS/HTTPS termination. Built once and cloned into the gRPC
-    // listener so both frontends share one certificate + ALPN policy.
+    // HTTP and gRPC share the certificate and ALPN policy.
     let acceptor = tls::build_acceptor(&config)?;
     if acceptor.is_some() {
         let mode = if config.tls_self_signed && config.tls_cert.is_none() {
@@ -92,10 +85,7 @@ async fn serve(config: MockServerConfig, worker_threads: usize) -> anyhow::Resul
         tracing::info!(%addr, tls = mode, "TLS enabled (ALPN h2 + http/1.1)");
     }
 
-    // Optional KServe OIP v2 gRPC listener on its own port, sharing this run's
-    // AppState (recorder/prefix-cache/scheduler) with the HTTP frontend. When
-    // TLS is configured the gRPC listener terminates the same certificate as
-    // `grpcs` (ALPN h2).
+    // The gRPC listener shares state and TLS configuration with HTTP.
     if let Some(grpc_port) = config.grpc_port {
         let grpc_addr = SocketAddr::new(host, grpc_port);
         let grpc_state = state.clone();
@@ -112,8 +102,7 @@ async fn serve(config: MockServerConfig, worker_threads: usize) -> anyhow::Resul
 
     let router = build_router(state);
 
-    // Optional Unix-domain socket listener serving the SAME router over HTTP/1.1
-    // (the runner's UDS transport is h1-only). Runs alongside the TCP frontend.
+    // The UDS transport requires HTTP/1.1.
     if let Some(uds_path) = config.uds.clone() {
         let uds_router = router.clone();
         tokio::spawn(async move {
@@ -128,18 +117,10 @@ async fn serve(config: MockServerConfig, worker_threads: usize) -> anyhow::Resul
     tracing::info!(%addr, backlog = LISTEN_BACKLOG, "Listening");
     let listener = build_listener(addr)?;
 
-    // Shared accept loop (see `tls::serve_http`): TCP_NODELAY on every socket,
-    // per-connection hyper auto HTTP/1+2 handshake, optional h2
-    // `max_concurrent_streams`, and — when `acceptor` is `Some` — a rustls
-    // handshake wrapping each stream before hyper sees it. Cleartext when None.
     tls::serve_http(listener, router, acceptor, config.max_concurrent_streams).await
 }
 
-/// Load the effective config. A balancer-spawned child carries its exact config
-/// as JSON in [`balancer::CONFIG_JSON_ENV`] — deserialize that verbatim (already
-/// final, `apply_flags` was run by the parent) rather than re-parsing argv.
-/// Otherwise parse the CLI/env surface and apply the `--fast`/`--verbose`
-/// post-processing.
+/// Load CLI configuration or the fully resolved child-process configuration.
 fn load_config() -> anyhow::Result<MockServerConfig> {
     if let Ok(json) = std::env::var(balancer::CONFIG_JSON_ENV) {
         let config: MockServerConfig = serde_json::from_str(&json)

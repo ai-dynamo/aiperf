@@ -3,12 +3,8 @@
 
 //! Static-accuracy evaluator worker seam.
 //!
-//! Rust deliberately contains no benchmark prompt builders, answer extractors,
-//! hidden-test decoders, code runners, or graders. The [`AccuracyEvaluator`]
-//! protocol keeps benchmark semantics in an isolated Python worker
-//! (lighteval/deepeval) while Rust owns request dispatch, measurement, and
-//! reporting. The external-evaluator provider-host and agentic verticals have
-//! been removed; only the static lighteval worker path remains.
+//! The [`AccuracyEvaluator`] protocol isolates benchmark semantics in a Python
+//! worker while Rust owns request dispatch, measurement, and reporting.
 
 pub mod protocol;
 pub mod worker;

@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Embedded config templates (generated from src/aiperf/config/templates/*.yaml).
-//! Regenerate if the Python templates change.
+//! Embedded config templates.
 
-/// (name, title, description, category, content) for each embedded template.
 pub const TEMPLATES: &[Template] = &[
     Template {
         name: "audio_multimodal",
@@ -213,14 +211,11 @@ pub const TEMPLATES: &[Template] = &[
 
 /// One embedded template.
 pub struct Template {
-    /// Template id (file stem).
+    /// Template identifier.
     pub name: &'static str,
-    /// Human title.
     pub title: &'static str,
-    /// One-line description.
     pub description: &'static str,
-    /// Category grouping.
     pub category: &'static str,
-    /// Raw YAML content (with SPDX header).
+    /// Raw YAML content, including its SPDX header.
     pub content: &'static str,
 }

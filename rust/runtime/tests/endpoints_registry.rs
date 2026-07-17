@@ -13,8 +13,6 @@ use aiperf_runtime::endpoints::{
 };
 use serde_json::{Value, json};
 
-/// Materialize a prepared endpoint's [`BodyPlan`] into a decoded JSON value so
-/// the structural assertions below keep inspecting fields as before stage B.
 fn plan_body(plan: aiperf_runtime::body_plan::BodyPlan) -> Value {
     serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
 }
@@ -185,10 +183,10 @@ fn raw_config_has_no_identity_and_round_trips_through_v1_policy() {
     assert!(serialized.get("headers").is_none());
     assert!(serialized.get("api_key").is_none());
 
-    let legacy = EndpointConfig::from_raw(EndpointType::Messages, raw.clone());
-    assert_eq!(legacy.endpoint_type, EndpointType::Messages);
-    assert_eq!(RawEndpointConfig::from(&legacy), raw);
-    assert_eq!(RawEndpointConfig::from(legacy), raw);
+    let compatibility = EndpointConfig::from_raw(EndpointType::Messages, raw.clone());
+    assert_eq!(compatibility.endpoint_type, EndpointType::Messages);
+    assert_eq!(RawEndpointConfig::from(&compatibility), raw);
+    assert_eq!(RawEndpointConfig::from(compatibility), raw);
 }
 
 #[test]
@@ -216,9 +214,6 @@ fn prepared_dispatch_uses_only_its_bound_config_and_dense_key() {
         Value::Bool(true)
     );
 
-    // The chat endpoint now honors `wait_for_model_mode` (default "inference"),
-    // so its prepared readiness policy is a concrete probe request rather than
-    // the historical `Unsupported` placeholder.
     assert!(matches!(
         prepared.readiness_policy("model-a").unwrap(),
         ReadinessPolicy::Request(_)
@@ -331,7 +326,7 @@ fn adapter_descriptors_round_trip_closed_endpoint_types() {
     for endpoint_type in endpoint_types {
         let id = EndpointId::new(endpoint_type.canonical_id()).unwrap();
         let descriptor = registry.resolve_factory(&id).unwrap().descriptor();
-        assert_eq!(descriptor.legacy_type(), Some(endpoint_type), "{id}");
+        assert_eq!(descriptor.compatibility_type(), Some(endpoint_type), "{id}");
         assert_eq!(descriptor.id, endpoint_type.canonical_id(), "{id}");
         assert!(!descriptor.description.is_empty(), "{id}");
         assert!(!descriptor.metrics_title.is_empty(), "{id}");

@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Backend-neutral authored dataset policy and direct input adapters.
-//!
-//! These values are shared source policy, not a process-protocol DTO. Protocol
-//! v1 wraps them for compatibility; protocol v2 selects a trait adapter and
-//! retains the resulting native Dataset as its first shared runtime value.
+//! Backend-neutral dataset policy and direct input adapters.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -28,11 +24,7 @@ use crate::engine::execute::{
 };
 use crate::engine::protocol::ModelsSpec;
 
-/// Public dataset configuration resolved from the Python plugin registry.
-///
-/// Python keeps ownership of the named plugin catalog in
-/// `src/aiperf/plugin/plugins.yaml:1733-1957`; Rust receives only the explicit
-/// source coordinates and loader options needed for one run.
+/// Resolved public dataset source and loader configuration.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublicDatasetSpec {
@@ -89,10 +81,7 @@ pub struct FileDatasetSpec {
     /// Inline records in the exact Config-v2 shape.
     #[serde(default)]
     pub records: Option<Value>,
-    /// Native loader registration name. Absent (empty) when `--custom-dataset-type`
-    /// was not supplied, in which case the loader is auto-detected structurally
-    /// (mirrors Python's `CustomDatasetComposer._explicit_format` returning `None`
-    /// so `_infer_dataset_type` runs).
+    /// Native loader name, or empty for structural auto-detection.
     #[serde(default)]
     pub format: String,
     /// Conversation sampling strategy.
@@ -147,37 +136,19 @@ pub struct TraceSynthesisSpec {
     /// Recorded content corpus (`coding` by default, or `sonnet`).
     #[serde(default)]
     pub corpus: Option<String>,
-    /// Recorded-graph trajectory-start (t*) window lower bound, as a fraction of
-    /// each trace's replayable span. Zero (the default) disables trajectory-start
-    /// selection. Python projects this per-run knob (Config `trajectory_start_min_ratio`)
-    /// onto the synthesis block beside [`Self::idle_gap_cap_seconds`].
+    /// Lower trajectory-start bound as a fraction of the replayable span.
     #[serde(default)]
     pub trajectory_start_min_ratio: f64,
-    /// Recorded-graph trajectory-start (t*) window upper bound, as a fraction of
-    /// each trace's replayable span. Zero (the default) disables trajectory-start
-    /// selection. Projected from Config `trajectory_start_max_ratio`.
+    /// Upper trajectory-start bound as a fraction of the replayable span.
     #[serde(default)]
     pub trajectory_start_max_ratio: f64,
-    /// Deterministic seed for trajectory-start (t*) sampling, derived by Python
-    /// from the run seed. Zero (the default) selects the run-root-derived seed.
+    /// Deterministic trajectory-start sampling seed.
     #[serde(default)]
     pub t_star_random_seed: u64,
-    /// Resolved dataset-sampling strategy (`sequential`/`shuffle`/`random`)
-    /// governing WHICH recorded-graph template a freed recycle lane serves.
-    /// Projected by Python `rust_wire._project_trajectory_knobs` from the
-    /// resolved `dataset.sampling`. Absent/unknown (the default) keeps the
-    /// byte-unchanged sequential cursor draw. Consumed by the graph phase
-    /// runtime's draw sites via [`crate::engine::graph_input::GraphSamplingStrategy`].
+    /// Recorded-graph recycle strategy: `sequential`, `shuffle`, or `random`.
     #[serde(default)]
     pub dataset_sampling_strategy: Option<String>,
-    /// Cache-bust marker target for the recorded-graph first-turn user message.
-    /// Projected by Python `rust_wire._project_trajectory_knobs` from the
-    /// scenario's `require_cache_bust` lock (Config `cache_bust_target`).
-    /// Absent/`"none"` (the default) disables the marker; `"first_turn_prefix"`
-    /// prepends a per-conversation nonce marker to the first user message so
-    /// shared-trace lanes send distinct prefixes AND the scenario-required ISL
-    /// accounting matches agentx. Consumed by
-    /// [`crate::engine::graph_input::CacheBustTarget`].
+    /// Cache-bust target; absent or `"none"` disables marker injection.
     #[serde(default)]
     pub cache_bust_target: Option<String>,
 }
@@ -447,15 +418,8 @@ impl<'de> Deserialize<'de> for DistributionSpec {
     where
         D: Deserializer<'de>,
     {
-        // `serde_json`'s `arbitrary_precision` feature is enabled workspace-wide
-        // (aiperf-graph needs it to carry >u64 recorded-trace hash ids losslessly
-        // into `BigInt` via `Number::to_string`). Feature unification turns it on
-        // for this crate too, and it is incompatible with `#[serde(untagged)]`
-        // over numeric fields: the derived content buffer represents each number
-        // as an internal map and fails with "invalid type: map, expected f64".
-        // Route through `serde_json::Value` and dispatch on the discriminating
-        // keys, then decode each concrete variant directly — a path that is
-        // agnostic to the number representation.
+        // `arbitrary_precision` represents buffered numbers as maps, so dispatch
+        // through `Value` before decoding the concrete numeric variant.
         let value = Value::deserialize(deserializer)?;
         let (has_peaks, has_points, has_median, has_stddev, has_value) = {
             let object = value
@@ -616,7 +580,7 @@ const fn one_usize() -> usize {
     1
 }
 
-/// Retained result of one direct dataset-input adapter load.
+/// Canonical result of one dataset-input adapter load.
 pub struct PreparedDatasetInput {
     /// Canonical composed dataset used by every scheduled phase.
     pub dataset: Dataset,
@@ -724,9 +688,7 @@ impl DatasetInputAdapterResolver for BuiltinRunnerDatasetInputAdapterResolver {
         raw: &RawValue,
         context: &DatasetInputContext<'_>,
     ) -> Result<PreparedDatasetInput> {
-        // This decode reads only the open discriminator. The selected adapter
-        // then performs the sole full decode and source load; no intermediate
-        // DatasetSpec, Conversation, or alternate runtime representation exists.
+        // Decode only the discriminator so the selected adapter owns the full load.
         let identity: DatasetInputIdentity = serde_json::from_str(raw.get())
             .context("decoding dataset-input adapter discriminator")?;
         let adapter = self
@@ -940,9 +902,7 @@ mod tests {
 
     #[test]
     fn distribution_spec_decodes_under_arbitrary_precision() {
-        // Reproduces the workspace-wide `arbitrary_precision` feature (enabled by
-        // aiperf-graph) that previously broke the derived untagged decoder for
-        // every numeric distribution shape with "invalid type: map, expected f64".
+        // Numeric variants must decode with workspace-wide `arbitrary_precision`.
         let fixed: DistributionSpec = serde_json::from_str(r#"{"value":256.0}"#).unwrap();
         assert!(matches!(fixed, DistributionSpec::Fixed(spec) if spec.value == 256.0));
         let normal: DistributionSpec =
@@ -952,7 +912,6 @@ mod tests {
             serde_json::from_str(r#"{"mean":2.0,"median":1.5}"#).unwrap();
         assert!(matches!(lognormal, DistributionSpec::LogNormal(_)));
 
-        // A whole synthetic dataset source with numeric distributions must decode.
         let SyntheticDatasetInput::Synthetic(spec) = serde_json::from_str(
             r#"{"type":"synthetic","entries":1,"sampling":"sequential",
                 "prompts":{"isl":{"mean":256.0,"stddev":0.0},"osl":{"value":8.0}},
@@ -985,9 +944,6 @@ mod tests {
 
     #[test]
     fn trace_synthesis_carries_tstar_and_warmup_knobs() {
-        // Recorded-graph trajectory-start (t*) window and its derived seed ride
-        // on the synthesis block beside idle_gap_cap_seconds; C2 binds them into
-        // RecordedTraceInputConfig.
         let spec: TraceSynthesisSpec = serde_json::from_str(
             r#"{
                 "speedup_ratio": 1.0,
@@ -1004,7 +960,6 @@ mod tests {
         assert_eq!(spec.trajectory_start_min_ratio, 0.25);
         assert_eq!(spec.trajectory_start_max_ratio, 0.75);
         assert_eq!(spec.t_star_random_seed, 4242);
-        // idle_gap_cap_seconds default is retained beside the new knobs.
         assert_eq!(spec.idle_gap_cap_seconds, Some(60.0));
     }
 

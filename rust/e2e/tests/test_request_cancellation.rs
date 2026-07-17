@@ -35,7 +35,6 @@ async fn test_request_cancellation() {
                 request["error"]["type"].as_str().unwrap(),
                 "RequestCancellationError"
             );
-            // Make sure that error_isl is still computed for errors
             let error_isl = &request["metrics"]["error_isl"];
             assert!(!error_isl.is_null());
             assert!(error_isl["value"].as_f64().unwrap() > 0.0);
@@ -43,7 +42,6 @@ async fn test_request_cancellation() {
     }
 
     let json = r.artifacts.json();
-    // This is not a cancellation error
     assert_eq!(json["was_cancelled"].as_bool(), Some(false));
     let error_summary = &json["error_summary"];
     assert!(!error_summary.is_null());

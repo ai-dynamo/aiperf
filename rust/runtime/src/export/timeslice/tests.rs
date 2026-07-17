@@ -42,7 +42,7 @@ fn dist(
     })
 }
 
-/// Build a counter stats block (`total` drives avg/min/max/sum in the legacy shape).
+/// Build a counter stats block (`total` drives avg/min/max/sum in the compatibility shape).
 fn counter(total: f64, rate: f64) -> ReportStats {
     ReportStats::Counter(ReportCounterStats {
         total: ReportValue::Finite(total),

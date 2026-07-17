@@ -1,22 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Pure-Rust port of the Agentic Code generator config models
-//! (`src/aiperf/dataset/agentic_code_gen/models.py`) and loader
-//! (`.../config.py`).
+//! Agentic Code synthesis configuration.
 //!
-//! Reproduces the byte-exact defaults and the `mu`/`sigma` auto-computation of
-//! `LognormalParams.compute_mu_sigma` (`models.py:82-100`) so the seeded
-//! sampling stream matches numpy exactly. Only the fields the generator
-//! interprets are modeled; unknown JSON keys are ignored (matching pydantic's
-//! `extra="allow"` on `SessionDistributionConfig`, `models.py:264`).
+//! Defaults and `mu`/`sigma` derivation are part of the seeded sampling
+//! contract. Unknown JSON keys are ignored.
 
 use std::path::Path;
 
 use serde_json::Value;
 
-/// Lognormal distribution parameters with real-space summary statistics.
+/// Lognormal parameters with real-space summary statistics.
 ///
-/// Port of `LognormalParams` (`models.py:61-100`). `mu`/`sigma` are resolved
+/// `mu`/`sigma` are resolved
 /// from `mean`/`median` when absent: `mu = ln(median)`,
 /// `sigma = sqrt(2 * ln(mean/median))` if `mean/median > 1` else `0`.
 #[derive(Clone, Debug)]
@@ -30,14 +25,12 @@ pub struct LognormalParams {
 }
 
 impl LognormalParams {
-    /// Construct from real-space `mean`/`median`, auto-computing `mu`/`sigma`
-    /// exactly as the pydantic model validator (`models.py:96-99`).
+    /// Construct from real-space `mean` and `median`.
     pub fn from_mean_median(mean: f64, median: f64) -> Self {
         Self::new(mean, median, None, None, None, None)
     }
 
-    /// Full constructor mirroring `compute_mu_sigma` (`models.py:82-100`):
-    /// resolve `mu`/`sigma` from `mean`/`median` only when both are `None`.
+    /// Resolve missing `mu` or `sigma` from `mean` and `median`.
     pub fn new(
         mean: f64,
         median: f64,
@@ -88,7 +81,6 @@ impl LognormalParams {
 }
 
 /// Lognormal config for new tokens per turn with truncation-bias correction.
-/// Port of `NewTokensPerTurnConfig` (`models.py:103-110`).
 #[derive(Clone, Debug)]
 pub struct NewTokensPerTurnConfig {
     pub params: LognormalParams,
@@ -96,7 +88,6 @@ pub struct NewTokensPerTurnConfig {
 }
 
 /// Two-component mixture model for inter-turn delays.
-/// Port of `MixtureDelayConfig` (`models.py:121-144`).
 #[derive(Clone, Debug)]
 pub struct MixtureDelayConfig {
     pub agentic_fraction: f64,
@@ -106,15 +97,13 @@ pub struct MixtureDelayConfig {
 }
 
 /// Context-dependent reset probability config.
-/// Port of `ResetConfig` (`models.py:147-159`).
 #[derive(Clone, Debug)]
 pub struct ResetConfig {
     pub base_probability: f64,
     pub context_scaling: f64,
 }
 
-/// Group assignment for L1.5 cache sharing via Zipf distribution.
-/// Port of `Layer15GroupConfig` (`models.py:210-218`).
+/// Group assignment for L1.5 cache sharing via a Zipf distribution.
 #[derive(Clone, Debug)]
 pub struct Layer15GroupConfig {
     pub num_groups: usize,
@@ -122,7 +111,6 @@ pub struct Layer15GroupConfig {
 }
 
 /// Token sizes for the KV cache prefix model.
-/// Port of `CacheLayerConfig` (`models.py:221-247`).
 #[derive(Clone, Debug)]
 pub struct CacheLayerConfig {
     pub layer1_tokens: i64,
@@ -132,7 +120,6 @@ pub struct CacheLayerConfig {
 }
 
 /// Explicit target distribution for turns per session.
-/// Port of `TurnCountConfig` (`models.py:162-207`).
 #[derive(Clone, Debug)]
 pub struct TurnCountConfig {
     pub mean: i64,
@@ -144,7 +131,7 @@ pub struct TurnCountConfig {
 }
 
 impl TurnCountConfig {
-    /// Bounded lognormal params for integer turn sampling (`models.py:200-207`).
+    /// Return bounded lognormal parameters for integer turn sampling.
     pub fn to_lognormal(&self) -> LognormalParams {
         LognormalParams::new(
             self.mean as f64,
@@ -157,8 +144,7 @@ impl TurnCountConfig {
     }
 }
 
-/// Full configuration for synthesizing Agentic Code sessions.
-/// Port of `SessionDistributionConfig` (`models.py:258-388`).
+/// Configuration for synthesizing Agentic Code sessions.
 #[derive(Clone, Debug)]
 pub struct SessionDistributionConfig {
     pub new_tokens_per_turn: NewTokensPerTurnConfig,
@@ -174,7 +160,6 @@ pub struct SessionDistributionConfig {
 }
 
 impl Default for SessionDistributionConfig {
-    /// The exact built-in defaults from `models.py` (drives the default output).
     fn default() -> Self {
         Self {
             new_tokens_per_turn: NewTokensPerTurnConfig {
@@ -211,17 +196,10 @@ impl Default for SessionDistributionConfig {
 }
 
 impl SessionDistributionConfig {
-    /// Load a config from a bundled name or a file path, mirroring
-    /// `config.py::load_config` + `_load_json`. Supports raw config JSON and a
-    /// `manifest.json` (unwraps `generation_params`). The only bundled config is
-    /// `default`, which we resolve to the built-in defaults.
+    /// Load raw config JSON or a manifest containing `generation_params`.
     pub fn load(path_or_name: &str) -> anyhow::Result<Self> {
         if path_or_name == "default" && !Path::new(path_or_name).is_file() {
-            // Bundled "default" config JSON is itself a non-default preset in the
-            // Python tree; but when the user passes no --config the Python CLI
-            // uses SessionDistributionConfig() built-in defaults. A literal
-            // "default" name maps to the bundled configs/default.json only if a
-            // file resolves. We keep parity by requiring an explicit file here.
+            // A named preset must resolve to a file; omitted config uses `Default`.
         }
         let p = Path::new(path_or_name);
         if p.is_file() {
@@ -242,10 +220,7 @@ impl SessionDistributionConfig {
         )
     }
 
-    /// Build from a JSON object, applying the model defaults for any missing
-    /// field and the `drop_deprecated_system_prompt_tokens` /
-    /// `restart_fraction` / `turns`->`reset=None` pre-validators
-    /// (`models.py:311-335`).
+    /// Build from JSON, applying defaults and supported aliases.
     pub fn from_value(v: &Value) -> anyhow::Result<Self> {
         let obj = v
             .as_object()
@@ -277,8 +252,7 @@ impl SessionDistributionConfig {
                 max: itd.get("max").and_then(Value::as_f64),
             };
         }
-        // `turns` set with no explicit `reset` drops reset to None
-        // (`models.py:330-331`).
+        // Explicit turn targets disable probabilistic reset unless reset is authored.
         let turns_present = obj.get("turns").is_some_and(|t| !t.is_null());
         if let Some(r) = obj.get("reset") {
             cfg.reset = if r.is_null() {
@@ -311,7 +285,6 @@ impl SessionDistributionConfig {
                 min: t.get("min").and_then(Value::as_i64).unwrap_or(0),
                 max: t.get("max").and_then(Value::as_i64).unwrap_or(0),
                 allow_truncation,
-                // model_validator default: 100 unless allow_truncation.
                 max_session_attempts: if allow_truncation {
                     None
                 } else {
@@ -358,7 +331,6 @@ impl SessionDistributionConfig {
                 },
             };
         }
-        // restart_fraction alias (`models.py:318-329`).
         if let Some(rf) = obj.get("restart_fraction").and_then(Value::as_f64) {
             cfg.restart_initial_probability = rf;
         }

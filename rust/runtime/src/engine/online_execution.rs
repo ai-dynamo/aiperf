@@ -3,15 +3,8 @@
 
 //! Protocol-v2 executable workloads for the native online transports.
 //!
-//! The scheduled, graph, and static-accuracy [`WorkloadFactory`]
-//! implementations own authored-source lowering into the protocol-neutral
-//! [`NativeRunSpec`] and resolve the transport's turn-placement/graph-placement
-//! factory and readiness policy from the validated transport (http/grpc) by
-//! type — there is no per-transport pair object, and dynosim transports are
-//! prepared through their own module. Direct `dag_jsonl` input remains an
-//! authored graph program: the common coordinator passes it once to the selected
-//! runner-owned authored-input adapter, which returns `GraphTracePlan`s and one
-//! frozen segment store.
+//! Workload factories lower authored input into [`NativeRunSpec`] and resolve
+//! execution and readiness policy from the validated transport.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -58,20 +51,12 @@ use crate::engine::registry::{
 use crate::engine::turn_execution::RequestExecutorFactory;
 
 /// Native execution binding for the built-in `http` transport.
-///
-/// HTTP is the base transport: it drives the shared hyper turn-placement factory
-/// (injected through [`ExecutionFactories`], so a remote HTTP placement can
-/// replace it) and is the only native transport that performs a model-readiness
-/// probe before profiling.
-///
-/// [`ExecutionFactories`]: crate::engine::execution_factories::ExecutionFactories
 #[derive(Clone)]
 pub struct HttpNativeExecution {
     executor: Arc<dyn RequestExecutorFactory>,
 }
 
 impl HttpNativeExecution {
-    /// Bind the HTTP turn-placement factory resolved from the process context.
     pub fn new(executor: Arc<dyn RequestExecutorFactory>) -> Self {
         Self { executor }
     }
@@ -120,14 +105,10 @@ impl NativeTransportExecution for HttpNativeExecution {
     }
 }
 
-/// Resolve the native execution binding for a validated transport by resolving
-/// its registered factory by id and asking it for the binding.
+/// Resolve the native execution binding for a validated transport.
 ///
 /// Returns `Ok(None)` for a transport whose execution mode is not the
-/// `RequestExecutor` seam (dynosim's virtual-clock co-simulation), which the
-/// caller prepares through the offline module instead. This is the one place the
-/// native path consults the transport registry; there is no per-transport
-/// `match` in any workload.
+/// `RequestExecutor` seam, such as virtual-clock co-simulation.
 fn resolve_native_execution(
     context: &RunContext,
     transport: &dyn ValidatedTransportConfig,
@@ -142,17 +123,9 @@ fn resolve_native_execution(
 
 use crate::engine::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
 
-/// Dispatch a workload run onto the dynosim virtual-clock transport, or fail
-/// closed when the runtime is built without the `dynosim` feature.
+/// Dispatch to dynosim or reject it when the feature is disabled.
 ///
-/// The `None` arm of every native scheduled/graph validate/prepare match hits
-/// the identical cfg-gated shape: forward to the offline module when the feature
-/// is compiled in (the dynosim functions do not exist otherwise, so the call
-/// must stay under `#[cfg(feature = "dynosim")]`), and otherwise `bail!` that the
-/// transport does not support the workload. Centralizing the gate and the bail
-/// message keeps that trap in one place; the genuinely workload-specific `Some`
-/// arms stay inline. `$unused` reproduces the original per-arm `let _ = …` so
-/// argument liveness is unchanged under the Python-free build.
+/// `$unused` keeps cfg-disabled arguments live without requiring dynosim symbols.
 macro_rules! dynosim_or_unsupported {
     ($transport_id:expr, $workload:literal, $dispatch:expr, $unused:expr $(,)?) => {{
         #[cfg(feature = "dynosim")]
@@ -172,12 +145,6 @@ macro_rules! dynosim_or_unsupported {
 }
 
 /// Register the built-in executable workloads (`scheduled`, `graph`).
-///
-/// Each is one [`WorkloadFactory`] that owns its authored-source lowering
-/// and resolves the transport's turn-placement/graph-placement factory from the
-/// validated transport by id/type. Any registered transport (http, grpc,
-/// dynosim) can drive them; there is no per-transport pair object and no
-/// compatibility predicate.
 pub fn register_online_workloads(registry: &mut crate::extensions::AIPerfRegistry) -> Result<()> {
     let tokenizers: Arc<dyn OnlineTokenizerSourceResolver> =
         Arc::new(HfHubOnlineTokenizerSourceResolver::default());
@@ -188,8 +155,7 @@ pub fn register_online_workloads(registry: &mut crate::extensions::AIPerfRegistr
     Ok(())
 }
 
-/// Register the static-accuracy workload (HTTP only) after sidecar parity or an
-/// exact frontend gate is present in the same distribution.
+/// Register the HTTP-only static-accuracy workload.
 pub fn register_http_static_accuracy_workload(
     registry: &mut crate::extensions::AIPerfRegistry,
 ) -> Result<()> {
@@ -201,11 +167,6 @@ pub fn register_http_static_accuracy_workload(
 }
 
 /// Register static accuracy with distribution-selected preparation factories.
-///
-/// Both factories are retained by the workload factory and used exactly once
-/// when an authored run becomes its prepared operation. This is the compile-time
-/// extension point for non-Hugging-Face tokenizer stores or non-local evaluator
-/// processes.
 pub fn register_http_static_accuracy_workload_with_factories(
     registry: &mut crate::extensions::AIPerfRegistry,
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
@@ -217,9 +178,7 @@ pub fn register_http_static_accuracy_workload_with_factories(
     }))
 }
 
-/// Built-in scheduled workload: runs over any native (http/grpc) or dynosim
-/// transport. Transport-specific endpoint validation, turn-placement factory,
-/// and readiness policy are resolved from the validated transport by id/type.
+/// Built-in scheduled workload for native and dynosim transports.
 struct ScheduledWorkloadFactoryV2 {
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
 }
@@ -305,9 +264,7 @@ impl WorkloadFactory for ScheduledWorkloadFactoryV2 {
     }
 }
 
-/// Built-in direct Graph-IR workload: runs over any native (http/grpc) or
-/// dynosim transport. The resolved transport selects the graph placement's
-/// graph dispatcher (`build_graph_dispatcher`) plus readiness policy.
+/// Built-in Graph-IR workload for native and dynosim transports.
 struct GraphWorkloadFactoryV2 {
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
 }
@@ -349,9 +306,6 @@ impl WorkloadFactory for GraphWorkloadFactoryV2 {
         let workload = workload_config::<GraphWorkloadConfigV2>(workload, "graph")?;
         match resolve_native_execution(context, transport, transport_id)? {
             Some(binding) => {
-                // Every native transport binding builds a graph dispatcher
-                // (`build_graph_dispatcher`), so graph support is not a separate
-                // gate. Run-level validation is dispatched to the binding.
                 binding.validate_run(run, context)?;
                 ensure!(
                     run.sidecars.live_streaming.is_none(),
@@ -505,21 +459,14 @@ impl WorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
     }
 }
 
-/// Build the prepared native operation for one lowered plan, driving the
-/// transport's turn-placement factory, readiness policy, and provenance entirely
-/// through its [`NativeTransportExecution`] binding.
-///
-/// There is no per-transport branch here: the binding is the transport, so
-/// adding a native transport changes nothing in this function.
+/// Build a prepared operation using its [`NativeTransportExecution`] binding.
 fn prepare_native_operation(
     run: &AuthoredRunSpecV2,
     context: &RunContext,
     mut plan: NativeRunSpec,
     binding: Arc<dyn NativeTransportExecution>,
 ) -> Result<Box<dyn PreparedRunnerOperation>> {
-    // Stamp the resolved transport binding onto the plan so the single native
-    // driver layer can read `uses_virtual_clock()` to pick the clock/driver.
-    // (Graph lowering already sets it; setting it here makes scheduled uniform.)
+    // The driver selects its clock from the resolved transport binding.
     plan.transport = Some(binding.clone());
     let report_facts = native_plan_report_facts(&plan)?;
     let request_executor = binding.executor_factory();
@@ -619,7 +566,7 @@ fn default_revision() -> String {
     "main".into()
 }
 
-/// Preparation-time tokenizer acquisition seam for protocol-v2 online pairs.
+/// Preparation-time tokenizer acquisition for protocol-v2 online workloads.
 ///
 /// The native implementation accepts built-in encodings and local paths
 /// without IO, or resolves a Hugging Face repository revision to an immutable
@@ -631,7 +578,7 @@ pub trait OnlineTokenizerSourceResolver: Send + Sync {
     fn resolve(&self, name: &str, revision: &str, trust_remote_code: bool) -> Result<String>;
 }
 
-/// Native Hugging Face/local/built-in tokenizer source resolver.
+/// Resolves built-in, local, and Hugging Face tokenizers.
 pub struct NativeOnlineTokenizerSourceResolver {
     fetcher: Arc<dyn DatasetFetcher>,
     cache_directory: PathBuf,
@@ -664,7 +611,6 @@ impl Default for NativeOnlineTokenizerSourceResolver {
 }
 
 impl NativeOnlineTokenizerSourceResolver {
-    /// Construct with an injected byte fetcher and cache root.
     pub fn new(fetcher: Arc<dyn DatasetFetcher>, cache_directory: PathBuf) -> Self {
         Self {
             fetcher,
@@ -796,9 +742,7 @@ fn tokenizer_directory_to_string(directory: &Path) -> Result<String> {
 /// redirect, reuses the standard `~/.cache/huggingface` cache across runs, and
 /// honors `HF_HUB_OFFLINE`. Built-in encodings and local paths short-circuit
 /// without IO. `hf-hub` acquires the `main` revision, so a pinned non-`main`
-/// revision falls back to the exact-commit HTTP resolver. Selected through the
-/// [`OnlineTokenizerSourceResolver`] seam so a distribution with an internal
-/// artifact store can still swap the whole mechanism.
+/// revision falls back to the exact-commit HTTP resolver.
 #[derive(Default)]
 pub struct HfHubOnlineTokenizerSourceResolver {
     pinned_revision_fallback: NativeOnlineTokenizerSourceResolver,
@@ -817,8 +761,8 @@ impl OnlineTokenizerSourceResolver for HfHubOnlineTokenizerSourceResolver {
         if let Some(local) = resolve_builtin_or_local(name, trust_remote_code)? {
             return Ok(local);
         }
-        // hf-hub resolves the branch tip; an authored pinned commit/branch needs
-        // the exact-commit HTTP path, which the fallback still performs.
+        // hf-hub resolves branch tips, so pinned revisions require the
+        // exact-commit HTTP resolver.
         if revision != default_revision() {
             return self
                 .pinned_revision_fallback
@@ -837,9 +781,9 @@ impl OnlineTokenizerSourceResolver for HfHubOnlineTokenizerSourceResolver {
 }
 
 fn validate_repository_id(value: &str) -> Result<()> {
-    // Hugging Face repository IDs are either `namespace/name` or a bare
-    // canonical/legacy model id with no namespace (`gpt2`, `bert-base-uncased`,
-    // `t5-small`). Both are valid `hf-hub` repos, so accept one or more
+    // Hugging Face repository IDs are either `namespace/name` or a bare model
+    // ID (`gpt2`, `bert-base-uncased`, `t5-small`). Both are valid `hf-hub`
+    // repositories, so accept one or more
     // segments; only reject empty segments and path-traversal components (local
     // paths and tiktoken encodings are already resolved before this point).
     let segments = value.split('/').collect::<Vec<_>>();
@@ -874,7 +818,6 @@ fn hugging_face_model_url(
         path.extend(repository.split('/'));
         if let Some((kind, value)) = suffix {
             if kind == "resolve" {
-                // File URLs do not use the API prefix.
                 drop(path);
                 let mut file = Url::parse(endpoint)?;
                 {
@@ -929,12 +872,10 @@ impl AuthoredTokenizerV2 {
         })
     }
 
-    /// Lower to a harmless built-in tokenizer without resolving the authored
-    /// source. Selected for endpoints that neither tokenize their input nor
-    /// produce output tokens: the authored `tokenizer.name` is the primary
-    /// model repository regardless of endpoint (Python projects it verbatim),
-    /// so resolving it would download or gate-fail a tokenizer the run never
-    /// consults. A chat template would tokenize input, so it is dropped here.
+    /// Use a built-in tokenizer for endpoints with no token metrics.
+    ///
+    /// This avoids resolving an unused model repository. Chat templates are
+    /// disabled because applying one would require tokenization.
     fn lower_builtin(&self) -> TokenizerSpec {
         TokenizerSpec {
             name: "builtin".into(),
@@ -948,8 +889,7 @@ impl AuthoredTokenizerV2 {
 /// AIPerf only tokenizes when the endpoint tokenizes its input or produces
 /// output tokens; `base_metrics_processor` filters token metrics by the same
 /// two flags, so a descriptor with both false has no token metrics and needs no
-/// tokenizer. Descriptor-driven so any future non-tokenizing endpoint is
-/// covered without enumerating endpoint ids.
+/// tokenizer. Descriptor-driven gating avoids enumerating endpoint IDs.
 fn endpoint_needs_tokenizer(descriptor: &crate::endpoints::EndpointDescriptor) -> bool {
     descriptor.tokenizes_input || descriptor.produces_tokens
 }
@@ -971,16 +911,12 @@ fn lower_tokenizer_for_endpoint(
     }
 }
 
-/// Strictly validate one authored tokenizer policy without resolving its
-/// source. Workload factories use this during side-effect-free validation and
-/// call [`lower_authored_tokenizer`] exactly once during preparation.
+/// Validate an authored tokenizer policy without resolving its source.
 pub(crate) fn validate_authored_tokenizer(raw: &RawValue) -> Result<()> {
     AuthoredTokenizerV2::decode(raw).map(|_| ())
 }
 
-/// Decode and resolve one authored tokenizer through an injected source
-/// resolver. Offline and future remote transports reuse this preparation without
-/// inheriting the online HTTP workload adapter.
+/// Resolve an authored tokenizer through an injected source resolver.
 pub(crate) fn lower_authored_tokenizer(
     raw: &RawValue,
     resolver: &dyn OnlineTokenizerSourceResolver,
@@ -1062,10 +998,8 @@ pub(crate) fn lower_scheduled(
     workload: &ScheduledWorkloadConfigV2,
     tokenizers: &dyn OnlineTokenizerSourceResolver,
 ) -> Result<NativeRunSpec> {
-    // Prepare the endpoint before resolving the tokenizer: its descriptor
-    // decides whether a real tokenizer is needed at all. Non-tokenizing
-    // endpoints (e.g. image_retrieval, riva_asr) must not trigger a remote /
-    // gated-model tokenizer download for a tokenizer the run never consults.
+    // Endpoint capabilities determine whether tokenizer resolution may perform
+    // remote or gated-model I/O.
     let profile = context.default_endpoint_profile()?;
     let prepared_endpoint = context
         .product_registry()
@@ -1121,8 +1055,6 @@ pub(crate) fn lower_scheduled(
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
         workload.failure_policy,
-        // Scheduled resolves its transport through the injected
-        // RequestExecutorFactory; the graph binding is unused on the linear path.
         None,
     )
 }
@@ -1137,8 +1069,8 @@ fn media_generator_factory(
         return Ok(Arc::new(NativeSyntheticMediaGeneratorFactory::default()));
     };
     let Some(content_dir) = &spec.content_dir else {
-        // The Python feature starts a temporary server when CONTENT_DIR is
-        // empty but activates file writing only when both values are present.
+        // Without a content directory, generated media cannot be published
+        // through the content server.
         return Ok(Arc::new(NativeSyntheticMediaGeneratorFactory::default()));
     };
     let publisher = ContentServerMediaPublisher::new(content_dir, spec.base_url())
@@ -1192,7 +1124,6 @@ fn lower_graph(
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
         workload.failure_policy,
-        // The resolved transport builds the graph dispatcher (`build_graph_dispatcher`).
         Some(transport),
     )
 }
@@ -1215,10 +1146,8 @@ fn lower_static_accuracy(
         &workload.phases,
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
-        // Static accuracy has no failure knob today; it inherits the scheduled
-        // default (resilient) via `None`.
+        // Static accuracy uses the resilient default failure policy.
         None,
-        // Static accuracy runs over HTTP and does not use the graph runtime.
         None,
     )
 }
@@ -1313,13 +1242,7 @@ fn native_plan_report_facts(plan: &NativeRunSpec) -> Result<ReportPairRunFacts> 
     Ok(ReportPairRunFacts::new().with_graph(graph))
 }
 
-/// Prepared native (http/grpc, scheduled/graph/static-accuracy) operation.
-///
-/// The workload resolved the transport's turn-placement factory and readiness
-/// policy at prepare time; execution is transport-blind from here — the same
-/// entry point drives scheduled turns (through the selected request executor)
-/// and graph traces (through the shared graph placement with the plan's
-/// `transport_kind` arm).
+/// Prepared native operation with resolved execution and readiness policy.
 struct PreparedNativeOperation {
     plan: NativeRunSpec,
     request_executor: Arc<dyn RequestExecutorFactory>,
@@ -1472,9 +1395,6 @@ mod tests {
     #[test]
     fn registration_adds_only_real_online_workloads() {
         let mut registry = crate::extensions::AIPerfRegistry::builtin().unwrap();
-        // Registration proves the executable scheduled/graph/static-accuracy
-        // workloads compose into the one unified registry without a per-transport
-        // pair object; any workload runs over any transport.
         register_online_workloads(&mut registry).unwrap();
         register_http_static_accuracy_workload(&mut registry).unwrap();
     }

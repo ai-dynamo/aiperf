@@ -732,10 +732,8 @@ impl MetricsAccumulator {
         aggregate_results: &BTreeMap<String, MetricResult>,
         aggregate_timeslices: &[MetricTimeslice],
     ) -> Vec<InferenceMetricSeriesSummary> {
-        // Python's accumulator stores categorical metadata separately from
-        // numeric metrics and exposes exact masks for grouped analysis. Native
-        // reports apply that same masking seam to the request's selected
-        // model/endpoint pair.
+        // Categorical dimensions stay separate from numeric metrics so grouped
+        // analysis can mask the selected model/endpoint pair exactly.
         let dimensions = self
             .store
             .inference_dimensions()
@@ -1805,7 +1803,7 @@ mod tests {
         }
     }
 
-    /// Stage A within-tolerance bar for the in-process sharded exact-fold summary.
+    /// Tolerance for the in-process sharded exact-fold summary.
     ///
     /// Counts, min, max, and percentiles are order-independent set operations over the
     /// merged value multiset, so they must be BIT-EXACT after the append-only shard
@@ -1846,9 +1844,8 @@ mod tests {
         }
     }
 
-    /// The Stage A shard merge: several dense per-shard EXACT accumulators, each fed a
-    /// disjoint set of records at LOCAL-dense `request_index` slots (the local fold
-    /// ordinal the sharded exact-fold worker stamps), merged through
+    /// Several dense per-shard exact accumulators, each fed a disjoint set of
+    /// records at local-dense `request_index` slots, merged through
     /// `MetricsAccumulator::merge` (`append_store`), yield a summary within tolerance of
     /// a single accumulator fed every record in global order. Counts and percentiles
     /// stay exact; sums/means fall within the relative epsilon.

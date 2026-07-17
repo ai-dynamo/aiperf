@@ -105,13 +105,8 @@ pub enum OperationV2 {
     Execute,
 }
 
-/// One strict protocol-v2 execution envelope.
-///
-/// This is no longer the stdin wire type: the stdin payload is the bare
-/// [`BenchmarkRunWireV2`], and the re-exec child reconstructs this envelope
-/// in-process (fixed [`PROTOCOL_V2`], operation from the `--execute` /
-/// `--validate` mode) before handing it to the unchanged coordinator. The
-/// `Deserialize` derive is retained for tests and out-of-band tooling.
+/// One strict protocol-v2 execution envelope reconstructed around the bare
+/// [`BenchmarkRunWireV2`] stdin payload.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvelopeV2 {
@@ -176,11 +171,8 @@ pub struct BenchmarkRunWireV2 {
 
 /// Runner-relevant subset of the canonical BenchmarkConfig dump.
 ///
-/// Unknown Config keys are ignored so Python can dump BenchmarkConfig without
-/// maintaining a second field-for-field allowlist. The dump legitimately carries
-/// keys this runner does not consume (for example `model`, `warmup`, `profiling`),
-/// so `deny_unknown_fields` is intentionally NOT used here; removed selectors such
-/// as `workload`/`accuracy` are simply ignored rather than rejected.
+/// Unknown Config keys are ignored because the canonical dump includes fields this
+/// runner does not consume, such as `model`, `warmup`, and `profiling`.
 #[derive(Deserialize)]
 pub struct BenchmarkConfigWireV2 {
     /// Model-selection policy.
@@ -209,9 +201,8 @@ pub struct BenchmarkConfigWireV2 {
     /// Native metrics policy.
     #[serde(default)]
     pub metrics: Value,
-    /// Optional run-failure policy (`"continue"` / `"abort"`); absent applies
-    /// each execution path's historical default (scheduled resilient, graph
-    /// fail-fast). Lowered into the shared workload config so both paths decode it.
+    /// Optional run-failure policy (`"continue"` / `"abort"`); absent selects
+    /// resilient scheduled execution or fail-fast graph execution.
     #[serde(default)]
     pub failure_policy: Value,
     /// Goodput/SLO policy.
@@ -260,11 +251,7 @@ impl BenchmarkRunWireV2 {
         Ok(())
     }
 
-    /// Adapt canonical Config nesting to the linked legacy preparation seam.
-    ///
-    /// The adapter is deliberately private to the runner boundary: public input
-    /// remains BenchmarkRun while in-tree factories continue to own their
-    /// strict config decoding until their internal seam is retired.
+    /// Adapt canonical Config nesting to the linked preparation seam.
     pub(crate) fn into_authored(self) -> Result<AuthoredRunSpecV2> {
         self.validate_outer()?;
         let dataset = self
@@ -1150,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_resource_block_is_intentional_and_flat_legacy_fields_fail() {
+    fn empty_resource_block_is_intentional_and_flat_fields_fail() {
         let mut value = request();
         value["run"]["resources"] = serde_json::json!({});
         let decoded: EnvelopeV2 = serde_json::from_value(value).unwrap();
@@ -1165,9 +1152,9 @@ mod tests {
             assert!(!decoded.run.resource_is_present(resource));
         }
 
-        let mut legacy = request();
-        legacy["run"]["models"] = legacy["run"]["resources"]["models"].take();
-        let error = serde_json::from_value::<EnvelopeV2>(legacy)
+        let mut flat = request();
+        flat["run"]["models"] = flat["run"]["resources"]["models"].take();
+        let error = serde_json::from_value::<EnvelopeV2>(flat)
             .err()
             .unwrap()
             .to_string();

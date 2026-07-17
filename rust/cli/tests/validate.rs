@@ -1,13 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Parity of native `aiperf validate mooncake-trace` vs the Python oracle: the
-//! pass message is byte-exact; the fail path flags the same lines/count/exit.
+//! `aiperf validate mooncake-trace` command contract coverage.
 
 use std::process::Command;
 
-fn bin() -> String {
-    format!("{}/../../target/debug/aiperf", env!("CARGO_MANIFEST_DIR"))
-}
 fn fixture(name: &str) -> String {
     format!(
         "{}/../../tools/parity/validate/{name}",
@@ -17,7 +13,7 @@ fn fixture(name: &str) -> String {
 
 #[test]
 fn validate_pass_is_byte_exact() {
-    let out = Command::new(bin())
+    let out = Command::new(env!("CARGO_BIN_EXE_aiperf"))
         .args([
             "validate",
             "mooncake-trace",
@@ -35,7 +31,7 @@ fn validate_pass_is_byte_exact() {
 
 #[test]
 fn validate_fail_flags_all_rows() {
-    let out = Command::new(bin())
+    let out = Command::new(env!("CARGO_BIN_EXE_aiperf"))
         .args([
             "validate",
             "mooncake-trace",

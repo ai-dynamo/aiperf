@@ -3,19 +3,9 @@
 
 //! Transport-neutral placement for turn execution.
 //!
-//! The benchmark has one scheduler and one logical `TurnDispatcher`. Each
-//! transport contributes only a [`WorkerSink`] (the Rust analogue of Python's
-//! `BaseTransport.send_request`) built through an [`ExecutionSinkBuilder`]; HTTP,
-//! gRPC, and any future socket transport share the one dispatch/measure/stream
-//! path written once against this seam and never bring their own execution model.
-//!
-//! There is ONE thread-per-core execution mechanism, and it lives ABOVE the
-//! transport: [`run_sharded_scheduled`](crate::engine::sharded_scheduled) runs the
-//! whole scheduled pipeline — scheduler, admission, dispatch, transport, and
-//! capture — independently on each sub-cell OS thread, so a transport sink is
-//! always co-located on its own reactor with no cross-thread per-request hop. This
-//! module therefore builds only a single co-located sink; the factory and sink
-//! traits remain the injection point for a future cross-node transport.
+//! Each transport supplies a worker-local [`WorkerSink`] through an
+//! [`ExecutionSinkBuilder`]. Scheduling, measurement, streaming, cancellation,
+//! and drain remain transport-independent.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -31,13 +21,13 @@ use crate::transport::http::{TransportSink, TransportSinkConfig};
 use anyhow::{Result, ensure};
 use async_trait::async_trait;
 
-/// Inputs available to an execution-placement factory for one benchmark run.
+/// Inputs for one execution backend.
 pub struct ExecutionBackendConfig {
-    /// Number of execution workers requested by resolved Config v2.
+    /// Number of requested execution workers.
     pub workers: usize,
-    /// Coordinator-local clock used by direct execution.
+    /// Coordinator-local execution clock.
     pub coordinator_clock: Rc<dyn Clock>,
-    /// Copyable origin used to construct worker-local clocks on one timeline.
+    /// Origin shared by worker-local clocks.
     pub real_clock_anchor: RealClockAnchor,
     /// Ordered inference endpoint list.
     pub base_urls: Vec<String>,
@@ -45,47 +35,32 @@ pub struct ExecutionBackendConfig {
     pub model: String,
     /// Fully resolved transport policy.
     pub transport: TransportSinkConfig,
-    /// Optional worker-local open endpoint preparation.
+    /// Optional worker-local endpoint preparation.
     ///
-    /// The factory runs independently on every native worker, preserving the
-    /// same dense-key table contract a future remote placement can implement.
+    /// Each worker receives an independent dense-key table.
     pub prepared_endpoints: Option<Arc<dyn PreparedEndpointTableFactory>>,
 }
 
-/// Worker-local prepared endpoint table construction.
-///
-/// Implementations retain registry/factory state only. Each placement worker
-/// calls this seam before accepting commands, so prepared endpoint objects and
-/// credentials never cross a thread or remote execution boundary.
+/// Constructs worker-local prepared endpoint tables.
 pub trait PreparedEndpointTableFactory: Send + Sync {
-    /// Build one complete deterministic dense-key table for a worker.
+    /// Build one deterministic dense-key table.
     fn prepare_worker(&self) -> Result<PreparedEndpointTable>;
 }
 
-/// Composition seam for local (co-located) or a future remote execution placement.
+/// Constructs the request executor for a run.
 pub trait RequestExecutorFactory: Send + Sync {
-    /// Construct the backend used below the run's single logical dispatcher.
+    /// Construct the backend used by the run's dispatcher.
     fn build(&self, config: ExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>>;
 }
 
-/// The worker-facing contract of a transport sink — the Rust analogue of the
-/// Python `BaseTransport.send_request` seam.
-///
-/// This is the ONLY thing that differs between native transports: given a
-/// prepared turn, drive it to terminal against a real server and feed the
-/// worker-local observer. The dispatch/measure/stream path is written once over
-/// this trait, so HTTP, gRPC, and any future socket transport share one
-/// measurement path, one drain, one cancellation, and one streaming relay — a
-/// transport never brings its own execution model, only its sink. Thread-per-core
-/// parallelism is provided by the sharded scheduled runtime above the transport.
+/// Worker-facing contract for a transport sink.
 #[async_trait(?Send)]
 pub trait WorkerSink {
     /// Anchor the sink's timestamp origin to the run origin (shared with the
     /// worker observer so TTFT/ITL are not offset by setup duration).
     fn set_run_origin(&self, origin_ns: i64);
 
-    /// Report the coordinator-known inference dimensions for one turn (used by
-    /// the dimension probe; no IO).
+    /// Report inference dimensions without performing I/O.
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions;
 
     /// Whether this sink can stream intermediate responses to a live observer.
@@ -141,13 +116,7 @@ impl WorkerSink for TransportSink {
     }
 }
 
-/// Worker-local sink construction — the transport-specific half of execution.
-///
-/// One implementation per transport (HTTP, gRPC). Everything above it —
-/// measurement, drain, cancellation, streaming — is generic over this builder, so
-/// adding a transport means writing a builder, never a second execution backend.
-/// The builder is `Send + Sync` (moved onto each sharded sub-cell OS thread) and
-/// constructs the `!Send` sink inside that thread's reactor.
+/// Constructs a `!Send` transport sink inside each worker reactor.
 pub trait ExecutionSinkBuilder: Send + Sync + 'static {
     /// The worker-local sink this transport drives.
     type Sink: WorkerSink + RequestExecutor + 'static;
@@ -159,7 +128,7 @@ pub trait ExecutionSinkBuilder: Send + Sync + 'static {
     fn build_sink(&self, clock: Rc<dyn Clock>, worker_id: usize) -> Result<Self::Sink>;
 }
 
-/// Built-in HTTP sink builder: constructs a worker-local [`TransportSink`].
+/// Constructs worker-local HTTP transport sinks.
 pub struct HttpSinkBuilder {
     base_urls: Vec<String>,
     model: String,
@@ -168,7 +137,6 @@ pub struct HttpSinkBuilder {
 }
 
 impl HttpSinkBuilder {
-    /// Capture the per-run HTTP sink inputs from the resolved backend config.
     pub fn from_config(config: &ExecutionBackendConfig) -> Self {
         Self {
             base_urls: config.base_urls.clone(),
@@ -198,18 +166,10 @@ impl ExecutionSinkBuilder for HttpSinkBuilder {
     }
 }
 
-/// Build the native execution backend for any transport sink builder.
+/// Build one co-located transport sink.
 ///
-/// There is exactly ONE thread-per-core execution mechanism, and it lives ABOVE
-/// the transport: [`run_sharded_scheduled`](crate::engine::sharded_scheduled) runs
-/// the whole scheduled pipeline — scheduler, admission, dispatch, transport, and
-/// capture — independently on each sub-cell OS thread, so every worker's transport
-/// sink is co-located on its own reactor. This factory therefore only ever builds a
-/// single co-located sink; `workers > 1` never reaches here because every workload
-/// shape shards (`shardable == workers > 1` in
-/// [`execute_native_inner`](crate::engine::execute), including static-accuracy),
-/// and the sharded runtime hands each of its threads `workers == 1`. A `workers > 1`
-/// request is a wiring bug rather than a second execution model, so it fails closed.
+/// Thread-per-core execution constructs one backend per shard, so this function
+/// accepts exactly one worker.
 pub(crate) fn build_native<B: ExecutionSinkBuilder>(
     builder: B,
     workers: usize,
@@ -226,11 +186,7 @@ pub(crate) fn build_native<B: ExecutionSinkBuilder>(
     Ok(Rc::new(builder.build_sink(coordinator_clock, 0)?))
 }
 
-/// Native local execution factory.
-///
-/// Builds one co-located transport sink on the coordinator reactor; OS-thread
-/// parallelism for `workers > 1` runs comes from the sharded scheduled runtime
-/// above the transport, not from this factory.
+/// Native HTTP execution factory.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HttpExecutionFactory;
 
@@ -248,9 +204,7 @@ impl RequestExecutorFactory for HttpExecutionFactory {
     }
 }
 
-/// Construct one worker-local HTTP [`TransportSink`], optionally binding a
-/// worker-local prepared endpoint table so prepared endpoint objects and
-/// credentials never cross a thread boundary.
+/// Construct one worker-local HTTP [`TransportSink`].
 fn prepare_transport_sink(
     clock: Rc<dyn Clock>,
     start_ns: i64,

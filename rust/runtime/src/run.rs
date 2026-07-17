@@ -23,11 +23,7 @@
 //! The transport is `!Send` (`Rc<dyn Clock>`), so the loop runs on a single
 //! `LocalSet` with `spawn_local`; a shared clock is the one time authority.
 //!
-//! The backend-neutral `run_*_with_backend` runtimes and their ancillary
-//! helpers are consumed by the feature-gated `dynosim` co-simulation and by the
-//! in-crate tests; the product online path is driven through the runner. Under a
-//! default, non-test build they have no caller, so dead-code / unused-import
-//! diagnostics are suppressed for that configuration only.
+//! Backend-neutral helpers are enabled for simulation and direct runtime tests.
 #![cfg_attr(not(test), allow(unused_imports))]
 #![cfg_attr(not(any(test, feature = "dynosim")), allow(dead_code))]
 
@@ -168,8 +164,8 @@ pub(crate) fn start_ramps(
     if let Some(duration_ns) = ancillary.request_rate_ramp_duration_ns {
         let target = rate.expect("validated request-rate ramp target");
         let update_interval_ns = ancillary.rate_ramp_update_interval_ns;
-        // Python starts from one proportional update increment, deliberately
-        // not a fixed 1 QPS start.
+        // Start at one proportional update increment so the target is reached
+        // exactly after the configured number of updates.
         let start = target * update_interval_ns as f64 / duration_ns as f64;
         let config = RamperConfig::new(start, target, duration_ns)?
             .with_update_interval_ns(update_interval_ns)?;
@@ -792,10 +788,7 @@ pub(crate) async fn run_user_centric_adaptive_with_backend(
     Ok(runtime.finish(workload.name(), workload.user_control_snapshot()))
 }
 
-// Test-only thin HTTP wrappers over the backend-neutral runtimes. The product
-// path no longer exposes these one-shot builders (Python composes runs through
-// the runner); they are retained here only to keep the live `*_with_backend`
-// paths under direct unit-test coverage.
+// Test-only HTTP wrappers over the backend-neutral runtimes.
 #[cfg(test)]
 async fn run(
     base_url: String,

@@ -1,22 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Config pre-processing: `${ENV}` substitution + Jinja2 (`{{ }}`) rendering.
+//! Config preprocessing for `${ENV}` substitution and Jinja2 rendering.
 //!
-//! Byte-for-byte port of Python's `aiperf.config.loader.jinja::expand_config_dict`
-//! (`src/aiperf/config/loader/env_vars.py` + `jinja.py`). The pipeline runs on the
-//! parsed-YAML value tree BEFORE it is deserialized into the typed config:
+//! The pipeline runs on the parsed YAML value tree before typed deserialization:
 //!
 //! 1. `${VAR}` / `${VAR:default}` substitution from the process environment. A
-//!    string that is *entirely* one reference is coerced to bool/int/float
-//!    (`_coerce_scalar_string`); an embedded reference stays a string.
-//! 2. The `variables:` block is resolved in dependency order (each variable may
-//!    reference any other) into a flat template context.
+//!    string that is *entirely* one reference is coerced to bool/int/float; an
+//!    embedded reference stays a string.
+//! 2. The `variables:` block is resolved in dependency order into a flat
+//!    template context. Each variable may reference any other variable.
 //! 3. Jinja2 `{{ expr }}` / `{% ... %}` rendering over every string leaf, with
 //!    `StrictUndefined` (a missing name is a hard error) and result coercion.
 //!    `template`/`body`/`payload_template` fields and the `artifacts.user_files`
 //!    subtree are skipped (rendered at request/run time, not config-load time).
 //!
-//! The Jinja engine is `minijinja` (already a workspace dependency); its
+//! The Jinja engine is `minijinja`; its
 //! expression semantics match Jinja2 for the arithmetic/attribute forms the
 //! templates use.
 
@@ -26,22 +24,19 @@ use minijinja::{Environment, UndefinedBehavior, Value as JinjaValue};
 use regex::Regex;
 use serde_json::{Map, Value};
 
-/// `${VAR}` or `${VAR:default}` — a leading `$`, braces, an identifier, and an
-/// optional `:default` (default may be empty or contain any non-`}` bytes).
+/// `${VAR}` or `${VAR:default}` with any non-`}` bytes allowed in the default.
 static ENV_VAR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}").unwrap());
-/// A string that is ENTIRELY one `${...}` reference (drives scalar coercion).
+/// A string consisting entirely of one `${...}` reference.
 static WHOLE_ENV_VAR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\$\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}$").unwrap());
-/// An unterminated `${...` opener (no closing brace before EOL) — a hard error.
+/// An unterminated `${...` opener.
 static UNTERMINATED_ENV_VAR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\$\{[^}\n]*$").unwrap());
 
-/// Fields whose value is itself a request-time Jinja template — never rendered
-/// at config-load time (`SKIP_TEMPLATE_FIELDS`).
+/// Request-time Jinja fields that must not render during config loading.
 const SKIP_TEMPLATE_FIELDS: &[&str] = &["template", "body", "payload_template"];
-/// Subtrees rendered at run start with run-time-only context; skipped at load
-/// (`SKIP_TEMPLATE_PATH_PREFIXES`).
+/// Subtrees rendered at run start with runtime-only context.
 const SKIP_TEMPLATE_PATH_PREFIXES: &[&str] = &[
     "artifacts.user_files",
     "benchmark.artifacts.user_files",
@@ -55,24 +50,16 @@ pub fn expand_config(root: Value) -> anyhow::Result<Value> {
     render_with_context(root)
 }
 
-/// Stage 1 only: `${ENV}` substitution over the value tree. Exposed so the YAML
-/// sweep expander can substitute the base config once, then Jinja-render each
-/// variation separately (matching Python's plan-build order:
-/// env → sweep-expand → per-variation Jinja).
+/// Substitute `${ENV}` before sweep expansion and per-variation Jinja rendering.
 pub(crate) fn substitute_env(root: Value) -> anyhow::Result<Value> {
     substitute_env_vars(root)
 }
 
-/// Stages 2+3: build the Jinja context from `root` and render every template
-/// string in it. Used per-variation after the sweep override rewrites the tree.
+/// Build the Jinja context and render each template string.
 pub(crate) fn render_with_context(root: Value) -> anyhow::Result<Value> {
     let context = build_context(&root)?;
     render_jinja(root, &context, "")
 }
-
-// ---------------------------------------------------------------------------
-// Stage 1: ${ENV} substitution.
-// ---------------------------------------------------------------------------
 
 fn substitute_env_vars(value: Value) -> anyhow::Result<Value> {
     match value {
@@ -116,8 +103,7 @@ fn substitute_string(text: &str) -> anyhow::Result<Value> {
     if UNTERMINATED_ENV_VAR.is_match(&substituted) {
         anyhow::bail!("unterminated environment variable reference in {substituted:?}");
     }
-    // A whole-string reference coerces to its scalar type; an embedded one stays
-    // a string.
+    // Embedded references remain strings; whole references adopt scalar types.
     if WHOLE_ENV_VAR.is_match(text) {
         Ok(coerce_scalar(&substituted))
     } else {
@@ -125,8 +111,7 @@ fn substitute_string(text: &str) -> anyhow::Result<Value> {
     }
 }
 
-/// Python `_coerce_scalar_string` / `_coerce_rendered`: true/false → bool, then
-/// int, then float, else the string unchanged.
+/// Coerce booleans, then integers, then floats; otherwise preserve the string.
 fn coerce_scalar(s: &str) -> Value {
     let lower = s.to_ascii_lowercase();
     if lower == "true" {
@@ -146,27 +131,20 @@ fn coerce_scalar(s: &str) -> Value {
     Value::String(s.to_string())
 }
 
-// ---------------------------------------------------------------------------
-// Stage 2: template context (variables block + lifted benchmark subtree).
-// ---------------------------------------------------------------------------
-
 /// Build the Jinja context: the whole config at top level, the `benchmark`
-/// subtree lifted to top level, and the resolved `variables:` block. minijinja
-/// traverses nested objects for `{{ a.b.c }}`, so unlike the Python port we do
-/// not also materialize flat dotted keys.
+/// subtree lifted to top level, and the resolved `variables:` block.
 fn build_context(root: &Value) -> anyhow::Result<Map<String, Value>> {
     let mut ctx = Map::new();
     if let Some(obj) = root.as_object() {
         for (k, v) in obj {
             ctx.insert(k.clone(), v.clone());
         }
-        // Lift benchmark body keys to the top level (backward-template-compat).
+        // Top-level benchmark keys remain available to existing templates.
         if let Some(benchmark) = obj.get("benchmark").and_then(Value::as_object) {
             for (k, v) in benchmark {
                 ctx.insert(k.clone(), v.clone());
             }
         }
-        // Resolve the variables block against everything else, in dep order.
         if let Some(variables) = obj.get("variables").and_then(Value::as_object) {
             let mut base = ctx.clone();
             for key in variables.keys() {
@@ -196,7 +174,7 @@ fn resolve_variables(
         .collect();
 
     while !pending.is_empty() {
-        // Deterministic order: sort the ready set by name (Python sorts too).
+        // Stable ordering makes dependency resolution deterministic.
         pending.sort_by(|a, b| a.0.cmp(&b.0));
         let mut made_progress = false;
         let mut still_pending = Vec::new();
@@ -210,8 +188,7 @@ fn resolve_variables(
                     resolved.insert(name, v);
                     made_progress = true;
                 }
-                // A strict-undefined failure means an unresolved dependency; retry
-                // it after this pass resolves more variables.
+                // Undefined names may resolve after another variable completes.
                 Err(RenderError::Undefined) => still_pending.push((name, template)),
                 Err(RenderError::Fatal(e)) => return Err(e),
             }
@@ -225,11 +202,6 @@ fn resolve_variables(
     Ok(resolved)
 }
 
-// ---------------------------------------------------------------------------
-// Stage 3: Jinja rendering over the value tree.
-// ---------------------------------------------------------------------------
-
-/// True if `path` is at or under a skipped subtree prefix.
 fn path_is_skipped(path: &str) -> bool {
     SKIP_TEMPLATE_PATH_PREFIXES
         .iter()
@@ -280,14 +252,11 @@ fn join_path(prefix: &str, key: &str) -> String {
     }
 }
 
-/// Render error kinds: a strict-undefined miss (retryable during variable
-/// resolution) versus any other fatal template/syntax error.
 enum RenderError {
     Undefined,
     Fatal(anyhow::Error),
 }
 
-/// Render one config value if it is a template string; pass non-strings through.
 fn render_value_strict(
     value: &Value,
     context: &Map<String, Value>,
@@ -299,14 +268,12 @@ fn render_value_strict(
     }
 }
 
-/// Render a single string with StrictUndefined and coerce the result. Non-template
-/// strings pass through unchanged (matching Python's `{{`/`}}`/`{%` gate).
+/// Render a template with strict undefined names and coerce its result.
 fn render_str_strict(
     data: &str,
     context: &Map<String, Value>,
     path: &str,
 ) -> Result<Value, RenderError> {
-    // Balance checks mirror `_check_orphan_jinja_markers`.
     if data.contains("{{") && !data.contains("}}") {
         return Err(RenderError::Fatal(anyhow::anyhow!(
             "Jinja2 template error at {path:?}: unbalanced '{{{{' with no closing '}}}}'"
@@ -343,12 +310,10 @@ mod tests {
 
     #[test]
     fn env_var_default_coerces_scalar() {
-        // Unset var with a numeric default coerces to the JSON number.
         let v = substitute_string("${AIPERF_TEST_UNSET:600.0}").unwrap();
         assert_eq!(v, Value::from(600.0));
         let v = substitute_string("${AIPERF_TEST_UNSET:42}").unwrap();
         assert_eq!(v, Value::from(42));
-        // Embedded reference stays a string.
         let v = substitute_string("x-${AIPERF_TEST_UNSET:ab}-y").unwrap();
         assert_eq!(v, Value::String("x-ab-y".into()));
     }
@@ -378,7 +343,6 @@ mod tests {
         let root = serde_json::json!({
             "benchmark": {"artifacts": {"user_files": {"f.txt": "{{ runtime_only }}"}}},
         });
-        // Would raise StrictUndefined if rendered; skipped instead.
         let out = expand_config(root).unwrap();
         assert_eq!(
             out["benchmark"]["artifacts"]["user_files"]["f.txt"],

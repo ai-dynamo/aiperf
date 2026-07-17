@@ -22,23 +22,18 @@ pub struct MockServerConfig {
     /// Optional KServe Open Inference Protocol (OIP) v2 gRPC listener port. When
     /// set, a second listener serves the KServe `GRPCInferenceService`
     /// (`ModelInfer`, `ModelStreamInfer`, `ModelReady`, `ServerLive`,
-    /// `ServerReady`) over h2c on `--host:<this>`, mirroring ai-dynamo's
-    /// frontend so AIPerf's native gRPC KServe client has a mock target. The
-    /// HTTP frontend on `--port` is unchanged. Unset (the default) means no gRPC
-    /// listener starts. Not supported together with `--processes > 1` (the L4
-    /// balancer is HTTP-only): gRPC is warned-and-skipped in that mode.
+    /// `ServerReady`) over h2c on `--host:<this>`. Unset means no gRPC listener.
+    /// The HTTP-only L4 balancer ignores this option with `--processes > 1`.
     #[arg(long, env = "MOCK_SERVER_GRPC_PORT")]
     pub grpc_port: Option<u16>,
 
     /// Optional Unix-domain socket path. When set, the server binds a
-    /// `UnixListener` at this path and serves the SAME axum router over it as
-    /// HTTP/1.1 (the runner's UDS transport is HTTP/1.1-only —
+    /// `UnixListener` at this path and serves the axum router over HTTP/1.1
+    /// (the runner's UDS transport is HTTP/1.1-only:
     /// `transport::http/client/connection.rs` connects a `UnixStream` and
     /// negotiates h1). A stale socket file at the path is unlinked first. The
-    /// TCP frontend on `--port` is unchanged and continues to serve in parallel.
-    /// Unset (the default) means the server is TCP-only. Not supported together
-    /// with `--processes > 1` (the L4 balancer is TCP-only): the UDS listener is
-    /// warned-and-skipped in that mode.
+    /// TCP frontend on `--port` continues in parallel. The TCP-only L4 balancer
+    /// ignores this option with `--processes > 1`.
     #[arg(long, env = "MOCK_SERVER_UDS")]
     pub uds: Option<String>,
 
@@ -60,7 +55,7 @@ pub struct MockServerConfig {
     /// `127.0.0.1`/`localhost`, generated fresh at startup. Convenient for local
     /// TLS integration runs where the client disables verification
     /// (`endpoint.ssl_verify=false`); ignored when `--tls-cert`/`--tls-key` are
-    /// given (an explicit cert wins).
+    /// given.
     #[arg(
         long,
         env = "MOCK_SERVER_TLS_SELF_SIGNED",
@@ -72,11 +67,8 @@ pub struct MockServerConfig {
     /// embedding model (like a Triton `python`-backend embedder): it consumes the
     /// input text tensor and returns a single `FP32` embedding tensor of this
     /// dimension (shape `[1, dim]`) instead of a generated `BYTES` text output.
-    /// This makes the mock a target for AIPerf's `kserve_v2_embeddings` gRPC
-    /// endpoint, so the STRING-in / FP32-out embedding path can be exercised
-    /// end-to-end without an LLM. Unset (the default) keeps the token-generating
-    /// text behavior. Only affects unary `ModelInfer`; embeddings are never
-    /// streamed.
+    /// This exercises the `kserve_v2_embeddings` STRING-in / FP32-out contract.
+    /// Only unary `ModelInfer` supports embeddings.
     #[arg(long, env = "MOCK_SERVER_GRPC_EMBEDDING_DIM")]
     pub grpc_embedding_dim: Option<usize>,
 
@@ -105,14 +97,13 @@ pub struct MockServerConfig {
     pub workers: usize,
 
     /// Number of server processes to run behind a built-in round-robin load
-    /// balancer. `1` (the default) is the unchanged single-process path. `N > 1`
+    /// balancer. `1` serves in one process. `N > 1`
     /// turns this process into a lightweight L4 (TCP) round-robin balancer: it
     /// binds `--host:--port`, spawns `N` child `aiperf-mock-server` processes on
     /// internal loopback ports carrying this exact config, and splices each
     /// accepted connection to the next backend in rotation. This lets the mock
-    /// saturate many cores across independent processes (separate allocators and
-    /// tokio runtimes) without a single shared-runtime bottleneck, while exposing
-    /// the same OpenAI-compatible frontend on one URL. `0` = auto = number of
+    /// use independent allocators and tokio runtimes while exposing one
+    /// OpenAI-compatible frontend. `0` = auto = number of
     /// CPUs. When auto-dividing, each child's tokio `--workers` defaults to
     /// `max(1, nproc / processes)` so the total worker-thread count stays bounded.
     #[arg(long, env = "MOCK_SERVER_PROCESSES", default_value_t = 1)]
@@ -135,8 +126,7 @@ pub struct MockServerConfig {
     /// Per-ISL-token TTFT scaling (ms). Effective TTFT =
     /// `ttft + ttft_per_isl_token_ms * prompt_token_count`, modeling prefill
     /// cost that scales with prompt length (e.g. 0.05 ~= 50ms per 1k input
-    /// tokens). Default 0.0 keeps TTFT a flat constant. Name matches the
-    /// Python mock server's knob.
+    /// tokens). Default 0.0 keeps TTFT constant.
     #[arg(long, env = "MOCK_SERVER_TTFT_PER_ISL_TOKEN_MS", default_value_t = 0.0)]
     pub ttft_per_isl_token_ms: f64,
 
@@ -310,7 +300,7 @@ pub struct MockServerConfig {
     /// Disable content-addressed KV-cache (prefix) reuse. By default the mock
     /// models radix prefix caching like SGLang (which has it ON by default,
     /// `--disable-radix-cache=False`): a prompt's leading blocks that match a
-    /// previously-seen prefix skip prefill, lowering TTFT, and are reported as
+    /// cached prefix skip prefill, lowering TTFT, and are reported as
     /// `usage.prompt_tokens_details.cached_tokens`. Hits occur only on genuinely
     /// shared prefixes (multi-turn history, shared system prompts). Mirrors
     /// SGLang's `--disable-radix-cache`.
@@ -444,7 +434,7 @@ pub struct MockServerConfig {
     /// HTTP status codes injected when `--error-rate` fires. Comma-separated
     /// (e.g. `429,503,400,500`); the mock picks one per injected error via the
     /// seeded `mock.errors` RNG stream, so the sequence is reproducible under
-    /// `--random-seed`. Defaults to `500` — the historical single-code behavior.
+    /// `--random-seed`. Defaults to `500`.
     #[arg(
         long,
         env = "MOCK_SERVER_ERROR_STATUS_CODES",
@@ -584,12 +574,7 @@ pub struct MockServerConfig {
     #[arg(long, env = "MOCK_SERVER_MODELS", value_delimiter = ',')]
     pub models: Vec<String>,
 
-    // ---- Extended usage-accounting knobs -----------------------------------
-    // Deterministic fixed values injected into the emitted `usage` object so
-    // AIPerf's `usage_*` catalog metrics can be exercised end-to-end. All
-    // default to `0` (`0.0` for the seconds knob), meaning the corresponding
-    // sub-field is OMITTED entirely — a normal run's usage payload is unchanged.
-    //
+    // Zero-valued usage fields are omitted from the wire payload.
     /// Prompt tokens reported as written into the KV cache, emitted as top-level
     /// `cache_creation_input_tokens` (OpenAI) and in the Anthropic `messages`
     /// usage. Feeds AIPerf `usage_prompt_cache_write_tokens`.
@@ -668,7 +653,6 @@ pub struct MockServerConfig {
     )]
     pub usage_tool_use_prompt_tokens: usize,
 
-    // ---- Tool-call / function-call emission --------------------------------
     /// Seeded probability (0.0–1.0) that a *chat* request answers with a
     /// function tool call (`message.tool_calls` non-streaming, `delta.tool_calls`
     /// deltas streaming) instead of a plain assistant turn. The per-request draw
@@ -705,11 +689,8 @@ pub struct MockServerConfig {
 }
 
 impl MockServerConfig {
-    /// True when any `--usage-*` extended-accounting knob is set, so the usage
-    /// augmentation in [`crate::handlers`] can be skipped entirely on the common
-    /// path (keeping a normal run's payload byte-identical).
     /// True when any TLS flag selects an HTTPS frontend (explicit cert/key pair
-    /// or `--tls-self-signed`), so `main::serve` builds an acceptor.
+    /// or `--tls-self-signed`).
     pub fn tls_enabled(&self) -> bool {
         self.tls_self_signed || self.tls_cert.is_some() || self.tls_key.is_some()
     }
@@ -729,13 +710,12 @@ impl MockServerConfig {
 
 impl Default for MockServerConfig {
     fn default() -> Self {
-        // Parse from an empty arg list so clap defaults apply.
         Self::parse_from::<_, &str>([])
     }
 }
 
 impl MockServerConfig {
-    /// Apply `--fast` / `--verbose` post-processing, matching the Python model_validator.
+    /// Apply `--fast` and `--verbose` configuration overrides.
     pub fn apply_flags(mut self) -> Self {
         if self.verbose {
             self.log_level = "DEBUG".to_string();
@@ -749,8 +729,7 @@ impl MockServerConfig {
             self.itl_concurrency_lin_ms = 0.0;
             self.ttft_jitter_cv = 0.0;
             self.itl_jitter_cv = 0.0;
-            // --fast means truly instant: bypass the batched scheduler and the
-            // prefix cache too.
+            // `--fast` must bypass scheduler and cache latency as well.
             self.scheduler_enabled = false;
             self.disable_prefix_cache = true;
             self.prefix_cache_hit_rate = 0.0;
@@ -798,7 +777,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_python() {
+    fn default_values_are_stable() {
         let cfg = MockServerConfig::default();
         assert_eq!(cfg.port, 8000);
         assert_eq!(cfg.host, "127.0.0.1");
@@ -833,8 +812,6 @@ mod tests {
         assert_eq!(cfg.dcgm_num_gpus, 2);
         assert!(cfg.dcgm_auto_load);
         assert!(!cfg.fast);
-        // Error-injection defaults: single 500 code (historical), 1s Retry-After,
-        // no mid-stream errors.
         assert_eq!(cfg.error_rate, 0.0);
         assert_eq!(cfg.error_status_codes, vec![500u16]);
         assert_eq!(cfg.error_retry_after, 1);

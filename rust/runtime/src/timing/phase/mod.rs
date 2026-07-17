@@ -3,9 +3,8 @@
 
 //! Clock-native phase lifecycle and progress policy.
 //!
-//! The Python message bus is deliberately absent: typed snapshots flow directly
-//! through [`PhaseObserver`]. The async runner and orchestrator build on these
-//! leaf types without changing their single-threaded `Rc`/`RefCell` contract.
+//! Typed snapshots flow directly through [`PhaseObserver`] while preserving the
+//! single-threaded `Rc`/`RefCell` execution contract.
 
 mod config;
 mod lifecycle;

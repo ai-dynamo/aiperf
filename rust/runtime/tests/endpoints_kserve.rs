@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native parity tests for the KServe endpoint family.
+//! KServe endpoint wire and behavior contracts.
 
 use std::collections::BTreeSet;
 
@@ -12,8 +12,6 @@ use aiperf_runtime::endpoints::{
 };
 use serde_json::{Map, Value, json};
 
-/// Materialize a prepared endpoint's [`BodyPlan`] into a decoded JSON value so
-/// the structural assertions below keep comparing against `json!` objects.
 fn plan_body(plan: aiperf_runtime::body_plan::BodyPlan) -> Value {
     serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
 }
@@ -81,8 +79,8 @@ fn all_kserve_dialects_are_open_registry_only() {
 
     for id in expected {
         assert!(matches!(
-            registry.legacy_endpoint(&EndpointId::new(id).unwrap()),
-            Err(EndpointRegistryError::NoLegacyAdapter(_))
+            registry.compatibility_endpoint(&EndpointId::new(id).unwrap()),
+            Err(EndpointRegistryError::NoCompatibilityAdapter(_))
         ));
     }
 }
@@ -182,8 +180,6 @@ fn kserve_v2_infer_and_vlm_match_tensor_payloads_and_text_fallback() {
         .unwrap()
         .materialize_standalone()
         .unwrap();
-    // Golden-byte gate (stage B): materialized KServe plan bytes are identical to
-    // `to_vec` of the equivalent hand-built tensor object.
     assert_eq!(
         &bytes[..],
         serde_json::to_vec(&expected).unwrap().as_slice()

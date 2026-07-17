@@ -73,8 +73,7 @@ use crate::metrics_core::{MetricEntry, NativeReport, ReportStats, ReportValue};
 /// The Python `DEFAULT_STAT_KEYS` / `STAT_COLUMN_KEYS` (console exporter).
 const STAT_COLUMN_KEYS: [&str; 7] = ["avg", "min", "max", "p99", "p90", "p50", "std"];
 
-/// Producer version stamp written into the datastore header. Kept in step with
-/// the SDK the framing was ported from.
+/// Producer version stamp written into the datastore header.
 const HEADER_PRODUCER: &str = "aiperf-native-wandb";
 /// Minimum consumer able to read the streams we emit.
 const HEADER_MIN_CONSUMER: &str = "0.65.0";

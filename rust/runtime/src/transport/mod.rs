@@ -1,12 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Transport plane: the wire clients and sinks, grouped by transport.
+//! Wire clients, sinks, and transport-neutral contracts.
 //!
-//! `http` = hyper HTTP client + SSE; `grpc` = Tonic gRPC client (feature-gated);
-//! `core` = the transport-neutral dispatch vocabulary (request/record/response/
-//! trace/error DTOs, connection-reuse strategy) reused verbatim by every
-//! transport. `core` is ungated (generic) — it never depends on a feature gate.
+//! `http` contains Hyper and SSE support, `grpc` contains feature-gated Tonic
+//! support, and ungated `core` contains shared dispatch vocabulary.
 pub mod core;
 #[cfg(feature = "grpc")]
 pub mod grpc;

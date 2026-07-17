@@ -1,25 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Lightweight `dry_run` transport: a fake execution leaf that fabricates every
-//! request outcome from a small analytic latency model, with zero network.
-//!
-//! # What this is
-//!
-//! `dry_run` is a first-class registered transport (`transport.type: dry_run`,
-//! `--dry-run` on the CLI). It is classified as a *native* transport
-//! ([`crate::engine::online_execution::classify_native_transport`]) so it reuses
-//! the entire native scheduled/graph runtime — pacing, [`crate::scheduled`]
-//! admission, phase orchestration, the metrics accumulator, and the whole export
-//! plane — unchanged. Only the leaf that would open a socket is swapped: instead
-//! of [`crate::transport::http::TransportSink`], the run drives [`FakeRequestExecutor`],
-//! which synthesizes each request's timing analytically and drives the same
-//! [`NativeMetricsObserver`] the real HTTP path drives.
-//!
-//! The value: a user can run `aiperf profile --dry-run` and exercise the full
-//! pipeline (does my config produce valid artifacts? how fast can the loadgen
-//! itself dispatch?) without an inference server. See the design record at
-//! `~/.aiperf/docs/superpowers/specs/2026-07-16-dry-run-transport-design.md`.
+//! Socket-free `dry_run` transport with analytic request timing.
 //!
 //! # Fabrication contract
 //!
@@ -33,15 +15,11 @@
 //! `itl_ms`, and `request_latency = ttft_ms + (OSL−1)·itl_ms`, all exact under a
 //! zero-jitter model — which is what the end-to-end test asserts.
 //!
-//! # Clock modes (both built)
+//! # Clock modes
 //!
-//! The clock is the ONLY difference between the two modes: the single native
-//! driver layer reads
+//! The native driver reads
 //! [`uses_virtual_clock`](crate::engine::registry::NativeTransportExecution::uses_virtual_clock)
-//! (true only for `clock: sim`), constructs the matching clock, and lets it drive
-//! itself via [`Clock::drive`](crate::clock::Clock::drive). There is no separate
-//! sim execution path — same `prepare_and_execute_native`, same `RunCapture`,
-//! per-record artifacts, and `inputs.json`.
+//! and drives the selected clock through [`Clock::drive`](crate::clock::Clock::drive).
 //!
 //! - **`clock: sim`** (default) — a `SimClock` whose idle-pump driver
 //!   fast-forwards virtual time to each next event on a single reactor. Arrival
@@ -51,13 +29,8 @@
 //!   self-benchmark path (raw dispatch throughput). Arrival pacing /
 //!   fixed-schedule / duration bounds wait in real wall-time.
 //!
-//! # Extension points left open
-//!
-//! - **Analytic model:** TTFT/ITL scale with ISL, OSL, and live in-flight
-//!   concurrency plus seeded lognormal jitter, ported byte-for-byte from
-//!   `rust/mock-server/src/latency.rs` (the dynosim/Dynamo-replay perf-model
-//!   shape). With the scaling and jitter knobs at their `0.0` defaults it reduces
-//!   to fixed `ttft_ms`/`itl_ms`, keeping the run byte-deterministic.
+//! TTFT/ITL can scale with ISL, OSL, and live concurrency, with seeded
+//! lognormal jitter. Zero scaling and jitter yield deterministic fixed latency.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -109,15 +82,9 @@ const fn default_kv_utilization() -> f64 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DryRunClock {
-    /// Real wall clock: reuses the native worker-thread executor, so arrival
-    /// pacing / fixed-schedule timestamps / duration bounds wait in real
-    /// wall-time. The loadgen self-benchmark path (raw dispatch throughput).
+    /// Real wall clock for pacing, schedules, and duration bounds.
     Real,
-    /// Virtual `SimClock` (the default): the SAME native execution driven under
-    /// `drive_sim` on a single reactor, so rate/duration/fixed-schedule runs
-    /// finish at ~startup wall-speed and the aggregate report is byte
-    /// deterministic. Full artifact set (per-record `profile_export.jsonl`,
-    /// `inputs.json`, …) — it flows through the ordinary `RunCapture` path.
+    /// Virtual `SimClock` for deterministic single-reactor execution.
     #[default]
     Sim,
 }
@@ -126,17 +93,11 @@ pub enum DryRunClock {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DryRunLatencyModel {
-    /// Closed-form linear model: `base + per_isl·ISL + per_osl·OSL +
-    /// concurrency terms`, ported from `mock-server/src/latency.rs`. The default.
+    /// Linear model: `base + token terms + concurrency terms`.
     #[default]
     Linear,
-    /// Byte-for-byte port of the Dynamo mocker's default perf model
-    /// (`PerfModel::Polynomial`,
-    /// `dynamo-aiperf-native/lib/mocker/src/common/perf_model.rs:270-315`): TTFT
-    /// from the prefill-token count, ITL from KV-cache utilization. This is the
-    /// self-contained variant of the Dynamo replay analytical model (the
-    /// `Interpolated`/`Aiconfigurator` variants need an NPZ profile or the AIC
-    /// SDK — reachable via the `dynosim` transport, not the lightweight dry run).
+    /// Dynamo `PerfModel::Polynomial`: TTFT from prefill tokens and ITL from
+    /// KV-cache utilization.
     AiconfiguratorPolynomial,
 }
 
@@ -152,9 +113,7 @@ pub static DRY_RUN_TRANSPORT_DESCRIPTOR: TransportDescriptor = TransportDescript
 
 /// Strict validated config owned by the `dry_run` transport.
 ///
-/// The analytic latency model is a byte-for-byte port of the `aiperf-mock-server`
-/// analytic model (`rust/mock-server/src/latency.rs`), the same shape the Dynamo
-/// replay / dynosim perf model uses: per request,
+/// Per request:
 ///
 /// ```text
 /// ttft = (ttft_ms + ttft_per_isl_token_ms·ISL + ttft_concurrency_quad_ms·inflight²) · jitter(ttft_jitter_cv)
@@ -195,8 +154,7 @@ pub struct DryRunTransportConfigV2 {
     /// Root seed for the per-request jitter draw. Unused while both CVs are `0.0`.
     #[serde(default)]
     pub seed: u64,
-    /// Which analytic latency curve to use (`linear` default, or
-    /// `aiconfigurator_polynomial` for the Dynamo perf-model port).
+    /// Analytic latency curve: `linear` or `aiconfigurator_polynomial`.
     #[serde(default)]
     pub latency_model: DryRunLatencyModel,
     /// KV-cache utilization in `[0, 1]` feeding the polynomial decode curve. Only
@@ -270,11 +228,6 @@ impl DryRunParams {
     /// concurrency-contention terms; `ordinal` seeds the per-request jitter draw
     /// so the timing is reproducible across runs (independent of the random UUID).
     ///
-    /// The `Linear` terms are ported from
-    /// `rust/mock-server/src/latency.rs::LatencySimulator::new`; the
-    /// `AiconfiguratorPolynomial` curves are ported from the Dynamo mocker
-    /// `PerfModel::Polynomial`
-    /// (`dynamo-aiperf-native/lib/mocker/src/common/perf_model.rs:270-315`).
     fn effective_latencies_ns(
         &self,
         isl: usize,
@@ -318,11 +271,7 @@ impl DryRunParams {
     }
 }
 
-/// Dynamo mocker `PerfModel::Polynomial` prefill curve, in milliseconds, for
-/// `prefill_tokens` total new tokens across the batch. Byte-for-byte port of
-/// `dynamo-aiperf-native/lib/mocker/src/common/perf_model.rs:272-273` (with the
-/// same `0.0` floor and the `prefill_tokens == 0 → 0.0` short-circuit at
-/// `perf_model.rs:266`).
+/// `PerfModel::Polynomial` prefill curve in milliseconds.
 fn aic_polynomial_prefill_ms(prefill_tokens: f64) -> f64 {
     if prefill_tokens <= 0.0 {
         return 0.0;
@@ -331,28 +280,22 @@ fn aic_polynomial_prefill_ms(prefill_tokens: f64) -> f64 {
         .max(0.0)
 }
 
-/// Dynamo mocker `PerfModel::Polynomial` decode curve, in milliseconds, for KV
-/// utilization `active_perc` (active KV tokens / total KV tokens). Byte-for-byte
-/// port of `perf_model.rs:315` with the `.max(1.0)` step-collision floor from
-/// `perf_model.rs:330`.
+/// `PerfModel::Polynomial` decode curve in milliseconds with a 1 ms floor.
 fn aic_polynomial_decode_ms(active_perc: f64) -> f64 {
     (-25.74 * active_perc * active_perc + 54.01 * active_perc + 5.74).max(1.0)
 }
 
-/// Milliseconds → non-negative nanoseconds (rounded), matching
-/// `latency.rs::ms_to_ns`.
+/// Convert milliseconds to rounded, non-negative nanoseconds.
 fn ms_to_ns(ms: f64) -> i64 {
     (ms * 1_000_000.0).max(0.0).round() as i64
 }
 
-/// Deterministic per-request RNG seeded from the root seed and a salt, matching
-/// `latency.rs::seeded_rng`.
+/// Deterministic per-request RNG derived from a root seed and salt.
 fn seeded_rng(seed: u64, salt: u64) -> crate::rng::RandomGenerator {
     crate::rng::RandomGenerator::from_seed(Some(seed ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15)))
 }
 
-/// Mean-preserving lognormal jitter multiplier with coefficient of variation
-/// `cv` (`<= 0.0` → `1.0`). Byte-for-byte port of `latency.rs::lognormal_jitter`.
+/// Mean-preserving lognormal jitter; non-positive `cv` yields `1.0`.
 fn lognormal_jitter(rng: &mut crate::rng::RandomGenerator, cv: f64) -> f64 {
     if cv <= 0.0 {
         return 1.0;

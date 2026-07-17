@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Header composition. Port of `BaseTransport.build_headers` +
-//! `AioHttpTransport.get_transport_headers`.
+//! HTTP header composition.
 
 use std::collections::BTreeMap;
 
@@ -10,7 +9,7 @@ use crate::transport::http::models::RequestConfig;
 
 /// Compose the final header set: base (User-Agent) -> correlation/request-id ->
 /// endpoint headers -> transport headers (Accept, Content-Type). Later sources
-/// override earlier ones, matching Python's merge order.
+/// override earlier ones.
 pub fn build_headers(
     cfg: &RequestConfig,
     streaming: bool,
@@ -28,12 +27,10 @@ pub fn build_headers(
         h.insert(name.to_string(), corr.clone());
     }
 
-    // Endpoint headers override base/correlation.
     for (k, v) in &cfg.headers {
         h.insert(k.clone(), v.clone());
     }
 
-    // Transport headers.
     h.insert(
         "Accept".to_string(),
         if streaming {

@@ -1,15 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! End-to-end proof for the `--dry-run` fake-transport path.
+//! End-to-end coverage for the `--dry-run` transport.
 //!
-//! `aiperf profile --dry-run` swaps the real HTTP leaf for a fake execution
-//! backend that fabricates every request outcome from an analytic latency model
-//! with **zero network** — no mock server, no sockets. The full pipeline
-//! (scheduling → per-worker metrics → export plane) runs unchanged, so this test
-//! verifies the raw per-record artifact (`profile_export.jsonl`) exactly, per the
-//! repo's feature-complete bar: TTFT, ITL, request_latency, and OSL for every
-//! record must equal the analytic config with no tolerance band (the fake sink
-//! is itself the deterministic oracle).
+//! The analytic sink opens no sockets, and its TTFT, ITL, request latency, and
+//! OSL are exact.
 //!
 //! This test is `#[ignore]` only because synthetic prompt generation needs a
 //! tokenizer (`Qwen/Qwen3-0.6B`), which is fetched from the Hugging Face hub on
@@ -20,12 +14,10 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Path to the built `aiperf` binary under test.
 fn aiperf_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_aiperf"))
 }
 
-/// Analytic knobs asserted end to end.
 const TTFT_MS: f64 = 10.0;
 const ITL_MS: f64 = 2.0;
 const OSL: f64 = 12.0;
@@ -54,7 +46,6 @@ fn dry_run_fabricates_exact_per_record_timing_with_zero_network() {
             "profile",
             "--model",
             "Qwen/Qwen3-0.6B",
-            // Nothing listens here: the dry-run leaf opens no sockets.
             "--url",
             "127.0.0.1:9",
             "--endpoint-type",
@@ -72,8 +63,6 @@ fn dry_run_fabricates_exact_per_record_timing_with_zero_network() {
             &(OSL as u64).to_string(),
             "--output-tokens-stddev",
             "0",
-            // Bare --dry-run defaults to the sim clock, which flows through the
-            // normal RunCapture path and emits per-record profile_export.jsonl.
             "--dry-run",
             "--dry-run-ttft-ms",
             &TTFT_MS.to_string(),
@@ -92,14 +81,11 @@ fn dry_run_fabricates_exact_per_record_timing_with_zero_network() {
         String::from_utf8_lossy(&output.stderr),
     );
 
-    // The full export plane must have produced its normal artifact set.
     let native = out_dir.path().join("native-v2.json");
     let records_path = out_dir.path().join("profile_export.jsonl");
     assert!(native.exists(), "native-v2.json not written");
     assert!(records_path.exists(), "profile_export.jsonl not written");
 
-    // Raw per-record verification: every record's fabricated timing must equal
-    // the analytic config exactly (deterministic oracle, no tolerance band).
     let records = std::fs::read_to_string(&records_path).expect("read jsonl");
     let mut count = 0usize;
     for line in records.lines().filter(|line| !line.trim().is_empty()) {
@@ -119,8 +105,6 @@ fn dry_run_fabricates_exact_per_record_timing_with_zero_network() {
     }
     assert_eq!(count, REQUESTS, "expected {REQUESTS} fabricated records");
 
-    // Summary aggregate (derived independently from the worker RecordIngest) must
-    // agree exactly, proving the metrics + summary-export path end to end.
     let summary: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(out_dir.path().join("profile_export_aiperf.json"))
             .expect("read summary"),
@@ -142,8 +126,6 @@ fn dry_run_fabricates_exact_per_record_timing_with_zero_network() {
     );
 }
 
-/// Run one `--dry-run --dry-run-clock sim` profile into `out`, returning the
-/// child output for assertions.
 fn run_sim_dry_run(out: &std::path::Path, extra: &[&str]) -> std::process::Output {
     let mut args: Vec<String> = vec![
         "profile".into(),
@@ -205,7 +187,6 @@ fn sim_clock_dry_run_is_deterministic_and_exact() {
         String::from_utf8_lossy(&out_b.stderr)
     );
 
-    // Two seeded virtual-clock runs must be byte-identical.
     let report_a = std::fs::read(a.path().join("native-v2.json")).expect("report A");
     let report_b = std::fs::read(b.path().join("native-v2.json")).expect("report B");
     assert_eq!(
@@ -213,7 +194,6 @@ fn sim_clock_dry_run_is_deterministic_and_exact() {
         "seeded sim runs must produce byte-identical native-v2.json"
     );
 
-    // And the summary values are exact (virtual time is exact).
     let summary: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(a.path().join("profile_export_aiperf.json")).expect("summary"),
     )

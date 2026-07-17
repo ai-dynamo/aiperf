@@ -5,8 +5,7 @@
 //!
 //! Endpoint implementations own decoded request and response semantics. This
 //! module lowers those decoded values into HTTP URL/body/lifecycle policy and
-//! decodes HTTP response frames back into [`ServerResponse`]. A future gRPC or
-//! WebSocket transport supplies its own binding without forking the endpoint.
+//! decodes HTTP response frames back into [`ServerResponse`].
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -403,8 +402,7 @@ pub struct MetadataHttpEndpointBinding<'a, C: HttpEndpointConfigView + ?Sized = 
 }
 
 impl<'a> MetadataHttpEndpointBinding<'a, RawEndpointConfig> {
-    /// Bind a worker-local prepared endpoint without reconstructing a legacy
-    /// enum/configuration pair.
+    /// Bind a worker-local prepared endpoint directly from its metadata.
     pub fn from_prepared(
         endpoint: &'a dyn PreparedEndpoint,
         default_base_urls: &'a [String],
@@ -446,10 +444,8 @@ impl<C: HttpEndpointConfigView + ?Sized> MetadataHttpEndpointBinding<'_, C> {
                     .flatten()
             })
             .or(self.descriptor.endpoint_path);
-        // The source transport expands this
-        // transport-owned placeholder in both custom and metadata paths before
-        // applying URL-prefix de-duplication. Keep expansion at the binding
-        // boundary so endpoint dialects remain transport agnostic.
+        // Expand the transport-owned placeholder at this boundary so endpoint
+        // dialects remain transport agnostic.
         let target = target.map(|target| target.replace("{model_name}", self.model_name));
         match target.as_deref() {
             None => Ok(base_url.trim_end_matches('/').to_string()),

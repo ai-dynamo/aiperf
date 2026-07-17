@@ -1,15 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Byte-exact behavioral parity of the native [`OptunaPlanner`] against the
-//! production `OptunaSearchPlanner` (seeded TPE sampler).
-//!
-//! `tools/parity/dump_bayes.py` drives the *real* Python planner against a
-//! deterministic oracle with the seeded `tpe` sampler and records the exact
-//! `ask()` sequence + convergence reason. This test drives the native planner —
-//! which drives the SAME optuna study via pyo3 — over the identical oracle and
-//! asserts the sequences match exactly. (Seeded optuna TPE is a deterministic
-//! numpy-RNG sampler, so same seed + same tells → same suggestions in any
-//! process.)
+//! Seeded TPE planner golden-sequence coverage.
 //!
 //! Requires the `search-pyo3` feature (embeds optuna). Run with:
 //!   LD_LIBRARY_PATH=<py libdir> cargo test -p aiperf-cli --features search-pyo3 \
@@ -57,7 +48,6 @@ fn run_native(
     let mut asks = Vec::new();
     while let Some(value) = planner.ask().expect("ask") {
         asks.push(value);
-        // Deterministic oracle matching dump_bayes.py.
         let throughput = value as f64 * 10.0;
         let ttft = threshold - 50.0 + ttft_slope * value as f64;
         let feasible = ttft < threshold;

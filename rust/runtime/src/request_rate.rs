@@ -14,9 +14,8 @@
 //! live from issuance through the first meaningful token, with terminal return
 //! as the no-token fallback. Think time delays continuation queue insertion on
 //! the injected [`Clock`](crate::clock::Clock), so the same workload remains
-//! deterministic under `SimClock`. A future branching workload can implement
-//! [`Workload`] separately and route DAG children directly; this linear policy
-//! intentionally owns only root conversation chains.
+//! deterministic under `SimClock`. This linear policy owns only root
+//! conversation chains.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -204,8 +203,7 @@ impl RequestRateWorkload {
             session_slots,
             prefill_slots,
             state: Rc::new(RequestRateState::default()),
-            // Default is the scheduled path's historical behavior: resilient
-            // (a failed transport request is recorded and the run continues).
+            // Transport failures are recorded and issuance continues by default.
             on_failure: OnFailure::for_scheduled_default(),
         })
     }
@@ -240,8 +238,8 @@ impl RequestRateWorkload {
         turn: TurnToSend,
         scheduled_ns: i64,
     ) -> bool {
-        // Python `CreditIssuer.issue_credit` blocks for continuation prefill
-        // admission; the session slot is already held by turn zero.
+        // Continuations may wait for prefill admission because turn zero already
+        // holds the session slot.
         let prefill_guard = match &self.prefill_slots {
             Some(pool) => Some(pool.acquire().await),
             None => None,
@@ -471,12 +469,8 @@ fn issue_rate_turn(
                 // response that never produced the first-token callback.
                 prefill_for_terminal.borrow_mut().take();
                 let correlation_id = credit.turn.x_correlation_id.clone();
-                // Fail-fast discipline (config-selected; default is resilient).
-                // A real transport failure latches the run so the issuer loop
-                // breaks and `execute` bails at teardown. Cancellations and
-                // admission rejections are authored/expected outcomes and never
-                // latch — mirroring the graph fail-fast policy, which ignores
-                // `TraceError::Cancelled`.
+                // Abort policy latches transport failures only; cancellations and
+                // admission rejections remain ordinary terminal outcomes.
                 if on_failure.is_abort()
                     && matches!(outcome.terminal, ReplayTerminalStatus::Failed)
                 {

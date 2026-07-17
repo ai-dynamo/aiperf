@@ -31,9 +31,9 @@ pub struct ExgenticV2DatasetLoader;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ExgenticComposer;
 
-/// Reviewed Exgentic v1 dataset commit from the Python loader.
+/// Pinned Exgentic v1 dataset revision.
 pub const EXGENTIC_V1_REVISION: &str = "70036b93a04e61b0ea2706a68b962f4f26774587";
-/// Reviewed Exgentic v2 dataset commit from the Python loader.
+/// Pinned Exgentic v2 dataset revision.
 pub const EXGENTIC_V2_REVISION: &str = "4b8ad4ab198438e5a170f9171c19c6a2cf7c1814";
 
 #[async_trait]

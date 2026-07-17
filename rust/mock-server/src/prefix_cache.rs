@@ -3,17 +3,17 @@
 
 //! Content-addressed block-level prefix (KV-cache) reuse model.
 //!
-//! Mirrors what vLLM/SGLang do: a prompt is split into fixed-size blocks, each
-//! block is chain-hashed (its hash folds in every preceding block, so an
-//! identical prefix yields identical block hashes), and the longest run of
+//! A prompt is split into fixed-size blocks and chain-hashed so each hash
+//! folds in every preceding block. An identical prefix yields identical block
+//! hashes, and the longest run of
 //! leading blocks already resident in the cache is served from cache — those
 //! tokens skip prefill, lowering TTFT. After lookup the request's blocks are
 //! inserted into a capacity-bounded cache, so an aged-out prefix goes cold and
 //! stops hitting. The cached token count is reported back as
 //! `usage.prompt_tokens_details.cached_tokens`.
 //!
-//! The eviction policy is configurable (`--prefix-cache-eviction-policy`),
-//! mirroring SGLang's `--radix-eviction-policy`. See [`EvictionPolicy`].
+//! `--prefix-cache-eviction-policy` uses SGLang
+//! `--radix-eviction-policy` semantics. See [`EvictionPolicy`].
 //!
 //! `--prefix-cache-hit-rate > 0` bypasses content addressing and forces a fixed
 //! cached fraction on every request — a workload-agnostic "what if N% hit"
@@ -28,10 +28,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::MockServerConfig;
 
-/// KV-cache eviction policy, mirroring SGLang's `--radix-eviction-policy`. Under
-/// capacity pressure the block with the smallest "eviction key" is removed
-/// first; each variant matches the corresponding SGLang
-/// `EvictionStrategy.get_priority`. `lru` is the default.
+/// SGLang-compatible `--radix-eviction-policy` semantics.
+///
+/// Capacity pressure removes the block with the smallest eviction key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[clap(rename_all = "lower")]
@@ -71,8 +70,7 @@ struct BlockMeta {
 }
 
 impl BlockMeta {
-    /// Eviction key (smaller is evicted first), mirroring SGLang's
-    /// `EvictionStrategy.get_priority` for each policy.
+    /// Smaller keys are evicted first.
     fn evict_key(&self, policy: EvictionPolicy) -> (i64, i64, i64) {
         let la = self.last_access as i64;
         let cr = self.creation as i64;
@@ -129,7 +127,6 @@ impl BlockCache {
         self.clock += 1;
         let now = self.clock;
         if let Some(mut m) = self.blocks.get(&hash).copied() {
-            // Existing block: re-key as just-accessed without changing residency.
             self.order.remove(&m.evict_key(self.policy));
             m.last_access = now;
             m.hit_count += 1;
@@ -138,7 +135,7 @@ impl BlockCache {
             self.blocks.insert(hash, m);
             return;
         }
-        // New block: free space first so the incoming block is never the victim.
+        // Evict before insertion so the incoming block cannot select itself.
         while self.blocks.len() >= self.capacity {
             match self.order.pop_first() {
                 Some((_, h)) => {
@@ -173,8 +170,7 @@ pub struct PrefixCache {
 }
 
 impl PrefixCache {
-    /// Build from config; `None` when prefix caching is disabled and no hit-rate
-    /// override is requested (so the hot path stays a plain `Option`).
+    /// Returns `None` when both cache operation and synthetic hits are disabled.
     pub fn from_config(cfg: &MockServerConfig) -> Option<Self> {
         if cfg.disable_prefix_cache && cfg.prefix_cache_hit_rate <= 0.0 {
             return None;
@@ -211,19 +207,15 @@ impl PrefixCache {
         if bytes.is_empty() {
             return 0;
         }
-        // Block count tracks token count, so matched_blocks / total_blocks is a
-        // faithful cached-token fraction regardless of bytes-per-token. Capped so
-        // token-granular (block_tokens=1) matching stays cheap on huge prompts.
+        // Bound hashing cost while preserving the cached-token fraction.
         let target_blocks = prompt_tokens
             .div_ceil(self.block_tokens)
             .clamp(1, MAX_BLOCKS_PER_REQUEST);
         let block_bytes = bytes.len().div_ceil(target_blocks).max(1);
 
-        // Chain-hash every block up front, outside the cache lock: blake2 is the
-        // expensive per-request work and needs no shared state, so serializing it
-        // under the lock would bottleneck all requests. Only the cheap
-        // contains/touch bookkeeping below holds the lock, and it stays interleaved
-        // to preserve mid-scan self-eviction fidelity under tight capacity.
+        // Hashing is independent and expensive; keep it outside the shared cache
+        // lock. Membership and touch remain interleaved to preserve self-eviction
+        // under tight capacity.
         let mut chained: u64 = 0xcbf2_9ce4_8422_2325; // FNV offset basis, just a seed
         let mut hashes: Vec<u64> = Vec::with_capacity(target_blocks);
         let mut lo = 0usize;
@@ -264,7 +256,7 @@ mod tests {
             prefix_cache_block_tokens: block_tokens,
             prefix_cache_capacity_blocks: capacity,
             ..MockServerConfig::default()
-        }; // prefix cache on by default
+        };
         PrefixCache::from_config(&cfg).unwrap()
     }
 
@@ -272,9 +264,7 @@ mod tests {
     fn cold_prompt_misses_then_warm_repeat_hits() {
         let pc = cache(4, 10_000);
         let text = "the quick brown fox jumps over the lazy dog and keeps running far away";
-        // First sight: nothing cached yet.
         assert_eq!(pc.cached_tokens(text, 64, 0), 0);
-        // Exact repeat: almost everything cached (all but the final block of work).
         let again = pc.cached_tokens(text, 64, 0);
         assert!(
             (60..64).contains(&again),
@@ -287,8 +277,6 @@ mod tests {
         let pc = cache(4, 10_000);
         let shared = "SYSTEM PROMPT: you are a helpful assistant. ".repeat(4);
         pc.cached_tokens(&format!("{shared}question one about apples"), 80, 0);
-        // A different request reusing the same leading prefix hits on the prefix
-        // only — not on its unique tail.
         let cached = pc.cached_tokens(
             &format!("{shared}a totally different unique tail here"),
             80,
@@ -313,10 +301,9 @@ mod tests {
 
     #[test]
     fn capacity_eviction_goes_cold() {
-        let pc = cache(4, 2); // room for ~2 blocks only
+        let pc = cache(4, 2);
         let a = "first prompt aaaa bbbb cccc dddd";
-        pc.cached_tokens(a, 64, 0); // warm a (many blocks -> immediately over capacity)
-        // Flood with unrelated traffic to evict a's blocks.
+        pc.cached_tokens(a, 64, 0);
         for i in 0..50 {
             pc.cached_tokens(&format!("flood traffic number {i} xxxx yyyy"), 64, 0);
         }
@@ -334,25 +321,18 @@ mod tests {
             ..MockServerConfig::default()
         };
         let pc = PrefixCache::from_config(&cfg).unwrap();
-        // 60% of 100 tokens cached, regardless of (unique) content.
         assert_eq!(pc.cached_tokens("anything at all goes here", 100, 0), 60);
         assert_eq!(pc.cached_tokens("totally different text", 100, 0), 60);
-        // Never caches the whole prompt.
         assert_eq!(pc.cached_tokens("x", 1, 0), 0);
     }
-
-    // --- Eviction-policy unit tests --------------------------------------------
-    // Each drives the same access sequence through a capacity-2 cache and asserts
-    // which block the policy evicts when a third block arrives. last_access order
-    // after the shared prelude is block 2 (oldest), then block 1 (re-accessed).
 
     #[test]
     fn lru_evicts_least_recently_accessed() {
         let mut c = BlockCache::new(EvictionPolicy::Lru, 2);
         c.touch(1, 0);
         c.touch(2, 0);
-        c.touch(1, 0); // re-access 1 -> 2 is now least-recently-used
-        c.touch(3, 0); // evicts 2
+        c.touch(1, 0);
+        c.touch(3, 0);
         assert!(c.contains(1) && c.contains(3) && !c.contains(2));
     }
 
@@ -360,19 +340,19 @@ mod tests {
     fn lfu_evicts_least_frequently_used() {
         let mut c = BlockCache::new(EvictionPolicy::Lfu, 2);
         c.touch(1, 0);
-        c.touch(1, 0); // hit_count(1) = 2
-        c.touch(2, 0); // hit_count(2) = 1
-        c.touch(3, 0); // evicts the least-frequent block 2, not the recent-but-frequent 1
+        c.touch(1, 0);
+        c.touch(2, 0);
+        c.touch(3, 0);
         assert!(c.contains(1) && c.contains(3) && !c.contains(2));
     }
 
     #[test]
     fn fifo_evicts_earliest_inserted() {
         let mut c = BlockCache::new(EvictionPolicy::Fifo, 2);
-        c.touch(1, 0); // created first
+        c.touch(1, 0);
         c.touch(2, 0);
-        c.touch(1, 0); // re-access does not change creation order
-        c.touch(3, 0); // evicts the earliest-created block 1
+        c.touch(1, 0);
+        c.touch(3, 0);
         assert!(c.contains(2) && c.contains(3) && !c.contains(1));
     }
 
@@ -381,8 +361,8 @@ mod tests {
         let mut c = BlockCache::new(EvictionPolicy::Mru, 2);
         c.touch(1, 0);
         c.touch(2, 0);
-        c.touch(1, 0); // 1 is now most-recently-used (and the incoming 3 is pinned)
-        c.touch(3, 0); // evicts the most-recently-used resident block 1
+        c.touch(1, 0);
+        c.touch(3, 0);
         assert!(c.contains(2) && c.contains(3) && !c.contains(1));
     }
 
@@ -390,9 +370,9 @@ mod tests {
     fn filo_evicts_latest_inserted() {
         let mut c = BlockCache::new(EvictionPolicy::Filo, 2);
         c.touch(1, 0);
-        c.touch(2, 0); // 2 is the latest-inserted resident block
-        c.touch(1, 0); // re-access does not change creation order
-        c.touch(3, 0); // evicts the latest-created resident block 2
+        c.touch(2, 0);
+        c.touch(1, 0);
+        c.touch(3, 0);
         assert!(c.contains(1) && c.contains(3) && !c.contains(2));
     }
 
@@ -400,8 +380,8 @@ mod tests {
     fn priority_evicts_lowest_priority_first() {
         let mut c = BlockCache::new(EvictionPolicy::Priority, 2);
         c.touch(1, 5);
-        c.touch(2, 1); // lowest priority
-        c.touch(3, 9); // evicts the lowest-priority block 2
+        c.touch(2, 1);
+        c.touch(3, 9);
         assert!(c.contains(1) && c.contains(3) && !c.contains(2));
     }
 
@@ -409,9 +389,9 @@ mod tests {
     fn slru_evicts_probationary_before_protected() {
         let mut c = BlockCache::new(EvictionPolicy::Slru, 2);
         c.touch(1, 0);
-        c.touch(1, 0); // hit_count(1) = 2 -> protected
-        c.touch(2, 0); // hit_count(2) = 1 -> probationary, and more recent than 1
-        c.touch(3, 0); // evicts the probationary block 2 despite it being newer
+        c.touch(1, 0);
+        c.touch(2, 0);
+        c.touch(3, 0);
         assert!(c.contains(1) && c.contains(3) && !c.contains(2));
     }
 }

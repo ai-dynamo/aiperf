@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! The cellular controller — the Phase-2 multi-process topology.
+//! Multi-process cellular controller.
 //!
 //! When a run requests `cfg.runtime.cells > 1`, the receiving runner becomes the
 //! controller rather than executing in-process. It partitions the request budget by
@@ -37,26 +37,24 @@ use crate::cellular::{CellMessage, ControllerTransport, SpecFor, VeloControllerT
 #[cfg(feature = "velo")]
 use crate::engine::cell_launcher::{CellLaunchContext, select_launcher};
 
-/// Env toggle (tier T3) for the master-less, barrier-free start: the controller
+/// Env toggle for barrier-free start: the controller
 /// triggers START immediately instead of gathering all N cell registrations first
 /// (the O(N) fan-in rendezvous). Default off (the tight synchronized start). Cells
 /// registering after the trigger see the completed event instantly (velo's
 /// completed-event cache), so each starts on its own registration.
 pub const CELL_BARRIER_FREE_ENV: &str = "AIPERF_CELL_BARRIER_FREE";
 
-/// Env toggle (ultimate spec §4) routing the run-wide START through the monotonic
+/// Env toggle routing the run-wide START through the monotonic
 /// phaser control plane instead of the single-shot velo event: the controller binds a
 /// `PhaserServer` and `advance`s `Started`; cells subscribe with `PhaserClient` and
 /// await generation 1. Default off (the event-based START). The phaser generalizes
-/// START to every phase transition + dataset-availability signal; this opt-in proves the
-/// distributed phaser drives a real run's START end-to-end without disturbing the
-/// tested event path.
+/// START to phase transitions and dataset-availability signals.
 pub const CELL_PHASER_START_ENV: &str = "AIPERF_CELL_PHASER_START";
 
-/// Env toggle (ultimate spec §3) for the dataset fan-out data plane: the controller
+/// Env toggle for the dataset fan-out data plane: the controller
 /// generates the dataset request-ids once and broadcasts them; each cell builds its
 /// owned index over velo and runs the §4.5 dispatch state machine over it. Default off
-/// (per-cell seed regeneration / Stage-G file serve, unchanged).
+/// (per-cell seed regeneration or controller file serving).
 pub const CELL_DATASET_FANOUT_ENV: &str = "AIPERF_CELL_DATASET_FANOUT";
 
 /// The outcome of a cellular run: the merged report path plus a live view of the
@@ -186,14 +184,13 @@ pub fn run_cellular(
     kind.validate_phases(envelope, cell_count)?;
     // Same-host (local launcher) cells write their per-record artifacts into
     // controller-local `temp_root/cell-{id}` dirs, which the controller concatenates into
-    // the real artifact dir at finalize (Stage D). A cross-host (k8s) pod writes to its
+    // the real artifact dir at finalize. A cross-host (k8s) pod writes to its
     // own filesystem, so those files stay unreachable by the controller — still dropped.
     let is_k8s = matches!(
         std::env::var(crate::engine::cell_launcher::CELL_LAUNCHER_ENV).as_deref(),
         Ok("k8s")
     );
-    // Tier-T3 master-less start: skip the O(N) register rendezvous (see the start
-    // policy below). Default off (the tight synchronized start).
+    // Barrier-free start skips the O(N) registration rendezvous.
     let barrier_free = matches!(
         std::env::var(CELL_BARRIER_FREE_ENV)
             .unwrap_or_default()
@@ -201,7 +198,7 @@ pub fn run_cellular(
             .as_str(),
         "1" | "true" | "on" | "yes"
     );
-    // Ultimate spec §4: opt-in phaser-driven START (default off = the event START).
+    // Phaser-driven START is opt-in; the default uses the event.
     let phaser_start = matches!(
         std::env::var(CELL_PHASER_START_ENV)
             .unwrap_or_default()
@@ -209,10 +206,10 @@ pub fn run_cellular(
             .as_str(),
         "1" | "true" | "on" | "yes"
     );
-    // Ultimate spec §3: opt-in dataset fan-out. The controller generates the dataset's
+    // Dataset fan-out is opt-in. The controller generates the dataset's
     // request-ids once and broadcasts them; each cell builds its owned index over velo
     // and runs the §4.5 dispatch state machine over it (default off = per-cell seed
-    // regeneration / Stage-G file serve, unchanged).
+    // regeneration or controller file serving).
     let dataset_fanout = matches!(
         std::env::var(CELL_DATASET_FANOUT_ENV)
             .unwrap_or_default()
@@ -220,31 +217,24 @@ pub fn run_cellular(
             .as_str(),
         "1" | "true" | "on" | "yes"
     );
-    // The run's artifact spec, parsed once (the same `AuthoredRunSpecV2` shape the
-    // cell's execute path reads), for the Stage E shipping decision and the Stage D
-    // concat below.
+    // Parse the artifact policy once for upload and concatenation.
     let artifacts: crate::engine::protocol::ArtifactSpec = envelope
         .pointer("/run/cfg/artifacts")
         .cloned()
         .and_then(|value| serde_json::from_value(value).ok())
         .unwrap_or_default();
-    // Stage E (reopened): a CROSS-HOST (k8s) run whose cells write per-record
-    // artifacts to their own pod filesystems now ships those files to the controller
-    // over HTTP + streaming zstd, so the controller runs the SAME Stage D concat on
-    // `temp_root/cell-{id}`. Same-host (`--cells N`) keeps the shared-FS concat (no
-    // HTTP). Gated on the operator toggle and on the run actually requesting
-    // shippable files (per-record artifacts or inputs.json); a metrics-only run ships
-    // nothing.
+    // Cross-host cells upload requested artifacts over HTTP with streaming zstd.
+    // Same-host cells use shared-filesystem concatenation.
     // The test/dev HTTP-force seam ([`CELL_ARTIFACT_HTTP_FORCE_ENV`]) drives the
     // cross-host HTTP artifact path over loopback for a SAME-HOST run so a
-    // multi-process test can prove the shipping mechanism end-to-end. Off by default,
-    // so a normal `--cells N` run keeps the shared-FS Stage D concat unchanged.
+    // multi-process tests can exercise the shipping mechanism. Off by default,
+    // so a normal `--cells N` run keeps shared-filesystem concatenation.
     let force_http = crate::engine::cellular_cell::artifact_http_force_enabled();
     let http_shipping = (is_k8s || force_http)
         && crate::engine::cellular_cell::http_artifact_shipping_enabled()
         && !crate::engine::artifact_shipping::shippable_relatives(&artifacts).is_empty();
-    // Stage G: a cross-host cell cannot read a controller-local `file`/`path` dataset
-    // source, so the controller serves it over the SAME HTTP+zstd plane and the cell
+    // A cross-host cell cannot read a controller-local `file`/`path` dataset
+    // source, so the controller serves it over the HTTP+zstd plane and the cell
     // recompiles it locally. Only a cross-host (k8s / force) run with a `file`/`path`
     // dataset and HTTP shipping enabled needs the serve; same-host cells read the
     // controller-local path directly, and synthetic/inline-records/public need no serve.
@@ -252,7 +242,7 @@ pub fn run_cellular(
     let dataset_ship = (is_k8s || force_http)
         && crate::engine::cellular_cell::http_artifact_shipping_enabled()
         && dataset_source.is_some();
-    // Compute the Stage G serve plan BEFORE standing up the serve plane so an
+    // Compute the serve plan before binding so an
     // unreadable/missing/unsupported source fails the run closed here rather than
     // half-shipping. A single-file trace (or scheduled `file`/`path` dataset) ships as
     // one file; a graph trace whose `path` is a DIRECTORY or SEGMENTED-PREFIX ships
@@ -270,8 +260,7 @@ pub fn run_cellular(
     } else {
         None
     };
-    // The controller's artifact HTTP server carries BOTH per-record uploads (Stage E)
-    // and dataset serving (Stage G); stand it up when either is needed.
+    // One HTTP server handles per-record uploads and dataset serving.
     let need_artifact_server = http_shipping || dataset_ship;
     // The force seam only applies to the same-host launcher (k8s already ships): when
     // true, cells write to their own controller-local `temp_root/cell-{id}` scratch AND
@@ -313,10 +302,10 @@ pub fn run_cellular(
         std::fs::create_dir_all(&temp_root)
             .with_context(|| format!("creating cellular scratch {}", temp_root.display()))?;
 
-        // Stage E: start the artifact upload server BEFORE launching cells (a k8s pod
+        // Start the artifact upload server before launching cells; a k8s pod
         // may start and upload before the controller's collect loop). Cells POST their
         // per-record artifact files here with streaming zstd; each file lands at
-        // `temp_root/cell-{id}/{rel}` — exactly where the Stage D concat reads. The
+        // `temp_root/cell-{id}/{rel}`, where concatenation reads. The
         // allowlist is the run's shippable relative paths, so a cell can only land
         // known artifacts inside its own cell dir.
         // Where uploaded artifact files land (`landing_root/cell-{id}/{rel}`). k8s
@@ -339,7 +328,7 @@ pub fn run_cellular(
             controller_artifact_bind()
         };
         let artifact_server = if need_artifact_server {
-            // Upload allowlist: the run's per-record artifact relatives when Stage E
+            // Upload allowlist: the run's requested per-record artifact paths when
             // shipping is active, else empty (a dataset-serve-only run accepts no
             // uploads, so every POST is rejected).
             let allowed: std::collections::HashSet<String> = if http_shipping {
@@ -349,7 +338,7 @@ pub fn run_cellular(
             } else {
                 std::collections::HashSet::new()
             };
-            // Dataset serve plan (Stage G): the run's `file`/`path` source(s), keyed
+            // Dataset serve plan: the run's `file`/`path` source(s), keyed
             // by flat relative name, plus the manifest a cell fetches to reconstruct a
             // directory / segmented-prefix trace. Empty (`None` manifest) otherwise.
             let (datasets, manifest) = match dataset_plan {
@@ -387,7 +376,7 @@ pub fn run_cellular(
             .context("creating cellular start event")?;
         let start_handle = start_event.handle();
 
-        // Ultimate spec §4: when phaser-START is selected, bind the phaser control plane
+        // When phaser START is selected, bind the phaser control plane
         // on the controller velo BEFORE it moves into the transport, so cells can
         // subscribe. `advance(Started)` below drives the run-wide START through the
         // monotonic phaser. The server (held for the run) keeps its handlers alive via its
@@ -404,7 +393,7 @@ pub fn run_cellular(
             None => None,
         };
 
-        // Ultimate spec §3: dataset fan-out. Bind the dataset service, generate the
+        // Bind the dataset service, generate the
         // dataset's request-ids once, broadcast them chunk-by-chunk (advancing the phaser
         // `ShardsAvailable` per chunk when the phaser is active — the §4 availability
         // interlock), and finalize. A bounded run distributes fully up front (§4.6); each
@@ -505,7 +494,7 @@ pub fn run_cellular(
             VeloControllerTransport::bind_controller(velo, spec_for, cell_count, start_handle)
                 .context("binding controller transport")?;
 
-        // Tier-T2 hierarchical merge: insert `M = ceil(cells / fanout)` aggregators
+        // Insert `M = ceil(cells / fanout)` aggregators
         // between the cells and the controller. Each cell ships to its round-robin
         // aggregator; each aggregator merges its subtree and ships ONE store up, so the
         // controller collects `M` partitions instead of `cells`. Fold-only (sketch /
@@ -561,7 +550,7 @@ pub fn run_cellular(
                 &cell_coordinate,
             )
             .await
-            .context("spawning tier-T2 aggregators")?,
+            .context("spawning aggregators")?,
             _ => Vec::new(),
         };
 
@@ -601,7 +590,7 @@ pub fn run_cellular(
                 let _ = failure_tx.send(report).await;
             });
         }
-        // Watch each aggregator (tier T2) for a hard failure the same way, so a dead
+        // Watch each aggregator for hard failure, so a dead
         // aggregator aborts the run rather than hanging the controller's collect on a
         // subtree partition that will never arrive.
         for (agg_id, mut child) in aggregator_children.drain(..).enumerate() {
@@ -623,7 +612,7 @@ pub fn run_cellular(
         // trigger the START event so all cells begin dispatching together. This is a
         // tight O(N) fan-in rendezvous that fights unbounded horizontal scale.
         //
-        // Tier T3 (`AIPERF_CELL_BARRIER_FREE=1`) is the master-less alternative k6 uses:
+        // `AIPERF_CELL_BARRIER_FREE=1` triggers START without gathering all registrations:
         // the controller triggers START IMMEDIATELY, without gathering all N
         // registrations. A cell that registers *after* the trigger sees the completed
         // event instantly (velo's completed-event cache), so each cell starts as soon
@@ -633,7 +622,7 @@ pub fn run_cellular(
         // A failed cell is still caught by the collect loop's failure watch below.
         if barrier_free {
             tracing::info!(
-                "tier-T3 barrier-free start: triggering immediately without the O(N) register \
+                "barrier-free start: triggering immediately without the O(N) register \
                  rendezvous (cells start on their own registration; looser cross-cell start sync)"
             );
         } else {
@@ -649,7 +638,7 @@ pub fn run_cellular(
         start_event
             .trigger()
             .context("triggering cellular benchmark start")?;
-        // Ultimate spec §4: drive the run-wide START through the monotonic phaser
+        // Drive run-wide START through the monotonic phaser
         // (generation 1 = Started). Cells that subscribed with `PhaserClient` wake here;
         // a cell registering after this sees the completed generation via replay.
         if let Some(phaser) = &phaser {
@@ -666,8 +655,8 @@ pub fn run_cellular(
         // A cell ships EXACTLY ONE terminal partition, of one of two kinds depending on
         // the mode it ran (the whole run is uniform — every cell got the same envelope
         // + env, so they never mix): a `Partition` (retain path: raw records for the
-        // byte-exact global-order/concatenation merge) or a `StorePartition` (Stage-C
-        // metrics-only exact-fold: the cell's folded EXACT store, no record Vec). Count
+        // byte-exact global-order/concatenation merge) or a `StorePartition`
+        // (metrics-only exact-fold: the cell's folded exact store, no record Vec). Count
         // BOTH toward the one-per-cell termination barrier; the merge below dispatches on
         // which kind arrived.
         let mut partitions: Vec<RecordsShardPartition> = Vec::with_capacity(cell_count as usize);
@@ -682,7 +671,7 @@ pub fn run_cellular(
         let collected = |records: &[RecordsShardPartition], stores: &[ColumnStorePartition]| {
             records.len() + stores.len()
         };
-        // In the flat topology this is one partition per cell; under tier-T2 it is one
+        // In the flat topology this is one partition per cell; with aggregators it is one
         // MERGED partition per aggregator (`expected_partitions == aggregator count`).
         while collected(&partitions, &store_partitions) < expected_partitions as usize {
             tokio::select! {
@@ -708,8 +697,8 @@ pub fn run_cellular(
             }
         }
 
-        // Merge → the single report. A metrics-only exact-fold run shipped folded stores
-        // (Stage C): append them by cell_id (`merge_store_partitions`) — within-tolerance
+        // A metrics-only exact-fold run ships folded stores, appended by cell_id
+        // (`merge_store_partitions`) within tolerance
         // (counts/percentiles/min/max exact; sums/means a few ULPs), the same bar the
         // in-process sharded exact-fold merge meets. Otherwise the cells shipped raw
         // records: scheduled cells pre-tile a global dispatch ordinal (byte-exact global
@@ -763,7 +752,7 @@ pub fn run_cellular(
         // Three blocks a 1-cell report can carry are intentionally NOT reproduced here
         // (cells ship only their metric records + a heartbeat, so nothing else has a
         // channel back, and the merged report simply omits them):
-        // (1) the coordinator's finalize_run provenance (distribution_id / workload /
+        // (1) coordinator metadata (distribution_id / workload /
         //     alias-resolved endpoint_profiles / extensions) — the controller carries
         //     transport/workload/cells/record_count in its terminal envelope instead
         //     of replaying the coordinator's alias resolution;
@@ -825,13 +814,12 @@ pub fn run_cellular(
                 .context("writing merged cellular heartbeat")?;
         }
 
-        // Stage E artifact barrier: when cross-host HTTP shipping is active, wait for
+        // When cross-host HTTP shipping is active, wait for
         // every cell to POST its files AND its `/done` marker before concatenating, so
         // `temp_root/cell-{id}` is complete. (Same-host cells write their files locally
         // before shipping their velo partition, so the partition-collection loop above
         // is already their barrier.)
-        // Only when per-record uploads are active (Stage E): a dataset-serve-only
-        // run (Stage G, no per-record artifacts) never POSTs files or `/done`, so
+        // A dataset-serve-only run never POSTs files or `/done`, so
         // there is nothing to wait for and the barrier would spuriously time out.
         if http_shipping
             && let Some(server) = artifact_server.as_ref()
@@ -846,19 +834,19 @@ pub fn run_cellular(
         // execute path with a per-cell `temp_root/cell-{id}` dir as its artifact_dir and
         // wrote its merged per-record artifacts (records/raw/CSV/parquet/outputs) there.
         // The controller concatenates them into the real artifact dir (the per-cell dirs
-        // are the "shards"), reusing the Stage B concat (row SET-identical, completion
+        // are the shards), preserving row-set identity with completion
         // order accepted), before `_scratch` removes `temp_root`. `inputs.json` is NOT
         // concatenated (a single FULL-dataset document, not per-record rows): every cell
-        // generated the identical up-front (S4) inputs.json over the same resident
+        // generated the identical inputs.json over the same resident
         // dataset, so the controller copies ONE cell's copy verbatim
         // (`copy_cell_inputs_json`). inputs.json is always-on (`rust_wire`), so without
         // this the cellular run would silently drop it / break GenAI-Perf compat.
         //
         // The files are controller-local in two cases, both handled here:
         // - SAME-HOST (`!is_k8s`): every cell wrote directly to its controller-local
-        //   `temp_root/cell-{id}` dir (Stage D).
+        //   `temp_root/cell-{id}` dir.
         // - CROSS-HOST (k8s) with `http_shipping`: each pod wrote to its OWN fs, then
-        //   shipped every file to the controller over HTTP + streaming zstd (Stage E),
+        //   shipped every file to the controller over HTTP + streaming zstd,
         //   landing at the SAME `temp_root/cell-{id}/{rel}` paths.
         // Cross-host with shipping DISABLED still skips the concat (the files never
         // reach the controller) — the shared-storage product boundary, warned at start.
@@ -868,7 +856,7 @@ pub fn run_cellular(
             // Read the SHIPPED copies from the landing subtree when HTTP shipping is
             // active (k8s: landing_root == temp_root; same-host force: a separate
             // `http-landing` subtree), else the cells' own local writes under
-            // `temp_root/cell-{id}` (default same-host Stage D).
+            // `temp_root/cell-{id}` (default same-host path).
             let concat_source_root = if http_shipping { &landing_root } else { &temp_root };
             let cell_dirs: Vec<PathBuf> = (0..cell_count)
                 .map(|cell_id| concat_source_root.join(format!("cell-{cell_id}")))
@@ -907,7 +895,7 @@ pub fn run_cellular(
     })
 }
 
-/// The controller's HTTP artifact-upload bind (Stage E). A fixed routable port
+/// The controller's HTTP artifact-upload bind. A fixed routable port
 /// (`AIPERF_CONTROLLER_ARTIFACT_BIND`, default `0.0.0.0:9600`) the operator exposes
 /// on the controller pod; cells derive the matching authority from their `tcp://`
 /// velo coordinate host + the artifact port. Distinct from the velo messaging bind
@@ -964,7 +952,7 @@ pub(crate) fn collect_timeout() -> std::time::Duration {
     std::time::Duration::from_secs(secs)
 }
 
-/// The deadline for the Stage E artifact-upload barrier ([`ArtifactUploadServer::
+/// The deadline for the artifact-upload barrier ([`ArtifactUploadServer::
 /// wait_for_cells`](crate::engine::artifact_shipping::ArtifactUploadServer::wait_for_cells)),
 /// distinct from [`collect_timeout`]. By the time this barrier runs every cell has
 /// already shipped its velo partition (metrics), so only the per-record artifact
@@ -996,7 +984,7 @@ fn register_timeout() -> std::time::Duration {
 
 /// Builds the protocol-v2 envelope for one cell: the same run with its phase
 /// budgets sliced to the cell's owned share and its own scratch artifact dir. The
-/// dataset and seed are unchanged — the cell's `PartitionedSampler` selects its
+/// All cells receive the same dataset and seed; `PartitionedSampler` selects each
 /// owned instances from the shared space.
 ///
 /// The runner rebuilds each cell's sampler fresh at every phase boundary (the
@@ -1327,11 +1315,11 @@ fn cellular_will_use_exact_fold(envelope: &serde_json::Value) -> bool {
 ///   `dynosim_*` transport runs an unwired executor and hangs the controller; it is
 ///   rejected, not silently divergent. Synthetic, `file`, and `public` linear datasets
 ///   ARE wired: synthetic regenerates from the shared seed, a cross-host `file`/`path`
-///   source ships controller->cell over HTTP+zstd (Stage G) and recompiles
+///   source ships controller->cell over HTTP+zstd and recompiles
 ///   deterministically per cell, and `public` URL/HF each cell fetches itself. Graph
 ///   programs (dag_jsonl/weka_trace/dynamo_trace) take the whole-trace partition below.
 ///   Multi-turn `file` traces (per-conversation partition, like the graph path) remain a
-///   documented follow-up, rejected by the single-turn guard.
+///   rejected by the single-turn guard.
 /// - **One sampler draw must equal one dispatched turn.** [`PartitionedSampler`]
 ///   partitions by conversation *draw*, but the issuer stamps a per-*turn* ordinal
 ///   ([`CellularAutonomousIssuer`]); a multi-turn conversation makes the two diverge,
@@ -1345,12 +1333,11 @@ fn cellular_will_use_exact_fold(envelope: &serde_json::Value) -> bool {
 /// `inputs_json` (`dataset/loader/raw_payload.rs`), and the multi-turn public shapes
 /// (`sharegpt`, `hf_conversation`, `mt_bench`, ... in `dataset/loader/public.rs`) all
 /// group rows into MULTI-turn conversations regardless of `turns`. So the top-level
-/// `turns == 1` check alone does NOT prove single-turn for a file/public dataset — it is
+/// `turns == 1` check alone does not establish single-turn for a file/public dataset; it is
 /// backstopped by [`CELLULAR_SINGLE_TURN_FILE_FORMATS`], an explicit allowlist of the
 /// formats proven (in the loader code) to compile exactly one turn per conversation. The
-/// whitelist fails closed: an absent or unlisted format is rejected, so a session-grouping
-/// or ambiguous format can never slip through. Per-conversation cellular partition (which
-/// would admit the multi-turn formats, like the graph path) is a documented follow-up.
+/// whitelist fails closed: an absent or unlisted format is rejected, so a
+/// session-grouping or ambiguous format cannot pass validation.
 ///
 /// [`PartitionedSampler`]: crate::dataset::sampler
 /// [`CellularAutonomousIssuer`]: crate::cellular::CellularAutonomousIssuer
@@ -1391,7 +1378,7 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
             matches!(kind, Some("synthetic" | "file" | "public")),
             "cellular runs support synthetic, file, or public datasets (whose conversations the \
              sampler can partition one-draw-per-turn); got dataset type {kind:?}. A cross-host \
-             `file`/`path` dataset is shipped controller->cell over HTTP+zstd (Stage G) and \
+             `file`/`path` dataset is shipped controller->cell over HTTP+zstd and \
              recompiled per cell; inline `records` and `public` URL/HF each cell resolves itself"
         );
         // A strictly single-turn dataset (whitelisted file/public format + `turns == 1`,
@@ -1406,7 +1393,7 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
         // per-conversation draw index — which the RETAIN merge orders by. It is sound in
         // cellular ONLY on the exact-fold concat merge (order-independent store
         // concatenation), where per-turn order is irrelevant to the merged report. The
-        // per-cell partition unit (conversation, via [`PartitionedSampler`]) now matches
+        // The per-cell partition unit (conversation, via [`PartitionedSampler`]) matches
         // the draw unit, and the session budget is sliced by conversation
         // (`build_cell_envelope`), so each cell single-passes its owned conversation slice.
         ensure!(
@@ -1453,8 +1440,8 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
              partition). Use sequential/shuffle sampling, or run single-turn"
         );
     }
-    // A run seed is no longer *required*: every cell must compose the SAME dataset
-    // space, but when the author gives no `run.random_seed` the controller derives one
+    // Every cell must compose the same dataset space. When `run.random_seed` is absent,
+    // the controller derives one
     // shared seed and injects it into every cell envelope (see [`resolve_cellular_seed`]
     // / [`build_cell_envelope`]) — coherent partition without forcing the flag.
     //
@@ -1467,7 +1454,7 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-/// The Stage G serve plan for a cross-host `file`/`path` dataset source: the exact
+/// The serve plan for a cross-host `file`/`path` dataset source: the exact
 /// file set the controller registers (keyed by flat relative name) plus the
 /// [`DatasetManifest`](crate::engine::artifact_shipping::DatasetManifest)
 /// a cell fetches to reconstruct the tree and rewrite `datasets/0.path`.
@@ -1545,7 +1532,7 @@ fn build_dataset_serve_plan(
     } else {
         // A scheduled `file`/`path` dataset (single_turn, mooncake_trace, ...) always
         // ships as one file. Its multi-file directory shapes are out of scope and,
-        // as before, fail closed here.
+        // fail closed here.
         ensure!(
             source.is_file(),
             "cross-host cellular runs support a single-file dataset for this format; the path \
@@ -1584,8 +1571,8 @@ const CELLULAR_REQUEST_BOUNDED_PHASE_TYPES: [&str; 4] =
 ///   trace per cell);
 /// - lacks a `requests` budget, or has one below `cell_count` (a cell would own zero);
 /// - carries a `duration`/`sessions`/`adaptive_scale` bound that can stop it early (a
-///   duration bound needs the ragged-count merge that the graph-mode cellular path
-///   provides; `adaptive_scale` needs cross-cell scaling consensus — both future work); or
+///   duration bound needs the graph path's ragged-count merge;
+///   `adaptive_scale` needs cross-cell scaling consensus); or
 /// - has a `concurrency`/`prefill_concurrency` cap below `cell_count` — the `.max(1)`
 ///   per-cell floor would then over-subscribe the aggregate in-flight to `cell_count`
 ///   (enforced by [`ensure_cellular_cap_floor`], shared with the graph path).
@@ -1650,8 +1637,8 @@ fn validate_cellular_phase_budgets(envelope: &serde_json::Value, cell_count: u32
             );
         }
         // A `duration`/`adaptive_scale` bound still breaks the merge: a duration bound
-        // needs the ragged-count merge (a graph-mode follow-up) and `adaptive_scale` needs
-        // cross-cell scaling consensus. (`sessions` is now handled above — allowed on
+        // needs the graph path's ragged-count merge and `adaptive_scale` needs
+        // cross-cell scaling consensus. (`sessions` is allowed on
         // exact-fold, rejected on retain — rather than blanket-rejected here.)
         ensure!(
             phase.get("duration").is_none() && phase.get("adaptive_scale").is_none(),
@@ -1741,7 +1728,7 @@ fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32)
 /// report. Mirrors [`crate::engine::protocol::BenchmarkRunConfigWireV2`]'s
 /// `from_value(cfg.metrics).unwrap_or_default()` so an absent/loose `metrics` block
 /// falls back the same way (`metrics_config` still validates any SLO names present).
-/// Spawns the tier-T2 aggregator subprocesses (`aiperf --aggregator`), one per
+/// Spawns one `aiperf --aggregator` subprocess per aggregator,
 /// aggregator, each fed the run envelope on stdin (for the merge `MetricsConfig`) and
 /// its subtree parameters via env: its id, the fixed loopback `tcp://` coordinate it
 /// binds (its cells dial it there), how many cells ship to it, and the controller
@@ -1815,7 +1802,7 @@ pub(crate) fn cellular_metrics_config(envelope: &serde_json::Value) -> Result<Me
 /// gap), unlike a single-process run. This is surfaced as a loud runtime warning
 /// rather than a silent drop or a fail-closed rejection: `gpu_telemetry` and
 /// `server_metrics` default *on*, so rejecting any present sidecar would refuse nearly
-/// every cellular run. Cross-cell sidecar aggregation is future wiring.
+/// every cellular run.
 fn warn_dropped_sidecar_telemetry(envelope: &serde_json::Value) {
     const SIDECARS: [&str; 3] = ["server_metrics", "gpu_telemetry", "network_latency"];
     let is_active = |value: Option<&serde_json::Value>| match value {
@@ -1842,8 +1829,8 @@ fn warn_dropped_sidecar_telemetry(envelope: &serde_json::Value) {
 
 /// The per-record FILE artifacts a cellular run will DROP because the deployment
 /// cannot deliver a cell's files to the controller — empty unless this is a
-/// CROSS-HOST (k8s) run that requested them. This is the documented Stage E product
-/// boundary, and the single source of truth the concat gate (`!is_k8s`) and the
+/// cross-host run that requested them. This is the single source of truth for the
+/// concat gate (`!is_k8s`) and the
 /// operator warning ([`warn_dropped_per_record_artifacts`]) both derive from, so the
 /// two never drift.
 ///
@@ -1860,8 +1847,8 @@ fn warn_dropped_sidecar_telemetry(envelope: &serde_json::Value) {
 /// the project's own durability ramps); per-record artifacts (records.jsonl, one row
 /// per request) scale with total request count and reach tens–hundreds of GB summed
 /// across cells. velo is a control plane, and its transparent large-payload path
-/// (`velo::…::rendezvous::DataStore`, `StageMode::InMemory`; the RDMA arena is a Phase-2
-/// placeholder) buffers each staged payload whole in RAM on BOTH ends — so shipping it
+/// (`velo::…::rendezvous::DataStore`, `StageMode::InMemory`) buffers each payload
+/// whole in RAM on both ends, so shipping it
 /// as-is would put the sum of every shard's largest file in the single controller's RAM.
 /// Even hand-rolled sub-threshold chunk-to-disk (which would bound memory) would still
 /// funnel every cell's bulk artifact bytes through one controller node and require that
@@ -1870,8 +1857,8 @@ fn warn_dropped_sidecar_telemetry(envelope: &serde_json::Value) {
 /// reinventing, worse, what a shared filesystem provides natively. The intended
 /// cross-host mechanism is **shared object storage** (a ReadWriteMany PVC or S3-style
 /// bucket the operator mounts into every cell pod AND the controller): the cell's
-/// existing local-write path then lands each shard in the shared location and the
-/// controller's existing Stage D concat runs unchanged, with no bulk data on the
+/// local writes then land each shard in the shared location and the
+/// controller concatenates them with no bulk data on the
 /// control plane.
 fn dropped_cross_host_artifacts(envelope: &serde_json::Value, is_k8s: bool) -> Vec<&'static str> {
     if !is_k8s {
@@ -2045,7 +2032,7 @@ fn phase_ordinal_bases(envelope: &serde_json::Value) -> Result<BTreeMap<String, 
 
 /// The profiling phase's dispatch budget from the v2 envelope — its `requests` (turn)
 /// budget for a single-turn run, or its `sessions` (conversation) budget for a multi-turn
-/// exact-fold run. Used only to prove a bounded profiling phase exists (the caller
+/// exact-fold run. Used only to require a bounded profiling phase (the caller
 /// discards the value); the per-phase budget/shape checks live in
 /// [`validate_cellular_phase_budgets`].
 fn profiling_request_budget(envelope: &serde_json::Value) -> Result<u64> {
@@ -2132,14 +2119,8 @@ mod tests {
 
     #[test]
     fn rejects_non_shipping_run_shapes() {
-        // Supported: http (or default) transport, synthetic single-turn dataset. A run
-        // seed and a single endpoint URL are preferred but no longer required — a
-        // seedless run auto-derives one shared seed and multiple URLs round-robin
-        // cell-locally (both aggregate-equivalent, warned not rejected).
         for ok in [
-            // No run seed — allowed (controller derives a shared seed).
             serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}}),
-            // Multiple endpoint URLs — allowed (cell-local round-robin).
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic"}], "endpoint": {"urls": ["http://a", "http://b"]}}}}),
             serde_json::json!({"run": {"random_seed": 42, "cfg": {
                 "transport": {"type": "http"},
@@ -2149,19 +2130,10 @@ mod tests {
             serde_json::json!({"run": {"random_seed": 1, "cfg": {
                 "datasets": [{"type": "synthetic"}],
             }}}),
-            // Stage G: a single-turn `file`/`path` dataset is now accepted — the
-            // controller ships the source cross-host and each cell recompiles it.
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "single_turn", "path": "/data/prompts.jsonl"}]}}}),
-            // An inline-records `file` dataset (no path) is accepted — it already
-            // rides in the envelope, so no ship is needed.
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "single_turn", "records": []}]}}}),
-            // A single-turn `public` dataset is accepted — each cell fetches the URL/HF
-            // source itself. A whitelisted single-turn format is required (below).
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "public", "format": "accuracy"}]}}}),
-            // `raw_payload` is strictly single-turn (unique per-row group key).
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "raw_payload", "path": "/data/p.jsonl"}]}}}),
-            // gRPC is accepted: it runs the same online-scheduled executor as HTTP (the
-            // cell issuer + records shipper live above the transport).
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic"}], "transport": {"type": "grpc"}}}}),
         ] {
             assert!(
@@ -2169,22 +2141,11 @@ mod tests {
                 "should accept {ok}"
             );
         }
-        // Fail closed on each unsupported aspect (all else valid + seeded):
         for bad in [
-            // dynosim (offline/online SimClock) is a separate executor with no cell-issuer
-            // / records-shipping wiring, so it fails closed.
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic"}], "transport": {"type": "dynosim_offline"}}}}),
-            // An unknown dataset type is still rejected (only synthetic/file/public wired).
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "agentic"}]}}}),
             serde_json::json!({"run": {"random_seed": 42, "cfg": {}}}),
-            // Multi-turn synthetic (turns > 1) and the known multi-turn file formats are
-            // now ADMITTED on the exact-fold merge (see `admits_multi_turn_on_exact_fold`);
-            // this list keeps only shapes rejected regardless of turn count.
-            // A `file` dataset with an unknown/unspecified format fails closed — as multi-turn
-            // it is not a known multi-turn format, so it cannot partition by conversation.
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "path": "/data/t.jsonl"}]}}}),
-            // A bare `public` dataset (no format) fails closed — its default format could
-            // be a multi-turn public shape (sharegpt / mt_bench / hf_conversation).
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "public"}]}}}),
         ] {
             assert!(
@@ -2196,10 +2157,6 @@ mod tests {
 
     #[test]
     fn admits_graph_and_linear_file_datasets() {
-        // Graph programs (dag_jsonl / weka_trace / dynamo_trace) partition by whole
-        // trace via PartitionedGraphTraceSource, so validate_cellular_run_shape admits
-        // them past the single-turn guard even though they are `file` datasets. The
-        // http transport ensure is unchanged (graph dispatches HTTP too).
         for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace"] {
             let graph = serde_json::json!({"run": {"cfg": {
                 "transport": {"type": "http"},
@@ -2214,9 +2171,6 @@ mod tests {
                 "is_graph_dataset true for {graph_format}"
             );
         }
-        // Stage G + C1 fix: a PROVEN single-turn linear file format (single_turn) is
-        // ADMITTED — the controller ships the source cross-host and each cell recompiles
-        // it. It is NOT a graph dataset (takes the scheduled partition).
         let linear = serde_json::json!({"run": {"cfg": {
             "datasets": [{"type": "file", "format": "single_turn", "path": "/data/t.jsonl"}],
         }}});
@@ -2228,12 +2182,6 @@ mod tests {
             !is_graph_dataset(&linear),
             "single_turn is not a graph dataset (scheduled partition)"
         );
-        // `mooncake_trace` is a NON-graph, session-grouping trace format that compiles
-        // MULTI-turn conversations. It takes the scheduled partition (not the graph
-        // carve-out). On the exact-fold merge (the unit-test default: no retain-forcing
-        // env) it is now ADMITTED — the concat merge is order-independent, so the per-turn
-        // ordinal that broke the retain merge no longer matters. It stays NOT a graph
-        // dataset (scheduled partition + PartitionedSampler by conversation).
         let multi_turn_trace = serde_json::json!({"run": {"cfg": {
             "datasets": [{"type": "file", "format": "mooncake_trace", "path": "/data/t.jsonl"}],
         }}});
@@ -2245,7 +2193,6 @@ mod tests {
             !is_graph_dataset(&multi_turn_trace),
             "mooncake_trace is not a graph dataset (takes the scheduled partition)"
         );
-        // is_graph_dataset is false for a synthetic (scheduled) dataset.
         let synthetic = serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}});
         assert!(
             !is_graph_dataset(&synthetic),
@@ -2253,21 +2200,14 @@ mod tests {
         );
     }
 
-    /// Multi-turn datasets — synthetic (`turns > 1`) and the known multi-turn file/public
-    /// formats — are ADMITTED on the exact-fold merge (the unit-test default env: exact-fold
-    /// on, no sketch/adaptive/heartbeat). The concat merge is order-independent, so a
-    /// multi-turn conversation's variable per-turn ordinal no longer breaks the report.
     #[test]
     fn admits_multi_turn_on_exact_fold() {
         for ok in [
-            // Synthetic multi-turn (fixed and distributional turn counts).
             serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic", "turns": {"value": 3}}]}}}),
             serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic", "turns": {"mean": 2.0, "stddev": 1.0}}]}}}),
-            // Known multi-turn file formats (session-grouping / turn-array).
             serde_json::json!({"run": {"cfg": {"datasets": [{"type": "file", "format": "multi_turn", "path": "/data/t.jsonl"}]}}}),
             serde_json::json!({"run": {"cfg": {"datasets": [{"type": "file", "format": "mooncake_trace", "path": "/data/t.jsonl"}]}}}),
             serde_json::json!({"run": {"cfg": {"datasets": [{"type": "file", "format": "inputs_json", "path": "/data/t.jsonl"}]}}}),
-            // Known multi-turn public shape.
             serde_json::json!({"run": {"cfg": {"datasets": [{"type": "public", "format": "sharegpt"}]}}}),
         ] {
             assert!(
@@ -2279,8 +2219,6 @@ mod tests {
                 "run should be detected as multi-turn: {ok}"
             );
         }
-        // An unknown multi-turn file format still fails closed (not a known multi-turn
-        // format, so it may not compile or partition by conversation).
         let unknown = serde_json::json!({"run": {"cfg": {"datasets": [{"type": "file", "format": "not_a_real_format", "path": "/data/t.jsonl"}]}}});
         assert!(
             validate_cellular_run_shape(&unknown).is_err(),
@@ -2288,10 +2226,6 @@ mod tests {
         );
     }
 
-    /// A multi-turn dataset on the RETAIN path (here forced envelope-side by sketch metric
-    /// storage, which folds into a bounded t-digest and ships no exact StorePartition) is
-    /// REJECTED with a clear message: the retain global-ordinal merge diverges for
-    /// multi-turn. Single-turn on the same retain config is unaffected.
     #[test]
     fn rejects_multi_turn_on_retain() {
         let retain_multi = serde_json::json!({"run": {"cfg": {
@@ -2306,7 +2240,6 @@ mod tests {
             validate_cellular_run_shape(&retain_multi).is_err(),
             "multi-turn on the retain path must be rejected"
         );
-        // Single-turn on the identical retain config is still admitted.
         let retain_single = serde_json::json!({"run": {"cfg": {
             "datasets": [{"type": "synthetic"}],
             "metrics": {"sketch": true},
@@ -2317,15 +2250,10 @@ mod tests {
         );
     }
 
-    /// Stage G serve plan: a single-file trace ships as one file; a DIRECTORY or
-    /// segmented-prefix GRAPH trace now ships every shard the loader reads (via
-    /// `enumerate_recorded_trace_files`) with a `dir`/`prefix` manifest; a missing
-    /// path or a dag_jsonl directory (single-file loader) still fails closed.
     #[test]
     fn build_dataset_serve_plan_ships_single_dir_and_prefix() {
         let tmp = tempfile::TempDir::new().unwrap();
 
-        // Single-file trace (any graph format) → one-file plan, `file` manifest.
         let file = tmp.path().join("trace.dag.jsonl");
         std::fs::write(&file, b"{}\n").unwrap();
         let (map, manifest) = build_dataset_serve_plan(Some("dag_jsonl"), &file).unwrap();
@@ -2334,7 +2262,6 @@ mod tests {
         assert_eq!(map.len(), 1);
         assert_eq!(map.get("trace.dag.jsonl"), Some(&file));
 
-        // A DIRECTORY weka_trace ships every .json shard (loader read set), `dir` kind.
         let dir = tmp.path().join("shards");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.json"), b"{}").unwrap();
@@ -2346,7 +2273,6 @@ mod tests {
         assert_eq!(names, vec!["a.json".to_owned(), "b.json".to_owned()]);
         assert_eq!(map.len(), 2);
 
-        // A segmented-PREFIX dynamo_trace ships the matching shards, `prefix` kind.
         std::fs::write(tmp.path().join("seg.000000.jsonl.gz"), b"{}\n").unwrap();
         std::fs::write(tmp.path().join("seg.000001.jsonl.gz"), b"{}\n").unwrap();
         let prefix = tmp.path().join("seg.jsonl.gz");
@@ -2356,25 +2282,19 @@ mod tests {
         assert_eq!(map.len(), 2);
         assert!(map.contains_key("seg.000000.jsonl.gz"));
 
-        // A dag_jsonl DIRECTORY still fails closed (its loader reads one file).
         assert!(
             build_dataset_serve_plan(Some("dag_jsonl"), &dir).is_err(),
             "a dag_jsonl directory must fail closed (single-file loader)"
         );
-        // A missing path fails closed for a graph format and a scheduled format alike.
         let missing = tmp.path().join("nope.jsonl");
         assert!(build_dataset_serve_plan(Some("weka_trace"), &missing).is_err());
         assert!(build_dataset_serve_plan(Some("single_turn"), &missing).is_err());
-        // A scheduled single-file dataset ships as one file.
         let scheduled = tmp.path().join("prompts.jsonl");
         std::fs::write(&scheduled, b"{}\n").unwrap();
         let (_map, manifest) = build_dataset_serve_plan(Some("single_turn"), &scheduled).unwrap();
         assert_eq!(manifest.kind, "file");
     }
 
-    /// Multi-turn cellular requires a deterministic single-pass sampler: sequential/shuffle
-    /// are admitted, random-with-replacement is rejected (no stable per-cell conversation
-    /// slice). Single-turn random is unaffected (it never reaches the sampler check).
     #[test]
     fn rejects_multi_turn_random_sampler() {
         let random_multi = serde_json::json!({"run": {"cfg": {
@@ -2393,7 +2313,6 @@ mod tests {
                 "multi-turn cellular with {sampling:?} sampling must be admitted"
             );
         }
-        // Single-turn random is fine — the sampler check only applies to multi-turn.
         let random_single = serde_json::json!({"run": {"cfg": {
             "datasets": [{"type": "synthetic", "sampling": "random"}],
         }}});
@@ -2403,10 +2322,6 @@ mod tests {
         );
     }
 
-    /// `build_cell_envelope` slices a scheduled phase's `sessions` (conversation) budget by
-    /// `owned_positions`, and the per-cell shares TILE EXACTLY: they sum to the authored
-    /// total (no remainder dropped that would make the silently-recycling sampler resample),
-    /// and every cell owns >= 1 conversation when `total >= cell_count`.
     #[test]
     fn session_budget_tiles_exactly_across_cells() {
         let dir = Path::new("/tmp/aiperf-cellular-session-tiling-test");
@@ -2445,8 +2360,6 @@ mod tests {
                 );
             }
         }
-        // A GRAPH run's `sessions` budget is NOT sliced here (its cells partition the trace
-        // at runtime) — every cell keeps the whole budget.
         let graph = serde_json::json!({"run": {"cfg": {
             "datasets": [{"type": "file", "format": "dag_jsonl"}],
             "phases": [{"type": "concurrency", "name": "profiling", "sessions": 60, "concurrency": 8}],
@@ -2470,28 +2383,21 @@ mod tests {
         }
     }
 
-    /// `validate_cellular_phase_budgets` accepts a `sessions`-bounded phase on the exact-fold
-    /// merge (multi-turn), rejects `sessions < cell_count` (a cell would own zero), and
-    /// rejects a `sessions` budget on the retain path.
     #[test]
     fn phase_budgets_accept_sessions_on_exact_fold() {
-        // Session-bounded profiling phase, exact-fold (default env) → OK.
         let ok = serde_json::json!({"run": {"cfg": {"phases": [
             {"type": "concurrency", "name": "profiling", "sessions": 60, "concurrency": 8},
         ]}}});
         assert!(validate_cellular_phase_budgets(&ok, 4).is_ok());
-        // sessions < cell_count → rejected (a cell owns zero conversations).
         let too_few = serde_json::json!({"run": {"cfg": {"phases": [
             {"type": "concurrency", "name": "profiling", "sessions": 3, "concurrency": 8},
         ]}}});
         assert!(validate_cellular_phase_budgets(&too_few, 4).is_err());
-        // A `sessions` budget on the retain path (sketch storage) → rejected.
         let retain = serde_json::json!({"run": {"cfg": {
             "metrics": {"sketch": true},
             "phases": [{"type": "concurrency", "name": "profiling", "sessions": 60, "concurrency": 8}],
         }}});
         assert!(validate_cellular_phase_budgets(&retain, 4).is_err());
-        // A phase with neither `requests` nor `sessions` → rejected.
         let unbounded = serde_json::json!({"run": {"cfg": {"phases": [
             {"type": "concurrency", "name": "profiling", "concurrency": 8},
         ]}}});
@@ -2500,7 +2406,6 @@ mod tests {
 
     #[test]
     fn run_kind_detects_and_dispatches() {
-        // detect: a graph-format dataset is the Graph kind; anything else is Scheduled.
         let graph_env = serde_json::json!(
             {"run": {"cfg": {"datasets": [{"type": "file", "format": "dag_jsonl"}]}}}
         );
@@ -2512,8 +2417,6 @@ mod tests {
             CellularRunKind::Scheduled
         );
 
-        // validate_phases (graph): a sessions-bounded phase with a concurrency cap
-        // >= cell_count and no `requests` passes; a phase carrying `requests` is rejected.
         let graph_ok = serde_json::json!({"run": {"cfg": {"phases": [
             {"type": "concurrency", "name": "profiling", "sessions": 100, "concurrency": 8},
         ]}}});
@@ -2527,8 +2430,6 @@ mod tests {
                 .is_err()
         );
 
-        // phase_ordinal_bases: the scheduled kind computes a per-phase base map from a
-        // request-bounded envelope; the graph kind always returns an empty map.
         let two_phase = serde_json::json!({"run": {"cfg": {"phases": [
             {"name": "warmup", "requests": 10},
             {"name": "profiling", "requests": 100},
@@ -2549,9 +2450,6 @@ mod tests {
 
     #[test]
     fn derives_metrics_config_from_the_envelope() {
-        // Authored SLOs + slice duration + server-token-count flow into the merge
-        // config (the merge would silently drop goodput/timeslices under
-        // MetricsConfig::default()).
         let env = serde_json::json!({"run": {"cfg": {
             "metrics": {"slos": {"request_latency": 60.0}, "slice_duration_seconds": 2.0},
             "endpoint": {"use_server_token_count": true},
@@ -2560,13 +2458,11 @@ mod tests {
         assert_eq!(config.slos.len(), 1);
         assert_eq!(config.slice_duration_ns, Some(2_000_000_000));
         assert!(config.use_server_token_count);
-        // Absent metrics/endpoint → the default policy (empty SLOs, no timeslicing).
         let bare =
             cellular_metrics_config(&serde_json::json!({"run": {"cfg": {}}})).expect("default");
         assert!(bare.slos.is_empty());
         assert_eq!(bare.slice_duration_ns, None);
         assert!(!bare.use_server_token_count);
-        // An SLO metric absent from the catalog is rejected, like the 1-cell path.
         assert!(
             cellular_metrics_config(&serde_json::json!({"run": {"cfg": {
                 "metrics": {"slos": {"not_a_real_metric": 1.0}},
@@ -2577,17 +2473,11 @@ mod tests {
 
     #[test]
     fn rejects_non_request_bounded_phases() {
-        // Request-bounded (arrival-pattern) phase types with requests + caps >= cells
-        // pass; a post-send cancellation policy AND concurrency/rate ramps are allowed
-        // (aggregate-equivalent approximations, warned not rejected).
         let ok = serde_json::json!({"run": {"cfg": {"phases": [
             {"type": "concurrency", "name": "warmup", "requests": 10, "concurrency": 8},
             {"type": "concurrency", "name": "profiling", "requests": 100, "concurrency": 8, "cancellation": {"rate": 25.0, "delay": 0.5}, "concurrency_ramp": {"start": 1, "end": 100}},
         ]}}});
         assert!(validate_cellular_phase_budgets(&ok, 4).is_ok());
-        // Fail closed (cell_count 4) on: a trace-driven or missing phase type; requests
-        // absent or below cell_count; a duration/sessions/adaptive_scale bound; or a
-        // concurrency/prefill cap below cell_count. (Ramps and cancellation are allowed.)
         for bad in [
             serde_json::json!({"run": {"cfg": {"phases": [
                 {"type": "fixed_schedule", "name": "profiling", "requests": 100},
@@ -2624,13 +2514,6 @@ mod tests {
 
     #[test]
     fn rejects_graph_requests_budget_but_allows_sessions() {
-        // PartitionedGraphTraceSource partitions the SESSION space (sessions /
-        // --num-conversations / a duration), not a static-node `requests` budget: a
-        // `requests` phase falls back to the single-cell CyclingGraphTraceSource and
-        // every cell replays the full un-partitioned cycle. Fail closed on `requests`
-        // (and on a concurrency cap below cell_count), accept a session/duration bound.
-        //
-        // REJECT: a graph phase carrying a static-node `requests` budget.
         assert!(
             validate_graph_cellular_phases(
                 &serde_json::json!({"run": {"cfg": {"phases": [
@@ -2640,7 +2523,6 @@ mod tests {
             )
             .is_err()
         );
-        // REJECT: a concurrency cap below cell_count (floors to 1 per cell, over-subscribes).
         assert!(
             validate_graph_cellular_phases(
                 &serde_json::json!({"run": {"cfg": {"phases": [
@@ -2650,7 +2532,6 @@ mod tests {
             )
             .is_err()
         );
-        // ACCEPT: a `sessions`-bounded phase with a concurrency cap >= cell_count and no `requests`.
         assert!(
             validate_graph_cellular_phases(
                 &serde_json::json!({"run": {"cfg": {"phases": [
@@ -2660,7 +2541,6 @@ mod tests {
             )
             .is_ok()
         );
-        // ACCEPT: a `duration`-bounded phase with no `requests` budget.
         assert!(
             validate_graph_cellular_phases(
                 &serde_json::json!({"run": {"cfg": {"phases": [
@@ -2674,13 +2554,6 @@ mod tests {
 
     #[test]
     fn each_phase_partitions_and_tiles_independently() {
-        // The per-cell sampler restarts each phase, so each phase is partitioned on
-        // its OWN instance space `0..phase_requests`: cell k's per-phase count is
-        // `owned_positions(phase_requests, k, count)` and the phase-local ordinals
-        // `within*count + cell_id` tile `0..phase_requests` densely — the invariant
-        // the phase-aware merge relies on, and what makes the merged per-phase
-        // instance set equal a 1-cell run's. A cumulative base offset (the earlier
-        // bug) would draw the wrong instances since the sampler is not continuous.
         let dir = Path::new("/tmp/aiperf-cellular-envelope-test");
         for (warmup, profiling) in [(100u64, 1000u64), (3, 3), (1, 7), (10, 250), (7, 13)] {
             for count in 1..=5u32 {
@@ -2734,8 +2607,6 @@ mod tests {
 
     #[test]
     fn slices_rate_and_concurrency_caps_per_cell() {
-        // The arrival rate is divided evenly (the cells' rates sum to the authored
-        // aggregate), and the concurrency/prefill caps are per-cell round-robin shares.
         let dir = Path::new("/tmp/aiperf-cellular-envelope-test");
         let envelope = serde_json::json!({"run": {"cfg": {"phases": [
             {"type": "constant", "name": "profiling", "requests": 100, "rate": 40.0,
@@ -2784,9 +2655,6 @@ mod tests {
 
     #[test]
     fn detects_requested_per_record_artifacts() {
-        // A metrics-only cellular run (no per-record file artifacts) → nothing detected,
-        // so the warn stays silent. `inputs_path` is per-session, not per-record, so it
-        // must NOT trigger the per-record warning either.
         let metrics_only = serde_json::json!({"run": {"cfg": {"artifacts": {
             "inputs_path": "inputs.json",
         }}}});
@@ -2794,10 +2662,8 @@ mod tests {
             requested_per_record_artifacts(&metrics_only).is_empty(),
             "metrics-only (+ per-session inputs.json) must not flag per-record artifacts"
         );
-        // An empty artifacts object and a wholly absent one are both silent.
         assert!(requested_per_record_artifacts(&serde_json::json!({})).is_empty());
 
-        // Each per-record file artifact is detected independently.
         for key in [
             "records_path",
             "raw_path",
@@ -2813,7 +2679,6 @@ mod tests {
             );
         }
 
-        // A run requesting several reports them all (order matches the scan order).
         let many = serde_json::json!({"run": {"cfg": {"artifacts": {
             "records_path": "profile_export.jsonl",
             "records_parquet_path": "profile_export.parquet",
@@ -2827,35 +2692,23 @@ mod tests {
 
     #[test]
     fn cross_host_artifact_boundary_is_precise() {
-        // Stage E product boundary: the per-record artifact drop is EXACTLY
-        // "cross-host (k8s) run that requested per-record files". `dropped_cross_host_artifacts`
-        // is the single source of truth for both the concat gate (`!is_k8s`) and the operator
-        // warning, so this pins that they can never disagree.
         let with_files = serde_json::json!({"run": {"cfg": {"artifacts": {
             "records_path": "profile_export.jsonl",
             "records_parquet_path": "profile_export.parquet",
             "outputs_path": "profile_export.json",
         }}}});
 
-        // Same-host (`!is_k8s`) drops NOTHING even when per-record files are requested:
-        // the controller concatenates each cell's controller-local dir (`concatenate_cell_artifacts`),
-        // so the gate runs and the warn stays silent.
         assert!(
             dropped_cross_host_artifacts(&with_files, false).is_empty(),
             "same-host concatenates per-record artifacts; nothing is dropped"
         );
 
-        // Cross-host (k8s) with per-record files → exactly those files are dropped (each
-        // pod writes to its own filesystem, unreachable by the controller). Order matches
-        // the scan order so the warn's `artifacts=` field is stable.
         assert_eq!(
             dropped_cross_host_artifacts(&with_files, true),
             vec!["records_path", "records_parquet_path", "outputs_path"],
             "cross-host drops exactly the requested per-record files"
         );
 
-        // Cross-host but metrics-only (only the per-session inputs.json) → nothing dropped,
-        // so the k8s warn does NOT fire spuriously on a run that produces no per-record files.
         let metrics_only = serde_json::json!({"run": {"cfg": {"artifacts": {
             "inputs_path": "inputs.json",
         }}}});
@@ -2863,7 +2716,6 @@ mod tests {
             dropped_cross_host_artifacts(&metrics_only, true).is_empty(),
             "cross-host metrics-only run drops no per-record files (inputs.json is per-session)"
         );
-        // A cross-host run with no artifacts block at all is likewise silent.
         assert!(dropped_cross_host_artifacts(&serde_json::json!({}), true).is_empty());
     }
 }

@@ -131,7 +131,7 @@ pub struct GpuTelemetrySpec {
     pub collection_interval_ns: i64,
     /// Clock deadline applied independently to each telemetry HTTP request.
     pub request_timeout_ns: i64,
-    /// Legacy-compatible per-GPU JSONL path relative to the run directory.
+    /// Per-GPU JSONL path relative to the run directory.
     pub records_path: PathBuf,
     /// Ordered source list after Config-v2 default expansion and deduplication.
     pub sources: Vec<GpuTelemetrySourceSpec>,
@@ -169,7 +169,7 @@ pub struct NetworkLatencyProbeSpec {
     pub complete_topup_timeout_ns: i64,
     /// Successful-sample floor applied independently to every unique target.
     pub min_successful_samples: usize,
-    /// Legacy-compatible per-sample JSONL path relative to the run directory.
+    /// Per-sample JSONL path relative to the run directory.
     pub records_path: PathBuf,
 }
 

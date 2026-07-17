@@ -1,26 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Full-stack integration-test harness.
+//! Full-stack integration-test harness for the native `aiperf` CLI.
 //!
-//! Boots the `aiperf-mock-server` Axum router in-process on a random loopback port
-//! and drives the unified native `aiperf` binary (`aiperf profile ...`) — the
-//! product entry point — against it as a subprocess, then reads back the emitted
-//! artifact tree. (The one exception is a test that opts into the legacy Python
-//! execution engine via `AIPERF_RUNTIME_ENGINE=python`, which routes that leg
-//! through `python -m aiperf.cli` since the native entry point doesn't honor that
-//! switch.)
-//!
-//! The whole point is apples-to-apples product coverage: the exact same
-//! `aiperf profile` CLI a user runs, pointed at a deterministic mock target,
-//! with the artifact files parsed as untyped `serde_json::Value` so tests can
-//! assert on any field without importing the Python schema.
+//! The harness runs an in-process mock server on loopback, invokes `aiperf`
+//! as a subprocess, and reads its artifact tree as `serde_json::Value`.
+//! `AIPERF_RUNTIME_ENGINE=python` runs through `python -m aiperf.cli` because
+//! that execution-engine selector is handled by the Python frontend.
 
 #![allow(dead_code)]
 
 mod raw_jsonl;
-// Re-exported for every test binary; not all of them use each helper, and
-// `mod common` is compiled per-binary, so silence the per-binary unused warning.
+// `mod common` is compiled separately for each test binary.
 #[allow(unused_imports)]
 pub use raw_jsonl::{
     RawRecordTiming, TunedExpectations, assert_raw_records_timing_and_data,
@@ -112,12 +103,7 @@ impl MockServer {
             .build()
             .expect("build mock server runtime");
 
-        // Build the state INSIDE the runtime context: `BatchScheduler::start()`
-        // no-ops when `Handle::try_current()` fails (so sync unit-test builds are
-        // safe), so constructing `AppState` outside the runtime would silently
-        // leave the step-scheduler tick-loop unstarted and hang every
-        // scheduler-enabled run in warmup. `runtime.enter()` gives this thread a
-        // runtime handle for the duration of `AppState::build`.
+        // `AppState::build` needs a runtime handle to start the batch scheduler.
         let state: Arc<AppState> = {
             let _guard = runtime.enter();
             AppState::build(cfg)
@@ -299,8 +285,7 @@ impl AIPerfHarness {
         args.extend(shell_split(profile_args));
         args.push("--artifact-dir".to_string());
         args.push(self.artifact_path().display().to_string());
-        // Only inject the default tokenizer when the test didn't specify one —
-        // mirrors the Python conftest behaviour.
+        // An explicit tokenizer always takes precedence over the harness default.
         if !args.iter().any(|a| a == "--tokenizer") {
             args.push("--tokenizer".to_string());
             args.push(DEFAULT_MODEL.to_string());
@@ -309,9 +294,8 @@ impl AIPerfHarness {
     }
 
     /// Like [`run`](Self::run) but with extra environment variables set on the
-    /// `aiperf` subprocess (e.g. `AIPERF_RUNTIME_ENGINE=python` to drive the
-    /// legacy Python engine). Mirrors [`run`](Self::run)'s tokenizer/artifact
-    /// injection.
+    /// `aiperf` subprocess. Applies [`run`](Self::run)'s tokenizer and artifact
+    /// arguments.
     pub fn run_env(&self, profile_args: &str, extra_env: &[(&str, &str)]) -> RunResult {
         let mut args = vec!["profile".to_string()];
         args.extend(shell_split(profile_args));
@@ -340,15 +324,7 @@ impl AIPerfHarness {
         timeout_secs: u64,
         extra_env: &[(&str, &str)],
     ) -> RunResult {
-        // Default: invoke the unified `aiperf` binary directly — it IS the native
-        // entry point that owns `profile`/`config` (and delegates other subcommands
-        // to Python internally), so we exercise the real product entry path rather
-        // than a Python wrapper. The ONE exception is a test that opts into the
-        // legacy pure-Python execution engine via `AIPERF_RUNTIME_ENGINE=python`:
-        // the native entry point does not honor that switch (only the Python
-        // frontend does), so that leg routes through `python -m aiperf.cli`
-        // (dispatches `aiperf.cli:app` directly — the same Cyclopts tree as
-        // `aiperf.entrypoint:main`).
+        // The Python frontend owns the `AIPERF_RUNTIME_ENGINE=python` selector.
         let wants_python_engine = extra_env
             .iter()
             .any(|(k, v)| *k == "AIPERF_RUNTIME_ENGINE" && *v == "python");
@@ -449,9 +425,7 @@ fn cancel_child(child: &std::process::Child) {
 #[cfg(not(unix))]
 fn cancel_child(_child: &std::process::Child) {}
 
-/// Resolve the Python interpreter: `$VIRTUAL_ENV/bin/python`, else `python3`. Used
-/// only for the legacy `AIPERF_RUNTIME_ENGINE=python` leg, which runs
-/// `python -m aiperf.cli` (dispatching `aiperf.cli:app`).
+/// Resolve the Python interpreter for `AIPERF_RUNTIME_ENGINE=python`.
 fn python_binary() -> String {
     if let Ok(venv) = std::env::var("VIRTUAL_ENV") {
         let candidate = PathBuf::from(&venv).join("bin").join("python");
@@ -466,8 +440,7 @@ fn python_binary() -> String {
 ///
 /// The harness spawns this binary directly as the entry point; it re-execs itself
 /// (`current_exe()`) in the internal `--execute` mode, or honors `AIPERF_EXEC_BIN`
-/// as an override. On the legacy `aiperf-python` leg the Python orchestrator reads
-/// the same `AIPERF_EXEC_BIN` to locate the execution child. Priority:
+/// as an override. The Python frontend reads the same variable. Priority:
 /// 1. `AIPERF_EXEC_BIN` env var (already set by the user or outer harness)
 /// 2. `target/release/aiperf` then `target/debug/aiperf` relative to the Cargo
 ///    workspace root (derived from this file's `CARGO_MANIFEST_DIR` at compile time)
@@ -478,11 +451,10 @@ pub fn exec_binary() -> String {
             return v;
         }
     }
-    // CARGO_MANIFEST_DIR is rust/e2e; workspace root is two levels up.
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace = manifest
-        .parent() // rust/
-        .and_then(|p| p.parent()) // workspace root
+        .parent()
+        .and_then(|p| p.parent())
         .unwrap_or(&manifest);
     let suffix = std::env::consts::EXE_SUFFIX;
     for profile in ["release", "debug"] {

@@ -3,8 +3,9 @@
 
 //! Metric-unit inference for the Parquet `unit` column.
 //!
-//! Faithful port of `src/aiperf/server_metrics/units.py::infer_unit` and the
-//! `BaseMetricUnit.display_name` implementation in
+//! Matches the compatibility contract defined by
+//! `src/aiperf/server_metrics/units.py::infer_unit` and
+//! `BaseMetricUnit.display_name` in
 //! `src/aiperf/common/enums/metric_enums.py`. `display_name` is the enum MEMBER
 //! NAME lowercased with `_per_second` rewritten to `/s` (NOT the unit's `tag`),
 //! so this module models the inferred unit as an enum whose [`Unit::display_name`]

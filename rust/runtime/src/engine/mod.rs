@@ -15,19 +15,12 @@
 //! with default features and never compile this layer or its dependency surface.
 
 pub mod application;
-// Cross-host (k8s) cellular per-record artifact shipping over HTTP + streaming
-// zstd (Stage E). Only reachable on the velo cellular path (it reuses the velo
-// controller's bootstrap/DNS addressing), and its zstd streaming core is gated on
-// the `zstd` dep the `velo` feature pulls in.
+// Cross-host cellular artifact shipping reuses Velo bootstrap addressing and zstd.
 #[cfg(feature = "velo")]
 pub mod artifact_shipping;
 pub mod cellular_cell;
-// Tier-T2 hierarchical merge: the aggregator role between cells and the controller.
 #[cfg(feature = "velo")]
 pub mod cellular_aggregator;
-// The controller orchestration (cell launch + velo transport + merge) is only
-// reachable with the `velo` feature; `owned_positions` (needed by the non-velo
-// sharded runtime) lives in `cell_launcher` instead.
 pub mod cell_launcher;
 // Barrier-synchronized cross-cell timing origin (opt-in, feature-agnostic): a
 // cell zeroes its record timeline at the velo START barrier instead of its
@@ -35,7 +28,6 @@ pub mod cell_launcher;
 pub mod cell_origin;
 #[cfg(feature = "velo")]
 pub mod cellular_controller;
-// The scheduled-vs-graph classification both the controller and the cell name.
 pub mod cellular_kind;
 pub mod control_plane_http;
 pub mod coordinator;

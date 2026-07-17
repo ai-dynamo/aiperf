@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Product-path proofs for protocol-v2 HTTP client policy.
+//! Protocol-v2 HTTP client policy coverage.
 //!
-//! These tests execute the ordinary scheduled pair through the sole runner
-//! subprocess. The asserted defaults and insecure TLS behavior are verified
-//! without routing through protocol v1 or a leaf-only transport API.
+//! These tests execute scheduled runs through an `aiperf --execute` subprocess.
+//! Defaults and insecure TLS behavior are verified without protocol v1 or a
+//! leaf-only transport API.
 
 use std::convert::Infallible;
 use std::io::Write;

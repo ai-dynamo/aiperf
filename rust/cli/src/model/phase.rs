@@ -1,16 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Typed `phases` section of the native `BenchmarkConfig`.
+//! Typed benchmark phase policy.
 //!
-//! Wire shape ported from `src/aiperf/orchestrator/rust_wire.py::_phase`,
-//! `_rate_phase`, `_ramp`. Every phase carries a common block (`name`,
-//! `exclude_from_results`, `seamless`, plus optional bounds/ramps/cancellation/
-//! adaptive) and a `type`-discriminated body. Optionals use `_set_optional`
-//! semantics (absent when unset).
+//! Every phase combines common settings with a type-discriminated body.
+//! Optional fields are absent when unset.
 
 use serde::{Deserialize, Serialize};
 
-/// A concurrency/prefill/rate ramp (`_ramp`).
+/// A concurrency, prefill, or rate ramp.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Ramp {
     /// Ramp duration, seconds.
@@ -41,17 +38,14 @@ pub struct SlaFilter {
     pub threshold: f64,
 }
 
-/// The adaptive-scale controller block (`_adaptive_scale`).
+/// Adaptive-scale controller policy.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AdaptiveScale {
     /// Controlled axis (`concurrency`/`request_rate`/…).
     pub control_variable: String,
-    /// Lower bound. A `serde_json::Number` to preserve Python's int-vs-float
-    /// distinction: the defaulted bound serializes as an int (`1`), an explicitly
-    /// authored config bound as a float (`2.0`).
+    /// Lower bound, preserving the authored integer or floating-point wire form.
     pub minimum: serde_json::Number,
-    /// Upper bound (int when derived from the concurrency axis, float when set as
-    /// the config's `adaptive_control_max`).
+    /// Upper bound, preserving the authored integer or floating-point wire form.
     pub maximum: serde_json::Number,
     /// Assessment period, seconds.
     pub assessment_period_seconds: f64,

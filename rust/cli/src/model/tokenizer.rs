@@ -1,11 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Typed `tokenizer` section of the native `BenchmarkConfig`.
+//! Typed tokenizer acquisition policy.
 //!
-//! Wire shape ported from
-//! `src/aiperf/orchestrator/rust_wire.py::_authored_tokenizer_v2`. When no
-//! tokenizer is authored, the loader fills `name` from the primary model (or
-//! `"builtin"` for a fake model name) and the other fields with these defaults.
+//! When unspecified, the tokenizer name comes from the primary model, or is
+//! `"builtin"` for a synthetic model name.
 
 use serde::{Deserialize, Serialize};
 

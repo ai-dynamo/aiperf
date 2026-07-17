@@ -3,34 +3,19 @@
 
 //! In-cluster Kubernetes reporting for the native `aiperf controller` role.
 //!
-//! Native port of the Python `aiperf.kubernetes.completion_signal` +
-//! `results_sidecar.write_ready_marker`: the controller pod reaches up to its
-//! own `AIPerfJob` CR and PUSHES progress/snapshot into `.status` during the run
-//! and a completion annotation at the end, using the in-cluster service-account
-//! token + the `aiperfjobs/status` RBAC the run pod already carries. The operator
-//! reacts via kopf field/annotation handlers — there is no progress service to poll.
-//!
-//! Off-cluster (no `AIPERF_JOB_ID`/`AIPERF_NAMESPACE`) every method is a no-op, so
-//! the same `aiperf controller` binary runs locally unchanged.
-//!
-//! Ported from `src/aiperf/kubernetes/completion_signal.py` (patch shapes),
-//! `cr_refs.py` (group/version/plural), `constants.py::Annotations`
-//! (`aiperf.nvidia.com/benchmark-complete`), and `results_sidecar.py`
-//! (`.aiperf_results_ready.json`). Best-effort: a transient API error logs and
-//! returns without failing the run.
+//! The controller patches its `AIPerfJob` status and completion annotation with
+//! its service-account credentials. Reporting is a no-op off-cluster and API
+//! errors never fail a benchmark.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-/// AIPerfJob CRD coordinates (mirrors `cr_refs.py`).
 const AIPERF_GROUP: &str = "aiperf.nvidia.com";
 const AIPERF_VERSION: &str = "v1alpha1";
 const AIPERF_PLURAL: &str = "aiperfjobs";
-/// Completion annotation key (mirrors `constants.py::Annotations.BENCHMARK_COMPLETE`).
 const BENCHMARK_COMPLETE_ANNOTATION: &str = "aiperf.nvidia.com/benchmark-complete";
-/// Results-ready marker filename (mirrors `results_sidecar.py::READY_MARKER_NAME`).
 const READY_MARKER_NAME: &str = ".aiperf_results_ready.json";
 
 /// Standard in-cluster service-account mount (overridable in tests via
@@ -84,7 +69,6 @@ impl InClusterConfig {
         })
     }
 
-    /// Construct from explicit parts (tests / non-standard mounts).
     pub fn from_parts(
         host: String,
         port: u16,
@@ -103,7 +87,6 @@ impl InClusterConfig {
         }
     }
 
-    /// PATCH path for the CR `status` subresource.
     fn status_path(&self) -> String {
         format!(
             "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{}/{AIPERF_PLURAL}/{}/status",
@@ -111,7 +94,6 @@ impl InClusterConfig {
         )
     }
 
-    /// PATCH path for the CR object itself (metadata/annotations).
     fn object_path(&self) -> String {
         format!(
             "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{}/{AIPERF_PLURAL}/{}",
@@ -120,13 +102,11 @@ impl InClusterConfig {
     }
 }
 
-/// Look up an env var, treating empty/whitespace as absent.
 fn non_empty_env(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|v| !v.trim().is_empty())
 }
 
-/// The `.status.phases.<phase>` merge-patch body (mirrors
-/// `completion_signal.report_benchmark_progress`).
+/// Build a `.status.phases.<phase>` merge patch.
 pub fn progress_body(
     phase: &str,
     requests_completed: u64,
@@ -138,7 +118,6 @@ pub fn progress_body(
     if let Some(total) = requests_total {
         phase_stats["requestsTotal"] = json!(total);
         if total > 0 {
-            // Round to 1 decimal, matching Python's `round(x, 1)`.
             let pct = (1000.0 * requests_completed as f64 / total as f64).round() / 10.0;
             phase_stats["requestsProgressPercent"] = json!(pct);
         }
@@ -153,12 +132,12 @@ pub fn progress_body(
     json!({ "status": status })
 }
 
-/// The `.status.snapshot` merge-patch body (mirrors `report_benchmark_snapshot`).
+/// Build a `.status.snapshot` merge patch.
 pub fn snapshot_body(snapshot: Value) -> Value {
     json!({ "status": { "snapshot": snapshot } })
 }
 
-/// The completion-annotation merge-patch body (mirrors `signal_benchmark_complete`).
+/// Build the completion-annotation merge patch.
 pub fn complete_body() -> Value {
     json!({ "metadata": { "annotations": { BENCHMARK_COMPLETE_ANNOTATION: "true" } } })
 }
@@ -168,10 +147,7 @@ pub fn ready_marker_path(base_dir: &Path) -> PathBuf {
     base_dir.join(READY_MARKER_NAME)
 }
 
-/// Write the results-ready marker after exports complete (mirrors
-/// `results_sidecar.write_ready_marker`). The operator/sidecar refuses to serve
-/// results until this file exists, so it must be written AFTER the report is
-/// committed and BEFORE the completion annotation.
+/// Write the marker after committing exports and before signaling completion.
 pub fn write_ready_marker(base_dir: &Path, was_cancelled: bool) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(base_dir)?;
     let marker = ready_marker_path(base_dir);
@@ -215,9 +191,7 @@ impl CrReporter {
         }
     }
 
-    /// Signal completion: mirror the Python ordering write-marker -> annotation
-    /// (the marker is written by the caller after export; here we set the
-    /// annotation the operator watches). No-op off-cluster.
+    /// Set the completion annotation. The caller writes the ready marker first.
     pub fn signal_complete(&self) {
         self.patch_object(&complete_body());
     }
@@ -287,10 +261,7 @@ async fn send_merge_patch_async(
             .add(cert)
             .map_err(|e| anyhow::anyhow!("failed to add cluster CA: {e}"))?;
     }
-    // Pin the aws-lc-rs provider explicitly (matching `transport_http`/mlflow):
-    // the bare `ClientConfig::builder()` panics when the process default
-    // CryptoProvider is ambiguous (both `ring` and `aws-lc-rs` linked), which is
-    // the case in the shipped binary.
+    // Pin aws-lc-rs because both linked providers make the process default ambiguous.
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let tls_config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
@@ -372,7 +343,6 @@ mod tests {
             b["status"]["phases"]["profiling"]["requestsProgressPercent"],
             33.3
         );
-        // No overall phase key when None.
         assert!(b["status"].get("phase").is_none());
     }
 
@@ -410,7 +380,6 @@ mod tests {
 
     #[test]
     fn reporter_off_cluster_is_noop() {
-        // With no config, patch/complete are silent no-ops (no panic, no network).
         let reporter = CrReporter { config: None };
         assert!(!reporter.active());
         reporter.patch_status(&progress_body("profiling", 1, Some(2), None, None));

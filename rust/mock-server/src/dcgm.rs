@@ -191,7 +191,7 @@ impl FakeGpuState {
 
     fn update(&mut self, base_load: f64) {
         let load = (base_load + self.load_offset).clamp(0.0, 1.0);
-        // Snapshot the config fields we need so we can hold a mutable borrow of rng/self.
+        // Copying these fields avoids overlapping mutable and immutable borrows of `self`.
         let idle_power_w = self.cfg.idle_power_w as f64;
         let max_power_w = self.cfg.max_power_w as f64;
         let temp_idle_c = self.cfg.temp_idle_c as f64;
@@ -223,13 +223,12 @@ impl FakeGpuState {
         );
         self.mem_free = self.mem_total - self.mem_used;
         self.mem_copy = self.noise(load * 50.0, 0.05, 100.0);
-        // Video encode/decode engines: modest load-driven utilization (percent).
         self.enc_util = self.noise(load * 40.0, 0.05, 100.0);
         self.dec_util = self.noise(load * 30.0, 0.05, 100.0);
-        // SM activity is a DCGM profiling ratio in [0, 1]; the runner scales it x100.
+        // DCGM exposes SM activity as a ratio; AIPerf scales it to percent.
         self.sm_active = self.noise(0.05 + load * 0.90, 0.02, 1.0);
 
-        self.energy += self.power * 1000.0; // 1 tick = 1 s
+        self.energy += self.power * 1000.0; // Each generated sample represents one second.
         if self.rng.random() < 0.0001 {
             self.xid += 1;
         }
@@ -420,14 +419,13 @@ impl DcgmFaker {
                 )
                 .unwrap();
             }
-            // No blank line between metric blocks - matches Python's "\n".join
             let _ = i;
         }
         out
     }
 }
 
-/// A pool of DCGM fakers (one per instance). Index 0 = /dcgm1/metrics, etc.
+/// DCGM metric sources indexed from `/dcgm1/metrics`.
 pub struct DcgmPool {
     fakers: Vec<DcgmFaker>,
     request_counter: AtomicU32,
@@ -480,7 +478,6 @@ mod tests {
         assert!(out.contains("DCGM_FI_DEV_POWER_USAGE"));
         assert!(out.contains("DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION"));
         assert!(out.contains("DCGM_FI_DEV_XID_ERRORS"));
-        // Encode/decode/SM-activity fills consumed by the runner GPU telemetry decoder.
         assert!(out.contains("DCGM_FI_DEV_ENC_UTIL"));
         assert!(out.contains("DCGM_FI_DEV_DEC_UTIL"));
         assert!(out.contains("DCGM_FI_PROF_SM_ACTIVE"));
@@ -513,11 +510,9 @@ mod tests {
         let idle = faker.generate();
         faker.set_load(1.0);
         let busy = faker.generate();
-        // Very loose heuristic: idle util should be smaller than busy util
         let util_idle: f64 = extract_metric(&idle, "DCGM_FI_DEV_GPU_UTIL").unwrap();
         let util_busy: f64 = extract_metric(&busy, "DCGM_FI_DEV_GPU_UTIL").unwrap();
         assert!(util_idle < util_busy, "idle={util_idle} busy={util_busy}");
-        // SM_ACTIVE is a 0..1 ratio the runner scales x100.
         let sm_busy: f64 = extract_metric(&busy, "DCGM_FI_PROF_SM_ACTIVE").unwrap();
         assert!(
             (0.0..=1.0).contains(&sm_busy),

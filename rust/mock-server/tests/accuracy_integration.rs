@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Integration tests for the accuracy-dataset response mode.
-//!
-//! Spin up a real axum server with `--accuracy-dataset` loaded and assert the
-//! chat responses carry the ground-truth answer (correct/wrong at the seeded
-//! rate), the CoT shape, and the adversarial parser-choke frames.
+//! Wire tests for accuracy responses, telemetry, and adversarial SSE frames.
 
 use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
@@ -39,7 +35,6 @@ fn client() -> reqwest::Client {
         .unwrap()
 }
 
-/// Write a JSONL dataset to a uniquely named temp file and return its path.
 fn write_dataset(name: &str, lines: &[Value]) -> PathBuf {
     let mut body = String::new();
     for l in lines {
@@ -137,7 +132,6 @@ async fn unmatched_prompt_falls_through_to_corpus() {
     cfg.accuracy_correct_rate = 1.0;
     let (addr, _h) = spawn_server(cfg).await;
     let msg = chat_content(addr, "an entirely different prompt string").await;
-    // Not the formatted answer; falls back to normal generation.
     assert_ne!(msg["content"], "The answer is (B)");
 }
 
@@ -152,15 +146,13 @@ async fn live_accuracy_endpoint_and_prometheus_reflect_served_requests() {
         ],
     );
     let mut cfg = base_cfg(&ds);
-    cfg.accuracy_correct_rate = 1.0; // every matched answer is correct
+    cfg.accuracy_correct_rate = 1.0;
     let (addr, _h) = spawn_server(cfg).await;
 
-    // Three matched requests + one unmatched.
     for p in ["p one", "p two", "p three", "totally unknown prompt"] {
         let _ = chat_content(addr, p).await;
     }
 
-    // JSON endpoint.
     let acc: Value = client()
         .get(format!("http://{addr}/accuracy"))
         .send()
@@ -178,7 +170,6 @@ async fn live_accuracy_endpoint_and_prometheus_reflect_served_requests() {
     assert_eq!(acc["tasks"]["demo"]["matched"], 3);
     assert_eq!(acc["tasks"]["demo"]["correct"], 3);
 
-    // Prometheus scrape carries the same tally.
     let prom = client()
         .get(format!("http://{addr}/metrics"))
         .send()
@@ -217,8 +208,6 @@ async fn accuracy_endpoint_disabled_without_dataset() {
 
 #[tokio::test]
 async fn adversarial_null_object_frame_is_served_in_stream() {
-    // Many prompts at adversarial_rate 1.0: at least one draws NullObjectChunk,
-    // and every streamed request still returns 200 (the run must survive it).
     let lines: Vec<Value> = (0..40)
         .map(|i| json!({"text": format!("prompt number {i}"), "ground_truth": "B"}))
         .collect();

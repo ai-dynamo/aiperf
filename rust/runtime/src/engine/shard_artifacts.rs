@@ -1,22 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Per-shard artifact files for sharded exact-fold (Stage B).
+//! Per-shard artifact merging for sharded exact-fold execution.
 //!
-//! Stage A gave a `workers > 1` scheduled run per-shard EXACT accumulators merged
-//! into one within-tolerance summary, but a run WITH per-record file artifacts still
-//! fell back to the retain path because the shards had nowhere to stream their
-//! records/raw/CSV/parquet/outputs. Stage B closes that: each thread-per-core shard
-//! opens its OWN [`crate::engine::record_lane::RecordArtifactLane`] writing
-//! to a per-shard temp directory (`<artifact_dir>/.shard-<id>/…`), streams one row
-//! per completed record, and drops it — exactly like the single-thread lane. This
-//! module fuses those per-shard files into the single final artifact at the
-//! coordinator once every shard has finished.
-//!
-//! # Why a plain concatenation is correct
-//!
-//! Streamed per-record artifacts are emitted in COMPLETION order (the accepted
-//! decision — the fold-and-drop path cannot buffer the whole run to re-sort), so the
+//! Streamed per-record artifacts are emitted in completion order, so the
 //! final artifact is compared as a SORTED SET, never byte-for-byte against a specific
 //! dispatch order. A shard's rows are a disjoint subset of the run's records (the
 //! two-level partition tiles `0..total` exactly once — see
@@ -24,8 +11,6 @@
 //! with the SAME shared row builders the batch writers use, so a byte-append of the
 //! shard files yields the union of rows, which is set-identical to the batch writer
 //! over the union. No cross-shard ordering is needed.
-//!
-//! # Per-artifact merge rules
 //!
 //! - `records.jsonl` / `raw.jsonl`: byte-append each shard file (one compact JSON
 //!   object + `\n` per row). The JSONL lane creates its file eagerly, so an empty
@@ -43,8 +28,7 @@
 //!   `data` arrays, and write the final document once. Set-compared, so shard order
 //!   is irrelevant.
 //!
-//! `inputs.json` is NOT merged here: under sharded exact-fold it is generated ONCE at
-//! the coordinator from the resident dataset (the S4 up-front path), so the shards
+//! `inputs.json` is generated once at the coordinator from the resident dataset, so shards
 //! never capture it.
 
 use std::io::Write;
@@ -128,14 +112,14 @@ pub(crate) fn concatenate_shard_artifacts(
 }
 
 /// Fuse each cell's per-record artifact files into the single final artifact in the
-/// run's real artifact dir (Stage D, same-host cellular path).
+/// run's artifact directory.
 ///
 /// Unlike the sharded path, a cell's `artifact_dir` IS its `temp_root/cell-{id}` dir,
-/// so under exact-fold (or the retain batch tail) each cell already wrote its merged
+/// Under exact-fold or the retain batch tail, each cell writes its merged
 /// per-record artifacts at `cell_dir.join(relative)` — the FULL relative path, not the
 /// flattened per-shard file name. The controller has every cell dir locally (same
-/// host), so Stage D is exactly the Stage B concat with the per-cell dirs as the
-/// shards: byte-append records/raw JSONL, header-once + data-append CSV, row-group
+/// host), so per-cell directories are merged as shards: byte-append records/raw
+/// JSONL, header-once + data-append CSV, row-group
 /// concat parquet, and data-array merge outputs.json. Set-compared (completion order
 /// accepted), identical to the in-process sharded merge.
 ///
@@ -189,9 +173,8 @@ fn concatenate_artifacts(
 
 /// Copy one cell's `inputs.json` verbatim into the real artifact dir.
 ///
-/// Unlike the per-record artifacts, `inputs.json` is a single FULL-dataset document —
-/// the up-front (S4) `write_inputs_json` output over the whole resident dataset — that
-/// every cell generates IDENTICALLY (same dataset, same seed): each cell's
+/// Unlike per-record artifacts, `inputs.json` is a full-dataset document generated
+/// identically by every cell from the same dataset and seed. Each cell's
 /// `cell_dir.join(relative)` is byte-identical, so there is nothing to merge. The
 /// controller simply copies the FIRST cell dir that produced the file into
 /// `artifact_dir.join(relative)`, so a cellular run emits the exact same `inputs.json`
@@ -344,9 +327,6 @@ mod tests {
     use crate::metrics_core::{MetricsConfig, Phase, RecordIngest, TokenCounts};
     use uuid::Uuid;
 
-    /// One synthetic captured record. `visible`/`reasoning` populate the outputs
-    /// stream; `phase` gates warmup exclusion; a cancelled record exercises the CSV
-    /// error tail. Distinct `session_num` per record keys the set comparisons.
     fn record(session_num: u64, phase: Phase, cancelled: bool) -> CapturedRecord {
         let mut ingest = RecordIngest::minimal(1_000_000, 11_000_000, phase);
         ingest.session_num = session_num;
@@ -374,8 +354,6 @@ mod tests {
         }
     }
 
-    /// A representative run: six profiling records (one cancelled) plus a warmup
-    /// record `outputs.json` must exclude.
     fn union_records() -> Vec<CapturedRecord> {
         vec![
             record(1, Phase::Profiling, false),
@@ -388,7 +366,6 @@ mod tests {
         ]
     }
 
-    /// The final relative artifact paths under a run directory.
     fn all_artifacts() -> ArtifactSpec {
         ArtifactSpec {
             records_path: Some(PathBuf::from("profile_export.jsonl")),
@@ -401,7 +378,6 @@ mod tests {
         }
     }
 
-    /// Drive one shard slice through its own per-shard lane (all artifacts enabled).
     fn drive_shard_lane(
         artifact_dir: &Path,
         shard_id: usize,
@@ -430,7 +406,6 @@ mod tests {
         lane.finish().unwrap();
     }
 
-    /// The line SET (order-independent) of a text file, or empty when absent.
     fn line_set(path: &Path) -> BTreeMap<String, usize> {
         let mut set = BTreeMap::new();
         if let Ok(text) = std::fs::read_to_string(path) {
@@ -441,9 +416,6 @@ mod tests {
         set
     }
 
-    /// Per-shard lanes over disjoint slices + concat == the batch writer over the
-    /// union, as a SET, for records/raw/CSV/outputs (and parquet under its feature).
-    /// One shard is deliberately empty (no rows) to exercise the empty-shard path.
     #[test]
     fn per_shard_concat_matches_batch_over_union() {
         let config = MetricsConfig::default();
@@ -451,13 +423,11 @@ mod tests {
         let artifacts = all_artifacts();
         let workers = 3usize;
 
-        // Disjoint shard slices: [0..3], [] (empty), [3..7].
         let shard_dir_root = tempfile::tempdir().unwrap();
         let slices: [&[CapturedRecord]; 3] = [&records[0..3], &[], &records[3..7]];
         for (id, slice) in slices.iter().enumerate() {
             drive_shard_lane(shard_dir_root.path(), id, slice, &artifacts, &config);
         }
-        // The empty shard created its eager JSONL files but no CSV/parquet.
         assert!(
             !shard_artifact_path(
                 shard_dir_root.path(),
@@ -470,7 +440,6 @@ mod tests {
 
         concatenate_shard_artifacts(shard_dir_root.path(), &artifacts, workers).unwrap();
 
-        // The per-shard temp dirs are cleaned up.
         for id in 0..workers {
             assert!(
                 !shard_dir(shard_dir_root.path(), id).exists(),
@@ -478,7 +447,6 @@ mod tests {
             );
         }
 
-        // Batch writers over the union into a separate dir.
         let batch_dir = tempfile::tempdir().unwrap();
         write_records_jsonl(
             &batch_dir.path().join("profile_export.jsonl"),
@@ -498,7 +466,6 @@ mod tests {
         .unwrap();
         write_outputs_json(&batch_dir.path().join("outputs.json"), &records, &config).unwrap();
 
-        // records.jsonl / raw.jsonl: line SET parity.
         for name in ["profile_export.jsonl", "profile_export_raw.jsonl"] {
             assert_eq!(
                 line_set(&shard_dir_root.path().join(name)),
@@ -507,7 +474,6 @@ mod tests {
             );
         }
 
-        // CSV: identical header + identical data-row SET.
         let merged_csv =
             std::fs::read_to_string(shard_dir_root.path().join("profile_export_records.csv"))
                 .unwrap();
@@ -524,8 +490,6 @@ mod tests {
             "CSV line set (header once + data rows) must equal the batch writer"
         );
 
-        // outputs.json: same schema_version and same data SET after sorting by
-        // (session_num, turn_index); warmup excluded (six profiling records).
         let sort_data = |path: &Path| -> serde_json::Value {
             let mut doc: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
@@ -544,8 +508,6 @@ mod tests {
         assert_eq!(merged_outputs["data"].as_array().unwrap().len(), 6);
         assert_eq!(merged_outputs, batch_outputs);
 
-        // parquet: row-count parity (SET/schema parity proven in
-        // `crate::export::per_record_parquet::concat_shards_matches_batch_over_union`).
         #[cfg(feature = "parquet")]
         {
             use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -579,10 +541,6 @@ mod tests {
         }
     }
 
-    /// Drive one cell slice through a lane pointed straight at the cell's own dir
-    /// (`cell_dir.join(relative)`), exactly as a cell's execute path does when its
-    /// `artifact_dir` is its `temp_root/cell-{id}` dir. Mirrors [`drive_shard_lane`] but
-    /// with the cell-dir (full relative path) layout, not the flattened per-shard file.
     fn drive_cell_lane(
         cell_dir: &Path,
         slice: &[CapturedRecord],
@@ -609,12 +567,6 @@ mod tests {
         lane.finish().unwrap();
     }
 
-    /// Stage D: per-cell lanes over disjoint slices (each writing to its own
-    /// `cell-{id}` dir) + the controller's cellular concat == the batch writer over the
-    /// union, as a SET, for records/raw/CSV/outputs (and parquet under its feature). One
-    /// cell is deliberately empty. This is the same SET-parity bar the sharded concat
-    /// meets, but exercising the cell-dir (full relative path) source layout and the
-    /// controller-owned (no source deletion) cleanup contract.
     #[test]
     fn per_cell_concat_matches_batch_over_union() {
         let config = MetricsConfig::default();
@@ -622,22 +574,18 @@ mod tests {
         let artifacts = all_artifacts();
         let cell_count = 3usize;
 
-        // The controller's throwaway scratch tree with one dir per cell.
         let temp_root = tempfile::tempdir().unwrap();
         let cell_dirs: Vec<PathBuf> = (0..cell_count)
             .map(|id| temp_root.path().join(format!("cell-{id}")))
             .collect();
-        // Disjoint cell slices: [0..3], [] (empty), [3..7].
         let slices: [&[CapturedRecord]; 3] = [&records[0..3], &[], &records[3..7]];
         for (dir, slice) in cell_dirs.iter().zip(slices) {
             drive_cell_lane(dir, slice, &artifacts, &config);
         }
 
-        // The real run artifact dir the controller fuses into (separate from the scratch).
         let run_dir = tempfile::tempdir().unwrap();
         concatenate_cell_artifacts(&cell_dirs, run_dir.path(), &artifacts).unwrap();
 
-        // The controller does NOT delete cell dirs (ScratchTreeGuard owns the scratch).
         for dir in &cell_dirs {
             assert!(
                 dir.exists(),
@@ -646,7 +594,6 @@ mod tests {
             );
         }
 
-        // Batch writers over the union into a separate dir.
         let batch_dir = tempfile::tempdir().unwrap();
         write_records_jsonl(
             &batch_dir.path().join("profile_export.jsonl"),
@@ -737,8 +684,6 @@ mod tests {
         }
     }
 
-    /// An all-empty run (every shard saw zero displayable rows): the JSONL finals are
-    /// empty files, and the lazy CSV/parquet/outputs behave like the batch writer.
     #[test]
     fn all_empty_shards_leave_empty_jsonl_and_no_csv() {
         let config = MetricsConfig::default();
@@ -750,16 +695,13 @@ mod tests {
         }
         concatenate_shard_artifacts(dir.path(), &artifacts, workers).unwrap();
 
-        // JSONL finals exist and are empty.
         for name in ["profile_export.jsonl", "profile_export_raw.jsonl"] {
             let bytes = std::fs::read(dir.path().join(name)).unwrap();
             assert!(bytes.is_empty(), "{name} is an empty file");
         }
-        // No CSV (zero displayable rows), no parquet.
         assert!(!dir.path().join("profile_export_records.csv").exists());
         #[cfg(feature = "parquet")]
         assert!(!dir.path().join("profile_export.parquet").exists());
-        // outputs.json still a valid empty document.
         let outputs: serde_json::Value =
             serde_json::from_slice(&std::fs::read(dir.path().join("outputs.json")).unwrap())
                 .unwrap();

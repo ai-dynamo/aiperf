@@ -1,25 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! The one classification a cellular run is dispatched on: is it a scheduled
-//! synthetic/linear run or a graph program?
-//!
-//! [`CellularRunKind`] is the single seam both sides of the cellular split name:
-//! the controller ([`cellular_controller`](crate::engine::cellular_controller))
-//! answers the four ways the two paths differ (phase validation, per-phase global
-//! ordinal bases, record merge, per-cell session-budget slicing) through the `impl`
-//! block that lives beside those controller-private helpers, while the cell and the
-//! frontend terminal envelope
-//! read the pure, controller-independent facts defined here (detection from the
-//! dataset format, the provenance `workload` label, and whether the retain-path
-//! multi-turn backstop applies). Keeping the enum here — rather than private to the
-//! controller — lets the cell name the kind explicitly instead of re-deriving
-//! graph-ness ad hoc from the dataset format, and lets the frontend label a run's
-//! provenance correctly.
-//!
-//! A future kind (e.g. a distinct gRPC-graph executor) is one variant plus the three
-//! controller arms; transport (`http`/`grpc`) is orthogonal to the kind — both run
-//! the same scheduled executor, so gRPC does NOT add a variant here.
+//! Cellular execution classification for scheduled and graph runs.
 
 use serde_json::Value;
 
@@ -41,14 +23,7 @@ pub(crate) fn is_graph_dataset(envelope: &Value) -> bool {
         })
 }
 
-/// Which execution path a cellular run drives. The scheduled arrival-paced executor
-/// and the graph trace executor differ in exactly four ways — how the phases are
-/// validated, whether a per-phase global ordinal base applies, how the cells'
-/// records merge, and whether the per-cell session budget is sliced — answered by
-/// the `impl` block in
-/// [`cellular_controller`](crate::engine::cellular_controller). The pure
-/// facts every consumer needs (detection, provenance label, multi-turn backstop,
-/// session-budget slicing) live here.
+/// The cellular execution path selected by the dataset format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CellularRunKind {
     /// Synthetic/linear scheduled runs: request-bounded phases, pre-tiled global
@@ -69,8 +44,7 @@ impl CellularRunKind {
         }
     }
 
-    /// The `workload` provenance label the frontend stamps on the terminal envelope.
-    /// Distinct from the `transport` label (`http`/`grpc`), which is orthogonal.
+    /// The `workload` label for the terminal envelope.
     pub fn workload_label(&self) -> &'static str {
         match self {
             Self::Scheduled => "scheduled",

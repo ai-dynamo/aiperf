@@ -483,9 +483,7 @@ mod tests {
 
     #[test]
     fn schema_accepts_python_integer_coercions_nullable_subagent_stats_and_wide_hashes() {
-        // Build the RawValue straight from text so the >u64::MAX hash keeps every
-        // digit — round-tripping through a `Value` would lose it without the
-        // (now removed) `arbitrary_precision` feature.
+        // RawValue preserves every digit of hashes larger than u64::MAX.
         let raw = RawValue::from_string(
             r#"{
                 "id":"trace","models":["m"],"block_size":"16.0",

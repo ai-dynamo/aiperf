@@ -3,9 +3,8 @@
 
 //! Direct phase lifecycle observation without a message bus.
 //!
-//! This trait retains the phase event content while deleting the ZMQ wire
-//! envelopes. Calls are synchronous and local because phase state is already
-//! serialized on one `LocalSet`.
+//! Calls are synchronous and local because phase state is serialized on one
+//! `LocalSet`.
 
 use std::cell::RefCell;
 

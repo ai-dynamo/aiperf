@@ -3,17 +3,7 @@
 mod common;
 use common::*;
 
-// Config v2 -> v2 runner -> direct online Graph-IR product proof.
-//
-// The Python originals drive the orchestrator internals directly
-// (`Installation` / `RustSubprocessExecutor`), stand up a custom
-// body-recording graph chat server, and assert against the raw protocol-v2
-// request wire and captured request bodies. The Rust `AIPerfHarness` shells
-// out to `python -m aiperf profile` against `aiperf-mock-server` and cannot
-// observe the v2 request wire or record per-dispatch bodies, so the deep
-// wire/body assertions are ported as `#[ignore]`d tests documenting the
-// required infrastructure. The CLI-expressible graph reachability run is
-// exercised directly.
+// Online graph wire checks requiring protocol capture and a body-recording server.
 
 use serde_json::json;
 
@@ -79,8 +69,7 @@ async fn test_python_config_v2_reaches_online_graph_adapter_without_dual_convers
     assert!(r.success(), "{}", r.stderr);
     assert_eq!(r.artifacts.request_count() as u32, 4);
 
-    // The following mirror the Python wire/body assertions that require
-    // protocol-v2 capture and the body-recording graph server:
+    // Required protocol-capture assertions:
     //   request["protocol_version"] == 2 && request["operation"] == "execute"
     //   request["run"]["cfg"]["transport"] == {"type": "http"}
     //   dataset["format"] == "dag_jsonl" && dataset["records"] == graph_rows()
@@ -111,8 +100,7 @@ async fn test_python_config_v2_graph_uses_shared_phase_ramp_adaptive_and_session
     assert!(r.success(), "{}", r.stderr);
     assert_eq!(r.artifacts.request_count() as u32, 4);
 
-    // The following mirror the Python assertions that require protocol-v2
-    // capture and the shared phase projection surface:
+    // Required phase-projection assertions:
     //   projected_phases[0]["seamless"] == false
     //   projected_phases[1]["seamless"] == true
     //   projected_phases[0]["concurrency_ramp"] == {duration: 0.01, strategy: linear}

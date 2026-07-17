@@ -302,9 +302,7 @@ pub(super) fn markdown_doc(r: &mut TemplateRenderer) -> Result<String, RecordedT
     let v1 = r.pick(VARS)?;
     let err = r.pick(ERRORS)?;
 
-    // Python builds the ENTIRE `lang_examples` dict (python/go/rust/typescript)
-    // before selecting one, so every language's `param_type`/`return_type` choice
-    // is drawn, in order, and only then is the example selected.
+    // Every language's parameter and return types are drawn before selection.
     let py_param = r
         .pick(&[
             "str", "int", "float", "bool", "dict", "list", "Any", "Optional",

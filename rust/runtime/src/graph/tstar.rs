@@ -2,16 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Deterministic per-trace `t*` sampling for snapshot-at-`t*` warmup partition.
 //!
-//! Byte-exact port of the agentx `t*` draw from
-//! `src/aiperf/timing/graph_ir_source.py:113-150` (`_sample_t_star` and
-//! `_seed_for_trace_lane`) plus the trace-duration helper from
-//! `src/aiperf/graph/analysis/snapshot.py:65` (`trace_duration_us`).
+//! The sampling and seed derivation must remain byte-exact with
+//! `graph_ir_source.py:_sample_t_star` and `_seed_for_trace_lane`.
 //!
 //! A sampling instant `t*` splits a trace's firings into a warmup prefix
 //! (`arrival_offset_us < t*`) and a profiled set. `t*` is drawn uniformly over
 //! `[start_min_ratio, start_max_ratio] * trace_duration`, with a LANE-salted,
-//! numpy-bit-compatible RNG so seeded Rust and Python produce identical draws.
-//! Python numpy is the fixed reference; this Rust conforms to it.
+//! NumPy-compatible RNG preserves deterministic cross-language draws.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -35,11 +32,11 @@ pub trait TStarSampler {
 
 /// Window-based `t*` sampler: `t* = uniform(min*dur, max*dur)`.
 ///
-/// Byte parity with `graph_ir_source.py:_sample_t_star` (lines 113-138): a
+/// Per `graph_ir_source.py:_sample_t_star`, a
 /// zero-or-negative duration or a collapsed window (`hi <= lo`, e.g. the
 /// default `[0, 0]`) yields a no-draw exact instant; otherwise a lane-salted
 /// numpy-compatible uniform draw. The result is a float (no integer-microsecond
-/// truncation), matching agentx.
+/// truncation).
 pub struct WindowTStarSampler {
     /// Lower window bound as a fraction of the trace duration.
     pub start_min_ratio: f64,
@@ -51,26 +48,23 @@ pub struct WindowTStarSampler {
 
 impl TStarSampler for WindowTStarSampler {
     fn sample_t_star(&self, trace_id: &str, lane: u64, duration_us: f64) -> f64 {
-        // graph_ir_source.py:132-135 -- non-positive duration collapses to 0.
         if duration_us <= 0.0 {
             return 0.0;
         }
         let lo = self.start_min_ratio * duration_us;
         let hi = self.start_max_ratio * duration_us;
-        // graph_ir_source.py:137-138 -- a collapsed window draws nothing.
         if hi <= lo {
             return lo.max(0.0);
         }
         let seed = seed_for_trace_lane(self.random_seed, trace_id, lane);
         let t = NumpyPcg64::from_u64_seed(seed).uniform(lo, hi);
-        // graph_ir_source.py:_plan_trace clamps with max(t_star, 0.0).
         t.max(0.0)
     }
 }
 
-/// Derive a per-(trace, lane) RNG seed (agentx `_seed_for_trace_lane`).
+/// Derive a per-(trace, lane) RNG seed.
 ///
-/// Byte-exact port of `graph_ir_source.py:138-150`: SHA-256 the ASCII string
+/// Per `graph_ir_source.py:_seed_for_trace_lane`, SHA-256 the ASCII string
 /// `"{base_seed}:{trace_id}:{lane}"` and take the low 8 bytes big-endian. This
 /// keeps per-(trace, lane) `t*` values deterministic given `base_seed` yet
 /// decorrelated across both traces and lanes.
@@ -83,16 +77,13 @@ pub fn seed_for_trace_lane(base_seed: u64, trace_id: &str, lane: u64) -> u64 {
     u64::from_be_bytes(low8)
 }
 
-/// Derive the legacy agentx `ShuffleSampler` child RNG seed from the RUN root.
+/// Derive the `ShuffleSampler` child RNG seed from the run root.
 ///
-/// Byte-exact port of `_RNGManager.derive` (agentx
-/// `common/random_generator.py:392-410`, the `sha256` low-8-big-endian child
-/// seed) specialized to the label `ShuffleSampler` requests at
-/// `dataset/dataset_samplers.py:76` (`rng.derive("dataset.sampler.shuffle")`):
+/// Per `_RNGManager.derive` and `dataset_samplers.py:ShuffleSampler`,
 /// SHA-256 the ASCII string `"{root_seed}:dataset.sampler.shuffle"` and take the
-/// low 8 bytes big-endian. The argument is the RUN root seed
+/// low 8 bytes big-endian. The argument is the run root seed
 /// (`rng.init(config.random_seed)`), NOT `t_star_random_seed`.
-pub fn legacy_shuffle_seed(root_seed: u64) -> u64 {
+pub fn sampler_shuffle_seed(root_seed: u64) -> u64 {
     let mut hasher = Sha256::new();
     hasher.update(format!("{root_seed}:dataset.sampler.shuffle").as_bytes());
     let digest = hasher.finalize();
@@ -101,17 +92,15 @@ pub fn legacy_shuffle_seed(root_seed: u64) -> u64 {
     u64::from_be_bytes(low8)
 }
 
-/// Derive the legacy agentx `RandomSampler` child RNG seed from the RUN root.
+/// Derive the `RandomSampler` child RNG seed from the run root.
 ///
-/// Byte-exact port of `_RNGManager.derive` (agentx
-/// `common/random_generator.py:392-410`) specialized to the label `RandomSampler`
-/// requests at `dataset/dataset_samplers.py` (`rng.derive("dataset.sampler.random")`):
+/// Per `_RNGManager.derive` and `dataset_samplers.py:RandomSampler`,
 /// SHA-256 the ASCII string `"{root_seed}:dataset.sampler.random"` and take the
 /// low 8 bytes big-endian. This is the SAME run-root derivation as
-/// [`legacy_shuffle_seed`], with a different salt, so a future sampler adds a salt
+/// [`sampler_shuffle_seed`], with a different salt, so a future sampler adds a salt
 /// rather than a new seed field. The result seeds a [`PythonMt19937`]
 /// (`random.Random(seed)`), NOT a numpy PCG64.
-pub fn legacy_random_seed(root_seed: u64) -> u64 {
+pub fn sampler_random_seed(root_seed: u64) -> u64 {
     let mut hasher = Sha256::new();
     hasher.update(format!("{root_seed}:dataset.sampler.random").as_bytes());
     let digest = hasher.finalize();
@@ -120,9 +109,9 @@ pub fn legacy_random_seed(root_seed: u64) -> u64 {
     u64::from_be_bytes(low8)
 }
 
-/// Persistent-epoch shuffle state for one corpus size (the legacy sampler model).
+/// Persistent-epoch shuffle state for one corpus size.
 ///
-/// agentx `ShuffleSampler` (`dataset/dataset_samplers.py:66`) shuffles
+/// `ShuffleSampler` (`dataset/dataset_samplers.py:66`) shuffles
 /// `arange(total)` in place at init (pass 0) with ONE generator, then re-shuffles
 /// that SAME persistent generator each time the cursor wraps (pass 1, 2, ...).
 /// This is a CONTINUOUS-STATE generator: pass `k` is `arange(total)` after
@@ -159,10 +148,9 @@ impl ShuffleEpochs {
     }
 }
 
-/// Persistent with-replacement draw state for one corpus size (legacy
-/// `RandomSampler`).
+/// Persistent with-replacement draw state for one corpus size.
 ///
-/// agentx `RandomSampler` (`dataset/dataset_samplers.py`) seeds ONE
+/// `RandomSampler` (`dataset/dataset_samplers.py`) seeds ONE
 /// `random.Random(rng.derive("dataset.sampler.random"))` at init and calls
 /// `choice(ids)` per draw — `ids[self._randbelow(len(ids))]`, i.e. a positional
 /// stream of `randbelow(total)` from a single persistent MT19937 (see
@@ -196,26 +184,23 @@ impl RandomStream {
     }
 }
 
-/// Resolved recycle-draw mode: the legacy sampler family a draw reproduces.
+/// Resolved recycle-draw mode.
 ///
-/// Each variant reproduces one agentx `dataset/dataset_samplers.py` sampler
-/// BYTE-EXACT. This is the trait-shaped enum the draw dispatches on; a new
-/// sampling policy adds a variant plus its draw branch here (and a derive salt on
-/// [`crate::rng::RngRoot`]), never a hardcoded mode string at a draw site.
+/// Each variant reproduces one `dataset_samplers.py` sampler byte-exactly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecycleDrawMode {
-    /// Legacy `SequentialSampler`: the cursor-with-wrap `x % total` draw.
+    /// `SequentialSampler`: the cursor-with-wrap `x % total` draw.
     Sequential,
-    /// Legacy `ShuffleSampler`: persistent-epoch shuffle (without replacement).
+    /// `ShuffleSampler`: persistent-epoch shuffle without replacement.
     Shuffle,
-    /// Legacy `RandomSampler`: CPython MT19937 `choice` (WITH replacement).
+    /// `RandomSampler`: CPython MT19937 `choice` with replacement.
     Random,
 }
 
 /// Strategy-aware corpus-index remap shared by every graph recycle draw site.
 ///
-/// Reproduces legacy agentx `SequentialSampler`/`ShuffleSampler`/`RandomSampler`
-/// (`dataset/dataset_samplers.py`) BYTE-EXACT: the SINGLE choke point every
+/// Reproduces `SequentialSampler`, `ShuffleSampler`, and `RandomSampler`
+/// (`dataset/dataset_samplers.py`) byte-exactly at the single remap point every
 /// cross-trace draw in the pressure lane fan-out, the pass-0 lane resolve, AND
 /// the profiling recycle draw routes through, so `--dataset-sampling-strategy`
 /// governs WHICH corpus template a freed lane serves without changing the draw
@@ -224,10 +209,10 @@ pub enum RecycleDrawMode {
 /// - `Shuffle` (without replacement) returns `epoch[x / total][x % total]` where
 ///   each epoch is the running array after one more in-place shuffle of the SAME
 ///   persistent numpy generator (the continuous-state model — see
-///   [`ShuffleEpochs`]), seeded once with [`legacy_shuffle_seed`]`(run_root)`;
+///   [`ShuffleEpochs`]), seeded once with [`sampler_shuffle_seed`]`(run_root)`;
 /// - `Random` (WITH replacement) returns the x-th `randbelow(total)` of a single
 ///   persistent CPython MT19937 (see [`RandomStream`]), seeded once with
-///   [`legacy_random_seed`]`(run_root)`.
+///   [`sampler_random_seed`]`(run_root)`.
 ///
 /// The per-`total` state is cached in a `RefCell` (single event-loop mutation);
 /// the derivation is deterministic given `(base_seed, total)`, so two instances
@@ -236,14 +221,14 @@ pub enum RecycleDrawMode {
 /// `PressureDraw` (pressure/pass-0 draws) and the
 /// [`crate::graph::workload::CyclingGraphTraceSource`] /
 /// `PartitionedGraphTraceSource` profiling recycle, so the profiling recycle
-/// continues the SAME order the pressure stage replays under (a freed profiling
-/// lane never re-serves a template the pressure stage already drew under a
+/// continues the same order pressure warmup replays under (a freed profiling
+/// lane never re-serves a template pressure warmup already drew under a
 /// different order).
 pub struct PermutationDraw {
-    /// The resolved legacy sampler family this draw reproduces.
+    /// The resolved sampler family.
     mode: RecycleDrawMode,
-    /// The legacy sampler child seed for the resolved mode ([`legacy_shuffle_seed`]
-    /// for `Shuffle`, [`legacy_random_seed`] for `Random`), both of the run root;
+    /// The sampler child seed for the resolved mode ([`sampler_shuffle_seed`]
+    /// for `Shuffle`, [`sampler_random_seed`] for `Random`), both of the run root;
     /// unused for `Sequential`.
     base_seed: u64,
     /// Per-`total` persistent shuffle-epoch state (`Shuffle` mode only).
@@ -258,16 +243,15 @@ impl PermutationDraw {
         Self::with_mode(RecycleDrawMode::Sequential, 0)
     }
 
-    /// Persistent-epoch shuffle draw (legacy `ShuffleSampler`, without
-    /// replacement). `base_seed` is the legacy `ShuffleSampler` child seed
-    /// ([`legacy_shuffle_seed`] of the run root), NOT `t_star_random_seed`.
+    /// Persistent-epoch `ShuffleSampler` draw without replacement.
+    /// `base_seed` is [`sampler_shuffle_seed`] of the run root, not
+    /// `t_star_random_seed`.
     pub fn shuffle(base_seed: u64) -> Self {
         Self::with_mode(RecycleDrawMode::Shuffle, base_seed)
     }
 
-    /// Persistent with-replacement draw (legacy `RandomSampler`). `base_seed` is
-    /// the legacy `RandomSampler` child seed ([`legacy_random_seed`] of the run
-    /// root).
+    /// Persistent with-replacement `RandomSampler` draw.
+    /// `base_seed` is [`sampler_random_seed`] of the run root.
     pub fn random(base_seed: u64) -> Self {
         Self::with_mode(RecycleDrawMode::Random, base_seed)
     }
@@ -317,10 +301,9 @@ impl PermutationDraw {
 
 /// Return the trace's intrinsic wall-clock span in microseconds.
 ///
-/// Port of `graph/analysis/snapshot.py:65` (`trace_duration_us`): the largest
+/// Per `graph/analysis/snapshot.py:trace_duration_us`, return the largest
 /// `arrival_offset_us` across the trace's node firings, `0.0` when no node
-/// carries timing. The Python side reads the offset from each elaborated
-/// firing; the Rust recorded-graph adapters store it as
+/// carries timing. Recorded-graph adapters store the offset as
 /// `node.metadata["arrival_offset_us"]` (a u64; see
 /// `graph/recorded/trie/mod.rs:190`). Every node in the resolved graph fires
 /// exactly once in the static elaboration, so the max over nodes equals the max
@@ -389,21 +372,18 @@ mod tests {
     }
 
     #[test]
-    fn legacy_shuffle_seed_matches_python_sha256_low8_be() {
+    fn sampler_shuffle_seed_matches_python_sha256_low8_be() {
         // python3 -c "import hashlib; print(int.from_bytes(
         //   hashlib.sha256(b'0:dataset.sampler.shuffle').digest()[:8],'big'))"
         // These are exactly the `seed` fields of the committed golden vectors.
-        assert_eq!(legacy_shuffle_seed(0), 5203359018791016587);
-        assert_eq!(legacy_shuffle_seed(42), 7029856620319297634);
-        assert_eq!(legacy_shuffle_seed(12345), 9928324691828912718);
+        assert_eq!(sampler_shuffle_seed(0), 5203359018791016587);
+        assert_eq!(sampler_shuffle_seed(42), 7029856620319297634);
+        assert_eq!(sampler_shuffle_seed(12345), 9928324691828912718);
     }
 
     #[test]
-    fn legacy_shuffle_sampler_golden_vectors() {
-        // Authoritative parity gate: for each committed vector, the persistent-
-        // epoch `PermutationDraw` seeded with the legacy `ShuffleSampler` child
-        // seed must reproduce the exact recycle-order `sequence` (pass 0, pass 1,
-        // into pass 2) that agentx `ShuffleSampler` emits for the same run root.
+    fn shuffle_sampler_golden_vectors() {
+        // Each child seed must reproduce the committed persistent-shuffle sequence.
         #[derive(serde::Deserialize)]
         struct Vector {
             root_seed: u64,
@@ -413,16 +393,16 @@ mod tests {
         }
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/data/legacy_shuffle_sampler_vectors.json"
+            "/tests/data/shuffle_sampler_vectors.json"
         );
-        let raw = std::fs::read_to_string(path).expect("read legacy shuffle vectors");
+        let raw = std::fs::read_to_string(path).expect("read shuffle sampler vectors");
         let vectors: Vec<Vector> =
-            serde_json::from_str(&raw).expect("parse legacy shuffle vectors");
+            serde_json::from_str(&raw).expect("parse shuffle sampler vectors");
         assert!(!vectors.is_empty(), "golden vectors must not be empty");
         for vector in &vectors {
             // The child-seed derivation itself is part of the parity contract.
             assert_eq!(
-                legacy_shuffle_seed(vector.root_seed),
+                sampler_shuffle_seed(vector.root_seed),
                 vector.seed,
                 "child seed for root {}",
                 vector.root_seed
@@ -441,22 +421,18 @@ mod tests {
     }
 
     #[test]
-    fn legacy_random_seed_matches_python_sha256_low8_be() {
+    fn sampler_random_seed_matches_python_sha256_low8_be() {
         // python3 -c "import hashlib; print(int.from_bytes(
         //   hashlib.sha256(b'42:dataset.sampler.random').digest()[:8],'big'))"
         // These are exactly the `seed` fields of the committed random golden vectors.
-        assert_eq!(legacy_random_seed(0), 16856100311250370471);
-        assert_eq!(legacy_random_seed(42), 2008847916738778864);
-        assert_eq!(legacy_random_seed(12345), 3869323597464144403);
+        assert_eq!(sampler_random_seed(0), 16856100311250370471);
+        assert_eq!(sampler_random_seed(42), 2008847916738778864);
+        assert_eq!(sampler_random_seed(12345), 3869323597464144403);
     }
 
     #[test]
-    fn legacy_random_sampler_golden_vectors() {
-        // Authoritative parity gate for the WITH-replacement recycle draw: for
-        // each committed vector, the persistent CPython MT19937 `PermutationDraw`
-        // seeded with the legacy `RandomSampler` child seed must reproduce the
-        // exact `choice`-index `sequence` agentx `RandomSampler` emits for the
-        // same run root. The child-seed derivation is part of the contract.
+    fn random_sampler_golden_vectors() {
+        // Each child seed must reproduce the committed CPython MT19937 sequence.
         #[derive(serde::Deserialize)]
         struct Vector {
             root_seed: u64,
@@ -470,18 +446,17 @@ mod tests {
         }
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/data/legacy_random_sampler_vectors.json"
+            "/tests/data/random_sampler_vectors.json"
         );
-        let raw = std::fs::read_to_string(path).expect("read legacy random sampler vectors");
-        let fixtures: Fixtures =
-            serde_json::from_str(&raw).expect("parse legacy random sampler vectors");
+        let raw = std::fs::read_to_string(path).expect("read random sampler vectors");
+        let fixtures: Fixtures = serde_json::from_str(&raw).expect("parse random sampler vectors");
         assert!(
             !fixtures.sampler.is_empty(),
             "sampler vectors must not be empty"
         );
         for vector in &fixtures.sampler {
             assert_eq!(
-                legacy_random_seed(vector.root_seed),
+                sampler_random_seed(vector.root_seed),
                 vector.seed,
                 "child seed for root {}",
                 vector.root_seed
@@ -505,7 +480,7 @@ mod tests {
         // two instances agree regardless of the order positions are requested (the
         // incremental stream cache is only an optimization). Unlike shuffle, a full
         // pass need NOT cover every index (replacement permits repeats).
-        let seed = legacy_random_seed(42);
+        let seed = sampler_random_seed(42);
         let total = 8usize;
         let forward = PermutationDraw::random(seed);
         let reverse = PermutationDraw::random(seed);

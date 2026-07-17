@@ -1,18 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! End-to-end verification of the native `aiperf` entry point's logging parity
-//! with the Python frontend (`src/aiperf/common/logging.py`).
-//!
-//! Unlike the rest of the e2e suite (which drives `python -m aiperf`), this test
-//! runs the native `aiperf` binary DIRECTLY as the entry point, so it exercises
-//! the Rust logging stack end to end:
-//!
-//! - the default level is INFO (no verbosity flag given),
-//! - the entry-point lifecycle lines (`Starting native AIPerf run` … `Native
-//!   AIPerf run completed`) are emitted,
-//! - the `--execute` child's runtime narrative (dataset / phase lifecycle /
-//!   export) is forwarded as `aiperf runner:` lines, and
-//! - every line lands in `<artifact_dir>/logs/aiperf.log` (Python's FileHandler).
 
 mod common;
 
@@ -22,9 +9,6 @@ use std::time::{Duration, Instant};
 
 use common::{DEFAULT_MODEL, MockServer, exec_binary};
 
-/// Drive the native `aiperf` binary directly (bypassing `python -m aiperf`) and
-/// return the exit code. Bounded run, with a hard timeout guard. `extra_args` and
-/// `extra_env` let callers vary the workload / logging config.
 fn run_native_profile(
     mock_url: &str,
     artifact_dir: &std::path::Path,
@@ -53,7 +37,7 @@ fn run_native_profile(
     }
 
     let mut child = cmd.spawn().expect("failed to spawn native aiperf");
-    // Drain both pipes so a full OS pipe buffer can never deadlock the child.
+    // Drain both pipes concurrently to prevent child blockage on full buffers.
     let mut out = child.stdout.take().expect("child stdout");
     let mut err = child.stderr.take().expect("child stderr");
     let out_thread = std::thread::spawn(move || {
@@ -103,16 +87,11 @@ async fn native_front_door_writes_full_log_narrative() {
     );
     assert_eq!(exit, 0, "native aiperf profile run should exit 0");
 
-    // Python's `setup_rich_logging` writes to `<artifact_dir>/logs/aiperf.log`;
-    // the native entry point must produce the same file.
     let log_path = dir.path().join("logs").join("aiperf.log");
     let log = std::fs::read_to_string(&log_path)
         .unwrap_or_else(|e| panic!("logs/aiperf.log missing at {}: {e}", log_path.display()));
 
-    // The run's milestone narrative, in the order it must appear. Entry-point
-    // lines come from `aiperf_cli`; the runtime lines are forwarded from the
-    // `--execute` child as `aiperf runner:` lines. Wording mirrors the Python
-    // frontend so existing log-scraping keeps matching on the native path.
+    // Existing log consumers depend on these exact milestones and their order.
     let ordered_milestones = [
         "Starting native AIPerf run",
         "Initialized 2 phase(s)",
@@ -138,8 +117,6 @@ async fn native_front_door_writes_full_log_narrative() {
         search_from += found + milestone.len();
     }
 
-    // Default level is INFO: the file must carry INFO lines and no DEBUG/TRACE
-    // (no verbosity flag was passed).
     assert!(
         log.contains(" INFO "),
         "log should contain INFO-level lines"
@@ -150,18 +127,12 @@ async fn native_front_door_writes_full_log_narrative() {
     );
 }
 
-/// With `AIPERF_STATS_INTERVAL` set, the profiling phase must emit the periodic
-/// `[realtime MM:SS profiling]` metrics block (header + `done/ok/err` counter row
-/// + TTFT/ITL/e2e latency rows) into `logs/aiperf.log`. Request-rate pacing
-/// guarantees the profiling phase spans several intervals regardless of mock
-/// speed, so at least one block fires.
 #[tokio::test]
 async fn realtime_metrics_block_is_logged() {
     let mock = MockServer::start();
     let dir = tempfile::tempdir().expect("tempdir");
 
-    // request-rate 5 over 20 requests => ~4s of arrivals; a 1s interval yields
-    // multiple ticks.
+    // Pacing keeps profiling active long enough to emit interval metrics.
     let exit = run_native_profile(
         &mock.url,
         dir.path(),
@@ -190,8 +161,6 @@ async fn realtime_metrics_block_is_logged() {
         "expected at least one [realtime …] block header in the log; got none.\n\
          --- log ---\n{log}"
     );
-    // The block carries the counter row and the latency rows (proving the live
-    // per-completion accumulator was fed, not just a counts heartbeat).
     assert!(
         log.contains("done=") && log.contains("ok=") && log.contains("err="),
         "realtime block must include the done/ok/err counter row.\n--- log ---\n{log}"
@@ -202,7 +171,6 @@ async fn realtime_metrics_block_is_logged() {
     );
 }
 
-/// `AIPERF_STATS_INTERVAL=0` disables the realtime heartbeat entirely.
 #[tokio::test]
 async fn realtime_heartbeat_disabled_by_zero_interval() {
     let mock = MockServer::start();

@@ -1,47 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Phase-1 characterization tests for the `workers > 1` execution paths
-//! (Graham-King verified-port standard).
+//! Characterization tests for `workers > 1` execution.
 //!
-//! [`execute_native_inner`](crate::engine::execute) now runs ONE thread-per-core
-//! execution model for a scheduled run:
+//! Rate-based phases partition request budgets; `user_centric` and
+//! `fixed_schedule` partition conversations. Static-accuracy evaluators remain
+//! coordinator-local while dispatch and capture are sharded.
 //!
-//! - **sharded** ([`crate::engine::sharded_scheduled`]) — chosen for EVERY
-//!   `workers > 1` run, whatever the phase shape, INCLUDING static accuracy. Each
-//!   OS thread is a self-contained sub-cell with a co-located transport; there is
-//!   no per-request cross-thread hop. Rate-based phases (Concurrency/Poisson/Gamma/
-//!   Constant) partition the request budget; the trace-driven
-//!   `user_centric`/`fixed_schedule` phases partition per conversation (each
-//!   sub-cell owns a disjoint conversation subset via its two-level partition). A
-//!   static-accuracy run shards its dispatch+capture too: the `!Send`
-//!   evaluator/grader stays on the coordinator, but each shard owns an
-//!   `AccuracyRecordProcessor` over the shared read-only associations and the
-//!   disjoint `Send` captures concatenate at the coordinator for a single grade.
-//! - **co-located single worker** — `workers <= 1` only.
-//!
-//! Phase 2 unified these: the sharded model covers ALL `workers > 1` shapes and the
-//! old cross-thread `ThreadPerCoreExecutor` hop is deleted. The last accuracy clamp
-//! (workers forced to 1 for static accuracy) is removed. These tests pin the
-//! captured per-record output and record counts so that unification stays
-//! data-equivalent (exact multiset parity for rate-based and fixed_schedule,
-//! aggregate parity for open-loop user_centric), and the static-accuracy tally
-//! identical between `workers == 1` and `workers == 4`.
-//!
-//! # Why the assertions are DATA-level, not ns-level
-//!
-//! `workers > 1` is inherently a **real-clock** run: a `SimClock` can only advance
-//! the single reactor its idle-pump drives, so
-//! [`execute_prepared_native_plan_uncommitted_with_runtime_factories`](crate::engine::execute)
-//! forces `workers = 1` under the virtual clock (the thread-per-core workers own
-//! private reactors the pump cannot reach). There is therefore NO deterministic-ns
-//! lib-level path for `workers > 1`; the only reproducible fixture is a
-//! fixed-latency mock with tolerance on timing and exactness on data — exactly the
-//! `CLAUDE.md` feature-complete recipe. These tests pin the reproducible facts:
-//! record count, OSL (generated-token count), ISL (fixed synthetic input length),
-//! status, and cross-model DATA parity between `workers = 1` and `workers = 4`
-//! (the invariant Phase 2 must preserve), and assert timing only for presence and
-//! positivity.
+//! Multi-worker execution uses real clocks because `SimClock` advances only its
+//! own reactor. These tests therefore assert exact data and record-count
+//! invariants while checking timing only for presence and positivity.
 
 #[cfg(test)]
 mod tests {
@@ -80,23 +48,15 @@ mod tests {
     use crate::rng::RngRoot;
     use crate::transport::core::ConnectionReuseStrategy;
 
-    /// Fixed synthetic input sequence length every conversation carries.
     const FIXED_ISL: u64 = 12;
-    /// Fixed generated-token count the mock returns for every request (== OSL).
     const FIXED_OSL: usize = 6;
-    /// Mock time-to-first-token, milliseconds.
     const MOCK_TTFT_MS: u64 = 8;
-    /// Mock inter-token latency, milliseconds.
     const MOCK_ITL_MS: u64 = 2;
 
-    /// A fixed-latency OpenAI-shaped SSE chat-completions mock.
+    /// Fixed-latency OpenAI-compatible SSE server.
     ///
-    /// Runs on its own dedicated OS thread with a multi-threaded runtime so every
-    /// thread-per-core worker (each on a private `current_thread` reactor) can
-    /// connect independently. Every request — regardless of path or body — gets an
-    /// identical deterministic reply: after `MOCK_TTFT_MS`, `FIXED_OSL`
-    /// content-delta chunks each `MOCK_ITL_MS` apart (fixed content `"x"`), then a
-    /// usage frame with `completion_tokens == FIXED_OSL`, then `[DONE]`.
+    /// A multi-threaded runtime accepts concurrent worker connections. Responses
+    /// contain `FIXED_OSL` timed chunks, authoritative usage, and `[DONE]`.
     struct FixedMock {
         base_url: String,
         shutdown: Option<tokio::sync::oneshot::Sender<()>>,
@@ -160,8 +120,6 @@ mod tests {
         }
     }
 
-    /// One connection's handler: stream the fixed SSE reply with real inter-token
-    /// delays (an mpsc channel drained as an HTTP body stream).
     async fn serve_sse(
         _request: Request<hyper::body::Incoming>,
     ) -> Result<
@@ -190,7 +148,6 @@ mod tests {
                     return;
                 }
             }
-            // Terminal usage frame (empty choices) — authoritative completion count.
             let usage = json!({
                 "id": "chatcmpl-fixed",
                 "object": "chat.completion.chunk",
@@ -225,10 +182,6 @@ mod tests {
         entries: usize,
         turns: usize,
     ) -> crate::engine::dataset_input::SyntheticDatasetSpec {
-        // Fixed ISL, zero stddev, no OSL distribution: every first turn is exactly
-        // FIXED_ISL input tokens. `turns > 1` yields multi-turn conversations
-        // (required by user_centric); later turns accumulate context so only the
-        // first-turn ISL is FIXED_ISL. Deterministic.
         let mut spec = json!({
             "entries": entries,
             "random_seed": 7,
@@ -258,7 +211,6 @@ mod tests {
         local.block_on(&runtime, fut)
     }
 
-    /// Build the canonical synthetic dataset on a throwaway current-thread runtime.
     fn build_dataset(
         registry: &AIPerfRegistry,
         entries: usize,
@@ -284,10 +236,6 @@ mod tests {
         }
     }
 
-    /// Build a single-turn `mooncake_trace` dataset whose every conversation
-    /// carries a first-turn `timestamp_ms` — the shape `fixed_schedule` requires
-    /// (it bails on a first turn missing `timestamp_ms`). Fixed `input_length ==
-    /// FIXED_ISL`, `output_length == FIXED_OSL`; ascending timestamps.
     fn build_mooncake_dataset(
         registry: &AIPerfRegistry,
         entries: usize,
@@ -345,8 +293,6 @@ mod tests {
         }])
     }
 
-    /// Assemble one `NativeRunSpec` for a fixed profiling `phase`, pointed at the
-    /// mock, writing per-record JSONL into `artifact_dir`.
     fn plan(
         base_url: &str,
         artifact_dir: &Path,
@@ -380,8 +326,6 @@ mod tests {
         }
     }
 
-    /// Drive one run to completion against `mock` and return the parsed per-record
-    /// JSONL rows (each row's `metadata` + `metrics` map).
     fn run_and_read_records(
         registry: &AIPerfRegistry,
         mock: &FixedMock,
@@ -401,7 +345,6 @@ mod tests {
             None,
         )
         .expect("native run must complete");
-        // No profiling-phase errors: the report groups them into `errors`.
         assert!(
             report_error_count(&report) == 0,
             "expected zero profiling errors, report: {report:?}"
@@ -410,10 +353,7 @@ mod tests {
     }
 
     fn report_error_count<T: serde::Serialize>(report: &T) -> usize {
-        // The report serializes its aggregate; the errors array is the grouped
-        // profiling terminal errors. Read it structurally so the assertion does not
-        // depend on private fields (and so the test never names the `NativeReport`
-        // type, whose re-export is private).
+        // Structural access avoids depending on the private report type.
         let value = serde_json::to_value(report).unwrap();
         value
             .get("errors")
@@ -439,7 +379,6 @@ mod tests {
             .filter(|line| !line.trim().is_empty())
             .map(|line| serde_json::from_str::<Value>(line).unwrap())
             .filter(|row| {
-                // Single profiling phase only; guard anyway.
                 row.get("metadata")
                     .and_then(|m| m.get("benchmark_phase"))
                     .map(|phase| phase != "warmup" && phase != "Warmup")
@@ -455,7 +394,6 @@ mod tests {
             .and_then(Value::as_f64)
     }
 
-    /// The exact DATA facts Phase 2 must preserve for one record, order-independent.
     fn data_key(row: &Value) -> (i64, i64) {
         (
             metric(row, "input_sequence_length").unwrap().round() as i64,
@@ -463,11 +401,6 @@ mod tests {
         )
     }
 
-    /// Assert every record carries the pinned fixed OSL, a present positive
-    /// latency, and no error — the deterministic per-record facts. When
-    /// `expect_fixed_isl` is set (single-turn datasets), every ISL must equal
-    /// `FIXED_ISL`; multi-turn datasets only require a positive ISL (later turns
-    /// accumulate context).
     fn assert_pinned_records(rows: &[Value], expected_count: usize, expect_fixed_isl: bool) {
         assert_eq!(
             rows.len(),
@@ -496,7 +429,6 @@ mod tests {
             }
             let latency = metric(row, "request_latency").expect("request_latency present");
             assert!(latency > 0.0, "request_latency must be positive: {latency}");
-            // With OSL >= 2 the reconciled inter-token latency is defined.
             assert!(
                 metric(row, "inter_token_latency").is_some(),
                 "inter_token_latency present for multi-token records"
@@ -516,7 +448,6 @@ mod tests {
         keys
     }
 
-    /// The distinct set of turn shapes present, order-independent.
     fn distinct_data_keys(rows: &[Value]) -> Vec<(i64, i64)> {
         let mut keys: Vec<(i64, i64)> = rows.iter().map(data_key).collect();
         keys.sort_unstable();
@@ -524,11 +455,6 @@ mod tests {
         keys
     }
 
-    // ============================ concurrency ============================
-
-    /// `workers > 1` + concurrency is the SHARDED path today
-    /// (`sharded_scheduled::run_sharded_scheduled`). Pin its per-record output and
-    /// prove it is DATA-identical to the single-thread `workers == 1` baseline.
     #[test]
     fn concurrency_workers_gt_1_is_sharded_and_data_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();
@@ -546,7 +472,6 @@ mod tests {
             .unwrap()
         };
 
-        // Baseline: single-thread coordinator (workers == 1, NOT sharded).
         let baseline = run_and_read_records(
             &registry,
             &mock,
@@ -556,7 +481,6 @@ mod tests {
         );
         assert_pinned_records(&baseline, requests as usize, true);
 
-        // workers == 4 selects the sharded path (rate-based + accuracy.is_none()).
         let sharded = run_and_read_records(
             &registry,
             &mock,
@@ -573,7 +497,6 @@ mod tests {
         );
     }
 
-    /// `workers > 1` + Poisson request-rate also shards. Pin it.
     #[test]
     fn poisson_workers_gt_1_is_sharded_and_data_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();
@@ -616,13 +539,6 @@ mod tests {
         );
     }
 
-    // ============================ user_centric ============================
-
-    /// `workers > 1` + user_centric now shards per conversation (each sub-cell owns
-    /// a disjoint conversation subset and runs `1/W` of the users/rate/budget). Pin
-    /// the captured output and prove `workers == 4` draws from the same turn-shape
-    /// universe and dispatches the same total count as `workers == 1` — the
-    /// aggregate invariants an open-loop workload preserves under sharding.
     #[test]
     fn user_centric_workers_gt_1_thread_per_core_data_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();
@@ -640,7 +556,6 @@ mod tests {
             }))
             .unwrap()
         };
-        // user_centric requires multi-turn conversations (average turns >= 2).
         let dataset = || build_dataset(&registry, entries, 2);
 
         let baseline = run_and_read_records(&registry, &mock, 1, dataset(), phase());
@@ -649,14 +564,8 @@ mod tests {
         let threaded = run_and_read_records(&registry, &mock, 4, dataset(), phase());
         assert_pinned_records(&threaded, requests as usize, false);
 
-        // CHARACTERIZATION FINDING: user_centric is OPEN-LOOP churn — the exact
-        // first-turn/second-turn split under a `requests` budget is timing-sensitive
-        // (how many users reached their 2nd turn before the budget filled), so it
-        // differs between `workers == 1` and `workers == 4` under the real clock. The
-        // deterministic, Phase-2-preservable invariants are therefore the total
-        // record count (== the budget) and the SET of turn shapes dispatched (the
-        // same conversations feed both), NOT the per-shape multiset. Phase 2 parity
-        // for user_centric must be asserted at this aggregate level, not per-turn.
+        // Real-clock churn makes the per-shape multiset timing-dependent; the
+        // stable invariant is the set of turn shapes.
         assert_eq!(
             distinct_data_keys(&baseline),
             distinct_data_keys(&threaded),
@@ -664,19 +573,10 @@ mod tests {
         );
     }
 
-    // ============================ fixed_schedule ============================
-
-    /// `workers > 1` + fixed_schedule now shards per conversation: each sub-cell
-    /// owns a disjoint conversation subset (its two-level partition) and replays
-    /// that subset's full authored schedule, so the W threads tile the trace
-    /// exactly. Pin the captured output and prove `workers == 4` is DATA-identical
-    /// (exact multiset parity) to `workers == 1`.
     #[test]
     fn fixed_schedule_workers_gt_1_thread_per_core_data_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();
         let mock = FixedMock::spawn();
-        // Fixed-schedule dispatches one first turn per conversation, so the record
-        // count equals the conversation count, not a `requests` budget.
         let entries = 10;
         let phase = || -> PhaseSpec {
             serde_json::from_value(json!({
@@ -702,7 +602,6 @@ mod tests {
             phase(),
         );
 
-        // Fixed-schedule dispatches one first turn per conversation.
         assert_eq!(
             baseline.len(),
             entries,
@@ -717,22 +616,6 @@ mod tests {
         );
     }
 
-    // ============================ static-accuracy ============================
-
-    // A static-accuracy run NOW shards (the last clamp removed). Its `!Send`
-    // evaluator/grader stays on the coordinator, but the per-record CAPTURE is pure
-    // `Send` data — each shard owns an `AccuracyRecordProcessor` over the shared
-    // read-only associations, and the disjoint captures concatenate at the
-    // coordinator for a single main-thread grade (keyed by `problem_id`, so the
-    // merged set is order-independent).
-    //
-    // The full production evaluator is a pinned Python subprocess (lighteval/harness)
-    // a pure-Rust `--lib` test cannot spawn, so the evaluator is injected here through
-    // its trait seam (`StaticAccuracyEvaluatorFactory`). The evaluator produces the
-    // problems and grades the captured responses; the FixedMock is the inference
-    // target. The invariant: the graded tally is IDENTICAL for `workers == 1` and
-    // `workers == 4` (the sharded partition dispatches the same problem_id multiset).
-
     use crate::accuracy_core::{
         AccuracyEvaluator, EvaluatorDatasetIdentity, EvaluatorGenerationConfig, EvaluatorGrade,
         EvaluatorGradeBatch, EvaluatorGradeItem, EvaluatorIdentity, EvaluatorLoadConfig,
@@ -745,7 +628,6 @@ mod tests {
     };
     use async_trait::async_trait;
 
-    /// Number of evaluator-authored problems in the accuracy fixture.
     const ACCURACY_PROBLEMS: usize = 4;
 
     fn accuracy_identity() -> EvaluatorIdentity {
@@ -782,10 +664,6 @@ mod tests {
         }
     }
 
-    /// A fixture evaluator producing `ACCURACY_PROBLEMS` single-turn chat problems
-    /// and grading each captured response by its problem index parity — a
-    /// deterministic, response-independent verdict so the tally is a pure function of
-    /// the captured problem_id multiset (identical across worker counts).
     struct FixtureEvaluator {
         identity: EvaluatorIdentity,
         loaded: EvaluatorLoadResult,
@@ -822,7 +700,6 @@ mod tests {
         }
     }
 
-    /// `prob-N` is graded correct when `N` is even — response-independent.
     fn fixture_is_correct(problem_id: &str) -> bool {
         problem_id
             .rsplit('-')
@@ -887,8 +764,6 @@ mod tests {
         }
     }
 
-    /// Trait-injected fixture factory: returns a fresh in-process evaluator (no
-    /// Python subprocess), so the whole static-accuracy path is driven at lib level.
     struct FixtureEvaluatorFactory;
 
     #[async_trait(?Send)]
@@ -901,8 +776,6 @@ mod tests {
         }
     }
 
-    /// Assemble a static-accuracy `NativeRunSpec` (fixture evaluator) for a fixed
-    /// concurrency profiling phase pointed at the mock.
     fn accuracy_plan(
         base_url: &str,
         artifact_dir: &Path,
@@ -952,8 +825,6 @@ mod tests {
         }
     }
 
-    /// Run one static-accuracy benchmark to completion and return `(total, correct)`
-    /// from the graded `accuracy_records` in the report.
     fn run_accuracy_tally(
         registry: &AIPerfRegistry,
         mock: &FixedMock,
@@ -990,11 +861,6 @@ mod tests {
         (total, correct)
     }
 
-    /// The last executor-unification clamp removed: a static-accuracy run at
-    /// `workers == 4` shards its dispatch+capture and grades the concatenated
-    /// captures to the SAME tally as the single-worker baseline. Each of the 4
-    /// problems is dispatched `requests / 4` times; problems `prob-0`/`prob-2` grade
-    /// correct, so exactly half the records are correct at either worker count.
     #[test]
     fn static_accuracy_workers_gt_1_shards_and_tally_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();

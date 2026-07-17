@@ -3,12 +3,9 @@
 
 //! User-centric rate schedule — the pure virtual-history math.
 //!
-//! The user-centric strategy simulates a realistic multi-turn chat scenario:
-//! at `t=0` there is already a **steady-state** of users at varying stages of
-//! their session, so KV-cache pressure is realistic from the first second
-//! rather than ramping up as sessions accumulate. This module computes that
-//! seeding — the deterministic, RNG-free, clock-free part — while the async run
-//! loop and credit issuance live elsewhere.
+//! At `t=0`, deterministic virtual history places users at different session
+//! ages so cache pressure begins at steady state. This module is RNG- and
+//! clock-free.
 //!
 //! Each of the `num_users` users is assigned a virtual "age" spreading them
 //! across the *session lifetime* (turns from first to last, i.e.
@@ -22,19 +19,12 @@
 //! - `turn_gap = num_users / rate` — per-user inter-turn gap
 //!   (`qps = num_users / turn_gap`).
 //!
-//! All times are **integer nanoseconds** (the clock's native unit). Seconds are
-//! converted with `(secs * 1e9).round()`.
-//!
-//! ## Example: 15 users, 20 turns, 1.0 QPS
-//!
-//! `turn_gap = 15s`, `stagger = 1s`. User 1 is virtually done (its id is
-//! burned); a fresh user (id 16) fires at `t=0` with all 20 turns; the other
-//! 14 users fire at 1s..14s with decreasing turns remaining.
+//! All times use integer nanoseconds.
 
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
-/// Convert a non-negative interval in seconds to integer nanoseconds, rounding
-/// half-to-even (matches Python `round()` on the ns product).
+/// Convert a non-negative interval in seconds to integer nanoseconds using
+/// half-to-even rounding.
 fn secs_to_ns(secs: f64) -> i64 {
     (secs * NANOS_PER_SECOND).round() as i64
 }
@@ -141,8 +131,7 @@ pub fn plan_user_centric(
         let turns_to_send = session_lifetime as i64 - session_age as i64;
 
         if turns_to_send <= 0 {
-            // Virtually done before t=0: emit nothing but still burn the id so
-            // subsequent ids stay in order (mirrors `_next_user_id += 1`).
+            // Burn virtually completed IDs to preserve subsequent ordering.
             next_user_id += 1;
             continue;
         }
@@ -183,7 +172,7 @@ pub fn plan_user_centric(
 /// Absolute spawn time of the replacement for a user spawned at `prev_spawn_ns`.
 ///
 /// Open-loop schedule: `prev_spawn_ns + max_turns * turn_gap_ns`, independent of
-/// response times (mirrors `next_spawn = prev_spawn + max_turns * turn_gap`).
+/// response times.
 pub fn next_replacement_spawn_ns(prev_spawn_ns: i64, max_turns: usize, turn_gap_ns: i64) -> i64 {
     prev_spawn_ns + max_turns as i64 * turn_gap_ns
 }

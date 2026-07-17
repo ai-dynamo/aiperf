@@ -1,23 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Native adaptive-search recipes (`--search-recipe`).
+//! Adaptive-search recipes (`--search-recipe`).
 //!
-//! Ports Python's `aiperf.search_recipes` GRID recipes (`concurrency-ramp`,
-//! `prefill-ttft-curve`, `decode-itl-curve`). A grid recipe expands its search
-//! space into a STATIC grid sweep at config time — log-spaced value lists over
-//! config paths — which is then run like any sweep. Because a recipe sweeps
-//! CONFIG paths (a scalar `datasets.main.prompts.isl = N` becomes `{value:N}`,
-//! not the `--isl` mean), the recipe path resolves the base run once and mutates
-//! the built `cfg` per variation, mirroring Python's raw-config override.
-//!
-//! The `monotonic` search style runs a dynamic ask-tell loop rather than a
-//! static sweep: [`MonotonicPlanner`] is a byte-exact pure-logic port of
-//! `aiperf.orchestrator.search_planner.monotonic::MonotonicSLASearchPlanner`
-//! (exponential probe + bisection over a 1D SLA-saturation boundary), driven by
-//! [`crate::profile::run_search_loop`] which runs one `aiperf` child per
-//! probe and feeds back a per-iteration feasibility verdict. The `bayes` /
-//! `optuna` / `smooth_isotonic` styles additionally need GP/isotonic fits (the
-//! former via in-process pyo3 optuna) and remain future work.
+//! Grid recipes expand log-spaced config-path axes before execution. The
+//! `monotonic` style instead probes exponentially and bisects a one-dimensional
+//! SLA boundary, running one child process per feasibility verdict.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -64,10 +51,7 @@ pub struct RecipeSweep {
     pub post_process: Option<PostProcess>,
 }
 
-/// A grid recipe's post-process handler + its output filename. Dispatched by
-/// [`run_post_process`] once the sweep aggregate lands on disk. Mirrors Python's
-/// `PostProcessSpec` (`aiperf.search_recipes._base::PostProcessSpec`): a named
-/// handler with resolved params and a target filename under `sweep_aggregate/`.
+/// A grid recipe's derived-artifact handler.
 pub enum PostProcess {
     /// `sla_breach_knee` → `sla_breach.json` (max-concurrency-under-sla grid).
     SlaBreach(SlaBreachSpec),
@@ -80,8 +64,7 @@ pub enum PostProcess {
 }
 
 impl PostProcess {
-    /// The artifact filename written under `sweep_aggregate/` (Python's
-    /// `PostProcessSpec.output_filename`).
+    /// The artifact filename written under `sweep_aggregate/`.
     pub fn output_filename(&self) -> &'static str {
         match self {
             PostProcess::SlaBreach(_) => "sla_breach.json",
@@ -107,7 +90,7 @@ impl PostProcess {
 }
 
 /// Locate the sweep-aggregate directory under `base` (single-trial
-/// `<base>/sweep_aggregate`, or REPEATED multi-trial
+/// `<base>/sweep_aggregate`, or repeated multi-trial
 /// `<base>/aggregate/sweep_aggregate`).
 fn find_sweep_aggregate_dir(base: &Path) -> Option<PathBuf> {
     for cand in [
@@ -121,10 +104,8 @@ fn find_sweep_aggregate_dir(base: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Run a recipe's post-process handler over the sweep aggregate under `base` and
-/// write its derived artifact beside it. Ports the `aggregate_sweep_and_export`
-/// post-process hook: read `profile_export_aiperf_sweep.json`, run the handler,
-/// write `<sweep_aggregate>/<output_filename>` (pretty JSON).
+/// Run a recipe's post-process handler and write pretty JSON beside the sweep
+/// aggregate.
 pub fn run_post_process(base: &Path, pp: &PostProcess) -> anyhow::Result<()> {
     let dir = find_sweep_aggregate_dir(base).ok_or_else(|| {
         anyhow::anyhow!(
@@ -161,9 +142,8 @@ pub struct RecipeVariation {
     pub values: Vec<(String, i64)>,
 }
 
-/// `steps` log-spaced integer values in `[lo, hi]` inclusive, endpoints forced,
-/// rounding duplicates collapsed, ascending — byte-exact port of Python
-/// `aiperf.search_recipes.builtins::_logspace_int_steps`.
+/// Return ascending log-spaced integers in `[lo, hi]`, with endpoints forced
+/// and rounding duplicates removed.
 pub fn logspace_int_steps(lo: f64, hi: f64, steps: i64) -> anyhow::Result<Vec<i64>> {
     anyhow::ensure!(steps >= 2, "search steps must be >= 2 (got {steps})");
     anyhow::ensure!(lo > 0.0, "search lower bound must be > 0 (got {lo})");
@@ -180,7 +160,7 @@ pub fn logspace_int_steps(lo: f64, hi: f64, steps: i64) -> anyhow::Result<Vec<i6
     Ok(vals)
 }
 
-/// Python 3 `round()` — round-half-to-even (banker's rounding).
+/// Round half to even.
 fn python_round(v: f64) -> f64 {
     let floor = v.floor();
     let diff = v - floor;
@@ -196,7 +176,7 @@ fn python_round(v: f64) -> f64 {
 }
 
 /// Expand a grid `--search-recipe` into its axes. `Ok(None)` when no recipe is
-/// set; errors on an unknown / not-yet-supported (bayes/isotonic) recipe.
+/// set; errors on an unsupported recipe.
 pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>> {
     let Some(recipe) = flags.search_recipe.as_deref() else {
         return Ok(None);
@@ -210,10 +190,6 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
     let mut post_process: Option<PostProcess> = None;
     let axes = match recipe {
         "concurrency-ramp" => {
-            // The degradation-knee handler reports the first swept concurrency
-            // whose latency exceeds baseline * (1 + threshold) (byte-exact with
-            // Python's `DegradationKneeDetect`; defaults threshold 0.20,
-            // metric request_latency, stat p99).
             post_process = Some(PostProcess::DegradationKnee(DegradationKneeSpec {
                 threshold_pct: flags.degradation_threshold.unwrap_or(0.20),
                 metric_tag: flags
@@ -238,8 +214,6 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
             }]
         }
         "prefill-ttft-curve" => {
-            // The TTFT-curve handler fits TTFT vs ISL (linear, quadratic fallback
-            // when r^2 < 0.85) → `prefill_curve.json`.
             post_process = Some(PostProcess::TtftCurve(CurveSpec {
                 metric_tag: "time_to_first_token".to_string(),
                 stat: "avg".to_string(),
@@ -248,8 +222,6 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
             prefill_ttft_axes(flags)?
         }
         "decode-itl-curve" => {
-            // The ITL-surface handler builds a 2D ITL(concurrency, OSL) grid →
-            // `decode_itl_surface.json`.
             post_process = Some(PostProcess::ItlSurface(SurfaceSpec {
                 metric_tag: "inter_token_latency".to_string(),
                 stat: "avg".to_string(),
@@ -259,12 +231,8 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
             decode_itl_axes(flags)?
         }
         "max-concurrency-under-sla" => {
-            // Only the static `--search-style grid` variant expands to a sweep
-            // here. The dynamic styles run their own ask-tell loop, intercepted
-            // in `profile::run` before this expander: `monotonic` is pure Rust;
-            // `smooth_isotonic` (default) / `bo` / `optuna` need the scipy/optuna
-            // numerical core, available only in the `search-pyo3` build. Reaching
-            // this branch means the feature is OFF and the style is non-grid.
+            // Dynamic styles bypass sweep expansion. Smooth-isotonic and
+            // Bayesian styles require the `search-pyo3` numerical core.
             let style = flags.search_style.as_deref().unwrap_or("smooth_isotonic");
             anyhow::ensure!(
                 style == "grid",
@@ -274,8 +242,6 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
                  --search-style grid (static sweep) or --search-style monotonic \
                  (pure-Rust probe+bisection), or rebuild with --features search-pyo3"
             );
-            // After the sweep aggregate is written, locate the SLA-feasibility
-            // boundary along the swept concurrency (`sla_breach.json`).
             post_process = Some(PostProcess::SlaBreach(SlaBreachSpec {
                 swept_param: "phases.profiling.concurrency".to_string(),
                 filters: build_sla_filters(flags),
@@ -283,7 +249,6 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
             vec![RecipeAxis {
                 path: "phases.profiling.concurrency",
                 seg: "concurrency",
-                // Grid style is a fixed 8-step log-spaced concurrency sweep.
                 values: logspace_int_steps(
                     flags.concurrency_min.unwrap_or(1) as f64,
                     flags.concurrency_max.unwrap_or(1000) as f64,
@@ -293,7 +258,7 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
             }]
         }
         other => anyhow::bail!(
-            "search recipe {other:?} is not yet supported natively (grid recipes: \
+            "search recipe {other:?} is unsupported natively (grid recipes: \
              concurrency-ramp, prefill-ttft-curve, decode-itl-curve, pareto-sweep, \
              max-concurrency-under-sla --search-style grid)"
         ),
@@ -306,7 +271,7 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
 
 /// The `prefill-ttft-curve` axes: ISL log-spaced over `[--isl-min, --isl-max]`
 /// (defaults 256..32768, 8 steps) crossed with a fixed concurrency=1 axis
-/// (isolate prefill cost from queueing). Mirrors `PrefillTTFTCurve.expand`.
+/// to isolate prefill cost from queueing.
 fn prefill_ttft_axes(flags: &ProfileFlags) -> anyhow::Result<Vec<RecipeAxis>> {
     Ok(vec![
         RecipeAxis {
@@ -331,7 +296,7 @@ fn prefill_ttft_axes(flags: &ProfileFlags) -> anyhow::Result<Vec<RecipeAxis>> {
 /// The `decode-itl-curve` axes: concurrency log-spaced over
 /// `[--concurrency-min, --concurrency-max]` (defaults 1..200, 6 steps) crossed
 /// with OSL log-spaced over `[--osl-min, --osl-max]` (defaults 64..1024, 4
-/// steps). Mirrors `DecodeITLCurve.expand`.
+/// steps).
 fn decode_itl_axes(flags: &ProfileFlags) -> anyhow::Result<Vec<RecipeAxis>> {
     Ok(vec![
         RecipeAxis {
@@ -357,9 +322,9 @@ fn decode_itl_axes(flags: &ProfileFlags) -> anyhow::Result<Vec<RecipeAxis>> {
     ])
 }
 
-/// Cartesian-product expansion of recipe axes (sorted by dotted path, last axis
-/// fastest — Python `itertools.product` over sorted `sweep_parameters`). Labels
-/// are `"path=value, ..."`, dir names `"seg_value__..."`, values keyed by path.
+/// Cartesian-product expansion of recipe axes, sorted by dotted path with the
+/// last axis varying fastest. Labels are `"path=value, ..."`, directory names
+/// are `"seg_value__..."`, and values are keyed by path.
 fn expand_axes(axes: &[RecipeAxis]) -> Vec<RecipeVariation> {
     let mut order: Vec<usize> = (0..axes.len()).collect();
     order.sort_by_key(|&i| axes[i].path);
@@ -406,8 +371,8 @@ fn expand_axes(axes: &[RecipeAxis]) -> Vec<RecipeVariation> {
 
 /// Expand `pareto-sweep`: each `--isl-osl-pairs isl/osl` shape (outer) crossed
 /// with each `--concurrency` value (inner). Custom `shape_{isl}_{osl}_c{conc}`
-/// labels, `isl_{isl}__osl_{osl}__concurrency_{conc}` dirs, and `{concurrency,
-/// isl, osl}` values (Python `_pareto_sweep`).
+/// labels, `isl_{isl}__osl_{osl}__concurrency_{conc}` directories, and
+/// `{concurrency, isl, osl}` values.
 fn expand_pareto(flags: &ProfileFlags) -> anyhow::Result<Vec<RecipeVariation>> {
     let pairs_raw = flags
         .isl_osl_pairs
@@ -429,7 +394,6 @@ fn expand_pareto(flags: &ProfileFlags) -> anyhow::Result<Vec<RecipeVariation>> {
                 .map_err(|_| anyhow::anyhow!("bad osl in {token:?}"))?,
         ));
     }
-    // Concurrency list (default [1]); comma-list from --concurrency.
     let conc: Vec<i64> = match flags.concurrency.as_deref() {
         Some(c) => c
             .split(',')
@@ -467,8 +431,7 @@ fn expand_pareto(flags: &ProfileFlags) -> anyhow::Result<Vec<RecipeVariation>> {
     Ok(out)
 }
 
-/// Apply one recipe override onto a built `cfg` value (mirrors Python's raw
-/// config override + resolution): concurrency sets the profiling phase's
+/// Apply one recipe override to a built `cfg`: concurrency sets the profiling phase's
 /// `concurrency`; isl/osl replace the prompts distribution with a fixed scalar.
 pub fn apply_override(cfg: &mut Value, kind: AxisKind, value: i64) {
     match kind {
@@ -502,12 +465,7 @@ pub fn apply_override(cfg: &mut Value, kind: AxisKind, value: i64) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Dynamic monotonic SLA-saturation planner (exponential probe + bisection).
-// ---------------------------------------------------------------------------
-
-/// Comparison operator for an [`SlaFilter`]. Mirrors the Python `SLAFilter.op`
-/// literal (`"lt" | "le" | "gt" | "ge"`).
+/// Comparison operator for an [`SlaFilter`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SlaOp {
     Lt,
@@ -516,8 +474,7 @@ pub enum SlaOp {
     Ge,
 }
 
-/// One SLA feasibility constraint on a run-summary metric stat. Port of
-/// `aiperf.config.sweep.adaptive::SLAFilter`.
+/// One SLA feasibility constraint on a run-summary metric.
 #[derive(Clone, Debug)]
 pub struct SlaFilter {
     /// Metric tag key into the report's `metrics` map (e.g. `time_to_first_token`).
@@ -532,9 +489,8 @@ pub struct SlaFilter {
 
 impl SlaFilter {
     /// True iff `observed` satisfies this filter. A missing / non-finite
-    /// observation is **infeasible** (mirrors `_sla_helpers::trial_satisfies`:
-    /// the planner has no signal to rank against, so silently passing would
-    /// invert the bracket). Strict ops treat `value == threshold` as infeasible.
+    /// observation is **infeasible** because accepting it would invert the
+    /// search bracket. Strict operators reject equality.
     pub fn satisfied_by(&self, observed: Option<f64>) -> bool {
         let Some(v) = observed.filter(|v| v.is_finite()) else {
             return false;
@@ -547,8 +503,7 @@ impl SlaFilter {
         }
     }
 
-    /// Serialize this filter to its `{metric_tag, stat, op, threshold}` dict
-    /// (Python `sweep_sla_filter.sla_filter_to_dict` over an `SLAFilter`).
+    /// Serialize this filter as `{metric_tag, stat, op, threshold}`.
     pub fn to_dict(&self) -> Value {
         serde_json::json!({
             "metric_tag": self.metric_tag,
@@ -570,8 +525,7 @@ pub fn op_str(op: SlaOp) -> &'static str {
 }
 
 /// Build the SLA filter list for the `max-concurrency-under-sla` recipe from the
-/// CLI SLA flags. Byte-exact port of
-/// `MaxConcurrencyUnderSLA._build_sla_filters`: TTFT p95, inter-token p95
+/// CLI SLA flags: TTFT p95, inter-token p95
 /// (`--tpot-sla-ms`/`--itl-sla-ms` alias), e2e p99, error-rate p99 — in that
 /// order. An empty result means no SLA target was supplied.
 pub fn build_sla_filters(flags: &ProfileFlags) -> Vec<SlaFilter> {
@@ -585,7 +539,7 @@ pub fn build_sla_filters(flags: &ProfileFlags) -> Vec<SlaFilter> {
         });
     }
     // `--tpot-sla-ms` and `--itl-sla-ms` are aliases for the same inter-token SLA;
-    // Python's `get_inter_token_sla_ms` prefers tpot then itl.
+    // TPOT takes precedence when both aliases are supplied.
     if let Some(itl) = flags.tpot_sla_ms.or(flags.itl_sla_ms) {
         filters.push(SlaFilter {
             metric_tag: "inter_token_latency".into(),
@@ -613,8 +567,7 @@ pub fn build_sla_filters(flags: &ProfileFlags) -> Vec<SlaFilter> {
     filters
 }
 
-/// Per-swept-value pass/fail tally for the stability window. Port of the Python
-/// `_PointLog`: a verdict is provisional until `required` trials agree.
+/// Per-value pass/fail tally; a verdict requires `required` agreeing trials.
 struct PointLog {
     required: i64,
     passes: i64,
@@ -657,8 +610,7 @@ enum Phase {
     Bisect,
 }
 
-/// Static resolution of the monotonic planner's config (byte-exact with
-/// `MaxConcurrencyUnderSLA._build_monotonic_output` + `resolve_concurrency_bounds`).
+/// Resolved monotonic planner configuration.
 pub struct MonotonicSpec {
     pub lo: i64,
     pub hi: i64,
@@ -690,12 +642,7 @@ impl MonotonicSpec {
         Ok(Self {
             lo,
             hi,
-            // `--search-max-iterations` is a recipe-tunable override of the
-            // recipe's `_MONOTONIC_MAX_ITERATIONS` default (20); see
-            // `recipes._RECIPE_TUNABLE_FIELD_TO_SWEEP_FIELD`.
             max_iterations: flags.search_max_iterations.unwrap_or(20),
-            // `monotonic_stability_trials` is a config-only field (no CLI flag);
-            // its default is 2.
             stability_trials: 2,
             precision: 0.05,
             sla_filters,
@@ -703,8 +650,7 @@ impl MonotonicSpec {
     }
 }
 
-/// Exponential-probe + bisection 1D SLA-saturation planner. Byte-exact port of
-/// `MonotonicSLASearchPlanner`: [`Self::ask`] yields the next concurrency to
+/// Exponential-probe and bisection planner. [`Self::ask`] yields the next concurrency to
 /// probe, the caller runs it and computes a feasibility verdict, then
 /// [`Self::tell`] absorbs it and plans the next probe. [`Self::is_converged`]
 /// latches a terminal reason.
@@ -714,9 +660,9 @@ pub struct MonotonicPlanner {
     stability_trials: i64,
     precision: f64,
 
-    /// Highest concurrency with a latched feasible verdict (Python `feasible_max`).
+    /// Highest concurrency with a latched feasible verdict.
     pub feasible_max: Option<i64>,
-    /// Lowest concurrency with a latched infeasible verdict (Python `infeasible_min`).
+    /// Lowest concurrency with a latched infeasible verdict.
     pub infeasible_min: Option<i64>,
 
     point_logs: HashMap<i64, PointLog>,
@@ -842,10 +788,7 @@ impl MonotonicPlanner {
 
     fn plan_next_step(&mut self, value: i64, verdict: Option<bool>) {
         match verdict {
-            None => {
-                // Stability window: re-ask the same value until a verdict latches.
-                self.next_value = value;
-            }
+            None => self.next_value = value,
             Some(v) => {
                 if self.phase == Phase::Probe {
                     self.plan_probe_step(value, v);
@@ -858,7 +801,6 @@ impl MonotonicPlanner {
 
     fn plan_probe_step(&mut self, value: i64, verdict: bool) {
         if !verdict {
-            // First failure during probing — bracket found.
             if self.feasible_max.is_none() {
                 self.convergence_reason = Some("monotonic_no_pass_in_range".into());
                 return;
@@ -867,7 +809,6 @@ impl MonotonicPlanner {
             self.plan_bisect_step();
             return;
         }
-        // Passed: try double, capped at hi.
         let next_value = value * 2;
         if next_value >= self.hi {
             if value >= self.hi {
@@ -904,7 +845,6 @@ impl MonotonicPlanner {
             self.convergence_reason = Some("monotonic_precision_reached".into());
             return;
         }
-        // Integer midpoint biased downward — keeps the bracket tightening.
         let mut midpoint = feasible_max + gap / 2;
         if midpoint <= feasible_max {
             midpoint = feasible_max + 1;
@@ -921,7 +861,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn logspace_matches_python() {
+    fn logspace_matches_contract() {
         assert_eq!(
             logspace_int_steps(1.0, 100.0, 5).unwrap(),
             vec![1, 3, 10, 32, 100]

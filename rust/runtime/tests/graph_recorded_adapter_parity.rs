@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native replay parity for the two Python-recorded trace formats.
+//! Byte-exact replay parity across recorded trace formats.
 //!
 //! The fixture's one intentional RNG amendment is the repository's canonical
 //! `aiperf-rng` BLAKE3/PCG64 stream. With that stream held common, both source

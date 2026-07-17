@@ -1,32 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Typed `endpoint` section of the native `BenchmarkConfig`.
+//! Typed endpoint configuration.
 //!
-//! Wire shape ported from `src/aiperf/orchestrator/rust_wire.py::_authored_endpoint`
-//! (with `include_readiness=True`, as `dump_benchmark_run` uses). Input keys /
-//! defaults come from `src/aiperf/config/endpoint.py`. Serializing [`Endpoint`]
-//! yields the exact `cfg.endpoint` subtree the runner consumes.
-//!
-//! Typing: `endpoint.type` is an open, registry-validated dialect id in Python
-//! (annotated `str`, not a closed enum), so it is a transparent newtype rather
-//! than an enum; `connection_reuse` / `wait_for_model_mode` /
-//! `request_content_type` ARE closed sets and are real enums. Optional fields
-//! use `_set_optional` semantics in Python (omitted when absent), so they are
-//! `skip_serializing_if = "Option::is_none"`; the always-present fields emit
-//! their value (including readiness fields).
+//! Endpoint dialects are registry-validated and extensible. Optional fields are
+//! omitted when absent.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// An OpenAI-compatible / KServe / Riva endpoint dialect id (e.g. `chat`,
-/// `completions`, `embeddings`, `rankings`). Open/extensible in Python
-/// (registry-validated), so a transparent newtype rather than a closed enum.
+/// An extensible endpoint dialect id.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct EndpointType(pub String);
 
-/// Connection-reuse policy. Closed set (`ConnectionReuseStrategy`).
+/// Connection-reuse policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConnectionReuse {
     /// Shared connection pool.
@@ -40,7 +28,7 @@ pub enum ConnectionReuse {
     StickyUserSessions,
 }
 
-/// Readiness-probe mode. Closed set (Python `Literal['models','inference','both']`).
+/// Readiness-probe mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WaitForModelMode {
@@ -52,8 +40,7 @@ pub enum WaitForModelMode {
     Both,
 }
 
-/// Request body content type, in wire spelling (Python maps the MIME string to
-/// these tokens in `_authored_endpoint`). Closed set.
+/// Request body content type in wire spelling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestContentType {
@@ -95,7 +82,7 @@ pub struct Endpoint {
     pub headers: BTreeMap<String, String>,
     /// Use HTTP/2 (h2/h2c).
     pub http2: bool,
-    /// Readiness-probe timeout, in seconds (always present via include_readiness).
+    /// Readiness-probe timeout in seconds.
     pub wait_for_model_timeout: f64,
     /// Readiness-probe poll interval, in seconds.
     pub wait_for_model_interval: f64,

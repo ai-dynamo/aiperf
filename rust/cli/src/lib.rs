@@ -1,16 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Native Rust entry point for AIPerf.
+//! AIPerf CLI and execution entry point.
 //!
-//! This crate owns the `aiperf profile`/`config` commands natively AND the
-//! execution engine: it parses the profile CLI flags and YAML Config v2 into
-//! idiomatic Rust types, projects one run onto the protocol-v2 request schema,
-//! and drives execution by re-execing the same `aiperf` binary in its internal
-//! `--execute` mode ([`execute_mode`]) over stdio. Every other subcommand is
-//! delegated to the Python frontend.
-//!
-//! The library target exists so both the `aiperf` binary and the integration
-//! tests share the same wire DTOs, projection code, and execution shell.
+//! The crate parses CLI flags and Config v2, projects protocol-v2 requests, and
+//! re-execs `aiperf --execute` over stdio. Python-backed commands are delegated
+//! through [`delegate`].
 
 pub mod analyze_trace;
 #[cfg(feature = "search-pyo3")]

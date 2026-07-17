@@ -4,14 +4,9 @@
 //! Transport-neutral reduction of decoded endpoint responses into observer
 //! facts and aggregated model/usage/metrics state.
 //!
-//! Every native transport (`http`, `grpc`, and any future wire) decodes its
-//! own record into a sequence of [`ServerResponse`] items and then reduces that
-//! sequence identically: parse each response, absorb usage/data/endpoint
-//! metrics, emit token callbacks, and reconstruct the assistant turn. That
-//! reduction is the same regardless of how the bytes arrived, so it lives here
-//! once instead of being copied per transport. A transport contributes only the
-//! wire-decode that produces the [`ServerResponse`] iterator and the mapping
-//! from its own error enum to a [`ReplayTerminalStatus`].
+//! Transports decode wire records into [`ServerResponse`] items. This module
+//! parses those items, reconciles usage, accumulates response data and endpoint
+//! metrics, emits token observations, and reconstructs assistant turns.
 
 use std::cell::Cell;
 
@@ -24,7 +19,7 @@ use loadgen_core::sink::{
     ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
 };
 
-/// The aggregated state a reduction folds each parsed response into.
+/// Mutable state accumulated across parsed responses.
 pub(crate) struct EndpointReduceAccumulators<'a> {
     /// Concatenated user-visible text across responses.
     pub response_text: &'a mut String,
@@ -36,8 +31,7 @@ pub(crate) struct EndpointReduceAccumulators<'a> {
     pub observed_usage: &'a mut ObservedUsage,
 }
 
-/// The transport-supplied token-emission context: how to correlate, whether the
-/// endpoint emits tokens, and how to map perf-ns to run-relative milliseconds.
+/// Token-emission context supplied by a transport.
 pub(crate) struct TokenEmitter<'a> {
     /// Request correlation id.
     pub uuid: Uuid,
@@ -55,10 +49,9 @@ pub(crate) struct TokenEmitter<'a> {
     pub on_first_token: &'a dyn Fn(i64),
 }
 
-/// Fold one successfully-parsed response into `acc` and emit its token
-/// callbacks through `emit`. Returns true when the response carried content
-/// data (the caller's `parsed_content` latch). Usage is absorbed even when the
-/// response has no content payload.
+/// Fold a parsed response into `acc`, returning whether it carried content.
+///
+/// Usage is reconciled even when the response has no content payload.
 pub(crate) fn reduce_parsed_response(
     parsed: &ParsedResponse,
     emit: &TokenEmitter<'_>,
@@ -220,8 +213,7 @@ pub(crate) fn absorb_usage(parsed: &ParsedResponse, observed: &mut ObservedUsage
         .or(observed.prompt_audio_seconds);
 }
 
-/// Reconstruct the assistant message JSON from a rebuilt turn: prefer the raw
-/// wire message, else synthesize `{role, content}` from the turn's texts.
+/// Return the raw assistant message, or synthesize one from the rebuilt turn.
 pub(crate) fn assistant_message(turn: &Turn) -> Option<Value> {
     if let Some(message) = turn
         .raw_messages

@@ -1,18 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Feature-gated runner composition for Dynamo's in-process offline engine.
+//! Feature-gated composition for Dynamo's in-process execution engine.
 //!
-//! This module owns only the authored runner boundary. The virtual clock,
-//! steppable engine host, scheduling loops, cancellation, observers, and exact
-//! AIPerf/Dynamo parity proof remain in [`crate::dynosim`]. A registered
-//! backend/workload pair supplies one of the typed execution plans below; no
-//! string branch or alternate executable is introduced here.
-//!
-//! The strict authored projection mirrors the canonical Python wire producer
-//! and consumes its dataset and phase shapes. The graph adapter resolves `dag_jsonl`
-//! directly into Graph-IR once; it never constructs an intermediate linear
-//! dataset or re-projects the authored object through protocol v1.
+//! [`crate::dynosim`] owns clock driving, scheduling, cancellation, observation,
+//! and AIPerf/Dynamo metric verification.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -727,7 +719,7 @@ pub struct ValidatedDynosimTransport {
 }
 
 impl ValidatedDynosimTransport {
-    /// Report/provenance prefix for the selected clock axis.
+    /// Report mode prefix for the selected clock axis.
     ///
     /// `"offline"` for deterministic virtual-clock replay, `"online"` for
     /// wall-clock in-process replay (`drive_real_with_source`).
@@ -1264,9 +1256,7 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
                             // directly, so the sampler needs no worker-record
                             // source (and must not be double-fed).
                             None,
-                            // Offline replay keeps its historical resilient
-                            // behavior; the failure-policy knob is an online-path
-                            // convergence and is not wired to co-simulation.
+                            // Co-simulation uses its configured resilient failure policy.
                             OnFailure::for_scheduled_default(),
                         )?
                         .with_metrics_config(metrics.clone())
@@ -1363,11 +1353,11 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
             outcome.report.parity,
             &outcome.report.performance,
         )?);
-        let mut provenance = outcome.provenance;
-        provenance.insert("workload".into(), "scheduled".into());
-        provenance.insert("phase_count".into(), phase_count.to_string());
-        provenance.insert("benchmark_id".into(), benchmark_id);
-        provenance.insert(
+        let mut report_metadata = outcome.provenance;
+        report_metadata.insert("workload".into(), "scheduled".into());
+        report_metadata.insert("phase_count".into(), phase_count.to_string());
+        report_metadata.insert("benchmark_id".into(), benchmark_id);
+        report_metadata.insert(
             "event_delivery".into(),
             if terminal_event_delivery {
                 "terminal_coalesced"
@@ -1379,7 +1369,7 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
         Ok(PreparedRunOutcome {
             native_report,
             report_facts,
-            provenance,
+            provenance: report_metadata,
             report_commit: None,
         })
     }
@@ -1689,9 +1679,7 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
                         t_star_window,
                         phase_sidecars,
                         &backends,
-                        // Offline replay keeps its historical fail-fast graph
-                        // behavior; the failure-policy knob is an online-path
-                        // convergence and is not wired to co-simulation.
+                        // Co-simulation uses fail-fast graph execution.
                         OnFailure::for_graph_default(),
                     )
                     .await?;
@@ -1738,16 +1726,16 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
                 outcome.report.parity,
                 &outcome.report.performance,
             )?);
-        let mut provenance = outcome.provenance;
-        provenance.insert("workload".into(), "graph".into());
-        provenance.insert("graph_input".into(), metadata.format);
-        provenance.insert("graph_roots".into(), metadata.root_count.to_string());
-        provenance.insert("graph_nodes".into(), metadata.node_count.to_string());
-        provenance.insert("phase_count".into(), phase_count.to_string());
+        let mut report_metadata = outcome.provenance;
+        report_metadata.insert("workload".into(), "graph".into());
+        report_metadata.insert("graph_input".into(), metadata.format);
+        report_metadata.insert("graph_roots".into(), metadata.root_count.to_string());
+        report_metadata.insert("graph_nodes".into(), metadata.node_count.to_string());
+        report_metadata.insert("phase_count".into(), phase_count.to_string());
         Ok(PreparedRunOutcome {
             native_report,
             report_facts,
-            provenance,
+            provenance: report_metadata,
             report_commit: None,
         })
     }
@@ -1811,11 +1799,11 @@ impl DynosimExecutor {
         };
         verify_parity_for(online, &report.performance, &report.dynamo, report.parity)?;
         let artifacts = self.emit_backend_artifacts(&report.dynamo)?;
-        let provenance = self.provenance(report.parity);
+        let report_metadata = self.report_metadata(report.parity);
         Ok(DynosimScheduledOutcome {
             report,
             artifacts,
-            provenance,
+            provenance: report_metadata,
         })
     }
 
@@ -1859,11 +1847,11 @@ impl DynosimExecutor {
         };
         verify_parity_for(online, &report.performance, &report.dynamo, report.parity)?;
         let artifacts = self.emit_backend_artifacts(&report.dynamo)?;
-        let provenance = self.provenance(report.parity);
+        let report_metadata = self.report_metadata(report.parity);
         Ok(DynosimScheduledOutcome {
             report,
             artifacts,
-            provenance,
+            provenance: report_metadata,
         })
     }
 
@@ -1881,11 +1869,11 @@ impl DynosimExecutor {
         let report = run_graph_offline(self.engine.clone(), config)?;
         verify_parity(&report.performance, &report.dynamo, report.parity)?;
         let artifacts = self.emit_backend_artifacts(&report.dynamo)?;
-        let provenance = self.provenance(report.parity);
+        let report_metadata = self.report_metadata(report.parity);
         Ok(DynosimGraphOutcome {
             report,
             artifacts,
-            provenance,
+            provenance: report_metadata,
         })
     }
 
@@ -1933,11 +1921,11 @@ impl DynosimExecutor {
         verify_parity_for(online, &report.performance, &report.dynamo, report.parity)?;
         ensure_no_failed_traces(&report.workload)?;
         let artifacts = self.emit_backend_artifacts(&report.dynamo)?;
-        let provenance = self.provenance(report.parity);
+        let report_metadata = self.report_metadata(report.parity);
         Ok(DynosimDirectGraphOutcome {
             report,
             artifacts,
-            provenance,
+            provenance: report_metadata,
         })
     }
 
@@ -1977,11 +1965,11 @@ impl DynosimExecutor {
         verify_parity_for(online, &report.performance, &report.dynamo, report.parity)?;
         ensure_no_failed_traces(&report.workload)?;
         let artifacts = self.emit_backend_artifacts(&report.dynamo)?;
-        let provenance = self.provenance(report.parity);
+        let report_metadata = self.report_metadata(report.parity);
         Ok(DynosimDirectGraphOutcome {
             report,
             artifacts,
-            provenance,
+            provenance: report_metadata,
         })
     }
 
@@ -2012,11 +2000,11 @@ impl DynosimExecutor {
             )?;
             artifacts.worker_artifacts_json = Some(path);
         }
-        let provenance = self.provenance(report.parity);
+        let report_metadata = self.report_metadata(report.parity);
         Ok(DynosimTraceOutcome {
             report,
             artifacts,
-            provenance,
+            provenance: report_metadata,
         })
     }
 
@@ -2062,7 +2050,7 @@ impl DynosimExecutor {
         self.artifact_target.join(relative)
     }
 
-    fn provenance(&self, parity: OfflineMetricParity) -> BTreeMap<String, String> {
+    fn report_metadata(&self, parity: OfflineMetricParity) -> BTreeMap<String, String> {
         BTreeMap::from([
             (
                 "transport".into(),
@@ -2130,8 +2118,7 @@ fn create_artifact_target(path: &Path) -> Result<()> {
         .with_context(|| format!("creating offline artifact target {}", path.display()))
 }
 
-/// Abort an offline graph run when any root trace failed, surfacing the first
-/// available trace error exactly as the inline call sites once did.
+/// Abort an offline graph run when any root trace failed.
 fn ensure_no_failed_traces(workload: &crate::graph::workload::GraphWorkloadReport) -> Result<()> {
     if workload.failed == 0 {
         return Ok(());
@@ -2223,7 +2210,7 @@ pub struct DynosimScheduledOutcome {
     pub report: OfflineScheduledReport,
     /// Optional backend-specific artifact paths.
     pub artifacts: DynosimArtifactOutputs,
-    /// Additive terminal/native-report provenance.
+    /// Additive terminal and native-report metadata.
     pub provenance: BTreeMap<String, String>,
 }
 
@@ -2233,7 +2220,7 @@ pub struct DynosimGraphOutcome {
     pub report: OfflineGraphReport,
     /// Optional backend-specific artifact paths.
     pub artifacts: DynosimArtifactOutputs,
-    /// Additive terminal/native-report provenance.
+    /// Additive terminal and native-report metadata.
     pub provenance: BTreeMap<String, String>,
 }
 
@@ -2243,7 +2230,7 @@ pub struct DynosimDirectGraphOutcome {
     pub report: OfflineDirectGraphReport,
     /// Optional backend-specific artifact paths.
     pub artifacts: DynosimArtifactOutputs,
-    /// Additive terminal/native-report provenance.
+    /// Additive terminal and native-report metadata.
     pub provenance: BTreeMap<String, String>,
 }
 
@@ -2253,7 +2240,7 @@ pub struct DynosimTraceOutcome {
     pub report: OfflineRunReport,
     /// Optional backend-specific artifact paths.
     pub artifacts: DynosimArtifactOutputs,
-    /// Additive terminal/native-report provenance.
+    /// Additive terminal and native-report metadata.
     pub provenance: BTreeMap<String, String>,
 }
 

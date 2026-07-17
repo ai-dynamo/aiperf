@@ -1,25 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! REAL end-to-end proof for A1 worker-local metric accumulation.
-//!
-//! The scheduled online product path now accumulates each request's metrics into
-//! its execution worker's own `NativeMetricsObserver` (no per-token replay onto a
-//! single coordinator observer); the coordinator drains per-worker records,
-//! stamps the global dispatch ordinal, and re-ingests them in dispatch order.
-//!
-//! This test drives the real `aiperf` subprocess against an in-process
-//! deterministic HTTP mock, running the identical request set once with
-//! `worker_count = 1` (which accumulates on the coordinator reactor, matching the
-//! superseded single-observer path) and once with `worker_count = 4` (the
-//! worker-local path with records split across four worker observers). Every
-//! count/token report field — which is deterministic given the fixed mock — must
-//! be **byte-identical** across the two worker counts. A difference means the
-//! worker-local drain / global-`request_index` reassignment corrupted the report.
+//! End-to-end worker-local metric accumulation coverage.
 //!
 //! Latency distribution fields are wall-clock (`RealClock`) and jitter run to
-//! run, so they are intentionally excluded; the design guarantees byte-identity
-//! only for the integer/token surface here.
+//! run, so only deterministic count and token metrics are compared.
 
 use std::io::Write;
 use std::net::SocketAddr;
@@ -43,21 +28,21 @@ async fn chat() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/event-stream")], body)
 }
 
-fn benchmark_run(legacy: Value) -> Value {
-    let mut endpoint = legacy["resources"]["endpoints"]["profiles"][0].clone();
+fn benchmark_run(source: Value) -> Value {
+    let mut endpoint = source["resources"]["endpoints"]["profiles"][0].clone();
     endpoint.as_object_mut().unwrap().remove("id");
     json!({
-        "benchmark_id": legacy["identity"]["benchmark_id"],
-        "artifact_dir": legacy["artifact_target"],
-        "random_seed": legacy["identity"]["random_seed"],
+        "benchmark_id": source["identity"]["benchmark_id"],
+        "artifact_dir": source["artifact_target"],
+        "random_seed": source["identity"]["random_seed"],
         "cfg": {
-            "models": legacy["resources"]["models"],
+            "models": source["resources"]["models"],
             "endpoint": endpoint,
-            "datasets": [legacy["workload"]["config"]["dataset"]],
-            "phases": legacy["workload"]["config"]["phases"],
-            "tokenizer": legacy["workload"]["config"]["tokenizer"],
-            "transport": {"type": legacy["transport"]["type"]},
-            "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
+            "datasets": [source["workload"]["config"]["dataset"]],
+            "phases": source["workload"]["config"]["phases"],
+            "tokenizer": source["workload"]["config"]["tokenizer"],
+            "transport": {"type": source["transport"]["type"]},
+            "runtime": {"workers": source["workload"]["config"]["worker_count"]}
         }
     })
 }

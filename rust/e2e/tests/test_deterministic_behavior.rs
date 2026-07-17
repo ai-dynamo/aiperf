@@ -3,12 +3,8 @@
 mod common;
 use common::*;
 
-/// Tests for deterministic behavior with random seeds.
-
-/// Same random seed produces identical payloads across runs.
 #[tokio::test]
 async fn test_same_seed_identical_inputs() {
-    // Note: Using multiple workers to ensure that the random seed is reproducible.
     let h1 = AIPerfHarness::new().await;
     let r1 = h1.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
@@ -45,7 +41,6 @@ async fn test_same_seed_identical_inputs() {
     }
 }
 
-/// Different random seeds produce different payloads.
 #[tokio::test]
 async fn test_different_seeds_different_inputs() {
     let h1 = AIPerfHarness::new().await;

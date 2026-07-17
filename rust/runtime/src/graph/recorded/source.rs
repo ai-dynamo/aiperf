@@ -42,13 +42,11 @@ pub(crate) async fn load_weka_documents(
                 .collect()
         }
         DatasetSource::Path(path) => {
-            // A single WEKA file is either ONE trace as a whole JSON document
-            // (the historical single-object form) or a JSONL corpus with one
+            // A WEKA file is either one trace as a whole JSON document or a JSONL
+            // corpus with one
             // trace per line (the published `semianalysisai/cc-traces-weka-*`
-            // `traces.jsonl` shape). Try the whole-document parse first to keep
-            // the single-object path byte-identical; on a trailing-characters
-            // failure fall back to line-delimited parsing (mirroring the Dynamo
-            // loader's `read_json_lines_raw`).
+            // `traces.jsonl` shape). A trailing-characters failure switches to
+            // line-delimited parsing.
             let bytes = fs::read(path).map_err(|error| source_error(path, error))?;
             match parse_whole_json_raw(&bytes, &path.display().to_string()) {
                 Ok(value) => Ok(vec![value]),
@@ -264,7 +262,7 @@ fn json_documents_in_dir(path: &Path, kind: &str) -> Result<Vec<PathBuf>, Record
 /// [`Directory`](Self::Directory) points it at the reconstructed directory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecordedTracePathKind {
-    /// A single trace file (the historic single-file shipping shape).
+    /// A single recorded-trace file.
     File,
     /// A directory the loader enumerates (WEKA/aiperf `.json`; Dynamo
     /// `.jsonl`/`.jsonl.gz`).

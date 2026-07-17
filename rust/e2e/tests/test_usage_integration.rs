@@ -3,9 +3,6 @@
 mod common;
 use common::*;
 
-// Integration tests for API usage field parsing with mock server.
-
-/// IntegrationTestDefaults (from tests/integration/conftest.py).
 const WORKERS_MAX: u32 = 1;
 const CONCURRENCY: u32 = 2;
 const REQUEST_COUNT: u32 = 10;
@@ -23,7 +20,6 @@ const USAGE_METRIC_CSV_NAMES: [&str; 3] = [
     "Usage Total Tokens",
 ];
 
-/// Return the keys of a jsonl record's `metrics` object.
 fn record_metric_keys(record: &serde_json::Value) -> Vec<String> {
     record
         .get("metrics")
@@ -32,7 +28,6 @@ fn record_metric_keys(record: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Test that usage field metrics appear in all export formats.
 async fn usage_metrics_in_exports(endpoint_type: &str, model: &str) {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
@@ -83,7 +78,7 @@ async fn usage_metrics_in_exports(endpoint_type: &str, model: &str) {
     }
 }
 
-/// Mirror of Python truthiness for metric values (0 / empty is falsy).
+/// Matches the export contract that excludes null, zero, and empty metrics.
 fn is_falsy(v: &serde_json::Value) -> bool {
     match v {
         serde_json::Value::Null => true,
@@ -105,7 +100,6 @@ async fn test_usage_metrics_in_exports_completions() {
     usage_metrics_in_exports("completions", "openai/gpt-oss-120b").await;
 }
 
-/// Mirror of `RunResult.has_streaming_metrics`: all streaming metric keys present.
 fn has_streaming_metrics(r: &RunResult) -> bool {
     let json = r.artifacts.json();
     [
@@ -118,7 +112,6 @@ fn has_streaming_metrics(r: &RunResult) -> bool {
     .all(|k| json.get(k).map(|v| !v.is_null()).unwrap_or(false))
 }
 
-/// Test that streaming responses preserve cumulative usage values.
 #[tokio::test]
 async fn test_streaming_usage_passthrough() {
     let h = AIPerfHarness::new().await;

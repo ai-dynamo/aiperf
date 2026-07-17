@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end proof that the graph executor dispatches real OpenAI chat
-//! completions over HTTP via `TransportChatSink` (backed by `aiperf-transport-http`)
-//! against the workspace `aiperf-mock-server` binary — not an in-process stub.
+//! End-to-end graph dispatch over HTTP through `TransportChatSink`.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -70,7 +68,6 @@ impl RealMock {
                 return None;
             }
         };
-        // Poll for readiness (up to ~5s).
         for _ in 0..250 {
             if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
                 return Some(RealMock {
@@ -270,7 +267,6 @@ fn graph_dispatches_over_transport_to_real_mock() {
 
     let result = run_trace(Rc::new(graph), trace, materializer, sink, TimeBase::Wall).unwrap();
 
-    // Both LLM nodes reached the wire and completed through the shared collector.
     assert_eq!(obs.admits.load(Ordering::Relaxed), 2, "two HTTP dispatches");
     assert_eq!(obs.completed.load(Ordering::Relaxed), 2, "both completed");
     assert!(
@@ -278,7 +274,6 @@ fn graph_dispatches_over_transport_to_real_mock() {
         "real output tokens observed"
     );
 
-    // n0's real HTTP reply flowed onto its channel as a non-empty assistant msg.
     match result.channels.get("c0").and_then(ChanVal::as_value) {
         Some(Value::Array(a)) => {
             assert_eq!(a.len(), 1, "c0 holds n0's assistant reply");
@@ -290,7 +285,6 @@ fn graph_dispatches_over_transport_to_real_mock() {
         }
         other => panic!("c0 should hold assistant messages, got {other:?}"),
     }
-    // n1 ran after n0 (spliced c0) and also produced a real reply on c1.
     match result.channels.get("c1").and_then(ChanVal::as_value) {
         Some(Value::Array(a)) => {
             assert_eq!(a.len(), 1, "c1 holds n1's assistant reply");
@@ -315,7 +309,6 @@ fn graph_dispatches_over_transport_h2c_to_real_mock() {
 
     let obs = Rc::new(CountObs::default());
     let clock: Rc<dyn Clock> = RealClock::new();
-    // http2 = true -> h2c prior-knowledge over cleartext against the mock.
     let sink = Rc::new(TransportChatSink::new(
         clock,
         &mock.base_url,

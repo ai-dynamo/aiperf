@@ -6,8 +6,7 @@
 //! Hot path (`record_tokens`) is a single `fetch_add` on an `AtomicU64`.
 //! A background tokio task samples the counter on a fixed cadence, maintains
 //! the sliding-window view, tracks peak throughput, and invokes the
-//! registered DCGM load callback. This removes the per-token Mutex that
-//! previously bottlenecked streaming under high concurrency.
+//! registered DCGM load callback.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -23,19 +22,15 @@ pub type LoadCallback = Arc<dyn Fn(f64) + Send + Sync + 'static>;
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(10);
 
 pub struct Throughput {
-    /// Running count of tokens recorded since process start.
     running_total: AtomicU64,
-    /// Running max observed throughput (stored as f64 bits for atomic swap).
     max_observed_bits: AtomicU64,
     min_throughput_baseline: AtomicU32,
-    /// Window in milliseconds (stored as u32 to allow atomic reads).
     window_ms: AtomicU32,
     inner: Mutex<Inner>,
     callback: Mutex<Option<LoadCallback>>,
 }
 
 struct Inner {
-    /// (sample_instant, cumulative_total) pairs inside the window.
     samples: VecDeque<(Instant, u64)>,
     sampler_running: bool,
 }
@@ -114,7 +109,6 @@ impl Throughput {
         let (throughput, _) = compute_throughput(&inner.samples, window_ms);
         drop(inner);
 
-        // Update peak throughput observed.
         loop {
             let cur_bits = self.max_observed_bits.load(Ordering::Relaxed);
             let cur = f64::from_bits(cur_bits);
@@ -131,7 +125,7 @@ impl Throughput {
             }
         }
 
-        // Fire the DCGM load callback outside any locks.
+        // Callbacks may perform arbitrary work and must not hold the sample lock.
         if let Some(cb) = self.callback.lock().as_ref().cloned() {
             let peak = f64::from_bits(self.max_observed_bits.load(Ordering::Relaxed));
             let floor = self.min_throughput_baseline.load(Ordering::Relaxed) as f64;

@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Error types for the hash-derived RNG crate.
+//! Errors for hash-derived random-number operations.
 
 use std::fmt;
 
-/// Result alias for `aiperf-rng` operations.
+/// Result alias for RNG operations.
 pub type Result<T> = std::result::Result<T, RngError>;
 
 /// Validation and construction errors returned by RNG helpers.

@@ -2,15 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Shared integration-test helpers.
-//!
-//! The product `run_*` one-shot HTTP builders and the synthetic/JSONL
-//! conversation loaders were removed from the crate; Python composes real runs
-//! through the runner. These helpers rebuild equivalent synthetic and
-//! trace-timestamped conversation sources over the live native dataset +
-//! prepared-endpoint path, and re-compose the scheduled/fixed-schedule/
-//! user-centric online runtimes from public building blocks, so the timing,
-//! scheduling, and transport coverage the deleted helpers exercised is
-//! preserved.
 
 #![allow(dead_code)]
 
@@ -164,7 +155,7 @@ fn scheduled_policies(seed: u64, base_urls: &[String]) -> ScheduledAncillaryPoli
     }
 }
 
-/// Re-composed equivalent of the removed `run_fixed_schedule_online`.
+/// Run a fixed-schedule workload against an HTTP endpoint.
 pub async fn run_fixed_schedule_online(
     base_url: String,
     model: String,
@@ -184,7 +175,7 @@ pub async fn run_fixed_schedule_online(
     .await
 }
 
-/// Re-composed equivalent of the removed `run_fixed_schedule_online_with_ancillary`.
+/// Run a fixed-schedule workload with ancillary timing policies.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_fixed_schedule_online_with_ancillary(
     base_url: String,
@@ -219,7 +210,7 @@ pub async fn run_fixed_schedule_online_with_ancillary(
     .await
 }
 
-/// Re-composed equivalent of the removed `run_user_centric_online`.
+/// Run a user-centric workload against an HTTP endpoint.
 pub async fn run_user_centric_online(
     base_url: String,
     model: String,
@@ -249,7 +240,7 @@ pub async fn run_user_centric_online(
     .await
 }
 
-/// Re-composed equivalent of the removed `run_single_turn_dataset_online`.
+/// Run a single-turn dataset workload against an HTTP endpoint.
 ///
 /// `prepared_endpoints` MUST be the same table the source's prepared bindings
 /// were built over, so the dispatcher resolves each turn's dense endpoint key to

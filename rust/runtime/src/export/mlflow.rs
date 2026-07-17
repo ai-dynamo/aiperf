@@ -3,8 +3,7 @@
 
 //! MLflow run tracker (native Rust, MLflow REST + local FileStore uploader).
 //!
-//! Ports the Python MLflow exporter (`exporters/mlflow_data_exporter.py`) to the
-//! runner: creates/attaches an MLflow run and logs the same params, per-stat
+//! Creates or attaches an MLflow run and logs the configured params, per-stat
 //! metrics (`metric.tag` for avg, `metric.tag.<stat>` for the rest), tags
 //! (`aiperf.version`, `benchmark_id`, `aiperf.was_cancelled`, user tags), and
 //! uploads the artifact bundle. Two tracking backends are supported directly,

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Pure-Rust port of the KV cache prefix model
-//! (`src/aiperf/dataset/agentic_code_gen/prefix_model.py`).
+//! Deterministic hash allocation for the KV-cache prefix model.
 //!
 //! Deterministic hash-id allocation — no RNG, pure arithmetic. Layout:
 //! `L1: [0..L1_blocks)`, `L1.5: [L1_blocks + group*MAX_GROUP_BLOCKS ..]`,
@@ -13,8 +12,7 @@ const MAX_GROUP_BLOCKS: i64 = 200;
 const MAX_GROUPS: i64 = 1_000;
 const MAX_SESSION_BLOCKS: i64 = 4_000;
 
-/// Allocates deterministic hash IDs for the layered prefix model
-/// (`prefix_model.py:30`).
+/// Allocates deterministic hash IDs for the layered prefix model.
 pub struct PrefixAllocator {
     block_size: i64,
     l1_blocks: i64,
@@ -24,7 +22,6 @@ pub struct PrefixAllocator {
 }
 
 impl PrefixAllocator {
-    /// Construct from cache config + block size (`prefix_model.py:33-51`).
     pub fn new(config: &CacheLayerConfig, block_size: i64) -> anyhow::Result<Self> {
         if block_size <= 0 {
             anyhow::bail!("block_size must be > 0");
@@ -67,7 +64,7 @@ impl PrefixAllocator {
         (base..base + used).collect()
     }
 
-    /// Generate the full `hash_ids` array for a turn (`prefix_model.py:92-136`).
+    /// Generate the full `hash_ids` array for a turn.
     pub fn turn_hash_ids(
         &self,
         session_index: i64,
@@ -126,8 +123,7 @@ impl PrefixAllocator {
         Ok(result)
     }
 
-    /// Extract everything after L1 + L1.5 from a full `hash_ids` array
-    /// (`prefix_model.py:181-185`).
+    /// Extract session-owned IDs after the shared L1 and L1.5 prefixes.
     pub fn extract_session_ids(&self, hash_ids: &[i64]) -> Vec<i64> {
         if (hash_ids.len() as i64) <= self.prefix_blocks {
             return Vec::new();
@@ -136,7 +132,6 @@ impl PrefixAllocator {
     }
 }
 
-/// `math.ceil(a / b)` for positive `b` (Python integer/float ceil division).
 fn div_ceil(a: i64, b: i64) -> i64 {
     if a <= 0 { 0 } else { (a + b - 1) / b }
 }

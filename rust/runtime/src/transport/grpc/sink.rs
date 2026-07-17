@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Scheduled-runtime composition for the protocol-v2 native gRPC transport.
+//! Scheduled-runtime composition for protocol-v2 gRPC.
 //!
-//! This module intentionally accepts only worker-local prepared endpoints. It
-//! has no protocol-v1 endpoint adapter, no closed endpoint enum dispatch, and
-//! no Python transport fallback. The scheduler-facing command/result types are
-//! temporarily shared with the established online execution-placement seam;
-//! all actual wire IO and timing are owned by `aiperf-transport-grpc`.
+//! The sink accepts worker-local prepared endpoints and delegates wire I/O and
+//! timing to [`GrpcTransport`].
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -59,12 +56,7 @@ pub struct GrpcTransportSinkConfig {
     pub session_header: Option<String>,
 }
 
-/// Transport-native request retaining its protocol-v2 prepared endpoint.
-///
-/// The richer runner placement seam uses [`PreparedTurn`] directly until
-/// its historical HTTP naming is generalized. This wrapper keeps the canonical
-/// [`RequestSink`] extension seam available without discarding the dense
-/// endpoint reference required by gRPC serialization.
+/// A [`RequestSink`] request retaining its prepared endpoint binding.
 #[derive(Clone, Debug)]
 pub struct GrpcRequest {
     turn: PreparedTurn,
@@ -76,7 +68,7 @@ impl GrpcRequest {
         Self { turn }
     }
 
-    /// Recover the richer prepared turn.
+    /// Recover the prepared turn.
     pub fn into_inner(self) -> PreparedTurn {
         self.turn
     }
@@ -117,8 +109,7 @@ pub struct GrpcTransportSink {
     binding_registry: GrpcBindingRegistry,
     prepared_endpoints: Option<Rc<PreparedEndpointTable>>,
     prepared_bindings: Vec<Box<dyn crate::transport::grpc::GrpcEndpointBinding>>,
-    /// Worker-local metric accumulator for the scheduled runner's measured
-    /// execution path (unset until `configure_measurement`).
+    /// Worker-local metric accumulator, unset until `configure_measurement`.
     measurement: WorkerMeasurement,
 }
 
@@ -488,10 +479,6 @@ impl Dispatcher for GrpcTransportSink {
         GrpcTransportSink::dispatch_collect(self, turn, observer, on_first_token).await
     }
 
-    // The inherent gRPC `inference_dimensions` resolves from a `&TurnToSend`
-    // (scheduled path); the `Dispatcher` seam is keyed on the transport-neutral
-    // `Request`. Build the same dimensions gRPC produces — selected URL by
-    // the request's url index, model falling back to the sink's model.
     fn inference_dimensions(&self, request: &Request) -> InferenceDimensions {
         InferenceDimensions {
             endpoint_url: self.selected_url(request.url_index),

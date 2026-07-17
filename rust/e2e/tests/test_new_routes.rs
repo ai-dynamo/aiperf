@@ -1,29 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end coverage for three HTTP dialects the AIPerf runner drives that the
-//! mock server previously lacked: the vLLM/Dynamo token-native Generate endpoint
-//! (`/inference/v1/generate`), the OpenAI Responses API (`/v1/responses`), and
-//! the KServe `/openai/v1/*` OpenAI-compatible aliases.
-//!
-//! Each test drives the real `python -m aiperf profile` CLI against
-//! `aiperf-mock-server` with `--export-level raw` and verifies the raw
-//! per-record output (`profile_export_raw.jsonl`) carries the correct DATA
-//! (and, for the streaming dialects, TIMING) — the feature-complete bar.
-
 mod common;
 use common::*;
 
 use serde_json::Value;
 
-// ============================================================================
-// (1) vLLM / Dynamo token-native Generate — `POST /inference/v1/generate`
-// ============================================================================
-
-/// Parse the single non-streaming response body out of a raw record. The runner
-/// records a non-SSE response as one `responses[]` entry `{perf_ns, text,
-/// content_type}` whose `text` is the verbatim JSON body
-/// (`aiperf_runtime::engine::records::text_response_value`).
+/// Non-SSE response JSON is stored verbatim in `responses[].text`.
 fn non_streaming_body(record: &Value) -> Option<Value> {
     let responses = record.get("responses").and_then(Value::as_array)?;
     for resp in responses {
@@ -36,11 +19,7 @@ fn non_streaming_body(record: &Value) -> Option<Value> {
     None
 }
 
-/// Token-native Generate: the runner sends validated raw input `token_ids`
-/// (`vllm_generate.rs:146-162`) and parses `choices[].token_ids` integer arrays
-/// (`vllm_generate.rs:259-303`). Drive a synthetic run with a fixed ISL=64 /
-/// OSL=8 and assert every raw record's response carries an 8-integer `token_ids`
-/// output and the correct ISL/model/status.
+/// Token-native Generate returns integer `choices[].token_ids`.
 #[tokio::test]
 async fn vllm_generate_raw_records_carry_token_ids() {
     if cfg!(target_os = "macos") {
@@ -68,7 +47,6 @@ async fn vllm_generate_raw_records_carry_token_ids() {
     let records = r.artifacts.raw_records();
     assert_eq!(records.len(), 6, "expected 6 raw records");
     for (i, rec) in records.iter().enumerate() {
-        // DATA: HTTP status.
         assert_eq!(
             rec.get("status").and_then(Value::as_u64),
             Some(200),
@@ -77,7 +55,6 @@ async fn vllm_generate_raw_records_carry_token_ids() {
         let body = non_streaming_body(rec)
             .unwrap_or_else(|| panic!("record {i}: no parseable non-streaming body\n{rec}"));
 
-        // DATA: token_ids output array of exactly OSL integers.
         let token_ids = body
             .pointer("/choices/0/token_ids")
             .and_then(Value::as_array)
@@ -93,7 +70,6 @@ async fn vllm_generate_raw_records_carry_token_ids() {
             "record {i}: token_ids must be integers, got {token_ids:?}"
         );
 
-        // DATA: ISL echoed in usage, and model.
         assert_eq!(
             body.pointer("/usage/prompt_tokens").and_then(Value::as_u64),
             Some(ISL as u64),
@@ -113,15 +89,7 @@ async fn vllm_generate_raw_records_carry_token_ids() {
     }
 }
 
-// ============================================================================
-// (2) KServe `/openai/v1/*` aliases — `kserve_chat` -> /openai/v1/chat/completions
-// ============================================================================
-
-/// The KServe OpenAI-compatible chat alias: the runner's `kserve_chat` endpoint
-/// (`kserve.rs:33`) defaults to `/openai/v1/chat/completions`, which the mock now
-/// routes to the same OpenAI chat handler. Drive a tuned streaming run and verify
-/// every raw record reproduces the tuned TTFT/ITL/latency and OSL — proving the
-/// alias route reaches the real chat SSE path end to end.
+/// `kserve_chat` routes `/openai/v1/chat/completions` through chat SSE.
 #[tokio::test]
 async fn openai_v1_chat_alias_raw_timing_and_data() {
     if cfg!(target_os = "macos") {
@@ -159,15 +127,8 @@ async fn openai_v1_chat_alias_raw_timing_and_data() {
     );
 }
 
-// ============================================================================
-// (3) OpenAI Responses API — `POST /v1/responses`
-// ============================================================================
-
 /// Collect `(perf_ns, delta_text)` for every `response.output_text.delta` SSE
-/// frame in one raw record. The runner records each SSE event as a `responses[]`
-/// entry with a `data` packet whose value is the event JSON; the streaming
-/// parser keys on `type == "response.output_text.delta"` and reads `delta`
-/// (`endpoints.rs:1334-1391`).
+/// frame in one raw record.
 fn responses_deltas(record: &Value) -> Vec<(i64, String)> {
     let mut out = Vec::new();
     let Some(responses) = record.get("responses").and_then(Value::as_array) else {
@@ -198,8 +159,7 @@ fn responses_deltas(record: &Value) -> Vec<(i64, String)> {
     out
 }
 
-/// True when any `response.completed` frame in the record carries a usage block
-/// with the expected `output_tokens`.
+/// Returns terminal `response.completed` output-token usage.
 fn responses_completed_output_tokens(record: &Value) -> Option<u64> {
     let responses = record.get("responses").and_then(Value::as_array)?;
     for resp in responses {
@@ -227,10 +187,7 @@ fn responses_completed_output_tokens(record: &Value) -> Option<u64> {
     None
 }
 
-/// OpenAI Responses API streaming: drive a tuned run and verify every raw record
-/// carries exactly OSL `response.output_text.delta` frames with non-empty text,
-/// a terminal `response.completed` usage block, and (when the environment is not
-/// a timer-virtualizing sandbox) the tuned TTFT/ITL on the delta frames.
+/// Timer-virtualizing environments skip timing assertions but retain wire checks.
 #[tokio::test]
 async fn responses_streaming_raw_records_carry_deltas_and_usage() {
     if cfg!(target_os = "macos") {
@@ -260,7 +217,6 @@ async fn responses_streaming_raw_records_carry_deltas_and_usage() {
     let records = r.artifacts.raw_records();
     assert_eq!(records.len(), 6, "expected 6 raw records");
 
-    // Compute a fast-forward guard from the first record's first delta.
     let first_deltas = responses_deltas(&records[0]);
     let start_perf = records[0].get("start_perf_ns").and_then(Value::as_i64);
     let measured_ttft = match (start_perf, first_deltas.first()) {
@@ -276,14 +232,12 @@ async fn responses_streaming_raw_records_carry_deltas_and_usage() {
     }
 
     for (i, rec) in records.iter().enumerate() {
-        // DATA: HTTP status.
         assert_eq!(
             rec.get("status").and_then(Value::as_u64),
             Some(200),
             "record {i}: status not 200\n{rec}"
         );
 
-        // DATA: exactly OSL content deltas, each non-empty text.
         let deltas = responses_deltas(rec);
         assert_eq!(
             deltas.len(),
@@ -296,7 +250,6 @@ async fn responses_streaming_raw_records_carry_deltas_and_usage() {
             "record {i}: a delta frame carried empty text"
         );
 
-        // DATA: terminal completed usage carries output_tokens == OSL.
         assert_eq!(
             responses_completed_output_tokens(rec),
             Some(OSL as u64),
@@ -307,7 +260,6 @@ async fn responses_streaming_raw_records_carry_deltas_and_usage() {
             continue;
         }
 
-        // TIMING: TTFT ~= tuned within tolerance.
         let start = rec
             .get("start_perf_ns")
             .and_then(Value::as_i64)
@@ -318,7 +270,6 @@ async fn responses_streaming_raw_records_carry_deltas_and_usage() {
             "record {i}: TTFT {ttft_ms:.2}ms not within 8ms of tuned {TTFT_MS}ms"
         );
 
-        // TIMING: mean ITL over consecutive delta frames ~= tuned.
         let perfs: Vec<i64> = deltas.iter().map(|(p, _)| *p).collect();
         let gaps: Vec<f64> = perfs
             .windows(2)

@@ -3,12 +3,8 @@
 
 //! Tokenization and response generation.
 //!
-//! The character-based ~4-chars-per-token scheme, including:
-//! - LRU-cached tokenize()
-//! - corpus loading (Shakespeare text asset)
-//! - token budget logic (min/max, ignore_eos, default 0.8–1.2× prompt)
-//! - deterministic prompt-seeded selection
-//! - reasoning tokens for gpt-oss / qwen models
+//! Character-based tokenization, bounded caching, deterministic generation,
+//! token budgets, and reasoning-token accounting.
 
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -37,15 +33,13 @@ const TOKENIZE_CACHE_CAP: usize = 16_384;
 /// `tokenize_uncached` is O(n) and cheap next to the request's simulated latency.
 const TOKENIZE_CACHE_MAX_BYTES: usize = 256 * 1024;
 
-/// Lock-free sharded tokenize cache. Replaces `Mutex<LruCache>`, which serialized
-/// every request's tokenization through a single lock.
+/// Lock-free sharded tokenization cache.
 static TOKENIZE_CACHE: Lazy<DashMap<String, Vec<String>>> =
     Lazy::new(|| DashMap::with_capacity_and_shard_amount(1024, 64));
 
 static CORPUS_TOKENS: RwLock<Option<Vec<String>>> = RwLock::new(None);
 
-/// Load corpus from shakespeare.txt (char-based chunking - mirrors `no_tokenizer` path).
-/// Safe to call multiple times - idempotent.
+/// Loads the optional Shakespeare corpus once.
 pub fn load_corpus() {
     {
         let guard = CORPUS_TOKENS.read().unwrap();
@@ -110,16 +104,13 @@ fn workspace_corpus_path() -> PathBuf {
         .join("../../src/aiperf/dataset/generator/assets/shakespeare.txt")
 }
 
-/// Character-based tokenizer: ~4 chars/token, breaking at whitespace when possible.
-/// Matches the Python `_tokenize` implementation byte-for-byte for ASCII input.
+/// Splits at roughly four characters per token, preferring nearby whitespace.
 fn tokenize_uncached(text: &str) -> Vec<String> {
     if text.is_empty() {
         return Vec::new();
     }
 
-    // Work on the string's byte indices to match Python slicing semantics
-    // (Python str slicing indexes by code units; for ASCII this matches bytes).
-    // For non-ASCII, we fall back to char-based scanning below so we never split UTF-8.
+    // Byte scanning is safe for ASCII; Unicode input uses character boundaries.
     let bytes = text.as_bytes();
 
     if bytes.iter().all(|b| b.is_ascii()) {
@@ -291,8 +282,7 @@ impl GenRequest<'_> {
         }
     }
 
-    /// Request priority for the `priority` KV-cache eviction policy. Only chat
-    /// and text completions carry one; everything else defaults to 0.
+    /// Request priority for the `priority` KV-cache eviction policy.
     pub fn priority(&self) -> i64 {
         match self {
             GenRequest::Chat(r) => r.priority.unwrap_or(0),
@@ -327,7 +317,6 @@ fn extract_chat_text(messages: &[crate::models::Message]) -> String {
     parts.join("\n")
 }
 
-/// Extract the prompt text and an optional max_tokens override for the request.
 fn extract_content(req: &GenRequest<'_>) -> (String, Option<usize>) {
     match req {
         GenRequest::Chat(r) => (extract_chat_text(&r.messages), r.max_output_tokens()),
@@ -515,8 +504,7 @@ pub fn generate_output_token_ids(
     ignore_eos: bool,
 ) -> (Vec<u32>, &'static str) {
     let prompt_token_count = input_token_ids.len();
-    // The seed only needs to be a stable function of the input; the text path
-    // hashes token strings, so mirror that with the IDs rendered as strings.
+    // Render IDs as strings so text and token-native generation share seed logic.
     let seed_repr: Vec<String> = input_token_ids
         .iter()
         .take(5)
@@ -621,7 +609,6 @@ fn ignore_eos_of(req: &GenRequest<'_>) -> bool {
     }
 }
 
-/// Tokenize a request and generate the output/reasoning tokens.
 pub fn tokenize_request(req: &GenRequest<'_>) -> TokenizedText {
     let (text, max_tokens) = extract_content(req);
     let prompt_tokens = tokenize(&text);
@@ -703,7 +690,6 @@ mod tests {
     fn tokenize_simple_ascii_splits_on_4_chars() {
         let tokens = tokenize("hello world");
         assert!(!tokens.is_empty());
-        // Reconstruction is lossless
         assert_eq!(tokens.concat(), "hello world");
     }
 
@@ -713,7 +699,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_corpus_is_discoverable_without_a_deprecated_checkout() {
+    fn workspace_corpus_path_is_discoverable() {
         let path = workspace_corpus_path();
         assert!(path.ends_with("src/aiperf/dataset/generator/assets/shakespeare.txt"));
         assert!(path.is_file());
@@ -721,7 +707,6 @@ mod tests {
 
     #[test]
     fn reasoning_model_produces_reasoning_tokens() {
-        // Use explicit max_tokens=1000 so reasoning (default 250) fits in budget.
         let mut req = chat("openai/gpt-oss-120b", "Hello there! Think about this hard.");
         req.max_tokens = Some(1000);
         let req_gen = GenRequest::Chat(&req);
@@ -741,11 +726,9 @@ mod tests {
 
     #[test]
     fn reasoning_clamps_to_budget() {
-        // Small prompt, no explicit max_tokens -> reasoning clamped to total_budget.
         let req = chat("qwen", "short");
         let req_gen = GenRequest::Chat(&req);
         let out = tokenize_request(&req_gen);
-        // total_budget = max(prompt_tokens*2, 16) = 16
         assert_eq!(out.reasoning_tokens, 16);
     }
 

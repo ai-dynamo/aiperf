@@ -54,9 +54,7 @@ pub trait InputTokenCounter: Send + Sync {
 
     /// Count input tokens through a worker-local prepared endpoint binding.
     ///
-    /// Policies that preserve authored counts inherit this default. Exact
-    /// endpoint-aware counters override it without reconstructing a legacy
-    /// endpoint/configuration pair.
+    /// Policies that preserve authored counts inherit this default.
     fn count_prepared_input_tokens(
         &self,
         _endpoint: &dyn PreparedEndpoint,
@@ -443,10 +441,8 @@ pub struct ResolvedPreparedEndpoint<'a> {
 
 /// Open selection seam for prepared dataset endpoint overrides.
 ///
-/// The ordinary single-profile implementation is
-/// [`PreparedEndpointTableResolver`]. A future remote catalog or workload-local
-/// routing policy can implement the same contract without changing session,
-/// scheduling, or dispatch code.
+/// [`PreparedEndpointTableResolver`] provides local online resolution without
+/// coupling session, scheduling, or dispatch code to table lookup.
 pub trait PreparedTurnEndpointResolver: fmt::Debug {
     /// Resolve an authored per-turn endpoint name, or the run default when
     /// absent, to one dense prepared binding.
@@ -560,9 +556,7 @@ fn lower_static_messages(
 
 /// Endpoint selection retained by one schedulable turn.
 ///
-/// This is an enum rather than a bare [`PreparedEndpointReference`] to keep the
-/// seam open: a future non-prepared execution binding can be added as a new
-/// variant without touching every turn consumer.
+/// The enum keeps endpoint-binding details explicit at turn-consumer boundaries.
 #[derive(Clone)]
 pub enum TurnEndpoint {
     /// Protocol-v2 open prepared binding selected only by stable key and ID.
@@ -660,7 +654,7 @@ pub struct TurnToSend {
     pub request_parameters: BTreeMap<String, String>,
     /// Endpoint path selected by the endpoint resolver.
     pub endpoint_path: Option<String>,
-    /// Legacy adapter or open prepared endpoint identity used for execution.
+    /// Prepared endpoint identity used for execution.
     pub endpoint: TurnEndpoint,
     /// Whether this endpoint returns an SSE stream.
     pub streaming: bool,
@@ -1104,14 +1098,8 @@ impl NativeDatasetConversationSource {
         )
     }
 
-    /// Same as [`Self::preferred_with_prepared_resolver`] but with an explicitly
-    /// injected cell partition instead of the process-environment default. `None`
-    /// reads the partition from the env (`AIPERF_CELL_ID`/`_COUNT`) — the
-    /// byte-unchanged default every current caller takes; `Some` restricts this
-    /// source to the partition's owned instances, a per-thread `(cell_id,
-    /// cell_count)` slice the process-global env vars cannot express, for a future
-    /// single-process thread-per-core scheduled run whose `W` sub-cell threads each
-    /// own a distinct partition.
+    /// Inject a per-thread cell partition. `None` reads
+    /// `AIPERF_CELL_ID`/`AIPERF_CELL_COUNT` from the process environment.
     #[allow(clippy::too_many_arguments)]
     pub fn preferred_with_prepared_resolver_for_partition(
         dataset: NativeDataset,
@@ -1184,14 +1172,8 @@ impl NativeDatasetConversationSource {
         )
     }
 
-    /// Same as [`Self::sequential_with_prepared_resolver`] but with an explicitly
-    /// injected cell partition instead of the process-environment default. `None`
-    /// reads the partition from the env (`AIPERF_CELL_ID`/`_COUNT`) — the
-    /// byte-unchanged default every current caller takes; `Some` restricts this
-    /// source to the partition's owned instances, a per-thread `(cell_id,
-    /// cell_count)` slice the process-global env vars cannot express, for a future
-    /// single-process thread-per-core scheduled run whose `W` sub-cell threads each
-    /// own a distinct partition.
+    /// Inject a per-thread cell partition. `None` reads
+    /// `AIPERF_CELL_ID`/`AIPERF_CELL_COUNT` from the process environment.
     pub fn sequential_with_prepared_resolver_for_partition(
         dataset: NativeDataset,
         model: impl Into<String>,
@@ -1235,27 +1217,17 @@ impl NativeDatasetConversationSource {
         if default_output_tokens == 0 {
             bail!("native dataset default output tokens must be positive");
         }
-        // A cell of a multi-cell run yields only its owned instances (roadmap S4);
-        // the single-process path returns the sampler unchanged (byte-identical).
-        // `None` reads the partition from the process env — the byte-unchanged
-        // default for every current caller; `Some` injects a per-thread partition
-        // the process-global env vars cannot express (thread-per-core scheduled run).
+        // A cell samples only its partition; an explicit partition supports
+        // thread-local ownership without process-global environment mutation.
         let sampler = match cell_partition {
             None => crate::dataset::sampler::PartitionedSampler::from_env(sampler),
             Some(partition) => {
                 crate::dataset::sampler::PartitionedSampler::for_partition(sampler, Some(partition))
             }
         };
-        // Trace-driven workloads (fixed_schedule, user_centric) enumerate
-        // `conversations()` (this `metadata` list) directly rather than drawing
-        // through the partitioned sampler, so a sharded sub-cell must own only its
-        // partition's slice of the enumerable conversations or every thread would
-        // replay the whole trace (W× duplication). Restrict the enumeration to the
-        // partition-owned authored indices — the same `owns(position)` ownership the
-        // sampler applies to `.next()` over the same authored root order, so the
-        // enumerate-based and sample-based partitions select the identical subset and
-        // the W threads tile the conversation space exactly. `None`/identity (single
-        // process) keeps every conversation (byte-unchanged).
+        // Trace workloads enumerate metadata instead of sampling. Apply the same
+        // authored-index ownership here so sub-cells tile conversations without
+        // duplicate replay.
         let enumeration_partition = match cell_partition {
             Some(partition) if partition.cell_count() > 1 => Some(partition),
             _ => None,
@@ -1800,7 +1772,7 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_counter_matches_python_template_and_bare_paths() {
+    fn endpoint_counter_handles_template_and_bare_paths() {
         let body = serde_json::to_vec(&json!({
             "messages":[{"role":"user","content":"hello world"}],
             "tools":[{"type":"function","function":{"name":"weather"}}]
@@ -1828,7 +1800,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn counter_matches_python_root_counting_rules() {
+    async fn credit_counter_counts_root_turns_for_session_bounds() {
         let dataset = inline_multi_turn_dataset(2, 2, "model").await;
         let mut source = prepared_chat_source(dataset, "model", 2);
         let mut counter = CreditCounter::default();
@@ -1996,10 +1968,7 @@ mod tests {
         assert_eq!(body1["messages"][1]["content"], "reply-0");
         assert_eq!(body2["messages"][3]["content"], "reply-1");
 
-        // The spliced reply equals the pre-change re-rendered body: a single-text
-        // assistant turn renders to `{"role":"assistant","content":"reply-0"}`
-        // (byte-parity of `lower_turn` vs that render is pinned in the endpoints
-        // `reply_constructors_lower_to_value_dispatch_wire_all_shapes` test).
+        // A single-text assistant turn has this contractually serialized shape.
         assert_eq!(
             body1["messages"][1],
             json!({"role": "assistant", "content": "reply-0"})

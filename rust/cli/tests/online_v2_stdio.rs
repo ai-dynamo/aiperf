@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Process proofs for executable protocol-v2 online pairs.
+//! Process coverage for executable protocol-v2 online configurations.
 
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
@@ -32,7 +32,6 @@ const TOKENIZER_JSON: &str = r#"{
 }"#;
 
 fn capabilities() -> Value {
-    // Capabilities is an in-process call now — one binary, no subprocess.
     serde_json::to_value(
         aiperf_cli::execute_mode::capabilities_catalog().expect("capabilities catalog"),
     )

@@ -1,16 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Reusable tuned-mock `profile_export_raw.jsonl` TIMING + DATA verification.
-//!
-//! This is the operational form of the "feature-complete" bar: given a mock
-//! server tuned to fixed, jitter-free per-token latencies (`--ttft T`,
-//! `--itl I`, `--ttft-jitter-cv 0 --itl-jitter-cv 0`, analytic mode, fixed
-//! synthetic ISL/OSL), every raw record's on-the-wire token timing must
-//! reproduce the tuned model within a tight transport tolerance — proving the
-//! whole `Python -> aiperf runner -> transport -> record` path measures and
-//! persists per-request timing faithfully (single-process, cellular fold+ship+
-//! merge, multi-turn, or graph).
+//! Tuned-mock timing and data checks for `profile_export_raw.jsonl`.
 //!
 //! # The raw-record schema this parses
 //!
@@ -25,7 +16,7 @@
 //!     `{ perf_ns, packets: [{ name: "data", value: "<chunk>" }] }`. The chunk
 //!     `value` is either a JSON `chat.completion.chunk` or the literal `[DONE]`.
 //!
-//! # The critical OSL rule (earned in blood)
+//! # Generated-token accounting
 //!
 //! OSL is the count of *generated-token* chunks — a data chunk whose
 //! `choices[0].delta.content` is present (non-null). It EXCLUDES:
@@ -33,8 +24,8 @@
 //!   * the `stream_options.include_usage` usage chunk (empty `choices`), which
 //!     arrives ~0 ms after the last token, and
 //!   * `reasoning_content` chunks (reasoning models stream those separately).
-//! Counting the trailing usage/`[DONE]` chunk both inflates OSL by one AND
-//! dilutes the measured ITL (its ~0 ms gap drags the mean down), which is why
+//! Counting a trailing usage or `[DONE]` chunk inflates OSL and dilutes ITL,
+//! which is why
 //! callers pin a NON-reasoning model (`gpt-4`) so `content` chunks == the
 //! requested output cap exactly.
 //!
@@ -43,8 +34,6 @@
 //!   * ITL    = mean gap between consecutive content chunks' `perf_ns`
 //!   * latency = (`request_end_ns` - `request_start_ns`)
 //!
-//! Reference (ttft=100, itl=10, osl=8): TTFT ~101.1 ms, ITL ~9.99 ms,
-//! latency ~171 ms, OSL 8.
 
 use serde_json::Value;
 
@@ -64,9 +53,7 @@ pub fn tuned_mock_config(ttft_ms: f64, itl_ms: f64) -> MockServerConfig {
     cfg.itl = itl_ms;
     cfg.ttft_jitter_cv = 0.0;
     cfg.itl_jitter_cv = 0.0;
-    // Analytic closed-form TTFT/ITL, not the batched scheduler.
     cfg.scheduler_enabled = false;
-    // --fast would zero the latencies; make sure it is off.
     cfg.fast = false;
     cfg
 }
@@ -109,10 +96,7 @@ impl TunedExpectations {
             osl,
             model: None,
             status: 200,
-            // Tight: the manual isolated reference measured ~1 ms of transport
-            // overhead on TTFT and ~0.03 ms on ITL. These leave a little slack for
-            // loopback/connection jitter without becoming a wide band. (Callers
-            // that cannot isolate the run should widen TTFT via `tol_ms`.)
+            // Loopback and connection setup add small transport jitter.
             ttft_tol_ms: 6.0,
             itl_tol_ms: 2.0,
         }
@@ -248,16 +232,11 @@ pub fn extract_timing(record: &Value) -> RawRecordTiming {
     }
 }
 
-/// Detect a timer-virtualizing sandbox that fast-forwarded the mock's `timerfd`
-/// sleeps to ~0 ms, collapsing the tuned latencies.
+/// Detect timer virtualization that collapses the mock's `timerfd` sleeps.
 ///
 /// Returns `true` (and prints a clear `SKIP:` line) when the first record's
 /// measured TTFT is drastically below the tuned value (`< tuned / 4`), which is
-/// only possible if the timer was virtualized — a real slow OR fast run still
-/// pays the tuned first-token sleep, so this never masks a genuine timing
-/// regression. Timing tests call this first and `return` early when it is true,
-/// turning the otherwise-confusing "TTFT 0.05ms not within 6ms of 100ms" hard
-/// failure into an explicit skip.
+/// only possible when the configured first-token sleep was not observed.
 pub fn timing_fast_forwarded(records: &[Value], tuned_ttft_ms: f64) -> bool {
     let Some(first) = records.first() else {
         return false;
@@ -291,10 +270,7 @@ pub fn assert_raw_records_timing_and_data(records: &[Value], expected: &TunedExp
 
     let ttft_tol = expected.ttft_tol_ms;
     let itl_tol = expected.itl_tol_ms;
-    // request_latency = TTFT + (osl-1) ITLs, so its rigorous error bound is the
-    // sum of the per-component tolerances — TTFT contention plus one ITL-tol per
-    // gap. (In practice ITL error is a small systematic bias, not random, so the
-    // real drift is far under this bound.)
+    // Latency tolerance accumulates TTFT tolerance and one ITL tolerance per gap.
     let latency_tol = ttft_tol + (expected.osl.saturating_sub(1)) as f64 * itl_tol;
     let expected_latency =
         expected.ttft_ms + (expected.osl.saturating_sub(1)) as f64 * expected.itl_ms;
@@ -302,7 +278,6 @@ pub fn assert_raw_records_timing_and_data(records: &[Value], expected: &TunedExp
     for (index, record) in records.iter().enumerate() {
         let timing = extract_timing(record);
 
-        // DATA: HTTP status.
         assert_eq!(
             timing.status,
             Some(expected.status),
@@ -311,7 +286,6 @@ pub fn assert_raw_records_timing_and_data(records: &[Value], expected: &TunedExp
             expected.status
         );
 
-        // DATA: OSL == the requested output cap (content chunks only).
         assert_eq!(
             timing.osl, expected.osl,
             "record {index}: OSL (content chunks) {} != expected {} \
@@ -319,7 +293,6 @@ pub fn assert_raw_records_timing_and_data(records: &[Value], expected: &TunedExp
             timing.osl, expected.osl
         );
 
-        // DATA: model, when pinned.
         if let Some(want_model) = &expected.model {
             assert_eq!(
                 timing.model.as_deref(),
@@ -329,7 +302,6 @@ pub fn assert_raw_records_timing_and_data(records: &[Value], expected: &TunedExp
             );
         }
 
-        // TIMING: TTFT ~= configured ttft within tol.
         let ttft = timing
             .ttft_ms
             .unwrap_or_else(|| panic!("record {index}: no content chunk, cannot measure TTFT"));
@@ -339,7 +311,6 @@ pub fn assert_raw_records_timing_and_data(records: &[Value], expected: &TunedExp
             expected.ttft_ms
         );
 
-        // TIMING: mean ITL ~= configured itl within itl_tol (only when >= 2 tokens).
         if expected.osl >= 2 {
             let itl = timing.itl_ms.unwrap_or_else(|| {
                 panic!("record {index}: OSL {} but no ITL computed", timing.osl)
@@ -351,7 +322,6 @@ pub fn assert_raw_records_timing_and_data(records: &[Value], expected: &TunedExp
             );
         }
 
-        // TIMING: request_latency ~= ttft + (osl-1)*itl within the accumulated tol.
         assert!(
             (timing.latency_ms - expected_latency).abs() <= latency_tol,
             "record {index}: request_latency {:.2}ms is not within {latency_tol}ms of \
@@ -428,7 +398,6 @@ pub fn assert_raw_records_timing_self_consistent_model(
             "record {index}: no content (generated-token) chunks in the stream"
         );
 
-        // DATA: model, when pinned — parity with the fixed-OSL variant.
         if let Some(want_model) = model {
             assert_eq!(
                 timing.model.as_deref(),
@@ -469,27 +438,15 @@ pub fn assert_raw_records_timing_self_consistent_model(
     }
 }
 
-/// Sandbox-safe unit coverage for the classification/timing core
-/// (`is_content_chunk` / `data_chunks` / `extract_timing`).
-///
-/// These are PURE PARSING tests over synthetic `serde_json` records — no mock
-/// server, no network, no `timerfd` sleeps — so they run identically in a
-/// normal sandbox and a timer-virtualizing CI. They pin the earned-in-blood OSL
-/// gotcha (§"The critical OSL rule") independent of the wall-clock e2e tests,
-/// which cannot run under a timer-fast-forwarding sandbox: the terminal usage
-/// chunk (empty `choices`), the `[DONE]` sentinel, and `reasoning_content`-only
-/// chunks must NOT count toward OSL, and ITL must be computed from
-/// content-chunk gaps only.
+/// Parsing-only coverage for generated-token classification and timing.
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
-    /// One second in nanoseconds, used to keep synthetic perf timelines readable.
+    /// One millisecond in nanoseconds.
     const MS: i64 = 1_000_000;
 
-    /// A generated-content SSE `chat.completion.chunk` (`choices[0].delta.content`
-    /// present and non-null) — the ONLY chunk kind that counts toward OSL.
     fn content_chunk(model: &str, token: &str) -> serde_json::Value {
         json!({
             "id": "chatcmpl-x",
@@ -504,8 +461,6 @@ mod tests {
         })
     }
 
-    /// A reasoning-only chunk: `reasoning_content` present, `content` explicitly
-    /// null. Reasoning models stream these separately; they must be excluded.
     fn reasoning_chunk(model: &str, token: &str) -> serde_json::Value {
         json!({
             "id": "chatcmpl-x",
@@ -520,8 +475,6 @@ mod tests {
         })
     }
 
-    /// The terminal `stream_options.include_usage` chunk: empty `choices`, a
-    /// trailing `usage` block, arriving ~0 ms after the last token.
     fn usage_chunk(model: &str) -> serde_json::Value {
         json!({
             "id": "chatcmpl-x",
@@ -533,9 +486,6 @@ mod tests {
         })
     }
 
-    /// Wrap an already-serialized SSE payload string into one `responses[]` entry
-    /// at the given perf timestamp. `raw` is placed verbatim in the `data` packet
-    /// value — pass a JSON chunk string or the literal `"[DONE]"`.
     fn response_entry(perf_ns: i64, raw: &str) -> serde_json::Value {
         json!({
             "perf_ns": perf_ns,
@@ -543,13 +493,10 @@ mod tests {
         })
     }
 
-    /// One `responses[]` entry carrying a JSON chunk value at `perf_ns`.
     fn chunk_entry(perf_ns: i64, chunk: &serde_json::Value) -> serde_json::Value {
         response_entry(perf_ns, &chunk.to_string())
     }
 
-    /// Assemble a synthetic raw record from `start_perf_ns`, the request wall-clock
-    /// bounds, and a set of `responses[]` entries.
     fn record(
         start_perf_ns: i64,
         request_start_ns: i64,
@@ -568,16 +515,9 @@ mod tests {
         })
     }
 
-    /// The canonical gotcha case: a stream of one content chunk, one reasoning-only
-    /// chunk, one usage-only chunk, and the `[DONE]` sentinel must yield OSL == 1
-    /// (ONLY the content chunk), a TTFT/latency derived from the content chunk's
-    /// perf timestamp, and no ITL (single token).
     #[test]
     fn osl_excludes_reasoning_usage_and_done() {
         let start = MS;
-        // Reasoning streams before the content token; usage + [DONE] trail it. The
-        // reasoning/usage/[DONE] perf timestamps are chosen so that if any leaked
-        // into the content set, TTFT or ITL would visibly shift.
         let responses = vec![
             chunk_entry(start + 40 * MS, &reasoning_chunk("gpt-4", "hmm")),
             chunk_entry(start + 100 * MS, &content_chunk("gpt-4", "hello")),
@@ -599,8 +539,6 @@ mod tests {
         assert_eq!(timing.latency_ms, 171.0);
     }
 
-    /// A record with no reasoning/usage/[DONE] at all still counts its lone content
-    /// chunk and yields no ITL — the osl==1 edge case in isolation.
     #[test]
     fn single_content_chunk_has_no_itl() {
         let start = 5 * MS;
@@ -614,16 +552,9 @@ mod tests {
         assert_eq!(timing.latency_ms, 105.0);
     }
 
-    /// Multi-content stream: OSL counts every content chunk, ITL is the mean gap of
-    /// consecutive CONTENT chunks only — interleaved reasoning/usage/[DONE] entries
-    /// (including one whose perf_ns falls between two content chunks) must not
-    /// perturb the ITL mean.
     #[test]
     fn multi_content_itl_from_content_gaps_only() {
         let start = 2 * MS;
-        // Content chunks at +100, +112, +120 -> gaps 12 and 8 -> mean ITL 10.
-        // A usage chunk lands at +116 (between two content chunks); if it were
-        // (wrongly) counted, the gap sequence would change and the mean would drift.
         let responses = vec![
             chunk_entry(start + 100 * MS, &content_chunk("gpt-4", "t0")),
             chunk_entry(start + 112 * MS, &content_chunk("gpt-4", "t1")),
@@ -644,8 +575,6 @@ mod tests {
         assert_eq!(timing.latency_ms, 130.0);
     }
 
-    /// A leading reasoning burst before any content: OSL and TTFT anchor on the
-    /// FIRST content chunk, not the earlier reasoning tokens.
     #[test]
     fn reasoning_prefix_does_not_shift_ttft() {
         let start = 0;
@@ -663,8 +592,6 @@ mod tests {
         assert_eq!(timing.itl_ms, Some(10.0));
     }
 
-    /// An empty (or content-free) response set yields OSL 0 and no TTFT/ITL — the
-    /// helper must not panic, so callers can surface "no content chunk" cleanly.
     #[test]
     fn empty_and_content_free_records() {
         let empty = record(0, 0, 50 * MS, 200, vec![]);
@@ -675,7 +602,6 @@ mod tests {
         assert_eq!(t.model, None);
         assert_eq!(t.latency_ms, 50.0);
 
-        // Only reasoning + usage + [DONE], never a content token.
         let no_content = record(
             0,
             0,
@@ -693,9 +619,6 @@ mod tests {
         assert_eq!(t.itl_ms, None);
     }
 
-    /// `is_content_chunk` directly: true only for a present, non-null
-    /// `choices[0].delta.content`; false for null content, empty choices, and a
-    /// missing delta.
     #[test]
     fn is_content_chunk_predicate() {
         assert!(is_content_chunk(&content_chunk("m", "x")));
@@ -705,8 +628,6 @@ mod tests {
         assert!(!is_content_chunk(&json!({})));
     }
 
-    /// `data_chunks` skips the `[DONE]` sentinel and non-`data` packets but keeps
-    /// every parseable JSON `data` packet with its perf timestamp.
     #[test]
     fn data_chunks_skips_done_and_nondata() {
         let rec = json!({

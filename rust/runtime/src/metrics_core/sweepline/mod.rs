@@ -5,7 +5,7 @@
 //!
 //! Every curve is represented as a right-continuous step function. Event ordering,
 //! floating-point cancellation, decode-token accounting, and active-only statistics
-//! intentionally preserve the Python behavior documented in
+//! follow the contract documented in
 //! `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md`.
 
 mod kv_cache;
@@ -294,15 +294,9 @@ pub(super) fn sweep_line_cumsum_repeated(mut events: Vec<RepeatedSweepEvent>) ->
     StepFn::new(timestamps_ns, values)
 }
 
-// Both sweep sorts key on `(timestamp asc, delta asc)`: the original comparator
-// broke ties by `(delta > 0)` and then `delta`, but `delta`-ascending already
-// orders every negative (end) delta before every positive (start) delta, so the
-// sign key is redundant and `(timestamp, delta)` reproduces it exactly. That
-// exact order is preserved here by a stable radix on the timestamp bit-key plus
-// a `delta` tie-break within each equal-timestamp run — replacing the
-// `total_cmp` comparison sort (two bit-twiddling compares per comparison) that
-// profiled as the export hot spot. See
-// `~/.claude/benchmark-findings/rust-sweepline-radix-vs-numpy-lexsort.md`.
+// Sorting by `(timestamp asc, delta asc)` places end deltas before start deltas
+// at equal timestamps. A stable timestamp radix plus an in-run delta tie-break
+// preserves that ordering without comparison-sorting the full event set.
 
 fn sort_sweep_events(events: &mut [SweepEvent]) {
     sort_by_timestamp_then_delta(events, |event| event.timestamp_ns, |event| event.delta);
@@ -321,7 +315,7 @@ fn radix_key(x: f64) -> u64 {
 }
 
 /// Sorts `items` by `(timestamp, delta)` total order in place, byte-for-byte
-/// identical to the retired `sort_unstable_by(total_cmp)` comparator.
+/// identical to sorting by `(timestamp, delta)` with `total_cmp`.
 ///
 /// A stable LSD radix on `radix_key(timestamp)` orders by timestamp (ties keep
 /// input order); each equal-timestamp run is then sorted by `delta` so the

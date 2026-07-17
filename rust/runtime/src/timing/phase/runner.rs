@@ -103,9 +103,8 @@ impl CancellationSignal {
 
 /// Local-loop context shared with one phase execution strategy.
 ///
-/// Issuers mutate progress synchronously and dispatch asynchronously. Future
-/// strategies can add workload-specific policy without gaining direct access
-/// to lifecycle transitions, which remain runner-owned.
+/// Issuers mutate progress synchronously and dispatch asynchronously; lifecycle
+/// transitions remain runner-owned.
 #[derive(Clone)]
 pub struct PhaseContext {
     clock: Rc<dyn Clock>,
@@ -290,8 +289,7 @@ pub trait PhaseExecutionFactory {
 
     /// Cancel in-flight work shared across every active phase.
     ///
-    /// The orchestrator invokes this before signalling individual runners,
-    /// matching Python's router-wide cancellation ordering.
+    /// The orchestrator invokes this before signalling individual runners.
     fn cancel_all(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
         Box::pin(async { Ok(()) })
     }

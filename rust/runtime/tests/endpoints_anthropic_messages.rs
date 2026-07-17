@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Byte and behavior parity fixtures for the Messages endpoint.
+//! Messages endpoint wire and behavior contracts.
 
 use std::collections::BTreeMap;
 
@@ -11,8 +11,6 @@ use aiperf_runtime::endpoints::{
 };
 use serde_json::{Map, Value, json};
 
-/// Materialize a formatter's [`BodyPlan`] into a decoded JSON value so the
-/// structural assertions below keep inspecting fields as before stage B.
 fn plan_body(plan: aiperf_runtime::body_plan::BodyPlan) -> Value {
     serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
 }
@@ -56,7 +54,7 @@ fn response(perf_ns: u64, value: Value) -> ServerResponse {
 }
 
 #[test]
-fn simple_non_streaming_request_is_byte_exact_with_pr_731() {
+fn simple_non_streaming_request_is_byte_exact() {
     let mut turn = text_turn("Hello!");
     turn.model = Some("claude-sonnet-4-20250514".into());
     let body = MessagesEndpoint
@@ -183,7 +181,7 @@ fn streaming_and_headers_match_messages_wire_contract() {
 }
 
 #[test]
-fn image_shapes_and_unsupported_media_match_pr() {
+fn image_shapes_and_unsupported_media_match_contract() {
     let mut turn = Turn {
         texts: vec![Media::new(vec!["describe".into()])],
         images: vec![Media::new(vec![

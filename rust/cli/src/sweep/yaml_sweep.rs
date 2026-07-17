@@ -1,10 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! YAML `sweep:` block expansion.
-//!
-//! Byte-for-byte port of Python's `aiperf.config.sweep.expand::_expand_grid_sweep`
-//! / `_expand_zip_sweep` + the shared dotted-path helpers
-//! (`aiperf.config.loader.dotted_path`). A config with a top-level
+//! YAML `sweep:` block expansion. A config with a top-level
 //!
 //! ```yaml
 //! sweep:
@@ -14,19 +10,18 @@
 //!     rate: [10.0, 30.0]  # bare-name alias -> phases.profiling.rate
 //! ```
 //!
-//! expands, per Python's plan build, in the order: `${ENV}` substitution on the
-//! base config → sweep expansion (deep-clone the base, write each parameter value
+//! expands in this order: `${ENV}` substitution on the base config → sweep
+//! expansion (deep-clone the base, write each parameter value
 //! into the `benchmark` subtree at its dotted path, drop the `sweep` key) →
 //! per-variation Jinja render → resolve each variation as a single run. Parameter
-//! names are alpha-sorted (stable variation order); grid = Cartesian product, zip
-//! = lockstep. Label/dir-name match `SweepVariation` (`"path=value, ..."` /
-//! `"seg_value__..."`).
+//! names are alpha-sorted; grid is Cartesian product and zip is lockstep.
+//! Labels use `"path=value, ..."` and directory names use `"seg_value__..."`.
 
 use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
-/// Bare-name sugar for the 12 most-swept phase fields (`_SWEEP_PATH_ALIASES`).
+/// Bare-name aliases for commonly swept phase fields.
 const ALIASES: &[(&str, &str)] = &[
     ("concurrency", "phases.profiling.concurrency"),
     (
@@ -78,9 +73,8 @@ pub enum SweepKind {
     Zip,
 }
 
-/// Normalize a config's `benchmark` subtree the way Python's
-/// `normalize_benchmark_input` does at `AIPerfConfig` parse — BEFORE the sweep
-/// override rewrites dotted paths, so a path like `datasets.default.prompts.isl`
+/// Normalize the `benchmark` subtree before applying sweep overrides, so a path
+/// like `datasets.default.prompts.isl`
 /// resolves even when the config used the singular `dataset:` / `warmup:` /
 /// `profiling:` / `model:` shorthands. Idempotent when already in list form.
 pub fn normalize_benchmark(config: &mut Value) {
@@ -88,7 +82,6 @@ pub fn normalize_benchmark(config: &mut Value) {
         return;
     };
 
-    // warmup/profiling -> phases (each entry gets its `name`).
     if bench.contains_key("warmup") || bench.contains_key("profiling") {
         let mut phases = Vec::new();
         if let Some(mut w) = bench.remove("warmup") {
@@ -108,7 +101,6 @@ pub fn normalize_benchmark(config: &mut Value) {
         bench.insert("phases".into(), Value::Array(phases));
     }
 
-    // model -> models; a bare string / string list -> {items:[{name}]}.
     if bench.contains_key("model") && !bench.contains_key("models") {
         let m = bench.remove("model").unwrap();
         bench.insert("models".into(), m);
@@ -126,7 +118,6 @@ pub fn normalize_benchmark(config: &mut Value) {
         }
     }
 
-    // dataset -> datasets: [{name: default, ...}].
     if bench.contains_key("dataset") && !bench.contains_key("datasets") {
         let mut ds = bench.remove("dataset").unwrap();
         if let Some(o) = ds.as_object_mut() {
@@ -140,7 +131,6 @@ pub fn normalize_benchmark(config: &mut Value) {
         bench.insert("datasets".into(), Value::Array(vec![ds]));
     }
 
-    // A flat single-phase shorthand `phases: {type: ...}` -> a named list.
     if let Some(phases) = bench.get_mut("phases")
         && phases.is_object()
         && phases.get("type").is_some()
@@ -170,8 +160,6 @@ pub fn parse(config: &Value) -> anyhow::Result<Option<YamlSweep>> {
         .and_then(Value::as_object)
         .ok_or_else(|| anyhow::anyhow!("sweep block requires a `parameters:` map"))?;
 
-    // Resolve each parameter path (alias + validation); alpha-sort by resolved
-    // path for a stable variation order.
     let mut axes: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for (path, values) in params {
         let values = values.as_array().filter(|v| !v.is_empty()).ok_or_else(|| {
@@ -214,7 +202,6 @@ impl YamlSweep {
         let mut out = Vec::with_capacity(combos.len());
         for (index, combo) in combos.into_iter().enumerate() {
             let mut config = base.clone();
-            // Overrides write into the `benchmark` subtree; drop the sweep key.
             if let Some(obj) = config.as_object_mut() {
                 obj.remove("sweep");
             }
@@ -250,8 +237,7 @@ impl YamlSweep {
     }
 }
 
-/// Cartesian product of axis value indices (last axis varies fastest — matches
-/// Python's `itertools.product`).
+/// Cartesian product of axis indices with the last axis varying fastest.
 fn cartesian(axes: &[(String, Vec<Value>)]) -> Vec<Vec<usize>> {
     let mut out = vec![vec![]];
     for (_, values) in axes {
@@ -268,22 +254,21 @@ fn cartesian(axes: &[(String, Vec<Value>)]) -> Vec<Vec<usize>> {
     out
 }
 
-/// Python `str(value)` for a config-typed sweep value: an integer renders bare,
-/// a float via Python's `str(float)` (`10` → `10.0`), a string verbatim.
+/// Render integers bare, integral floats with `.0`, and strings verbatim.
 fn render_value(v: &Value) -> String {
     match v {
         Value::Number(n) if n.is_i64() || n.is_u64() => n.to_string(),
         Value::Number(n) => n.as_f64().map(py_float).unwrap_or_else(|| n.to_string()),
         Value::String(s) => s.clone(),
         Value::Bool(b) => {
-            // Python str(True) == "True".
+            // YAML boolean labels use title case.
             if *b { "True".into() } else { "False".into() }
         }
         other => other.to_string(),
     }
 }
 
-/// Python `str(float)` (`10.0` for whole numbers, else the shortest repr).
+/// Render whole floats with `.0`, otherwise use the shortest representation.
 fn py_float(v: f64) -> String {
     if v.fract() == 0.0 && v.is_finite() {
         format!("{v:.1}")
@@ -292,9 +277,8 @@ fn py_float(v: f64) -> String {
     }
 }
 
-/// Resolve a bare-name alias, then validate the dotted path (`_validate_dotted_path`).
+/// Resolve a bare-name alias and validate the dotted path.
 fn validate_dotted_path(p: &str) -> anyhow::Result<String> {
-    // Bare name (no dot) resolves through the alias table.
     let resolved = if !p.contains('.') {
         ALIASES
             .iter()
@@ -367,8 +351,8 @@ fn find_named_index(arr: &[Value], name: &str, parent_key: &str) -> Option<usize
     }
 }
 
-/// Write `value` into `data` at a dotted path, traversing dicts by key and
-/// lists-of-named-dicts by `name` (`_set_nested_value`).
+/// Write `value` at a dotted path, traversing maps by key and named lists by
+/// `name`.
 fn set_nested_value(data: &mut Value, path: &str, value: Value) -> anyhow::Result<()> {
     let keys: Vec<&str> = path.split('.').collect();
     let mut current = data;
@@ -427,16 +411,13 @@ mod tests {
         let parsed = parse(&cfg).unwrap().unwrap();
         let vars = parsed.expand(&cfg).unwrap();
         assert_eq!(vars.len(), 4);
-        // Alpha-sorted axes: datasets.* before phases.* (rate -> phases.profiling.rate).
         assert_eq!(
             vars[0].label,
             "datasets.default.prompts.isl=128, phases.profiling.rate=10.0"
         );
         assert_eq!(vars[0].dir_name, "isl_128__rate_10.0");
-        // The rate override landed on the profiling phase.
         let phases = &vars[0].config["benchmark"]["phases"];
         assert_eq!(phases[0]["rate"], Value::from(10.0));
-        // The sweep key is dropped from each variation config.
         assert!(vars[0].config.get("sweep").is_none());
     }
 }

@@ -19,9 +19,8 @@
 //! into the crate-neutral [`PerRecordRow`] and calls [`write_per_record_parquet`];
 //! no metric or error logic is duplicated across the boundary.
 //!
-//! # Schema (self-describing, no byte-parity oracle)
-//! There is no Python per-record Parquet exporter — this is greenfield, so byte
-//! identity is not a target. The target is a correct, stable, self-describing
+//! # Schema
+//! Byte identity is not a target. The target is a correct, stable, self-describing
 //! schema: fixed metadata head, one metric column per [`record_metric_columns`]
 //! entry (catalog order, null when the request produced no finite value), fixed
 //! error tail, and — only when `include_trace` — flat `trace_*` HTTP-timing
@@ -51,7 +50,7 @@ use crate::export::parquet_util::{float_column, string_column, writer_properties
 
 // The per-record metric column set is shared with the records CSV writer and is
 // derived from the catalog, so it lives (ungated) in `metrics_core`. Re-exported
-// here under the `PerRecordMetricColumn` name the sink historically used.
+// here as `PerRecordMetricColumn`.
 pub use crate::metrics_core::RecordMetricColumn as PerRecordMetricColumn;
 pub use crate::metrics_core::record_metric_columns;
 
@@ -461,7 +460,7 @@ impl StreamingPerRecordParquetWriter {
 
 /// Concatenate several per-shard per-record Parquet files into one combined file.
 ///
-/// Stage B (sharded exact-fold): each thread-per-core shard streams its own
+/// Each thread-per-core shard streams its own
 /// [`StreamingPerRecordParquetWriter`] to a per-shard temp file, so the coordinator
 /// must fuse those into the single final `profile_export.parquet`. Because every
 /// shard file was produced by the same [`build_schema`]/[`writer_properties`]
@@ -470,9 +469,8 @@ impl StreamingPerRecordParquetWriter {
 /// reader-to-writer copy reads each shard's row groups back as [`RecordBatch`]es and
 /// re-emits them into a fresh combined file carrying that same schema and file KV
 /// metadata. Row order across shards is completion order (the accepted streamed
-/// decision) — the logical row SET is the union of the shard rows, which is exactly
-/// the batch writer over the union produces (proven by the Stage B shard-concat
-/// parity test).
+/// decision) — the logical row set is the union of the shard rows, which is exactly
+/// what the batch writer over the union produces.
 ///
 /// Only shard paths that exist are read (a shard that saw no displayable row left no
 /// file, matching the empty-rows contract); if NONE exist, no combined file is
@@ -748,9 +746,8 @@ mod tests {
     }
 
     /// The streaming writer and the one-shot writer produce the identical schema,
-    /// file metadata, and logical row SET (not byte-identity — the streaming file
-    /// has several row groups where the one-shot has one). This is the S3 parity
-    /// oracle in the absence of a Python byte oracle.
+    /// file metadata, and logical row set (not byte identity — the streaming file
+    /// has several row groups where the one-shot has one).
     fn assert_streaming_matches_batch(rows: &[PerRecordRow], bound: usize, include_trace: bool) {
         let columns = record_metric_columns();
         let dir = tempfile::tempdir().unwrap();
@@ -825,7 +822,7 @@ mod tests {
         assert_streaming_matches_batch(&sample_rows(4), 2, false);
     }
 
-    /// Stage B: streaming disjoint shard slices through per-shard writers then
+    /// Streaming disjoint shard slices through per-shard writers then
     /// concatenating them yields the identical schema, file KV metadata, and logical
     /// row SET as one batch writer over the union — proving the coordinator's
     /// per-shard parquet fusion is set-equivalent to the retain path. A shard with no
@@ -867,7 +864,7 @@ mod tests {
         assert_eq!(combined_meta, batch_meta);
         assert_eq!(combined_batch.num_rows(), batch_batch.num_rows());
 
-        // Row SET parity: key each row by session_num (unique per sample row) and
+        // Key each row by session_num (unique per sample row) and
         // compare the request-latency cell, independent of cross-shard row order.
         let latency_by_session = |batch: &RecordBatch| -> BTreeMap<i64, Option<i64>> {
             let session = column::<Int64Array>(batch, "session_num");

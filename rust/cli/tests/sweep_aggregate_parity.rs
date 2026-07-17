@@ -1,11 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Byte-exact parity of the native single-trial sweep aggregate against Python.
-//!
-//! `dump_sweep_aggregate.py` drives the production `SweepAnalyzer.compute` +
-//! aggregate sweep exporters over the synthetic reports in `sweep_agg_spec.json`
-//! and captures the resulting `profile_export_aiperf_sweep.{json,csv}`. The
-//! native `sweep::aggregate::finish` must reproduce both byte-for-byte.
+//! Byte-exact single-trial sweep aggregate golden coverage.
 
 use std::path::PathBuf;
 
@@ -30,7 +25,6 @@ fn single_trial_sweep_aggregate_matches_python() {
     )
     .unwrap();
 
-    // A throwaway base dir; each cell report is written under it before finish.
     let base = std::env::temp_dir().join(format!("aiperf-sweep-agg-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
@@ -57,7 +51,6 @@ fn single_trial_sweep_aggregate_matches_python() {
         });
     }
 
-    // Point the aggregate at `base` (artifact_dir) and suppress the table.
     let flags = ProfileFlags::parse_from_args(&[
         "--model".to_string(),
         "m".to_string(),

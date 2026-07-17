@@ -21,7 +21,7 @@ use crate::endpoints::models::{
     ParsedResponse, RequestInfo, ResponseData, ServerResponse, VideoResponseData,
 };
 use crate::endpoints::registry::{
-    PreparedEndpointBehavior, PreparedRequest, format_legacy_payload,
+    PreparedEndpointBehavior, PreparedRequest, format_compatibility_payload,
 };
 
 pub use flexible::{RawEndpoint, RawEndpointFactory, TemplateEndpoint, TemplateEndpointFactory};
@@ -262,7 +262,7 @@ impl Endpoint for NimEmbeddingsEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -455,7 +455,7 @@ macro_rules! ranking_endpoint {
             }
 
             fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-                format_legacy_payload(self, request_info)
+                format_compatibility_payload(self, request_info)
             }
 
             fn parse_response(
@@ -492,7 +492,7 @@ impl Endpoint for HuggingFaceGenerateEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -578,7 +578,7 @@ impl Endpoint for ImageGenerationEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -625,7 +625,7 @@ impl Endpoint for ImageEditEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -802,7 +802,7 @@ impl Endpoint for VideoGenerationEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -889,7 +889,7 @@ impl Endpoint for ImageRetrievalEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -966,7 +966,7 @@ impl Endpoint for SolidoRagEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {

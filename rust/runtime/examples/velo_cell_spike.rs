@@ -1,16 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Spike: prove the discovery-free cell↔controller reach used by the velo cell
-//! transport, mechanism B (bootstrap PeerInfo fetch), against official velo
-//! v0.5.0 — two separate `Velo` instances, no discovery backend.
+//! Discovery-free Velo peer registration between two local instances.
 //!
-//! The controller knows only its own bind address; the cell obtains the
-//! controller's real `PeerInfo` out-of-band (here handed directly, simulating a
-//! bootstrap fetch from the operator-hardcoded coordinate), `register_peer`s it,
-//! and calls the `register` typed-unary handler carrying its OWN `peer_info()` so
-//! the controller can reach it back. Success = the register reply round-trips.
+//! The cell registers the controller's `PeerInfo` and sends its own `PeerInfo`
+//! through the typed registration handler so replies can route back.
 //!
-//! Run: `cargo run -p aiperf --features velo --example velo_cell_spike`
+//! Run: `cargo run -p aiperf-runtime --features velo --example velo_cell_spike`
 
 use std::sync::Arc;
 
@@ -52,14 +47,13 @@ async fn build_tcp_velo() -> Result<Arc<Velo>> {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<()> {
-    // --- controller: knows only its own bind address ---
     let controller = build_tcp_velo().await?;
     controller
         .register_handler(
             Handler::typed_unary_async(
                 "aiperf.cell.register",
                 |ctx: TypedContext<Register>| async move {
-                    // Learn the cell's real PeerInfo from the payload so replies route back.
+                    // Register the advertised cell identity before replying.
                     let peer: velo::PeerInfo = rmp_serde::from_slice(&ctx.input.cell_peer)
                         .context("decode cell PeerInfo")?;
                     ctx.msg.register_peer(peer).context("register_peer cell")?;
@@ -73,13 +67,9 @@ async fn main() -> Result<()> {
         )
         .context("register handler")?;
 
-    // Mechanism B: the controller's REAL PeerInfo, transferred out-of-band.
-    // In production the controller serves these bytes at its hardcoded bootstrap
-    // coordinate; here we serialize/deserialize directly to prove the velo path.
     let controller_peer_bytes =
         rmp_serde::to_vec(&controller.peer_info()).context("encode controller PeerInfo")?;
 
-    // --- cell: knows only the controller's PeerInfo bytes (the "bootstrap") ---
     let cell = build_tcp_velo().await?;
     let controller_peer: velo::PeerInfo =
         rmp_serde::from_slice(&controller_peer_bytes).context("decode controller PeerInfo")?;
@@ -103,6 +93,6 @@ async fn main() -> Result<()> {
         reply.ok && reply.cell_id == 7,
         "unexpected reply: {reply:?}"
     );
-    println!("SPIKE RESULT: mechanism B (bootstrap-peerinfo) WORKS — reply {reply:?}");
+    println!("registration reply: {reply:?}");
     Ok(())
 }

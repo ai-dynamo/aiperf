@@ -3,14 +3,14 @@
 
 //! NumPy-compatible `SeedSequence` + PCG64 bit generator.
 //!
-//! This is a byte-exact port of the seeding and generation path that
+//! This implements the byte-exact seeding and generation path that
 //! `numpy.random.default_rng(int_seed)` uses, built solely to reproduce
 //! Python's `np.random.default_rng(seed).uniform(lo, hi)` t* values in Rust.
 //! It is deliberately independent of `crate::rng::generator` (BLAKE3 +
 //! `rand_pcg`), which uses different seeding and a different output stream and
 //! is NOT numpy-compatible.
 //!
-//! Ported from numpy 2.5.1 (constants verified against numpy 1.26.4 sdist,
+//! Source reference: NumPy 2.5.1 (constants verified against NumPy 1.26.4,
 //! which are stream-stable across these versions):
 //!   - `numpy/random/bit_generator.pyx`: `_coerce_to_uint32_array` /
 //!     `_int_to_uint32_array`, `SeedSequence.mix_entropy`,

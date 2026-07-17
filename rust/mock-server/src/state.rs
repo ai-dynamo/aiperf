@@ -27,24 +27,17 @@ pub struct AppState {
     pub clock_anchor: RealClockAnchor,
     pub start_wallclock: std::time::SystemTime,
     pub error_rng: Mutex<ErrorRng>,
-    /// Seeded per-request draw for tool-call emission, on its own stream so it
-    /// never perturbs the `mock.errors` draw order. Reproducible under
-    /// `--random-seed`.
+    /// Dedicated seeded stream that cannot perturb `mock.errors` draw order.
     pub tool_call_rng: Mutex<ToolCallRng>,
-    /// Step-based batched scheduler, present only when `--scheduler-enabled`.
-    /// When set, the latency model is driven by scheduler admission instead of
-    /// the closed-form analytic delays.
+    /// Scheduler admission drives latency when enabled.
     pub scheduler: Option<Arc<BatchScheduler>>,
     /// KV-cache prefix-reuse model, present when `--prefix-cache-enabled` or a
     /// `--prefix-cache-hit-rate` override is set. Cached prefix tokens skip
     /// prefill (lower TTFT) and are reported in usage.
     pub prefix_cache: Option<Arc<PrefixCache>>,
-    /// Ground-truth-aware response mode, present when `--accuracy-dataset` is
-    /// set. Requests whose prompt matches a dataset row return the (seeded)
-    /// correct-or-wrong answer formatted for the benchmark grader.
+    /// Seeded benchmark answers loaded by `--accuracy-dataset`.
     pub accuracy: Option<Arc<crate::accuracy::AccuracyDataset>>,
-    /// Live tally of what the mock has actually answered correctly this run,
-    /// exposed at `GET /accuracy` and on the Prometheus `/metrics` scrape.
+    /// Live accuracy exposed by `GET /accuracy` and Prometheus metrics.
     pub accuracy_live: crate::accuracy::AccuracyLive,
 }
 
@@ -77,9 +70,7 @@ pub struct ToolCallRng {
 
 impl ToolCallRng {
     pub fn new(seed: Option<u64>) -> Self {
-        // The mock-server RNG namespaces (`mock.errors`, `mock.dcgm`) live in the
-        // frozen `aiperf_runtime::rng::namespace` module; this feature adds a sibling
-        // stream identifier without touching that crate.
+        // Keep tool-call draws independent from other mock RNG namespaces.
         let rng = aiperf_runtime::rng::RngRoot::new(seed).derive("mock.tool_calls");
         Self { rng }
     }
@@ -94,8 +85,6 @@ impl AppState {
     pub fn build(config: MockServerConfig) -> Arc<Self> {
         let recorder = MetricRecorder::new();
         let dcgm_pool = Self::build_dcgm_pool(&config);
-        // Create the scheduler when enabled and start its tick task (start is a
-        // no-op outside a tokio runtime, so non-async test builds are safe).
         let scheduler = if config.scheduler_enabled {
             let s = BatchScheduler::new(&config);
             s.start();
@@ -110,8 +99,7 @@ impl AppState {
                     tracing::info!("Accuracy dataset loaded: {} rows from {}", ds.len(), path);
                     Arc::new(ds)
                 }
-                // A misconfigured accuracy dataset is a hard startup error: the
-                // whole point of the run is ground-truth-aware responses.
+                // Accuracy mode cannot satisfy its contract without the dataset.
                 Err(e) => panic!("failed to load accuracy dataset: {e}"),
             }
         });
@@ -147,11 +135,8 @@ impl AppState {
     }
 
     fn build_dcgm_pool(config: &MockServerConfig) -> DcgmPool {
-        // Resolve per-faker DCGM seeds:
-        // - Explicit `--dcgm-seed` wins (legacy behavior: seed + faker_idx).
-        // - Otherwise derive from `--random-seed` via the RNG engine under
-        //   the indexed `"mock.dcgm"` namespace. This keeps all mock-server RNGs under a
-        //   single reproducibility root.
+        // An explicit `--dcgm-seed` takes precedence; otherwise each faker uses
+        // an indexed `mock.dcgm` stream under `--random-seed`.
         let faker_seed = |idx: u64| -> Option<u64> {
             if let Some(s) = config.dcgm_seed {
                 Some(s + idx)
@@ -162,7 +147,6 @@ impl AppState {
                 })
             }
         };
-        // Two fakers by default - matches Python behavior.
         let fakers = vec![
             DcgmFaker::new(
                 &config.dcgm_gpu_name,
@@ -201,11 +185,8 @@ impl AppState {
     /// Decide whether to inject a pre-stream error for this request, and if so
     /// which HTTP status code to return.
     ///
-    /// The trigger draw and the code-selection draw both come from the seeded
-    /// `mock.errors` stream, so both which requests fail and which code they
-    /// fail with are reproducible under `--random-seed`. The code is chosen
-    /// uniformly from `--error-status-codes` (default `[500]`, preserving the
-    /// historical single-code behavior). Returns `None` when no error fires.
+    /// Both draws use `mock.errors`; the status is uniform over
+    /// `--error-status-codes`, whose default is `[500]`.
     pub fn inject_error_status(&self) -> Option<u16> {
         let rate = self.config.error_rate;
         if rate <= 0.0 {
@@ -219,7 +200,6 @@ impl AppState {
         if codes.is_empty() {
             return Some(500);
         }
-        // Second draw selects the code so the menu is exercised deterministically.
         let idx = ((rng.next() * codes.len() as f64) as usize).min(codes.len() - 1);
         Some(codes[idx])
     }

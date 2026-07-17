@@ -1,39 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Extended-warmup handoff payload -- the WARMUP -> PROFILING re-cut channel.
+//! Extended-warmup handoff payload.
 //!
-//! Port of `src/aiperf/timing/graph_warmup_handoff.py` (branch
-//! `ajc/aiperf-graph-ir`). The graph-native counterpart of AgentX v1.0's
-//! `finalize_phase` trajectory replacement: the WARMUP `GraphIRReplayStrategy`
-//! builds one [`GraphWarmupHandoff`] at `teardown_phase` (after every warmup
-//! credit return has landed) and stashes it on the SHARED `GraphPhaseChannel`;
-//! the PROFILING strategy pops it (consume-once) and resumes each lane at its
-//! recorded execution frontier via `chop_trie_at_frontier`.
+//! Warmup builds one [`GraphWarmupHandoff`] after every credit return lands.
+//! Profiling consumes it once and resumes each lane at its recorded frontier.
 //!
-//! Everything deterministic (the per-`(trace, lane)` t* plan) is NOT carried
-//! here -- both phases re-derive it from the seeded sampler. The handoff
+//! The per-`(trace, lane)` t* plan is not carried because both phases derive it
+//! from the seeded sampler. The handoff
 //! carries only what determinism cannot reproduce: which template each lane was
 //! mid-flight on at drain, which nodes actually executed, and when their
 //! returns landed.
-//!
-//! # Type mapping (Python -> Rust)
-//! - `frozenset[str]` -> [`BTreeSet<String>`] (deterministic iteration order).
-//! - `dict[str, float]` -> [`BTreeMap<String, f64>`] (deterministic order).
-//! - `dict[int, LaneHandoff]` -> [`BTreeMap<u64, LaneHandoff>`]; the `int` key is
-//!   the lane index and is load-bearing (see `pressure_lane_count` semantics),
-//!   so the keyed map is preserved rather than flattened to a `Vec`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One lane's live-at-drain execution state.
 ///
-/// Ports `LaneHandoff` (`graph_warmup_handoff.py:27`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LaneHandoff {
     /// Template trace id the lane was mid-flight on at drain (may differ from
-    /// the lane's pass-0 template when the pressure stage recycled the lane).
+    /// the lane's pass-0 template when pressure warmup recycled the lane).
     pub template_trace_id: String,
     /// The live pressure instance id at drain (e.g. `t-1#0.p2`). The profiling
     /// resume reuses it verbatim as the resumed instance's id so the
@@ -57,7 +44,6 @@ pub struct LaneHandoff {
 
 /// The full warmup -> profiling handoff, one entry per live lane.
 ///
-/// Ports `GraphWarmupHandoff` (`graph_warmup_handoff.py:54`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct GraphWarmupHandoff {
     /// Lanes live at drain, keyed by lane index. Lanes absent here (template
@@ -67,18 +53,17 @@ pub struct GraphWarmupHandoff {
     /// Drain-end instant on the same monotonic clock as the return walls,
     /// stamped at warmup teardown (after all returns landed).
     pub drain_end_wall_us: f64,
-    /// Next corpus draw index after the pressure stage's last recycle draw.
+    /// Next corpus draw index after pressure warmup's last recycle draw.
     /// Profiling's BOUNDED recycle loop continues the wrap from here so freed
-    /// lanes don't re-serve templates the pressure stage just replayed (agentx
-    /// shares ONE sampler across pressure / handoff / profiling draws). Single-
+    /// lanes don't re-serve templates pressure warmup just replayed. One
+    /// sampler is shared across pressure, handoff, and profiling draws. Single-
     /// pass profiling (no stop conditions) deliberately ignores it -- full-corpus
     /// coverage takes precedence over cursor continuity there.
     pub corpus_cursor: u64,
     /// Number of pressure lanes (`0..K-1`) the warmup ran. A lane below this
     /// count with NO entry in `lanes` completed at drain: profiling must
     /// fresh-start it (next cursor template, full `t*=0` replay) instead of
-    /// re-running a t* resume the pressure stage already executed -- agentx
-    /// `_build_handoff_trajectories` empty-lane parity.
+    /// re-running a t* resume pressure warmup already executed.
     pub pressure_lane_count: u64,
 }
 

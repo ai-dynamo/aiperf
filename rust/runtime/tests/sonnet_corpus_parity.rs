@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Cross-language parity: the Rust sonnet-corpus tokenization must match the
-//! inherited Python `PromptGenerator._initialize_corpus`
+//! Python `PromptGenerator._initialize_corpus`
 //! (`src/aiperf/dataset/generator/prompt.py`) byte-for-byte.
 //!
 //! The reference fixture `tests/data/sonnet_corpus_parity.json` is produced by

@@ -56,37 +56,36 @@ async fn chat(
 }
 
 fn capabilities() -> Value {
-    // Capabilities is an in-process call now — one binary, no subprocess.
     serde_json::to_value(
         aiperf_cli::execute_mode::capabilities_catalog().expect("capabilities catalog"),
     )
     .expect("catalog to Value")
 }
 
-fn benchmark_run(legacy: Value) -> Value {
-    let mut endpoint = legacy["resources"]["endpoints"]["profiles"][0].clone();
+fn benchmark_run(source: Value) -> Value {
+    let mut endpoint = source["resources"]["endpoints"]["profiles"][0].clone();
     endpoint.as_object_mut().unwrap().remove("id");
     let mut cfg = json!({
-        "models": legacy["resources"]["models"],
+        "models": source["resources"]["models"],
         "endpoint": endpoint,
-        "datasets": [legacy["workload"]["config"]["dataset"]],
-        "phases": legacy["workload"]["config"]["phases"],
-        "tokenizer": legacy["workload"]["config"]["tokenizer"],
-        "transport": {"type": legacy["transport"]["type"]},
-        "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
+        "datasets": [source["workload"]["config"]["dataset"]],
+        "phases": source["workload"]["config"]["phases"],
+        "tokenizer": source["workload"]["config"]["tokenizer"],
+        "transport": {"type": source["transport"]["type"]},
+        "runtime": {"workers": source["workload"]["config"]["worker_count"]}
     });
     // Side-channel telemetry producers are authored under `cfg.sidecars`; the
     // graph path accepts and runs them exactly as the scheduled path does.
-    let sidecars = legacy["resources"]["sidecars"].clone();
+    let sidecars = source["resources"]["sidecars"].clone();
     if !sidecars.is_null() {
         cfg.as_object_mut()
             .unwrap()
             .insert("sidecars".to_owned(), sidecars);
     }
     json!({
-        "benchmark_id": legacy["identity"]["benchmark_id"],
-        "artifact_dir": legacy["artifact_target"],
-        "random_seed": legacy["identity"]["random_seed"],
+        "benchmark_id": source["identity"]["benchmark_id"],
+        "artifact_dir": source["artifact_target"],
+        "random_seed": source["identity"]["random_seed"],
         "cfg": cfg
     })
 }

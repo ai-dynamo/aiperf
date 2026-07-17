@@ -2,19 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Drive one execution child (`aiperf --execute`) over stdio for a single run.
 //!
-//! There is no separate runner binary: the entry point re-execs itself in the
-//! internal `--execute` mode ([`crate::execute_mode`]). The protocol is unchanged:
-//! write the request JSON to the child's stdin and close it; the child streams
-//! human-readable lifecycle/readiness lines to stderr and writes exactly one
-//! terminal JSON line to stdout. This module forwards the child's stderr to our
-//! stderr live (so readiness/progress is visible while the run is in flight) and
-//! parses the single terminal line.
-//!
-//! Ported from `src/aiperf/orchestrator/rust_executor.py::_parse_terminal` and
-//! `runner_installation._communicate_forwarding_signals`. Graceful Ctrl+C
-//! cancellation is handled by [`crate::signals`]: `run_once` publishes the child
-//! PID so the forwarder delivers one SIGINT to the child (which drains + writes a
-//! partial `was_cancelled=true` report) instead of an abrupt kill.
+//! The request is written to stdin, lifecycle diagnostics are forwarded from
+//! stderr, and exactly one terminal JSON line is read from stdout. [`crate::signals`]
+//! forwards SIGINT to the published child PID so cancellation can drain and
+//! produce a partial `was_cancelled=true` report.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
@@ -23,10 +14,7 @@ use std::thread;
 
 use serde::Deserialize;
 
-/// The runner's single terminal response line, deserialized with typed field
-/// access (no `serde_json::Value` poking). Mirrors the `run_terminal` envelope
-/// the runner writes to stdout; unknown fields are ignored so the CLI reads only
-/// what it acts on.
+/// Fields consumed from the execution child's `run_terminal` envelope.
 #[derive(Debug, Deserialize)]
 struct TerminalResponse {
     /// Wire protocol discriminator; must equal `2`.
@@ -38,28 +26,21 @@ struct TerminalResponse {
     /// Absolute path to the committed `native-v2.json`, present on success.
     #[serde(default)]
     report_path: Option<String>,
-    /// Human-readable failure detail, present on failure. Accepted for forward
-    /// compatibility; the runner emits typed `errors` (below), not this scalar.
+    /// Scalar failure detail accepted for forward compatibility.
     #[serde(default)]
     error: Option<String>,
-    /// Typed failure diagnostics emitted by the runner's terminal envelope
-    /// (`RunTerminalV2.errors`). The messages carry the full failure detail
-    /// (readiness timeouts, execution faults) that the parent surfaces to the
-    /// user and exit path.
+    /// Typed failure diagnostics emitted in `RunTerminalV2.errors`.
     #[serde(default)]
     errors: Vec<TerminalDiagnostic>,
 }
 
-/// One typed diagnostic from the runner's terminal envelope.
 #[derive(Debug, Deserialize)]
 struct TerminalDiagnostic {
-    /// Human-readable failure message.
     #[serde(default)]
     message: String,
 }
 
-/// The runner's terminal outcome, reduced to the fields the CLI acts on plus the
-/// observed process exit code.
+/// Execution outcome consumed by the CLI.
 #[derive(Debug)]
 pub struct Terminal {
     /// Whether the run committed a report successfully.
@@ -72,13 +53,10 @@ pub struct Terminal {
     pub error: Option<String>,
 }
 
-/// Spawn the runner once, send `request_json`, forward stderr live, and parse the
-/// terminal line.
+/// Spawn one execution child and drive the stdio protocol to completion.
 ///
-/// Returns an error only for I/O/protocol faults (spawn failed, no single JSON
-/// line, malformed JSON, wrong envelope fields). A run that fails *cleanly*
-/// returns `Ok(Terminal { success: false, .. })` so the caller can render the
-/// runner's own error.
+/// I/O and protocol faults return an error. A valid failure envelope returns
+/// `Ok(Terminal { success: false, .. })`.
 pub fn run_once(
     exec_bin: &Path,
     request_json: &[u8],
@@ -87,9 +65,7 @@ pub fn run_once(
     let mut command = Command::new(exec_bin);
     command
         .arg(crate::execute_mode::EXECUTE_FLAG)
-        // Hand the resolved log-level directive to the child: its argv is just
-        // `--execute`, so the parent's level is the only way it inherits one
-        // (mirrors Python, where the parent owns the log config).
+        // The child has no verbosity flags, so inherit the resolved directive.
         .env(crate::logging::LOG_ENV, crate::logging::current_directive())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -105,12 +81,10 @@ pub fn run_once(
             exec_bin.display()
         )
     })?;
-    // Publish the PID so the signal forwarder can deliver a graceful SIGINT.
     child_pid.set(child.id());
 
-    // Write the request on a dedicated thread and close stdin so the runner can
-    // begin. Writing before we drain stdout is safe: the runner reads its whole
-    // request before emitting anything.
+    // The child consumes the complete request before writing stdout, avoiding a
+    // pipe deadlock while the writer thread closes stdin.
     let mut stdin = child.stdin.take().expect("piped stdin");
     let payload = request_json.to_vec();
     let writer = thread::spawn(move || {
@@ -121,20 +95,17 @@ pub fn run_once(
         drop(stdin);
     });
 
-    // Forward stderr line-by-line to our stderr, live.
     let stderr = child.stderr.take().expect("piped stderr");
     let stderr_reader = thread::spawn(move || {
         let reader = BufReader::new(stderr);
         for line in reader.lines().map_while(Result::ok) {
             if !line.trim().is_empty() {
-                // Forward each child (execution-engine) stderr line through our
-                // own tracing so it reaches the console AND `logs/aiperf.log`.
+                // Route child diagnostics through both configured logging sinks.
                 tracing::info!(target: "aiperf", "aiperf: {line}");
             }
         }
     });
 
-    // Drain stdout on the main thread.
     let mut stdout = child.stdout.take().expect("piped stdout");
     let mut out = Vec::new();
     stdout
@@ -152,18 +123,13 @@ pub fn run_once(
     parse_terminal(&out, returncode)
 }
 
-/// Reset the child's inherited signal mask so SIGINT/SIGTERM are deliverable to
-/// the runner's own `tokio::signal` graceful-cancel listener.
+/// Reset the child's signal mask for its graceful-cancellation listener.
 ///
 /// The front-door process BLOCKS SIGINT/SIGTERM in its main-thread mask so the
 /// [`crate::signals`] forwarder can `sigwait` them (see [`crate::signals::install`]).
 /// `Command::spawn` fork+execs from that thread, so the child inherits the
-/// blocked mask. A blocked signal is never delivered, so the forwarded SIGINT
-/// stays pending in the child, the phase orchestrator is never cancelled, and
-/// the run finishes with `was_cancelled=false` instead of draining into a
-/// partial `was_cancelled=true` report. Python's orchestrator forwards via
-/// `signal.signal` handlers (no mask change), so its child is already unblocked;
-/// this restores that behavior for the native execution child.
+/// blocked mask. Without this reset, forwarded signals remain pending and the
+/// phase orchestrator cannot produce a partial cancelled report.
 #[cfg(unix)]
 fn unblock_signals_in_child(command: &mut Command) {
     use std::os::unix::process::CommandExt;
@@ -179,13 +145,10 @@ fn unblock_signals_in_child(command: &mut Command) {
     }
 }
 
-/// No-op on non-unix targets: the forwarder and its mask are unix-only.
 #[cfg(not(unix))]
 fn unblock_signals_in_child(_command: &mut Command) {}
 
-/// Parse the runner's stdout into a [`Terminal`], enforcing the "exactly one
-/// terminal JSON line" contract via typed deserialization (no `Value` poking).
-/// Mirrors `rust_executor._parse_terminal`.
+/// Parse stdout while enforcing the single-terminal-line contract.
 fn parse_terminal(stdout: &[u8], returncode: i32) -> anyhow::Result<Terminal> {
     let text = String::from_utf8_lossy(stdout);
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -209,9 +172,8 @@ fn parse_terminal(stdout: &[u8], returncode: i32) -> anyhow::Result<Terminal> {
         response.event
     );
 
-    // Prefer the typed `errors` diagnostics (what the runner actually emits);
-    // fall back to a scalar `error` for forward compatibility. Multiple
-    // diagnostics are joined so no failure detail is dropped.
+    // Preserve every typed diagnostic, with the scalar field as a compatibility
+    // fallback.
     let error = if !response.errors.is_empty() {
         let joined = response
             .errors
@@ -239,8 +201,6 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
-    /// A tiny shell script standing in for `aiperf`: discards stdin and
-    /// prints `script_body` verbatim (the caller supplies the emit commands).
     fn fake_runner_raw(script_body: &str) -> tempfile::TempPath {
         let mut f = tempfile::Builder::new().suffix(".sh").tempfile().unwrap();
         writeln!(f, "#!/bin/sh\ncat >/dev/null\n{script_body}").unwrap();
@@ -252,7 +212,6 @@ mod tests {
         path
     }
 
-    /// A fake runner that emits `line` as its single stdout line.
     fn fake_runner(line: &str) -> tempfile::TempPath {
         fake_runner_raw(&format!("printf '%s\\n' '{line}'"))
     }
@@ -273,7 +232,6 @@ mod tests {
 
     #[test]
     fn rejects_multiple_stdout_lines() {
-        // Two genuine stdout lines must violate the one-terminal-line contract.
         let runner = fake_runner_raw("printf 'first\\nsecond\\n'");
         let err =
             run_once(runner.as_ref(), b"{}", &crate::signals::ChildPid::default()).unwrap_err();

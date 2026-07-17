@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Establish one connection: DNS -> TCP(+socket opts) -> optional TLS/ALPN ->
-//! httpN handshake. Every phase timestamped via the Clock into TraceData.
+//! Clock-injected DNS, TCP, TLS, and HTTP connection establishment.
 
 use std::net::SocketAddr;
 use std::rc::Rc;
@@ -31,9 +30,7 @@ use crate::transport::http::client::resolver::{CachingDnsResolver, DnsResolver};
 use crate::transport::http::config::{ClientConfig, apply_socket_opts};
 use crate::transport::http::models::HttpVersion;
 
-/// A local (`!Send`) executor: drives the connection future on the current
-/// thread via `spawn_local`. Used for the HTTP/2 connection so that neither the
-/// IO nor the request body must be `Send` (the crate is `Rc`-based / `!Send`).
+/// Drives `!Send` HTTP/2 connections on the current thread.
 #[derive(Clone)]
 pub struct LocalExec;
 
@@ -101,9 +98,8 @@ impl SendCompletion {
     /// Return the instant the encoder first requested the body, immediately
     /// after the request head was accepted for writing.
     ///
-    /// Hyper exposes no request-head callback. The first body poll is its
-    /// closest lifecycle boundary to aiohttp's distinct
-    /// `on_request_headers_sent` event.
+    /// Hyper exposes no request-head callback, so the first body poll is the
+    /// closest observable lifecycle boundary.
     pub fn headers_ns(&self) -> Option<i64> {
         self.headers_ns.get()
     }
@@ -141,10 +137,6 @@ pub struct TimedBody {
 
 impl TimedBody {
     /// Build a timed body that writes its timestamp into `sent_ns`.
-    ///
-    /// This compatibility constructor is useful to timing-only callers. The
-    /// cancellable request path uses the crate-private completion constructor so
-    /// it can also await the event.
     pub fn new(bytes: Bytes, clock: Rc<dyn Clock>, sent_ns: Rc<Cell<Option<i64>>>) -> Self {
         Self::with_completion(bytes, clock, Rc::new(SendCompletion::with_cell(sent_ns)))
     }
@@ -322,18 +314,16 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
 
 /// Build TLS policy for one transport.
 ///
-/// `ssl_verify=false` deliberately disables only certificate-chain and hostname
-/// validation. Handshake signatures remain cryptographically verified. This is
-/// the Rust equivalent of the Python connector's `ssl=False` behavior.
+/// `ssl_verify=false` disables certificate-chain and hostname validation while
+/// retaining cryptographic handshake-signature verification.
 fn rustls_config(client: &ClientConfig) -> Arc<rustls::ClientConfig> {
     if let Some(prepared) = &client.prepared_tls {
         return prepared.rustls_config();
     }
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    // Select the provider explicitly. The complete runner links both the HTTP
-    // transport's aws-lc default and tonic/reqwest's ring features, so rustls
-    // cannot infer a process-global provider safely from feature unification.
+    // Feature unification links multiple crypto providers, so select one
+    // explicitly instead of relying on rustls process-global inference.
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let mut cfg = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_safe_default_protocol_versions()
@@ -348,14 +338,10 @@ fn rustls_config(client: &ClientConfig) -> Arc<rustls::ClientConfig> {
     Arc::new(cfg)
 }
 
-/// A rustls verifier that accepts ANY server certificate — the shared
-/// `ssl_verify=false` policy. Exposed so the gRPC (tonic) transport can install
-/// the same danger verifier for `grpcs` against a self-signed / untrusted
-/// server, matching the HTTP transport's behavior. Signatures stay
-/// cryptographically verified; only chain/hostname validation is skipped.
+/// Shared `ssl_verify=false` verifier for gRPC.
 ///
-/// The HTTP transport uses [`NoCertificateVerification`] directly; this wrapper
-/// exists solely for the gRPC transport, so it is gated on the `grpc` feature.
+/// Handshake signatures remain verified; certificate-chain and hostname
+/// validation are skipped.
 #[cfg(feature = "grpc")]
 pub(crate) fn insecure_server_cert_verifier() -> Arc<dyn rustls::client::danger::ServerCertVerifier>
 {
@@ -430,7 +416,6 @@ pub async fn establish_with_resolver(
     .await
 }
 
-/// The un-timed connection-establishment body raced by [`establish`].
 async fn establish_inner(
     url: &Url,
     cfg: &ClientConfig,
@@ -479,7 +464,6 @@ async fn establish_inner(
         let _ = apply_socket_opts(&sref);
     }
 
-    // Decide protocol.
     let force_h2 = matches!(cfg.http_version, HttpVersion::Http2PriorKnowledge);
     let force_h1 = matches!(cfg.http_version, HttpVersion::Http1Only);
 
@@ -501,8 +485,8 @@ async fn establish_inner(
             .map_err(ErrorDetails::from)?;
         let connected_ns = clock.now_ns();
         trace.tls_connect_end_ns = Some(connected_ns);
-        // Python's connection-create trace folds TLS into tcp_connect_*.
-        // Preserve that public span while retaining the Rust-only TLS bracket.
+        // The public TCP span includes TLS while the dedicated TLS fields retain
+        // the narrower handshake bracket.
         trace.tcp_connect_end_ns = Some(connected_ns);
         let alpn_h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2");
         let use_h2 = force_h2 || (alpn_h2 && !force_h1);
@@ -526,13 +510,9 @@ where
     I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
 {
     if use_h2 {
-        // hyper caps locally-reset streams at 1024 (the Rapid-Reset / CVE-2023-44487
-        // guard). At very high in-flight concurrency (100k+), a duration bound or
-        // per-request timeout cancels many streams at once and trips that cap,
-        // tearing the connection down and failing every remaining stream. Raise it
-        // via `AIPERF_H2_MAX_RESET_STREAMS` for concurrent-request stress tests;
-        // absent the env var the hyper default (1024) is preserved. Mirrors the
-        // mock server's `--max-concurrent-streams`.
+        // Hyper's Rapid Reset guard caps locally reset streams at 1024. Large
+        // cancellation bursts can exceed it and close the connection, so stress
+        // tests may raise the cap with `AIPERF_H2_MAX_RESET_STREAMS`.
         let mut builder = hyper::client::conn::http2::Builder::new(LocalExec);
         if let Some(cap) = std::env::var("AIPERF_H2_MAX_RESET_STREAMS")
             .ok()
@@ -596,7 +576,6 @@ mod tests {
         let clock = Rc::new(SimClock::new());
         let clk: Rc<dyn Clock> = clock.clone();
         let out: Result<u32, ErrorDetails> = drive_sim(clock.clone(), async move {
-            // Resolves immediately, before the 1ms deadline.
             let ready = async { Ok::<u32, ErrorDetails>(42) };
             with_timeout(clk, Some(1_000_000), ready, timeout_err).await
         });
@@ -607,7 +586,6 @@ mod tests {
     fn none_timeout_is_a_pure_passthrough() {
         let clock = Rc::new(SimClock::new());
         let clk: Rc<dyn Clock> = clock.clone();
-        // No timer is armed; a ready future passes straight through.
         let out: Result<u32, ErrorDetails> = drive_sim(clock.clone(), async move {
             let ready = async { Ok::<u32, ErrorDetails>(7) };
             with_timeout(clk, None, ready, timeout_err).await
@@ -632,8 +610,6 @@ mod tests {
 
     #[test]
     fn inner_error_passes_through_before_deadline() {
-        // With a generous deadline the inner error is returned as-is (the timer
-        // never fires), proving errors aren't masked as timeouts.
         let clock = Rc::new(SimClock::new());
         let clk: Rc<dyn Clock> = clock.clone();
         let out: Result<u32, ErrorDetails> = drive_sim(clock.clone(), async move {

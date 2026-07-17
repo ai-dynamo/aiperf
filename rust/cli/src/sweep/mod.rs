@@ -1,19 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Native sweep / multi-run engine.
+//! Sweep and multi-run engine.
 //!
-//! Ports Python's `config/sweep/expand.py` + `orchestrator/orchestrator.py`:
-//! comma-list flags become sweep axes, expanded (grid = Cartesian product, zip =
-//! lockstep) into `Variation`s, each of which clones the base flags, overrides
-//! the swept scalar, and re-runs the single-run `load::resolve` builder — so the
-//! sweep engine is a loop *around* the byte-exact single-run projection.
-//!
-//! Byte-exact contracts preserved from Python (proven vs `tools/parity/dump_sweep.py`):
+//! Comma-list flags become grid or lockstep axes. Each variation clones the
+//! base flags, overrides swept scalars, and resolves a single run.
+//! Artifact contracts:
 //! - Axis keys sorted alphabetically by dotted path before producting/zipping
 //!   (directory-name + combination order depend on it).
 //! - `label = "<dotted_path>=<value>, ..."`; `dir_name = "<seg>_<value>__..."`.
-//! - Value rendering: integer axes render the integer; float axes (rate/duration)
-//!   render Python's `str(float)` (`2` → `2.0`).
+//! - Integer axes render bare; integral float axes retain `.0`.
 //! - `sweep_id` is one UUID for the whole plan; `random_seed = base + index`.
 
 use crate::flags::ProfileFlags;
@@ -24,7 +19,7 @@ pub mod confidence;
 pub mod run;
 pub mod yaml_sweep;
 
-/// How an axis value renders in labels / dir names (mirrors the config field type).
+/// How an axis value renders in labels and directory names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AxisKind {
     Int,
@@ -121,11 +116,9 @@ struct Axis {
     values: Vec<String>,
 }
 
-/// Python `str(float)` for a whole/decimal float (`2` → `2.0`, `2.5` → `2.5`).
+/// Render integral floats with `.0` and other floats with the shortest form.
 fn py_float(raw: &str) -> anyhow::Result<String> {
     let v: f64 = raw.trim().parse()?;
-    // Rust's `{}` drops the trailing `.0`; re-add it for whole numbers to match
-    // Python's `str(float)`. Non-whole values already render with a fraction.
     if v.fract() == 0.0 && v.is_finite() {
         Ok(format!("{v:.1}"))
     } else {
@@ -137,7 +130,6 @@ fn py_float(raw: &str) -> anyhow::Result<String> {
 fn render(kind: AxisKind, raw: &str) -> anyhow::Result<String> {
     match kind {
         AxisKind::Int => {
-            // Validate it parses; keep the integer text.
             let v: i64 = raw.trim().parse()?;
             Ok(v.to_string())
         }
@@ -167,8 +159,8 @@ pub struct Expansion {
     /// Whether any axis had >1 value (a real sweep).
     pub is_sweep: bool,
     /// The dataset entry-count pool shared by every cell when a count axis
-    /// (`request_count`/`num_conversations`) is swept: `max(axis)` (Python
-    /// `_resolve_entries` uses the max so every variation has its full set).
+    /// (`request_count`/`num_conversations`) is swept: `max(axis)`, ensuring
+    /// every variation has its full set.
     /// `None` when no count axis is swept (each cell derives its own entries).
     pub entries_override: Option<i64>,
 }
@@ -182,7 +174,6 @@ pub enum SweepType {
 
 /// Collect sweep axes from comma-list flags and expand them.
 pub fn expand(flags: &ProfileFlags, sweep_type: SweepType) -> anyhow::Result<Expansion> {
-    // Collect axes: any sweepable flag whose value contains a comma.
     let mut axes: Vec<Axis> = Vec::new();
     for def in AXES {
         if let Some(raw) = axis_raw(flags, def.id)
@@ -193,7 +184,6 @@ pub fn expand(flags: &ProfileFlags, sweep_type: SweepType) -> anyhow::Result<Exp
         }
     }
     if axes.is_empty() {
-        // No sweep: one base variation.
         return Ok(Expansion {
             variations: vec![Variation {
                 index: 0,
@@ -207,9 +197,7 @@ pub fn expand(flags: &ProfileFlags, sweep_type: SweepType) -> anyhow::Result<Exp
         });
     }
 
-    // Dataset entry pool for a swept count axis: `max`, highest precedence
-    // `num_conversations` then `request_count` (only when `--num-dataset-entries`
-    // is not explicitly pinned). Mirrors Python `_resolve_entries`.
+    // A shared maximum entry pool ensures every count variation has enough data.
     let axis_max = |id: &str| -> Option<i64> {
         axes.iter().find(|a| a.def.id == id).map(|a| {
             a.values
@@ -225,10 +213,9 @@ pub fn expand(flags: &ProfileFlags, sweep_type: SweepType) -> anyhow::Result<Exp
         axis_max("num_conversations").or_else(|| axis_max("request_count"))
     };
 
-    // Alphabetical sort by dotted path — dir-name + combination order depend on it.
+    // Directory names and combination order depend on dotted-path ordering.
     axes.sort_by(|a, b| a.def.path.cmp(b.def.path));
 
-    // Build the combination index tuples.
     let combos: Vec<Vec<usize>> = match sweep_type {
         SweepType::Grid => cartesian(&axes),
         SweepType::Zip => {
@@ -270,8 +257,7 @@ pub fn expand(flags: &ProfileFlags, sweep_type: SweepType) -> anyhow::Result<Exp
     })
 }
 
-/// Cartesian product of axis value indices (last axis varies fastest — matches
-/// Python's `itertools.product` over the sorted axes).
+/// Cartesian product of axis indices with the last axis varying fastest.
 fn cartesian(axes: &[Axis]) -> Vec<Vec<usize>> {
     let mut out = vec![vec![]];
     for axis in axes {
@@ -304,7 +290,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn py_float_matches_python_str() {
+    fn py_float_preserves_contract() {
         assert_eq!(py_float("2").unwrap(), "2.0");
         assert_eq!(py_float("2.0").unwrap(), "2.0");
         assert_eq!(py_float("2.5").unwrap(), "2.5");

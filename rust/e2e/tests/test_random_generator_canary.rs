@@ -1,12 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Canary test for random generator consistency.
-//!
-//! This test serves as a regression detector for the decoupled random generators.
-//! It compares the exact output of a seeded run against a known reference, ensuring
-//! that any changes to the codebase don't silently break determinism.
-
 mod common;
 use common::*;
 
@@ -14,13 +8,8 @@ use serde_json::Value;
 
 const CANARY_SEED: u32 = 42;
 
-/// Reference inputs captured from a known-good seeded run.
 const REFERENCE_JSON: &str = include_str!("assets/canary_reference_inputs.json");
 
-/// Compare inputs while excluding session_id (UUIDs).
-///
-/// Payloads are compared exactly; any mismatch indicates a regression in
-/// random generation.
 fn assert_inputs_match(reference: &Value, current: &Value) {
     let ref_sessions = reference["data"]
         .as_array()
@@ -41,8 +30,7 @@ fn assert_inputs_match(reference: &Value, current: &Value) {
     {
         assert_eq!(
             ref_session["payloads"], cur_session["payloads"],
-            "Session {i}: Payloads don't match!\n\
-             This indicates a regression in random generation.\n\
+            "Session {i}: payload mismatch.\n\
              Reference: {}\n\
              Current:   {}",
             ref_session["payloads"], cur_session["payloads"]
@@ -50,13 +38,6 @@ fn assert_inputs_match(reference: &Value, current: &Value) {
     }
 }
 
-/// Verify random generator produces exact output matching reference.
-///
-/// This test runs aiperf with a fixed seed and compares the generated inputs.json
-/// against a reference file. Any change in the random generation that affects
-/// output will cause this test to fail, alerting us to potential regressions.
-///
-/// Note: session_id (UUIDs) are excluded from comparison as they are not seeded.
 #[tokio::test]
 async fn test_random_generator_canary() {
     let h = AIPerfHarness::new().await;

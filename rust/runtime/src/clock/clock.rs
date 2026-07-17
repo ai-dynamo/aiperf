@@ -1,16 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The time source the async dataflow runs against.
-//!
-//! Two implementations back the same tokio executor:
-//!
-//! * [`SimClock`](crate::clock::sim_clock::SimClock) — **virtual** discrete-event time
-//!   (ai-dynamo dynosim's pattern), ns-exact and deterministic. Driven by the
-//!   downstream sim idle-pump driver (`drive_sim`); used for fast, reproducible
-//!   runs where timers cost nothing.
-//! * [`RealClock`](crate::clock::real_clock::RealClock) — **real** wall-clock time with
-//!   ns-precision `timerfd` timers on Linux, integrated with tokio's IO reactor.
-//!   The live backend for dispatching in real time.
+//! Clock abstraction for real and deterministic virtual execution.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -27,30 +17,20 @@ pub trait Clock {
     /// Non-positive durations resolve after a single task yield.
     fn sleep(self: Rc<Self>, duration_ns: i64) -> Pin<Box<dyn Future<Output = ()>>>;
 
-    // Virtual-time control (fast-forward to the next event, advance-and-wake) is
-    // intentionally NOT on this trait: it is meaningful only for `SimClock` and
-    // is driven by `drive_sim` through the concrete `Rc<SimClock>`, via
-    // `SimClock`'s inherent `next_event_time`/`advance_to` methods. Keeping it off
-    // the trait avoids no-op stubs on `RealClock`.
+    // Virtual-time control stays on `SimClock` because `RealClock` cannot
+    // advance explicitly.
 
-    /// True when this clock needs the sim idle-pump driver (the downstream
-    /// `drive_sim` pump); false when it drives via tokio's reactor (the
-    /// downstream `drive_real` pump).
+    /// Whether this clock requires an idle pump to advance virtual time.
     fn is_virtual(&self) -> bool {
         false
     }
 
-    /// Drive `body` to completion over this clock's reactor discipline — the
-    /// executor half of the `{clock}` seam. Callers select real vs virtual
-    /// execution by which clock they construct, never by branching on
-    /// [`is_virtual`](Clock::is_virtual): the clock IS the driver.
+    /// Drive `body` to completion using this clock's reactor discipline.
     ///
     /// The default drives on a current-thread tokio runtime whose IO/timer
-    /// reactor wakes real sleepers (the [`RealClock`](crate::clock::real_clock::RealClock)
-    /// discipline). [`SimClock`](crate::clock::sim_clock::SimClock) overrides it
-    /// with the deterministic idle-pump that fast-forwards virtual time to each
-    /// next event; a non-`false` [`RunOutcome::deadlocked`] there means the run
-    /// parked with no schedulable virtual-time event.
+    /// reactor wakes real sleepers. [`SimClock`](crate::clock::sim_clock::SimClock)
+    /// overrides this with deterministic event-by-event advancement; a
+    /// [`RunOutcome::deadlocked`] result means no virtual event can make progress.
     fn drive(self: Rc<Self>, body: Pin<Box<dyn Future<Output = ()> + '_>>) -> RunOutcome {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()

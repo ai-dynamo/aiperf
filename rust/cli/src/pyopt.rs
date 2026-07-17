@@ -1,26 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! In-process optuna seam for the BO search styles (`--search-style bo|optuna`).
+//! In-process Optuna operations for `--search-style bo|optuna`.
 //!
-//! Feature-gated (`search-pyo3`): drives the REAL optuna study the Python
-//! planner uses (`OptunaSearchPlanner`), so a seeded run's suggestion sequence
-//! is byte-identical rather than a fragile from-scratch TPE/GP reimplementation.
-//! The Rust [`crate::bayes`] planner owns the ask/tell loop, the SLA
-//! observation/objective extraction, the failure sentinel, improvement
-//! tracking, and the three-signal convergence; this seam owns only
-//! `study.ask()`/`suggest_int`/`set_user_attr`/`study.tell()`.
-//!
-//! The embedded `constraints_func` mirrors `_optuna_helpers.build_constraints_func`
-//! + `_signed_violation` exactly (Optuna's contract: > 0 violates, <= 0
-//! feasible). Sampler selection mirrors `build_sampler`: `tpe` and `gp` are
-//! supported here (both ship with optuna-core / torch); `botorch` is the
-//! Python default but falls back to TPE when the optional extra is absent — the
-//! caller passes the already-resolved sampler name.
+//! [`crate::bayes`] owns orchestration and convergence. This module owns the
+//! study, pending trial, sampler, and constraint callback. Positive constraint
+//! values violate the SLA; non-positive values are feasible.
 
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyModule, PyTuple};
 
-/// The embedded optuna helper module. `sla_specs` is a list of
+/// Embedded Optuna helper module. `sla_specs` is a list of
 /// `(attr_key, op, threshold)`; `constraints_func` reads each observation off
 /// `trial.user_attrs[attr_key]` and returns the signed violation.
 const PYOPT_SRC: &str = r#"
@@ -55,10 +44,7 @@ def make_study(direction, sampler_name, n_startup, seed, sla_specs):
 
         sampler = GPSampler(n_startup_trials=n_startup, seed=seed, constraints_func=cf)
     elif sampler_name in ("botorch", "bo"):
-        # Mirrors `_optuna_helpers.build_sampler` botorch branch. `bo` (the
-        # BayesianSearchPlanner curated preset) additionally selects the modern
-        # qLogNEI acquisition; plain `botorch`/`optuna` uses BoTorch's built-in
-        # default (single-objective constrained -> qEI).
+        # `bo` selects qLogNEI; `botorch` uses BoTorch's constrained default.
         from optuna_integration import BoTorchSampler
 
         candidates_func = None
@@ -86,7 +72,6 @@ def ask_int(study, path, lo, hi, log):
 
 
 def tell(study, trial, objective, attr_items):
-    # attr_items: list of (key, value_or_None); objective: single float.
     for k, val in attr_items:
         trial.set_user_attr(k, val)
     study.tell(trial, [float(objective)])

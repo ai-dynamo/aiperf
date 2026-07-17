@@ -101,8 +101,7 @@ impl BucketStatistics {
 /// Learns per-bucket means from adjacent scrapes with exactly one active bucket.
 ///
 /// Intervals missing a bucket on either side are skipped rather than treating a
-/// partial exposition as zero; this is the native dynamic-schema replacement
-/// for Python's first-scrape schema latch.
+/// partial exposition as zero.
 pub fn accumulate_bucket_statistics(
     snapshots: &[HistogramSnapshot],
 ) -> BTreeMap<String, BucketStatistics> {

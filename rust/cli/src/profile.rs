@@ -15,10 +15,7 @@ use crate::sweep::artifact_dir::IterationOrder;
 use crate::sweep::{self, run as sweep_run};
 use crate::{exec_bin, execute, flags::ProfileFlags, load, yaml};
 
-/// Eagerly create the artifact dir and remove any prior `native-v2.json` so a
-/// re-run into the same directory doesn't trip the runner's write-once guard
-/// (ports `rust_executor._clear_prior_report` + the eager mkdir Python does in
-/// `setup_rich_logging`).
+/// Remove a prior report before the runner's write-once output.
 fn clear_prior_report(artifact_dir: &Path) {
     let _ = std::fs::create_dir_all(artifact_dir);
     let _ = std::fs::remove_file(artifact_dir.join("native-v2.json"));
@@ -34,13 +31,8 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         }
     };
 
-    // Multi-run / convergence bounds (`_multi_run._summarize_and_export` guards,
-    // `_strategy.validate_convergence_config`, and the `MultiRunConfig` field
-    // bounds). A validation failure returns a non-zero exit via `anyhow::Err`.
     validate_multi_run(&flags)?;
 
-    // YAML `--config`: a `sweep:` block expands to a native sweep; otherwise it
-    // is one run through the native YAML surface.
     if let Some(path) = &flags.config_file {
         let mut base = yaml::read_env_substituted(path)?;
         if let Some(sweep) = crate::sweep::yaml_sweep::parse(&base)? {
@@ -64,10 +56,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         return run_search_loop(&flags);
     }
 
-    // The default `smooth_isotonic` style (and an explicit request for it) runs
-    // the scipy-backed dynamic loop — available only in the `search-pyo3` build
-    // (embeds Python+scipy). Without the feature it falls through to the grid
-    // expander's clear "not yet native" error.
+    // Smooth isotonic search requires the `search-pyo3` scipy integration.
     #[cfg(feature = "search-pyo3")]
     if flags.search_recipe.as_deref() == Some("max-concurrency-under-sla")
         && matches!(
@@ -78,8 +67,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         return run_isotonic_loop(&flags);
     }
 
-    // The `bo` / `optuna` styles run an optuna-backed BO ask-tell loop (real
-    // optuna via the search-pyo3 seam). Same gating as smooth_isotonic.
+    // Bayesian search requires the `search-pyo3` Optuna integration.
     #[cfg(feature = "search-pyo3")]
     if flags.search_recipe.as_deref() == Some("max-concurrency-under-sla")
         && matches!(flags.search_style.as_deref(), Some("bo") | Some("optuna"))
@@ -121,12 +109,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     run_sweep(&flags, &expansion, trials, order)
 }
 
-/// Validate the multi-run / convergence flag bounds before any run work.
-///
-/// Mirrors the Python `MultiRunConfig` field bounds (`config/sweep/multi_run.py`),
-/// `_strategy.validate_convergence_config`, and the confidence-level check
-/// (`ConfidenceAggregation.__init__`). Each failure is an `anyhow::Err`, which
-/// `main` maps to a non-zero exit.
+/// Validate multi-run and convergence bounds before execution.
 fn validate_multi_run(flags: &ProfileFlags) -> anyhow::Result<()> {
     if let Some(n) = flags.num_profile_runs
         && !(1..=10).contains(&n)
@@ -176,9 +159,7 @@ fn validate_multi_run(flags: &ProfileFlags) -> anyhow::Result<()> {
 /// the runner's console summary to stdout on success.
 fn run_single(run: crate::model::BenchmarkRun) -> anyhow::Result<i32> {
     let artifact_dir = run.artifact_dir.clone();
-    // Bind `logs/aiperf.log` to this run's artifact dir before anything logs, so
-    // the whole run (including the forwarded execution-engine narrative) is
-    // captured — mirroring Python's `setup_rich_logging(run)`.
+    // Bind logging before execution so startup events reach the run artifact.
     crate::logging::set_log_file(&artifact_dir);
     clear_prior_report(&artifact_dir);
     tracing::info!("Starting native AIPerf run");
@@ -226,9 +207,7 @@ fn run_yaml_sweep(
     run_cells(flags, &cells, true, IterationOrder::Repeated)
 }
 
-/// Execute a grid `--search-recipe`: expand its config-path axes into a static
-/// grid, resolve the base run once, mutate the built cfg per variation, stamp the
-/// sweep envelope, and run every cell. Byte-exact vs the Python recipe → sweep.
+/// Execute a grid search recipe as stamped sweep cells.
 fn run_recipe_sweep(
     flags: &ProfileFlags,
     recipe: crate::search::RecipeSweep,
@@ -254,13 +233,7 @@ fn run_recipe_sweep(
     Ok(code)
 }
 
-/// Drive the dynamic monotonic SLA-saturation search (`max-concurrency-under-sla
-/// --search-style monotonic`): a byte-exact [`crate::search::MonotonicPlanner`]
-/// (verified against the production planner in `tests/monotonic_parity.rs`)
-/// proposes one concurrency to probe at a time; each probe is one
-/// `aiperf` invocation whose per-iteration SLA feasibility verdict (all
-/// filters satisfied by a successful run) is fed back to steer the next probe.
-/// Ports the orchestrator's `while planner.ask()` loop (`orchestrator.py`).
+/// Drive monotonic SLA saturation with probe and bisection iterations.
 fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     let spec = crate::search::MonotonicSpec::from_flags(flags)?;
     let filters = spec.sla_filters.clone();
@@ -268,8 +241,7 @@ fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     let mut planner = crate::search::MonotonicPlanner::new(spec);
     let mut records: Vec<IterationRecord> = Vec::new();
 
-    // Resolve the base run once with concurrency neutralized (the planner owns
-    // the swept concurrency); mirrors `plan_recipe_cells`.
+    // The planner owns concurrency, so the base run uses a neutral scalar.
     let mut base_flags = flags.clone();
     base_flags.concurrency = Some("1".to_string());
     let base = load::resolve(&base_flags)?;
@@ -444,12 +416,7 @@ fn write_search_boundary(
     Ok(())
 }
 
-/// Drive the dynamic smooth-isotonic SLA search (default `--search-style`):
-/// the native [`crate::isotonic::SmoothIsotonicPlanner`] (verified byte-exact
-/// against the production planner in `tests/isotonic_parity.rs`, PAVA+PCHIP fit
-/// via scipy) proposes one concurrency per probe; each probe is one runner
-/// invocation whose per-iteration feasibility + per-filter signed margins steer
-/// the fit. Requires the `search-pyo3` build.
+/// Drive smooth-isotonic SLA search using a scipy PAVA/PCHIP fit.
 #[cfg(feature = "search-pyo3")]
 fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     use std::collections::HashMap;
@@ -617,12 +584,7 @@ fn run_isotonic_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     Ok(if any_failure { 1 } else { 0 })
 }
 
-/// Drive the dynamic optuna-BO SLA search (`--search-style bo|optuna`): the
-/// native [`crate::bayes::OptunaPlanner`] (verified byte-exact vs the production
-/// planner on the seeded TPE sampler in `tests/bayes_parity.rs`, real optuna via
-/// pyo3) proposes one concurrency per probe; each probe is one runner invocation
-/// whose objective (output_token_throughput) + per-filter SLA observations feed
-/// the study's constraints. Requires the `search-pyo3` build.
+/// Drive constrained Optuna search for `--search-style bo|optuna`.
 #[cfg(feature = "search-pyo3")]
 fn run_bayes_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     // The recipe's objective is output_token_throughput / avg (maximize).
@@ -777,13 +739,12 @@ fn run_bayes_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     Ok(if any_failure { 1 } else { 0 })
 }
 
-/// Drive the `max-goodput-under-slo` recipe (`src/aiperf/search_recipes/_max_goodput_under_slo.py`):
-/// Bayesian-optimize `goodput` over log-uniform concurrency with a
+/// Drive `max-goodput-under-slo`: optimize `goodput` over log-uniform concurrency with a
 /// `good_request_fraction >= --slo-attainment-fraction` outcome constraint. The
 /// three TTFT/TPOT/E2E SLO thresholds are installed as config `slos` (via the
 /// `--goodput` projection) so the runtime marks each request good/bad and
 /// computes the `goodput` / `good_request_fraction` metrics. Requires
-/// `search-pyo3` (real optuna). Emits `search_history.json`.
+/// `search-pyo3`. Emits `search_history.json`.
 #[cfg(feature = "search-pyo3")]
 fn run_goodput_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
     const OBJ_METRIC: &str = "goodput";
@@ -1090,9 +1051,7 @@ fn run_sweep(
     run_cells(flags, &cells, expansion.is_sweep, order)
 }
 
-/// Resolve the per-variation seed policy from the multi-run/sweep seed flags
-/// (Python `set_consistent_seed` / `same_seed`): an explicit `--random-seed`
-/// wins; else `42` when consistent seeding is on (the default), else no seed.
+/// Resolve per-variation seed policy from sweep seed flags.
 pub fn seed_policy(flags: &ProfileFlags) -> sweep_run::SeedPolicy {
     let consistent = flags.set_consistent_seed && !flags.no_set_consistent_seed;
     let base = flags
@@ -1130,8 +1089,6 @@ fn run_cells(
         crate::logging::set_log_file(&base);
     }
 
-    // Multi-run banner, mirroring Python's `log_multi_run_banner`
-    // (`src/aiperf/cli_runner/_banner.py`).
     let total = cells.len();
     tracing::info!("{}", "=".repeat(80));
     tracing::info!("Starting Multi-Run Benchmark");

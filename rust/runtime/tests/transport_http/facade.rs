@@ -1,4 +1,6 @@
-// rust/transport-http/tests/facade.rs
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 mod common;
 use common::{MockServer, run_local};
 use std::rc::Rc;
@@ -65,7 +67,6 @@ fn facade_sticky_reuse_reuses_connection_across_turns() {
         let t = HttpTransport::new(clock, ClientConfig::default());
         let url = format!("{}/v1/chat/completions", mock.base_url);
 
-        // Turn 1 (non-final): sticky session opens a fresh connection.
         let cfg1 = RequestConfig::new(&url)
             .reuse(ConnectionReuseStrategy::StickyUserSessions)
             .correlation_id("session-A")
@@ -81,7 +82,6 @@ fn facade_sticky_reuse_reuses_connection_across_turns() {
         );
         assert!(tr1.tcp_connect_start_ns.is_some());
 
-        // Turn 2 (final): same session reuses the pooled connection, then releases.
         let cfg2 = RequestConfig::new(&url)
             .reuse(ConnectionReuseStrategy::StickyUserSessions)
             .correlation_id("session-A")
@@ -100,8 +100,6 @@ fn facade_sticky_reuse_reuses_connection_across_turns() {
             "reuse must not open a new socket"
         );
 
-        // Turn 3: after the final turn released the lease, a new sticky request
-        // for the same session opens a fresh connection again.
         let cfg3 = RequestConfig::new(&url)
             .reuse(ConnectionReuseStrategy::StickyUserSessions)
             .correlation_id("session-A")

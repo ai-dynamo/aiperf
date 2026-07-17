@@ -2,29 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //! t* frontier chop for a segment-trie [`ParsedGraph`].
 //!
-//! Port of `src/aiperf/timing/snapshot_chop.py:21-114` (`chop_trie_at_tstar`
-//! plus helpers `_chop_edges`, `_chop_node_inputs`) from branch
-//! `ajc/aiperf-graph-ir`. Format-agnostic: operates purely on `ParsedGraph`
+//! Format-agnostic: operates purely on `ParsedGraph`
 //! topology, [`StaticEdge`]s, per-node `arrival_offset_us`, and AND-fan-in
 //! `inputs` — no recorded-trace (weka/dynamo) types. Any adapter that emits the
 //! segment-trie IR (a graph of [`LlmNode`] + [`StaticEdge`] with
 //! `metadata["arrival_offset_us"]`) can be snapshotted here.
-//!
-//! Signature adaptation vs the Python original: the Python model carries
-//! `arrival_offset_us` as a first-class `LlmNode` field; the Rust IR carries it
-//! in `LlmNode.metadata["arrival_offset_us"]` (a JSON `u64`, written by the
-//! recorded-trie builder in `graph/recorded/trie/mod.rs`). `t_star_us` is taken
-//! as `f64` (the brief's shape) rather than Python's `int`; the comparison and
-//! the re-root offset arithmetic are otherwise identical.
 
 use crate::graph::model::{GraphRecord, LlmNode, ParsedGraph, START_NODE_ID, StaticEdge};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// The node's recorded arrival offset in microseconds, or `0.0` when absent.
 ///
-/// Mirrors Python's `(node.arrival_offset_us or 0)`: a missing or non-numeric
-/// `metadata["arrival_offset_us"]` (and the recorded value `0`) all resolve to
-/// `0.0`.
+/// Missing, non-numeric, and zero `metadata["arrival_offset_us"]` values resolve
+/// to `0.0`.
 fn arrival_offset_us(node: &LlmNode) -> f64 {
     node.metadata
         .get("arrival_offset_us")
@@ -38,22 +28,19 @@ fn arrival_offset_us(node: &LlmNode) -> f64 {
 /// realization of one recorded trace; every node carries `arrival_offset_us`
 /// (its recorded `t` * 1e6, stored in `metadata`). The snapshot chop:
 ///
-/// * Drops every node whose `arrival_offset_us < t_star_us` — the pre-`t*`
-///   turns were already WARMED (primed), not PROFILED.
-/// * Re-roots each SURVIVING node that lost ALL its predecessors to the chop
+/// * Drops every node whose `arrival_offset_us < t_star_us`.
+/// * Re-roots each surviving node that lost all predecessors to the chop
 ///   from `START` via a synthetic [`StaticEdge`] whose `min_start_delay_us =
-///   arrival_offset_us - t_star_us` — the node's ABSOLUTE offset from the
-///   instance run-origin `t*`. Inter-turn edges between two SURVIVING nodes are
+///   arrival_offset_us - t_star_us` — the node's absolute offset from the
+///   instance run-origin `t*`. Inter-turn edges between two surviving nodes are
 ///   kept verbatim (whichever delay kind they carry is unchanged).
-/// * Leaves each surviving node's prompt segment program UNCHANGED: the full
+/// * Leaves each surviving node's prompt segment program unchanged: the full
 ///   pre-`t*` prefix stays in the path so the worker still materializes the
-///   EXACT resume prompt.
+///   exact resume prompt.
 ///
 /// `t_star_us <= 0` returns the graph unchanged (full `t*=0` replay).
 ///
-/// Port of `snapshot_chop.py:21-114`. Only `graph.graph` is chopped; the named
-/// `graphs` map and `traces` are carried through verbatim, matching Python
-/// (which rebuilds only `graph.graph`).
+/// Only `graph.graph` is chopped; named graphs and traces remain unchanged.
 pub fn chop_trie_at_tstar(graph: &ParsedGraph, t_star_us: f64) -> ParsedGraph {
     if t_star_us <= 0.0 {
         return graph.clone();
@@ -61,9 +48,7 @@ pub fn chop_trie_at_tstar(graph: &ParsedGraph, t_star_us: f64) -> ParsedGraph {
 
     let old_graph = &graph.graph;
 
-    // Survivors, in the graph's node-id order (BTreeMap iteration is stable and
-    // deterministic — the Rust analogue of the Python dict's insertion order for
-    // an adapter that inserts nodes in id order).
+    // BTreeMap iteration keeps survivor order deterministic.
     let survivor_ids: BTreeSet<&str> = old_graph
         .nodes
         .iter()
@@ -73,8 +58,7 @@ pub fn chop_trie_at_tstar(graph: &ParsedGraph, t_star_us: f64) -> ParsedGraph {
 
     let new_edges = chop_edges(&old_graph.edges, &survivor_ids, &old_graph.nodes, t_star_us);
 
-    // Recompute each surviving node's AND-fan-in `inputs` against the chop: a
-    // requirement on a DROPPED predecessor's `{src}_out` channel would deadlock
+    // A requirement on a dropped predecessor's `{src}_out` channel would deadlock
     // `await_inputs` (that channel is never written post-chop). Keep only
     // requirements whose source survives; a node re-rooted entirely from START
     // ends with empty `inputs`.
@@ -106,7 +90,7 @@ pub fn chop_trie_at_tstar(graph: &ParsedGraph, t_star_us: f64) -> ParsedGraph {
 /// An edge survives only when BOTH endpoints survive (or it roots an explicitly
 /// kept node at `START`). Each surviving node that lost ALL its predecessors to
 /// the chop is re-rooted from `START` at its `t*`-relative absolute offset,
-/// dropping any kept `START` edge for it. Port of `snapshot_chop.py:_chop_edges`.
+/// dropping any kept `START` edge for it.
 fn chop_edges(
     edges: &[StaticEdge],
     survivors: &BTreeSet<&str>,
@@ -134,9 +118,7 @@ fn chop_edges(
 
     let mut new_edges: Vec<StaticEdge> = kept_edges
         .into_iter()
-        // De Morgan of Python's `not (source == START and target not in
-        // has_surviving_pred)`: drop a kept START edge only when its target
-        // gained a re-root (i.e. lost all surviving preds).
+        // Drop a kept START edge only when its target gained a re-root.
         .filter(|e| e.source != START_NODE_ID || has_surviving_pred.contains(e.target.as_str()))
         .collect();
 
@@ -159,8 +141,7 @@ fn chop_edges(
 /// Drop a surviving node's `inputs` requirements on dropped predecessors.
 ///
 /// An input-free node passes through untouched. An `inputs` list whose surviving
-/// subset equals the original is returned unchanged (mirrors Python's
-/// no-rebuild fast path). Port of `snapshot_chop.py:_chop_node_inputs`.
+/// subset equals the original is returned unchanged.
 fn chop_node_inputs(node: &LlmNode, survivor_out_channels: &BTreeSet<String>) -> LlmNode {
     if node.inputs.is_empty() {
         return node.clone();
@@ -182,16 +163,16 @@ fn chop_node_inputs(node: &LlmNode, survivor_out_channels: &BTreeSet<String>) ->
 /// Chop a segment-trie [`ParsedGraph`] to its extended-warmup handoff frontier.
 ///
 /// The extended (cache-pressure) warmup replays the post-`t*` remainder with
-/// zero idle delay; at drain, PROFILING must resume each chain at its first
+/// zero idle delay; at drain, profiling must resume each chain at its first
 /// NOT-yet-executed node rather than re-firing from `t*`. The chop:
 ///
 /// * Drops every node with `arrival_offset_us < t_star_us` (pre-`t*` history,
-///   primed by the boundary warmup) AND every node in `executed`
+///   primed by the boundary warmup) and every node in `executed`
 ///   (dispatched-and-returned during warmup/pressure — the server holds their
 ///   KV).
 /// * Keeps inter-survivor edges verbatim (recorded pacing resumes past the
 ///   frontier).
-/// * Re-roots each surviving node that lost ALL its real predecessors from
+/// * Re-roots each surviving node that lost all its real predecessors from
 ///   `START` with `min_start_delay_us` set to its RESIDUAL delay: for each
 ///   dropped predecessor edge, the residual is the recorded gap
 ///   `recorded_delay` minus the wall time `max(0, drain_end_wall_us
@@ -202,10 +183,10 @@ fn chop_node_inputs(node: &LlmNode, survivor_out_channels: &BTreeSet<String>) ->
 ///   `min_start_delay_us`): the ledger wall is the predecessor's RETURN, so a
 ///   dispatch-anchored delay (`delay_after_predecessor_start_us` / first-token)
 ///   debited from a return-anchored elapsed would over-delay by the pred's live
-///   service time, so start-anchored edges contribute 0 (burst). A dropped
+///   service time, so start-anchored edges contribute 0. A dropped
 ///   predecessor with no recorded wall contributes 0 (fire immediately).
 /// * Rescopes surviving nodes' AND-fan-in `inputs` exactly like
-///   [`chop_trie_at_tstar`]. A survivor that KEEPS a surviving-pred edge but LOST
+///   [`chop_trie_at_tstar`]. A survivor that keeps a surviving-pred edge but lost
 ///   a residual-carrying binding edge to the chop is NOT re-rooted; instead that
 ///   dropped edge's residual is FOLDED into the node's `min_start_delay_us`
 ///   (max-combined with any existing node value). Under
@@ -214,21 +195,9 @@ fn chop_node_inputs(node: &LlmNode, survivor_out_channels: &BTreeSet<String>) ->
 ///
 /// `return_wall_us` and `drain_end_wall_us` share one monotonic clock (the
 /// warmup strategy's ledger); only differences are meaningful. Unlike
-/// [`chop_trie_at_tstar`], this chop has NO `t_star_us <= 0` early return: at
+/// [`chop_trie_at_tstar`], this chop has no `t_star_us <= 0` early return: at
 /// `t*<=0` every node still passes the arrival test, but `executed` nodes are
-/// STILL dropped and their successors re-rooted at residuals.
-///
-/// Port of `snapshot_chop.py:130-301` (`chop_trie_at_frontier` plus helper
-/// `_frontier_edges`) from branch `ajc/aiperf-graph-ir`. Signature adaptation:
-/// the Python original takes keyword-only `t_star_us: float`, `executed:
-/// frozenset[str]`, `return_wall_us: dict[str, float]`, `drain_end_wall_us:
-/// float`, and `residual_cap_us: float | None`; the Rust port takes the same
-/// arguments positionally as `&HashSet<String>` / `&HashMap<String, f64>` /
-/// `f64` / `Option<f64>`, and reads `arrival_offset_us` from
-/// `metadata["arrival_offset_us"]` (per [`arrival_offset_us`]) rather than a
-/// first-class field. The wall-ledger arguments are retained (NOT dropped to a
-/// bare `(graph, t*, executed)` shape) because the residual pacing they drive is
-/// the whole point of the frontier chop vs the t* chop — Python behavior governs.
+/// still dropped and their successors re-rooted at residuals.
 pub fn chop_trie_at_frontier(
     graph: &ParsedGraph,
     t_star_us: f64,
@@ -267,7 +236,7 @@ pub fn chop_trie_at_frontier(
         let node = &old_graph.nodes[*nid];
         let mut node = chop_node_inputs(node, &survivor_out_channels);
         // A dropped binding edge's residual must not vanish just because a
-        // zero-delay join edge from a SURVIVING pred remains: fold it into the
+        // zero-delay join edge from a surviving predecessor remains.
         // node-level gate, max-combined with any existing node value.
         if let Some(&residual) = kept_pred_residuals.get(*nid) {
             node.min_start_delay_us = Some(node.min_start_delay_us.unwrap_or(0.0).max(residual));
@@ -286,7 +255,7 @@ pub fn chop_trie_at_frontier(
 
 /// Edge set for the handoff chop: keep inter-survivor, re-root at residuals.
 ///
-/// Mirrors [`chop_edges`] structurally; the ONLY divergence is the re-root
+/// Mirrors [`chop_edges`] structurally; the divergence is the re-root
 /// offset — the t* chop rebases to the recorded absolute offset (`arrival - t*`)
 /// because nothing was replayed yet, while the frontier chop uses the
 /// residual-of-recorded-gap because pressure already consumed the recorded leads.
@@ -295,7 +264,6 @@ pub fn chop_trie_at_frontier(
 /// id to the leftover residual of a dropped binding edge whose target ALSO
 /// retains a surviving-pred edge (so it is not re-rooted); the caller folds those
 /// node-level so a dropped binding gap is not lost behind a zero-delay join edge.
-/// Port of `snapshot_chop.py:_frontier_edges`.
 fn frontier_edges(
     edges: &[StaticEdge],
     survivors: &BTreeSet<&str>,
@@ -373,26 +341,19 @@ fn frontier_edges(
 
 /// The per-session chain key a trie node belongs to.
 ///
-/// The Rust recorded builders mint node ids with `:` as the ordinal separator
+/// Recorded builders mint node ids with `:` as the ordinal separator
 /// (weka `{scope}:{turn_index}` — `graph/recorded/weka/mod.rs:170`; aiperf_trace
-/// `{chain}:{turn}`; dynamo `{session_id}:{k}`), so a `_`-based id split (Python's
-/// `_chain_key`) does NOT recover the enclosing session chain and would make
+/// `{chain}:{turn}`; dynamo `{session_id}:{k}`), so a `_`-based id split does not
+/// recover the enclosing session chain and would make
 /// every recorded node its own singleton. Instead group by the AUTHORITATIVE
 /// chain identity the trie lowerer stamps into
 /// `metadata["conversation_id"]` (= the weka scope / dynamo `session_id` /
 /// aiperf_trace agent-or-session, written at `graph/recorded/trie/mod.rs:170`),
 /// with `metadata["turn_index"]` as the ordinal.
 ///
-/// FALLBACK: a node lacking `metadata["conversation_id"]` (e.g. a synthetic/dag
+/// A node lacking `metadata["conversation_id"]` (e.g. a synthetic/dag
 /// graph that reaches this path) forms a defensive singleton keyed by its own
-/// id — mirroring Python's no-separator case.
-///
-/// This faithfully achieves the INTENT of `graph_ir_replay.py:106-127`
-/// (`_chain_key`): "recover the enclosing session chain". Python parsed the id
-/// only because its sidecar-loaded timing plane had stripped `metadata["trie"]`,
-/// leaving ids as the sole chain signal; the Rust IR retains `conversation_id`
-/// in metadata, so grouping by it is both robust and correct for the Rust id
-/// scheme.
+/// id.
 fn chain_key(node_id: &str, node: &LlmNode) -> String {
     node.metadata
         .get("conversation_id")
@@ -409,14 +370,7 @@ fn chain_key(node_id: &str, node: &LlmNode) -> String {
 /// priming (profiling replays them from their own start); chains entirely
 /// pre-`t*` are not live (nothing of them is profiled). The returned map borrows
 /// the boundary nodes from `graph` unchanged — the warmup re-root is applied by
-/// [`rewrite_for_warmup`], mirroring Python's returning of the same node objects.
-///
-/// Port of `graph_ir_replay.py:128-149` (`_warmup_boundary_nodes`). Signature
-/// adaptation: the Python original takes a `GraphRecord` and reads a first-class
-/// `LlmNode.arrival_offset_us`; the Rust IR reads it from
-/// `metadata["arrival_offset_us"]` via [`arrival_offset_us`], and `t_star_us` is
-/// `f64` (the brief's shape) rather than Python's `int`. Python sorts `(arrival,
-/// nid)` tuples; the Rust sort is byte-identical (arrival then id).
+/// [`rewrite_for_warmup`].
 pub fn warmup_boundary_nodes(graph: &GraphRecord, t_star_us: f64) -> BTreeMap<String, &LlmNode> {
     let mut chains: BTreeMap<String, Vec<(f64, &str)>> = BTreeMap::new();
     for (nid, node) in &graph.nodes {
@@ -427,8 +381,7 @@ pub fn warmup_boundary_nodes(graph: &GraphRecord, t_star_us: f64) -> BTreeMap<St
     }
     let mut boundary: BTreeMap<String, &LlmNode> = BTreeMap::new();
     for members in chains.values_mut() {
-        // Python `list.sort()` on `(arrival, nid)` tuples; arrivals are never
-        // NaN (they come from finite recorded offsets), so `partial_cmp` is total.
+        // Recorded offsets are finite, so this comparison is total.
         members.sort_by(|a, b| a.partial_cmp(b).expect("finite arrival offsets"));
         let last_pre = members
             .iter()
@@ -446,31 +399,25 @@ pub fn warmup_boundary_nodes(graph: &GraphRecord, t_star_us: f64) -> BTreeMap<St
 
 /// Rewrite `parsed` into the WARMUP boundary-priming graph at `t*`.
 ///
-/// AgentX-parity contract: warmup dispatches exactly ONE priming credit per
-/// chain LIVE at `t*` — the chain's boundary turn, the last node of that
+/// Warmup dispatches exactly one priming credit per chain live at `t*`: the
+/// chain's boundary turn, the last node of that
 /// per-session chain whose recorded arrival precedes `t*`
 /// ([`warmup_boundary_nodes`]). Because trie prompts are cumulative along a
 /// chain, priming the boundary turn's prompt (at the worker-side warmup
 /// `max_tokens` cap, keyed off the `"warmup"` phase variant) warms the chain's
 /// whole prefix.
 ///
-/// The produced graph is FLAT: only the boundary nodes survive, each re-rooted
-/// from `START` with NO leading offset (warmup bursts every priming credit at
+/// The produced graph is flat: only the boundary nodes survive, each re-rooted
+/// from `START` with no leading offset (warmup bursts every priming credit at
 /// phase start rather than replaying recorded gaps — the synthetic edge carries
 /// no delay of any kind) and with fan-in `inputs` cleared and `min_start_delay_us`
 /// dropped (their predecessors are gone). Node identity, the trie envelope
 /// (`metadata`, including the retained `arrival_offset_us`), `max_tokens`, and
 /// the prompt program (`items`) are preserved so the worker resolves the
 /// unmodified catalog ordinal and materializes the exact recorded prompt.
-/// `t_star_us <= 0` (full native replay, or a zero-duration trace) yields an
-/// EMPTY graph so the warmup phase finalizes immediately.
-///
-/// Port of `graph_ir_replay.py:151-181` (`rewrite_for_warmup`). Signature
-/// adaptation: `t_star_us` is `f64`; the worker-side warmup `max_tokens` cap is
-/// applied downstream by the `"warmup"` phase variant and is NOT encoded into the
-/// node here, matching the Python source (which likewise leaves `max_tokens`
-/// untouched). Only `graph.graph` is rewritten; the named `graphs` map and
-/// `traces` carry through verbatim, matching Python's `replace(parsed, graph=…)`.
+/// `t_star_us <= 0` (full replay or a zero-duration trace) yields an
+/// empty graph so the warmup phase finalizes immediately. The worker applies the
+/// warmup `max_tokens` cap downstream; the node remains unchanged.
 pub fn rewrite_for_warmup(parsed: &ParsedGraph, t_star_us: f64) -> ParsedGraph {
     let boundary = if t_star_us > 0.0 {
         warmup_boundary_nodes(&parsed.graph, t_star_us)
@@ -550,8 +497,7 @@ mod tests {
     }
 
     /// 3-node chain n0 -> n1 -> n2 at arrival offsets 0 / 1e6 / 2e6 us, edges
-    /// START->n0, n0->n1, n1->n2, n2->END. Mirrors the Python fixture in
-    /// `/tmp/tstar/run.py`.
+    /// START->n0, n0->n1, n1->n2, n2->END.
     fn fixture() -> ParsedGraph {
         let mut nodes = BTreeMap::new();
         nodes.insert("n0".to_owned(), node(0, &[]));
@@ -587,10 +533,6 @@ mod tests {
             })
             .collect()
     }
-
-    // Expected values below were produced by running the VERBATIM Python chop
-    // (`snapshot_chop.py:21-114`) against the equivalent fixture — see the
-    // task-B1 report and `/tmp/tstar/run.py`.
 
     #[test]
     fn chop_tstar_mid_chain_drops_n0_reroots_n1() {
@@ -645,13 +587,6 @@ mod tests {
         assert!(chopped.graph.edges.is_empty());
     }
 
-    // --- warmup rewrite (task B2) ---------------------------------------------
-    //
-    // Expected values below were produced by running the VERBATIM Python warmup
-    // rewrite (`graph_ir_replay.py:106-181`: `_chain_key`,
-    // `_warmup_boundary_nodes`, `rewrite_for_warmup`) against a shape-equivalent
-    // standalone fixture — see the task-B2 report and `/tmp/warmup_derive.py`.
-
     /// Node with `metadata["conversation_id"] = chain`, arrival, inputs, optional
     /// min-start-delay, and optional `max_tokens`, so warmup preservation/clearing
     /// is observable. Chain identity comes from the conversation_id metadata (as
@@ -674,7 +609,7 @@ mod tests {
     /// Four chains at `t* = 1.5e6`: `chainA` straddles t* (boundary = chainA_1),
     /// `chainB` entirely pre-t* (not live), `chainC` entirely post-t* (no prime),
     /// `chainD` straddles with a node-level min-start-delay + max_tokens on its
-    /// boundary (boundary = chainD_1). Mirrors `/tmp/warmup_derive.py`.
+    /// boundary (boundary = chainD_1).
     fn warmup_fixture() -> ParsedGraph {
         let mut nodes = BTreeMap::new();
         nodes.insert("chainA_0".to_owned(), wnode("chainA", 0, &[], None, None));
@@ -807,11 +742,6 @@ mod tests {
     /// `t*`: `root:0` (arrival 0, pre-t*) and `root:1` (arrival 2e6, post-t*).
     /// Both carry `metadata["conversation_id"] = "root"`. The chain is LIVE, so
     /// its boundary must be the LAST pre-t* node, `root:0`.
-    ///
-    /// Under the OLD `_`-split `chain_key`, `root:0` and `root:1` have no `_`, so
-    /// each became its own singleton chain — neither singleton has both a pre-
-    /// and post-t* member, so the boundary map came back EMPTY (the real-recorded
-    /// warmup never primed). Grouping by `conversation_id` recovers the chain.
     #[test]
     fn warmup_boundary_groups_colon_recorded_ids_by_conversation_id() {
         let mut nodes = BTreeMap::new();
@@ -862,8 +792,8 @@ mod tests {
     }
 
     /// Fallback: a node with NO `conversation_id` metadata (e.g. a synthetic/dag
-    /// graph reaching this path) forms a defensive singleton keyed by its own id,
-    /// mirroring Python's no-separator case. Two such nodes never group, so a lone
+    /// graph reaching this path) forms a defensive singleton keyed by its own id.
+    /// Two such nodes never group, so a lone
     /// straddle across two DIFFERENT synthetic ids yields no boundary.
     #[test]
     fn warmup_boundary_falls_back_to_node_id_without_conversation_id() {
@@ -898,17 +828,9 @@ mod tests {
         assert!(warmup.graph.edges.is_empty());
     }
 
-    // --- frontier handoff-resume chop (task B3) -------------------------------
-    //
-    // Expected values below were produced by running the VERBATIM Python
-    // frontier chop (`snapshot_chop.py:130-189`: `chop_trie_at_frontier` +
-    // `_frontier_edges`, reusing `_chop_node_inputs`) against a shape-equivalent
-    // standalone fixture — see the task-B3 report and `/tmp/frontier/derive.py`.
-
     /// Linear chain `n0 -> n1 -> n2 -> n3` at arrivals 0/1e6/2e6/3e6 us, edges
     /// START->n0, n0->n1, n1->n2, n2->n3, n3->END (each inter-node edge carries
-    /// an end-anchored `delay_after_predecessor_us = 1e6`). Mirrors
-    /// `base_fixture()` in `/tmp/frontier/derive.py`.
+    /// an end-anchored `delay_after_predecessor_us = 1e6`).
     fn frontier_fixture() -> ParsedGraph {
         let mut nodes = BTreeMap::new();
         nodes.insert("n0".to_owned(), node(0, &[]));
@@ -1044,8 +966,7 @@ mod tests {
     /// AND-fan-in `j` depends on both `a1` (recorded chain pred) and `x` (a
     /// binding pred). Dropping `x` while `a1` survives exercises the
     /// fold-into-kept-survivor path: `j` is NOT re-rooted (it keeps a1->j) but
-    /// x->j's residual is folded into `j.min_start_delay_us`. Mirrors
-    /// `fold_fixture()` in `/tmp/frontier/derive.py`.
+    /// x->j's residual is folded into `j.min_start_delay_us`.
     fn fold_fixture() -> ParsedGraph {
         let mut nodes = BTreeMap::new();
         nodes.insert("a0".to_owned(), node(0, &[]));

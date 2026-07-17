@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Defaults. Port of `AioHttpDefaults` / `SocketDefaults`.
+//! HTTP client and socket defaults.
 
 use std::fmt::{self, Debug, Formatter};
 use std::sync::Arc;
@@ -166,14 +166,14 @@ pub struct ClientConfig {
     /// Maximum response-body bytes accepted per request.
     ///
     /// The bound is enforced on every received chunk for streaming, ordinary,
-    /// and non-2xx bodies. `None` preserves the unbounded compatibility mode.
+    /// and non-2xx bodies. `None` leaves the body unbounded.
     pub max_response_body_bytes: Option<u64>,
     /// Verify the server certificate and hostname for HTTPS connections.
     pub ssl_verify: bool,
     /// Provider-resolved custom trust and optional mTLS identity.
     ///
     /// This cannot be authored through endpoint configuration. When present it
-    /// is a fully verifying policy and supersedes the built-in WebPKI roots.
+    /// is a fully verifying policy and replaces the built-in WebPKI roots.
     pub prepared_tls: Option<PreparedTlsClientConfig>,
     /// HTTP protocol selection and cleartext prior-knowledge policy.
     pub http_version: HttpVersion,
@@ -218,10 +218,8 @@ impl Default for ClientConfig {
     }
 }
 
-/// Apply low-latency streaming socket options (TCP_NODELAY, keepalive,
-/// SO_REUSEADDR). Linux-only extras (buffer sizes) are `cfg`-gated. Port of
-/// `SocketDefaults.apply_to_socket`. Operates on a borrowed [`socket2::SockRef`]
-/// so it never takes ownership of the fd.
+/// Apply low-latency streaming socket options without taking ownership of the
+/// file descriptor.
 pub fn apply_socket_opts(sock: &socket2::SockRef<'_>) -> std::io::Result<()> {
     sock.set_nodelay(true)?;
     sock.set_keepalive(true)?;
@@ -241,7 +239,7 @@ mod tests {
     use crate::transport::http::models::HttpVersion;
 
     #[test]
-    fn defaults_match_python_aiohttp_defaults() {
+    fn defaults_match_transport_policy() {
         let c = ClientConfig::default();
         assert!(c.ssl_verify);
         assert!(c.prepared_tls.is_none());

@@ -7,16 +7,8 @@ use base64::Engine;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-// Tests for video inputs.
-//
-// These tests exercise ffmpeg-backed video generation and inspect the produced
-// video streams with ffprobe. They require both `ffmpeg` (used by aiperf to
-// generate the video) and `ffprobe` (used here to decode metadata), so every
-// test is marked `#[ignore]` and gated at runtime on tool availability.
-
 const WORKERS_MAX: u32 = 1;
 
-/// Decoded metadata for a single generated video payload.
 struct VideoDetails {
     width: i64,
     height: i64,
@@ -29,7 +21,6 @@ struct VideoDetails {
     audio_sample_rate: Option<i64>,
 }
 
-/// Whether the ffprobe binary is available on PATH.
 fn ffprobe_available() -> bool {
     Command::new("ffprobe")
         .arg("-version")
@@ -40,14 +31,11 @@ fn ffprobe_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Check if MP4 video is fragmented by looking for `moof` (movie fragment) boxes
-/// in the header region.
 fn check_mp4_fragmentation(video_bytes: &[u8]) -> bool {
     let header_size = video_bytes.len().min(10240);
     video_bytes[..header_size].windows(4).any(|w| w == b"moof")
 }
 
-/// Parse a floating-point frame rate expressed as `num/den` (ffprobe format).
 fn parse_rational_fps(s: &str) -> f64 {
     if let Some((num, den)) = s.split_once('/') {
         let n: f64 = num.parse().unwrap_or(0.0);
@@ -60,7 +48,6 @@ fn parse_rational_fps(s: &str) -> f64 {
     s.parse().unwrap_or(0.0)
 }
 
-/// Decode base64 video data and extract file details using ffprobe via stdin.
 fn extract_base64_video_details(base64_data: &str) -> VideoDetails {
     let video_bytes = base64::engine::general_purpose::STANDARD
         .decode(base64_data.trim())
@@ -159,7 +146,6 @@ fn extract_base64_video_details(base64_data: &str) -> VideoDetails {
     }
 }
 
-/// Yield VideoDetails for every video found in the result payloads.
 fn iter_video_details(inputs: &serde_json::Value) -> Vec<VideoDetails> {
     let mut out = Vec::new();
     let Some(data) = inputs.get("data").and_then(|d| d.as_array()) else {
@@ -194,7 +180,6 @@ fn iter_video_details(inputs: &serde_json::Value) -> Vec<VideoDetails> {
     out
 }
 
-/// True if the inputs contain at least one video payload.
 fn has_input_videos(inputs: &serde_json::Value) -> bool {
     let Some(data) = inputs.get("data").and_then(|d| d.as_array()) else {
         return false;
@@ -225,7 +210,6 @@ fn approx_eq(a: f64, b: f64) -> bool {
     (a - b).abs() <= 1e-6 + 1e-6 * b.abs()
 }
 
-/// Verify video generation respects configured dimensions, fps, and duration.
 async fn video_generation_parameters(
     video_format: &str,
     video_codec: &str,
@@ -268,21 +252,18 @@ async fn video_generation_parameters(
     }
 }
 
-// requires: ffmpeg + ffprobe
 #[tokio::test]
-#[ignore]
+#[ignore = "requires ffmpeg for generation and ffprobe for stream inspection"]
 async fn test_video_generation_parameters_webm() {
     video_generation_parameters("webm", "libvpx-vp9", false).await;
 }
 
-// requires: ffmpeg + ffprobe
 #[tokio::test]
-#[ignore]
+#[ignore = "requires ffmpeg for generation and ffprobe for stream inspection"]
 async fn test_video_generation_parameters_mp4() {
     video_generation_parameters("mp4", "libx264", true).await;
 }
 
-/// Verify video+audio muxing produces correct audio stream per format.
 async fn video_with_audio_embeds_correct_stream(
     video_format: &str,
     video_codec: &str,
@@ -324,24 +305,20 @@ async fn video_with_audio_embeds_correct_stream(
     }
 }
 
-// requires: ffmpeg + ffprobe
 #[tokio::test]
-#[ignore]
+#[ignore = "requires ffmpeg for generation and ffprobe for stream inspection"]
 async fn test_video_with_audio_embeds_correct_stream_webm() {
     video_with_audio_embeds_correct_stream("webm", "libvpx-vp9", "vorbis").await;
 }
 
-// requires: ffmpeg + ffprobe
 #[tokio::test]
-#[ignore]
+#[ignore = "requires ffmpeg for generation and ffprobe for stream inspection"]
 async fn test_video_with_audio_embeds_correct_stream_mp4() {
     video_with_audio_embeds_correct_stream("mp4", "libx264", "aac").await;
 }
 
-/// Verify videos without audio enabled have no audio stream (backward compat).
-// requires: ffmpeg + ffprobe
 #[tokio::test]
-#[ignore]
+#[ignore = "requires ffmpeg for generation and ffprobe for stream inspection"]
 async fn test_video_without_audio_has_no_audio_stream() {
     if cfg!(target_os = "windows") || !ffprobe_available() {
         return;

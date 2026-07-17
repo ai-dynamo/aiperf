@@ -1,13 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end integration tests for network latency calibration.
-//!
-//! Drives a full `aiperf profile` run against the mock server and asserts that
-//! enabling calibration produces the per-sample JSONL artifact and the
-//! `network_adjusted_*` / `network_rtt` keys in the JSON export, while a
-//! baseline run without the flag is unaffected (non-regression).
-
 mod common;
 use common::*;
 
@@ -16,7 +9,6 @@ use aiperf_mock_server::config::MockServerConfig;
 const NETWORK_LATENCY_GLOB: &str = "**/*network_latency.jsonl";
 const ADJUSTED_KEYS: [&str; 2] = ["network_adjusted_time_to_first_token", "network_rtt"];
 
-// Integration defaults (mirrors tests/integration/conftest.py IntegrationTestDefaults).
 const REQUEST_COUNT: u32 = 10;
 const CONCURRENCY: u32 = 2;
 const WORKERS_MAX: u32 = 1;
@@ -24,7 +16,6 @@ const UI: &str = "simple";
 
 const MODEL: &str = "Qwen/Qwen2.5-32B-Instruct";
 
-/// Read one JSONL file matched by a glob as a `Vec<Value>`, filtering blanks.
 fn read_network_lines(r: &RunResult) -> Option<Vec<serde_json::Value>> {
     let path = r.artifacts.find_file(NETWORK_LATENCY_GLOB)?;
     let text = std::fs::read_to_string(&path).expect("read network latency jsonl");
@@ -36,7 +27,6 @@ fn read_network_lines(r: &RunResult) -> Option<Vec<serde_json::Value>> {
     )
 }
 
-/// Active probing emits the JSONL artifact and adjusted metric keys.
 #[tokio::test]
 async fn test_calibration_writes_jsonl_and_adjusted_metrics() {
     let h = AIPerfHarness::new().await;
@@ -66,7 +56,6 @@ async fn test_calibration_writes_jsonl_and_adjusted_metrics() {
     }
 }
 
-/// Non-regression: omitting the flag emits no network latency outputs.
 #[tokio::test]
 async fn test_baseline_without_flag_has_no_network_artifacts() {
     let h = AIPerfHarness::new().await;
@@ -97,10 +86,6 @@ async fn test_baseline_without_flag_has_no_network_artifacts() {
     }
 }
 
-/// A fixed override produces adjusted metrics with no active probing.
-///
-/// Uses a controlled-latency mock (TTFT well above the 5 ms override) so the
-/// subtraction never clamps at 0, letting us lock in the exact-shift property.
 #[tokio::test]
 async fn test_rtt_override_adjusts_without_probing() {
     let cfg = MockServerConfig {
@@ -129,9 +114,7 @@ async fn test_rtt_override_adjusts_without_probing() {
         );
     }
 
-    // A fixed 5 ms mean is deterministic, so lock in the core correctness
-    // property end-to-end: each adjusted latency is shifted down by exactly the
-    // RTT and its standard deviation is unchanged (display units are ms).
+    // Fixed RTT shifts latency averages without changing dispersion.
     let rtt_avg = export["network_rtt"]["avg"]
         .as_f64()
         .expect("network_rtt.avg");
@@ -158,7 +141,6 @@ async fn test_rtt_override_adjusts_without_probing() {
         );
     }
 
-    // No active probing: the per-sample JSONL artifact should not be written.
     assert!(
         r.artifacts.find_file(NETWORK_LATENCY_GLOB).is_none(),
         "unexpected network latency JSONL artifact with override"

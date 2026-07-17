@@ -69,8 +69,8 @@ impl Error for CancellationPolicyError {}
 /// Bernoulli selection with one constant post-send delay.
 ///
 /// `rate_percent=None` and `Some(0.0)` disable the policy. A configured stream
-/// is derived as `timing.request.cancellation` from the run root, matching the
-/// component-isolation contract of `aiperf-rng`.
+/// derives `timing.request.cancellation` from the run root so other component
+/// draws cannot perturb cancellation decisions.
 pub struct BernoulliFixedDelay {
     enabled: bool,
     cancellation_probability: f64,
@@ -90,8 +90,7 @@ impl BernoulliFixedDelay {
 
     /// Construct from a percentage and delay in seconds.
     ///
-    /// Seconds are truncated to integer nanoseconds, matching Python's
-    /// `int(delay * NANOS_PER_SECOND)` conversion.
+    /// Seconds are truncated to integer nanoseconds.
     pub fn new(
         rate_percent: Option<f64>,
         delay_seconds: f64,

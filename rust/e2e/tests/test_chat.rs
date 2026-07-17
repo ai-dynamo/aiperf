@@ -3,26 +3,9 @@
 mod common;
 use common::*;
 
-// Integration tests for the `aiperf chat` command against the mock server.
-//
-// Complements the unit tests (which cover the pure parsing/metric logic) by
-// exercising the full path end to end: real HTTP streaming, the metric
-// pipeline, and the printed stats block. Uses the in-repo mock server, which
-// reports `prompt_tokens_details.cached_tokens` so the cache-hit line resolves.
-//
-// Statefulness is asserted via the prompt-token count in each turn's `Cache:`
-// line (the server counts the real prompt it received): with history it grows
-// turn over turn; with `--no-history` and an identical message it does not.
-
-/// Per-turn prompt-token counts parsed from `Cache: <hit>/<prompt> ...` lines.
-///
-/// Captures the prompt-token count (ISL) from each
-/// `<hit>/<prompt> prompt tokens cached` fragment, in order.
 fn prompt_token_counts(stdout: &str) -> Vec<u32> {
     let mut out = Vec::new();
     for (idx, _) in stdout.match_indices("prompt tokens cached") {
-        // Walk back over " prompt tokens cached" to the "<hit>/<prompt>" pair
-        // and pull the digits immediately after the '/'.
         let prefix = &stdout[..idx];
         let prefix = prefix.trim_end();
         if let Some(slash) = prefix.rfind('/') {
@@ -38,9 +21,6 @@ fn prompt_token_counts(stdout: &str) -> Vec<u32> {
     out
 }
 
-/// `--quick` streams one reply and prints the stats block, including the cache
-/// line (prefix caches are server-side, so even a single-shot request reports a
-/// hit rate when the server surfaces cached tokens).
 #[tokio::test]
 async fn test_quick_prints_stats() {
     let h = AIPerfHarness::new().await;
@@ -54,9 +34,6 @@ async fn test_quick_prints_stats() {
     assert!(r.stdout.contains("Cache:"));
 }
 
-/// Default mode prints the ITL/decode + cache lines per turn, and the prompt
-/// grows turn over turn because history is resent.
-///
 /// requires: interactive `aiperf chat` stdin feeding (harness runs stdin=null).
 #[tokio::test]
 #[ignore]
@@ -67,20 +44,15 @@ async fn test_multi_turn_resends_history() {
         "tell me a short story\ncontinue the story\n",
         &[],
     );
-    // The full per-turn block (all four metrics) prints for each turn.
     assert_eq!(stdout.matches("TTFT:").count(), 2);
     for label in ["TPS:", "ITL:", "Cache:"] {
         assert!(stdout.contains(label));
     }
     let prompts = prompt_token_counts(&stdout);
     assert_eq!(prompts.len(), 2);
-    // Turn 2 resends turn 1 (user + assistant), so its prompt is larger.
     assert!(prompts[1] > prompts[0]);
 }
 
-/// `--no-history` sends each message independently: an identical message yields
-/// an identical prompt size across turns (no history).
-///
 /// requires: interactive `aiperf chat` stdin feeding (harness runs stdin=null).
 #[tokio::test]
 #[ignore]
@@ -95,15 +67,10 @@ async fn test_no_history_is_stateless() {
     assert!(stdout.contains("ITL:"));
     let prompts = prompt_token_counts(&stdout);
     assert_eq!(prompts.len(), 2);
-    // No history resent -> identical message -> identical prompt size.
     assert_eq!(prompts[0], prompts[1]);
 }
 
-/// Run `aiperf chat` interactively, feeding `stdin_text` then EOF.
-///
-/// Returns captured stdout; asserts a clean exit. The shared harness always
-/// wires stdin to `/dev/null`, so this helper shells out directly to reproduce
-/// the Python `asyncio.create_subprocess_exec` + `communicate(input=...)` path.
+/// Bypasses the shared harness because it wires stdin to `/dev/null`.
 fn run_chat_over_stdin(url: &str, stdin_text: &str, extra_args: &[&str]) -> String {
     use std::io::{Read, Write};
     use std::process::{Command, Stdio};

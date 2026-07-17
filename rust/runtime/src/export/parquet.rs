@@ -3,16 +3,6 @@
 
 //! Native-Rust server-metrics Parquet sink: `server_metrics_export.parquet`.
 //!
-//! Ports the Python `server_metrics/parquet_exporter.py`
-//! (`ServerMetricsParquetExporter`) plus the storage/unit machinery it depends on
-//! (`server_metrics/storage.py`, `server_metrics/units.py`), which today is driven
-//! by `orchestrator/native_report.py::_render_server_metrics_parquet`. That Python
-//! path reads the Rust-emitted `.aiperf-server-metrics-parquet-wire.jsonl` wire
-//! file (raw per-record [`crate::server_metrics::ServerMetricsRecord`] rows written
-//! by `rust/runner/src/server_metrics.rs::write_parquet_wire_jsonl`), rebuilds the
-//! `ServerMetricsHierarchy`, and renders Parquet with pyarrow. Doing it natively
-//! here lets the integration owner eventually delete that round-trip.
-//!
 //! # Parity target (documented honestly)
 //! Parquet byte-identity across writers (pyarrow vs arrow-rs) is **not** a goal:
 //! row-group layout, encodings, and page/compression defaults differ. The target
@@ -30,7 +20,7 @@
 //! `report.summary.server_metrics.profiling`, computes gauge/counter/histogram
 //! deltas, and writes the normalized (one-row-per-bucket) Parquet table.
 //!
-//! Ported from (cite exact oracle):
+//! Compatibility oracles:
 //! - `src/aiperf/server_metrics/parquet_exporter.py` (schema, metadata, deltas)
 //! - `src/aiperf/server_metrics/storage.py` (hierarchy, scalar/histogram series)
 //! - `src/aiperf/server_metrics/units.py` + `common/enums/metric_enums.py`
@@ -104,8 +94,7 @@ impl Exporter for ParquetExporter {
         let hierarchy = Hierarchy::from_wire_file(&wire_path)?;
         // The wire JSONL is a private runner→sink intermediate, not a user
         // artifact; remove it once consumed so it never lingers in the run
-        // directory. Mirrors the retired Python renderer's `wire_path.unlink()`
-        // (`orchestrator/native_report.py::_render_server_metrics_parquet`).
+        // directory.
         // Best-effort: a cleanup failure never aborts the export (the native-v2
         // report is the committed authority).
         if let Err(error) = std::fs::remove_file(&wire_path) {
@@ -116,7 +105,7 @@ impl Exporter for ParquetExporter {
         }
         let rows = hierarchy.collect_rows(start_ns, end_ns);
 
-        // Mirror the Python exporter: no rows -> skip file creation entirely.
+        // Empty row sets do not create an artifact.
         if rows.is_empty() {
             tracing::debug!("server-metrics parquet: no rows to export; skipping file");
             return Ok(());
@@ -277,7 +266,7 @@ where
 }
 
 // =============================================================================
-// Hierarchy / time-series (port of storage.py)
+// Hierarchy and time-series accumulation
 // =============================================================================
 
 /// Prometheus metric semantic type. Mirrors `enums.PrometheusMetricType`.

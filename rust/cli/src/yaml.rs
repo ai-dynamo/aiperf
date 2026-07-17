@@ -1,22 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The YAML Config-v2 input surface: parse a config file into normalized
-//! [`crate::load::Inputs`] and reuse the shared [`crate::load::build`] core.
+//! YAML Config v2 parsing and normalization.
 //!
 //! Config v2 accepts shorthand forms (`model:` → `models.items[0]`, `dataset:`
 //! → `datasets[0]`, a flat `phases:` → one phase) and both snake_case and
-//! camelCase keys (via `serde(alias)`, matching pydantic's `to_camel`).
-//!
-//! Coverage tracks the flag surface, section by section, each gated by a golden
-//! fixture: endpoint (auth/headers/extra/timeout/connection-reuse/content-type/
-//! session-header/wait-for-model/token-count flags), tokenizer, models.strategy,
-//! top-level `randomSeed`, telemetry (gpu/server-metrics/network-latency), export
-//! sinks (otel/mlflow/wandb), runtime (workers/cells), metrics (slos/slice), the
-//! synthetic dataset (prompts, prefix-prompts, multi-turn, media, sampling), file
-//! datasets, public datasets, and phases (arrival pattern/rate/smoothness/ramps/
-//! prefill/cancellation/user-centric/fixed-schedule/adaptive-scale, plus the
-//! `warmup`/`profiling` simple-config form). Unknown keys are ignored (no
-//! `deny_unknown_fields`).
+//! camelCase keys via `serde(alias)`. Unknown keys are ignored.
 
 use std::path::PathBuf;
 
@@ -42,8 +30,6 @@ pub(crate) fn resolve_str(
     text: &str,
     artifact_dir: Option<PathBuf>,
 ) -> anyhow::Result<crate::model::BenchmarkRun> {
-    // Parse to a generic value, apply `${ENV}` + Jinja2 expansion (matching
-    // Python's loader pipeline), then deserialize the expanded tree.
     let raw: serde_json::Value =
         serde_yaml::from_str(text).map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
     let expanded = crate::expand::expand_config(raw)?;
@@ -61,9 +47,7 @@ pub(crate) fn resolve_expanded_value(
     let mut file: ConfigFile = serde_json::from_value(expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
     let random_seed = file.random_seed;
-    // The canonical `runtime:` section is authored at the top level; fold it onto
-    // the (usually absent) nested `benchmark.runtime` so `runtime.cells` reaches
-    // the run envelope. A nested `benchmark.runtime` (legacy shorthand) wins.
+    // A nested runtime block takes precedence over the top-level block.
     if file.benchmark.runtime.is_none() {
         file.benchmark.runtime = file.runtime.take();
     }
@@ -74,9 +58,8 @@ pub(crate) fn resolve_expanded_value(
 
 /// Apply explicit `aiperf profile` flags over a config-file-derived run.
 ///
-/// The `--config` path builds the run from the file; a flag the user *also*
-/// passed on the command line must win (Python's flag-merge order: CLI over
-/// loaded config). Without this, operational flags beside `--config` are
+/// The `--config` path builds the run from the file; explicit command-line flags
+/// take precedence. Without this, operational flags beside `--config` are
 /// silently dropped — e.g. `--config foo.yaml --export-level raw` would never
 /// write `profile_export_raw.jsonl`, and `--cells 4` would run single-process.
 ///
@@ -91,37 +74,29 @@ fn apply_cli_overrides(
     let Some(flags) = overrides else {
         return Ok(());
     };
-    // `--tokenizer` over `tokenizer.name`.
     if let Some(name) = flags.tokenizer.clone() {
         inputs.tokenizer_name = Some(name);
     }
-    // `--export-level` (summary/records/raw) over `artifacts.records`/`artifacts.raw`.
     if let Some(level) = flags.export_level.as_deref() {
         let (records_formats, export_raw) = load::export_level_formats(Some(level))?;
         inputs.records_formats = records_formats;
         inputs.export_raw = export_raw;
     }
-    // `--cells N` over `runtime.cells`.
     if let Some(cells) = flags.cells {
         inputs.runtime_cells = cells;
     }
-    // `--random-seed S` over the config seed (sets both run and dataset seed,
-    // matching the flags-only path).
+    // CLI random seed governs both run and dataset sampling.
     if let Some(seed) = flags.random_seed {
         inputs.random_seed = Some(seed);
         inputs.dataset_random_seed = Some(seed);
     }
-    // `--server-metrics-formats` over `serverMetrics` export formats.
     if !flags.server_metrics_formats.is_empty() {
         inputs.server_metrics_formats = Some(flags.server_metrics_formats.clone());
     }
     Ok(())
 }
 
-/// Parse a config file to its raw value and apply only `${ENV}` substitution
-/// (stage 1). Used by the YAML sweep path, which must expand the sweep block
-/// against the env-substituted-but-not-yet-Jinja-rendered base (Python's
-/// plan-build order).
+/// Parse a config and substitute `${ENV}` before sweep and Jinja expansion.
 pub fn read_env_substituted(path: &std::path::Path) -> anyhow::Result<serde_json::Value> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("failed to read config {}: {e}", path.display()))?;
@@ -169,8 +144,7 @@ struct DistFields {
     max: Option<f64>,
 }
 
-/// Deserialize a duration field that accepts a number (seconds) OR a string like
-/// `30s`/`5m`/`2h`/`inf` (Python `loader/duration.py`).
+/// Deserialize seconds from a number, `30s`, `5m`, `2h`, or `inf`.
 fn de_duration_opt<'de, D>(d: D) -> Result<Option<f64>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -343,10 +317,7 @@ struct RuntimeSection {
     cells: Option<u32>,
 }
 
-/// The `models:` block. Accepts either the full mapping form
-/// (`{items: [...], strategy: ...}`) or the shorthand sequence of model names /
-/// item maps (`models: [gpt-4]` or `models: [{name: gpt-4}]`), matching Python's
-/// normalization of a bare list to items with the default strategy.
+/// A full models mapping or shorthand sequence of model names or item maps.
 #[derive(Debug)]
 struct ModelsSection {
     items: Vec<ModelItem>,
@@ -675,10 +646,7 @@ struct PhaseSection {
     start_offset: Option<i64>,
     #[serde(default, alias = "endOffset")]
     end_offset: Option<i64>,
-    /// Adaptive-scale config: a bare `true`/`false` toggle, or a nested block
-    /// (`{enabled, control_variable, strategy, sla, …}`) lowered onto the flat
-    /// fields below — mirrors Python `AdaptiveScalePhaseMixin`
-    /// (`src/aiperf/config/adaptive_scale_phase.py`).
+    /// A boolean toggle or nested adaptive-scale block.
     #[serde(default, alias = "adaptiveScale")]
     adaptive_scale: AdaptiveScaleField,
     #[serde(default, alias = "adaptiveSustainDuration")]
@@ -703,16 +671,13 @@ struct PhaseSection {
     adaptive_scale_max_step_multiplier: Option<i64>,
     #[serde(default, alias = "adaptiveScaleStepPercent")]
     adaptive_scale_step_percent: Option<f64>,
-    /// Adaptive-scale SLA filters: an explicit list of `{metric_tag,stat,op,
-    /// threshold}`, or a nested `{metric: {stat: {op: threshold}}}` map
-    /// (Python `normalize_adaptive_sla`).
+    /// An explicit filter list or nested `{metric: {stat: {op: threshold}}}` map.
     #[serde(default)]
     sla: SlaField,
 }
 
 impl PhaseSection {
-    /// Effective SLA filters: a block-nested `sla:` overrides the phase-level
-    /// `sla:` (Python `_lower_adaptive_scale_block` lowering order).
+    /// Block-local SLA filters take precedence over phase-level filters.
     fn sla_filters(&self) -> anyhow::Result<Vec<SlaFilterSection>> {
         if let Some(block) = self.adaptive_scale.block()
             && let Some(sla) = &block.sla
@@ -744,9 +709,7 @@ fn default_sla_stat() -> String {
     "p95".to_string()
 }
 
-/// `adaptive_scale:` accepts a bare bool toggle or a nested block; the block is
-/// lowered onto the flat `PhaseSection.adaptive_*`/`sla` fields, mirroring Python
-/// `lower_adaptive_scale_details` (`src/aiperf/config/adaptive_scale_phase.py`).
+/// `adaptive_scale:` accepts a boolean toggle or nested block.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum AdaptiveScaleField {
@@ -761,7 +724,6 @@ impl Default for AdaptiveScaleField {
 }
 
 impl AdaptiveScaleField {
-    /// Whether adaptive scale is enabled (`_parse_enabled` for the block form).
     fn enabled(&self) -> bool {
         match self {
             AdaptiveScaleField::Enabled(b) => *b,
@@ -778,8 +740,7 @@ impl AdaptiveScaleField {
     }
 }
 
-/// Nested `adaptive_scale:` block. Field aliases mirror Python's snake/camel
-/// `_ADAPTIVE_SCALE_FIELD_MAP`; `control`/`strategy` are sub-maps.
+/// Nested `adaptive_scale:` block with control and strategy sub-maps.
 #[derive(Debug, Default, Deserialize)]
 struct AdaptiveScaleBlock {
     #[serde(default)]
@@ -811,7 +772,7 @@ struct AdaptiveScaleBlock {
 }
 
 impl AdaptiveScaleBlock {
-    /// `_parse_enabled`: absent ⇒ true; bool as-is; truthy/falsy string.
+    /// An omitted `enabled` field enables an authored block.
     fn enabled(&self) -> bool {
         match &self.enabled {
             None => true,
@@ -886,8 +847,7 @@ struct ControlSub {
     max: Option<f64>,
 }
 
-/// `adaptive_scale.strategy: {type, step_policy, …}` sub-map
-/// (`_ADAPTIVE_SCALE_STRATEGY_FIELD_MAP`).
+/// `adaptive_scale.strategy: {type, step_policy, …}` sub-map.
 #[derive(Debug, Default, Deserialize)]
 struct StrategySub {
     #[serde(default, rename = "type")]
@@ -935,8 +895,7 @@ impl SlaField {
     }
 }
 
-/// Port of Python `normalize_adaptive_sla`: `{metric: {stat: {op: threshold}}}`
-/// → one `SlaFilterSection` per operator leaf, preserving map (YAML) order.
+/// Flatten nested SLA entries while preserving YAML map order.
 fn normalize_adaptive_sla(
     sla: &serde_json::Map<String, serde_json::Value>,
 ) -> anyhow::Result<Vec<SlaFilterSection>> {
@@ -983,10 +942,7 @@ impl Benchmark {
         let transport = parse_transport(self.transport.as_ref())?;
         let is_dynosim = transport.is_dynosim();
 
-        // DynoSim endpoints default to the `dynosim` dialect when the author
-        // leaves `endpoint.type` unset (mirrors `default_dynosim_endpoint_dialect`).
-        // Endpoint dialect defaults to `chat` (Python `EndpointConfig.type`), or
-        // `dynosim` under a DynoSim transport.
+        // DynoSim defaults to its own dialect; other transports default to chat.
         let endpoint_type = self
             .endpoint
             .endpoint_type
@@ -994,8 +950,7 @@ impl Benchmark {
             .or_else(|| is_dynosim.then(|| "dynosim".to_string()))
             .unwrap_or_else(|| "chat".to_string());
 
-        // DynoSim opens no sockets: inject the `dynosim://offline` sentinel when
-        // no URL is authored (mirrors `inject_dynosim_placeholder_url`).
+        // DynoSim needs a never-dialed sentinel when no URL is authored.
         let urls = match self.endpoint.url {
             Some(u) => u.into_vec(),
             None if is_dynosim => vec!["dynosim://offline".to_string()],
@@ -1040,8 +995,7 @@ impl Benchmark {
                 pool_size: p.pool_size,
             });
 
-        // Synthetic media (present when the block is authored; defaults mirror
-        // the flag builders, but sample rates stay raw like the config path).
+        // YAML sample rates retain their authored units.
         let image_spec = dataset.as_ref().and_then(|d| d.images.as_ref()).map(|i| {
             crate::model::dataset::ImageSpec {
                 batch_size: i.batch_size.unwrap_or(1),
@@ -1229,10 +1183,7 @@ impl Benchmark {
         let phase_rate = if is_user_centric { None } else { phase.rate };
         let phase_cancellation = phase.cancellation.as_ref().map(|c| (c.rate, c.delay));
 
-        // Fixed-schedule replay: carries the auto-offset toggle (defaulting to
-        // "true unless explicit offsets are set", mirroring the flag path). Unlike
-        // the flag path, the config leaves `requests` unset (the runner derives
-        // the count from the trace).
+        // Configured schedules leave request counting to the runner.
         let is_fixed_schedule = phase_type == Some("fixed_schedule");
         let fixed_schedule = is_fixed_schedule.then(|| {
             phase
@@ -1248,8 +1199,7 @@ impl Benchmark {
             None
         };
 
-        // Synthetic conversation count: num_conversations or an explicit
-        // dataset `entries`, else the Python default (never the request bound).
+        // Synthetic conversation count never derives from the request bound.
         let entries = num_conversations
             .or(dataset_entries)
             .unwrap_or(load::DEFAULT_ENTRIES);
@@ -1309,8 +1259,7 @@ impl Benchmark {
             })
             .unwrap_or((true, Vec::new(), None));
 
-        // Network latency: a fixed mean wins; otherwise an enabled block runs a
-        // probe with the given ping interval (mirrors `_network_latency`).
+        // A fixed network-latency mean takes precedence over probing.
         let (network_latency_mean, network_latency_probe) = match self.network_latency.as_ref() {
             Some(nl) if nl.mean_ms.is_some() => (nl.mean_ms, None),
             Some(nl) if nl.enabled => (None, Some(nl.ping_interval.unwrap_or(1.0))),
@@ -1388,7 +1337,7 @@ impl Benchmark {
             transport,
             streaming: self.endpoint.streaming,
             timeout_seconds: self.endpoint.timeout,
-            use_legacy_max_tokens: self.endpoint.use_legacy_max_tokens.unwrap_or(false),
+            use_max_tokens_compat: self.endpoint.use_legacy_max_tokens.unwrap_or(false),
             use_server_token_count: self.endpoint.use_server_token_count.unwrap_or(false),
             download_video_content: self.endpoint.download_video_content.unwrap_or(false),
             extra: self.endpoint.extra.unwrap_or_default(),
@@ -1552,14 +1501,10 @@ fn extract_prompts(
     (isl, osl, prompts.batch_size, prompts.block_size)
 }
 
-/// Build an [`AdaptiveScale`] from a YAML phase's `adaptive_*` fields, mirroring
-/// `rust_wire._adaptive_scale`. Bounds preserve Python's int-vs-float form: an
-/// explicit config bound is a float, a defaulted/axis-derived bound is an int.
+/// Build adaptive scaling while preserving explicit float and derived integer bounds.
 fn build_adaptive_yaml(phase: &PhaseSection) -> anyhow::Result<crate::model::phase::AdaptiveScale> {
     use crate::model::phase::{AdaptiveScale, SlaFilter};
-    // Effective values: a nested `adaptive_scale:` block overrides the flat
-    // `adaptive_*` fields (mirrors Python `lower_adaptive_scale_details`, which
-    // writes the block values over the flat `lowered` copy).
+    // Nested adaptive-scale values take precedence over flat fields.
     let block = phase.adaptive_scale.block();
     let eff_control_variable = block
         .and_then(|b| b.control_variable())
@@ -1664,11 +1609,7 @@ fn dist_from(d: &DistFields) -> Distribution {
     })
 }
 
-/// Apply the config's distribution discriminator defaults. A bare `{mean}` (no
-/// `stddev`/`median`/`peaks`) is a `NormalDistribution` whose `stddev` defaults
-/// to `0.0` — the wire therefore carries `stddev: 0.0`, matching Python's
-/// `NormalDistribution` (`src/aiperf/config/distributions.py`). A `median`
-/// (log-normal) or `peaks` (multimodal) shape takes no `stddev` default.
+/// Default bare `{mean}` distributions to zero standard deviation.
 fn normalize_dist(mut d: Distribution) -> Distribution {
     if d.mean.is_some()
         && d.stddev.is_none()

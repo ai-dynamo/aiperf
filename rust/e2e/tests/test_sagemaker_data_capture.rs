@@ -3,19 +3,10 @@
 mod common;
 use common::*;
 
-// Integration tests for the SageMaker Data Capture trace loader.
-//
-// Ports `tests/integration/test_sagemaker_data_capture.py`. Each test builds a
-// SageMaker Data Capture JSONL file, runs `aiperf profile` with
-// `--custom-dataset-type sagemaker_data_capture --fixed-schedule`, and asserts
-// the request count and that all output artifacts were produced.
-
 use base64::Engine as _;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-/// Mirror of the Python `result.has_all_outputs` property: json, csv, inputs,
-/// and jsonl artifacts must all be present.
 fn has_all_outputs(r: &RunResult) -> bool {
     !r.artifacts.json().is_null()
         && !r.artifacts.csv().is_empty()
@@ -23,9 +14,6 @@ fn has_all_outputs(r: &RunResult) -> bool {
         && !r.artifacts.jsonl().is_empty()
 }
 
-/// Build a SageMaker Data Capture record dict for testing.
-///
-/// Mirrors `tests/integration/utils.py::create_sagemaker_capture_record`.
 fn create_sagemaker_capture_record(
     messages: Value,
     max_tokens: Option<i64>,
@@ -89,14 +77,10 @@ fn create_sagemaker_capture_record(
     })
 }
 
-/// Create a SageMaker Data Capture JSONL file for testing.
-///
-/// Mirrors `tests/integration/utils.py::create_sagemaker_capture_file`.
 fn create_sagemaker_capture_file(dir: &Path, records: &[Value], filename: &str) -> PathBuf {
     write_jsonl(dir, filename, records)
 }
 
-/// Test replaying captured chat completion requests.
 #[tokio::test]
 async fn test_basic_capture_replay() {
     let h = AIPerfHarness::new().await;
@@ -139,7 +123,6 @@ async fn test_basic_capture_replay() {
     assert!(has_all_outputs(&r));
 }
 
-/// Test replaying captures with system messages in the messages array.
 #[tokio::test]
 async fn test_capture_with_system_message() {
     let h = AIPerfHarness::new().await;
@@ -181,11 +164,9 @@ async fn test_capture_with_system_message() {
     assert_eq!(r.artifacts.request_count() as usize, request_count);
 }
 
-/// Test loading captures from a directory with hourly-partitioned files.
 #[tokio::test]
 async fn test_capture_directory_input() {
     let h = AIPerfHarness::new().await;
-    // Simulate SageMaker's hourly directory structure
     let base = h.artifact_dir.path().join("captures");
     let hour_00 = base.join("2026").join("04").join("29").join("00");
     let hour_01 = base.join("2026").join("04").join("29").join("01");
@@ -227,7 +208,6 @@ async fn test_capture_directory_input() {
     assert!(has_all_outputs(&r));
 }
 
-/// Test that the loader auto-detects SageMaker Data Capture format.
 #[tokio::test]
 async fn test_capture_auto_detection() {
     let h = AIPerfHarness::new().await;
@@ -240,7 +220,6 @@ async fn test_capture_auto_detection() {
     let capture_file =
         create_sagemaker_capture_file(h.artifact_dir.path(), &records, "capture.jsonl");
 
-    // No --custom-dataset-type flag — should auto-detect
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
          --input-file {} --request-count 1 \
@@ -254,7 +233,6 @@ async fn test_capture_auto_detection() {
     assert_eq!(r.artifacts.request_count() as usize, 1);
 }
 
-/// Test replaying captures with BASE64-encoded payloads.
 #[tokio::test]
 async fn test_capture_with_base64_encoding() {
     let h = AIPerfHarness::new().await;

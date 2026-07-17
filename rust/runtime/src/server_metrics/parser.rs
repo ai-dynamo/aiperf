@@ -4,9 +4,9 @@
 //! Classic Prometheus and strict OpenMetrics text parsing.
 //!
 //! Family routing, metadata/summary skips, label de-duplication, sample-level
-//! `_created` filtering, and histogram assembly are implemented here. Unlike the
-//! inherited ZMQ path, one non-finite histogram field is dropped without
-//! tainting the remaining label series, as required by the native design.
+//! `_created` filtering, and histogram assembly are implemented here. A
+//! non-finite histogram field is dropped without tainting the remaining label
+//! series.
 
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter, Result as FmtResult};

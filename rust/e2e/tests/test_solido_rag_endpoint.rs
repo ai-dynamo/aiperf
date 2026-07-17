@@ -1,12 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Tests for /rag/api/prompt endpoint (SOLIDO RAG).
-
 mod common;
 use common::*;
 
-/// Basic SOLIDO RAG request.
 #[tokio::test]
 async fn test_basic_solido_rag() {
     let h = AIPerfHarness::new().await;

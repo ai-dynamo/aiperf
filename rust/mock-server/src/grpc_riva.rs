@@ -4,23 +4,22 @@
 //! NVIDIA Riva ASR / TTS / NLP gRPC target.
 //!
 //! Serves the Riva speech and language services AIPerf's native gRPC client
-//! dials (`aiperf_runtime::endpoints::riva` + `aiperf_runtime::transport::grpc::riva_binding`) so
-//! the `riva_*` endpoints have a deterministic mock inference target. Like the
-//! KServe service in [`crate::grpc`], this is hand-routed by gRPC method path
-//! over the shared hyper h2c stack, reusing that module's [`ProstCodec`]
-//! (`crate::grpc::ProstCodec`); there is no build-time `protoc`. The wire
+//! dials (`aiperf_runtime::endpoints::riva` and
+//! `aiperf_runtime::transport::grpc::riva_binding`). It routes by gRPC method
+//! path over the shared hyper h2c stack and reuses [`crate::grpc::ProstCodec`].
+//! The wire
 //! contract is guaranteed by construction: every request/response message is the
 //! exact prost struct the runner's Riva codec
 //! (`aiperf_runtime::transport::grpc::riva_proto`) encodes/decodes, so there is no second
 //! schema to drift, and the field numbers match by sharing the same types.
 //!
-//! The mock is not a real speech/NLP model: it returns deterministic, fixed
+//! The service returns deterministic
 //! content (a canned transcript, deterministic PCM audio bytes, canned
 //! classification/answer results) so an e2e run's raw records are exactly
 //! predictable. The public [`RIVA_ASR_TRANSCRIPT`] / [`RIVA_NATURAL_QUERY_ANSWER`]
-//! constants are the ground truth the e2e assertions check against.
+//! constants define the expected response content.
 //!
-//! Method coverage mirrors the runner's bindings:
+//! Supported methods:
 //!   * ASR `Recognize` (unary) + `StreamingRecognize` (bidirectional streaming)
 //!   * TTS `Synthesize` (unary) + `SynthesizeOnline` (server streaming)
 //!   * NLP `ClassifyText` / `ClassifyTokens` / `TransformText` / `PunctuateText`
@@ -65,24 +64,19 @@ const NLP_NATURAL_QUERY: &str = "/nvidia.riva.nlp.RivaLanguageUnderstanding/Natu
 const NLP_ANALYZE_INTENT: &str = "/nvidia.riva.nlp.RivaLanguageUnderstanding/AnalyzeIntent";
 const NLP_ANALYZE_ENTITIES: &str = "/nvidia.riva.nlp.RivaLanguageUnderstanding/AnalyzeEntities";
 
-/// Endpoint label the mock records Riva RPCs under in its `/metrics` counters.
 const RIVA_ENDPOINT: &str = "riva";
-/// Model label used for Riva request accounting (Riva selects models per-config,
-/// but the mock does not vary behavior by model).
+/// Riva selects models per request configuration, but mock behavior is fixed.
 const RIVA_MODEL: &str = "mock-riva";
 
-/// The deterministic transcript every ASR RPC returns. Public so the e2e can
-/// assert the raw record carries exactly this text end-to-end.
+/// Transcript returned by every ASR RPC.
 pub const RIVA_ASR_TRANSCRIPT: &str = "the quick brown fox jumps over the lazy dog";
-/// The deterministic answer every NaturalQuery RPC returns. Public for the same
-/// reason as [`RIVA_ASR_TRANSCRIPT`].
+/// Answer returned by every NaturalQuery RPC.
 pub const RIVA_NATURAL_QUERY_ANSWER: &str = "the mock riva answer is forty two";
 /// The deterministic intent class every AnalyzeIntent RPC returns.
 pub const RIVA_INTENT_CLASS: &str = "mock_greeting";
 /// The deterministic sentiment label every ClassifyText RPC returns.
 pub const RIVA_SENTIMENT_CLASS: &str = "positive";
 
-/// Boxed server-side response stream shared by the streaming Riva RPCs.
 type RivaStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send>>;
 
 /// True when `path` names a Riva service method this module serves.
@@ -220,9 +214,6 @@ pub async fn route_riva(
     }
 }
 
-/// Record a successful unary Riva RPC against the mock's shared counters and
-/// return `body`. Centralizes the request/latency/end accounting so each handler
-/// stays focused on its wire message.
 fn record_unary<T>(state: &AppState, start: Instant, body: T) -> Result<Response<T>, Status> {
     state
         .recorder
@@ -234,7 +225,6 @@ fn record_unary<T>(state: &AppState, start: Instant, body: T) -> Result<Response
     Ok(Response::new(body))
 }
 
-/// A single-hypothesis ASR result carrying the canned transcript.
 fn asr_result() -> SpeechRecognitionResult {
     SpeechRecognitionResult {
         alternatives: vec![SpeechRecognitionAlternative {
@@ -244,7 +234,6 @@ fn asr_result() -> SpeechRecognitionResult {
     }
 }
 
-/// `Recognize` (unary): return the deterministic transcript in one result.
 async fn asr_recognize(
     state: Arc<AppState>,
     _request: Request<RecognizeRequest>,
@@ -325,7 +314,6 @@ async fn asr_streaming(
 /// sized off the requested sample rate so the runner's PCM duration derivation
 /// is sensible. Never empty (the runner drops empty audio as no response).
 fn synth_audio(sample_rate_hz: i32) -> Vec<u8> {
-    // 0.1 s at the requested rate (default 22.05 kHz), 2 bytes/sample.
     let rate = if sample_rate_hz > 0 {
         sample_rate_hz as usize
     } else {
@@ -374,7 +362,6 @@ async fn tts_synthesize_online(
     let start = Instant::now();
     let msg = request.into_inner();
     let audio = synth_audio(msg.sample_rate_hz);
-    // Four roughly-equal chunks; the last takes the remainder.
     let chunk_len = audio.len().div_ceil(4).max(1);
     let stream = async_stream::stream! {
         for chunk in audio.chunks(chunk_len) {
@@ -585,7 +572,6 @@ mod tests {
             .into_inner();
         let transcript = &response.results[0].alternatives[0].transcript;
         assert_eq!(transcript, RIVA_ASR_TRANSCRIPT);
-        // The runner decodes off a wire round-trip; prove it survives encode.
         let encoded = response.encode_to_vec();
         let decoded = RecognizeResponse::decode(encoded.as_slice()).expect("decode");
         assert_eq!(
@@ -605,7 +591,6 @@ mod tests {
             .await
             .expect("tts ok")
             .into_inner();
-        // 0.1 s at 16 kHz, 2 bytes/sample = 3200 bytes.
         assert_eq!(response.audio.len(), 3200);
     }
 

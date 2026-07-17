@@ -1,15 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Wall-vs-virtual clock abstraction.
-//!
-//! A single [`Clock`] trait is implemented by:
-//!   - [`RealClock`] — real (monotonic) time; `sleep` actually waits.
-//!   - [`SimClock`] — a virtual discrete-event clock advanced explicitly, so a
-//!     run completes in simulated time with no wall-clock waits.
-//!
-//! The same async executor runs identically on either clock — the foundation
-//! for driving one front-end both live (real time) and simulated (virtual time).
+//! Real and deterministic virtual clock implementations.
 
 pub mod clock;
 pub mod real_clock;
@@ -22,10 +14,8 @@ pub use sim_clock::SimClock;
 /// Drive `body` to completion under a virtual [`SimClock`] with an idle pump:
 /// poll to quiescence, advance the clock to the next scheduled event, repeat.
 ///
-/// Shared by unit tests across the crate so this discrete-event pump — whose
-/// poll/advance ordering is easy to get subtly wrong — lives in exactly one
-/// place. This is the general-purpose twin of the graph-specific
-/// [`crate::graph::runtime::drive_sim`], which is coupled to a graph `Handle`.
+/// Polling must reach quiescence before each clock advance so same-time wakes
+/// run in deterministic registration order.
 #[cfg(test)]
 pub(crate) fn drive_sim<T>(
     clock: std::rc::Rc<SimClock>,

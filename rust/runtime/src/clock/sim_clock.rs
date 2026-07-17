@@ -1,17 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Discrete-event-simulation virtual clock.
+//! Integer-nanosecond discrete-event clock.
 //!
-//! Adopts ai-dynamo's dynosim DES-clock abstraction
-//! (`lib/mocker/src/replay/offline/{events,runtime_utils}.rs`): a min-heap of
-//! events keyed `(at, seq_no)` where the globally-monotonic `seq_no` is the
-//! deterministic same-time tie-break; a driver advances virtual time to the
-//! earliest event and drains everything scheduled at that instant. dynosim keys
-//! on `f64` ms; this clock keys on **integer ns** so firing-gate timing is
-//! exact and reproducible at sub-millisecond resolution.
-//!
-//! dynosim's API is `pub(crate)` and welded to mocker types, so this is a
-//! clean reimplementation of the pattern, not a dependency.
+//! Events are ordered by `(at_ns, seq_no)`, making same-time wakes deterministic
+//! in registration order.
 
 use crate::clock::clock::Clock;
 use std::cell::{Cell, RefCell};
@@ -37,8 +29,8 @@ impl PartialEq for Sleeper {
 impl Eq for Sleeper {}
 
 impl Ord for Sleeper {
-    /// Reversed so `BinaryHeap` (a max-heap) yields the EARLIEST `(at_ns, seq_no)`
-    /// first — exactly dynosim's `SimulationEvent` ordering.
+    /// Reverse ordering makes the max-heap yield the earliest deadline and
+    /// registration sequence first.
     fn cmp(&self, other: &Self) -> Ordering {
         other
             .at_ns
@@ -81,8 +73,7 @@ impl SimClock {
 
     /// Register `waker` to fire when virtual time reaches `at_ns`.
     ///
-    /// Ties at equal `at_ns` wake in registration order (`seq_no`), matching
-    /// AIPerf's `insertion_id` tie-break and dynosim's `seq_no`.
+    /// Equal deadlines wake in registration order.
     pub fn schedule(&self, at_ns: i64, waker: Waker) {
         let seq_no = self.seq.get();
         self.seq.set(seq_no + 1);
@@ -112,7 +103,6 @@ impl SimClock {
     /// Advance virtual time to `ns` (no-op if `ns <= now`), waking every sleeper
     /// whose deadline is `<= ns` in `(deadline, seq_no)` heap order.
     ///
-    /// dynosim's `advance_to`: monotonic, drains all events at/behind the new now.
     pub fn advance_to(&self, ns: i64) {
         if ns <= self.now_ns.get() {
             // Still drain any already-due sleepers (deadline <= now) so a

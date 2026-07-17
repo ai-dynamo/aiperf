@@ -847,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    fn authoritative_self_trajectory_does_not_fall_back_to_legacy_parent() {
+    fn authoritative_self_trajectory_does_not_use_fallback_parent() {
         let mut child = fallback_record("child", "c0", 1, 16);
         child["agent_context"] = json!({
             "session_id": "child",

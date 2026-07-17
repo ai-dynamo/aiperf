@@ -1,16 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Env-gated single-process live cellular heartbeat lane.
-//!
-//! When `AIPERF_CELLULAR_HEARTBEAT_LOG` names a writable path, each completed
-//! record's TTFT / ITL / latency feeds a [`HeartbeatAccumulator`], and the
-//! phase-progress cadence writes a percentile-projected [`MetricsHeartbeat`] as one
-//! NDJSON line to that file. Live percentiles are **sketch-derived**; the final
-//! report stays exact from the S2 partitions (roadmap S3). This is the
-//! single-process realization of the S3 lane — the same
-//! [`HeartbeatAccumulator`]/`t-digest` the cellular controller aggregates across
-//! cells over the transport in Phase 2.
+//! Env-gated live cellular heartbeat output.
 //!
 //! The NDJSON carries a **percentile projection**, not raw centroids: an empty
 //! t-digest anchors `min = +inf`, which JSON cannot encode, and percentiles are the

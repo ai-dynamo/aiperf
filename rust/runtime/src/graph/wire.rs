@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The wire message shape as an **extensible trait**, so the graph dataflow is
-//! endpoint-agnostic: OpenAI chat today, Anthropic Messages / OpenAI Responses /
-//! etc. by adding a `WireMessage` impl + a matching [`GraphSink`](super::sink)
-//! (which owns that dialect's body encoding + reply parsing).
+//! The wire message shape is extensible so graph dataflow remains
+//! endpoint-agnostic. Each dialect supplies a `WireMessage` implementation and
+//! matching [`GraphSink`](super::sink) for body encoding and reply parsing.
 //!
 //! The segment store, prompt materializer, executor, and channels are all
 //! generic over `M: WireMessage` — a message is whatever a dialect says it is

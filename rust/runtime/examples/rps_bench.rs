@@ -1,7 +1,9 @@
-// rust/transport-http/examples/rps_bench.rs
-//! Throughput load generator for `aiperf-transport-http`: proves sustained
-//! requests-per-second against a running OpenAI-compatible server (the
-//! `aiperf-mock-server --fast` mock).
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Throughput load generator for `aiperf_runtime::transport::http`.
+//! Measures sustained requests per second against an OpenAI-compatible server,
+//! including the `aiperf-mock-server --fast` mock.
 //!
 //! Design: thread-per-core (`THREADS` OS threads, each a current-thread tokio
 //! runtime + `LocalSet`). Each thread opens `CONNS` HTTP/2 (h2c prior-knowledge)

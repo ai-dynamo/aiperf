@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Wall-clock timing proof against the workspace `aiperf-mock-server` process.
+//! Wall-clock timing against the workspace `aiperf-mock-server` process.
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -115,11 +115,9 @@ fn run_local<F: std::future::Future>(future: F) -> F::Output {
     local.block_on(&runtime, future)
 }
 
-/// End-to-end proof that the raw-payload dispatch path — now routed through
-/// `BodyPlan::raw` + `JsonBodyMaterializer` (segment-unification §4 /
-/// endpoint-body-construction §4) — produces bytes the real `aiperf-mock-server`
-/// accepts, and that the dispatch-time model/stream override is tail-spliced
-/// without rewriting the authored body (the "concat, never re-serialize" rule).
+/// Verify `BodyPlan::raw` and `JsonBodyMaterializer` preserve authored bytes and
+/// tail-splice dispatch overrides as required by segment-unification §4 and
+/// endpoint-body-construction §4.
 #[test]
 fn raw_payload_body_plan_dispatches_byte_exactly_to_the_real_mock() {
     let Some(mock) = RealMock::spawn() else {
@@ -158,9 +156,7 @@ fn raw_payload_body_plan_dispatches_byte_exactly_to_the_real_mock() {
         ),
     );
 
-    // The real rust mock server must accept and answer the materialized bytes.
-    // A dependency-free HTTP/1.1 POST over a raw socket keeps this test in the
-    // `aiperf` crate without pulling an HTTP client dev-dependency.
+    // Use a raw HTTP/1.1 POST to avoid an additional client dev dependency.
     let (status_line, response_body) =
         post_raw(&mock.base_url, "/v1/chat/completions", &dispatched);
     assert!(

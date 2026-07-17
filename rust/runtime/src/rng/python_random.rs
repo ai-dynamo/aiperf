@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Byte-exact port of agentx's `RandomGenerator` (dual CPython-MT + numpy-PCG64).
+//! Byte-exact AgentX `RandomGenerator` compatibility.
 //!
-//! Ported from `aiperf/common/random_generator.py`. That generator wraps BOTH a
+//! The reference implementation in `aiperf/common/random_generator.py` wraps a
 //! `random.Random(child_seed)` (CPython Mersenne Twister) and a
 //! `numpy.random.default_rng(child_seed)` (PCG64), seeded from the SAME child
 //! seed, and routes each operation to one backend:

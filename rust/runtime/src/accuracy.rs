@@ -8,9 +8,6 @@
 //! prompts, generation settings, and grade results. Requests still flow through
 //! the same scheduler, endpoint materializer, transport, response parser,
 //! observer, and metrics pipeline as every other online run.
-//!
-//! Only the process boundary changes, so canonical semantics stay on the
-//! Python side.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -292,10 +289,8 @@ pub async fn load_evaluator_problems(
 
 /// Load opaque evaluator problems with an optional Python grader override.
 ///
-/// Config v2 has always allowed explicit grader selection. The override
-/// crosses the stdio
-/// control plane, but dataset loading, answer extraction, and scoring remain
-/// entirely inside the Python plugin implementation.
+/// The override crosses the stdio control plane, while dataset loading, answer
+/// extraction, and scoring remain inside the Python plugin.
 pub async fn load_evaluator_problems_with_grader(
     evaluator: &mut dyn AccuracyEvaluator,
     benchmark: &str,

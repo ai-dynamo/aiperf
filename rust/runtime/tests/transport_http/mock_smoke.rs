@@ -1,4 +1,6 @@
-// rust/transport-http/tests/mock_smoke.rs
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 mod common;
 use common::{MockServer, run_local};
 

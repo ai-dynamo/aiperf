@@ -1,9 +1,10 @@
-// io_uring thread-per-core twin of fastmock, for A/B microbenchmarking.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// io_uring thread-per-core fixed-response server for I/O microbenchmarks.
 //
-// N single-threaded monoio (io_uring) runtimes, one per OS thread, each with its
-// own SO_REUSEPORT listener on the same port so the kernel spreads connections.
-// Same fixed chat/models responses and wire behavior as tools/fastmock.rs — the
-// only variable under test is the I/O engine (io_uring vs blocking thread-per-conn).
+// Each monoio runtime owns an SO_REUSEPORT listener on the same port, isolating
+// the I/O engine as the benchmark variable.
 //
 // Usage: fastmock-uring [PORT] [--cores N]   (N default = available parallelism)
 use bytes::Bytes;
@@ -34,9 +35,7 @@ fn build_responses() -> (Bytes, Bytes) {
     (chat, models_resp)
 }
 
-/// Serve one keep-alive connection: parse each request off the byte buffer and
-/// write the fixed chat (POST) or models (GET) reply. Uses monoio's owned-buffer
-/// (`Rent`) read/write — the io_uring zero-copy path.
+/// Use monoio-owned buffers so io_uring retains buffer ownership across I/O.
 async fn handle(mut stream: TcpStream, chat: Bytes, models: Bytes) {
     let mut acc: Vec<u8> = Vec::with_capacity(65536);
     let mut buf: Vec<u8> = vec![0u8; 65536];
@@ -77,8 +76,6 @@ async fn handle(mut stream: TcpStream, chat: Bytes, models: Bytes) {
 
 async fn serve(port: u16, chat: Bytes, models: Bytes) {
     let addr = format!("127.0.0.1:{port}");
-    // SO_REUSEPORT so every per-core runtime binds the same port and the kernel
-    // load-balances accepts across them.
     let opts = ListenerOpts::default().reuse_port(true).reuse_addr(true);
     let listener = TcpListener::bind_with_config(addr.as_str(), &opts)
         .unwrap_or_else(|e| panic!("bind {addr}: {e}"));

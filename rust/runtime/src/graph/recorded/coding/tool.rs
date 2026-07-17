@@ -170,9 +170,7 @@ pub(super) fn tool_search(
     lang: Option<usize>,
 ) -> Result<String, RecordedTraceError> {
     let pool = file_pool(lang);
-    // Python builds the ENTIRE `lang_patterns` dict literal (python/go/rust/ts)
-    // before selecting one language's list, so all 16 embedded `choice(...)`
-    // draws fire; only the chosen language's 4 patterns are then used.
+    // All 16 language-pattern draws occur before selecting one language.
     let py = [
         format!("class {}", r.pick(CLASSES)?),
         format!("def {}", r.pick(METHODS)?),
@@ -330,9 +328,7 @@ $ du -sh .
 }
 
 fn bash_build_test(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
-    // Python `_gen_bash_build_test` draws mod/n_pkgs/build_time even though the
-    // language=None ("python") output uses none of them; the draws must fire to
-    // keep the shared stream in sync.
+    // These unused draws preserve the shared stream position.
     let _mod = r.pick(MODULES)?;
     let _n_pkgs = r.number(10, 200)?;
     let _build_time = r.uniform(0.5, 30.0);

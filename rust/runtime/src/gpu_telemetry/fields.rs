@@ -154,7 +154,7 @@ pub const DCGM_METRICS: &[GpuMetricSpec] = &[
     },
 ];
 
-/// AMD/ROCm mirror table retained for a future local AMDSMI source.
+/// AMD/ROCm metric definitions.
 pub const AMD_METRICS: &[GpuMetricSpec] = &[
     GpuMetricSpec {
         source_field: "amd_power",

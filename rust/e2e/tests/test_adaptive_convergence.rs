@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Integration tests for adaptive convergence and detailed aggregation.
 mod common;
 use common::*;
 
@@ -8,7 +7,6 @@ use std::path::PathBuf;
 
 const WORKERS_MAX: u32 = 1;
 
-/// Collect sorted `run_*` directories under `profile_runs`.
 fn run_dirs(profile_runs_dir: &std::path::Path) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(profile_runs_dir)
         .expect("read profile_runs dir")
@@ -26,7 +24,6 @@ fn run_dirs(profile_runs_dir: &std::path::Path) -> Vec<PathBuf> {
     dirs
 }
 
-/// Test adaptive strategy stops before max_runs when mock server returns stable metrics.
 #[tokio::test]
 async fn test_adaptive_ci_width_stops_early() {
     let h = AIPerfHarness::new().await;
@@ -44,7 +41,6 @@ async fn test_adaptive_ci_width_stops_early() {
 
     assert_eq!(r.exit_code, 0);
 
-    // Verify per-run artifacts exist
     let profile_runs_dir = h.artifact_path().join("profile_runs");
     assert!(
         profile_runs_dir.exists(),
@@ -61,7 +57,6 @@ async fn test_adaptive_ci_width_stops_early() {
         "Should have at most 5 run directories (max_runs cap)"
     );
 
-    // Verify each run has artifacts
     for run_dir in &dirs {
         let json_file = run_dir.join("profile_export_aiperf.json");
         assert!(
@@ -71,11 +66,9 @@ async fn test_adaptive_ci_width_stops_early() {
         );
     }
 
-    // Verify aggregate directory exists
     let aggregate_dir = h.artifact_path().join("aggregate");
     assert!(aggregate_dir.exists(), "aggregate directory should exist");
 
-    // Verify confidence aggregate JSON
     let agg_json = aggregate_dir.join("profile_export_aiperf_aggregate.json");
     assert!(agg_json.exists(), "Confidence aggregate JSON should exist");
 
@@ -91,7 +84,6 @@ async fn test_adaptive_ci_width_stops_early() {
     assert!(agg_data.get("metrics").is_some());
     assert!(agg_data["metrics"].as_object().unwrap().len() > 0);
 
-    // Verify detailed aggregate JSON
     let detailed_json = aggregate_dir.join("profile_export_aiperf_collated.json");
     assert!(
         detailed_json.exists(),
@@ -109,7 +101,6 @@ async fn test_adaptive_ci_width_stops_early() {
     );
     assert!(detailed_data.get("metrics").is_some());
 
-    // Verify detailed metrics schema
     let metrics = detailed_data["metrics"].as_object().unwrap();
     if !metrics.is_empty() {
         let sample_metric = metrics.values().next().unwrap();
@@ -126,9 +117,8 @@ async fn test_adaptive_ci_width_stops_early() {
     }
 }
 
-/// Test that multi-run without convergence flags uses FixedTrialsStrategy.
 #[tokio::test]
-async fn test_backward_compat_no_convergence_flags() {
+async fn test_fixed_trials_without_convergence_flags() {
     let h = AIPerfHarness::new().await;
     let r = h.run_timeout(
         &format!(
@@ -142,7 +132,6 @@ async fn test_backward_compat_no_convergence_flags() {
 
     assert_eq!(r.exit_code, 0);
 
-    // Verify exactly 3 runs (fixed, no early stopping)
     let profile_runs_dir = h.artifact_path().join("profile_runs");
     assert!(profile_runs_dir.exists());
     let dirs = run_dirs(&profile_runs_dir);
@@ -152,7 +141,6 @@ async fn test_backward_compat_no_convergence_flags() {
         "FixedTrialsStrategy should run exactly 3 times"
     );
 
-    // Verify only confidence aggregate exists (no detailed)
     let aggregate_dir = h.artifact_path().join("aggregate");
     assert!(aggregate_dir.exists());
 
@@ -166,7 +154,6 @@ async fn test_backward_compat_no_convergence_flags() {
     );
 }
 
-/// Test adaptive convergence with CV mode.
 #[tokio::test]
 async fn test_adaptive_cv_mode() {
     let h = AIPerfHarness::new().await;
@@ -189,7 +176,6 @@ async fn test_adaptive_cv_mode() {
     assert!(dirs.len() >= 2);
     assert!(dirs.len() <= 5);
 
-    // Verify both aggregation outputs
     let aggregate_dir = h.artifact_path().join("aggregate");
     assert!(
         aggregate_dir
@@ -203,7 +189,6 @@ async fn test_adaptive_cv_mode() {
     );
 }
 
-/// Test adaptive convergence works with request-rate benchmarking mode.
 #[tokio::test]
 async fn test_adaptive_request_rate_mode() {
     let h = AIPerfHarness::new().await;
@@ -227,7 +212,6 @@ async fn test_adaptive_request_rate_mode() {
     assert!(dirs.len() <= 5);
 }
 
-/// Test that --convergence-metric without --num-profile-runs > 1 raises error.
 #[tokio::test]
 async fn test_convergence_metric_without_multi_run_fails() {
     let h = AIPerfHarness::new().await;

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Raw hyper-based load generator for the mock server. Used to measure server
-//! throughput independent of the Python aiperf client's overhead.
+//! Raw HTTP load generator for measuring mock-server throughput.
 //!
 //! Usage:
 //!   cargo run --release --example loadgen -- --url http://127.0.0.1:19901/v1/chat/completions --concurrency 1000 --total 100000 [--streaming]
@@ -84,7 +83,6 @@ async fn main() -> anyhow::Result<()> {
                     Ok(r) => {
                         if r.status().is_success() {
                             if streaming {
-                                // drain the body
                                 let bytes = r.bytes().await.unwrap_or_default();
                                 let chunks = bytes.windows(6).filter(|w| w == b"data: ").count();
                                 total_tokens.fetch_add(chunks as u64, Ordering::Relaxed);

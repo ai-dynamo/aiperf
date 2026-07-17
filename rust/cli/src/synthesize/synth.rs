@@ -1,12 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Pure-Rust port of the session synthesis engine
-//! (`src/aiperf/dataset/agentic_code_gen/session_synthesizer.py`).
+//! Agentic Code session synthesis.
 //!
-//! Byte-exact reproduction of the per-session numpy draw ORDER, which is the
-//! sole thing that makes the emitted dataset match Python. The two modes:
-//! restart-split (default, `turns == None`) and explicit-turn (`turns` set).
-//! Cited line ranges refer to `session_synthesizer.py`.
+//! Random draw order is part of the serialized dataset contract. The two modes
+//! are restart-split and explicit-turn.
 
 use aiperf_runtime::rng::numpy_generator::NumpyGenerator;
 
@@ -16,7 +13,7 @@ use crate::synthesize::prefix::PrefixAllocator;
 
 const OUTPUT_MIN: i64 = 30;
 
-/// Why a session ended (`models.py:52-58`).
+/// Why a session ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionEndReason {
     ForcedRetire,
@@ -25,7 +22,7 @@ pub enum SessionEndReason {
     TargetTurnCount,
 }
 
-/// A single synthesized turn (`models.py:391-406`).
+/// A synthesized turn.
 #[derive(Clone, Debug)]
 pub struct SynthesizedTurn {
     pub turn_index: i64,
@@ -37,7 +34,7 @@ pub struct SynthesizedTurn {
     pub hash_ids: Vec<i64>,
 }
 
-/// A complete synthesized multi-turn session (`models.py:409-419`).
+/// A synthesized multi-turn session.
 #[derive(Clone, Debug)]
 pub struct SynthesizedSession {
     pub session_id: String,
@@ -48,8 +45,7 @@ pub struct SynthesizedSession {
     pub is_restart_continuation: bool,
 }
 
-/// Synthesizes multi-turn sessions from distribution config
-/// (`session_synthesizer.py:33`).
+/// Synthesizes multi-turn sessions from distribution config.
 pub struct SessionSynthesizer<'a> {
     config: &'a SessionDistributionConfig,
     rng: NumpyGenerator,
@@ -62,8 +58,7 @@ pub struct SessionSynthesizer<'a> {
 }
 
 impl<'a> SessionSynthesizer<'a> {
-    /// Construct, pre-computing Zipf group weights and the bias-corrected
-    /// new-tokens params (`session_synthesizer.py:50-90`).
+    /// Construct with precomputed Zipf weights and bias-corrected token parameters.
     pub fn new(config: &'a SessionDistributionConfig, seed: u64) -> anyhow::Result<Self> {
         let allocator = PrefixAllocator::new(&config.cache, config.block_size)?;
 
@@ -115,8 +110,7 @@ impl<'a> SessionSynthesizer<'a> {
         idx
     }
 
-    /// `_should_reset` (`session_synthesizer.py:105-112`). Always draws a
-    /// `random()` when a reset config is present.
+    /// Always consume a random draw when reset configuration is present.
     fn should_reset(&mut self, input_length: i64) -> bool {
         let Some(cfg) = &self.config.reset else {
             return false;
@@ -130,14 +124,12 @@ impl<'a> SessionSynthesizer<'a> {
         self.rng.choice_weighted(&self.group_weights) as i64
     }
 
-    /// `_sample_initial_context` (`session_synthesizer.py:121-126`).
     fn sample_initial_context(&mut self) -> i64 {
         let l2 = sample_lognormal(&self.config.cache.layer2, &mut self.rng, None, 100) as i64;
         let l2 = l2.max(1);
         (self.fixed_prefix + l2).min(self.config.max_prompt_tokens - 1)
     }
 
-    /// `_sample_output_length` (`session_synthesizer.py:128-136`).
     fn sample_output_length(&mut self) -> i64 {
         sample_lognormal(
             &self.config.generation_length,
@@ -147,7 +139,6 @@ impl<'a> SessionSynthesizer<'a> {
         ) as i64
     }
 
-    /// `_sample_delay_ms` (`session_synthesizer.py:138-146`).
     fn sample_delay_ms(&mut self, prev_input: i64) -> f64 {
         let mut delay_ms = sample_mixture_delay(&self.config.inter_turn_delay, &mut self.rng);
         let context_ratio = prev_input as f64 / self.config.max_prompt_tokens as f64;
@@ -158,13 +149,11 @@ impl<'a> SessionSynthesizer<'a> {
         delay_ms
     }
 
-    /// `_sample_new_tokens` (`session_synthesizer.py:148-152`).
     fn sample_new_tokens(&mut self) -> i64 {
         let nt = sample_lognormal(&self.new_tokens_params, &mut self.rng, None, 100) as i64;
         nt.max(1)
     }
 
-    /// `_sample_turn_target` (`session_synthesizer.py:154-160`).
     fn sample_turn_target(&mut self) -> i64 {
         let turns_cfg = self
             .config
@@ -176,9 +165,7 @@ impl<'a> SessionSynthesizer<'a> {
         target.max(turns_cfg.min).min(turns_cfg.max)
     }
 
-    /// Generate a random session id: `sess-<uuid.hex[:12]>` where the uuid is
-    /// built from 16 raw RNG bytes (`session_synthesizer.py:171-172`). Python's
-    /// `uuid.UUID(bytes=b).hex` is just the 16 bytes as lowercase hex.
+    /// Generate `sess-` followed by the first six RNG bytes as lowercase hex.
     fn session_id(&mut self) -> String {
         let b = self.rng.bytes(16);
         let mut s = String::with_capacity(5 + 12);
@@ -189,7 +176,6 @@ impl<'a> SessionSynthesizer<'a> {
         s
     }
 
-    /// `_synthesize_explicit_turn_session` (`session_synthesizer.py:162-253`).
     fn synthesize_explicit_turn_session(&mut self) -> anyhow::Result<SynthesizedSession> {
         let turns_cfg = self
             .config
@@ -287,7 +273,6 @@ impl<'a> SessionSynthesizer<'a> {
         )
     }
 
-    /// `synthesize_session` (`session_synthesizer.py:255-382`).
     fn synthesize_session(
         &mut self,
         inject_restart: bool,
@@ -360,7 +345,6 @@ impl<'a> SessionSynthesizer<'a> {
             let input_length = prev_input + prev_output + new_tokens;
 
             if input_length >= self.config.max_prompt_tokens {
-                // end_reason already defaults to ForcedRetire.
                 break;
             }
 
@@ -405,7 +389,6 @@ impl<'a> SessionSynthesizer<'a> {
         }])
     }
 
-    /// `_synthesize_continuation` (`session_synthesizer.py:384-479`).
     #[allow(clippy::too_many_arguments)]
     fn synthesize_continuation(
         &mut self,
@@ -453,7 +436,6 @@ impl<'a> SessionSynthesizer<'a> {
             let input_length = prev_input_b + prev_output_b + new_tokens;
 
             if input_length >= self.config.max_prompt_tokens {
-                // end_reason already defaults to ForcedRetire.
                 break;
             }
 
@@ -498,7 +480,6 @@ impl<'a> SessionSynthesizer<'a> {
         })
     }
 
-    /// `synthesize_sessions` (`session_synthesizer.py:481-529`).
     pub fn synthesize_sessions(
         &mut self,
         num_sessions: usize,
@@ -550,13 +531,12 @@ impl<'a> SessionSynthesizer<'a> {
         Ok(primary)
     }
 
-    /// The KV page size, needed by the writer.
     pub fn block_size(&self) -> i64 {
         self.config.block_size
     }
 }
 
-/// Python `round(x)` — banker's rounding (round half to even) to nearest int.
+/// Round half to even.
 fn banker_round(x: f64) -> i64 {
     let r = x.round_ties_even();
     r as i64

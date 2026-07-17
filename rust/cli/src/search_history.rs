@@ -1,19 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! `search_history.json` writer for the adaptive SLA-search recipes.
+//! `search_history.json` serialization for adaptive SLA-search recipes.
 //!
-//! Port of `aiperf.exporters.search_history::write_search_history`
-//! (`src/aiperf/exporters/search_history.py:66-332`): the top-level `config`
-//! block, the `iterations` trajectory, `best_trials` (feasibility-first argmax
-//! over the single objective — `_compute_best_trials` / `_serialize_trial`,
-//! lines 142-183), the 1D `boundary_summary`, the `recipe` id, and the
-//! `convergence_reason`. Sits next to `sweep_aggregate/` in the artifact dir.
-//!
-//! The native 1D-SLA planners (`crate::search::MonotonicPlanner`,
-//! `crate::isotonic::SmoothIsotonicPlanner`, `crate::bayes::OptunaPlanner`) hold
-//! the iteration history + latched boundary; each search loop in
-//! `crate::profile` records one [`IterationRecord`] per probe and calls
-//! [`write_search_history`] once the loop converges.
+//! The artifact records configuration, probe trajectory, feasibility-first best
+//! trials, one-dimensional boundary summary, recipe, and convergence reason.
 
 use std::path::Path;
 
@@ -85,7 +75,7 @@ fn variation_values(config: &HistoryConfig, concurrency: i64) -> Value {
     Value::Object(m)
 }
 
-/// Serialize one trial into a `best_trials` entry (`_serialize_trial`).
+/// Serialize one trial into a `best_trials` entry.
 fn serialize_trial(r: &IterationRecord, feasible_count: usize, config: &HistoryConfig) -> Value {
     serde_json::json!({
         "iteration_idx": r.iteration_idx,
@@ -97,9 +87,8 @@ fn serialize_trial(r: &IterationRecord, feasible_count: usize, config: &HistoryC
     })
 }
 
-/// Compute `best_trials` for the single-objective recipes (`_compute_best_trials`
-/// with `n_obj == 1`): the feasibility-first argmax/argmin over the scored
-/// iterations. `null` when no iteration carried an objective value.
+/// Compute the feasibility-first argmax or argmin for a single objective.
+/// Returns `null` when no iteration carried an objective value.
 fn compute_best_trials(records: &[IterationRecord], config: &HistoryConfig) -> Value {
     let scored: Vec<&IterationRecord> = records.iter().filter(|r| r.objective.is_some()).collect();
     let feasible: Vec<&IterationRecord> = scored.iter().copied().filter(|r| r.feasible).collect();
@@ -117,7 +106,7 @@ fn compute_best_trials(records: &[IterationRecord], config: &HistoryConfig) -> V
         .copied()
         .reduce(|a, b| {
             let (av, bv) = (a.objective.unwrap(), b.objective.unwrap());
-            // `max`/`min` keep the FIRST element on ties (Python semantics).
+            // Strict comparison preserves the first element on ties.
             let take_b = if maximize { bv > av } else { bv < av };
             if take_b { b } else { a }
         })
@@ -125,8 +114,7 @@ fn compute_best_trials(records: &[IterationRecord], config: &HistoryConfig) -> V
     Value::Array(vec![serialize_trial(best, feasible.len(), config)])
 }
 
-/// The 1D `boundary_summary` block (`_compute_boundary_summary`): the highest
-/// feasible and lowest infeasible swept value. `null` when no iteration ran.
+/// The highest feasible and lowest infeasible swept values.
 fn boundary_summary(records: &[IterationRecord], config: &HistoryConfig) -> Value {
     let feasible: Vec<&IterationRecord> = records.iter().filter(|r| r.feasible).collect();
     let infeasible: Vec<&IterationRecord> = records.iter().filter(|r| !r.feasible).collect();
@@ -162,7 +150,7 @@ fn boundary_summary(records: &[IterationRecord], config: &HistoryConfig) -> Valu
     })
 }
 
-/// The `config` block (`_build_config_block`).
+/// Build the serialized `config` block.
 fn config_block(config: &HistoryConfig) -> Value {
     serde_json::json!({
         "planner": config.planner,
@@ -273,7 +261,6 @@ mod tests {
         let best = compute_best_trials(&records, &cfg);
         let arr = best.as_array().unwrap();
         assert_eq!(arr.len(), 1);
-        // Highest-throughput FEASIBLE point (c=8), not the infeasible c=64.
         assert_eq!(
             arr[0]["variation_values"]["phases.profiling.concurrency"].as_i64(),
             Some(8)

@@ -3,12 +3,10 @@
 
 //! Native Clock-injected gRPC transport on Tonic channels.
 //!
-//! The lifecycle supports pooled, never, and
-//! sticky-user-session channels; lowercase metadata; a 30-second capped
-//! channel-ready stage; cancellation armed only after the RPC is submitted;
-//! unary, server-streaming, and bidirectional calls; in-band stream errors; and
-//! native-to-HTTP status mapping. Tonic replaces Python `grpc.aio`; application-visible time
-//! and deadlines use only [`crate::clock::Clock`].
+//! Supports pooled, per-request, and sticky-session channels; normalized
+//! metadata; bounded channel readiness; post-submission cancellation; unary,
+//! server-streaming, and bidirectional calls; in-band stream errors; and
+//! gRPC-to-HTTP status mapping. Deadlines use only [`crate::clock::Clock`].
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

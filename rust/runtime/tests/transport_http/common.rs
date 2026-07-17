@@ -1,4 +1,6 @@
-// rust/transport-http/tests/common/mod.rs
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Spawns the workspace `aiperf-mock-server` binary for integration tests.
 #![allow(dead_code)]
 
@@ -14,7 +16,6 @@ pub struct MockServer {
 }
 
 fn free_port() -> u16 {
-    // Bind :0, read the assigned port, drop the listener.
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     l.local_addr().unwrap().port()
 }
@@ -73,7 +74,6 @@ impl MockServer {
             }
         };
         let base_url = format!("http://127.0.0.1:{port}");
-        // Poll for readiness (up to ~5s).
         for _ in 0..250 {
             if TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
                 return Some(MockServer { child, base_url });
@@ -93,9 +93,7 @@ impl Drop for MockServer {
     }
 }
 
-/// Run `fut` to completion on a fresh current-thread runtime + `LocalSet`.
-/// Mirrors the per-test harness (`new_current_thread().enable_all()` +
-/// `LocalSet::block_on`) so behavior is identical to the inline version.
+/// Run `fut` on a fresh current-thread runtime and `LocalSet`.
 pub fn run_local<F: std::future::Future>(fut: F) -> F::Output {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -105,8 +103,7 @@ pub fn run_local<F: std::future::Future>(fut: F) -> F::Output {
     local.block_on(&rt, fut)
 }
 
-/// Build the streaming chat-completions request body used by the tests.
-/// Byte-identical to the per-file `chat_body(model)` builders.
+/// Build a streaming chat-completions request body.
 pub fn chat_body(model: &str) -> bytes::Bytes {
     bytes::Bytes::from(
         serde_json::to_vec(&serde_json::json!({

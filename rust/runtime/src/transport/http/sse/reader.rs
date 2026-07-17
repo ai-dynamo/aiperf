@@ -4,7 +4,6 @@
 //! Incremental SSE reader: buffers bytes, splits on `\n\n`/`\r\n\r\n` with a
 //! 3-byte cross-chunk back-scan, timestamps each message at chunk arrival via
 //! the `Clock`, handles JSON continuations, and flushes a trailing message.
-//! Behavioral port of Python `AsyncSSEStreamReader`.
 
 use std::rc::Rc;
 use std::task::{Context, Poll};
@@ -37,9 +36,7 @@ pub trait SseMessageHandler {
 /// (kind `Sse`) if an `event: error` message is seen, or propagates a stream
 /// error as `Err`.
 ///
-/// Python's `AsyncSSEStreamReader` yields every framed message until its input
-/// iterator ends; neither it nor `AioHttpClient` exits on `[DONE]`. Draining is
-/// also what makes an HTTP/1 response safe to return to the shared pool.
+/// Draining after `[DONE]` makes an HTTP/1 response safe to return to the pool.
 pub async fn read_sse<S>(
     stream: S,
     clock: Rc<dyn Clock>,
@@ -187,7 +184,6 @@ mod tests {
 
     #[test]
     fn delimiter_split_across_chunks() {
-        // "\n\n" arrives split: "...a\n" then "\ndata: b\n\n"
         let msgs = collect(vec!["data: a\n", "\ndata: b\n\n"]);
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].data(), Some("a"));

@@ -1,15 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The typed native `BenchmarkConfig` — the runner-consumed `cfg` tree.
+//! Typed runner-consumed benchmark configuration.
 //!
-//! Each section (`endpoint`, `datasets`, `phases`, `transport`, …) is added as a
-//! fully-typed struct as it is ported from `src/aiperf/config/*.py` (input keys)
-//! and `src/aiperf/orchestrator/rust_wire.py` (wire shape). Serializing this
-//! struct yields the exact `run.cfg` subtree the runner consumes.
-//!
-//! `deny_unknown_fields` is intentionally omitted: deserializing a Python golden
-//! through this type drops the sections not yet ported, which is exactly the
-//! parity filter (see `crate::model`). Fields present here are fully typed.
+//! Unknown sections are ignored during deserialization so partial
+//! configurations can be filtered through this type.
 
 use serde::{Deserialize, Serialize};
 
@@ -25,9 +19,9 @@ use super::telemetry::{GpuTelemetryConfig, NetworkLatencyConfig, ServerMetricsCo
 use super::tokenizer::Tokenizer;
 use super::transport::Transport;
 
-/// Accuracy-benchmark policy (`cfg.accuracy`). Present only when
-/// `--accuracy-benchmark` is set; every field is always serialized (Options as
-/// null) to match Python's `AccuracyConfig`. The runner owns accuracy execution.
+/// Accuracy policy present only when `--accuracy-benchmark` is set.
+///
+/// Optional fields serialize as explicit nulls.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Accuracy {
     /// Benchmark id (`--accuracy-benchmark`, e.g. `mmlu`).
@@ -46,14 +40,9 @@ pub struct Accuracy {
     pub verbose: bool,
 }
 
-/// The canonical benchmark configuration (runner-consumed projection).
+/// The runner-consumed benchmark configuration.
 ///
-/// Grows one typed section per port task. Sections not yet ported are simply
-/// absent from this struct; a Python golden deserialized through it drops them
-/// (no `deny_unknown_fields`), which is the parity filter. Every section field
-/// is `Option` so a partial config (and a filtered golden) both round-trip;
-/// `skip_serializing_if` keeps an unset section out of the serialized request
-/// exactly as Python omits an unprojected section.
+/// Unset sections are omitted from serialized requests.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct BenchmarkConfig {
     /// Model-selection policy (`cfg.models`).
@@ -101,10 +90,7 @@ pub struct BenchmarkConfig {
     /// Lowered side-channel sidecars (`cfg.sidecars`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidecars: Option<Sidecars>,
-    // The following seven fields are ALWAYS emitted (Python's Config v2 serializes
-    // them unconditionally, at their defaults when unset), so they carry no
-    // `skip_serializing_if` — matching Python byte-exact and carrying the
-    // `--scenario` / `--unsafe-override` / `--trajectory-start-*` flag values.
+    // These fields are always emitted, including their defaults.
     /// Accuracy-benchmark policy (`cfg.accuracy`; null unless an accuracy run).
     #[serde(default)]
     pub accuracy: Option<Accuracy>,

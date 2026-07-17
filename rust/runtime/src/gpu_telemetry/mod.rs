@@ -3,11 +3,8 @@
 
 //! DCGM-first GPU telemetry for native AIPerf.
 //!
-//! The crate is a leaf over the IO-free `aiperf-metrics` seam. A runtime owns
-//! the async collection task and phase barriers; this crate owns DCGM decoding,
+//! The runtime owns the async collection task and phase barriers. This module owns DCGM decoding,
 //! exact counter snapshots, gauge accumulation, and GPU efficiency rollups.
-//! Local NVML/AMDSMI implementations can be added behind [`GpuTelemetrySource`]
-//! without changing the accumulator or reporter.
 
 pub mod accumulator;
 pub mod collector;

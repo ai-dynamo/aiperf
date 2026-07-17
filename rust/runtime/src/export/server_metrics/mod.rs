@@ -3,11 +3,10 @@
 
 //! Native-Rust server-metrics summary sink: `server_metrics_export.json` + `.csv`.
 //!
-//! Ports the Python `aiperf/server_metrics/{json_exporter,csv_exporter}.py` to the
-//! runner. The native-v2 report already carries the server-metrics metadata
+//! The native-v2 report carries the server-metrics metadata
 //! (`summary.server_metrics`) and the labeled/typed series (gauge/counter/
 //! histogram) under `report.server_metrics`; this sink serializes them to the
-//! two legacy files byte-for-byte.
+//! two compatibility files byte-for-byte.
 //!
 //! Parity oracle (byte-exact source of truth), grounded at `path:line`:
 //! - JSON: `aiperf/server_metrics/json_exporter.py::_generate_content` /
@@ -25,7 +24,7 @@
 //! - Unit display: `aiperf/server_metrics/units.py::infer_unit` (re-inferred here
 //!   through `crate::server_metrics::infer_unit`) then
 //!   `BaseMetricUnit.display_name` (member name lowercased, `_per_second`→`/s`),
-//!   ported by [`display_unit`]. The native report's own `unit` field is
+//!   implemented by [`display_unit`]. The native report's own `unit` field is
 //!   deliberately not trusted — the Python compat path re-infers, so this sink
 //!   does too, keeping byte parity.
 //! - Data mapping: `aiperf/orchestrator/native_report.py::_project_server_metrics`
@@ -35,7 +34,7 @@
 //! # Extension seam
 //! Unit display policy is the one plausibly variable rule; it is isolated in
 //! [`display_unit`] over `crate::server_metrics::infer_unit`. Everything else is
-//! a fixed byte-for-byte contract against the two legacy artifacts.
+//! a fixed byte-for-byte contract against both compatibility artifacts.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

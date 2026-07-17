@@ -2,19 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Sweep orchestration: build one `BenchmarkRun` per `(variation, trial)` cell.
 //!
-//! The per-cell run is the byte-exact single-run projection with the sweep
-//! envelope stamped: `sweep_id`, `trial`, `variation`, `artifact_dir`, and a
-//! `random_seed = base + variation.index`.
+//! Each cell carries the single-run projection plus `sweep_id`, `trial`,
+//! `variation`, `artifact_dir`, and `random_seed = base + variation.index`.
 
 use crate::flags::ProfileFlags;
 use crate::model::BenchmarkRun;
 use crate::sweep::artifact_dir::{self, IterationOrder};
 use crate::sweep::{Expansion, Variation};
 
-/// Default base run seed when none is authored (matches Python's config default).
+/// Default base run seed.
 pub const DEFAULT_SWEEP_SEED: u64 = 42;
 
-/// Per-variation seed policy (Python `set_consistent_seed` / `same_seed`).
+/// Per-variation seed policy.
 #[derive(Clone, Copy)]
 pub struct SeedPolicy {
     /// Base seed: `None` disables seeding (`--no-set-consistent-seed`, no
@@ -64,11 +63,7 @@ pub fn plan_cells(
     let mut cells = Vec::new();
     for trial in 0..trials {
         for variation in &expansion.variations {
-            // Each cell resolves the single-run request with the swept scalar
-            // pinned; the resolved run's `artifact_dir` is the base target, from
-            // which the per-cell dir is derived.
             let mut flags = variation.apply(base_flags);
-            // A swept count axis shares one entries pool (`max`) across cells.
             if let Some(entries) = expansion.entries_override {
                 flags.num_dataset_entries = Some(entries.to_string());
             }
@@ -83,8 +78,6 @@ pub fn plan_cells(
                 order,
             );
             stamp(&mut run, variation, trial, sweep_id, seed, &dir);
-            // `disable_warmup_after_first` drops the warmup phase on every trial
-            // past the first (Python `BenchmarkPlan.disable_warmup_after_first`).
             if trial > 0 && disable_warmup_after_first {
                 drop_warmup(&mut run);
             }
@@ -101,7 +94,7 @@ pub fn plan_cells(
 
 /// Render a variation's rendered scalar back to its config-typed JSON: an integer
 /// text (`"10"`) becomes a JSON integer, a fractional text (`"2.0"`) a JSON float
-/// — matching Python `SweepVariation.values` holding the config-typed value.
+/// to preserve the config value type.
 fn axis_value_json(rendered: &str) -> serde_json::Value {
     if !rendered.contains('.')
         && let Ok(i) = rendered.parse::<i64>()
@@ -124,10 +117,9 @@ fn drop_warmup(run: &mut BenchmarkRun) {
 
 /// Stamp the sweep envelope onto a per-cell run.
 ///
-/// Every cell in a sweep *or* a multi-run plan carries `sweep_id`, `variation`,
-/// and `random_seed` — the Python orchestrator assigns a fresh `sweep_id` even to
-/// a non-sweep single-variation plan (a "sweep of size 1"), and stamps the base
-/// variation (`{index:0,label:"base",values:{}}`) onto each trial. Values render
+/// Every cell in a sweep or multi-run plan carries `sweep_id`, `variation`, and
+/// `random_seed`, including the base variation
+/// (`{index:0,label:"base",values:{}}`). Values render
 /// as their config-typed JSON: an integer axis is a JSON number, a float axis a
 /// JSON float. `plan_cells` only enters this path for a real sweep or `trials>1`,
 /// so unconditional stamping is correct.
@@ -154,9 +146,7 @@ fn stamp(
     run.trial = trial;
     run.artifact_dir = dir.to_path_buf();
     if let Some(cfg_artifacts) = run.cfg.artifacts.as_mut() {
-        // Keep `cfg.artifacts.dir` == run.artifact_dir (the runner reprojects
-        // relative paths against it). Only the base dir differs per cell; the
-        // per-record filenames stay relative.
+        // Per-record paths remain relative to the cell's artifact directory.
         let _ = cfg_artifacts;
     }
 }

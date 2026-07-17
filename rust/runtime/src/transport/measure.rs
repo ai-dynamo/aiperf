@@ -3,13 +3,9 @@
 
 //! Worker-local measurement plumbing shared by every `RequestExecutor` sink.
 //!
-//! Each thread-per-core worker owns exactly one [`NativeMetricsObserver`] that
-//! accumulates the complete record (arrival → admit → tokens → usage → terminal
-//! → response) so the end-of-run drain yields one authoritative
-//! [`RecordIngest`] per request. Owning that observer, deriving the live-record
-//! snapshot, and wrapping a dispatch future in the register/arrival/
-//! record-response/failed-terminal envelope are identical across transports, so
-//! they live here once. A transport contributes only the dispatch future.
+//! Each worker owns one [`NativeMetricsObserver`]. It accumulates arrival,
+//! admission, token, usage, terminal, and response facts into one
+//! [`RecordIngest`] per request.
 
 use std::cell::RefCell;
 use std::future::Future;
@@ -25,14 +21,14 @@ use crate::transport::core::{DispatchResult, MeasuredContext};
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
 
-/// The worker-local metric accumulator, `None` until `configure` runs.
+/// A worker-local metric accumulator.
 #[derive(Default)]
 pub(crate) struct WorkerMeasurement {
     cell: RefCell<Option<Rc<NativeMetricsObserver>>>,
 }
 
 impl WorkerMeasurement {
-    /// Install a fresh observer for this worker's run.
+    /// Install an observer for this worker's run.
     pub(crate) fn configure(&self, clock: Rc<dyn Clock>, config: MetricsConfig, origin_ns: i64) {
         let observer = NativeMetricsObserver::new(clock, origin_ns, config);
         *self.cell.borrow_mut() = Some(Rc::new(observer));
@@ -47,7 +43,7 @@ impl WorkerMeasurement {
             .ok_or_else(|| anyhow!("worker-local measurement was not configured before dispatch"))
     }
 
-    /// Take the observer and finalize it into the drained records at `end_ns`.
+    /// Finalize and remove the observer at `end_ns`.
     pub(crate) fn drain(&self, end_ns: i64) -> Vec<(Uuid, RecordIngest)> {
         match self.cell.borrow_mut().take() {
             Some(observer) => observer.take_finalizer_at(end_ns).finish_with_records().records,

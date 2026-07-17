@@ -1,4 +1,6 @@
-// rust/transport-http/tests/request.rs
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 mod common;
 use common::{MockServer, chat_body, run_local};
 
@@ -53,7 +55,6 @@ fn non_streaming_models_endpoint_returns_text_json() {
         };
         let clock: Rc<dyn aiperf_runtime::transport::http::Clock> = RealClock::new();
         let client = HttpClient::new(clock, ClientConfig::default());
-        // A non-streaming completion request returns a single JSON body.
         let url = url::Url::parse(&format!("{}/v1/chat/completions", mock.base_url)).unwrap();
         let mut headers = BTreeMap::new();
         headers.insert("Content-Type".into(), "application/json".into());

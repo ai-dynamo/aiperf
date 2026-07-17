@@ -157,7 +157,7 @@ pub struct ComposeConfig {
     pub shared_system_prompt: Option<String>,
     /// Per-conversation user context prompts in authored conversation order.
     pub user_context_prompts: Vec<String>,
-    /// Context behavior inherited by conversations without an explicit mode.
+    /// Context behavior for conversations without an explicit mode.
     pub default_context_mode: ConversationContextMode,
     /// Local/URL/already-encoded media resolution implementation.
     pub media_resolver: Arc<dyn MediaResolver>,
@@ -342,9 +342,7 @@ fn rebase_conversation_handles(
     remapped: &mut HashMap<Handle, Handle>,
 ) -> Result<()> {
     for turn in &mut conversation.turns {
-        // The unified dispatch body holds the prebuilt raw body, token-native
-        // handle, and message handles (segment-unification §9 stage 3); rebase
-        // each onto the newly injected context root.
+        // Rebase every dispatch representation onto the injected context root.
         for handle in &mut turn.body {
             *handle = rebase_handle(*handle, root, segments, remapped)?;
         }

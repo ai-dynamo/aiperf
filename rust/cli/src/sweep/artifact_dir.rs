@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Per-cell artifact-directory resolution — a byte-exact port of
-//! `orchestrator/orchestrator.py::_resolve_artifact_dir`.
+//! Per-cell artifact-directory resolution.
 //!
 //! | sweep | trials | order       | layout                                          |
 //! |-------|--------|-------------|-------------------------------------------------|
@@ -55,26 +54,21 @@ mod tests {
     #[test]
     fn five_row_table() {
         let b = Path::new("/base");
-        // no sweep, single trial
         assert_eq!(resolve(b, false, 1, "", 0, IterationOrder::Repeated), b);
-        // no sweep, multi-run -> run_NNNN
         assert_eq!(
             resolve(b, false, 3, "", 1, IterationOrder::Repeated),
             b.join("profile_runs").join("run_0002")
         );
-        // sweep, single trial -> <dir_name>
         assert_eq!(
             resolve(b, true, 1, "concurrency_4", 0, IterationOrder::Repeated),
             b.join("concurrency_4")
         );
-        // sweep, multi-run, REPEATED -> profile_runs/trial_NNNN/<dir_name>
         assert_eq!(
             resolve(b, true, 2, "concurrency_4", 0, IterationOrder::Repeated),
             b.join("profile_runs")
                 .join("trial_0001")
                 .join("concurrency_4")
         );
-        // sweep, multi-run, INDEPENDENT -> <dir_name>/profile_runs/trial_NNNN
         assert_eq!(
             resolve(b, true, 2, "concurrency_4", 1, IterationOrder::Independent),
             b.join("concurrency_4")

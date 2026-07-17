@@ -1,41 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Native optuna-backed BO SLA search planner (`--search-style bo|optuna`).
+//! Optuna-backed BO SLA search planner (`--search-style bo|optuna`).
 //!
-//! Pure-Rust port of `aiperf.orchestrator.search_planner.optuna_planner`
-//! (`OptunaSearchPlanner`) orchestration: the ask/tell loop, per-SLA
-//! observation + objective extraction, the per-objective failure sentinel,
-//! scalar improvement tracking, and the three-signal convergence
-//! (`_sla_helpers.evaluate_three_signal_convergence`). The optuna study itself
-//! (sampler + `constraints_func` + `study.ask()`/`tell()`) is the real optuna,
-//! driven via [`crate::pyopt`], so a seeded run's suggestion sequence is
-//! byte-identical.
-//!
-//! Byte-exact parity is verified with the deterministic seeded `tpe` sampler
-//! (`tests/bayes_parity.rs`). The default `botorch` GP path works end-to-end but
-//! its torch-based acquisition is not guaranteed byte-reproducible across
-//! processes (same caveat as scipy's unseeded bootstrap).
+//! [`crate::pyopt`] owns the study and sampler. This module owns ask/tell
+//! orchestration, failure sentinels, improvement tracking, and convergence.
+//! Seeded TPE suggestions are deterministic; torch-based BoTorch acquisition is
+//! not guaranteed to be reproducible across processes.
 
 use crate::pyopt::OptunaStudy;
 use crate::search::{SlaFilter, SlaOp};
 
-/// Plateau-CV guard: refuse to declare a plateau when the mean magnitude
-/// collapses (`_sla_helpers.PLATEAU_MEAN_EPSILON`).
+/// Minimum mean magnitude for the plateau-CV test.
 const PLATEAU_MEAN_EPSILON: f64 = 1e-9;
-/// Optuna's `NO_DATA_SENTINEL_LOSS` for empty-history failure sentinels.
+/// Failure loss used before any finite objective is observed.
 const NO_DATA_SENTINEL_LOSS: f64 = 1.0e6;
 
-/// Maximize vs minimize the single objective (`OptimizationDirection`).
+/// Optimization direction for the single objective.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     Maximize,
     Minimize,
 }
 
-/// Static resolution of the BO planner config (mirrors
-/// `MaxConcurrencyUnderSLA._build_bo_output` / `_build_optuna_output`: `[1,1000]`
-/// log-uniform concurrency, 30 iterations, 5 initial points, maximize
-/// output_token_throughput with the SLA filters as constraints).
+/// Resolved BO planner configuration.
 pub struct BayesSpec {
     pub lo: i64,
     pub hi: i64,
@@ -52,10 +39,10 @@ pub struct BayesSpec {
 }
 
 impl BayesSpec {
-    /// Resolve from the CLI flags for `max-concurrency-under-sla --search-style
-    /// bo|optuna`. `bo`/optuna default to the botorch sampler; `--optuna-sampler`
-    /// overrides. Seed comes from `--search-random-seed` (unset → non-seeded /
-    /// non-deterministic, as in Python).
+    /// Resolve `max-concurrency-under-sla --search-style bo|optuna`.
+    ///
+    /// The default sampler is BoTorch; `--optuna-sampler` overrides it.
+    /// An absent `--search-random-seed` leaves sampling nondeterministic.
     pub fn from_flags(flags: &crate::flags::ProfileFlags) -> anyhow::Result<Self> {
         let lo = flags.concurrency_min.unwrap_or(1);
         let hi = flags.concurrency_max.unwrap_or(1000);
@@ -70,8 +57,6 @@ impl BayesSpec {
             "recipe 'max-concurrency-under-sla' requires at least one of \
              --ttft-sla-ms / --tpot-sla-ms / --itl-sla-ms / --e2e-sla-ms / --error-rate-sla"
         );
-        // `bo`/`optuna` default to botorch (installed); `--optuna-sampler`
-        // overrides to `tpe`/`gp`.
         let sampler = flags
             .optuna_sampler
             .clone()
@@ -92,12 +77,10 @@ impl BayesSpec {
         })
     }
 
-    /// Resolve from the CLI flags for `max-goodput-under-slo`. Mirrors
-    /// `MaxGoodputUnderSLO.expand` (`src/aiperf/search_recipes/_max_goodput_under_slo.py:112-189`):
-    /// Bayesian-optimize `goodput` over log-uniform concurrency `[1, 1000]` with a
-    /// single `good_request_fraction >= --slo-attainment-fraction` outcome
-    /// constraint (default 0.95). The per-request TTFT/TPOT/E2E SLOs are installed
-    /// separately as config `slos` by the run loop.
+    /// Resolve `max-goodput-under-slo`.
+    ///
+    /// Optimizes `goodput` over log-uniform concurrency `[1, 1000]` subject to
+    /// `good_request_fraction >= --slo-attainment-fraction` (default `0.95`).
     pub fn for_goodput(flags: &crate::flags::ProfileFlags) -> anyhow::Result<Self> {
         let lo = flags.concurrency_min.unwrap_or(1);
         let hi = flags.concurrency_max.unwrap_or(1000);
@@ -170,8 +153,7 @@ pub struct OptunaPlanner {
 impl OptunaPlanner {
     /// Construct from a resolved [`BayesSpec`]; creates the seeded optuna study.
     pub fn new(spec: BayesSpec) -> anyhow::Result<Self> {
-        // botorch/bo need the optional extra; absent it, Python falls back to
-        // TPE (implicit default) with a warning. Match that behavior.
+        // BoTorch requires optional Python packages; TPE remains available.
         let sampler = match spec.sampler.as_str() {
             "botorch" | "bo" if !optuna_has_botorch() => {
                 eprintln!("aiperf: optuna botorch sampler unavailable; falling back to tpe");

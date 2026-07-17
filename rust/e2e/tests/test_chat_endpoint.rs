@@ -3,15 +3,11 @@
 mod common;
 use common::*;
 
-// Tests for /v1/chat/completions endpoint.
-
-/// IntegrationTestDefaults (from tests/integration/conftest.py).
 const WORKERS_MAX: u32 = 1;
 const CONCURRENCY: u32 = 2;
 const REQUEST_COUNT: u32 = 10;
 const UI: &str = "simple";
 
-/// Mirror of `RunResult.has_streaming_metrics`: all streaming metric keys present.
 fn has_streaming_metrics(r: &RunResult) -> bool {
     let json = r.artifacts.json();
     [
@@ -24,7 +20,6 @@ fn has_streaming_metrics(r: &RunResult) -> bool {
     .all(|k| json.get(k).map(|v| !v.is_null()).unwrap_or(false))
 }
 
-/// Basic non-streaming chat completion.
 #[tokio::test]
 async fn test_basic_chat() {
     let h = AIPerfHarness::new().await;
@@ -37,7 +32,6 @@ async fn test_basic_chat() {
     assert_eq!(r.artifacts.request_count() as u32, REQUEST_COUNT);
 }
 
-/// Streaming chat completion with metrics validation.
 #[tokio::test]
 async fn test_streaming_chat() {
     let h = AIPerfHarness::new().await;

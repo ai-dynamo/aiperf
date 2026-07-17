@@ -15,9 +15,8 @@ const PROBABILITY_SUM_ABS_TOLERANCE: f64 = 1.0e-6;
 
 /// Random operations required by workload distributions.
 ///
-/// The production implementation is [`RandomGenerator`]. Keeping this narrow
-/// seam generic lets future generators and deterministic test sources drive the
-/// same distribution control flow without dynamic dispatch on the hot path.
+/// [`RandomGenerator`] and deterministic test sources use this generic seam
+/// without dynamic dispatch on the hot path.
 pub trait SamplingRng {
     /// Draw a uniform value from `[0, 1)`.
     fn random(&mut self) -> f64;

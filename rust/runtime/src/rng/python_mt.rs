@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! CPython `random.Random` Mersenne Twister, ported byte-exact.
+//! Byte-exact CPython `random.Random` Mersenne Twister.
 //!
-//! This is the generator behind legacy agentx `RandomSampler`
+//! This is the generator behind AgentX `RandomSampler`
 //! (`dataset/dataset_samplers.py`), which samples the recorded-graph corpus WITH
 //! replacement via `random.Random(seed).choice(ids)`. numpy's PCG64
 //! ([`crate::rng::numpy_pcg64`]) drives the shuffle/`t*` draws; the with-replacement
 //! `RandomSampler` uses CPython's stdlib `random` instead, a DIFFERENT algorithm,
-//! so it needs its own byte-exact port.
+//! so it needs its own byte-exact implementation.
 //!
-//! Ported from CPython 3.12 (stream-stable across 3.x):
+//! Source reference: CPython 3.12 (stream-stable across 3.x):
 //!   - `Modules/_randommodule.c`: `init_genrand`, `init_by_array`,
 //!     `genrand_uint32`, and integer seeding in `random_seed` (absolute value
 //!     split into little-endian 32-bit key words, then `init_by_array`).
@@ -19,7 +19,7 @@
 //!     `Random.choice` (`seq[_randbelow(len(seq))]`).
 //!
 //! Python is the fixed reference; this Rust conforms to it. Parity is pinned by
-//! committed golden vectors (`tests/data/legacy_random_sampler_vectors.json`,
+//! committed golden vectors (`tests/data/random_sampler_vectors.json`,
 //! replayed in [`crate::graph::tstar`] and below).
 
 /// Mersenne Twister state size (`N` in `_randommodule.c`).
@@ -249,10 +249,10 @@ mod tests {
     fn load_fixtures() -> Fixtures {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/data/legacy_random_sampler_vectors.json"
+            "/tests/data/random_sampler_vectors.json"
         );
-        let raw = std::fs::read_to_string(path).expect("read legacy random sampler vectors");
-        serde_json::from_str(&raw).expect("parse legacy random sampler vectors")
+        let raw = std::fs::read_to_string(path).expect("read CPython random sampler vectors");
+        serde_json::from_str(&raw).expect("parse CPython random sampler vectors")
     }
 
     #[test]

@@ -9,7 +9,7 @@
 //! (`tools/poisson_intervals.py`, backed by `aiperf.common.rng_parity`) reproduces this
 //! byte-for-byte. Interval nanoseconds are integers, so JSONL lines compare exactly.
 //!
-//! Usage: `cargo run -p aiperf --example poisson_intervals -- <root_seed> <rate> <count>`
+//! Usage: `cargo run -p aiperf-runtime --example poisson_intervals -- <root_seed> <rate> <count>`
 
 use aiperf_runtime::rng::{RngRoot, namespace};
 use aiperf_runtime::timing::{ArrivalPattern, make_interval_generator};

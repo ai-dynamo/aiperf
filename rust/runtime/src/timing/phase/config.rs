@@ -72,7 +72,7 @@ pub struct PhaseConfig {
 }
 
 impl PhaseConfig {
-    /// Create a phase with source-faithful kind defaults.
+    /// Create a phase with kind-specific defaults.
     ///
     /// Warmup waits indefinitely for returns; profiling has no extra grace.
     pub fn new(id: impl Into<String>, kind: PhaseKind, stop: StopConfig) -> Self {

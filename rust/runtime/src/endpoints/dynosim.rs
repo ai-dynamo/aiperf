@@ -3,23 +3,10 @@
 
 //! Materialization-only `dynosim` endpoint dialect.
 //!
-//! Selected by default whenever the run's transport is `dynosim_offline` or
-//! `dynosim_online` (see the Python `BenchmarkConfig` transport/endpoint
-//! defaulting). Both dynosim transports drive Dynamo's passive in-process engine
-//! and open no sockets: the scheduled path materializes requests through
-//! [`crate`'s consumer] `TraceHashAwareRequestMaterializer` (an empty HTTP body
-//! plus store-derived input-token accounting), and the direct Graph-IR path
-//! dispatches authored tokens straight into the simulator. The endpoint
-//! therefore never has its [`PreparedEndpoint::format_payload`] dialed on the
-//! product path; it exists so the run can name a first-class `dynosim` dialect
-//! (reported as `dynosim://offline`) instead of a fake chat-over-HTTP URL.
-//!
-//! Material composition semantics mirror the chat dialect (text input,
-//! token output, no raw-token requirement) so that a trace-hash dataset composes
-//! and validates byte-identically to the pre-transport `endpoint.type: chat`
-//! offline form. Setting `requires_raw_token_ids` would reject recorded
-//! `mooncake_trace` turns (they carry `trace_hash_ids`, not exact `raw_token_ids`)
-//! at [`crate`'s] post-compose `Dataset::validate_for_endpoint` pass.
+//! `dynosim_offline` and `dynosim_online` open no sockets. Scheduled requests
+//! use an empty materialized body with store-derived token accounting; Graph IR
+//! dispatches authored tokens directly. Recorded traces carry `trace_hash_ids`,
+//! so this dialect does not require exact `raw_token_ids`.
 
 use std::collections::BTreeMap;
 
@@ -40,15 +27,11 @@ const DYNOSIM_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     id: "dynosim",
     aliases: &[],
     description: "Dynamo passive-engine co-simulation materialization dialect",
-    // Offline/online dynosim open no sockets; the request body is materialized
-    // as empty bytes and no path is ever dialed.
     endpoint_path: None,
     streaming_path: None,
     supports_streaming: true,
     produces_tokens: true,
     tokenizes_input: true,
-    // Recorded traces carry trace_hash_ids, not exact raw token IDs; requiring
-    // raw token IDs here would reject the mooncake scheduled path.
     requires_raw_token_ids: false,
     requires_form_data: false,
     requires_polling: false,
@@ -97,9 +80,8 @@ impl PreparedEndpoint for PreparedDynosim {
     }
 
     fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
-        // Never dialed on the product path: the in-process engine consumes an
-        // empty materialized body. This best-effort shape keeps the dialect
-        // preparable and inspectable without pretending to be a real API.
+        // The in-process engine consumes an empty body; this shape supports
+        // preparation-time inspection only.
         let model = request
             .turns()
             .first()

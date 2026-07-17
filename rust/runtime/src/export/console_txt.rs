@@ -70,7 +70,7 @@
 //!   * multi-model runs render the FIRST series' value per metric (Python
 //!     pre-aggregates one `MetricResult` per metric);
 //!   * the cache-reporting hint line and the dev-only internal / experimental /
-//!     http-trace tables are not ported.
+//!     HTTP-trace tables are excluded.
 //!
 //! All trigger data is in the native-v2 report (metric aggregates +
 //! `report.errors`). One [`Warning`] value + [`warning_panel`] helper + `detect_*`
@@ -117,7 +117,7 @@ pub struct ConsoleTxtExportConfig {
     pub width: u16,
     /// Include INTERNAL/EXPERIMENTAL metrics (dev mode). The main metrics table
     /// always hides them (Python `ConsoleMetricsExporter.exclude_flags`); the
-    /// dev-only INTERNAL/EXPERIMENTAL/HTTP-trace tables are not ported.
+    /// dev-only INTERNAL/EXPERIMENTAL/HTTP-trace tables are excluded.
     pub dev: bool,
     /// Base metrics title (Python `ConsoleMetricsExporter._get_title`):
     /// `NVIDIA AIPerf | <endpoint metrics_title>`, or `NVIDIA AIPerf` when the

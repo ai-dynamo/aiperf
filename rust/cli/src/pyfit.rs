@@ -1,25 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! In-process Python numerical seam for the scipy-backed dynamic search styles.
+//! In-process SciPy numerical operations for dynamic search.
 //!
-//! Feature-gated (`search-pyo3`): when enabled, the native binary embeds a
-//! CPython interpreter (pyo3 `auto-initialize`) and calls the EXACT scipy
-//! primitives the Python planners use, so the `smooth_isotonic` fit is byte-for-
-//! byte identical rather than a fragile Rust reimplementation of PAVA + PCHIP +
-//! root-solve. Everything else — the bracket ramp, phase state machine, probe
-//! queue, feasibility, and the run loop — stays pure Rust.
-//!
-//! The embedded Python mirrors, line-for-line, the scipy calls in
-//! `src/aiperf/orchestrator/search_planner/_smooth_isotonic_fit.py`
-//! (`smooth_isotonic_fit` + `find_root`) and the `isotonic_regression`
-//! distinct-count in `_smooth_isotonic_phases._needs_more_fit_data`. Ported
-//! callsites are cited in each function's docs.
+//! The `search-pyo3` feature embeds CPython and delegates PAVA, PCHIP root
+//! solving, cliff detection, and bootstrap confidence intervals to SciPy.
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-/// The embedded helper module source. Kept byte-faithful to the scipy calls in
-/// `_smooth_isotonic_fit.py` so the fit/root and distinct-count match Python.
+/// Embedded SciPy helper module.
 const PYFIT_SRC: &str = r#"
 import numpy as np
 from scipy.interpolate import PchipInterpolator
@@ -76,7 +65,7 @@ def fit_root(xs, ys, x_lo, x_hi):
 
 
 def isotonic_distinct(ys):
-    """Count distinct round(y_hat, 9) values of the PAVA fit (_needs_more_fit_data)."""
+    """Count distinct round(y_hat, 9) values of the PAVA fit."""
     result = isotonic_regression(np.asarray(list(ys), dtype=float), increasing=True)
     return len({round(float(v), 9) for v in result.x})
 
@@ -89,12 +78,7 @@ _MIN_LOCAL_POINTS = 3
 
 
 def detect_cliff(xs, ys, feasible_max, infeasible_min, x_hi, precision):
-    """Byte-faithful port of `_check_cliff` + `_cliff_detect.detect_cliff`.
-
-    `xs`/`ys` are the sorted-by-x, per-x averaged (x, margin) points for the
-    binding constraint. Builds the PAVA+PCHIP fit and applies the residual
-    guard. `feasible_max`/`infeasible_min` may be None.
-    """
+    """Apply the PAVA/PCHIP residual guard to sorted averaged margins."""
     raw_points = list(zip([int(x) for x in xs], [float(y) for y in ys]))
     if len(raw_points) < 2:
         return False
@@ -119,10 +103,7 @@ def detect_cliff(xs, ys, feasible_max, infeasible_min, x_hi, precision):
 
 
 def boundary_ci(margins, n_resamples=10000):
-    """Bootstrap 95% CI on the mean of replicate margins (`_replicate_budget.boundary_ci`).
-
-    NOTE: unseeded scipy.stats.bootstrap -> non-deterministic (as in Python).
-    """
+    """Bootstrap an unseeded 95% CI for the mean replicate margin."""
     from scipy.stats import bootstrap
 
     margins = [float(m) for m in margins]
@@ -135,8 +116,7 @@ def boundary_ci(margins, n_resamples=10000):
     return (float(result.confidence_interval.low), float(result.confidence_interval.high))
 "#;
 
-/// Run `f` with the embedded pyfit module, importing scipy once per call. pyo3's
-/// `auto-initialize` starts the interpreter on first `Python::with_gil`.
+/// Run `f` with the embedded helper module.
 fn with_pyfit<T>(f: impl FnOnce(&Bound<'_, PyModule>) -> PyResult<T>) -> anyhow::Result<T> {
     Python::with_gil(|py| {
         let module = PyModule::from_code(
@@ -152,9 +132,8 @@ fn with_pyfit<T>(f: impl FnOnce(&Bound<'_, PyModule>) -> PyResult<T>) -> anyhow:
     })
 }
 
-/// PAVA + PCHIP fit through `(xs, ys)`, returning the first root in `[x_lo, x_hi]`
-/// or `None` if the curve does not cross zero. Byte-faithful to
-/// `_smooth_isotonic_fit::smooth_isotonic_fit` + `find_root`.
+/// Fit PAVA and PCHIP through `(xs, ys)` and return the first root in
+/// `[x_lo, x_hi]`.
 pub fn fit_root(xs: &[i64], ys: &[f64], x_lo: f64, x_hi: f64) -> anyhow::Result<Option<f64>> {
     with_pyfit(|m| {
         let out = m
@@ -168,8 +147,7 @@ pub fn fit_root(xs: &[i64], ys: &[f64], x_lo: f64, x_hi: f64) -> anyhow::Result<
     })
 }
 
-/// Number of distinct `round(y_hat, 9)` values of the PAVA fit of `ys`. Mirrors
-/// the distinct-count in `_smooth_isotonic_phases._needs_more_fit_data`.
+/// Number of distinct `round(y_hat, 9)` values in the PAVA fit.
 pub fn isotonic_distinct(ys: &[f64]) -> anyhow::Result<usize> {
     with_pyfit(|m| {
         Ok(m.getattr("isotonic_distinct")?
@@ -178,8 +156,7 @@ pub fn isotonic_distinct(ys: &[f64]) -> anyhow::Result<usize> {
     })
 }
 
-/// PAVA-residual cliff guard over the sorted-by-x averaged points. Byte-faithful
-/// to `_smooth_isotonic_phases._check_cliff` + `_cliff_detect::detect_cliff`.
+/// Apply the PAVA residual cliff guard to sorted averaged points.
 pub fn detect_cliff(
     xs: &[i64],
     ys: &[f64],
@@ -202,10 +179,7 @@ pub fn detect_cliff(
     })
 }
 
-/// Bootstrap 95% CI on the mean of replicate margins. Wraps
-/// `_replicate_budget::boundary_ci`. NOTE: unseeded scipy bootstrap →
-/// non-deterministic (as in Python); the replicate branch is behaviorally, not
-/// byte, verifiable.
+/// Bootstrap an unseeded 95% CI for the mean replicate margin.
 pub fn boundary_ci(margins: &[f64]) -> anyhow::Result<(f64, f64)> {
     with_pyfit(|m| {
         Ok(m.getattr("boundary_ci")?
@@ -220,9 +194,6 @@ mod tests {
 
     #[test]
     fn fit_root_crosses_zero() {
-        // A monotone series crossing zero between x=3 and x=4: the PAVA+PCHIP
-        // root must land in (3, 4). Matches the _smooth_isotonic_fit docstring
-        // example shape.
         let xs = [1, 2, 3, 4, 5];
         let ys = [-2.0, -0.9, -1.1, 1.0, 2.0];
         let root = fit_root(&xs, &ys, 1.0, 5.0).unwrap().expect("a root");
@@ -231,7 +202,6 @@ mod tests {
 
     #[test]
     fn fit_root_no_crossing_is_none() {
-        // All-negative margins never cross zero -> no root.
         let xs = [1, 2, 3];
         let ys = [-3.0, -2.0, -1.0];
         assert!(fit_root(&xs, &ys, 1.0, 3.0).unwrap().is_none());
@@ -239,7 +209,6 @@ mod tests {
 
     #[test]
     fn isotonic_distinct_pools_violators() {
-        // PAVA pools the middle violator pair (-0.9, -1.1) into one value.
         let ys = [-2.0, -0.9, -1.1, 1.0, 2.0];
         assert_eq!(isotonic_distinct(&ys).unwrap(), 4);
     }

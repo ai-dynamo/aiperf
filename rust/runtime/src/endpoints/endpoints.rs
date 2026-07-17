@@ -19,7 +19,7 @@ use crate::endpoints::models::{
 };
 use crate::endpoints::registry::{
     PreparedEndpointBehavior, PreparedReadinessRequest, PreparedRequest, ReadinessMethod,
-    ReadinessPolicy, ReadinessSuccess, format_legacy_payload,
+    ReadinessPolicy, ReadinessSuccess, format_compatibility_payload,
 };
 
 /// Warmup prefix used by the completions endpoint.
@@ -173,7 +173,7 @@ const RESPONSES_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
 const COMPLETIONS_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     id: "completions",
     aliases: &[],
-    description: "OpenAI-compatible legacy Completions API",
+    description: "OpenAI-compatible Completions API",
     endpoint_path: Some("/v1/completions"),
     streaming_path: None,
     supports_streaming: true,
@@ -233,7 +233,7 @@ impl Endpoint for ChatEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn readiness_policy(
@@ -365,7 +365,7 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         }
         if let Some(max_tokens) = last.max_tokens {
             payload.insert(
-                if endpoint.use_legacy_max_tokens {
+                if endpoint.use_max_tokens {
                     "max_tokens"
                 } else {
                     "max_completion_tokens"
@@ -391,7 +391,7 @@ impl Endpoint for ResponsesEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -539,7 +539,7 @@ impl Endpoint for CompletionsEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -619,7 +619,7 @@ impl Endpoint for EmbeddingsEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -664,7 +664,7 @@ impl Endpoint for ChatEmbeddingsEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_legacy_payload(self, request_info)
+        format_compatibility_payload(self, request_info)
     }
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
         parse_embeddings_response(response, false)
@@ -699,24 +699,16 @@ pub(crate) enum PartShape {
     Messages,
 }
 
-/// One assembled message: either a lowered pre-serialized wire spliced verbatim,
-/// or a freshly-rendered value serialized once at dispatch.
+/// One assembled message in serialized or value form.
 enum RenderedMessage {
-    /// A pre-serialized message wire (a lowered static turn) spliced as-is.
     Wire(Bytes),
-    /// A message value rendered at dispatch (live reply, system/context prefix,
-    /// warmup-mutated first turn, preformatted `raw_messages`).
     Value(Value),
 }
 
-/// Assemble the per-turn messages for a message-array body, splicing each static
-/// turn's lowered wire (segment spec §5) and rendering only the turns that were
-/// not lowered. Mirrors [`build_messages`] / [`build_messages_responses`] exactly,
-/// so the resulting wire sequence is byte-identical to the live render path.
+/// Assemble message-array wires while preserving load-time bytes (segment spec §5).
 ///
 /// `render_first` forces the first turn to render to a mutable value even when it
-/// carries a lowered wire — the warmup carve-out, where the system prompt is
-/// folded into the first message in place (which a spliced wire cannot support).
+/// has serialized bytes, allowing warmup to prepend the system prompt.
 fn rendered_turn_messages(
     turns: &[Turn],
     shape: PartShape,
@@ -800,8 +792,7 @@ fn rendered_first_is_system(messages: &[RenderedMessage]) -> bool {
     }
 }
 
-/// Assemble the Chat Completions `messages` array as spliceable wires, mirroring
-/// [`format_chat_messages`] over the lowered/rendered turn messages.
+/// Assemble Chat Completions `messages` wires with system and user-context prefixes.
 fn format_chat_message_wires(
     request: &PreparedRequest<'_>,
     turns: &[Turn],
@@ -835,9 +826,7 @@ fn format_chat_message_wires(
     serialize_rendered_messages(out)
 }
 
-/// Assemble the Responses `input` array as spliceable wires, mirroring the
-/// user-context prefix plus [`build_messages_responses`] over lowered/rendered
-/// turn messages.
+/// Assemble Responses `input` wires with the user-context prefix.
 fn format_responses_input_wires(
     request: &PreparedRequest<'_>,
     turns: &[Turn],
@@ -855,9 +844,7 @@ fn format_responses_input_wires(
     serialize_rendered_messages(out)
 }
 
-/// Assemble the Anthropic Messages `messages` array as spliceable wires,
-/// mirroring the user-context prefix plus [`build_messages`] under the Messages
-/// part shape over lowered/rendered turn messages.
+/// Assemble Anthropic Messages `messages` wires with the user-context prefix.
 pub(crate) fn format_messages_array_wires(
     request: &PreparedRequest<'_>,
     turns: &[Turn],
@@ -875,20 +862,10 @@ pub(crate) fn format_messages_array_wires(
     serialize_rendered_messages(out)
 }
 
-/// Load-time content→segment lowering seam (segment spec §3/§3a).
+/// Load-time content-to-wire lowering seam (segment spec §3/§3a).
 ///
-/// A static content turn's per-turn message(s) are rendered and serialized once,
-/// at load (post endpoint-bind), to the exact wire bytes the dispatch path would
-/// otherwise produce every request. Dispatch then splices the stored wires
-/// verbatim (zero re-serialize) instead of re-rendering the turn's content. The
-/// contract is byte-exact: `lower_turn` returns exactly
-/// `serde_json::to_vec(render_turn_message(turn, shape))` per rendered message,
-/// applying the Responses `type:"message"` injection and replay-unsafe filter
-/// before serializing, so the shape's dispatch output is unchanged.
-///
-/// This is a trait (not a bare function) so a future endpoint dialect with its
-/// own message geometry can lower without the dataset pass branching on a shape
-/// enum — it registers a lowerer and the same load/splice machinery applies.
+/// Each result must equal the dispatch serializer's bytes, including Responses
+/// discriminants and replay filters.
 pub trait TurnMessageLowerer: Send + Sync {
     /// Render and serialize one turn's message wire(s) exactly as the dispatch
     /// message-array formatter would emit them for this turn in isolation.
@@ -918,10 +895,8 @@ impl ShapeLowerer {
 
 impl TurnMessageLowerer for ShapeLowerer {
     fn lower_turn(&self, turn: &Turn) -> EndpointResult<SmallVec<[Bytes; 1]>> {
-        // Mirror `build_messages` / `build_messages_responses` for one turn: a
-        // preformatted `raw_messages` turn splices its items (Responses drops
-        // replay-unsafe items); otherwise the turn renders one message (Responses
-        // injects `type:"message"`).
+        // Preformatted items are preserved except for replay-unsafe Responses
+        // output; rendered Responses messages receive `type:"message"`.
         let values: Vec<Value> = match self.shape {
             PartShape::Responses => {
                 if let Some(raw_messages) = &turn.raw_messages
@@ -1214,7 +1189,7 @@ fn absorb_chat_choice(
                     tool_calls_by_index.insert(idx, cloned);
                 }
             }
-            absorb_legacy_function_call(message.get("function_call"), tool_calls_by_index);
+            absorb_function_call(message.get("function_call"), tool_calls_by_index);
         }
         Some("chat.completion.chunk") => {
             let Some(delta) = choice.get("delta").and_then(Value::as_object) else {
@@ -1230,13 +1205,13 @@ fn absorb_chat_choice(
                     }
                 }
             }
-            merge_legacy_function_call_delta(delta.get("function_call"), tool_calls_by_index);
+            merge_function_call_delta(delta.get("function_call"), tool_calls_by_index);
         }
         _ => {}
     }
 }
 
-fn absorb_legacy_function_call(
+fn absorb_function_call(
     value: Option<&Value>,
     tool_calls_by_index: &mut BTreeMap<i64, Map<String, Value>>,
 ) {
@@ -1246,7 +1221,7 @@ fn absorb_legacy_function_call(
     let idx = tool_calls_by_index.len() as i64;
     tool_calls_by_index.insert(idx, json!({"type":"function","function":{"name":function_call.get("name").and_then(Value::as_str).unwrap_or(""),"arguments":function_call.get("arguments").and_then(Value::as_str).unwrap_or("")}}).as_object().unwrap().clone());
 }
-fn merge_legacy_function_call_delta(
+fn merge_function_call_delta(
     value: Option<&Value>,
     tool_calls_by_index: &mut BTreeMap<i64, Map<String, Value>>,
 ) {
@@ -1725,8 +1700,6 @@ mod lowering_tests {
         }
     }
 
-    /// Oracle: a lowered wire is byte-identical to the dispatch render path
-    /// (`serde_json::to_vec(render_turn_message(...))`) for the Chat shape.
     #[test]
     fn lowered_wire_matches_rendered_dispatch_wire_text_only() {
         let turn = text_turn();
@@ -1739,7 +1712,6 @@ mod lowering_tests {
         assert_eq!(wires[0], expected);
     }
 
-    /// Oracle: multimodal content lowers byte-identically to the dispatch render.
     #[test]
     fn lowered_wire_matches_rendered_dispatch_wire_multimodal() {
         let turn = multimodal_turn("http://example/a.png");
@@ -1751,8 +1723,6 @@ mod lowering_tests {
         assert_eq!(wires[0], expected);
     }
 
-    /// Oracle: the Responses shape lowers with the `type:"message"` injection,
-    /// matching the dispatch render exactly.
     #[test]
     fn lowered_wire_matches_rendered_dispatch_wire_responses() {
         let turn = text_turn();
@@ -1766,7 +1736,6 @@ mod lowering_tests {
             wires[0],
             Bytes::from(serde_json::to_vec(&expected_value).unwrap())
         );
-        // The injected discriminant is present in the wire bytes.
         assert!(
             std::str::from_utf8(&wires[0])
                 .unwrap()
@@ -1774,8 +1743,6 @@ mod lowering_tests {
         );
     }
 
-    /// Two turns with identical text but different media render to distinct wires
-    /// (the byte-parity companion to the segment hash-key fix).
     #[test]
     fn same_text_different_media_lowers_to_distinct_wires() {
         let lowerer = ShapeLowerer::for_descriptor_id("chat").unwrap();
@@ -1788,21 +1755,12 @@ mod lowering_tests {
         assert_ne!(a[0], b[0]);
     }
 
-    /// A dialect whose body is not a per-turn message array has no lowerer.
     #[test]
     fn non_message_array_dialects_have_no_lowerer() {
         assert!(ShapeLowerer::for_descriptor_id("embeddings").is_none());
         assert!(ShapeLowerer::for_descriptor_id("completions").is_none());
     }
 
-    /// Segment spec §5: both live-reply constructors used by
-    /// `multiturn::build_next_turn` — the text-only reply (`assistant_message ==
-    /// None`) and the preformatted `raw_messages` reply (`assistant_message ==
-    /// Some(..)`) — lower to the exact bytes the pre-change `RenderedMessage::Value`
-    /// dispatch path emitted, for every message-array shape. `lower_turn` is
-    /// compared against the live `rendered_turn_messages` → `serialize_rendered_messages`
-    /// pipeline (the code the reply spliced through before this change), so this is
-    /// the byte-parity oracle for capture-time lowering.
     #[test]
     fn reply_constructors_lower_to_value_dispatch_wire_all_shapes() {
         let text_reply = Turn {
@@ -1829,8 +1787,6 @@ mod lowering_tests {
         ] {
             let lowerer = ShapeLowerer::for_descriptor_id(id).unwrap();
             for reply in [&text_reply, &raw_reply] {
-                // The reply carries no `lowered` wire, so `rendered_turn_messages`
-                // takes the Value render path — exactly the pre-change dispatch body.
                 assert!(reply.lowered.is_none());
                 let value_path = serialize_rendered_messages(
                     rendered_turn_messages(std::slice::from_ref(reply), shape, false).unwrap(),

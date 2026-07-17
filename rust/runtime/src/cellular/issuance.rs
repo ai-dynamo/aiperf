@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! S1 — the issuance authority: the single central dispatch-ordinal assignment.
+//! Dense global dispatch-ordinal assignment.
 //!
 //! Every issued turn receives a **dense dispatch ordinal** — the record slot the
-//! records-first re-ingest orders by, and the basis of the codebase's
-//! worker-count-independent byte parity (roadmap
-//! `specs/2026-07-12-cellular-ready-seams-and-roadmap.md`, S1). An
+//! records-first re-ingest orders by, and the basis of worker-count-independent
+//! byte parity. An
 //! [`IssuanceAuthority`] maps a turn's dispatch indices to that ordinal.
 //!
 //! The runner rebuilds the per-cell sampler fresh at each phase boundary (the
@@ -15,16 +14,11 @@
 //! global base plus its phase-local slot — cell `k`'s `m`-th turn of a phase whose
 //! prior phases dispatched `base` turns is `base + m*count + k` — which equals the
 //! absolute slot a single-cell run assigns that instance, so the merged report is
-//! byte-identical. The single-process identity issuer keeps the cumulative flat slot
-//! (its non-cell record path is unchanged). All three indices are supplied; each
-//! issuer uses what it needs.
+//! byte-identical. The single-process identity issuer keeps the cumulative flat slot.
 //!
-//! This is a **single central assignment**, never a shared atomic: a shared-atomic
+//! This is a single central assignment, never a shared atomic: a shared-atomic
 //! self-issue interleaves nondeterministically and breaks run-to-run float
-//! reproducibility. Today the [`DirectIssuanceAuthority`] (identity) ships for the
-//! single-process cell of one. The [`CellularAutonomousIssuer`] — the deferred
-//! per-cell issuer with zero coordinator hop — is defined and tested here so the
-//! seam's Phase-2 path is proven; the cellular controller injects it per cell.
+//! reproducibility.
 
 use crate::cellular::partition::{CellPartition, ModuloCellPartition};
 
@@ -56,11 +50,9 @@ pub trait IssuanceAuthority {
     fn partition(&self) -> &dyn CellPartition;
 }
 
-/// Tier-0 "Direct" issuer: identity ordinal for the single-process cell of one.
+/// Identity issuer for a single-process cell of one.
 ///
-/// `global_ordinal == flat_local`, reproducing today's cumulative sequential
-/// dispatch ordinal exactly — the shipping default, and the reason wiring it
-/// through the dispatch path changes no output.
+/// `global_ordinal == flat_local` preserves cumulative sequential dispatch order.
 #[derive(Debug, Clone, Default)]
 pub struct DirectIssuanceAuthority {
     partition: ModuloCellPartition,
@@ -90,8 +82,8 @@ impl IssuanceAuthority for DirectIssuanceAuthority {
     }
 }
 
-/// Tier-2 "Cellular Autonomous" issuer: a cell assigns global ordinals from its
-/// round-robin partition with zero coordinator hop.
+/// Assigns global ordinals from a cell's round-robin partition without a
+/// coordinator hop.
 ///
 /// A cell's `m`-th turn *of a phase* is the absolute slot `phase_base + m *
 /// cell_count + cell_id`, where `phase_base` is the turns dispatched by the run's

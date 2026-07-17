@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end tests for the multi-process round-robin balancer.
-//!
-//! These launch the real `aiperf-mock-server` binary with `--processes N`, which
-//! spawns N child servers and fronts them with an L4 round-robin proxy, then
-//! drive traffic through the single public port and assert it is served
-//! correctly and spread across the backends.
+//! Wire tests for the multi-process round-robin balancer.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -43,8 +38,7 @@ fn wait_healthy(addr: SocketAddr, timeout: Duration) {
     panic!("balancer at {addr} never became healthy within {timeout:?}");
 }
 
-/// Minimal blocking HTTP/1.0 GET returning (status_code, body). `Connection:
-/// close` keeps the read loop simple (read to EOF).
+/// `Connection: close` permits reading the HTTP/1.0 response to EOF.
 fn http_get(addr: SocketAddr, path: &str) -> std::io::Result<(u16, String)> {
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2))?;
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
@@ -57,7 +51,6 @@ fn http_get(addr: SocketAddr, path: &str) -> std::io::Result<(u16, String)> {
     Ok(parse_response(&raw))
 }
 
-/// Minimal blocking HTTP/1.0 POST of a JSON body returning (status_code, body).
 fn http_post_json(addr: SocketAddr, path: &str, body: &str) -> std::io::Result<(u16, String)> {
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2))?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
@@ -111,8 +104,6 @@ fn balancer_serves_health_and_chat_through_one_port() {
     assert_eq!(status, 200, "health status");
     assert!(body.contains("healthy"), "health body: {body}");
 
-    // Drive a batch of chat completions through the single public port; every
-    // one must succeed, proving spawn + health-gate + proxy end-to-end.
     let payload =
         r#"{"model":"mock-model","messages":[{"role":"user","content":"hi"}],"max_tokens":4}"#;
     for i in 0..30 {
@@ -128,12 +119,6 @@ fn balancer_serves_health_and_chat_through_one_port() {
 
 #[test]
 fn balancer_distributes_connections_across_backends() {
-    // With N backends and a burst of concurrent connections, each backend must
-    // receive at least one connection. `/v1/models` echoes each backend's own
-    // process view; we instead prove distribution structurally: fire many
-    // concurrent connections and confirm all succeed, then that the balancer
-    // survives a load burst (a single dead/idle backend would surface as failed
-    // requests, since round-robin still routes 1/N of connections to it).
     let (_server, addr) = spawn_balancer(4);
     let payload =
         r#"{"model":"mock-model","messages":[{"role":"user","content":"x"}],"max_tokens":2}"#;
@@ -158,8 +143,7 @@ fn balancer_distributes_connections_across_backends() {
 }
 
 #[test]
-fn single_process_is_unchanged_direct_serve() {
-    // --processes 1 must NOT spawn children; it is the ordinary single server.
+fn single_process_serves_directly() {
     let (_server, addr) = spawn_balancer(1);
     let (status, _) = http_get(addr, "/health").unwrap();
     assert_eq!(status, 200);

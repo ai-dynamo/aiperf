@@ -1,14 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The `itl_surface_fit` post-process handler for the `decode-itl-curve` recipe.
+//! `itl_surface_fit` handler for the `decode-itl-curve` recipe.
 //!
-//! Pure-Rust port of `aiperf.search_recipes._itl_surface_fit::ItlSurfaceFit.process`
-//! (`src/aiperf/search_recipes/_itl_surface_fit.py:110-231`): walk the sweep
-//! aggregate for `(concurrency, OSL, ITL)` triples (via
-//! [`crate::search::extract::extract_2d_points`]), build an axis-aligned grid
-//! keyed by the unique sorted concurrency and OSL values observed, and emit
-//! `null` for cells with no measured triple (no interpolation). Written as
-//! `decode_itl_surface.json`.
+//! Builds an axis-aligned `(concurrency, OSL, ITL)` grid from observed values.
+//! Unmeasured cells are `null`; values are not interpolated.
 
 use serde_json::{Map, Value};
 
@@ -71,7 +66,6 @@ pub fn process(sweep_json: &Value, spec: &SurfaceSpec) -> anyhow::Result<Value> 
         }));
     }
 
-    // Axes from observed unique values (ascending), so missing cells stay null.
     let concurrency_axis = sorted_unique(triples.iter().map(|t| t.0));
     let osl_axis = sorted_unique(triples.iter().map(|t| t.1));
     let cell = |c: f64, o: f64| -> Value {
@@ -144,7 +138,6 @@ mod tests {
         assert_eq!(out["swept_metric"], "inter_token_latency");
         assert_eq!(out["surface_fit_failed"], false);
         let grid = out["surface"]["itl_grid"].as_array().unwrap();
-        // 2 concurrency x 2 osl grid; cell (4, 256) unmeasured -> null.
         assert_eq!(grid.len(), 2);
         assert_eq!(grid[0][0].as_f64(), Some(10.0));
         assert!(grid[1][1].is_null());

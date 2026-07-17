@@ -3,9 +3,6 @@
 mod common;
 use common::*;
 
-// Tests for /v1/embeddings endpoint.
-
-/// Basic embeddings request completes with expected request count.
 #[tokio::test]
 async fn test_basic_embeddings() {
     let h = AIPerfHarness::new().await;
@@ -20,7 +17,6 @@ async fn test_basic_embeddings() {
         h.mock.url
     ));
     assert_eq!(r.artifacts.request_count() as u32, DEFAULT_REQUEST_COUNT);
-    // Embeddings are non-streaming, so streaming metrics should not be present.
     assert!(
         r.artifacts
             .json()

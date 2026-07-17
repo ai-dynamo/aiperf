@@ -5,37 +5,12 @@ use common::*;
 
 use serde_json::Value;
 
-// Full-stack e2e for the mock server's KServe Open Inference Protocol targets,
-// driven by the real `python -m aiperf profile` CLI (native runner + its
-// production KServe HTTP and gRPC clients) against `aiperf-mock-server`.
-//
-// Coverage — every dialect verified at the raw-record (`profile_export_raw.jsonl`)
-// level with `--export-level raw`, asserting the on-the-wire response DATA:
-//   * HTTP  v2 infer (`kserve_v2_infer`, non-streaming) — `text_output` tensor.
-//   * HTTP  v1 predict (`kserve_v1_predict`)            — `predictions[].output`.
-//   * HTTP  `/v1/infer` alias (`image_retrieval`)       — bounding-box `data`.
-//   * gRPC  rankings (`kserve_v2_rankings`, unary)      — numeric `scores` tensor.
-//   * gRPC  images (`kserve_v2_images`, unary)          — `generated_image` tensor.
-//   * gRPC  vlm (`kserve_v2_vlm`, streaming)            — consumes an `image`
-//                                                         input tensor, streams text.
-//
-// These KServe dialects (except the streaming vlm path) are single-response, so
-// there is no per-token TTFT/ITL to verify; the raw-record DATA — status, the
-// decoded response body, and the output-tensor name/type/content — is the
-// feature-complete bar here. The mock uses the slash-free model `gpt-4` because
-// the KServe HTTP infer route templates the model name into the URL path
-// (`/v2/models/{model}/infer`), and a `/`-bearing model name would split the
-// single path segment. `waitForModelTimeout: 0` skips readiness polling.
-
 const REQUEST_COUNT: u32 = 6;
 const CONCURRENCY: u32 = 2;
-/// Slash-free model whose name is safe to template into the KServe URL path and
-/// which the mock treats as a NON-reasoning model (so `text_output` is non-empty).
+/// KServe model names occupy one URL path segment; this model also emits text.
 const KSERVE_MODEL: &str = "gpt-4";
 
-/// Read `responses[0].text` of a non-streaming record and parse it as JSON. The
-/// runner stores a non-streaming HTTP body — and a decoded unary-gRPC response —
-/// as a single `Text` response whose `text` is the JSON body.
+/// Non-streaming HTTP and unary gRPC bodies are stored in `responses[0].text`.
 fn first_response_json(record: &Value) -> Value {
     let text = record
         .get("responses")
@@ -47,22 +22,16 @@ fn first_response_json(record: &Value) -> Value {
     serde_json::from_str(text).unwrap_or(Value::Null)
 }
 
-/// Status code on a raw record (the runner records HTTP status, and maps a gRPC
-/// `grpc-status: 0` reply to 200).
+/// A successful `grpc-status: 0` maps to status 200.
 fn record_status(record: &Value) -> Option<u64> {
     record.get("status").and_then(Value::as_u64)
 }
 
-/// The first output tensor of a KServe `ModelInferResponse` JSON body.
 fn first_output(body: &Value) -> Option<&Value> {
     body.get("outputs")
         .and_then(Value::as_array)
         .and_then(|outputs| outputs.first())
 }
-
-// ---------------------------------------------------------------------------
-// HTTP configs (transport defaults to http; only the endpoint type differs)
-// ---------------------------------------------------------------------------
 
 fn http_infer_config(url: &str, endpoint_type: &str) -> String {
     format!(
@@ -92,9 +61,7 @@ fn http_infer_config(url: &str, endpoint_type: &str) -> String {
     )
 }
 
-/// Start a fresh HTTP harness, write a config targeting ITS mock, and run with
-/// `--export-level raw`. The config must be built from the same harness that
-/// runs it (each harness binds its own random mock port).
+/// Builds the config from the harness URL because each harness binds independently.
 async fn run_http(endpoint_type: &str) -> (AIPerfHarness, RunResult) {
     let h = AIPerfHarness::new().await;
     let config = http_infer_config(&h.mock.url, endpoint_type);
@@ -157,10 +124,7 @@ async fn test_kserve_http_v1_predict() {
     }
 }
 
-/// HTTP `/v1/infer` alias: driving `image_retrieval` WITHOUT an `--endpoint`
-/// override now resolves to the runner's default `/v1/infer` path, which the
-/// mock serves as an alias of `/v1/image/infer`. Each raw record carries the
-/// bounding-box `data` array.
+/// `image_retrieval` defaults to `/v1/infer`, an alias of `/v1/image/infer`.
 #[tokio::test]
 async fn test_kserve_http_v1_infer_alias() {
     let h = AIPerfHarness::new().await;
@@ -188,10 +152,6 @@ async fn test_kserve_http_v1_infer_alias() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// gRPC configs (transport: grpc, grpc:// URL; dataset carries inline records)
-// ---------------------------------------------------------------------------
-
 fn grpc_config(grpc_url: &str, endpoint_type: &str, streaming: bool, records: &str) -> String {
     format!(
         "schemaVersion: \"2.0\"\n\
@@ -215,7 +175,6 @@ fn grpc_config(grpc_url: &str, endpoint_type: &str, streaming: bool, records: &s
     )
 }
 
-/// Start a gRPC harness and run one config against it, asserting success.
 async fn run_grpc(
     endpoint_type: &str,
     streaming: bool,
@@ -244,7 +203,6 @@ async fn run_grpc(
     (h, r)
 }
 
-/// A `dataset:` block of inline single-turn rankings records (query + passages).
 const RANKINGS_RECORDS: &str = "\x20 dataset:\n\
     \x20   type: file\n\
     \x20   format: single_turn\n\
@@ -257,7 +215,6 @@ const RANKINGS_RECORDS: &str = "\x20 dataset:\n\
     \x20         - {name: query, contents: [\"capital of france\"]}\n\
     \x20         - {name: passages, contents: [\"paris is the capital\", \"london is in the uk\"]}\n";
 
-/// A `dataset:` block of inline single-turn text prompts (image-generation).
 const IMAGE_RECORDS: &str = "\x20 dataset:\n\
     \x20   type: file\n\
     \x20   format: single_turn\n\
@@ -266,7 +223,6 @@ const IMAGE_RECORDS: &str = "\x20 dataset:\n\
     \x20     - texts: [{name: text, contents: [\"a red bicycle on a hill\"]}]\n\
     \x20     - texts: [{name: text, contents: [\"a blue mountain sunset\"]}]\n";
 
-/// A synthetic `dataset:` block that attaches one image per turn (for vlm).
 const VLM_DATASET: &str = "\x20 dataset:\n\
     \x20   type: synthetic\n\
     \x20   entries: 6\n\
@@ -291,7 +247,6 @@ async fn test_kserve_grpc_rankings() {
     );
     for (i, record) in records.iter().enumerate() {
         assert_eq!(record_status(record), Some(200), "record {i} status");
-        // The number of passages in the request must equal the number of scores.
         let passages = record
             .get("payload")
             .and_then(|p| p.get("inputs"))
@@ -338,7 +293,7 @@ async fn test_kserve_grpc_images() {
         assert_eq!(output["datatype"], "BYTES", "record {i} output datatype");
         let image = output["data"][0].as_str().unwrap_or("");
         assert!(!image.is_empty(), "record {i}: empty generated_image");
-        // The mock emits a base64 JPEG (`/9j/...` is the JFIF SOI marker b64).
+        // `/9j/` is the base64-encoded JPEG SOI marker.
         assert!(
             image.starts_with("/9j/"),
             "record {i}: generated_image is not a base64 JPEG: {}",
@@ -363,7 +318,6 @@ async fn test_kserve_grpc_vlm_streaming() {
     for (i, record) in records.iter().enumerate() {
         assert_eq!(record_status(record), Some(200), "record {i} status");
 
-        // DATA: the request lowered an `image` input tensor (VLM consumes it).
         let input_names: Vec<&str> = record
             .get("payload")
             .and_then(|p| p.get("inputs"))
@@ -381,7 +335,6 @@ async fn test_kserve_grpc_vlm_streaming() {
             "record {i}: no `text_input` tensor, got {input_names:?}"
         );
 
-        // DATA: assemble the streamed `text_output` across all frames.
         let mut assembled = String::new();
         for response in record
             .get("responses")

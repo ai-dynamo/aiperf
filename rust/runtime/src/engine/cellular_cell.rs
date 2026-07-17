@@ -11,8 +11,8 @@
 //! seam instead of writing a report. The controller re-ingests every cell's
 //! records in global ordinal order for the single authoritative `native-v2.json`.
 //!
-//! Cell behaviour is injected through environment variables so the ordinary
-//! execute path is reused unchanged: [`CELL_ID_ENV`](crate::cellular::partition::CELL_ID_ENV)
+//! Cell behaviour is injected through environment variables:
+//! [`CELL_ID_ENV`](crate::cellular::partition::CELL_ID_ENV)
 //! / [`CELL_COUNT_ENV`](crate::cellular::partition::CELL_COUNT_ENV) select the
 //! issuer's partition, [`CELL_CONTROLLER_ADDR_ENV`] carries the controller's
 //! bootstrap coordinate, and [`CELL_PHASE_ORDINAL_BASES_ENV`] carries each phase's
@@ -38,7 +38,7 @@ use anyhow::Result;
 /// The cell id and count live in [`crate::cellular::partition`]'s env vars.
 pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
 
-/// Env var (tier-T2 hierarchical merge) carrying the velo coordinate a cell ships its
+/// Env var carrying the velo coordinate a cell ships its
 /// terminal partition + heartbeat to, when it is NOT the controller. In the flat
 /// (star) topology this is unset and a cell ships to the controller
 /// ([`CELL_CONTROLLER_ADDR_ENV`]); in the tree topology the controller sets it to the
@@ -53,7 +53,7 @@ pub const CELL_SHIP_ADDR_ENV: &str = "AIPERF_CELL_SHIP_ADDR";
 /// slot (the cell's sampler restarts each phase; see [`phase_ordinal_bases_from_env`]).
 pub const CELL_PHASE_ORDINAL_BASES_ENV: &str = "AIPERF_CELL_PHASE_ORDINAL_BASES";
 
-/// Env var carrying the controller's artifact upload `host:port` (Stage E). The
+/// Env var carrying the controller's artifact upload `host:port`. The
 /// operator injects this into k8s pods (or the local launcher sets it to the
 /// controller's bound server) so a cell knows where to POST its per-record artifact
 /// files. When absent, a cell on a `tcp://` (k8s) controller coordinate derives the
@@ -65,28 +65,25 @@ pub const CELL_ARTIFACT_ADDR_ENV: &str = "AIPERF_CELL_ARTIFACT_ADDR";
 /// matching the controller's `AIPERF_CONTROLLER_ARTIFACT_BIND` default).
 pub const CELL_ARTIFACT_PORT_ENV: &str = "AIPERF_CELL_ARTIFACT_PORT";
 
-/// Env toggle disabling cross-host HTTP artifact shipping (Stage E). Default ON;
-/// set to `0`/`false`/`off` to fall back to the shared-storage product boundary (the
-/// controller then warns the per-record files are dropped, as before). For operators
-/// on a shared-FS (ReadWriteMany PVC) setup who prefer the cells' own writes.
+/// Env toggle disabling cross-host HTTP artifact shipping. Default ON; set to
+/// `0`/`false`/`off` to use cell-local or shared-filesystem writes.
 pub const CELL_HTTP_ARTIFACT_SHIPPING_ENV: &str = "AIPERF_CELL_HTTP_ARTIFACT_SHIPPING";
 
 /// The default controller artifact-server port (server bind + cell-derived fetch).
 pub const DEFAULT_ARTIFACT_PORT: u16 = 9600;
 
 /// **Test/dev-only force seam.** Env flag that makes a LOCAL (`--cells N`, same-host)
-/// run drive the CROSS-HOST HTTP artifact path over loopback instead of the default
-/// shared-FS Stage D concat: the controller binds its artifact upload server on
+/// run drive the cross-host HTTP artifact path over loopback instead of direct
+/// shared-filesystem concatenation: the controller binds its artifact upload server on
 /// `127.0.0.1:0`, injects that authority into each locally-launched cell, and the
 /// cells POST their per-record artifact files back over real TCP + streaming zstd —
 /// exercising the exact production shipping/upload/concat code that k8s uses, but
 /// without a second host. Set to `1`/`true`/`on`/`yes` to enable.
 ///
-/// This exists ONLY so a same-host multi-PROCESS test can prove the HTTP+zstd
-/// shipping mechanism end-to-end (see `rust/e2e/tests/test_cellular_http_shipping.rs`).
-/// It is NOT a product mode: default local `--cells N` (flag unset) is byte-unchanged
-/// — cells write directly to the controller-local scratch and the controller
-/// concatenates those writes with no HTTP, exactly as before.
+/// This lets same-host multi-process tests exercise HTTP+zstd shipping
+/// (see `rust/e2e/tests/test_cellular_http_shipping.rs`).
+/// It is not a product mode; local `--cells N` writes directly to
+/// controller-local scratch when the flag is unset.
 pub const CELL_ARTIFACT_HTTP_FORCE_ENV: &str = "AIPERF_CELL_ARTIFACT_HTTP_FORCE";
 
 /// Whether the [test/dev HTTP-force seam](CELL_ARTIFACT_HTTP_FORCE_ENV) is enabled
@@ -117,7 +114,7 @@ pub fn http_artifact_shipping_enabled() -> bool {
 }
 
 /// The controller's artifact upload `host:port` this cell should POST to, or `None`
-/// when HTTP shipping is off or this is a same-host launcher (Stage D concatenates
+/// when HTTP shipping is off or this is a same-host launcher (which concatenates
 /// the cell's own local writes instead — no HTTP). Resolution order:
 /// 1. shipping disabled → `None`;
 /// 2. [`CELL_ARTIFACT_ADDR_ENV`] set (operator/launcher) → that authority;
@@ -143,7 +140,7 @@ pub fn cell_artifact_authority() -> Option<String> {
         .rsplit_once(':')
         .map_or(host_port, |(host, _)| host);
     // A loopback coordinate is a co-located (local) run — the controller runs no
-    // HTTP upload server there (Stage D concatenates the cells' shared-FS writes),
+    // HTTP upload server there because cells use shared-filesystem writes,
     // so unless an explicit `CELL_ARTIFACT_ADDR` forced it above, ship nothing.
     if host
         .parse::<std::net::IpAddr>()
@@ -187,8 +184,7 @@ fn phase_from_name(name: &str) -> Option<Phase> {
 
 /// The autonomous issuer for this cell, or [`DirectIssuanceAuthority`] when the
 /// process is not a cell. The partition is read from the environment (via
-/// [`ModuloCellPartition::from_env`]), so the single-process default stays
-/// byte-unchanged.
+/// [`ModuloCellPartition::from_env`]).
 ///
 /// [`DirectIssuanceAuthority`]: crate::cellular::DirectIssuanceAuthority
 pub fn issuance_authority_from_env() -> std::rc::Rc<dyn IssuanceAuthority> {
@@ -211,9 +207,9 @@ pub fn issuance_authority_for(
 }
 
 /// Ship this cell's per-record artifact files (+ `inputs.json`) to the controller's
-/// HTTP upload server with streaming zstd (Stage E, cross-host path), when shipping
+/// HTTP upload server with streaming zstd, when shipping
 /// is enabled and an artifact authority is resolvable ([`cell_artifact_authority`]).
-/// A no-op on the same-host launcher (Stage D concatenates the cell's own writes) or
+/// A no-op on the same-host launcher, which concatenates the cell's own writes, or
 /// when shipping is disabled.
 ///
 /// Called at cell finalize AFTER the cell has written its artifacts to its own
@@ -259,7 +255,7 @@ pub fn ship_http_artifacts_if_enabled(
 /// fetches independently). This is FORMAT-BLIND: it keys only on `type == "file"`
 /// plus a non-empty `path`, so a single-file GRAPH trace (`dag_jsonl`, or a
 /// single-file `weka_trace`/`dynamo_trace`) ALSO returns its path and rides the same
-/// Stage G serve/download/rewrite plane. (A graph trace whose `path` is a
+/// serve/download/rewrite plane. (A graph trace whose `path` is a
 /// DIRECTORY or segmented-prefix ships every shard the loader reads over the same
 /// plane via the manifest — see [`crate::engine::cellular_controller`]'s
 /// `build_dataset_serve_plan` and [`download_cell_dataset_if_needed`].) Reads the
@@ -286,7 +282,7 @@ fn cell_dataset_dir() -> std::path::PathBuf {
 }
 
 /// Before the cell compiles its dataset, ship the controller's `file`/`path`
-/// dataset source to the cell over HTTP + streaming zstd (Stage G) and rewrite the
+/// dataset source to the cell over HTTP + streaming zstd and rewrite the
 /// cell's envelope to point at the landed cell-local copy, so `build_file_dataset`
 /// reads a local file rather than the unreachable controller path.
 ///
@@ -364,8 +360,6 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
     serde_json::to_vec(&envelope).context("re-serializing cell envelope after dataset download")
 }
 
-// -- velo cell transport (fetch spec + ship records) ------------------------------
-
 /// The velo bind for this cell, chosen from the controller coordinate: a `tcp://`
 /// coordinate whose host is **loopback** is a co-located (local launcher) run — the
 /// cell binds loopback too so it advertises a loopback endpoint the loopback-bound
@@ -421,7 +415,7 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     let controller = connect_controller(&velo, &coordinate)
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} connect controller: {error}"))?;
-    // Ultimate spec §4: opt-in phaser-driven START. Capture the velo + controller peer
+    // Capture the velo and controller peer before the client consumes them so
     // before the client consumes them, so the cell can subscribe to the phaser control
     // plane over the same fetch instance and await generation 1 instead of the event.
     let phaser_start = matches!(
@@ -438,7 +432,7 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
         .register(cell_id)
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} register: {error}"))?;
-    // Block until START. Either the phaser reaches generation 1 (§4 control plane) or the
+    // Block until START. Either the phaser reaches generation 1 or the
     // single-shot event triggers — every cell resumes together once the controller has
     // seen the registrations (or immediately, barrier-free). A poisoned event / finalized
     // phaser (the controller aborted before starting) surfaces here as an error.
@@ -465,16 +459,12 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     Ok(reply.envelope)
 }
 
-/// Ultimate spec §3 + §4.5: build this cell's owned dataset index over the fan-out
-/// broadcast, then run the dispatch state machine over its owned slice. When
+/// Build this cell's owned dataset index and dispatch its owned slice. When
 /// `AIPERF_CELL_DATASET_FANOUT` is set, the controller has broadcast the dataset's
 /// request-ids; the cell subscribes over velo (replay-on-attach → its full owned shard),
 /// builds an index keyed by request_id filtered to its round-robin owned positions
-/// (§3.4 → O(1/N) RAM), and issues each owned request through the `DispatchTracker`
-/// (§4.5: exactly-once, counted `DistributionMiss`). A no-op when the flag is unset. This
-/// proves the §3 fan-out delivers each cell its owned shard and the §4.5 dispatch state
-/// machine drives it, over real velo, in a real run — fail-closed on any miss (an
-/// incomplete fan-out).
+/// using O(1/N) RAM, and issues each request exactly once through `DispatchTracker`.
+/// A distribution miss fails the run. The function is a no-op when the flag is unset.
 #[cfg(feature = "velo")]
 pub async fn verify_dataset_fanout() -> Result<()> {
     use crate::cellular::dispatch_state::{DispatchDecision, DispatchTracker};
@@ -508,10 +498,7 @@ pub async fn verify_dataset_fanout() -> Result<()> {
             .await
             .map_err(|error| anyhow::anyhow!("dataset fan-out build index: {error}"))?;
 
-    // Run the §4.5 dispatch state machine over the owned slice, ACTUALLY dispatching
-    // each owned request the controller broadcast: on `Issue`, POST the endpoint-ready
-    // body to its URL (the fan-out is the real dispatch source, not a marker). Count
-    // 2xx as a completed dispatch. Exactly-once + counted misses come from the tracker.
+    // `DispatchTracker` enforces exactly-once issue and counts missing payloads.
     let mut tracker = DispatchTracker::new();
     let mut ok_2xx: u64 = 0;
     for id in index.owned_ids() {
@@ -652,7 +639,7 @@ impl CellRecordsShipper {
     }
 
     /// Builds a shipper that sends to an explicit velo `coordinate` under `cell_id`.
-    /// Used by a tier-T2 aggregator to ship its one merged store up to the controller
+    /// Used by an aggregator to ship its merged store to the controller
     /// (the `cell_id` is the aggregator's id, which orders the controller's
     /// `merge_store_partitions` deterministically).
     pub fn to_coordinate(cell_id: u32, coordinate: String) -> Self {
@@ -707,9 +694,8 @@ impl CellRecordsShipper {
         self.ship(heartbeat, CellMessage::Partition(partition))
     }
 
-    /// Stage C: ships this cell's folded EXACT column store + a counters-only heartbeat
-    /// (the metrics-only exact-fold path). A cell running exact-fold folded every record
-    /// into its own accumulator and DROPPED the per-record data, so it has no record
+    /// Ships this cell's folded exact column store with a counters-only heartbeat.
+    /// Exact-fold mode retains no per-record data, so it has no record
     /// `Vec` to ship — it ships the folded store instead, which the controller appends
     /// across cells (`merge_store_partitions`) into the merged report.
     ///
@@ -822,7 +808,7 @@ mod tests {
     #[test]
     fn detects_only_file_path_datasets_for_ship() {
         // A `file` dataset with a `path` is the one non-synthetic source a cross-host
-        // cell cannot reach — the only shape the controller must ship (Stage G).
+        // cell cannot reach and must be shipped by the controller.
         let file_path = serde_json::json!({"run": {"cfg": {"datasets": [
             {"type": "file", "format": "single_turn", "path": "/data/prompts.jsonl"}
         ]}}});
@@ -834,7 +820,7 @@ mod tests {
         // A single-file GRAPH trace (`dag_jsonl`/`weka_trace`/`dynamo_trace`) is likewise
         // shipped: the predicate is format-blind (it keys only on `type == "file"` + a
         // non-empty `path`), so a graph `{type:file, format:dag_jsonl, path}` also returns
-        // the path and rides the SAME Stage G serve/download/rewrite plane. The controller
+        // the path and uses the same serve/download/rewrite plane. The controller
         // separately fails closed if that graph path is a directory/segmented-prefix.
         for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace"] {
             let graph = serde_json::json!({"run": {"cfg": {"datasets": [
@@ -843,7 +829,7 @@ mod tests {
             assert_eq!(
                 cellular_file_dataset_path(&graph),
                 Some(std::path::PathBuf::from("/traces/graph.jsonl")),
-                "single-file graph trace {graph_format} must ship over Stage G"
+                "single-file graph trace {graph_format} must be shipped"
             );
         }
 

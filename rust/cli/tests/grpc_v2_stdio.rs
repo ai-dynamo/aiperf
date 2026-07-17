@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Process proof for the protocol-v2-only native KServe gRPC pair.
+//! Protocol-v2 native KServe gRPC process coverage.
 
 use std::convert::Infallible;
 use std::io::Write;
@@ -59,7 +59,6 @@ fn one_json_line(output: &Output) -> Value {
 }
 
 fn capabilities() -> Value {
-    // Capabilities is an in-process call now — one binary, no subprocess.
     serde_json::to_value(
         aiperf_cli::execute_mode::capabilities_catalog().expect("capabilities catalog"),
     )
@@ -67,8 +66,6 @@ fn capabilities() -> Value {
 }
 
 fn run_child(request: &Value) -> Output {
-    // The stdin wire is the bare `run`; the operation is selected by the re-exec
-    // MODE (`--execute` / `--validate`), not a wire field.
     let flag = match request["operation"].as_str() {
         Some("validate") => "--validate",
         _ => "--execute",
@@ -335,9 +332,7 @@ fn infer_response(text: &str, request: &ModelInferRequest) -> ModelInferResponse
     }
 }
 
-/// A non-LLM embedding `ModelInfer` reply: one `FP32` tensor named
-/// `text_embeddings` of `dim` deterministic values, mirroring a Triton
-/// `python`-backend embedder.
+/// Return one deterministic `FP32` embedding tensor.
 fn embedding_infer_response(request: &ModelInferRequest, dim: usize) -> ModelInferResponse {
     let embedding: Vec<f32> = (0..dim).map(|index| index as f32 * 0.5).collect();
     ModelInferResponse {
@@ -357,8 +352,6 @@ fn embedding_infer_response(request: &ModelInferRequest, dim: usize) -> ModelInf
     }
 }
 
-/// Unary-only KServe service that answers every `ModelInfer` with an `FP32`
-/// embedding tensor (embeddings are never streamed).
 #[derive(Clone, Debug)]
 struct EmbeddingService {
     requests: Arc<Mutex<Vec<ModelInferRequest>>>,
@@ -424,7 +417,6 @@ impl UnaryService<Bytes> for EmbeddingInferSvc {
     }
 }
 
-/// Start an embedding-only gRPC server on an ephemeral port.
 async fn start_embedding_server(
     dim: usize,
 ) -> (
@@ -453,8 +445,6 @@ async fn start_embedding_server(
     (format!("grpc://{address}"), captured, shutdown_tx, server)
 }
 
-/// A v2 request selecting the `kserve_v2_embeddings` endpoint (unary, non-LLM)
-/// with the input/output tensor names renamed to a Triton embedder's shape.
 fn embedding_request(operation: &str, artifact_dir: &std::path::Path, url: &str) -> Value {
     json!({
         "protocol_version": 2,
@@ -716,12 +706,6 @@ benchmark:
     server.await.unwrap();
 }
 
-/// Full-stack process proof for the NON-LLM embedding path: the real runner
-/// binary, driven by a protocol-v2 `kserve_v2_embeddings` request over native
-/// gRPC, dispatches unary `ModelInfer` with a renamed STRING input tensor
-/// ("query") and parses the `FP32` "text_embeddings" reply into a successful
-/// run — no token-generation semantics. This is the Triton `python`-backend
-/// embedder case (Yingge's `clip-l14`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn embeddings_pair_validates_and_executes_over_native_grpc_stdio() {
     const DIM: usize = 8;
@@ -763,7 +747,6 @@ async fn embeddings_pair_validates_and_executes_over_native_grpc_stdio() {
     assert_eq!(terminal["provenance"]["transport"], "grpc");
     assert_eq!(terminal["provenance"]["workload"], "scheduled");
 
-    // The runner sent unary ModelInfer with the renamed BYTES input tensor.
     let requests = captured.lock().unwrap().clone();
     assert_eq!(requests.len(), 2, "one ModelInfer per synthetic entry");
     assert!(

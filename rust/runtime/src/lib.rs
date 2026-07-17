@@ -3,19 +3,8 @@
 
 //! Rust-native AIPerf load-generation runtime.
 //!
-//! OpenAI SSE chunk types live in [`crate::transport::http`]`::sse`, the OpenAI
-//! chat request-body builder in [`crate::endpoints`], and the `CollectorObserver`
-//! recorder in [`loadgen_core`]`::observer`; the
-//! Graph-IR engine lives in `crate::graph`; the clock-native scheduling policy
-//! (arrivals, slots, stop conditions, ramps, cancellation, and URL selection)
-//! lives in shared [`crate::timing`]. This library owns runtime composition used
-//! by the `aiperf` binary: the online HTTP sink over `aiperf-transport-http` ([`http`]),
-//! ancillary policy wiring ([`ancillary`]), phased scheduled execution
-//! ([`phase_runtime`]), workload shaping ([`workload`]), the online run loop
-//! ([`run`]), reporting ([`report`]), and canonical static-accuracy execution
-//! seams. Named compile-time extension composition lives in `crate::extensions`
-//! and is owned by the runner, so extension crates never need a dependency cycle
-//! through this runtime crate.
+//! The crate composes endpoint, transport, scheduling, workload, reporting,
+//! accuracy, and extension subsystems for the `aiperf` binary.
 //! With the `dynosim` Cargo feature, [`dynosim`] composes the
 //! same workloads and observers with `SimClock` plus Dynamo's passive mock
 //! engine for deterministic, socket-free co-simulation.
@@ -42,13 +31,9 @@ pub mod scheduler;
 pub mod user_centric;
 pub mod workload;
 
-// The v2 protocol / registry / execution layer for the `aiperf` binary.
-// Gated by `engine` so `mock-server` and other library consumers skip it
-// entirely.
 #[cfg(feature = "engine")]
 pub mod engine;
 
-// Modules absorbed from the formerly-standalone aiperf-* library crates.
 pub mod accuracy_core;
 pub mod adaptive_core;
 pub mod body_plan;

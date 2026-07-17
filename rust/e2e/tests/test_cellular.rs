@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end coverage for cellular (multi-process) mode, reached through the
-//! ordinary Python frontend via `--cells N`.
+//! End-to-end coverage for cellular multi-process execution via `--cells N`.
 //!
 //! `--cells N` sets `runtime.cells` in the projected protocol-v2 envelope; the
 //! launched `aiperf` becomes a controller that (via the `LocalLauncher`)
@@ -10,8 +9,7 @@
 //! partition of the request budget. Cells fetch their sliced envelope over the
 //! **velo** transport, await the controller's synchronized START, run their slice,
 //! ship their records over velo, and the controller merges them into one report.
-//! These tests prove the whole path works from `aiperf profile` — not just the
-//! Rust internals — and that an `N`-cell run reproduces the single-cell run's
+//! These tests require an `N`-cell run to reproduce the single-cell run's
 //! dataset-deterministic metrics byte-for-byte through the full presentation
 //! pipeline.
 //!
@@ -29,10 +27,6 @@ const DETERMINISTIC_METRICS: &[&str] = &["input_sequence_length", "output_sequen
 
 /// `aiperf profile --cells 3` runs end-to-end and reports the full request budget.
 ///
-/// Exercises the entire product path: Python projects `runtime.cells = 3`, the
-/// controller spawns three cell subprocesses, each dispatches its slice over the
-/// shared HTTP transport, ships its records back, and the controller merges them
-/// into one report the Python frontend then presents.
 #[tokio::test]
 async fn test_cellular_run_from_python_frontend() {
     let h = AIPerfHarness::new().await;
@@ -49,11 +43,7 @@ async fn test_cellular_run_from_python_frontend() {
         60,
         "merged cellular report must carry every cell's records"
     );
-    // Non-vacuous proof the CONTROLLER (multi-cell) path actually ran: the
-    // cellular-heartbeat.json sidecar is written only by the controller after
-    // aggregating the cells' shipped heartbeats. If `--cells` were stripped from the
-    // wire (or otherwise inert) this run would be a plain single process and the
-    // sidecar would be absent — so success()+request_count alone cannot mask it.
+    // Only the controller writes the cellular heartbeat after merging cell heartbeats.
     assert!(
         r.artifacts
             .find_file("**/cellular-heartbeat.json")
@@ -63,11 +53,7 @@ async fn test_cellular_run_from_python_frontend() {
     );
 }
 
-/// A seedless `--cells N` run auto-derives one shared seed and still runs multi-cell.
-///
-/// Previously rejected (cellular required an explicit `--random-seed`). The controller
-/// now derives a single seed from the run identity and injects it into every cell, so
-/// all cells compose the same dataset space without the operator supplying one.
+/// A seedless `--cells N` run derives one shared seed for all cells.
 #[tokio::test]
 async fn test_cellular_autoderives_seed_when_absent() {
     let h = AIPerfHarness::new().await;
@@ -113,10 +99,7 @@ async fn test_cellular_matches_single_cell() {
     let cellular = h3.run(&args(3, &h3.mock.url));
     assert!(cellular.success(), "3-cell run failed: {}", cellular.stderr);
 
-    // Guard against a vacuous pass: prove the two runs really differ in topology.
-    // The 3-cell run goes through the controller (emits cellular-heartbeat.json); the
-    // 1-cell baseline is single-process (no sidecar). Without this, a stripped
-    // `--cells` would make both runs 1-cell and byte-identical by construction.
+    // The heartbeat distinguishes controller execution from the single-process run.
     assert!(
         cellular
             .artifacts
@@ -181,9 +164,7 @@ fn record_isl_osl_multiset(r: &RunResult) -> Vec<(i64, i64)> {
     rows
 }
 
-/// Stage D: a `--cells N` run with per-record artifacts enabled (`--export-level raw`)
-/// EMITS the merged per-record files in the run artifact dir, and their row SET equals
-/// the single-cell run's for the same seed.
+/// A `--cells N` run emits merged per-record files matching the single-cell row set.
 ///
 /// Each cell runs its ordinary execute path with a controller-local `temp_root/cell-{id}`
 /// dir as its artifact_dir, so it writes its own `profile_export.jsonl` / `_raw.jsonl`
@@ -210,7 +191,6 @@ async fn test_cellular_emits_per_record_artifacts_matching_single_cell() {
     let cellular = h3.run(&args(3, &h3.mock.url));
     assert!(cellular.success(), "3-cell run failed: {}", cellular.stderr);
 
-    // Topology guard: the 3-cell run went through the controller; the baseline did not.
     assert!(
         cellular
             .artifacts
@@ -226,21 +206,19 @@ async fn test_cellular_emits_per_record_artifacts_matching_single_cell() {
         "1-cell baseline must be single-process (no cellular sidecar)"
     );
 
-    // The controller actually emitted the per-record files (Stage D): before this they
-    // were written only into the discarded scratch tree and never reached the run dir.
     assert!(
         cellular
             .artifacts
             .find_file("**/profile_export.jsonl")
             .is_some(),
-        "3-cell run must emit the merged profile_export.jsonl (Stage D concat)"
+        "3-cell run must emit the merged profile_export.jsonl"
     );
     assert!(
         cellular
             .artifacts
             .find_file("**/profile_export_raw.jsonl")
             .is_some(),
-        "3-cell run must emit the merged profile_export_raw.jsonl (Stage D concat)"
+        "3-cell run must emit the merged profile_export_raw.jsonl"
     );
 
     let base_records = record_isl_osl_multiset(&baseline);
@@ -259,37 +237,30 @@ async fn test_cellular_emits_per_record_artifacts_matching_single_cell() {
         "3-cell merged per-record row SET must equal the single-cell run's for the same seed"
     );
 
-    // Raw records must also be present and the same count (byte-append concat).
     assert_eq!(
         baseline.artifacts.raw_records().len(),
         cellular.artifacts.raw_records().len(),
         "1-cell and 3-cell must emit the same number of raw per-record rows"
     );
 
-    // inputs.json (always-on per rust_wire) must be emitted by the controller (Stage D)
-    // and be IDENTICAL to the single-cell run's: every cell generates the same full-dataset
-    // inputs.json from the shared seed, so the controller copies one cell's copy verbatim.
-    // Before Stage D it was silently dropped (written only into the discarded scratch tree).
+    // Every cell generates the same full-dataset inputs document from the shared seed.
     let base_inputs = baseline.artifacts.inputs();
     let cell_inputs = cellular.artifacts.inputs();
     assert!(
         !base_inputs.is_null(),
         "1-cell baseline must emit inputs.json"
     );
-    assert!(
-        !cell_inputs.is_null(),
-        "3-cell run must emit inputs.json (Stage D controller copy)"
-    );
+    assert!(!cell_inputs.is_null(), "3-cell run must emit inputs.json");
     assert_eq!(
         base_inputs, cell_inputs,
         "3-cell inputs.json must equal the single-cell run's (identical full-dataset doc)"
     );
 }
 
-/// Stage C: a `--cells N` metrics-only run with the DEFAULT exact-fold path (each cell
+/// A `--cells N` metrics-only run with exact folding (each cell
 /// folds its records into its own EXACT store and ships that folded store to the
-/// controller, which appends them) reproduces the same run on the legacy cellular
-/// RETAIN path (`AIPERF_RUNTIME_EXACT_FOLD=0`, cells ship raw record `Vec`s merged in
+/// controller, which appends them) reproduces retained-record cellular execution
+/// (`AIPERF_RUNTIME_EXACT_FOLD=0`, cells ship raw record `Vec`s merged in
 /// global dispatch order) for the dataset-deterministic metrics.
 ///
 /// Both runs go through the controller (multi-cell), differing ONLY in whether the
@@ -310,7 +281,6 @@ async fn test_cellular_exact_fold_matches_retain() {
         )
     };
 
-    // Default engine: exact-fold — each cell ships a folded CellMessage::StorePartition.
     let h_fold = AIPerfHarness::new().await;
     let folded = h_fold.run(&args(&h_fold.mock.url));
     assert!(
@@ -319,7 +289,6 @@ async fn test_cellular_exact_fold_matches_retain() {
         folded.stderr
     );
 
-    // Legacy retain — each cell ships its raw record Vec, merged in global order.
     let h_retain = AIPerfHarness::new().await;
     let retained = h_retain.run_env(
         &args(&h_retain.mock.url),
@@ -331,7 +300,6 @@ async fn test_cellular_exact_fold_matches_retain() {
         retained.stderr
     );
 
-    // Both must have gone through the controller (multi-cell), else this is vacuous.
     for (label, run) in [("exact-fold", &folded), ("retain", &retained)] {
         assert!(
             run.artifacts
@@ -364,7 +332,7 @@ async fn test_cellular_exact_fold_matches_retain() {
     }
 }
 
-/// Tier T1 (bounded-memory horizontal scale): a `--cells N` run with SKETCH metric
+/// A `--cells N` run with sketch metric
 /// storage (`AIPERF_METRICS_SKETCH=1`) reproduces the single-cell sketch run's EXACT
 /// aggregates. Each cell folds its records into a per-`(phase, tag)` t-digest store
 /// that retains no rows and ships that folded store (`CellMessage::StorePartition`,
@@ -374,12 +342,8 @@ async fn test_cellular_exact_fold_matches_retain() {
 /// min/max), so `request_count` and the INTEGER ISL/OSL `avg`/`min`/`max` match the
 /// single-cell run exactly. Percentiles are t-digest-approximate (a merged digest
 /// differs slightly from a single-ingestion digest) and are intentionally NOT compared
-/// for equality — the exact-aggregate contract is what tier T1 guarantees.
+/// for equality; the contract covers exact aggregates.
 ///
-/// This proves the whole path from `aiperf profile --cells N --sketch`: Python projects
-/// `metrics.sketch` + `runtime.cells`, each cell folds-and-drops into a bounded sketch
-/// (never retaining its record stream), ships the bounded store, and the controller
-/// merges O(cells) sketches into one report — the change that unblocked sketch cellular.
 #[tokio::test]
 async fn test_cellular_sketch_matches_single_cell() {
     let args = |cells: u32, url: &str| {
@@ -408,8 +372,6 @@ async fn test_cellular_sketch_matches_single_cell() {
         cellular.stderr
     );
 
-    // Topology guard: the 3-cell run went through the controller; the baseline did not
-    // — otherwise the merge is never exercised and the parity check is vacuous.
     assert!(
         cellular
             .artifacts
@@ -425,8 +387,7 @@ async fn test_cellular_sketch_matches_single_cell() {
         "1-cell baseline must be single-process (no cellular sidecar)"
     );
 
-    // The record total survives fold-and-clear + ship + merge (the store carries it;
-    // a sketch store's row count is 0).
+    // The store carries the record total even though a sketch store retains no rows.
     assert_eq!(
         baseline.artifacts.request_count() as u32,
         cellular.artifacts.request_count() as u32,
@@ -454,7 +415,7 @@ async fn test_cellular_sketch_matches_single_cell() {
     }
 }
 
-/// Tier T2 (hierarchical tree-merge): with `AIPERF_CELL_AGG_FANOUT` set, the controller
+/// With `AIPERF_CELL_AGG_FANOUT` set, the controller
 /// routes the cells through an aggregator tier — `M = ceil(cells / fanout)` extra
 /// `aiperf --aggregator` processes, each collecting its round-robin subtree of
 /// cells' folded stores, merging them, and shipping ONE merged store up — instead of the
@@ -464,9 +425,6 @@ async fn test_cellular_sketch_matches_single_cell() {
 /// deterministic metrics. Sketch storage (a fold path) so the cells ship a `StorePartition`
 /// the aggregator can merge; a base port well clear of the default avoids any collision.
 ///
-/// This exercises the full multi-process tree end-to-end (6 cells + 2 aggregators +
-/// controller) from `aiperf profile`, proving the single-controller fan-in ceiling is
-/// liftable by inserting aggregator tiers without changing the report.
 #[tokio::test]
 async fn test_cellular_tree_merge_matches_flat_star() {
     let args = |url: &str| {
@@ -497,7 +455,6 @@ async fn test_cellular_tree_merge_matches_flat_star() {
     );
     assert!(tree.success(), "tree cellular run failed: {}", tree.stderr);
 
-    // Both went through the controller (multi-cell), else the merge is never exercised.
     for (label, run) in [("flat", &flat), ("tree", &tree)] {
         assert!(
             run.artifacts
@@ -526,16 +483,16 @@ async fn test_cellular_tree_merge_matches_flat_star() {
         );
         assert_eq!(
             a, b,
-            "tier-T2 tree merge {metric} diverged from the flat star: flat={a}  tree={b}"
+            "tree merge {metric} diverged from the flat star: flat={a}  tree={b}"
         );
     }
 }
 
-/// Tier T3 (master-less barrier-free start): `AIPERF_CELL_BARRIER_FREE=1` makes the
+/// `AIPERF_CELL_BARRIER_FREE=1` makes the
 /// controller trigger START immediately instead of gathering all N cell registrations
 /// first (the O(N) fan-in rendezvous). Start timing does not affect the dataset-
 /// deterministic metrics, so a barrier-free run reproduces the synchronized-start run's
-/// deterministic metrics exactly — proving the rendezvous is removable for unbounded scale.
+/// deterministic metrics exactly.
 #[tokio::test]
 async fn test_cellular_barrier_free_matches_synchronized() {
     let args = |url: &str| {
@@ -586,19 +543,18 @@ async fn test_cellular_barrier_free_matches_synchronized() {
         assert!(!a.is_null(), "synchronized report missing metric {metric}");
         assert_eq!(
             a, b,
-            "tier-T3 barrier-free {metric} diverged from synchronized start: \
+            "barrier-free {metric} diverged from synchronized start: \
              sync={a}  barrier-free={b}"
         );
     }
 }
 
-/// Ultimate spec §4 (monotonic phaser control plane): `AIPERF_CELL_PHASER_START=1`
+/// `AIPERF_CELL_PHASER_START=1`
 /// routes the run-wide START through the distributed phaser (the controller binds a
 /// `PhaserServer` and advances generation 1 = `Started`; cells subscribe with
 /// `PhaserClient` and await generation 1) instead of the single-shot velo event. START
 /// timing does not affect the dataset-deterministic metrics, so a phaser-START run
-/// reproduces the event-START run's deterministic metrics exactly — proving the
-/// broadcast → phaser → phaser_velo control plane drives a real benchmark end-to-end.
+/// reproduces the event-START run's deterministic metrics exactly.
 #[tokio::test]
 async fn test_cellular_phaser_start_matches_event_start() {
     let args = |url: &str| {
@@ -616,7 +572,6 @@ async fn test_cellular_phaser_start_matches_event_start() {
     let event = h_event.run_env(&args(&h_event.mock.url), &[sketch]);
     assert!(event.success(), "event-START run failed: {}", event.stderr);
 
-    // §4: the monotonic phaser drives START.
     let h_phaser = AIPerfHarness::new().await;
     let phaser = h_phaser.run_env(
         &args(&h_phaser.mock.url),
@@ -649,20 +604,18 @@ async fn test_cellular_phaser_start_matches_event_start() {
         assert!(!a.is_null(), "event report missing metric {metric}");
         assert_eq!(
             a, b,
-            "§4 phaser-START {metric} diverged from event-START: event={a}  phaser={b}"
+            "phaser-START {metric} diverged from event-START: event={a}  phaser={b}"
         );
     }
 }
 
-/// Ultimate spec §3 (dataset fan-out data plane) + §4.5 (dispatch state machine): with
+/// With
 /// `AIPERF_CELL_DATASET_FANOUT=1` the controller generates the dataset's request-ids once
 /// and broadcasts them (advancing the phaser `ShardsAvailable` per chunk); each cell
 /// subscribes over velo, builds its owned index (round-robin owned-filter → O(1/N) RAM),
 /// and runs the dispatch state machine over its owned slice (exactly-once, counted
 /// `DistributionMiss`). The fan-out is additive verification — it does not change the
-/// benchmark — so an ON run reproduces the OFF run's deterministic metrics exactly, and
-/// (via the runner's fail-closed miss guard) succeeding proves every cell received its
-/// full owned shard with zero distribution misses.
+/// benchmark, so an enabled run reproduces the disabled run's deterministic metrics.
 #[tokio::test]
 async fn test_cellular_dataset_fanout_matches_baseline() {
     let args = |url: &str| {
@@ -705,7 +658,7 @@ async fn test_cellular_dataset_fanout_matches_baseline() {
         assert!(!a.is_null(), "baseline report missing metric {metric}");
         assert_eq!(
             a, b,
-            "§3 dataset-fanout {metric} diverged from baseline: off={a}  on={b}"
+            "dataset-fanout {metric} diverged from baseline: off={a}  on={b}"
         );
     }
 }
@@ -729,18 +682,9 @@ fn min_request_start_ns(run: &RunResult) -> i64 {
 /// `AIPERF_CELL_SHARED_ORIGIN=1` zeroes every cell's record timeline at the shared
 /// velo START barrier instead of at each cell's own post-setup local run start.
 ///
-/// Proves the barrier-synchronized origin end-to-end at the raw-record level:
-///
-/// 1. **No regression** — the shifted origin only moves ABSOLUTE timestamps; all
-///    latency/throughput/token metrics are differences, so an ON run reproduces a
-///    single-cell baseline's deterministic ISL/OSL exactly.
-/// 2. **The origin actually moved to the barrier** — with the flag ON the first
-///    request's `request_start_ns` is measured from the START barrier, so it is
-///    LATER than the flag-OFF run's (whose origin is each cell's post-setup start)
-///    by the whole per-cell setup span (dataset compile + the large-tokenizer
-///    load). That the ON minimum strictly exceeds the OFF minimum by a substantial
-///    margin is the deterministic signature of the origin having been pulled back
-///    to the shared barrier.
+/// Absolute timestamps move with the origin, while duration metrics and
+/// dataset-deterministic metrics remain unchanged. The first request timestamp
+/// includes per-cell setup when measured from the shared barrier.
 #[tokio::test]
 async fn test_cellular_shared_origin_zeroes_at_the_barrier() {
     let args = |url: &str| {
@@ -789,7 +733,6 @@ async fn test_cellular_shared_origin_zeroes_at_the_barrier() {
     }
     assert_eq!(on.artifacts.request_count() as u32, 60);
 
-    // (1) No regression: shared origin preserves the deterministic ISL/OSL exactly.
     let base_json = base.artifacts.json();
     let on_json = on.artifacts.json();
     for metric in DETERMINISTIC_METRICS {
@@ -802,9 +745,7 @@ async fn test_cellular_shared_origin_zeroes_at_the_barrier() {
         );
     }
 
-    // (2) The origin moved to the barrier: the ON first-request timestamp is later
-    // than the OFF one by the per-cell setup span. Assert a strict, substantial
-    // shift (>50ms — setup includes the large-tokenizer load, reliably seconds).
+    // Setup includes tokenizer loading, so the origin shift must exceed 50 ms.
     let off_min = min_request_start_ns(&off);
     let on_min = min_request_start_ns(&on);
     assert!(

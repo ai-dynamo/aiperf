@@ -1,27 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! The monotonic **phaser** control plane
-//! (`specs/2026-07-15-ultimate-cellular-velo-runtime-design.md` §4).
+//! Monotonic phaser control plane.
 //!
 //! A phaser is a monotonic generation counter the controller increments as the
-//! benchmark progresses, broadcast to all cells with **replay-on-attach** (over
-//! [`Broadcast`](super::broadcast::Broadcast)). It generalizes the one-shot synchronized
-//! START (§1.4) into one primitive that subsumes three things that were separate:
-//!
-//! 1. **START** — generation 1 = [`PhaseTransition::Started`] (replaces the
-//!    `AtomicU32` + `Notify` + single-shot-event scaffold).
-//! 2. **Dataset progression** — [`PhaseTransition::ShardsAvailable(k)`] means shards
-//!    `[0, k)` are pullable (drives the §3 data plane's availability interlock).
-//! 3. **Phase transitions** — [`PhaseTransition::PhaseAdvance`] (warmup → profiling →
-//!    drain) as generation steps.
+//! benchmark progresses and broadcasts to all cells with replay on attach. It
+//! carries synchronized start, dataset availability, phase transitions, and
+//! completion.
 //!
 //! Monotonic + replay-on-attach ⇒ a late-joining cell reads "current generation = G"
-//! atomically, then live-follows — **no missed transition** (the property START and the
-//! dataset interlock both need). Because the counter is monotonic and never reset,
-//! **cyclic** progressions (ramp steps, multi-round sweeps) come for free: consumers gate
-//! on `generation >= threshold_for_this_round` with generation arithmetic, never equality,
-//! so there is no ABA (§4.3).
+//! atomically, then follows live events without missing a transition. Consumers
+//! gate on `generation >= threshold`, never equality, so cyclic progressions
+//! cannot suffer ABA.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,13 +20,12 @@ use serde::{Deserialize, Serialize};
 
 use super::broadcast::{Broadcast, BroadcastEvent, Subscription};
 
-/// What a generation step means. Extend with new variants as the benchmark grows more
-/// phases; the phaser itself only cares that generation is monotonic.
+/// Meaning carried by one monotonic generation step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PhaseTransition {
     /// Generation 1: begin the benchmark (the synchronized/`barrier-free` START).
     Started,
-    /// Dataset shards `[0, k)` are now available to pull (§3 data-plane availability).
+    /// Dataset shards `[0, k)` are available to pull.
     ShardsAvailable(u64),
     /// A benchmark phase boundary (e.g. `"warmup"` → `"profiling"` → `"drain"`).
     PhaseAdvance(String),
@@ -53,8 +42,7 @@ pub struct PhaseEvent {
     pub transition: PhaseTransition,
 }
 
-/// Producer-side phaser: the controller `advance`s it; the current generation is a
-/// monotonic counter. Cheap to clone (shares one broadcast + counter).
+/// Producer-side phaser with shared broadcast and generation state.
 #[derive(Clone)]
 pub struct Phaser {
     broadcast: Broadcast<PhaseEvent>,

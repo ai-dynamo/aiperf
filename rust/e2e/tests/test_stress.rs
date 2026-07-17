@@ -3,11 +3,8 @@
 mod common;
 use common::*;
 
-// Tests for high concurrency and performance scenarios.
-
 const UI: &str = "simple";
 
-/// Mirror of `RunResult.has_streaming_metrics`: all streaming metric keys present.
 fn has_streaming_metrics(r: &RunResult) -> bool {
     let json = r.artifacts.json();
     [
@@ -20,7 +17,6 @@ fn has_streaming_metrics(r: &RunResult) -> bool {
     .all(|k| json.get(k).map(|v| !v.is_null()).unwrap_or(false))
 }
 
-/// High concurrency (1000) with streaming and multimodal inputs.
 #[tokio::test]
 async fn test_high_concurrency_multimodal() {
     let h = AIPerfHarness::new().await;
@@ -36,27 +32,19 @@ async fn test_high_concurrency_multimodal() {
         ),
         600,
     );
-    // Allow up to 0.5% drop at 1000-way concurrency. On a busy VDI a couple of
-    // in-flight requests can be cancelled during shutdown without indicating a
-    // real product bug — the assertion is about the stress path completing, not
-    // about exact request accounting.
+    // Busy hosts may cancel a few in-flight requests during shutdown.
     let count = r.artifacts.request_count();
     assert!(count >= 995.0, "Expected >=995 requests, got {count}");
     assert!(has_streaming_metrics(&r));
 }
 
-/// High worker count (100 workers) with streaming.
 #[tokio::test]
 async fn test_high_worker_count_streaming() {
-    // Windows VDIs hit WinError 1450 spawning 100 worker subprocesses; this
-    // stress level is Linux-CI only.
     if cfg!(target_os = "windows") {
         return;
     }
 
-    // 100 worker subprocesses spawning concurrently overrun the default
-    // registration retry budget; bump the per-worker max attempts so each
-    // worker has ~60s before giving up.
+    // The larger retry budget gives 100 concurrent workers time to register.
     // SAFETY: single-threaded test setup before the run spawns subprocesses.
     unsafe {
         std::env::set_var("AIPERF_SERVICE_REGISTRATION_MAX_ATTEMPTS", "60");

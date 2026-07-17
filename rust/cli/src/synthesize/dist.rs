@@ -1,21 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Pure-Rust port of the lognormal / mixture-delay samplers
-//! (`src/aiperf/dataset/agentic_code_gen/distributions.py`).
+//! Lognormal and mixture-delay samplers for Agentic Code synthesis.
 //!
-//! The synthesizer only ever calls these with `size=1`, so this file implements
-//! the `size=1` path exactly: one draw, then rejection-resample any out-of-range
-//! value (up to `max_attempts`) before clamping. The critical numpy draw-order
-//! for `sample_mixture_delay` (`distributions.py:98-101`) is preserved: draw the
-//! Bernoulli selector FIRST, then ALWAYS draw both the agentic and human
-//! lognormals, then select — matching numpy's `np.where` over full arrays.
+//! Mixture sampling always draws the selector and both component values before
+//! selecting, preserving the seeded random stream.
 
 use aiperf_runtime::rng::numpy_generator::NumpyGenerator;
 
 use crate::synthesize::config::{LognormalParams, MixtureDelayConfig};
 
-/// Draw one sample from a lognormal distribution with rejection sampling for
-/// `[min, max]` and a hard `clip_min` floor (`distributions.py:53-87`, size=1).
+/// Draw one bounded lognormal sample with a hard `clip_min` floor.
 pub fn sample_lognormal(
     params: &LognormalParams,
     rng: &mut NumpyGenerator,
@@ -46,8 +40,7 @@ pub fn sample_lognormal(
     sample
 }
 
-/// Draw one sample from the two-component mixture delay model
-/// (`distributions.py:90-104`, size=1).
+/// Draw one sample from the two-component mixture delay model.
 ///
 /// Draw order (must not change): `is_agentic = random() < agentic_fraction`,
 /// then `agentic = sample_lognormal(...)`, then `human = sample_lognormal(...)`,

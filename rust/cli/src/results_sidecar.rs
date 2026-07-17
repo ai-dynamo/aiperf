@@ -1,20 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native `aiperf results-sidecar` — the controller pod's results server.
+//! `aiperf results-sidecar`, the controller pod's results server.
 //!
-//! Native port of the Python `aiperf.kubernetes.results_sidecar`: a tiny HTTP
-//! server that serves the controller pod's `/results` volume so the operator can
-//! recover artifacts even if the main container exits after export. Files are
-//! hidden until the controller writes `.aiperf_results_ready.json` (see
-//! `crate::k8s::write_ready_marker`), preventing consumers from downloading
-//! partial exports; `checkpoints/` artifacts are served unconditionally.
+//! The server exposes the controller pod's `/results` volume after
+//! `.aiperf_results_ready.json` is written. Checkpoint artifacts remain
+//! available while the run is in progress.
 //!
-//! Contract (unchanged, so the operator's `_completion_fetch` fetch works
-//! against either implementation):
+//! HTTP contract:
 //! - `GET /healthz` -> `{"status":"ok"}`
 //! - `GET /api/results/list` -> `{"files":[{"name","size"}],"ready","processing"}`
-//! - `GET /api/results/files/{path}` -> the file bytes (marker-gated, traversal-safe)
+//! - `GET /api/results/files/{path}` -> marker-gated file bytes after lexical path checks
 //!
 //! Env: `AIPERF_RESULTS_DIR` (default `/results`),
 //! `AIPERF_RESULTS_SIDECAR_PORT` (default `9091`). Binds `0.0.0.0:<port>`.
@@ -31,7 +27,7 @@ const READY_MARKER_NAME: &str = ".aiperf_results_ready.json";
 const PROCESSING_MARKER_NAME: &str = ".aiperf_results_processing.json";
 const CHECKPOINTS_DIR_NAME: &str = "checkpoints";
 
-/// `aiperf results-sidecar` entry: run the results HTTP server until killed.
+/// Run the results HTTP server until the process is terminated.
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let results_dir = flag_value(args, "--results-dir")
         .map(PathBuf::from)
@@ -50,7 +46,6 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-/// Bind `0.0.0.0:port` and serve connections until the process is killed.
 async fn serve(results_dir: PathBuf, port: u16) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
     tracing::info!(port, dir = %results_dir.display(), "results sidecar listening");
@@ -76,7 +71,6 @@ async fn serve(results_dir: PathBuf, port: u16) -> anyhow::Result<()> {
     }
 }
 
-/// Route one request. Only `GET` is served.
 async fn handle(
     req: Request<hyper::body::Incoming>,
     base_dir: PathBuf,
@@ -99,7 +93,6 @@ async fn handle(
     Ok(resp)
 }
 
-/// `ResultsListResponse`: files (name+size), plus ready/processing flags.
 fn list_results(base_dir: &Path) -> serde_json::Value {
     if !base_dir.is_dir() {
         return json!({"files": [], "ready": false, "processing": false});
@@ -115,9 +108,7 @@ fn list_results(base_dir: &Path) -> serde_json::Value {
     })
 }
 
-/// Enumerate downloadable artifacts: everything under `base_dir` once the ready
-/// marker is set (excluding the marker itself and `checkpoints/`), plus every
-/// `checkpoints/` file unconditionally. Sorted by relative posix name.
+/// Enumerate ready artifacts and all checkpoints in stable path order.
 fn collect_files(base_dir: &Path) -> Vec<(String, u64)> {
     let mut out: Vec<(String, u64)> = Vec::new();
     let checkpoints = base_dir.join(CHECKPOINTS_DIR_NAME);
@@ -146,8 +137,7 @@ fn collect_files(base_dir: &Path) -> Vec<(String, u64)> {
     out
 }
 
-/// Serve one file: reject traversal / the reserved marker (400); gate on the
-/// ready marker unless it is a `checkpoints/` path (404); stream the bytes.
+/// Serve a marker-gated artifact after rejecting lexical traversal components.
 fn serve_file(base_dir: &Path, filename: &str) -> Response<Full<Bytes>> {
     let Some(rel) = safe_relative(filename) else {
         return json_response(
@@ -220,7 +210,6 @@ fn safe_relative(filename: &str) -> Option<PathBuf> {
         match component {
             Component::Normal(part) => rel.push(part),
             Component::CurDir => {}
-            // Traversal, absolute root, or a Windows prefix — reject outright.
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
         }
     }
@@ -230,8 +219,7 @@ fn safe_relative(filename: &str) -> Option<PathBuf> {
     Some(rel)
 }
 
-/// Recursively collect regular files under `root` (best-effort; unreadable dirs
-/// are skipped). Iterative to avoid unbounded recursion depth.
+/// Collect regular files iteratively, skipping unreadable directories.
 fn walk_files(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -251,7 +239,6 @@ fn walk_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Relative path -> forward-slash string (stable listing keys across platforms).
 fn posix(path: &Path) -> String {
     path.components()
         .filter_map(|c| c.as_os_str().to_str())
@@ -259,7 +246,6 @@ fn posix(path: &Path) -> String {
         .join("/")
 }
 
-/// Content-type by extension (mirrors the Python `_CONTENT_TYPES` map).
 fn content_type(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()) {
         Some("json") => "application/json",
@@ -281,7 +267,6 @@ fn json_response(status: StatusCode, body: &serde_json::Value) -> Response<Full<
         .expect("response")
 }
 
-/// Scan `args` for `--flag <value>` / `--flag=<value>`.
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
     let eq = format!("{flag}=");
     let mut it = args.iter();
@@ -333,12 +318,10 @@ mod tests {
         std::fs::write(dir.join("profile_export_aiperf.json"), b"{}").unwrap();
         std::fs::write(dir.join("checkpoints").join("ckpt_0.parquet"), b"x").unwrap();
 
-        // Not ready: only the checkpoint file is listed.
         let before = collect_files(&dir);
         let names: Vec<&str> = before.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, vec!["checkpoints/ckpt_0.parquet"]);
 
-        // Ready: the export surfaces too, marker excluded.
         std::fs::write(dir.join(READY_MARKER_NAME), b"{\"ready\":true}").unwrap();
         let after = collect_files(&dir);
         let names: Vec<&str> = after.iter().map(|(n, _)| n.as_str()).collect();

@@ -1,17 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end extended-usage-accounting tests: drive `aiperf profile` against a
-//! mock server configured with the `--usage-*` knobs and verify the streamed
-//! usage object in the raw per-record export carries every field AIPerf's
-//! `UsageView` parses, and that the derived `usage_*` catalog metrics land in
-//! the summary export with the exact configured values.
-//!
-//! Each field is pinned to a distinct nonzero value so a record's usage frame is
-//! fully assertable. The runner is put in `--use-server-token-count` mode so the
-//! request carries `stream_options.include_usage` and the terminal usage chunk
-//! is emitted. The specific JSON keys / nesting mirror what
-//! `aiperf_runtime::endpoints::usage::UsageView` reads:
+//! Extended usage wire-to-metric mappings:
 //!   - top-level `cache_creation_input_tokens` -> `usage_prompt_cache_write_tokens`
 //!   - top-level `prompt_cache_miss_tokens`    -> `usage_prompt_cache_miss_tokens`
 //!   - top-level `toolUsePromptTokenCount`     -> `usage_tool_use_prompt_tokens`
@@ -27,11 +17,9 @@ use common::*;
 use aiperf_mock_server::config::MockServerConfig;
 use serde_json::{Value, json};
 
-// Distinct nonzero values pinned via the `--usage-*` knobs, so every emitted
-// usage sub-field is individually assertable at the raw-record level.
 const CACHE_WRITE: u64 = 11;
 const CACHE_MISS: u64 = 22;
-const CACHE_READ: u64 = 33; // Anthropic-only; not asserted on the OpenAI path.
+const CACHE_READ: u64 = 33; // Used only by Anthropic usage shapes.
 const PROMPT_AUDIO_TOKENS: u64 = 44;
 const COMPLETION_AUDIO_TOKENS: u64 = 55;
 const PROMPT_AUDIO_SECONDS: f64 = 6.5;
@@ -41,8 +29,6 @@ const TOOL_USE_PROMPT: u64 = 99;
 
 const REQUESTS: usize = 4;
 
-/// Write a tiny `single_turn` input file (the `text` field becomes the user
-/// prompt). No ground truth is involved; only usage accounting is under test.
 fn write_prompts(dir: &std::path::Path) -> std::path::PathBuf {
     let records: Vec<Value> = (0..REQUESTS)
         .map(|i| json!({ "text": format!("Usage probe {i}: reply briefly.") }))
@@ -50,7 +36,6 @@ fn write_prompts(dir: &std::path::Path) -> std::path::PathBuf {
     write_jsonl(dir, "prompts.jsonl", &records)
 }
 
-/// A `--fast` mock config with every extended usage knob pinned nonzero.
 fn usage_cfg() -> MockServerConfig {
     MockServerConfig {
         fast: true,
@@ -68,8 +53,7 @@ fn usage_cfg() -> MockServerConfig {
     }
 }
 
-/// Extract the streamed terminal `usage` object from one raw record by scanning
-/// its SSE `data:` packets for the frame that carries a non-null `usage` key.
+/// Extracts the non-null terminal `usage` object from SSE data packets.
 fn record_usage(record: &Value) -> Value {
     let responses = record
         .get("responses")
@@ -100,8 +84,6 @@ fn record_usage(record: &Value) -> Value {
     panic!("no streamed usage frame found in record: {record}");
 }
 
-/// The raw per-record usage object carries every extended field with its exact
-/// configured value, at the exact key/nesting AIPerf's `UsageView` reads.
 #[tokio::test]
 async fn extended_usage_fields_present_in_raw_records() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -124,53 +106,49 @@ async fn extended_usage_fields_present_in_raw_records() {
 
     for rec in &records {
         let u = record_usage(rec);
-        // Top-level OpenAI-dialect keys.
         assert_eq!(
             u["cache_creation_input_tokens"].as_u64(),
             Some(CACHE_WRITE),
-            "cache_creation_input_tokens (usage.rs:110 -> usage_prompt_cache_write_tokens)"
+            "cache_creation_input_tokens -> usage_prompt_cache_write_tokens"
         );
         assert_eq!(
             u["prompt_cache_miss_tokens"].as_u64(),
             Some(CACHE_MISS),
-            "prompt_cache_miss_tokens (usage.rs:114 -> usage_prompt_cache_miss_tokens)"
+            "prompt_cache_miss_tokens -> usage_prompt_cache_miss_tokens"
         );
         assert_eq!(
             u["toolUsePromptTokenCount"].as_u64(),
             Some(TOOL_USE_PROMPT),
-            "toolUsePromptTokenCount (usage.rs:161 -> usage_tool_use_prompt_tokens)"
+            "toolUsePromptTokenCount -> usage_tool_use_prompt_tokens"
         );
         assert_eq!(
             u["prompt_audio_seconds"].as_f64(),
             Some(PROMPT_AUDIO_SECONDS),
-            "prompt_audio_seconds (usage.rs:165 -> usage_prompt_audio_seconds)"
+            "prompt_audio_seconds -> usage_prompt_audio_seconds"
         );
-        // Nested detail keys.
         assert_eq!(
             u["prompt_tokens_details"]["audio_tokens"].as_u64(),
             Some(PROMPT_AUDIO_TOKENS),
-            "prompt_tokens_details.audio_tokens (usage.rs:128 -> usage_prompt_audio_tokens)"
+            "prompt_tokens_details.audio_tokens -> usage_prompt_audio_tokens"
         );
         assert_eq!(
             u["completion_tokens_details"]["audio_tokens"].as_u64(),
             Some(COMPLETION_AUDIO_TOKENS),
-            "completion_tokens_details.audio_tokens (usage.rs:136 -> usage_completion_audio_tokens)"
+            "completion_tokens_details.audio_tokens -> usage_completion_audio_tokens"
         );
         assert_eq!(
             u["completion_tokens_details"]["accepted_prediction_tokens"].as_u64(),
             Some(ACCEPTED_PREDICTION),
-            "accepted_prediction_tokens (usage.rs:144 -> usage_accepted_prediction_tokens)"
+            "completion_tokens_details.accepted_prediction_tokens -> usage_accepted_prediction_tokens"
         );
         assert_eq!(
             u["completion_tokens_details"]["rejected_prediction_tokens"].as_u64(),
             Some(REJECTED_PREDICTION),
-            "rejected_prediction_tokens (usage.rs:152 -> usage_rejected_prediction_tokens)"
+            "completion_tokens_details.rejected_prediction_tokens -> usage_rejected_prediction_tokens"
         );
     }
 }
 
-/// The derived `usage_*` record metrics land in the summary export with exactly
-/// the per-record configured values (avg) and their run totals (= value * N).
 #[tokio::test]
 async fn extended_usage_metrics_present_in_summary() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -191,8 +169,6 @@ async fn extended_usage_metrics_present_in_summary() {
     let summary = r.artifacts.json();
     assert!(!summary.is_null(), "summary export should exist");
 
-    // (metric tag, per-record value) — each is a Record metric, so `avg` is the
-    // fixed per-request value and `total_usage_*` is that times the request count.
     let expected: &[(&str, f64)] = &[
         ("usage_prompt_cache_write_tokens", CACHE_WRITE as f64),
         ("usage_prompt_cache_miss_tokens", CACHE_MISS as f64),

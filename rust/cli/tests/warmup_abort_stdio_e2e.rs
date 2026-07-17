@@ -1,14 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Process-level gating: a terminal (non-cancelled) failure during the WARMUP
-//! graph phase aborts the run BEFORE profiling with a structured
+//! A terminal non-cancelled warmup failure aborts before profiling with a
 //! `trajectory_warmup_failed` protocol-v2 failure envelope.
-//!
-//! Mirrors the Python AgentX warmup gate: `report_warmup_failures`
-//! (`src/aiperf/timing/strategies/graph_ir_replay.py:908-931`) raised from
-//! `PhaseRunner._run_strategy` (`src/aiperf/timing/phase/runner.py:578`) so
-//! `TrajectoryWarmupFailedError` propagates and PROFILING never starts.
 
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
@@ -43,22 +37,22 @@ async fn chat(State(state): State<Arc<MockState>>, _body: Bytes) -> impl IntoRes
         .into_response()
 }
 
-fn benchmark_run(legacy: Value) -> Value {
-    let mut endpoint = legacy["resources"]["endpoints"]["profiles"][0].clone();
+fn benchmark_run(source: Value) -> Value {
+    let mut endpoint = source["resources"]["endpoints"]["profiles"][0].clone();
     endpoint.as_object_mut().unwrap().remove("id");
     let cfg = json!({
-        "models": legacy["resources"]["models"],
+        "models": source["resources"]["models"],
         "endpoint": endpoint,
-        "datasets": [legacy["workload"]["config"]["dataset"]],
-        "phases": legacy["workload"]["config"]["phases"],
-        "tokenizer": legacy["workload"]["config"]["tokenizer"],
-        "transport": {"type": legacy["transport"]["type"]},
-        "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
+        "datasets": [source["workload"]["config"]["dataset"]],
+        "phases": source["workload"]["config"]["phases"],
+        "tokenizer": source["workload"]["config"]["tokenizer"],
+        "transport": {"type": source["transport"]["type"]},
+        "runtime": {"workers": source["workload"]["config"]["worker_count"]}
     });
     json!({
-        "benchmark_id": legacy["identity"]["benchmark_id"],
-        "artifact_dir": legacy["artifact_target"],
-        "random_seed": legacy["identity"]["random_seed"],
+        "benchmark_id": source["identity"]["benchmark_id"],
+        "artifact_dir": source["artifact_target"],
+        "random_seed": source["identity"]["random_seed"],
         "cfg": cfg
     })
 }
@@ -99,12 +93,8 @@ fn synthesis() -> Value {
 /// straddles the midpoint `t*`: at least one node lands in WARMUP and one in
 /// PROFILING.
 ///
-/// Every turn's lowered node (`warmup_trace:<turn>`) carries the same
-/// `metadata["conversation_id"]` (the weka scope, stamped by the recorded trie
-/// lowerer at `graph/recorded/trie/mod.rs:170`), which
-/// `aiperf_runtime::graph::snapshot::warmup_boundary_nodes` groups per-session chains
-/// by; a chain live across `t*` then yields a non-empty warmup boundary that
-/// actually dispatches.
+/// Every turn shares one conversation identity, so the chain crosses the warmup
+/// boundary and produces a dispatchable frontier.
 fn weka_dataset() -> Value {
     let request = |t: f64| {
         json!({

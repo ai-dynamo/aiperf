@@ -1,23 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Typed `transport` section of the native `BenchmarkConfig`.
+//! Typed transport policy.
 //!
-//! Wire shape ported from `src/aiperf/orchestrator/rust_wire.py::_inline_transport`
-//! (a discriminated union keyed by `type`, with only explicitly-set fields
-//! present — the Pydantic `model_dump(exclude_unset=True, exclude_none=True)`).
-//! The default HTTP transport projects to exactly `{"type":"http"}`.
-//!
-//! The DynoSim transports (`dynosim_offline` / `dynosim_online`) carry the full
-//! typed [`DynosimConfig`] surface flat on the transport object (mirroring
-//! `aiperf.config.execution.DynosimOfflineTransport`, whose fields sit directly
-//! on the transport like a `PoissonPhase` lifts its own knobs). `exclude_unset`
-//! is reproduced by modeling every field as `Option`: a field is present on the
-//! wire iff the author set it in YAML, so a field left at its Python default is
-//! absent — byte-identical to the Pydantic dump.
+//! The wire uses a `type`-discriminated union and omits unset optional fields.
+//! DynoSim configuration fields are flattened onto the transport object.
 
 use serde::{Deserialize, Serialize};
 
-/// The typed inline transport selection (discriminated by `type`).
+/// Inline transport selection discriminated by `type`.
 ///
 /// Serde's internal tagging emits the `type` discriminator; the DynoSim newtype
 /// variants flatten [`DynosimConfig`]'s set fields alongside it.
@@ -52,10 +42,9 @@ impl Transport {
     }
 }
 
-/// The typed `dry_run` transport surface (analytic latency knobs, flat on the
-/// transport). Mirrors `aiperf_runtime::engine::dry_run::DryRunTransportConfigV2`.
-/// Fields are `Option` so only author-set knobs serialize (`exclude_unset`); the
-/// runtime applies its own defaults for any omitted field.
+/// Analytic latency settings flattened onto the `dry_run` transport.
+///
+/// The runtime supplies defaults for omitted fields.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DryRunConfig {
     /// Base time-to-first-token in milliseconds.
@@ -96,14 +85,12 @@ pub struct DryRunConfig {
     pub clock: Option<String>,
 }
 
-/// The typed `transport.config` field surface for the DynoSim transports.
+/// DynoSim transport configuration.
 ///
-/// Mirrors `aiperf.config.dynosim.DynosimTransportConfig` (`extra="forbid"`).
 /// The `engine` / `prefill_engine` / `decode_engine` / `router` objects are
 /// opaque `MockEngineArgs` / `KvRouterConfig` JSON preserved verbatim for Dynamo
-/// to validate. Every field is `Option` so only author-set fields serialize
-/// (the `exclude_unset` contract); the `#[serde(alias)]` on each multi-word key
-/// accepts the Config-v2 camelCase spelling on input while emitting snake_case.
+/// to validate. Multi-word fields accept Config-v2 camelCase input and emit
+/// snake_case.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DynosimConfig {
     /// JSON engine profile consumed by Dynamo's canonical parser.
@@ -183,8 +170,7 @@ pub struct DynosimConfig {
     /// Router policy for routed topologies (`round_robin` / `kv`).
     #[serde(default, alias = "routerMode", skip_serializing_if = "Option::is_none")]
     pub router_mode: Option<String>,
-    /// Optional build capabilities the exact runner image must carry. Sorted +
-    /// deduped at authoring time to match Python's `sorted(set(...))` dump.
+    /// Required runner build capabilities, sorted and deduplicated.
     #[serde(
         default,
         alias = "requiredFeatures",
@@ -197,8 +183,7 @@ pub struct DynosimConfig {
 }
 
 impl DynosimConfig {
-    /// Sort + dedup `required_features` so the wire order is Python's
-    /// `sorted(set(...))`.
+    /// Sort and deduplicate `required_features` for stable wire order.
     pub fn normalize(&mut self) {
         if let Some(features) = self.required_features.as_mut() {
             features.sort();
@@ -216,8 +201,9 @@ pub struct DynosimSla {
     /// Maximum mean inter-token latency (ms).
     #[serde(default, alias = "itlMs", skip_serializing_if = "Option::is_none")]
     pub itl_ms: Option<f64>,
-    /// Maximum end-to-end latency (ms). Pydantic's `to_camel("e2e_ms")` is
-    /// `e2EMs` (its digit-boundary rule), so that is the accepted camelCase key.
+    /// Maximum end-to-end latency in milliseconds.
+    ///
+    /// The accepted Config-v2 camelCase key is `e2EMs`.
     #[serde(default, alias = "e2EMs", skip_serializing_if = "Option::is_none")]
     pub e2e_ms: Option<f64>,
 }

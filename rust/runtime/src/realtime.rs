@@ -2,34 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Periodic realtime-metrics log block for a running profiling phase.
 //!
-//! Ports agentx's `RecordsManager._report_realtime_metrics` +
-//! `_render_realtime_block` (`src/aiperf/records/records_manager.py`), which logs
-//! a compact `[realtime MM:SS profiling]` block every `--stats-interval` seconds
-//! on non-dashboard UIs. The native single-process runner has no mesh/dashboard,
-//! so the log block is the whole feature.
-//!
-//! # How it gets correct live percentiles
-//! agentx assembles each completed record into per-metric accumulators as it
-//! arrives, so it can percentile TTFT/ITL/latency live. This module does the
-//! same: [`LiveMetricsProcessor`] is a [`TurnRecordProcessor`] the profiling
-//! runtime invokes once per completed request. It owns a *dedicated* retain-mode
-//! [`NativeMetricsObserver`] wired as an ordinary phase delegate (so it receives
-//! the same terminal status + token arrivals + usage callbacks); per completion
-//! it reconciles the authoritative response facts and drains that request's fully
-//! assembled record into a persistent [`MetricsAccumulator`]. The dedicated
-//! observer is separate from the run's authoritative observer, so the end-of-run
-//! report is untouched — and because the run's primary observer commonly runs in
-//! aggregate-only mode (which drops each slot inside `record_response` before the
-//! detached record-processor task runs), a snapshot against *it* would always
-//! miss; the dedicated delegate is what makes the live block observable. A
-//! [`Clock`]-driven [`realtime_reporter_loop`] summarizes that accumulator on a
-//! fixed interval and logs the block at INFO — reaching the console and
-//! `logs/aiperf.log` like the phase-lifecycle lines.
-//!
-//! Because the accumulator holds every completed record (not a degenerate
-//! window), the latency/TTFT/ITL/throughput percentiles are meaningful mid-run;
-//! only the headline requests-per-second is additionally shown as an
-//! instantaneous delta since the previous tick.
+//! A dedicated retain-mode observer drains each terminal record into a persistent
+//! accumulator. This is required because the aggregate-only report observer drops
+//! request slots before asynchronous record processors run. The injected
+//! [`Clock`] drives reporting intervals.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -44,11 +20,10 @@ use crate::multiturn::IssuedCredit;
 use crate::scheduled::{TurnDispatchOutcome, TurnRecordProcessor};
 
 /// Default realtime interval in seconds when `AIPERF_STATS_INTERVAL` is unset.
-/// Matches agentx's non-dashboard default (30s).
 const DEFAULT_STATS_INTERVAL_SECS: f64 = 30.0;
 
-/// The `AIPERF_STATS_INTERVAL` env var (seconds). `0` (or negative) disables the
-/// realtime block entirely; mirrors agentx's `--stats-interval 0`.
+/// The `AIPERF_STATS_INTERVAL` env var in seconds; non-positive values disable
+/// realtime output.
 const STATS_INTERVAL_ENV: &str = "AIPERF_STATS_INTERVAL";
 
 /// Resolve the realtime tick interval in nanoseconds, or `None` when disabled
@@ -95,8 +70,7 @@ impl LiveMetrics {
 /// profiling phase's scheduled runtime; the runtime calls [`Self::process`] once
 /// per completed request, after `on_terminal`/token callbacks have fired.
 ///
-/// # Why a dedicated observer, not the authoritative one
-/// The runner's authoritative `NativeMetricsObserver` commonly runs in
+/// The authoritative `NativeMetricsObserver` commonly runs in
 /// aggregate-only mode, which folds and *drops* each request's slot inside
 /// `record_response` (scheduled dispatch) before this processor's detached task
 /// runs — so a `snapshot_record` against it would always miss. Instead this
@@ -177,7 +151,7 @@ pub async fn realtime_reporter_loop(
         let summary = live.summarize();
         let done = finite(&summary, "request_count").unwrap_or(0.0);
         if done <= 0.0 {
-            continue; // Nothing finished yet; suppress the block (agentx parity).
+            continue; // Suppress output until a request finishes.
         }
         if let Some(block) = render_realtime_block(&summary, elapsed_s, prev) {
             tracing::info!("{block}");
@@ -196,9 +170,7 @@ const LATENCY_ROWS: &[(&str, &str)] = &[
 /// Percentiles shown per row, matching the native console summary columns.
 const PERCENTILES: &[u32] = &[50, 90, 99];
 
-/// Render the compact realtime block, or `None` when nothing has completed. The
-/// shape mirrors agentx's `_render_realtime_block` (a header, a counter row, then
-/// one labeled percentile row per latency metric plus output-sequence-length).
+/// Render the compact realtime block, or `None` when nothing has completed.
 pub fn render_realtime_block(
     summary: &AccumulatorSummary,
     elapsed_s: f64,
@@ -275,7 +247,7 @@ fn percentile(summary: &AccumulatorSummary, tag: &str, p: u32) -> Option<f64> {
         .filter(|v| v.is_finite())
 }
 
-/// Format `elapsed_s` as `MM:SS` (agentx `_format_elapsed`).
+/// Format `elapsed_s` as `MM:SS`.
 fn fmt_elapsed(elapsed_s: f64) -> String {
     let total = elapsed_s.max(0.0) as u64;
     format!("{:02}:{:02}", total / 60, total % 60)

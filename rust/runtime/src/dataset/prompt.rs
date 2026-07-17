@@ -83,7 +83,7 @@ impl CorpusSource {
 
 /// Corpus-token generator with prefix block reuse.
 ///
-/// Ports the inherited Python `PromptGenerator`
+/// Matches Python `PromptGenerator`
 /// (`src/aiperf/dataset/generator/prompt.py`): the default corpus is the
 /// Shakespeare sonnet text, tokenized once through the character-chunked
 /// [`tokenize_corpus_chunked`] policy, then sampled with wrap-around and prefix
@@ -300,7 +300,7 @@ mod tests {
     use crate::dataset::tokenizer::TiktokenTokenizer;
 
     #[test]
-    fn exact_lengths_and_hash_prefix_reuse_are_proven() {
+    fn exact_lengths_reuse_hash_prefixes() {
         let tokenizer = TiktokenTokenizer::builtin();
         let factory = CorpusPromptGeneratorFactory::default();
         let mut generator = factory.create(&tokenizer, RngRoot::new(Some(3))).unwrap();
@@ -320,8 +320,6 @@ mod tests {
         let mut generator = factory.create(&tokenizer, RngRoot::new(Some(11))).unwrap();
         let prompt = generator.generate(64, &[], 1).unwrap();
         assert_eq!(prompt.tokens.len(), 64);
-        // Sampled from the Shakespeare corpus: the decoded text is real English,
-        // not the former placeholder sentence.
         let alphabetic = prompt.text.chars().filter(|c| c.is_alphabetic()).count();
         assert!(
             alphabetic >= prompt.text.len() / 2,
@@ -329,7 +327,6 @@ mod tests {
             prompt.text
         );
 
-        // Same seed reproduces the identical prompt; a different seed diverges.
         let mut same = factory.create(&tokenizer, RngRoot::new(Some(11))).unwrap();
         assert_eq!(same.generate(64, &[], 1).unwrap(), prompt);
         let mut other = factory.create(&tokenizer, RngRoot::new(Some(12))).unwrap();

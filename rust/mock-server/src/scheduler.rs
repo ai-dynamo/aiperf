@@ -10,9 +10,8 @@
 //! concurrency saturation knee at concurrency ~= `max_batch_size`, and (when
 //! goodput-collapse is enabled) an actual tok/s *decrease* past the knee.
 //!
-//! Rust port of the Python `aiperf_mock_server.scheduler.BatchScheduler`. Each
-//! waiter is a tokio `oneshot`; admission sends the admitted step index, and a
-//! dropped sender (cancel/stop) wakes the awaiter without a value.
+//! Each waiter is a Tokio `oneshot`; admission sends the step index, while
+//! cancellation or shutdown wakes the waiter by dropping its sender.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -100,8 +99,7 @@ impl BatchScheduler {
         })
     }
 
-    /// Start the background tick task. No-op when disabled or already started,
-    /// or when called outside a tokio runtime (e.g. a sync test harness).
+    /// Starts one tick task when enabled and running inside Tokio.
     pub fn start(self: &Arc<Self>) {
         if !self.enabled || tokio::runtime::Handle::try_current().is_err() {
             return;
@@ -170,7 +168,6 @@ impl BatchScheduler {
         if !self.enabled || self.stopped.load(Ordering::Relaxed) {
             return 0;
         }
-        // Fraction of prefill still required after cache reuse (in (0, 1]).
         let uncached = if prompt_tokens > 0 {
             (prompt_tokens.saturating_sub(cached_tokens) as f64 / prompt_tokens as f64)
                 .clamp(0.0, 1.0)
@@ -215,8 +212,7 @@ impl BatchScheduler {
     }
 
     async fn tick_loop(self: Arc<Self>) {
-        // Nanosecond-precise step cadence via the RealClock `timerfd` primitive
-        // (not `tokio::time`'s 1 ms wheel, which would coarsen a sub-10 ms step).
+        // RealClock preserves sub-millisecond scheduler steps.
         let step_ns = ((self.step_ms * 1_000_000.0).max(0.0)) as i64;
         loop {
             aiperf_runtime::clock::sleep_ns(step_ns).await;
@@ -229,7 +225,6 @@ impl BatchScheduler {
         }
     }
 
-    /// Apply per-step lognormal noise to an admit budget (>= 1 when base >= 1).
     fn jitter_budget(&self, base: usize) -> usize {
         if self.admit_jitter_cv <= 0.0 || base == 0 {
             return base;
@@ -332,7 +327,6 @@ mod tests {
 
     #[tokio::test]
     async fn oversubscription_serializes_admission() {
-        // 8 decoders, batch of 4: half admitted one step later.
         let sched = BatchScheduler::new(&cfg(4, 2.0));
         sched.start();
         let futs: Vec<_> = (0..8)
@@ -362,14 +356,11 @@ mod tests {
     #[tokio::test]
     async fn cached_prefix_reduces_prefill_chunks() {
         let mut c = cfg(64, 1.0);
-        c.scheduler_prefill_chunks_per_request = 20; // fixed, ISL-independent
+        c.scheduler_prefill_chunks_per_request = 20;
         let sched = BatchScheduler::new(&c);
         sched.start();
-        // No cache hit -> full 20 chunks.
         assert_eq!(sched.run_prefill("a", 1000, 0, 0).await, 20);
-        // 75% cached -> ~25% of the work = 5 chunks.
         assert_eq!(sched.run_prefill("b", 1000, 750, 0).await, 5);
-        // Full cache hit -> floored at 1 block of real work.
         assert_eq!(sched.run_prefill("c", 1000, 1000, 0).await, 1);
         sched.stop().await;
     }
@@ -382,11 +373,8 @@ mod tests {
         c.scheduler_goodput_collapse_slope = 0.5;
         c.scheduler_goodput_collapse_floor = 0.3;
         let sched = BatchScheduler::new(&c);
-        // queue_len 10 (ratio 1.0) <= threshold => full batch
         assert_eq!(sched.effective_decode_budget(10), 10);
-        // ratio 2.5, overload 1.0, shrink min(0.7, 0.5)=0.5 => 5
         assert_eq!(sched.effective_decode_budget(25), 5);
-        // deep overload caps shrink at 1-floor=0.7 => floor 3
         assert_eq!(sched.effective_decode_budget(1000), 3);
     }
 
@@ -397,21 +385,17 @@ mod tests {
         c.scheduler_prefill_throughput_exponent = 0.585;
         c.scheduler_prefill_throughput_ref = 512;
         let sched = BatchScheduler::new(&c);
-        // at/below ref occupancy -> floored at the base budget (4)
         assert_eq!(sched.effective_prefill_budget(256), 4);
         assert_eq!(sched.effective_prefill_budget(512), 4);
-        // 2x ref -> base * 2^0.585 = 4 * 1.5 = 6 (so TTFT grows ~C^0.415)
         assert_eq!(sched.effective_prefill_budget(1024), 6);
-        // exponent 0 disables the scaling entirely
         c.scheduler_prefill_throughput_exponent = 0.0;
         assert_eq!(BatchScheduler::new(&c).effective_prefill_budget(1024), 4);
     }
 
     #[tokio::test]
     async fn disabled_passthrough() {
-        let sched = BatchScheduler::new(&MockServerConfig::default()); // scheduler_enabled = false
-        sched.start(); // no-op
-        // returns immediately without a running tick
+        let sched = BatchScheduler::new(&MockServerConfig::default());
+        sched.start();
         assert_eq!(sched.run_prefill("r", 4000, 0, 0).await, 0);
         let _ = sched.next_decode_step("r").await;
     }

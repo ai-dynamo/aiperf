@@ -1,32 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Producer-owned SPMC broadcast with replay-on-attach — the primitive behind the
-//! dataset data plane and the monotonic phaser control plane
-//! (`specs/2026-07-15-ultimate-cellular-velo-runtime-design.md` §3.1, §6.1).
+//! Producer-owned SPMC broadcast with replay on attach.
 //!
-//! velo today has only SPSC (1:1) and MPSC (N→1) streaming anchors, both
-//! consumer-owned and without replay — there is no producer→N-consumer fan-out. This
-//! is that missing primitive, built in-process (per §3.1's "an AIPerf-side layer over
-//! velo primitives" option). One producer `add`s an append-only stream of items; many
-//! consumers `attach` at different times and each receives a **snapshot of everything
-//! added so far, then the live tail** — modeled on the kvbm p2p `Session`'s
-//! `ReplayStream`, generalized from one-peer to N connectors.
-//!
-//! ## The one invariant (answers Ryan's "more racy state with multiple connectors")
-//!
-//! Membership (`attach`) serializes on the **same lock** as delta-append (`add` /
-//! `finalize`). So for every consumer, `(replay snapshot ⊎ live tail)` reconstructs the
-//! full producer order with **no gap and no duplicate at its own attach seam** — with
-//! **no per-consumer diff computed**. A chunk added in the window between snapshot-clone
-//! and sender-registration would otherwise be lost (gap) or double-counted (in both the
-//! snapshot and the live tail); holding one lock across snapshot-and-register closes
-//! that window. This is the crux of §3.1 and the reason a first-class primitive beats
-//! N ad-hoc per-consumer replay buffers.
-//!
-//! Add-only + finalize (§3.2): AIPerf never promises an item before it exists, so
-//! unlike the kvbm session there is no commit/available split — just `add` then a
-//! terminal `finalize`.
+//! One producer appends items and many consumers receive the complete prefix
+//! followed by the live tail. `attach`, `add`, and `finalize` share one lock, so
+//! each consumer observes producer order without a gap or duplicate at its
+//! replay/live boundary.
 
 use std::sync::{Arc, Mutex};
 

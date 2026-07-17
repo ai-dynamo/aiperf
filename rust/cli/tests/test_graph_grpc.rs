@@ -1,26 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Stage-1 substrate deliverable: `aiperf profile` with `transport.type: grpc` +
-//! a `dag_jsonl` graph dataset dispatches graph nodes over Tonic.
-//!
-//! This is the end-to-end proof for the unified `Dispatcher` seam
-//! (`specs/2026-07-14-unified-execution-substrate-design.md` §2.3 "Stage-1
-//! deliverable"). Before this stage `grpc + graph` failed closed because the one
-//! graph execution backend was welded to the concrete HTTP `TransportSink`;
-//! after `dyn`-ifying the graph sink's transport to `Rc<dyn Dispatcher>` and
-//! teaching the graph endpoint runtime factory to build a `GrpcTransportSink`,
-//! any workload runs over any transport with no `*Pair` cell object.
-//!
-//! The test stands up an in-process gRPC KServe (v2 infer) target — the same
-//! `OipService`/`RawCodec` harness `grpc_v2_stdio.rs` uses for the scheduled
-//! gRPC path — authors a multi-node `dag_jsonl` DAG (a root that forks to two
-//! children), runs the native `aiperf` with `transport.type: grpc`, and
-//! asserts every graph node dispatched over Tonic (one captured
-//! `ModelInferRequest` per node) with per-node records folded into the report.
-//! Channel dependencies (turn N+1 referencing turn N's generated text) flow via
-//! `TurnDispatchOutcome.response_text` returned from `dispatch_collect`, per
-//! substrate spec §6.1 — no extra plumbing beyond the shared observer seam.
+//! End-to-end graph dispatch over KServe gRPC.
 
 use std::convert::Infallible;
 use std::io::Write;
@@ -51,15 +32,12 @@ fn binary() -> &'static str {
 }
 
 fn capabilities() -> Value {
-    // Capabilities is an in-process call now — one binary, no subprocess.
     serde_json::to_value(
         aiperf_cli::execute_mode::capabilities_catalog().expect("capabilities catalog"),
     )
     .expect("catalog to Value")
 }
 
-/// Drive one `aiperf` child over the protocol-v2 stdio surface, returning
-/// its terminal envelope line on stdout.
 fn run_child(request: &Value) -> Output {
     let mut child = Command::new(binary())
         .arg("--execute")
@@ -93,10 +71,6 @@ fn one_json_line(output: &Output) -> Value {
     serde_json::from_slice(lines[0]).unwrap()
 }
 
-/// A multi-node single-turn DAG authored inline: `root` forks to `child_a` and
-/// `child_b`, so a single conversation instance dispatches THREE graph nodes.
-/// Proving all three land as distinct gRPC `ModelInfer` calls shows graph
-/// scheduling drives the Tonic dispatcher per node.
 fn graph_request(artifact_dir: &Path, url: &str) -> Value {
     json!({
         "protocol_version": 2,
@@ -210,9 +184,6 @@ impl Decoder for RawDecoder {
     }
 }
 
-/// A permissive KServe OIP target: it serves both unary `ModelInfer` and
-/// server-streaming `ModelStreamInfer`, recording every decoded request so the
-/// test can prove each graph node produced exactly one gRPC dispatch.
 #[derive(Clone, Debug)]
 struct OipService {
     requests: Arc<Mutex<Vec<ModelInferRequest>>>,
@@ -300,8 +271,6 @@ impl ServerStreamingService<Bytes> for ModelStreamInferSvc {
             let request = ModelInferRequest::decode(request.into_inner())
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
             captured.lock().unwrap().push(request.clone());
-            // Two-chunk server stream so the graph node observes a first-token
-            // (TTFT) then a terminal chunk, exercising the streaming path.
             let messages = ["node", "done"].map(|text| {
                 Ok(Bytes::from(
                     ModelStreamInferResponse {
@@ -361,17 +330,10 @@ async fn start_server() -> (
     (format!("grpc://{address}"), captured, shutdown_tx, server)
 }
 
-/// The Stage-1 deliverable: a `dag_jsonl` graph run over `transport.type: grpc`
-/// dispatches every graph node over Tonic and folds per-node records into the
-/// report — with no `*Pair` cell object composing `(grpc, graph)`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn graph_dag_dispatches_over_native_grpc() {
     let (url, captured, shutdown, server) = start_server().await;
 
-    // The catalog exposes transport and workload as INDEPENDENT registries: gRPC
-    // transport and the graph workload each appear on their own axis, with no
-    // pair/compatibility inventory gating their composition (Task 4 deleted
-    // `PairFactory`/`supported_pairs`/`validate_descriptor_compatibility`).
     let catalog = capabilities();
     assert!(
         catalog["transport"].get("grpc").is_some(),
@@ -383,7 +345,7 @@ async fn graph_dag_dispatches_over_native_grpc() {
     );
     assert!(
         catalog.get("supported_pairs").is_none(),
-        "the flatten removed any pair/compatibility inventory from the catalog: {catalog}"
+        "capabilities must not expose supported_pairs: {catalog}"
     );
 
     let temporary = tempfile::tempdir().unwrap();
@@ -401,13 +363,9 @@ async fn graph_dag_dispatches_over_native_grpc() {
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["protocol_version"], 2);
     assert_eq!(terminal["success"], true);
-    // Provenance proves the flattened selection accepted `grpc` transport under
-    // the `graph` workload — the exact cell that failed closed before Stage 1.
     assert_eq!(terminal["provenance"]["transport"], "grpc");
     assert_eq!(terminal["provenance"]["workload"], "graph");
 
-    // Every graph node dispatched over Tonic: root + child_a + child_b = 3 calls,
-    // each a decoded KServe `ModelInferRequest` carrying the graph model.
     let requests = captured.lock().unwrap().clone();
     assert_eq!(
         requests.len(),
@@ -433,7 +391,6 @@ async fn graph_dag_dispatches_over_native_grpc() {
         "graph node bodies materialize into the KServe text_input tensor"
     );
 
-    // The report folds per-node records: three graph nodes → three requests.
     let report: Value =
         serde_json::from_slice(&std::fs::read(artifact_dir.join("native-v2.json")).unwrap())
             .unwrap();

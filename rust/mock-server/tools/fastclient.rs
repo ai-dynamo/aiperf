@@ -1,12 +1,10 @@
-// Monster HTTP/1.1 load generator for fixed-response mock targets (fastmock &
-// friends). Std-only, no crates — compile with:  rustc -O fastclient.rs -o /tmp/fastclient
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// HTTP/1.1 load generator for fixed-response mock targets.
 //
-// It blazes because it does the opposite of a general client: persistent
-// keep-alive connections, a prebuilt request batch written in one syscall,
-// PIPELINED depth (write P requests, then read their P responses), and NO HTTP
-// parsing in the hot loop — the fixed response length L is probed once at
-// startup, so counting responses is just bytes_read / L. Reuses one buffer per
-// connection; zero per-request allocation.
+// Persistent connections, prebuilt request batches, and fixed response framing
+// avoid per-request allocation and parsing in the hot loop.
 //
 // Usage: fastclient URL [--connections C] [--duration S] [--pipeline P]
 //   URL            e.g. http://127.0.0.1:8131/v1/chat/completions
@@ -14,15 +12,8 @@
 //   --duration     seconds to sustain load (default 10)
 //   --pipeline     in-flight requests per connection per round-trip (default 1)
 //
-// *** On --pipeline and honest RPS ***
-// The DEFAULT is 1 = one request per round-trip, which is how every real
-// HTTP/1.1 client behaves (browsers disabled pipelining; reqwest/curl/wrk/oha
-// don't pipeline). Concurrency is expressed via --connections, NOT pipelining.
-// `--pipeline P>1` measures the server's raw *retirement ceiling*, not what a
-// real client can drive: it removes the round-trip wait AND lets the server
-// batch syscalls (one read pulls P requests, one write flushes P responses),
-// inflating RPS in a way real traffic never will. Use P>1 only to probe max
-// server capacity, and label it as such — never quote it as "client RPS".
+// Pipeline depth 1 measures ordinary HTTP/1.1 round trips. Higher depths remove
+// round-trip waits and batch syscalls, so report them only as server capacity.
 //
 // Assumes a UNIFORM fixed-length response (true for fastmock / fastmock-uring):
 // response framing is by the probed byte length L, not a per-response parser.
@@ -46,7 +37,6 @@ fn content_length(head: &[u8]) -> usize {
     0
 }
 
-/// Parse `http://host:port/path` into (host, port, path).
 fn parse_url(url: &str) -> (String, u16, String) {
     let rest = url.strip_prefix("http://").unwrap_or(url);
     let (authority, path) = match rest.find('/') {
@@ -92,8 +82,6 @@ fn main() {
     let mut url = "http://127.0.0.1:8131/v1/chat/completions".to_string();
     let mut connections = 128usize;
     let mut duration = 10u64;
-    // Default 1 = realistic (one in-flight per connection). P>1 = server-capacity
-    // ceiling only; see the header note.
     let mut pipeline = 1usize;
     let mut i = 0;
     while i < args.len() {
@@ -120,7 +108,6 @@ fn main() {
     let (host, port, path) = parse_url(&url);
     let addr = format!("{host}:{port}");
 
-    // Tiny fixed POST; fastmock ignores the body and returns the fixed chat reply.
     let req = format!(
         "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n{{}}"
     )
@@ -134,7 +121,6 @@ fn main() {
         }
     };
 
-    // Prebuilt pipelined batch: P requests written in one shot per round-trip.
     let batch: Arc<Vec<u8>> = Arc::new(req.iter().cloned().cycle().take(req.len() * pipeline).collect());
     let read_target = resp_len * pipeline;
 
@@ -177,7 +163,6 @@ fn main() {
                     total_errs.fetch_add(1, Ordering::Relaxed);
                     break;
                 }
-                // Read exactly `read_target` bytes = P complete fixed responses.
                 let mut got = 0usize;
                 let mut broken = false;
                 let cap = buf.len();

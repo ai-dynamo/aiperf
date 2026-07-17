@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The transport facade tying URL/header building to the request path and the
-//! connection pool. Port of `AioHttpTransport.send_request`.
+//! connection pool.
 
 use std::rc::Rc;
 
@@ -57,7 +57,7 @@ impl HttpTransport {
         }
     }
 
-    /// Override the correlation-id header name (Python `session_header`).
+    /// Override the correlation-id header name.
     pub fn with_session_header(mut self, name: impl Into<String>) -> Self {
         self.session_header = Some(name.into());
         self
@@ -106,8 +106,6 @@ impl HttpTransport {
         streaming: bool,
         first_token_filter: impl FnMut(i64, &SseMessage) -> bool,
     ) -> RequestRecord {
-        // Serialize the JSON payload. On failure, return an error record rather
-        // than silently sending an empty body (mirrors the bad-url handling).
         let body = match serde_json::to_vec(&payload) {
             Ok(b) => Bytes::from(b),
             Err(e) => {
@@ -124,8 +122,8 @@ impl HttpTransport {
     }
 
     /// Send an already-serialized JSON request body without decoding or
-    /// reserializing it. Dataset raw replay and segment-slice materialization use
-    /// this path to preserve authored bytes and avoid a hot-path JSON tree.
+    /// reserializing it. Graph dispatch uses this path to preserve preassembled
+    /// wire bytes and avoid a hot-path JSON tree.
     pub async fn send_request_bytes(
         &self,
         cfg: &RequestConfig,
@@ -234,8 +232,7 @@ impl HttpTransport {
         let deadline_ns = total_timeout_ns.map(|timeout| start_ns.saturating_add(timeout));
 
         let mut trace = TraceData {
-            // Match aiohttp's request lifecycle: request start precedes pool
-            // queueing/reuse/connection creation.
+            // Request timing includes pool queueing and connection creation.
             request_send_start_ns: Some(start_ns),
             ..TraceData::default()
         };
@@ -243,7 +240,6 @@ impl HttpTransport {
         let completion_for_dispatch = send_completion.clone();
         let completion_for_record = send_completion.clone();
 
-        // Acquire a connection per the reuse strategy, then dispatch on it.
         let dispatch = async {
             let acquire_remaining_ns = remaining_timeout(deadline_ns, self.clock.now_ns())?;
             let acquire_timeout_ns =
@@ -311,7 +307,6 @@ impl HttpTransport {
             res
         };
 
-        // Optional post-send cancellation.
         let result = match cfg.cancel_after_ns {
             Some(cancel_after) => {
                 match race_cancel_after_send(

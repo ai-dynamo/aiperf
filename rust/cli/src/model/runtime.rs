@@ -1,11 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Typed `runtime` section of the native `BenchmarkConfig`.
+//! Typed worker and cell runtime policy.
 //!
-//! Wire shape ported from `src/aiperf/orchestrator/rust_wire.py::dump_benchmark_run`
-//! (the runtime dict is filtered to `{workers, workers_min, workers_max,
-//! cells}`). `workers` / `workers_min` are always present (emitting `null` when
-//! unset — Python does not exclude them); `workers_max` is present only when set.
+//! `workers` and `workers_min` emit null when unset; `workers_max` is omitted.
 
 use serde::{Deserialize, Serialize};
 

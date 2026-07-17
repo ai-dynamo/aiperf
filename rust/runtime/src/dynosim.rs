@@ -936,8 +936,8 @@ pub struct OfflineScheduledExecution {
 }
 
 impl OfflineScheduledExecution {
-    /// Adapt one legacy single-phase runtime without copying or merging any
-    /// finalized metric summary.
+    /// Wrap one single-phase result without copying or merging its finalized
+    /// metric summary.
     pub fn single(profiling: ScheduledRunReport) -> Self {
         Self {
             performance: profiling.performance.clone(),
@@ -5156,10 +5156,8 @@ mod tests {
     }
 
     /// The multi-worker `SteppableAgg` PUSH path is byte-exact with Dynamo's own
-    /// native offline `AggRuntime::run()` (pull) driver under prefill saturation —
-    /// the regime where AIPerf's dynamic `SlotPool` admission previously deferred a
-    /// re-admitted request's prefill by one drain cycle and diverged tens of
-    /// percent. The mocker's steppable delta-cycle (EVALUATE completions → caller
+    /// native offline `AggRuntime::run()` pull driver under prefill saturation.
+    /// The mocker's steppable delta-cycle (EVALUATE completions → caller
     /// submits the replacement at the completion instant → COMMIT drives it now)
     /// closes that gap for round-robin aggregated replay with more than one worker,
     /// where `single_pass_engine` does not apply. Same engine args, same tokens.

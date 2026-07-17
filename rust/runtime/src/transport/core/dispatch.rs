@@ -1,15 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Transport-neutral dispatch DTOs shared by every transport.
-//!
-//! [`Request`] is the load generator's own transport-neutral request type,
-//! dispatched by every transport (http, grpc, dynosim, dry_run) through the
-//! `loadgen_core` [`Dispatchable`] seam. [`DispatchResult`], [`MeasuredContext`],
-//! and [`MeasuredOutcome`] are the backend-neutral result/measurement carriers
-//! consumed by scheduling, record processing, and the worker-local measured
-//! execution path. None of these carry transport-specific state, so they live in
-//! `transport::core` rather than any one transport module.
+//! Transport-neutral request, result, and measurement types.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -28,10 +20,7 @@ use crate::multiturn::{PreparedEndpointReference, TurnDataPolicy, TurnEndpoint, 
 use crate::scheduled::{TurnDispatchOutcome, TurnResponseObserver};
 use crate::transport::core::record::RequestRecord;
 
-/// A slim online request carrying prompt text — the load generator's own
-/// transport-neutral request type, dispatched by every transport (http, grpc,
-/// dynosim, dry_run). Implementing [`Dispatchable`] is all the dispatch seam
-/// requires.
+/// A transport-neutral inference request.
 #[derive(Clone)]
 pub struct Request {
     /// Stable per-request identifier used to correlate observer events.
@@ -106,12 +95,7 @@ impl Dispatchable for Request {
     }
 }
 
-/// HTTP-specific terminal result retained by raw-artifact consumers.
-///
-/// Policy-neutral workloads continue to consume [`TurnDispatchOutcome`]. The
-/// native subprocess runner calls the concrete collection method only when it
-/// must preserve HTTP wire facts; alternate backends do not inherit an HTTP
-/// dependency through the shared `TurnDispatcher` seam.
+/// A terminal outcome with the compatibility record required by raw artifacts.
 #[derive(Clone, Debug)]
 pub struct DispatchResult {
     /// Backend-neutral result consumed by scheduling and record processors.
@@ -122,27 +106,20 @@ pub struct DispatchResult {
     pub record: RequestRecord,
 }
 
-/// Coordinator-supplied per-turn measurement facts for the worker-local
-/// accumulation path.
+/// Coordinator-known facts registered by a worker-local metrics observer.
 ///
-/// The scheduled runner no longer replays every token onto one coordinator
-/// observer. Instead, each execution worker owns its own metrics observer
-/// and this context carries the coordinator-known arrival facts and metadata the
-/// worker registers locally before dispatch. Fields the coordinator only learns
-/// after dispatch (`phase`, `session_num`, `has_credit_timestamp`, and the global
-/// dispatch `request_index`) are deliberately absent from `metadata`; the
-/// coordinator patches them onto the drained record at finish so all
-/// credit/phase logic stays exactly where the single-observer path had it.
+/// `metadata` excludes `phase`, `session_num`, `has_credit_timestamp`, and the
+/// global `request_index`; the coordinator adds them after joining drained
+/// records by UUID.
 #[derive(Clone, Debug)]
 pub struct MeasuredContext {
-    /// Arrival timestamp in milliseconds relative to the run origin, computed
-    /// coordinator-side at issue exactly as the single-observer path did.
+    /// Arrival timestamp in milliseconds relative to the run origin.
     pub arrival_ms: f64,
     /// Coordinator-known input length forwarded to the worker's `on_arrival`.
     pub input_length: usize,
     /// Coordinator-known requested output length forwarded to `on_arrival`.
     pub requested_output_length: usize,
-    /// Begin-known request metadata (turn index, conversation, correlation,
+    /// Issue-time request metadata (turn index, conversation, correlation,
     /// dimensions, audio duration); no `request_index`/`phase`/`session_num`.
     pub metadata: RequestMetricMetadata,
     /// Whether a live-results sink is attached and the worker must return a
@@ -157,22 +134,17 @@ pub struct MeasuredContext {
     pub consume_record: bool,
 }
 
-/// Result of a worker-local measured execution: the transport outcome plus an
-/// optional non-consuming cloned record for the live-results sink.
-///
-/// The authoritative record stays inside the worker observer for the end-of-run
-/// drain; `live_record` (present only when [`MeasuredContext::wants_live_record`]
-/// is set) is a clone so live emission never removes it from the final merge.
+/// A transport outcome and optional record for live-results ingestion.
 #[derive(Debug)]
 pub struct MeasuredOutcome {
     /// Backend-neutral dispatch result consumed by scheduling/record processors.
     pub result: DispatchResult,
-    /// Non-consuming cloned record for a live sink, when requested.
+    /// Snapshot or consumed record for a live sink, according to
+    /// [`MeasuredContext::consume_record`].
     pub live_record: Option<RecordIngest>,
 }
 
-/// Owned execution command handed from the single logical dispatcher to an
-/// injected execution backend.
+/// An owned, scheduler-free execution command.
 ///
 /// The scheduling-only [`TurnToSend`] retains an `Rc` session backend so that
 /// continuations can be materialized locally. This projection deliberately
@@ -181,8 +153,7 @@ pub struct MeasuredOutcome {
 /// binding key in [`PreparedEndpointReference`]. Local backends retain the
 /// already-resolved prepared adapter allocation.
 ///
-/// Transport-neutral: consumed by http, grpc, graph, and dry-run execution, so
-/// it lives in `transport::core` rather than any one transport module.
+/// Consumed by HTTP, gRPC, graph, and dry-run execution.
 #[derive(Clone)]
 pub struct PreparedTurn {
     /// Transport-ready request fields.
@@ -211,11 +182,6 @@ impl fmt::Debug for PreparedTurn {
 }
 
 /// Endpoint selection retained by one scheduler-free execution command.
-///
-/// This is an enum rather than a bare [`PreparedEndpointReference`] to keep the
-/// seam open for a future non-prepared execution binding. Transport-neutral
-/// despite the historical `Http` name it carried: grpc, graph, and dry-run
-/// execution all consume it.
 #[derive(Clone)]
 pub enum PreparedEndpointBinding {
     /// Protocol-v2 worker-local prepared binding.
@@ -330,19 +296,11 @@ pub trait RequestExecutor {
         ))
     }
 
-    /// Warm the dispatch cold path on every execution worker before timed
-    /// issuance begins, so the first authored request is not delayed relative to
-    /// its schedule by one-time setup (connection establishment, endpoint body
-    /// materialization, tokenizer/JIT warmup).
+    /// Warm each worker's dispatch path before timed issuance.
     ///
-    /// This is the Rust-native analogue of the Python engine's ZMQ "workers
-    /// ready, go" barrier: each worker sends one throwaway request through its
-    /// real sink and discards the result, so the timed run starts warm and all
-    /// workers begin issuing from the same warmed state. The warmup request is
-    /// **never recorded** (a no-op observer, discarded outcome), so it does not
-    /// enter the metrics. Failures are non-fatal — the timed run surfaces any
-    /// real transport error itself. The default is a no-op for placements that
-    /// need no warmup.
+    /// The throwaway request uses the real sink with a no-op observer and is not
+    /// recorded. Failures are non-fatal because the timed run reports persistent
+    /// transport errors. Placements that require no warmup use the default no-op.
     async fn prewarm(&self, _turn: PreparedTurn) -> Result<()> {
         Ok(())
     }
@@ -366,19 +324,10 @@ pub trait RequestExecutor {
     }
 }
 
-/// Transport-neutral [`PreparedTurn`] dispatch seam shared by the graph path.
+/// Object-safe [`PreparedTurn`] dispatch used by graph workers.
 ///
-/// This is deliberately distinct from the HTTP `HttpRequestDispatcher` (the
-/// scheduled path, keyed on [`Request`]). Both the HTTP `TransportSink` and the
-/// native gRPC sink already expose an identical inherent `dispatch_collect(turn:
-/// PreparedTurn, …)`; this object-safe trait unifies them so a graph sink can
-/// hold its transport as `Rc<dyn Dispatcher>` and later dispatch a graph dataset
-/// over gRPC without branching on a concrete backend. It is `#[async_trait(?Send)]`
-/// because graph workers own their sink in `Rc`/`RefCell` on a thread-local
-/// `LocalSet`.
-///
-/// Extension point: a future non-HTTP/non-gRPC `PreparedTurn` transport
-/// implements this trait and nothing in the graph runtime changes.
+/// The trait is `#[async_trait(?Send)]` because each graph worker owns its sink
+/// in `Rc`/`RefCell` on a thread-local `LocalSet`.
 #[async_trait(?Send)]
 pub trait Dispatcher {
     /// Execute one owned scheduler-free command, retaining its terminal

@@ -267,7 +267,7 @@ pub struct DatasetProbe {
     pub path: Option<PathBuf>,
 }
 
-/// Pure parsing/fetching stage for one format.
+/// Parser and fetcher for one dataset format.
 #[async_trait]
 pub trait DatasetLoader: Send + Sync {
     /// Stable registration name.

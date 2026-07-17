@@ -3,9 +3,8 @@
 
 //! Runtime composition around HTTP-bound endpoint requests.
 //!
-//! Endpoint adapters own decoded semantics, while `aiperf-transport-http` owns
-//! URL/body/lifecycle lowering and HTTP/SSE decoding through
-//! [`HttpEndpointBinding`]. This module retains only runtime responsibilities:
+//! Endpoint adapters own decoded semantics, while [`HttpEndpointBinding`] owns
+//! URL/body/lifecycle lowering and HTTP/SSE decoding. This module retains:
 //! endpoint parsing, observer emission, usage/response aggregation, and the
 //! scheduled result shape.
 
@@ -511,9 +510,8 @@ fn parse_endpoint_response<A: RuntimeEndpointAdapter + ?Sized>(
         return Ok(None);
     }
 
-    // Older OpenAI-compatible mocks omitted `object` while retaining a valid
-    // `choices` envelope. Keep the endpoint adapter itself source-strict and
-    // normalize only this established wire-compatibility shape at dispatch.
+    // Accept the established OpenAI-compatible `choices` envelope when `object`
+    // is absent, while keeping the endpoint adapter source-strict.
     object.insert(
         "object".into(),
         Value::String(
@@ -597,13 +595,13 @@ mod tests {
             &decode_sse_response(&image).unwrap()
         ));
 
-        let legacy_chat =
+        let chat_without_object =
             SseMessage::parse(r#"data: {"choices":[{"delta":{"content":"compat"}}]}"#, 12);
         let chat_endpoint = prepared_streaming("chat");
         let chat_adapter = WorkerPreparedEndpointAdapter(chat_endpoint.as_ref());
         assert!(meaningful_endpoint_response(
             &chat_adapter,
-            &decode_sse_response(&legacy_chat).unwrap()
+            &decode_sse_response(&chat_without_object).unwrap()
         ));
     }
 

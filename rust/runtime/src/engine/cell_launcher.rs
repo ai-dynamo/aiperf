@@ -44,14 +44,14 @@ pub struct CellLaunchContext {
     pub controller_coordinate: String,
     /// Each phase's global dispatch-ordinal base, injected as
     /// [`CELL_PHASE_ORDINAL_BASES_ENV`] so a cell's issuer stamps
-    /// single-cell-equivalent absolute slots (unchanged from the process launcher).
+    /// single-cell-equivalent absolute slots.
     pub phase_ordinal_bases: BTreeMap<String, u64>,
-    /// The controller's artifact upload `host:port` (Stage E), injected as
+    /// The controller's artifact upload `host:port`, injected as
     /// [`CELL_ARTIFACT_ADDR_ENV`] so a local-launched cell POSTs its per-record
     /// artifact files there. `None` when HTTP artifact shipping is off or on the
-    /// same-host path (Stage D concatenates local writes instead of shipping).
+    /// same-host path, which concatenates local writes instead of shipping.
     pub artifact_authority: Option<String>,
-    /// Tier-T2 hierarchical merge: the number of aggregators, or `None` for the flat
+    /// The number of aggregators, or `None` for the flat
     /// star topology. When `Some(M)`, each cell is injected an
     /// [`AIPERF_CELL_SHIP_ADDR`](crate::engine::cellular_cell::CELL_SHIP_ADDR_ENV)
     /// pointing at its round-robin aggregator (`cell_id % M`) instead of shipping to
@@ -130,9 +130,8 @@ impl LocalLauncher {
         if let Some(authority) = &ctx.artifact_authority {
             command.env(CELL_ARTIFACT_ADDR_ENV, authority);
         }
-        // Tier-T2: ship this cell's terminal store to its round-robin aggregator rather
-        // than the controller. Only the ship target changes — the cell still fetches its
-        // envelope and awaits START from the controller — so the partition is unchanged.
+        // Aggregation changes only the terminal ship target; controller startup and
+        // partition ownership remain unchanged.
         if let Some(agg_count) = ctx.aggregator_count {
             // Round-robin: cell k ships to aggregator `k % M` at `base + (k % M)`.
             // Inlined (not the velo-gated `cellular_aggregator::ship_coordinate`) so
@@ -256,8 +255,6 @@ mod tests {
             Some("file:/tmp/controller-peer.rmp")
         );
         assert!(envs.contains_key(CELL_PHASE_ORDINAL_BASES_ENV));
-        // Stage E: the controller's artifact upload authority is injected so the cell
-        // knows where to POST its per-record artifact files.
         assert_eq!(
             envs.get(CELL_ARTIFACT_ADDR_ENV).map(String::as_str),
             Some("controller.local:9600")

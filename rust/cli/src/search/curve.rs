@@ -1,26 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The `ttft_curve_fit` post-process handler for the `prefill-ttft-curve` recipe.
+//! `ttft_curve_fit` handler for the `prefill-ttft-curve` recipe.
 //!
-//! Pure-Rust port of `aiperf.search_recipes._ttft_curve_fit::TTFTCurveFit.process`
-//! (`src/aiperf/search_recipes/_ttft_curve_fit.py:75-208`): fit `TTFT = a*ISL + b`
-//! with an ordinary-least-squares linear regression, and — when the linear
-//! `r^2 < 0.85` and at least 3 finite points remain — refit a quadratic
-//! `a*ISL^2 + b*ISL + c`, keeping whichever has the higher `r^2`. Written as
-//! `prefill_curve.json`.
-//!
-//! `numpy.polyfit` solves a column-scaled Vandermonde least-squares via SVD; this
-//! port solves the equivalent normal equations (deg 1 closed form; deg 2 via a
-//! 3x3 Gaussian-elimination solve). For a full-rank system the least-squares
-//! solution is unique, so the coefficients and `r^2` are numerically equal to
-//! numpy's to floating-point rounding — not guaranteed byte-identical (same
-//! caveat as the scipy-backed planner fits), but exact in algorithm.
+//! Fits `TTFT = a*ISL + b` by ordinary least squares. When `r² < 0.85` and at
+//! least three finite points remain, it also fits `a*ISL² + b*ISL + c` and
+//! retains the higher `r²`. The artifact is `prefill_curve.json`.
 
 use serde_json::Value;
 
 use crate::search::extract::{extract_points, num};
 
-/// Default `r^2` floor below which the linear fit refits quadratic (`_R2_FLOOR_DEFAULT`).
+/// Default `r²` floor below which the linear fit refits quadratically.
 const R2_FLOOR_DEFAULT: f64 = 0.85;
 
 /// Resolved params for the `ttft_curve_fit` handler.
@@ -34,20 +24,18 @@ pub struct CurveSpec {
 }
 
 /// Ordinary-least-squares polynomial fit of degree `deg` (1 or 2), returning the
-/// coefficients highest-degree-first (matching `numpy.polyfit`) plus `r^2`.
-/// `r^2` collapses to `0.0` when `y` has zero variance (degenerate constant fit).
+/// coefficients highest-degree-first plus `r²`. `r²` is `0.0` when `y` has
+/// zero variance.
 fn polyfit_with_r2(x: &[f64], y: &[f64], deg: usize) -> Option<(Vec<f64>, f64)> {
     let n = x.len();
     if n <= deg {
         return None;
     }
     let ncols = deg + 1;
-    // Normal equations A^T A c = A^T y, with A's columns [x^deg, ..., x, 1]
-    // (highest power first, matching numpy's Vandermonde column order).
+    // Column order is highest power first, as required by the artifact schema.
     let mut ata = vec![vec![0.0f64; ncols]; ncols];
     let mut atb = vec![0.0f64; ncols];
     for i in 0..n {
-        // powers[k] = x^(deg - k)
         let mut powers = vec![0.0f64; ncols];
         for (k, p) in powers.iter_mut().enumerate() {
             *p = x[i].powi((deg - k) as i32);
@@ -60,7 +48,6 @@ fn polyfit_with_r2(x: &[f64], y: &[f64], deg: usize) -> Option<(Vec<f64>, f64)> 
         }
     }
     let coeffs = solve_linear(ata, atb)?;
-    // r^2 from residuals.
     let mut ss_res = 0.0;
     for i in 0..n {
         let mut yhat = 0.0;
@@ -84,7 +71,6 @@ fn polyfit_with_r2(x: &[f64], y: &[f64], deg: usize) -> Option<(Vec<f64>, f64)> 
 fn solve_linear(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
     let n = b.len();
     for col in 0..n {
-        // Partial pivot.
         let mut pivot = col;
         for r in (col + 1)..n {
             if a[r][col].abs() > a[pivot][col].abs() {
@@ -96,7 +82,6 @@ fn solve_linear(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
         }
         a.swap(col, pivot);
         b.swap(col, pivot);
-        // Eliminate below.
         for r in (col + 1)..n {
             let factor = a[r][col] / a[col][col];
             for c in col..n {
@@ -105,7 +90,6 @@ fn solve_linear(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
             b[r] -= factor * b[col];
         }
     }
-    // Back-substitute.
     let mut x = vec![0.0f64; n];
     for i in (0..n).rev() {
         let mut sum = b[i];
@@ -131,7 +115,6 @@ pub fn process(sweep_json: &Value, spec: &CurveSpec) -> anyhow::Result<Value> {
         spec.stat
     );
 
-    // raw_points carries ALL extracted points (pre finite-filtering), as floats.
     let raw_points: Vec<Value> = points
         .iter()
         .map(|&(x, y)| serde_json::json!({ "isl": num(x), "ttft_ms": num(y) }))
@@ -144,7 +127,6 @@ pub fn process(sweep_json: &Value, spec: &CurveSpec) -> anyhow::Result<Value> {
         .collect();
 
     if finite.len() < 2 {
-        // Structured too-few-finite-points sentinel (mirrors the below_floor shape).
         return Ok(serde_json::json!({
             "fit_form": "linear",
             "coefficients": [],
@@ -225,7 +207,6 @@ mod tests {
 
     #[test]
     fn perfect_linear_fit() {
-        // TTFT = 0.05 * ISL exactly.
         let out = process(
             &agg(&[(256, 12.8), (512, 25.6), (1024, 51.2), (2048, 102.4)]),
             &spec(),
@@ -233,7 +214,6 @@ mod tests {
         .unwrap();
         assert_eq!(out["fit_form"], "linear");
         assert!(out["r_squared"].as_f64().unwrap() > 0.999, "{out}");
-        // slope ~= 0.05, intercept ~= 0.
         let coeffs = out["coefficients"].as_array().unwrap();
         assert!((coeffs[0].as_f64().unwrap() - 0.05).abs() < 1e-6, "{out}");
         assert_eq!(out["raw_points"].as_array().unwrap().len(), 4);
@@ -241,10 +221,6 @@ mod tests {
 
     #[test]
     fn quadratic_fallback_on_curved_data() {
-        // U-shaped parabola y = (ISL-3)^2: the linear fit is flat (slope 0,
-        // r^2 = 0, well below the 0.85 floor), so the quadratic refit wins.
-        // A monotonic y = ISL^2 would NOT work here — its linear r^2 is ~0.96,
-        // above the floor, so the refit branch never runs.
         let out = process(
             &agg(&[(1, 4.0), (2, 1.0), (3, 0.0), (4, 1.0), (5, 4.0)]),
             &spec(),

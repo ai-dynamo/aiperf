@@ -3,28 +3,21 @@
 
 //! Dynamic-capacity concurrency slots.
 //!
-//! A [`SlotPool`] is a semaphore whose limit can be adjusted at runtime for
-//! smooth phase transitions (ramp up/down):
+//! A [`SlotPool`] is a semaphore whose limit can change at runtime:
 //!
 //! - **Increase** cancels outstanding *debt* first, then adds the remaining slots
 //!   — immediate extra capacity.
 //! - **Decrease** drains currently-available slots immediately, and records the
 //!   shortfall it could not drain as **debt**. While `debt > 0`, each
-//!   [`release`](SlotPool) is *absorbed by the debt* (decrementing it) instead of
-//!   freeing a slot. In-flight holders therefore drain down gracefully rather
-//!   than the live count ever going negative. This graceful drain-on-decrease is
-//!   the whole point.
+//!   release is absorbed by debt instead of freeing a slot. In-flight holders
+//!   therefore drain without making effective capacity negative.
 //!
 //! Debt exists because the underlying semaphore's permit count must never go
 //! negative (a negative count would let `acquire` bypass blocking). Debt keeps
 //! that count `>= 0` while still enforcing the reduced effective capacity.
 //!
-//! [`SlotPool`] is **policy-neutral**: it knows nothing about sessions vs.
-//! prefill. Those are just two independent `SlotPool` instances the caller makes.
-//! For example the "prefill slot released on first token" rule is a *caller*
-//! policy — acquire at dispatch, then drop the returned [`SlotGuard`] when the
-//! first-token event fires. The optional [`ConcurrencyManager`] bundles the two
-//! pools for convenience without adding any policy of its own.
+//! [`SlotPool`] is policy-neutral. Session and prefill admission use independent
+//! pools, and callers decide when guards are released.
 //!
 //! Single-threaded design: state lives behind `Rc`/`Cell` (the crate runs on a
 //! `LocalSet`, `?Send`), while [`tokio::sync::Semaphore`] itself carries the
@@ -128,8 +121,8 @@ impl SlotPool {
 
     /// Whether the underlying semaphore has no free permits.
     ///
-    /// Mirrors Python `asyncio.Semaphore.locked()` — this reflects the raw permit
-    /// count and does **not** subtract debt (see [`effective_slots`](Self::effective_slots)).
+    /// This reflects the raw permit count and does **not** subtract debt; use
+    /// [`effective_slots`](Self::effective_slots) for debt-adjusted capacity.
     pub fn locked(&self) -> bool {
         self.inner.semaphore.available_permits() == 0
     }

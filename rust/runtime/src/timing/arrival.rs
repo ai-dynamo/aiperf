@@ -22,19 +22,9 @@
 //!   ([`WhenBehind::KeepAbsolute`], the graph policy: the schedule is honored and
 //!   the loop bursts to catch up).
 //!
-//! ## Why a *pure* function, not a stateful pacer
-//!
-//! [`next_arrival_target`] is deliberately stateless: the caller owns both the
-//! running `prev_target_ns` accumulator and the interval draw (passed as a
-//! `FnOnce` closure invoked only when an interval is actually needed). That is the
-//! whole point — the three loops share a live generator handle with ramp/adaptive
-//! actuators, so *when* an interval is drawn is observable. A stateful pacer that
-//! eagerly drew the next interval would shift that draw relative to a concurrent
-//! rate change; a pure function that draws through the caller's closure, only on
-//! the ticks the caller already drew, changes no draw timing and no generator
-//! interaction. It is byte-for-byte the arithmetic it replaces (see the parity
-//! tests), which is the only way to fold proven pacing loops together without
-//! risking their earned-in-blood timing.
+//! [`next_arrival_target`] is stateless because interval draw timing is observable
+//! when the generator is shared with ramp and adaptive actuators. The caller
+//! controls exactly when each draw occurs.
 //!
 //! Only the graph `IntervalGraphArrival` currently calls [`next_arrival_target`]
 //! directly. The other two loops keep their own inline arithmetic and use this
@@ -44,7 +34,7 @@
 //! paced online/offline driver (`crate::run`) draws the next interval at the tail
 //! of each iteration off a generator it shares with live ramp actuators, so
 //! moving that draw into the helper's start-of-iteration position could shift it
-//! across a concurrent rate change. The arithmetic is byte-identical either way.
+//! across a concurrent rate change.
 
 /// Where the first arrival (the one with no prior target) is due.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

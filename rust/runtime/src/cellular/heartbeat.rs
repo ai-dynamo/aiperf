@@ -1,21 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! S3 — the live metrics heartbeat.
+//! Live cellular metrics heartbeats.
 //!
 //! A [`MetricsHeartbeat`] is a bounded-cadence (≤1 s) live snapshot: monotonic
 //! counters, concurrency saturation, and associatively-mergeable t-digest sketches
 //! of the key latency distributions (TTFT / ITL / request latency). Live
-//! percentiles are **sketch-derived**; the final report stays **exact** from the S2
-//! partitions (roadmap `specs/2026-07-12-cellular-ready-seams-and-roadmap.md`, S3).
+//! percentiles are sketch-derived; final reports remain exact from record
+//! partitions.
 //!
 //! [`HeartbeatAccumulator`] ingests per-record latency facts into the sketches; the
 //! runner snapshots it on the phase-progress cadence, pairing the sketches with the
-//! authoritative counts (which come from the monotonic issuer, **not** summed
-//! shards, to avoid live-count wobble). [`MetricsHeartbeat::merge`] folds many
-//! cells' heartbeats into one — counters by sum, sketches by t-digest merge — so an
-//! in-process merge today and a cross-cell heartbeat merge later are the same
-//! operation.
+//! authoritative counts from the monotonic issuer. [`MetricsHeartbeat::merge`]
+//! sums counters and merges t-digests across cells.
 
 use serde::{Deserialize, Serialize};
 
@@ -314,8 +311,7 @@ mod tests {
     fn empty_sketch_heartbeat_round_trips_over_messagepack() {
         // An osl==1 run observes no inter-token gaps, so a cell ships an all-empty
         // itl_ms sketch whose min/max carry the +inf / -inf sentinels. MessagePack must
-        // round-trip those sentinels (JSON cannot); this pins the claim in the module
-        // and transport docs and guards against a future skip-serializing on min/max.
+        // round-trip those sentinels because JSON cannot.
         let heartbeat = HeartbeatAccumulator::new().snapshot(
             0,
             HeartbeatCounters::default(),

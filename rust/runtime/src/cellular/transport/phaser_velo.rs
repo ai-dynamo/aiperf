@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Velo distribution for the monotonic [`Phaser`](crate::cellular::phaser::Phaser)
-//! (`specs/2026-07-15-ultimate-cellular-velo-runtime-design.md` §4).
+//! Velo distribution for the monotonic [`Phaser`](crate::cellular::phaser::Phaser).
 //!
 //! Makes the in-process phaser a distributed control plane: the controller owns the
 //! phaser and `advance`s it; cells subscribe over velo and each receives
@@ -20,7 +19,7 @@
 //! The replay/live split happens under the broadcast's one lock (see
 //! [`Broadcast::attach`](crate::cellular::broadcast::Broadcast::attach)), so a
 //! generation advanced concurrently with a subscribe lands in exactly one of {reply
-//! snapshot, pushed live} — no missed transition, no double count, per §3.1.
+//! snapshot, pushed live}, with no missed transition or double count.
 
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
@@ -77,7 +76,7 @@ impl PhaserServer {
                         .register_peer(peer)
                         .map_err(|error| anyhow::anyhow!("register_peer cell: {error}"))?;
 
-                    // Atomic snapshot + live registration (the §3.1 seam invariant).
+                    // Attach atomically across the snapshot/live boundary.
                     let Subscription { replay, mut live } = phaser.attach_raw();
 
                     // Pump the live tail to the cell. Forwarding stops when the broadcast

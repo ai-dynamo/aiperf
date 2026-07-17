@@ -3,14 +3,8 @@
 mod common;
 use common::*;
 
-// Tests for /v1/images/edits endpoint.
-// Based on: docs/tutorials/sglang-image-edit.md
-
-/// Image edit completes requests without token-based streaming metrics.
-///
 /// The endpoint POSTs a prompt plus a reference image as multipart/form-data.
-/// request_content_type auto-defaults to multipart for image_edit, so the
-/// CLI matches the documented tutorial usage.
+/// `request_content_type` defaults to multipart for `image_edit`.
 #[tokio::test]
 async fn test_image_edit_produces_no_streaming_metrics() {
     let h = AIPerfHarness::new().await;
@@ -42,8 +36,6 @@ async fn test_image_edit_produces_no_streaming_metrics() {
     assert!(!json["request_throughput"].is_null());
 }
 
-/// Diffusion-specific extras (size, num_inference_steps, guidance_scale)
-/// flow through to the multipart form fields without affecting the metric pipeline.
 #[tokio::test]
 async fn test_image_edit_extra_inputs_pass_through() {
     let h = AIPerfHarness::new().await;

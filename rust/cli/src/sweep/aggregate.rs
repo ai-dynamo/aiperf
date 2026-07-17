@@ -1,21 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Sweep aggregation + terminal table.
+//! Sweep aggregation and terminal table.
 //!
-//! After every cell runs, read each cell's `native-v2.json`, render the live
-//! sweep table (gated on a TTY + >1 variation, mirroring Python's
-//! `_should_emit_sweep_table`), and write the `sweep_aggregate` artifacts.
-//!
-//! The `sweep_aggregate/profile_export_aiperf_sweep.{json,csv}` pair is a
-//! byte-exact port of Python's `AggregateSweepJsonExporter` /
-//! `AggregateSweepCsvExporter` (`src/aiperf/exporters/aggregate/`) driven by
-//! `SweepAnalyzer.compute` (`src/aiperf/orchestrator/aggregation/sweep.py`) and
-//! the single-trial `_json_metric_to_stats` projection
-//! (`src/aiperf/cli_runner/_sweep_aggregate.py`).
-//!
-//! **Two paths.** With one trial per variation (single-trial) each group's stats
-//! come from `_json_metric_to_stats` (a direct read of the cell `native-v2.json`
-//! summary, keyed by metric tag), so `best_configurations`/`pareto_optimal` are
+//! With one trial per variation, each group's stats come directly from the
+//! cell's `native-v2.json` summary keyed by metric tag, so
+//! `best_configurations`/`pareto_optimal` are
 //! always empty (their guards look for flattened `{tag}_{stat}` keys the
 //! single-trial projection never produces) and no confidence math runs. The
 //! multi-trial (`--num-profile-runs >= 2`) confidence aggregate is now native
@@ -24,8 +13,7 @@
 //! detailed JSON when `--convergence-metric` is set), and the sweep path writes
 //! per-variation confidence aggregates plus the cross-variation
 //! `sweep_aggregate` with `best_configurations`/`pareto_optimal`. The
-//! Student-t inverse CDF is a pure-Rust port (not scipy), so CI bounds are
-//! close-but-not-bit-exact — no test pins them numerically.
+//! Student-t inverse CDF uses an approximately `1e-10` bisection tolerance.
 
 use std::collections::BTreeSet;
 use std::io::IsTerminal;
@@ -64,12 +52,12 @@ const HEADLINE: &[(&str, &str, &str)] = &[
 ];
 
 /// Percentile fields carried through the single-trial projection, in the fixed
-/// order Python's `_json_metric_to_stats` iterates them.
+/// serialization order required by the single-trial artifact.
 const PERCENTILE_FIELDS: &[&str] = &["p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99"];
 
 /// Aggregate the finished cells: render the table and write the aggregate
 /// artifacts. Returns the process exit code (`0` full success; `1` when fewer
-/// than two runs succeeded — mirrors Python `_summarize_and_export`).
+/// than two runs succeeded).
 ///
 /// `is_sweep` selects the sweep vs non-sweep multi-run layout; `order` selects
 /// the REPEATED/INDEPENDENT per-variation + sweep-aggregate directory placement.
@@ -100,7 +88,6 @@ pub fn finish(
     let confidence = flags.confidence_level.unwrap_or(0.95);
     let multi_trial = outcomes.iter().any(|o| o.trial > 0);
 
-    // Single-trial: the byte-exact `native-v2.json`-driven sweep aggregate.
     if !multi_trial {
         let successful = outcomes.iter().filter(|o| o.success).count();
         write_sweep_aggregate(&base, outcomes, confidence)?;
@@ -108,7 +95,6 @@ pub fn finish(
         return Ok(if failed > 0 { 1 } else { 0 });
     }
 
-    // Multi-trial: the native confidence path (per-run summary pooling).
     let classified: Vec<Classified> = outcomes.iter().map(classify).collect();
     let cooldown = flags
         .profile_run_cooldown_seconds
@@ -160,8 +146,7 @@ pub fn finish(
     Ok(0)
 }
 
-/// A reclassified cell: its stable label plus the completed-benchmark verdict
-/// (`native_execution._classify` over the per-run summary).
+/// A cell's stable label and completed-benchmark verdict.
 struct Classified {
     /// The run/trial label (`run_NNNN`).
     label: String,
@@ -169,7 +154,7 @@ struct Classified {
     success: bool,
     /// Failure detail (`None` on success).
     error: Option<String>,
-    /// The Python-shaped `profile_export_aiperf.json` summary (present on success).
+    /// The `profile_export_aiperf.json` summary (present on success).
     summary: Option<Value>,
     /// The cell's artifact directory (holds the per-request `profile_export.jsonl`).
     artifact_dir: PathBuf,
@@ -179,8 +164,7 @@ struct Classified {
     variation: Option<Value>,
 }
 
-/// Reclassify a cell from its per-run summary: even a process-successful cell is
-/// FAILED when it recorded zero completed requests (`_classify`).
+/// Mark a process-successful cell failed when it recorded no completed requests.
 fn classify(o: &CellOutcome) -> Classified {
     let label = format!("run_{:04}", o.trial + 1);
     let base = Classified {
@@ -323,15 +307,11 @@ fn print_table(rows: &[CellRow]) {
     println!();
 }
 
-// ---------------------------------------------------------------------------
-// Byte-exact single-trial sweep aggregate.
-// ---------------------------------------------------------------------------
-
 /// A grouped variation cell: its display parameters and per-metric stats.
 struct Combo {
     /// Display-name -> config-typed value (leaf name unless it collides).
     parameters: Vec<(String, Value)>,
-    /// metric tag -> ordered stats map (`_json_metric_to_stats` shape).
+    /// Metric tag to ordered stats map.
     metrics: Vec<(String, Map<String, Value>)>,
 }
 
@@ -341,9 +321,6 @@ fn write_sweep_aggregate(
     outcomes: &[CellOutcome],
     confidence: f64,
 ) -> anyhow::Result<()> {
-    // Group by (label, sorted values), preserving first-seen order. Single-trial
-    // means each group is one cell; a duplicate label would pool, but the sweep
-    // expander never emits duplicate variation labels.
     let mut combos: Vec<Combo> = Vec::new();
     let mut num_successful = 0usize;
     let mut failed_runs: Vec<Value> = Vec::new();
@@ -372,10 +349,7 @@ fn write_sweep_aggregate(
         });
     }
 
-    // sweep_parameters: first-seen display-name -> ordered distinct values.
     let sweep_parameters = compute_sweep_parameters(&combos);
-    // `_build_metadata`: product of per-parameter distinct-value counts (1 for
-    // an empty parameter set — an empty product).
     let num_combinations: i64 = sweep_parameters.iter().map(|p| p.1.len() as i64).product();
 
     let json = build_sweep_json(
@@ -397,20 +371,18 @@ fn write_sweep_aggregate(
 
     let dir = base.join("sweep_aggregate");
     std::fs::create_dir_all(&dir)?;
-    // orjson OPT_INDENT_2 output; serde_json pretty matches it byte-for-byte for
-    // ASCII payloads (2-space indent, `": "`, `\n` newlines, no trailing space).
+    // Artifact JSON uses two-space indentation and LF line endings.
     let json_path = dir.join("profile_export_aiperf_sweep.json");
     let csv_path = dir.join("profile_export_aiperf_sweep.csv");
     std::fs::write(&json_path, serde_json::to_string_pretty(&json)?)?;
     std::fs::write(&csv_path, csv)?;
-    // Mirror Python's `_post_process`/`export_helpers` write lines.
     tracing::info!("Sweep aggregate JSON written to: {}", json_path.display());
     tracing::info!("Sweep aggregate CSV written to: {}", csv_path.display());
     Ok(())
 }
 
 /// The `parameters` dict for a cell: display-name -> config-typed value, sorted
-/// by dotted path (mirrors Python's `_short_values_dict` over sorted key-values).
+/// by dotted path.
 fn display_parameters(o: &CellOutcome) -> Vec<(String, Value)> {
     let values = o
         .values
@@ -420,11 +392,10 @@ fn display_parameters(o: &CellOutcome) -> Vec<(String, Value)> {
     let Some(values) = values else {
         return Vec::new();
     };
-    // Sort by dotted path (Python keys the VariationKey on sorted values).
+    // Dotted-path order is part of the artifact contract.
     let mut pairs: Vec<(String, Value)> =
         values.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     pairs.sort_by(|a, b| a.0.cmp(&b.0));
-    // Resolve leaf display names with collision fallback to the dotted path.
     let display = display_names(&pairs.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>());
     pairs
         .into_iter()
@@ -432,8 +403,7 @@ fn display_parameters(o: &CellOutcome) -> Vec<(String, Value)> {
         .collect()
 }
 
-/// Map dotted paths to leaf display names, falling back to the full dotted path
-/// when two paths share a leaf (`_parameter_display_names`).
+/// Map dotted paths to leaf display names, retaining full paths on collisions.
 fn display_names(paths: &[String]) -> std::collections::HashMap<String, String> {
     let leaf = |p: &str| p.rsplit('.').next().unwrap_or(p).to_string();
     let mut leaf_counts: std::collections::HashMap<String, usize> =
@@ -455,8 +425,7 @@ fn display_names(paths: &[String]) -> std::collections::HashMap<String, String> 
         .collect()
 }
 
-/// Project a native report's `metrics` map into the single-trial stats shape
-/// (`_legacy_stats` -> `_json_metric_to_stats`), preserving report metric order.
+/// Project a native report's `metrics` map into the single-trial stats shape.
 fn project_summary(report: &Value) -> Vec<(String, Map<String, Value>)> {
     let Some(metrics) = report.get("metrics").and_then(Value::as_object) else {
         return Vec::new();
@@ -481,7 +450,7 @@ fn project_summary(report: &Value) -> Vec<(String, Map<String, Value>)> {
     out
 }
 
-/// Pick the single-series or unlabeled-aggregate series (`_summary_series`).
+/// Pick the sole series or sole unlabeled aggregate series.
 fn summary_series(entry: &Map<String, Value>) -> Option<&Value> {
     let series = entry.get("series")?.as_array()?;
     if series.len() == 1 {
@@ -497,10 +466,9 @@ fn summary_series(entry: &Map<String, Value>) -> Option<&Value> {
     first
 }
 
-/// The `_legacy_stats` projection of one native metric series: the raw facts a
-/// metric-type carries, before the single-trial `_json_metric_to_stats` collapse.
+/// Raw facts carried by one native metric series.
 #[derive(Default)]
-struct LegacyStats {
+struct ProjectedStats {
     avg: Option<f64>,
     min: Option<f64>,
     max: Option<f64>,
@@ -527,9 +495,7 @@ fn read_percentiles(stats: &Map<String, Value>) -> Vec<(String, f64)> {
         .unwrap_or_default()
 }
 
-/// Build the ordered per-metric stats map for one metric, matching
-/// `_legacy_stats` (native type projection) fed through `_json_metric_to_stats`
-/// (single-trial: std/cv/ci collapse; percentiles/count/sum carried through).
+/// Build the ordered single-trial stats map for one metric.
 /// The report `std` is intentionally dropped — single-trial std is a hard 0.0.
 fn json_metric_stats(
     mtype: &str,
@@ -539,8 +505,8 @@ fn json_metric_stats(
     let num = |k: &str| stats.get(k).and_then(Value::as_f64);
     let int = |k: &str| stats.get(k).and_then(Value::as_u64);
 
-    let legacy = match mtype {
-        "distribution" => LegacyStats {
+    let projected = match mtype {
+        "distribution" => ProjectedStats {
             avg: num("avg"),
             min: num("min"),
             max: num("max"),
@@ -550,7 +516,7 @@ fn json_metric_stats(
         },
         "scalar" => {
             let v = num("value")?;
-            LegacyStats {
+            ProjectedStats {
                 avg: Some(v),
                 min: Some(v),
                 max: Some(v),
@@ -559,7 +525,7 @@ fn json_metric_stats(
         }
         "counter" => {
             let v = num("total")?;
-            LegacyStats {
+            ProjectedStats {
                 avg: Some(v),
                 min: Some(v),
                 max: Some(v),
@@ -567,7 +533,7 @@ fn json_metric_stats(
                 ..Default::default()
             }
         }
-        "histogram" => LegacyStats {
+        "histogram" => ProjectedStats {
             avg: num("avg"),
             count: int("count"),
             sum: num("sum"),
@@ -577,25 +543,25 @@ fn json_metric_stats(
         _ => return None,
     };
 
-    // `_json_metric_to_stats`: avg drives every point estimate; std/cv/ci = 0.
-    let avg = legacy.avg.unwrap_or(0.0);
+    // Single-trial dispersion and confidence intervals collapse to the mean.
+    let avg = projected.avg.unwrap_or(0.0);
     let mut m = Map::new();
     m.insert("mean".into(), f(avg));
     m.insert("avg".into(), f(avg));
     m.insert("std".into(), f(0.0));
-    m.insert("min".into(), f(legacy.min.unwrap_or(avg)));
-    m.insert("max".into(), f(legacy.max.unwrap_or(avg)));
+    m.insert("min".into(), f(projected.min.unwrap_or(avg)));
+    m.insert("max".into(), f(projected.max.unwrap_or(avg)));
     m.insert("cv".into(), f(0.0));
     m.insert("ci_low".into(), f(avg));
     m.insert("ci_high".into(), f(avg));
     m.insert("unit".into(), Value::String(unit.to_string()));
-    for (k, v) in legacy.percentiles {
+    for (k, v) in projected.percentiles {
         m.insert(k, f(v));
     }
-    if let Some(c) = legacy.count {
+    if let Some(c) = projected.count {
         m.insert("count".into(), Value::from(c));
     }
-    if let Some(s) = legacy.sum {
+    if let Some(s) = projected.sum {
         m.insert("sum".into(), f(s));
     }
     Some(m)
@@ -609,7 +575,7 @@ fn f(v: f64) -> Value {
         .unwrap_or(Value::Null)
 }
 
-/// `_compute_sweep_parameters`: first-seen display name -> distinct values list.
+/// Collect distinct parameter values in first-seen order.
 fn compute_sweep_parameters(combos: &[Combo]) -> Vec<(String, Vec<Value>)> {
     let mut out: Vec<(String, Vec<Value>)> = Vec::new();
     for combo in combos {
@@ -627,7 +593,7 @@ fn compute_sweep_parameters(combos: &[Combo]) -> Vec<(String, Vec<Value>)> {
     out
 }
 
-/// Assemble the byte-exact `profile_export_aiperf_sweep.json` document.
+/// Assemble `profile_export_aiperf_sweep.json`.
 fn build_sweep_json(
     num_runs: usize,
     num_successful: usize,
@@ -689,8 +655,8 @@ fn build_sweep_json(
     Value::Object(root)
 }
 
-/// Assemble the byte-exact `profile_export_aiperf_sweep.csv` (CRLF, csv module
-/// quoting rules). Ports `AggregateSweepCsvExporter._generate_content`.
+/// Assemble `profile_export_aiperf_sweep.csv` with CRLF and standard CSV
+/// quoting.
 fn build_sweep_csv(
     num_runs: usize,
     num_successful: usize,
@@ -702,7 +668,6 @@ fn build_sweep_csv(
     let mut w = CsvWriter::new();
 
     if !combos.is_empty() {
-        // Metric column set = UNION of metric tags across combos, sorted.
         let metric_names: BTreeSet<String> = combos
             .iter()
             .flat_map(|c| c.metrics.iter().map(|(t, _)| t.clone()))
@@ -738,16 +703,13 @@ fn build_sweep_csv(
         }
     }
 
-    // Section 2: Best Configurations (always empty on the single-trial path).
     w.row(&[] as &[String]);
     w.row(&["Best Configurations".to_string()]);
 
-    // Section 3: Pareto Optimal Points (always empty on the single-trial path).
     w.row(&[] as &[String]);
     w.row(&["Pareto Optimal Points".to_string()]);
     w.row(&["None".to_string()]);
 
-    // Section 4: Metadata.
     w.row(&[] as &[String]);
     w.row(&["Metadata".to_string()]);
     w.row(&["Field".to_string(), "Value".to_string()]);
@@ -766,8 +728,8 @@ fn build_sweep_csv(
     w.finish()
 }
 
-/// Render a parameter value for a CSV cell (matches Python: int stays bare,
-/// missing renders empty). Values come straight from the variation dict.
+/// Render a parameter value for a CSV cell; integers stay bare and missing
+/// values render empty.
 fn combo_param(combo: &Combo, name: &str) -> String {
     match combo.parameters.iter().find(|(n, _)| n == name) {
         Some((_, Value::String(s))) => s.clone(),
@@ -776,8 +738,7 @@ fn combo_param(combo: &Combo, name: &str) -> String {
     }
 }
 
-/// Python `_format_number`: None/non-finite -> ""; float -> fixed decimals;
-/// int -> bare. Our stats store every number as f64, so all render as fixed.
+/// Render finite values with fixed decimals and absent values as empty.
 fn fmt_num(value: Option<&Value>, decimals: usize) -> String {
     match value.and_then(Value::as_f64) {
         Some(v) if v.is_finite() => format!("{v:.decimals$}"),
@@ -785,9 +746,7 @@ fn fmt_num(value: Option<&Value>, decimals: usize) -> String {
     }
 }
 
-/// Minimal CSV writer matching Python's `csv.writer` defaults: `\r\n` line
-/// terminator, comma delimiter, `"`-quote only when a field needs it (contains
-/// comma, quote, CR, or LF), doubling embedded quotes.
+/// CSV writer using CRLF, comma delimiters, and doubled embedded quotes.
 pub(crate) struct CsvWriter {
     buf: String,
 }
@@ -816,11 +775,7 @@ impl CsvWriter {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Multi-trial sweep confidence aggregate (per-variation + cross-variation).
-// ---------------------------------------------------------------------------
-
-/// One grouped variation cell across trials (`_group_results_by_variation`).
+/// One variation grouped across trials.
 struct VariationGroup<'a> {
     /// The variation label (cell identity half of the group key).
     label: String,
@@ -830,8 +785,7 @@ struct VariationGroup<'a> {
     members: Vec<&'a Classified>,
 }
 
-/// Group classified cells by `(variation_label, sorted values)`, preserving
-/// first-seen order (`_group_results_by_variation`).
+/// Group cells by `(variation_label, sorted values)` in first-seen order.
 fn group_by_variation<'a>(classified: &'a [Classified]) -> Vec<VariationGroup<'a>> {
     let mut groups: Vec<VariationGroup> = Vec::new();
     for c in classified {
@@ -889,7 +843,7 @@ fn render_value(v: &Value) -> String {
     }
 }
 
-/// The `{seg}_{value}__...` directory name for a variation (`SweepVariation.dir_name`).
+/// The `{seg}_{value}__...` directory name for a variation.
 fn group_dir_name(values: &[(String, Value)]) -> String {
     values
         .iter()
@@ -898,8 +852,7 @@ fn group_dir_name(values: &[(String, Value)]) -> String {
         .join("__")
 }
 
-/// Display parameter names across all groups, leaf form unless a leaf collides
-/// (`_parameter_display_names`).
+/// Display leaf parameter names unless a leaf collides across groups.
 fn group_display_names(groups: &[VariationGroup]) -> std::collections::HashMap<String, String> {
     let mut paths: Vec<String> = Vec::new();
     for g in groups {
@@ -920,8 +873,8 @@ fn sweep_mode_str(order: IterationOrder) -> &'static str {
     }
 }
 
-/// Per-variation confidence-aggregate directory (`_per_variation_aggregate_dir`):
-/// REPEATED -> `<base>/aggregate/<dir>`, INDEPENDENT -> `<base>/<dir>/aggregate`.
+/// Per-variation confidence-aggregate directory:
+/// repeated -> `<base>/aggregate/<dir>`, independent -> `<base>/<dir>/aggregate`.
 fn per_variation_aggregate_dir(base: &Path, dir_name: &str, order: IterationOrder) -> PathBuf {
     match order {
         IterationOrder::Repeated => base.join("aggregate").join(dir_name),
@@ -929,8 +882,8 @@ fn per_variation_aggregate_dir(base: &Path, dir_name: &str, order: IterationOrde
     }
 }
 
-/// Sweep-level aggregate directory (`_sweep_aggregate_dir`): REPEATED multi-run
-/// -> `<base>/aggregate/sweep_aggregate`, else `<base>/sweep_aggregate`.
+/// Sweep-level aggregate directory: repeated multi-run uses
+/// `<base>/aggregate/sweep_aggregate`; otherwise `<base>/sweep_aggregate`.
 fn sweep_aggregate_dir(base: &Path, order: IterationOrder) -> PathBuf {
     match order {
         IterationOrder::Repeated => base.join("aggregate").join("sweep_aggregate"),
@@ -947,8 +900,7 @@ struct ComboStats {
 }
 
 /// Write the per-variation confidence aggregates and the cross-variation sweep
-/// aggregate for a multi-trial sweep (`aggregate_per_variation_and_export` +
-/// `aggregate_sweep_and_export`).
+/// aggregate for a multi-trial sweep.
 fn write_sweep_confidence(
     base: &Path,
     classified: &[Classified],
@@ -960,7 +912,6 @@ fn write_sweep_confidence(
     let display = group_display_names(&groups);
     let mode = sweep_mode_str(order);
 
-    // Per-variation confidence aggregates.
     for g in &groups {
         let success: Vec<&Classified> = g.members.iter().copied().filter(|c| c.success).collect();
         if success.is_empty() {
@@ -1012,7 +963,6 @@ fn write_sweep_confidence(
         )?;
     }
 
-    // Cross-variation sweep aggregate.
     let mut combos: Vec<ComboStats> = Vec::new();
     for g in &groups {
         let success: Vec<&Classified> = g.members.iter().copied().filter(|c| c.success).collect();
@@ -1080,8 +1030,7 @@ fn write_sweep_confidence(
     Ok(())
 }
 
-/// `[{name, values}]` from grouped variations, values in first-seen order
-/// (`_compute_sweep_parameters`).
+/// Build `[{name, values}]` with values in first-seen order.
 fn sweep_parameters_from_groups(
     groups: &[VariationGroup],
     display: &std::collections::HashMap<String, String>,
@@ -1124,7 +1073,7 @@ fn combo_unit<'a>(combo: &'a ComboStats, key: &str) -> Option<&'a str> {
 const THROUGHPUT_KEY: &str = "request_throughput_avg";
 const LATENCY_CANDIDATES: &[&str] = &["time_to_first_token_p99", "request_latency_p99"];
 
-/// Resolve the best latency key present in every combo (`_resolve_latency_key`).
+/// Resolve the preferred latency key present in every combination.
 fn resolve_latency_key(combos: &[ComboStats]) -> Option<&'static str> {
     LATENCY_CANDIDATES
         .iter()
@@ -1132,7 +1081,7 @@ fn resolve_latency_key(combos: &[ComboStats]) -> Option<&'static str> {
         .find(|k| combos.iter().all(|c| combo_mean(c, k).is_some()))
 }
 
-/// The `best_configurations` block (`_compute_best_configurations`).
+/// Build the `best_configurations` block.
 fn best_configurations(combos: &[ComboStats]) -> Map<String, Value> {
     let mut best = Map::new();
     if combos.is_empty() {
@@ -1180,9 +1129,8 @@ fn best_configurations(combos: &[ComboStats]) -> Map<String, Value> {
     best
 }
 
-/// The `pareto_optimal` frontier (`_compute_pareto` / `identify_pareto_optimal`):
-/// maximize throughput, minimize the resolved latency; strict domination; result
-/// sorted by sorted `(param, value)` pairs.
+/// Compute the strict Pareto frontier by maximizing throughput and minimizing
+/// latency, then sort by `(parameter, value)` pairs.
 fn pareto_optimal(combos: &[ComboStats]) -> Vec<Value> {
     if combos.is_empty() {
         return Vec::new();
@@ -1196,7 +1144,6 @@ fn pareto_optimal(combos: &[ComboStats]) -> Vec<Value> {
     {
         return Vec::new();
     }
-    // (throughput [maximize], latency [minimize]) per combo.
     let points: Vec<(f64, f64)> = combos
         .iter()
         .map(|c| {
@@ -1206,7 +1153,6 @@ fn pareto_optimal(combos: &[ComboStats]) -> Vec<Value> {
             )
         })
         .collect();
-    // A dominates B: better-or-equal on both, strictly better on one.
     let dominates = |a: (f64, f64), b: (f64, f64)| -> bool {
         let be = (a.0 >= b.0) && (a.1 <= b.1);
         let strict = (a.0 > b.0) || (a.1 < b.1);
@@ -1229,7 +1175,6 @@ fn pareto_optimal(combos: &[ComboStats]) -> Vec<Value> {
             (sorted, Value::Object(params_map(&combos[i])))
         })
         .collect();
-    // Sort by sorted (param, value) pairs (stringified) for determinism.
     result.sort_by(|a, b| {
         let ka: Vec<String> = a.0.iter().map(|(k, v)| format!("{k}={v}")).collect();
         let kb: Vec<String> = b.0.iter().map(|(k, v)| format!("{k}={v}")).collect();
@@ -1329,8 +1274,7 @@ fn metric_sweep_value(metric: &ConfidenceMetric) -> Value {
     Value::Object(m)
 }
 
-/// Assemble the multi-trial `profile_export_aiperf_sweep.csv`
-/// (`AggregateSweepCsvExporter._generate_content`).
+/// Assemble the multi-trial `profile_export_aiperf_sweep.csv`.
 fn build_sweep_confidence_csv(
     total: usize,
     num_successful: usize,
@@ -1381,7 +1325,6 @@ fn build_sweep_confidence_csv(
         }
     }
 
-    // Section 2: Best Configurations.
     w.row(&[] as &[String]);
     w.row(&["Best Configurations".to_string()]);
     if !best.is_empty() {
@@ -1417,7 +1360,6 @@ fn build_sweep_confidence_csv(
         }
     }
 
-    // Section 3: Pareto Optimal Points.
     w.row(&[] as &[String]);
     w.row(&["Pareto Optimal Points".to_string()]);
     if !pareto.is_empty() {
@@ -1438,7 +1380,6 @@ fn build_sweep_confidence_csv(
         w.row(&["None".to_string()]);
     }
 
-    // Section 4: Metadata.
     w.row(&[] as &[String]);
     w.row(&["Metadata".to_string()]);
     w.row(&["Field".to_string(), "Value".to_string()]);
@@ -1476,7 +1417,7 @@ fn combo_param_value(combo: &ComboStats, name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// `_format_number` for the sweep CSV: finite -> fixed decimals, else empty.
+/// Render finite CSV values with fixed decimals and non-finite values as empty.
 fn fmt_finite(v: f64, decimals: usize) -> String {
     if v.is_finite() {
         format!("{v:.decimals$}")
@@ -1485,19 +1426,12 @@ fn fmt_finite(v: f64, decimals: usize) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Detailed / collated aggregate (per-request JSONL pooling).
-// ---------------------------------------------------------------------------
-
 /// Write `profile_export_aiperf_collated.json` from each successful run's
-/// per-request `profile_export.jsonl` (`DetailedAggregation` +
-/// `AggregateDetailedJsonExporter`). Only emitted for the adaptive-convergence
-/// path (`plan.use_adaptive`).
+/// per-request `profile_export.jsonl`. Only emitted for adaptive convergence.
 fn write_detailed(dir: &Path, classified: &[Classified], cooldown: f64) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)?;
     let success: Vec<&Classified> = classified.iter().filter(|c| c.success).collect();
 
-    // metric name -> Vec<(label, values)> in run order.
     let mut per_run_data: Vec<(String, Vec<(String, Vec<f64>)>)> = Vec::new();
     for c in &success {
         let run_metrics = load_jsonl_metrics(&c.artifact_dir);
@@ -1594,8 +1528,7 @@ fn write_detailed(dir: &Path, classified: &[Classified], cooldown: f64) -> anyho
     Ok(())
 }
 
-/// Load per-request metric values from a run's `profile_export.jsonl`
-/// (`jsonl_loader.load_all_metrics`): profiling-phase, non-error records only.
+/// Load profiling-phase, non-error metrics from `profile_export.jsonl`.
 fn load_jsonl_metrics(dir: &Path) -> Vec<(String, Vec<f64>)> {
     let path = dir.join("profile_export.jsonl");
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -1637,7 +1570,7 @@ fn load_jsonl_metrics(dir: &Path) -> Vec<(String, Vec<f64>)> {
     out
 }
 
-/// NumPy-style linear-interpolation percentile over a sorted slice.
+/// Linear-interpolation percentile over a sorted slice.
 fn percentile_linear(sorted: &[f64], p: f64) -> f64 {
     let n = sorted.len();
     if n == 0 {

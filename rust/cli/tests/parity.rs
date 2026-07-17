@@ -1,27 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Byte-exact parity of the native `BenchmarkRun` against Python golden vectors.
+//! Byte-exact `BenchmarkRun` golden-vector coverage.
 //!
-//! The native type is both the domain object and the wire request. This suite
-//! asserts two things per golden:
-//!
-//! 1. The `aiperf` stdin wire type (`BenchmarkRunWireV2`, the bare run) accepts
-//!    the golden's `run` object — structural validity against the real consumer.
-//! 2. Each already-ported `cfg` section round-trips byte-exact: deserializing
-//!    the golden through the native `BenchmarkRun` (which drops not-yet-ported
-//!    keys) and re-serializing reproduces that section's subtree exactly.
-//!
-//! As sections land, add their key to `PORTED_CFG_SECTIONS`. A section not in
-//! the list is intentionally dropped by the native type and not asserted yet.
+//! Each fixture must deserialize as the stdin wire type, and modeled config
+//! sections must round-trip byte-exact through `BenchmarkRun`.
 
 use aiperf_cli::flags::ProfileFlags;
 use aiperf_cli::load;
 use aiperf_cli::model::BenchmarkRun;
 use aiperf_runtime::engine::protocol_v2::BenchmarkRunWireV2;
 
-/// `cfg` sections the native type currently models; asserted for byte-exact
-/// round-trip. Extend as each section is ported.
-const PORTED_CFG_SECTIONS: &[&str] = &[
+const MODELED_CFG_SECTIONS: &[&str] = &[
     "endpoint",
     "models",
     "tokenizer",
@@ -46,10 +35,8 @@ const PORTED_CFG_SECTIONS: &[&str] = &[
     "unsafe_override",
 ];
 
-/// Run-level (non-`cfg`) fields the native type currently models byte-exact.
-const PORTED_RUN_FIELDS: &[&str] = &["resolved"];
+const MODELED_RUN_FIELDS: &[&str] = &["resolved"];
 
-/// Golden fixtures the native path reproduces byte-exact (name = fixture stem).
 const FIXTURES: &[&str] = &[
     "minimal_chat",
     "rate_chat",
@@ -115,32 +102,26 @@ const FIXTURES: &[&str] = &[
     "synthesis",
 ];
 
-/// Load a golden request JSON (paths are relative to the crate dir `rust/cli`).
 fn load_golden(name: &str) -> serde_json::Value {
     let path = format!("../../tools/parity/golden/{name}.request.json");
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read golden {path}: {e}"));
     serde_json::from_slice(&bytes).expect("golden is valid JSON")
 }
 
-/// Re-serialize the golden `run` through the native `BenchmarkRun` type.
 fn runner_view(golden: &serde_json::Value) -> serde_json::Value {
     let run: BenchmarkRun =
         serde_json::from_value(golden["run"].clone()).expect("golden run deserializes as native");
     serde_json::to_value(&run).expect("native run serializes")
 }
 
-/// Read a `.args` fixture and split into argv tokens (fixtures use simple
-/// whitespace-separated tokens, no quoting).
 fn fixture_args(name: &str) -> Vec<String> {
     let path = format!("../../tools/parity/fixtures/{name}.args");
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     text.split_whitespace().map(str::to_owned).collect()
 }
 
-/// Assert the built run's consumed sections + run fields + artifact_dir match a
-/// golden, and that it deserializes as valid runner input.
 fn assert_matches_golden(fixture: &str, built: &serde_json::Value, golden: &serde_json::Value) {
-    for section in PORTED_CFG_SECTIONS {
+    for section in MODELED_CFG_SECTIONS {
         // A conditional section (e.g. `slos`) is null/absent on both sides for
         // fixtures that don't exercise it; `null == null` passes.
         assert_eq!(
@@ -149,15 +130,14 @@ fn assert_matches_golden(fixture: &str, built: &serde_json::Value, golden: &serd
             built["cfg"][section], golden["run"]["cfg"][section]
         );
     }
-    for field in PORTED_RUN_FIELDS {
+    for field in MODELED_RUN_FIELDS {
         assert_eq!(
             &built[field], &golden["run"][field],
             "[{fixture}] run.{field} diverges"
         );
     }
-    // The `export` section's static, registry-derived metadata (console_txt +
-    // genai_perf header/tag maps) is byte-exact; the genai_perf envelope is a
-    // best-effort echo (Python exclude_unset) and is compared only structurally.
+    // Registry-derived export metadata is byte-exact; invocation-specific
+    // envelope content is compared structurally.
     assert_export_static(
         fixture,
         &built["cfg"]["export"],
@@ -190,8 +170,7 @@ fn assert_export_static(fixture: &str, built: &serde_json::Value, golden: &serde
         built["genai_perf"]["envelope"].is_object(),
         "[{fixture}] export.genai_perf.envelope must be present"
     );
-    // MLflow/W&B config fields are byte-exact; params/config_json/cli_command
-    // are best-effort (invocation-specific) and not compared.
+    // Invocation-specific params, config JSON, and CLI command are not compared.
     if !golden["mlflow"].is_null() {
         for key in [
             "enabled",
@@ -217,8 +196,7 @@ fn assert_export_static(fixture: &str, built: &serde_json::Value, golden: &serde
             );
         }
     }
-    // The OTLP sink is byte-exact except for the invocation-specific
-    // `aiperf.benchmark.id` resource attribute (fresh uuid vs pinned golden).
+    // `aiperf.benchmark.id` is invocation-specific and excluded.
     if !golden["otel"].is_null() {
         assert_eq!(
             built["otel"]["endpoint"], golden["otel"]["endpoint"],
@@ -244,20 +222,17 @@ fn assert_export_static(fixture: &str, built: &serde_json::Value, golden: &serde
 
 #[test]
 fn goldens_are_valid_runner_input() {
-    // The golden files retain the historical `{operation, protocol_version, run}`
-    // shape (Python-generated reference data), but the stdin wire is now the bare
-    // `run` object — so validate the `run` subtree against the real consumer type.
     for fixture in FIXTURES {
         let golden = load_golden(fixture);
-        let _: BenchmarkRunWireV2 = serde_json::from_value(golden["run"].clone())
-            .unwrap_or_else(|e| panic!("[{fixture}] golden run is not valid BenchmarkRunWireV2: {e}"));
+        let _: BenchmarkRunWireV2 =
+            serde_json::from_value(golden["run"].clone()).unwrap_or_else(|e| {
+                panic!("[{fixture}] golden run is not valid BenchmarkRunWireV2: {e}")
+            });
     }
 }
 
 #[test]
 fn goldens_roundtrip_through_native_type() {
-    // Deserializing a golden through the native type and re-serializing must
-    // reproduce every ported section byte-exact (the type is correct).
     for fixture in FIXTURES {
         let golden = load_golden(fixture);
         let view = runner_view(&golden);
@@ -267,9 +242,6 @@ fn goldens_roundtrip_through_native_type() {
 
 #[test]
 fn loader_reproduces_goldens() {
-    // The pre-translation (flags -> native run) must reproduce each golden's
-    // consumed sections + resolved + artifact_dir. benchmark_id/cli_command are
-    // invocation-specific and excluded.
     for fixture in FIXTURES {
         let golden = load_golden(fixture);
         let flags = ProfileFlags::parse_from_args(&fixture_args(fixture))
@@ -347,8 +319,6 @@ const YAML_FIXTURES: &[(&str, &str, &str)] = &[
 
 #[test]
 fn yaml_configs_reproduce_goldens() {
-    // The native YAML surface must reproduce the same consumed sections as
-    // Python's resolve_config for each config file.
     for (config, golden_stem, artifact_dir) in YAML_FIXTURES {
         let golden = load_golden(golden_stem);
         let cfg = format!("../../tools/parity/configs/{config}.yaml");

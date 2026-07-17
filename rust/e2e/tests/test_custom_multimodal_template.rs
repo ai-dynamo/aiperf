@@ -3,18 +3,10 @@
 mod common;
 use common::*;
 
-// Integration test for custom multi-modal endpoint using template format.
-
-/// Test custom multi-modal endpoint with images and audio using custom template.
-///
-/// Verifies that:
-/// 1. The template endpoint type works with a custom Jinja2 template
-/// 2. All expected output artifacts are created
 #[tokio::test]
 async fn test_custom_multimodal_with_images_and_audio() {
     let h = AIPerfHarness::new().await;
 
-    // Custom jinja2 template that matches the custom endpoint format.
     let template = r#"{
     "modality_bundle": {
         "text_fragments": {{ texts|tojson }},
@@ -31,7 +23,6 @@ async fn test_custom_multimodal_with_images_and_audio() {
     }
 }"#;
 
-    // Write template to a file to avoid shell escaping issues.
     let tmp = tempfile::TempDir::new().unwrap();
     let template_file = write_text(tmp.path(), "custom_template.json", template);
 
@@ -52,11 +43,9 @@ async fn test_custom_multimodal_with_images_and_audio() {
         template_file.display(),
     ));
 
-    // Verify the benchmark completed successfully.
     assert!(r.success(), "run failed: {}", r.stderr);
     assert_eq!(r.artifacts.request_count() as u32, DEFAULT_REQUEST_COUNT);
 
-    // Verify all expected output artifacts are created (has_all_outputs).
     assert!(!r.artifacts.json().is_null(), "missing aiperf.json");
     assert!(
         !r.artifacts.jsonl().is_empty(),

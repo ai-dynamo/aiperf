@@ -3,35 +3,25 @@
 
 //! KServe Open Inference Protocol (OIP) v2 gRPC target.
 //!
-//! Serves the KServe `GRPCInferenceService` so AIPerf's native gRPC KServe
-//! client (`aiperf_runtime::transport::grpc`) has a mock inference target, mirroring
-//! ai-dynamo's frontend at
-//! `dynamo-aiperf-native/lib/llm/src/grpc/service/kserve.rs` (dispatching tensor
-//! requests to a chat/completion flavor). The five methods AIPerf dials are
+//! Serves the KServe `GRPCInferenceService` used by
+//! `aiperf_runtime::transport::grpc`. The five methods AIPerf dials are
 //! implemented: `ModelInfer` (unary), `ModelStreamInfer` (server-streaming),
 //! `ModelReady`, plus trivial `ServerLive` / `ServerReady` health.
 //!
 //! The wire contract is guaranteed by construction: the request/response
 //! messages are the *same* prost structs the client encodes/decodes
 //! (`aiperf_runtime::transport::grpc::proto`), so there is no second schema to drift.
-//! There is no build-time `protoc` / `tonic-build`; the service is a
-//! hand-routed `tower` service dispatched by method path (the server mirror of
-//! the client's hand-rolled `RawBytesCodec` + `PathAndQuery`), served over the
-//! same hyper h2 stack as the HTTP frontend.
+//! The service is routed by method path and served over hyper's h2 stack.
 //!
-//! Content comes from the mock's existing generation seam: a KServe
+//! A KServe
 //! `ModelInferRequest` is lowered to a synthetic [`ChatCompletionRequest`] and
 //! run through [`crate::handlers::RequestCtx`], so token generation, latency /
 //! prefix-cache / scheduler pacing, and `/metrics` accounting are shared with
-//! the HTTP handlers rather than re-implemented. `text_input` (BYTES) carries
+//! the HTTP handlers. `text_input` (BYTES) carries
 //! the prompt and an optional `max_tokens` (INT32) tensor caps output; the reply
 //! is a `text_output` (BYTES) tensor.
-//!
-//! Extensibility: routing is by method path, so a second gRPC dialect is an
-//! added `(path -> handler)` arm plus its prost messages. The NVIDIA Riva
-//! ASR/TTS/NLP dialect is served this way by the sibling [`crate::grpc_riva`]
-//! module (dispatched here before the KServe match), reusing this module's
-//! [`ProstCodec`] and h2c stack; KServe is no longer the only dialect served.
+//! NVIDIA Riva ASR/TTS/NLP methods dispatch to [`crate::grpc_riva`] over the
+//! same codec and h2c stack.
 
 use std::convert::Infallible;
 use std::marker::PhantomData;
@@ -119,7 +109,7 @@ pub enum GrpcBehavior {
 
 impl GrpcBehavior {
     /// Resolve `Auto` against the request's input tensor names; the explicit
-    /// variants pass through unchanged. Rankings wins when a `passages` tensor is
+    /// variants pass through as-is. Rankings wins when a `passages` tensor is
     /// present; images when a `prompt` tensor is present without a `text_input`;
     /// text otherwise (covers `kserve_v2_infer` and `kserve_v2_vlm`).
     fn resolve(self, msg: &ModelInferRequest) -> GrpcBehavior {
@@ -160,10 +150,6 @@ struct ServerReadyResponse {
 
 /// Server-streaming response stream for `ModelStreamInfer`.
 type InferStream = Pin<Box<dyn Stream<Item = Result<ModelStreamInferResponse, Status>> + Send>>;
-
-// ===========================================================================
-// Prost codec (server mirror of the client's `RawBytesCodec`; no `tonic-prost`)
-// ===========================================================================
 
 /// A tonic [`Codec`] that decodes `D` and encodes `E` via `prost`. Generic over
 /// the two message types because each RPC has a distinct request/response pair.
@@ -216,18 +202,13 @@ impl<D: prost::Message + Default> Decoder for ProstDecoder<D> {
     type Error = Status;
 
     fn decode(&mut self, src: &mut DecodeBuf<'_>) -> Result<Option<Self::Item>, Status> {
-        // tonic hands us exactly one complete length-delimited frame; read it
-        // whole (like the client's `RawBytesDecoder`) and prost-decode.
+        // Tonic supplies one complete length-delimited frame.
         let bytes: Bytes = src.copy_to_bytes(src.remaining());
         D::decode(bytes)
             .map(Some)
             .map_err(|error| Status::internal(format!("decode KServe protobuf: {error}")))
     }
 }
-
-// ===========================================================================
-// Request lowering + response construction
-// ===========================================================================
 
 /// Extract the prompt (`text_input` BYTES) and optional `max_tokens` (INT32)
 /// from a KServe `ModelInferRequest`, honoring typed contents first and falling
@@ -369,7 +350,6 @@ fn model_name(msg: &ModelInferRequest) -> String {
     }
 }
 
-/// Lower a KServe inference request to the shared chat generation input.
 fn synth_chat(model: &str, prompt: &str, max_tokens: Option<usize>) -> ChatCompletionRequest {
     ChatCompletionRequest {
         model: model.to_string(),
@@ -402,7 +382,6 @@ fn text_output_tensor(name: &str, text: &str) -> InferOutputTensor {
     }
 }
 
-/// Build a `ModelInferResponse` with a single `text_output` tensor.
 fn build_infer_response(
     id: &str,
     model: &str,
@@ -436,7 +415,6 @@ fn embedding_output_tensor(name: &str, embedding: &[f32]) -> InferOutputTensor {
     }
 }
 
-/// Build a `ModelInferResponse` carrying one `FP32` embedding tensor.
 fn build_embedding_response(
     id: &str,
     model: &str,
@@ -470,7 +448,6 @@ fn scores_output_tensor(name: &str, scores: &[f32]) -> InferOutputTensor {
     }
 }
 
-/// Build a `ModelInferResponse` carrying one numeric `scores` tensor.
 fn build_scores_response(
     id: &str,
     model: &str,
@@ -503,7 +480,6 @@ fn image_output_tensor(name: &str, b64_image: &str) -> InferOutputTensor {
     }
 }
 
-/// Build a `ModelInferResponse` carrying one `generated_image` tensor.
 fn build_image_response(
     id: &str,
     model: &str,
@@ -539,17 +515,12 @@ fn generated_tokens(tokenized: &TokenizedText) -> Vec<&str> {
         .collect()
 }
 
-/// Wrap one incremental chunk as a streaming envelope.
 fn stream_chunk(id: &str, model: &str, output_name: &str, text: &str) -> ModelStreamInferResponse {
     ModelStreamInferResponse {
         error_message: String::new(),
         infer_response: Some(build_infer_response(id, model, output_name, text)),
     }
 }
-
-// ===========================================================================
-// RPC handlers
-// ===========================================================================
 
 /// `ModelInfer` (unary): generate the full text and return it in one response.
 async fn model_infer(
@@ -575,8 +546,6 @@ async fn model_infer(
     let (prompt, max_tokens) = decode_infer_inputs(&msg)?;
     let output_name = requested_output_name(&msg);
 
-    // Non-LLM embedding mode: consume the input text and return a single FP32
-    // embedding tensor (one encoder forward pass, no token generation).
     if let Some(dim) = state.config.grpc_embedding_dim {
         return model_infer_embedding(state, &msg, &prompt, max_tokens, &output_name, &model, dim)
             .await;
@@ -833,10 +802,6 @@ async fn server_ready(
     Ok(Response::new(ServerReadyResponse { ready: true }))
 }
 
-// ===========================================================================
-// Routing + serving
-// ===========================================================================
-
 /// Route one gRPC request to its handler by method path. Unknown methods get a
 /// gRPC `Unimplemented` status. Returns `Infallible` because every path — RPC or
 /// not — resolves to a well-formed gRPC HTTP response.
@@ -907,10 +872,7 @@ pub async fn route(
 /// accept loop on the shared runtime with `TCP_NODELAY`, sharing `state` (and
 /// thus recorder / prefix-cache / scheduler) with the HTTP frontend.
 ///
-/// Cleartext (h2c) KServe gRPC listener. Thin wrapper over
-/// [`serve_grpc_with_tls`] with no acceptor; hyper's auto builder serves the
-/// HTTP/2-prior-knowledge preface tonic clients send. Kept as the stable 2-arg
-/// entry point every existing caller (tests, the e2e harness) already uses.
+/// Serve cleartext h2c using HTTP/2 prior knowledge.
 pub async fn serve_grpc(addr: SocketAddr, state: Arc<AppState>) -> anyhow::Result<()> {
     serve_grpc_with_tls(addr, state, None).await
 }
@@ -945,8 +907,6 @@ pub async fn serve_grpc_with_tls(
                 async move { route(state, req).await }
             });
             let builder = ConnBuilder::new(TokioExecutor::new());
-            // The TLS and cleartext arms serve structurally-identical gRPC
-            // connections over different stream types.
             match acceptor {
                 Some(acceptor) => {
                     let tls_stream = match acceptor.accept(stream).await {
@@ -1141,16 +1101,12 @@ mod tests {
             chunks += 1;
         }
         assert!(chunks > 0, "expected at least one streamed chunk");
-        // Deterministic generation: the concatenated stream equals the unary text.
         assert_eq!(assembled, expected);
     }
 
     #[tokio::test]
     async fn model_stream_infer_reasoning_model_is_not_empty() {
-        // Regression: a reasoning model with a small max_tokens budget spends it
-        // all on reasoning tokens, leaving zero *output* tokens. The stream must
-        // still emit the reasoning tokens — an empty gRPC server stream is a
-        // failed request to strict clients (the runner). Caught only end-to-end.
+        // Strict clients reject an empty server stream.
         use futures::StreamExt;
         let state = fast_state();
         let mut msg = infer_request("think hard about this prompt please", Some(4));
@@ -1225,7 +1181,6 @@ mod tests {
         };
         assert_eq!(GrpcBehavior::Auto.resolve(&vlm), GrpcBehavior::Text);
 
-        // Explicit override wins over the input tensor names.
         assert_eq!(GrpcBehavior::Text.resolve(&rankings), GrpcBehavior::Text);
     }
 
@@ -1247,7 +1202,6 @@ mod tests {
             .into_inner();
         let scores = scores_of(&response, "scores");
         assert_eq!(scores.len(), 3, "one score per passage");
-        // Deterministic: the score matches the HTTP reranker's hash.
         for (passage, score) in ["p0", "p1", "p2"].iter().zip(&scores) {
             let expected = crate::handlers::compute_mock_score("what is ai", passage) as f32;
             assert!((score - expected).abs() < 1e-6);

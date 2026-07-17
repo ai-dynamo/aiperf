@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Typed transport errors. Replaces Python's stringly-typed `ErrorDetails.type`.
+//! Typed transport errors.
 
 /// The category of a transport failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +16,7 @@ pub enum ErrorKind {
     Connect,
     /// A read/response timeout elapsed.
     Timeout,
-    /// Anything else.
+    /// Another transport failure.
     Other,
 }
 
@@ -40,7 +40,7 @@ impl ErrorDetails {
             message: message.into(),
         }
     }
-    /// An SSE `event: error` error (pseudo-status 502, matching Python).
+    /// An SSE `event: error` failure with pseudo-status 502.
     pub fn sse(message: impl Into<String>) -> Self {
         Self {
             kind: ErrorKind::Sse,

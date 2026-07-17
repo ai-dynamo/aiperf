@@ -1,38 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Typed `export` section — the post-report sink policy the runner consumes.
+//! Typed post-report export policy.
 //!
-//! Mirrors the runner's `aiperf_runtime::export::ExportConfig` (and its `console_txt` /
-//! `genai_perf` sub-configs) exactly; the runner decodes this block with
-//! `deny_unknown_fields`, so only fields it owns are emitted.
-//!
-//! Wire shape ported from `src/aiperf/orchestrator/rust_wire.py::_export`,
-//! `_console_txt_frontend_projection`, `_genai_perf_frontend_projection`.
-//!
-//! Two provenance classes:
-//! * **Static, byte-exact** — the per-metric console metadata and the
-//!   header_map/filtered_tags/scalar_tags come from Python's `MetricRegistry`
-//!   (intentionally divergent from the Rust `metrics_core` catalog, per that
-//!   projection's own docstring). They are identical across runs, so they are
-//!   captured once into `resources/metric_metadata.json` and embedded here
-//!   byte-exact rather than derived from the divergent Rust catalog.
-//! * **Best-effort** — the genai-perf `envelope.input_config` is Python's
-//!   `JsonExportData.model_dump(exclude_unset=True)`, whose set-tracking a flat
-//!   native object cannot reproduce. It is projected functionally (opaque
-//!   `Value`, echoed verbatim by the runner) so the aiperf-v1 exports are
-//!   *emitted*; the metric VALUES come from the authoritative native-v2 report.
+//! Static console metadata is embedded byte-exact from
+//! `resources/metric_metadata.json`. It intentionally differs from the native
+//! metrics catalog and must not be regenerated from that catalog.
+//! Envelope values are opaque and echoed verbatim by the runner.
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 
-/// aiperf-v1 exports echo the Python package version, not the Rust crate version.
+/// Aiperf-v1 export compatibility version, independent of the Rust crate version.
 pub const AIPERF_V1_VERSION: &str = "0.11.0";
-/// Fixed console render width (`Environment.UI.CONSOLE_EXPORT_WIDTH`).
+/// Fixed console render width.
 const CONSOLE_EXPORT_WIDTH: u16 = 140;
 
-/// One console-metric's display metadata (mirrors `console_txt::ConsoleMetricMeta`).
+/// Display metadata for one console metric.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConsoleMetricMeta {
     /// Display header.
@@ -57,7 +42,7 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
-/// Static, registry-derived metric metadata captured from Python once.
+/// Embedded metric display metadata.
 #[derive(Debug, Deserialize)]
 struct StaticMeta {
     console_metrics: BTreeMap<String, ConsoleMetricMeta>,
@@ -71,7 +56,7 @@ static META: LazyLock<StaticMeta> = LazyLock::new(|| {
         .expect("embedded metric_metadata.json is valid")
 });
 
-/// The fixed-width console artifact policy (mirrors `ConsoleTxtExportConfig`).
+/// Fixed-width console artifact policy.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConsoleTxt {
     /// The `.txt` artifact is always written.
@@ -86,21 +71,20 @@ pub struct ConsoleTxt {
     pub metrics: BTreeMap<String, ConsoleMetricMeta>,
 }
 
-/// The genai-perf-v1 envelope (opaque values echoed by the runner sink).
+/// Opaque values echoed by the genai-perf-v1 sink.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GenaiPerfEnvelope {
     /// aiperf-v1 package version.
     pub aiperf_version: String,
     /// Run identifier.
     pub benchmark_id: serde_json::Value,
-    /// Input-config echo (best-effort; see module docs).
+    /// Input configuration echoed verbatim.
     pub input_config: serde_json::Value,
     /// Run info.
     pub run_info: serde_json::Value,
 }
 
-/// The aiperf-v1 summary sink policy (mirrors `GenaiPerfExportConfig`; `stem`
-/// omitted so the runner keeps its default).
+/// Aiperf-v1 summary sink policy.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GenaiPerf {
     /// Whether `profile_export_aiperf.{json,csv}` are written.
@@ -111,11 +95,11 @@ pub struct GenaiPerf {
     pub filtered_tags: Vec<String>,
     /// Registered scalar-tier tags (sorted).
     pub scalar_tags: Vec<String>,
-    /// Frontend-owned envelope values.
+    /// Envelope values echoed by the sink.
     pub envelope: GenaiPerfEnvelope,
 }
 
-/// The OTLP/HTTP metrics sink (mirrors `OtelExportConfig`, projected fields).
+/// OTLP/HTTP metrics sink.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OtelExport {
     /// Whether the OTLP sink runs.
@@ -130,10 +114,8 @@ pub struct OtelExport {
 }
 
 impl OtelExport {
-    /// Build the OTLP sink from a collector URL and run identity (mirrors
-    /// `_otel_frontend_projection`): append `/v1/metrics` when absent, attach the
-    /// canonical aiperf resource attributes, merge any custom
-    /// `--otel-resource-attributes`, and record the `--gen-ai-provider`.
+    /// Build the OTLP sink, appending `/v1/metrics` when absent and merging
+    /// `--otel-resource-attributes`.
     pub fn build(
         url: &str,
         benchmark_id: &str,
@@ -170,7 +152,7 @@ impl OtelExport {
     }
 }
 
-/// Fixed MLflow artifact glob list (`_mlflow_frontend_projection`).
+/// Fixed MLflow artifact globs.
 fn mlflow_artifact_globs() -> Vec<String> {
     [
         "*.json",
@@ -189,8 +171,7 @@ fn mlflow_artifact_globs() -> Vec<String> {
     .collect()
 }
 
-/// The MLflow REST uploader sink (mirrors `MlflowExportConfig`). Envelope-ish
-/// fields (`params`) are best-effort; the config fields are byte-exact.
+/// MLflow REST uploader sink.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MlflowExport {
     /// Whether the sink runs.
@@ -218,21 +199,20 @@ pub struct MlflowExport {
     pub total_expected_requests: Option<f64>,
     /// Run tags.
     pub tags: std::collections::BTreeMap<String, String>,
-    /// Logged params (best-effort; Python includes cli_command).
+    /// Best-effort logged parameters; currently empty.
     pub params: std::collections::BTreeMap<String, String>,
 }
 
-/// The Weights & Biases sink (mirrors `WandbExportConfig`). `config_json` /
-/// `cli_command` are best-effort; the config fields are byte-exact.
+/// Weights & Biases sink.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WandbExport {
     /// aiperf-v1 version.
     pub aiperf_version: String,
     /// Run identifier.
     pub benchmark_id: String,
-    /// Redacted invoking command (best-effort).
+    /// Best-effort redacted invoking command; currently empty.
     pub cli_command: String,
-    /// Serialized config (best-effort).
+    /// Best-effort serialized configuration; currently `{}`.
     pub config_json: String,
     /// W&B entity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -248,8 +228,7 @@ pub struct WandbExport {
     pub tags: Option<Vec<String>>,
 }
 
-/// The typed `export` policy. Only the sinks the frontend enables are modeled;
-/// omitted sinks decode to the runner's all-disabled defaults.
+/// Export policy; omitted sinks decode as disabled.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Export {
     /// aiperf-v1 summary sink.
@@ -265,29 +244,18 @@ pub struct Export {
     /// W&B sink (present when `--wandb-project` is set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wandb: Option<WandbExport>,
-    /// Server-metrics summary sink (`server_metrics_export.{json,csv}`), present
-    /// when server-metrics collection is enabled and the JSON and/or CSV format is
-    /// selected. Projects `aiperf::export::ServerMetricsExportConfig`.
+    /// Server-metrics JSON/CSV summary sink.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_metrics: Option<ServerMetricsExport>,
-    /// Server-metrics Parquet sink (`server_metrics_export.parquet`), present when
-    /// server-metrics collection is enabled and the `parquet` format is selected.
-    /// Projects `aiperf::export::ParquetExportConfig`.
+    /// Server-metrics Parquet sink.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parquet: Option<ParquetExport>,
 }
 
-/// The server-metrics summary sink policy (`cfg.export.server_metrics`).
+/// Server-metrics summary sink policy.
 ///
-/// Projects the runner's `aiperf::export::ServerMetricsExportConfig`: the
-/// JSON/CSV toggles plus the three frontend-owned envelope values the native
-/// report cannot reconstruct (`aiperf_version`, `benchmark_id`, `input_config`).
-/// Ported from
-/// `src/aiperf/orchestrator/rust_wire.py::_server_metrics_frontend_projection`
-/// (`rust_wire.py:1158`): enabled iff collection is on and JSON and/or CSV is a
-/// selected format; `input_config` is echoed only when JSON is enabled. The field
-/// set matches the runner struct exactly (which decodes with
-/// `deny_unknown_fields`), so unset optional values are skipped on the wire.
+/// Enabled only for selected JSON or CSV output. `input_config` is carried only
+/// for JSON output, and unset optional values are omitted.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ServerMetricsExport {
     /// Emit `server_metrics_export.json`.
@@ -309,13 +277,8 @@ pub struct ServerMetricsExport {
 }
 
 impl ServerMetricsExport {
-    /// Build the server-metrics summary policy for a run.
-    ///
-    /// Returns `None` (the block is omitted from `cfg.export`, decoding to the
-    /// runner's all-disabled default) when collection is disabled or neither JSON
-    /// nor CSV is selected, mirroring
-    /// `_server_metrics_frontend_projection`. `input_config` is carried only when
-    /// JSON is enabled (the CSV export never reads it).
+    /// Build the summary policy, or omit it when collection or summary formats
+    /// are disabled.
     pub fn build(
         formats: &[String],
         server_metrics_enabled: bool,
@@ -345,13 +308,7 @@ impl ServerMetricsExport {
     }
 }
 
-/// The server-metrics Parquet sink toggle (`cfg.export.parquet`).
-///
-/// Projects the runner's `aiperf::export::ParquetExportConfig`; `enabled` is the
-/// sole field (the native Parquet sink reads the runner-emitted wire JSONL and
-/// the profiling boundary from the report). Ported from
-/// `src/aiperf/orchestrator/rust_wire.py::_parquet_frontend_projection`
-/// (`rust_wire.py:1244`).
+/// Server-metrics Parquet sink toggle.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ParquetExport {
     /// Emit `server_metrics_export.parquet`.
@@ -359,10 +316,7 @@ pub struct ParquetExport {
 }
 
 impl ParquetExport {
-    /// Build the Parquet sink toggle: enabled iff server-metrics collection is on
-    /// and the `parquet` format is selected (the same gate under which the sidecar
-    /// lowers the `parquet_wire_path` the sink consumes). Returns `None` otherwise
-    /// so the block is omitted and the runner sink stays disabled.
+    /// Enable the sink only when collection and Parquet output are selected.
     pub fn build(formats: &[String], server_metrics_enabled: bool) -> Option<Self> {
         if server_metrics_enabled && formats.iter().any(|format| format == "parquet") {
             Some(Self { enabled: true })
@@ -446,9 +400,7 @@ impl WandbExport {
 impl Export {
     /// Build the export policy for a run.
     ///
-    /// `endpoint_type` selects the console title; `genai_perf_enabled` follows the
-    /// `"json" in artifacts.summary` signal (default on). The envelope is
-    /// projected functionally from the supplied opaque values.
+    /// `endpoint_type` selects the console title. Envelope values remain opaque.
     pub fn build(
         endpoint_type: &str,
         genai_perf_enabled: bool,
@@ -486,9 +438,7 @@ impl Export {
     }
 }
 
-/// Reproduce `ConsoleMetricsExporter._get_title`: `NVIDIA AIPerf | <metrics
-/// title>` from the endpoint plugin metadata, degrading to `NVIDIA AIPerf` for a
-/// runner-only dialect with no Python metadata.
+/// Build the endpoint-specific console title, falling back to `NVIDIA AIPerf`.
 fn console_title(endpoint_type: &str) -> String {
     match endpoint_metrics_title(endpoint_type) {
         Some(title) => format!("NVIDIA AIPerf | {title}"),
@@ -496,7 +446,7 @@ fn console_title(endpoint_type: &str) -> String {
     }
 }
 
-/// The per-endpoint metrics title from Python's endpoint plugin metadata.
+/// The per-endpoint metrics title.
 fn endpoint_metrics_title(endpoint_type: &str) -> Option<&'static str> {
     Some(match endpoint_type {
         "chat" | "completions" | "huggingface_generate" | "raw" | "responses" | "template" => {
@@ -542,7 +492,6 @@ mod tests {
         )
         .expect("json/csv selected");
         assert!(sm.json && sm.csv);
-        // Only the five runner-known keys are serialized (deny_unknown_fields).
         let value = serde_json::to_value(&sm).unwrap();
         let keys: std::collections::BTreeSet<&str> = value
             .as_object()
@@ -589,7 +538,6 @@ mod tests {
             ServerMetricsExport::build(&["json".into()], false, "v", "id", serde_json::Value::Null)
                 .is_none()
         );
-        // jsonl/parquet-only selects no summary sink (those are runner-owned).
         assert!(
             ServerMetricsExport::build(
                 &["jsonl".into(), "parquet".into()],

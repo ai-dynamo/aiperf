@@ -3,11 +3,7 @@
 
 //! Runner-owned HTTP execution for complete Graph-IR traces.
 //!
-//! The graph coordinator never owns transport state. This factory is installed
-//! behind `aiperf-graph`'s whole-trace placement seam, so each native worker
-//! builds its own clock, transport, materializer, metric observer, and node
-//! policies. Replacing native placement with ZMQ leaves graph scheduling and
-//! this worker-side execution contract unchanged.
+//! Each worker owns its clock, transport, materializer, observer, and node policies.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -56,10 +52,7 @@ use crate::engine::registry::{NativeTransportExecution, ValidatedEndpointProfile
 
 /// Composition seam for whole-trace graph execution placement.
 ///
-/// The graph coordinator owns root selection, arrival, admission, and failure
-/// policy. This factory owns only where a complete prepared trace executes. A
-/// future ZMQ or RPC implementation can therefore replace native placement
-/// without changing graph workload or runner orchestration code.
+/// The coordinator owns admission policy; this factory owns trace placement.
 pub trait GraphPlacementFactory: Send + Sync {
     /// Build one placement backend from a worker-local execution factory.
     fn build(
@@ -94,14 +87,8 @@ pub(crate) enum GraphExecutionEvent {
         record: Box<CapturedRecord>,
         /// Static graph node id (e.g. `"n_1"`) this terminal record belongs to.
         ///
-        /// Carried so the phase observer can attribute the return to a specific
-        /// node in its per-lane executed-node/return-wall ledgers (the E3c
-        /// cache-pressure handoff). `None` for backends with no node identity
-        /// (the offline dynosim adapter), which never feed the warmup handoff.
-        /// Ports the `credit.node_ordinal` -> `node_id` inversion Python does in
-        /// `graph_ir_replay.py:_record_return_wall`
-        /// (`src/aiperf/timing/strategies/graph_ir_replay.py:884`); the Rust
-        /// worker already holds the node id, so no ordinal round-trip is needed.
+        /// Node identity for lane return accounting; absent when the backend
+        /// cannot participate in warmup handoff.
         node_id: Option<String>,
     },
     /// One admitted root trace reached its placement terminal.
@@ -119,9 +106,7 @@ pub(crate) enum GraphExecutionEvent {
 
 /// Object-safe worker-event delivery seam.
 ///
-/// The stock implementation uses an in-process JSON-free channel. A future
-/// remote placement can decode the same terminal facts into this seam without
-/// changing phase accounting, adaptive sampling, or artifact collection.
+/// Implementations deliver ordered terminal facts to phase accounting.
 pub(crate) trait GraphExecutionEventSink: Send + Sync {
     /// Deliver one ordered execution event or fail the run if delivery closed.
     fn emit(&self, event: GraphExecutionEvent) -> Result<(), TraceError>;
@@ -149,8 +134,7 @@ impl GraphExecutionEventSink for ChannelRunnerGraphExecutionEventSink {
 
 /// Coordinator-side wrapper that observes every placement terminal.
 ///
-/// Keeping this outside worker implementations covers native queue rejection
-/// and future remote transports as well as traces that reached a worker.
+/// This wrapper observes both placement rejection and worker terminals.
 pub(crate) struct ObservedRunnerGraphPlacement {
     delegate: Rc<dyn TracePlacement>,
     events: Arc<dyn GraphExecutionEventSink>,
@@ -250,9 +234,7 @@ impl GraphPlacementFactory for InlineGraphPlacementFactory {
 
 /// Startup seam that prepares one endpoint dispatcher per graph worker.
 ///
-/// Native HTTP prepares local transports and endpoint bindings. A future
-/// remote placement can implement this contract with the same data-only
-/// [`PreparedTurn`] identity without changing graph scheduling.
+/// Prepares worker-local dispatchers and endpoint bindings.
 pub(crate) trait GraphEndpointRuntimeFactory: Send + Sync {
     /// Prepare one worker-local dispatcher before any trace is admitted.
     fn prepare_worker(
@@ -408,9 +390,7 @@ impl GraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
     }
 }
 
-/// Per-profile inputs staged after endpoint preparation but before the
-/// worker-local dispatcher is built (the dispatcher construction is deferred so
-/// both transport arms share the finalized `Rc<PreparedEndpointTable>`).
+/// Profile inputs retained until the shared endpoint table is finalized.
 struct StagedGraphProfile {
     profile_id: String,
     endpoint_id: EndpointId,
@@ -558,24 +538,10 @@ pub(crate) struct GraphBackendFactoryConfig {
     pub(crate) cache_bust: Option<GraphCacheBust>,
 }
 
-/// Resolved first-turn cache-bust marker inputs shared by every graph worker.
+/// First-turn cache-bust inputs shared by graph workers.
 ///
-/// Ports the marker minting agentx does in
-/// `ajc/agentx:src/aiperf/timing/strategies/cache_bust.py::build_cache_bust_marker`
-/// (FIRST_TURN_PREFIX arm) onto the native recorded-graph path. The marker text
-/// is `[rid:<sha256(f"{benchmark_id}:{recycle_pass}:{trajectory_index}:{trace_id}")[:12]>]\n\n`;
-/// on the native path the per-trace instance nonce (the suffix of
-/// [`EngineGraphSink::trace_id`] after `"::"`) supplies the cross-instance and
-/// cross-recycle uniqueness agentx gets from its `(recycle_pass, trajectory_index)`
-/// tuple, so `recycle_pass`/`trajectory_index` are folded into the instance id
-/// and pinned at `0` in the digest tuple. Because the marker is a per-run nonce,
-/// its BYTES differ from agentx run to run; only its TOKEN COUNT matters for ISL
-/// parity, and that is invariant (a fixed-length hex digest wrapped in
-/// `[rid:...]\n\n` always tokenizes to the same count, with a clean whitespace
-/// break before the message body). Sharing the same marker across a continued
-/// warmup->profiling session (agentx's KV-cache lineage nicety) is a documented
-/// lane-0-baseline future refinement, consistent with the graph-fidelity caveats
-/// in the module map.
+/// The marker is `[rid:<12 hex chars>]\n\n`; fixed shape preserves token-count
+/// accounting while the trace instance id makes each conversation distinct.
 #[derive(Clone)]
 pub(crate) struct GraphCacheBust {
     /// Per-run benchmark identity digested into the marker.
@@ -595,10 +561,8 @@ impl GraphCacheBust {
         if !self.target.is_enabled() {
             return None;
         }
-        // Pin recycle_pass/trajectory_index to 0: the instance nonce inside
-        // `trace_id` already carries the per-instance/per-recycle uniqueness
-        // agentx encodes in that tuple, and the resulting marker is a nonce that
-        // only needs a stable token length (invariant for any digest).
+        // The trace instance nonce supplies uniqueness; fixed zeros keep marker
+        // length and token accounting stable.
         let unique = format!("{}:0:0:{trace_id}", self.benchmark_id);
         let digest = Sha256::digest(unique.as_bytes());
         let hex = digest
@@ -610,14 +574,7 @@ impl GraphCacheBust {
     }
 }
 
-/// Prepend `marker` to the content of the first `role == "user"` message.
-///
-/// Port of `ajc/agentx:src/aiperf/workers/worker.py::_inject_marker_into_first_user_turn`
-/// (string-content and multimodal-parts arms) for the FIRST_TURN_PREFIX target.
-/// Idempotent: re-prepending the same constant marker is a no-op, matching
-/// agentx's every-credit injection over a shared prefix. The marker's trailing
-/// `\n\n` guarantees a clean whitespace token break before the message body, so
-/// the recorded content's own tokenization is unchanged.
+/// Idempotently prepend `marker` to the first user message.
 fn prepend_first_turn_marker(messages: &mut [Value], marker: &str) {
     for message in messages.iter_mut() {
         let Some(object) = message.as_object_mut() else {
@@ -822,9 +779,7 @@ impl TracePlacement for GraphWorkerBackend {
         if let Some(policy) = &self.node_policy {
             local = local.with_node_policy(policy.clone());
         }
-        // Node failure discipline mirrors the run-level policy: `Abort` aborts
-        // the trace on a node failure (default); `Continue` treats it as empty
-        // and lets the DAG drain (the dormant Python-parity resilient default).
+        // `Continue` treats a failed node as empty so the DAG can drain.
         let node_failure: Rc<dyn NodeFailurePolicy> = match self.on_failure {
             OnFailure::Abort => Rc::new(AbortTraceNodeFailurePolicy),
             OnFailure::Continue => Rc::new(ResilientNodeFailurePolicy),
@@ -935,11 +890,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                 })
             })
             .collect::<Result<Vec<Value>>>()?;
-        // Scenario-locked FIRST_TURN_PREFIX cache-bust: prepend the trace
-        // instance's marker to the first user message. Applied on every request
-        // (idempotent over the shared prefix), so the marker rides at the head
-        // of the conversation's first user turn in every accumulated request the
-        // way agentx's worker-side injection does.
+        // Idempotent injection keeps accumulated requests on one cache-bust prefix.
         if let Some(marker) = self.cache_bust_marker.as_deref() {
             prepend_first_turn_marker(&mut raw_messages, marker);
         }
@@ -1237,13 +1188,13 @@ mod tests {
     }
 
     #[test]
-    fn prepared_graph_runtime_does_not_require_a_legacy_endpoint_adapter() {
+    fn prepared_graph_runtime_does_not_require_endpoint_adapter() {
         let mut registry = EndpointRegistryBuilder::new();
         registry.register_factory(PreparedOnlyChatFactory).unwrap();
         let registry = registry.freeze();
         assert!(
             registry
-                .legacy_endpoint(&EndpointId::new("chat").unwrap())
+                .compatibility_endpoint(&EndpointId::new("chat").unwrap())
                 .is_err()
         );
 

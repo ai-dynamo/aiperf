@@ -81,8 +81,7 @@ impl MetricRecorder {
         }
     }
 
-    /// Resolve (and cache) all per-(endpoint, model) metric handles.
-    /// Call once per request and pass the returned Arc into hot loops.
+    /// Cache per-request handles so token loops avoid label-map lookups.
     pub fn labeled(&self, endpoint: &str, model: &str) -> Arc<LabeledMetrics> {
         let key = (endpoint.to_string(), model.to_string());
         if let Some(hit) = self.labeled_cache.get(&key) {
@@ -285,7 +284,7 @@ impl MetricRecorder {
             .record_tokens(usage.completion_tokens as u64);
     }
 
-    /// Hot-path TTFT recorder — zero HashMap lookups, uses pre-resolved handles.
+    /// Record TTFT without resolving labels.
     pub fn record_ttft_fast(&self, labeled: &LabeledMetrics, ttft_secs: f64) {
         labeled.ttft_by_endpoint.observe(ttft_secs);
         self.metrics
@@ -303,7 +302,7 @@ impl MetricRecorder {
         labeled.df_ttft.observe(ttft_secs);
     }
 
-    /// Hot-path ITL recorder — zero HashMap lookups.
+    /// Record ITL without resolving labels.
     pub fn record_itl_fast(&self, labeled: &LabeledMetrics, itl_secs: f64) {
         labeled.itl_by_endpoint.observe(itl_secs);
         self.metrics
@@ -317,26 +316,20 @@ impl MetricRecorder {
         labeled.df_itl.observe(itl_secs);
     }
 
-    /// Hot-path streamed-token recorder.
     #[inline]
     pub fn record_streamed_token_fast(&self, labeled: &LabeledMetrics) {
         labeled.tokens_streamed.inc();
         self.throughput.record_tokens(1);
     }
 
-    /// Batched token recorder — one counter bump for N tokens. Used by the
-    /// fast-mode pre-render path where we emit N chunks in a single HTTP frame.
+    /// Record a pre-rendered batch with one counter update.
     #[inline]
     pub fn record_streamed_tokens_fast(&self, labeled: &LabeledMetrics, count: u64) {
         labeled.tokens_streamed.inc_by(count);
         self.throughput.record_tokens(count);
     }
 
-    /// Observe `count` identical values on the TTFT/ITL/etc. histograms in one
-    /// call. Prometheus histograms expose only `observe(f64)`, but in fast mode
-    /// all values are zero, so repeated observes just bump the `+Inf` bucket
-    /// count — cheaper than constructing N chunks would be, but we avoid the
-    /// string-label resolution each call by pre-resolving into `labeled`.
+    /// Record the zero-latency observations represented by a pre-rendered batch.
     #[inline]
     pub fn record_zero_ttft_and_itls(&self, labeled: &LabeledMetrics, itl_count: usize) {
         labeled.ttft_by_endpoint.observe(0.0);
@@ -419,8 +412,7 @@ impl MetricRecorder {
             0.0
         };
         self.metrics.vllm.KV_CACHE_USAGE.set(usage);
-        // Host-side KV cache trails device usage; a fixed fraction keeps it
-        // deterministic and bounded to [0, 1] for the runner's cpu-cache row.
+        // A fixed host-cache fraction keeps telemetry deterministic and bounded.
         self.metrics.vllm.CPU_CACHE_USAGE.set(usage * 0.5);
         self.metrics.sglang.TOKEN_USAGE.set(usage);
         self.metrics.sglang.CACHE_HIT_RATE.set(0.3);
@@ -447,8 +439,7 @@ impl MetricRecorder {
             .set(usage);
     }
 
-    /// Current number of in-flight LLM requests (>= 0). Used by the analytic
-    /// latency model's concurrency terms.
+    /// Nonnegative concurrency input for the analytic latency model.
     pub fn inflight_count(&self) -> i64 {
         self.inflight_count.load(Ordering::Relaxed).max(0)
     }
@@ -485,7 +476,6 @@ impl MetricRecorder {
     pub fn record_llm_inflight_end(&self, model: &str) {
         let prev = self.inflight_count.fetch_sub(1, Ordering::Relaxed);
         if prev <= 0 {
-            // never let it go negative
             self.inflight_count.store(0, Ordering::Relaxed);
         }
         self.metrics.vllm.NUM_REQUESTS_RUNNING.dec();
@@ -527,15 +517,13 @@ impl MetricRecorder {
             .vllm
             .PREFIX_CACHE_HITS
             .inc_by((p as f64 * 0.3) as u64);
-        // External (host/remote) prefix cache: queried the same prompt, a smaller
-        // fraction served externally. Feeds the runner external hit-rate derivation.
+        // A smaller external-cache fraction exercises AIPerf's hit-rate derivation.
         self.metrics.vllm.EXTERNAL_PREFIX_CACHE_QUERIES.inc_by(p);
         self.metrics
             .vllm
             .EXTERNAL_PREFIX_CACHE_HITS
             .inc_by((p as f64 * 0.15) as u64);
-        // Cumulative preemption counter: one deterministic bump per completed
-        // request so a phase-boundary delta is always nonzero.
+        // One bump per request gives interval scrapes deterministic nonzero deltas.
         self.metrics.vllm.NUM_PREEMPTIONS.inc();
 
         self.metrics
@@ -550,8 +538,7 @@ impl MetricRecorder {
                 .set(c as f64 / latency_secs);
         }
         self.metrics.sglang.NUM_USED_TOKENS.add(t as i64);
-        // SGLang cumulative token/retraction counters mirroring the vLLM view so
-        // the runner's SGLang-fallback atlas rows resolve to nonzero deltas.
+        // These counters exercise SGLang-specific telemetry derivations.
         self.metrics.sglang.PROMPT_TOKENS.inc_by(p);
         self.metrics.sglang.GENERATION_TOKENS.inc_by(c);
         self.metrics
@@ -723,9 +710,7 @@ impl MetricRecorder {
             .inc();
     }
 
-    /// Snapshot of models observed by `init_model_config`. Callers get a
-    /// stable sorted list so `/v1/models` output is deterministic between
-    /// scrapes.
+    /// Return observed models in deterministic order.
     pub fn seen_models(&self) -> Vec<String> {
         let guard = self.initialized_models.lock();
         let mut v: Vec<String> = guard.iter().cloned().collect();

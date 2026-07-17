@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Legacy-compatible per-request JSONL generated from native metric records.
+//! Per-request JSONL generated from native metric records.
 //!
-//! Python's convergence and detailed-aggregation consumers read the
-//! `MetricRecordInfo` shape. Rust retains that wire shape, but every value is
-//! produced by the same [`crate::metrics_core::MetricsAccumulator`] used for
-//! native-v2 aggregation.
+//! Convergence and detailed-aggregation consumers require the
+//! `MetricRecordInfo` wire shape. Every value is produced by the same
+//! [`crate::metrics_core::MetricsAccumulator`] used for native-v2 aggregation.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -29,9 +28,8 @@ use uuid::Uuid;
 /// Create (truncating) one export file, creating its parent directory first.
 ///
 /// `dir_what` / `file_what` are the `with_context` subjects for the
-/// `create_dir_all` and `File::create` steps; each caller passes its own so the
-/// per-writer error text is unchanged. Shared by the batch writers here and the
-/// streaming [`crate::engine::record_lane`], which repeated this same triad.
+/// `create_dir_all` and `File::create` operations; each caller supplies its own
+/// values to preserve per-writer error text.
 pub(crate) fn create_export_writer(
     path: &Path,
     dir_what: &str,
@@ -65,7 +63,7 @@ pub struct CapturedModelOutput {
 }
 
 impl CapturedModelOutput {
-    /// Preserve the structured endpoint split, falling back to the legacy flat
+    /// Preserve the structured endpoint split, falling back to the flat
     /// text only for backends that do not expose normalized visible content.
     pub fn from_parts(
         flattened_text: &str,
@@ -462,8 +460,7 @@ const CSV_TRACE_COLUMNS: &[&str] = &[
     "trace_connection_reused",
 ];
 
-/// Escape one CSV field, mirroring the legacy Python
-/// `BufferedCsvWriterMixin._escape_csv_value`: quote when the value contains a
+/// Escape one CSV field: quote when the value contains a
 /// comma, double-quote, or newline, doubling any embedded quote.
 fn csv_escape(value: &str) -> String {
     if value.contains(',') || value.contains('"') || value.contains('\n') {
@@ -485,29 +482,19 @@ fn csv_opt_u64(value: Option<u64>) -> String {
 
 /// Write finalized request metrics as a per-record CSV.
 ///
-/// Ported from the legacy Python `RecordExportCsvResultsProcessor`
-/// (`src/aiperf/post_processors/record_export_csv_results_processor.py`) plus its
-/// `BufferedCsvWriterMixin` (`src/aiperf/common/mixins/buffered_csv_writer_mixin.py`)
-/// onto the native post-run path. The runner already holds every finalized
-/// record, so the Python streaming/column-evolution/temp-file machinery collapses
-/// into one deterministic write: metadata columns, then one column per catalog
+/// Writes metadata columns, then one column per catalog
 /// record-metric (in catalog order, empty when a request lacks the metric), then
 /// the error columns. Reuses the exact [`record_metrics`] projection and
 /// [`classify_record_error`] classification the JSONL/Parquet sinks use, so all
 /// three per-record artifacts agree.
 ///
-/// Metric columns follow the summary CSV's convention rather than the legacy
-/// per-record CSV's `{tag}_value`/`{tag}_unit` pairs: one column per metric named
+/// Metric columns use one column per metric named
 /// `{Header} ({unit})` (`RecordMetricColumn::csv_display_name`), so the unit lives
 /// in the header exactly like `profile_export_aiperf.csv`.
 ///
-/// Two fields the legacy Python CSV lacked are included for parity with the newer
-/// JSONL/Parquet per-record artifacts: the error status `error_code` (e.g. 499 for
-/// a post-send cancellation) and, when `include_trace` is set, the flat `trace_*`
-/// HTTP-timing columns (the Python CSV dropped trace entirely). A record with no
-/// projected metrics and no error is skipped (mirroring the Python
-/// `if not display_metrics and not error: return`); an all-skipped run writes no
-/// file.
+/// The artifact includes error status `error_code` and, when `include_trace` is
+/// set, flat `trace_*` HTTP-timing columns. A record with no projected metrics
+/// and no error is skipped; an all-skipped run writes no file.
 /// Build the records CSV header line (no trailing newline): fixed metadata
 /// columns, one column per catalog record-metric (`{Header} ({unit})`), the error
 /// triple, then the optional flat `trace_*` columns. Shared by [`write_records_csv`]
@@ -534,8 +521,8 @@ pub(crate) fn record_csv_header(include_trace: bool) -> String {
 }
 
 /// Build one records CSV data row (no trailing newline) for `captured`, or `None`
-/// when the record has neither a projected metric nor an error and must be skipped
-/// (mirroring the Python `if not display_metrics and not error: return`). Shared by
+/// when the record has neither a projected metric nor an error and must be skipped.
+/// Shared by
 /// [`write_records_csv`] and the streaming lane so both emit identical row bytes and
 /// apply the identical skip-empty rule.
 pub(crate) fn record_csv_row(
@@ -557,7 +544,6 @@ pub(crate) fn record_csv_row(
         CSV_METADATA_COLUMNS.len() + columns.len() + 3 + CSV_TRACE_COLUMNS.len(),
     );
 
-    // Metadata (order matches CSV_METADATA_COLUMNS).
     cells.push(record.session_num.to_string());
     cells.push(csv_escape(&captured.uuid.to_string()));
     cells.push(csv_escape(&captured.x_correlation_id));
@@ -579,8 +565,6 @@ pub(crate) fn record_csv_row(
     cells.push(record.canceled.to_string());
     cells.push(csv_opt_i64(record.canceled.then_some(record.end_ns)));
 
-    // Metrics: one value cell per catalog column (unit is carried in the
-    // header), empty when the record lacks the metric.
     for column in &columns {
         match metrics.get(&column.tag) {
             Some(metric) => cells.push(metric.value.to_string()),
@@ -588,8 +572,6 @@ pub(crate) fn record_csv_row(
         }
     }
 
-    // Error: code / type / message (empty when the record reached a normal
-    // terminal).
     match &error {
         Some(classified) => {
             cells.push(csv_opt_i64(classified.code.map(i64::from)));
@@ -603,8 +585,6 @@ pub(crate) fn record_csv_row(
         }
     }
 
-    // Trace columns, only when requested (mirrors the JSONL's conditional
-    // trace_data and the Parquet trace_* tail).
     if include_trace {
         let http = &record.http;
         cells.push(csv_opt_i64(http.stream_setup_ns));
@@ -640,8 +620,6 @@ pub(crate) fn write_records_csv(
         .filter_map(|captured| record_csv_row(captured, config, include_trace))
         .collect();
 
-    // No displayable records -> no file (mirrors the Python zero-row cleanup and
-    // the Parquet empty-skip).
     if rows.is_empty() {
         return Ok(());
     }
@@ -727,15 +705,12 @@ pub fn write_raw_records_jsonl(path: &Path, records: &[CapturedRecord]) -> Resul
 
 /// One dataset session and its per-turn formatted request payloads.
 ///
-/// This is the native-path source for `inputs.json`. The legacy multiprocess
-/// `DatasetManager._generate_inputs_json_file` produced the same
-/// `{session_id, payloads[]}` shape by formatting every dataset turn through
-/// the endpoint; the native runner already builds the exact canonical request
-/// body per dispatched turn, so we retain those bytes (deduplicated per
-/// `(conversation_id, turn_index)`) and serialize them here without a
+/// This is the source for the `inputs.json` `{session_id, payloads[]}` shape.
+/// The runner retains each exact canonical request body (deduplicated per
+/// `(conversation_id, turn_index)`) and serializes them here without a
 /// decode-then-encode round-trip.
 pub struct InputSession {
-    /// Conversation/session identity — mirrors legacy `SessionPayloads.session_id`.
+    /// Conversation/session identity.
     pub session_id: String,
     /// One canonical request body per turn, ordered by turn index.
     pub payloads: Vec<Box<RawValue>>,
@@ -855,10 +830,7 @@ pub(crate) fn outputs_entry_indented(
 
 /// Write profiling response and reasoning text with selected metric values.
 ///
-/// This collapses Python's per-processor fragment/aggregation implementation
-/// into one post-run write because the native runner already owns every
-/// finalized record. Schema 1.1 keeps provider reasoning separate from
-/// user-visible response text.
+/// Schema 1.1 keeps provider reasoning separate from user-visible response text.
 pub fn write_outputs_json(
     path: &Path,
     records: &[CapturedRecord],
@@ -1148,13 +1120,13 @@ mod tests {
         assert_eq!(reasoning_only.response_text, None);
         assert_eq!(reasoning_only.reasoning_text.as_deref(), Some("why"));
 
-        let legacy = CapturedModelOutput::from_parts("answer", None, None);
-        assert_eq!(legacy.response_text.as_deref(), Some("answer"));
-        assert_eq!(legacy.reasoning_text, None);
+        let flattened = CapturedModelOutput::from_parts("answer", None, None);
+        assert_eq!(flattened.response_text.as_deref(), Some("answer"));
+        assert_eq!(flattened.reasoning_text, None);
     }
 
     #[test]
-    fn jsonl_uses_native_record_metrics_and_legacy_metadata_shape() {
+    fn jsonl_uses_native_record_metrics_and_compatible_metadata_shape() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("profile_export.jsonl");
         let mut ingest = RecordIngest::minimal(1_000_000, 11_000_000, Phase::Profiling);

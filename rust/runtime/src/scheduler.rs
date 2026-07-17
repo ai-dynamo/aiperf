@@ -3,12 +3,8 @@
 
 //! Clock-backed local-task scheduling for timing workloads.
 //!
-//! Python's `LoopScheduler` is the common scheduling seam used by request-rate,
-//! user-centric, and fixed-schedule strategies. This module carries the
-//! same three verbs over AIPerf's injected [`Clock`]: absolute scheduling,
-//! relative scheduling, and immediate execution. Futures stay `!Send` and run
-//! on the caller's `LocalSet`; the injected clock makes the implementation work
-//! with both `RealClock` and the deterministic `SimClock`.
+//! Absolute, relative, and immediate tasks stay `!Send` on the caller's
+//! `LocalSet`; the injected [`Clock`] supports real and deterministic execution.
 
 use std::cell::Cell;
 use std::future::Future;
@@ -23,8 +19,6 @@ pub type LocalTask = Pin<Box<dyn Future<Output = ()> + 'static>>;
 
 /// Scheduler seam shared by clock-driven workload strategies.
 ///
-/// A future implementation may add task priorities or a bounded timer wheel;
-/// strategies depend only on this trait and therefore need no changes.
 pub trait LocalTaskScheduler {
     /// Execute `task` on the local executor as soon as it can be polled.
     fn execute_async(&self, task: LocalTask);
@@ -95,10 +89,8 @@ impl SchedulerState {
 
 /// [`Clock`]-backed implementation of [`LocalTaskScheduler`].
 ///
-/// Delayed tasks sample a cancellation generation before parking. Calling
-/// [`cancel_pending`](LocalTaskScheduler::cancel_pending) advances that
-/// generation and wakes every parked task; tasks already past their delay keep
-/// running. This mirrors phase cleanup without cancelling in-flight transport.
+/// Delayed tasks capture a cancellation generation. Cancelling advances that
+/// generation and wakes parked tasks without interrupting in-flight transport.
 #[derive(Clone)]
 pub struct ClockTaskScheduler {
     state: Rc<SchedulerState>,

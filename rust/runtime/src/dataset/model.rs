@@ -3,9 +3,9 @@
 
 //! Handle-only conversation and turn domain model.
 //!
-//! The fields preserve every Python dataset value that affects dispatch,
-//! scheduling, context reconstruction, multimodal metrics, accuracy association,
-//! or DAG reporting. Large or wire-sensitive values are always [`Handle`]s;
+//! The fields retain every dataset value that affects dispatch, scheduling,
+//! context reconstruction, multimodal metrics, accuracy association, or DAG
+//! reporting. Large or wire-sensitive values are always [`Handle`]s;
 //! projection into metadata therefore never copies or strips media bytes.
 
 use std::fmt::{self, Display};
@@ -178,7 +178,7 @@ pub struct ConversationBranch {
     pub branch_id: BranchId,
     /// Authored child conversation identifiers.
     pub child_conversation_ids: SmallVec<[SessionId; 1]>,
-    /// Inherited-context fork or fresh-context spawn.
+    /// Parent-context fork or fresh-context spawn.
     pub mode: ConversationBranchMode,
     /// Pre-session or post-turn dispatch.
     pub dispatch_timing: DispatchTiming,
@@ -221,7 +221,7 @@ pub struct Turn {
     /// from the preserved body without rewriting it.
     pub streaming: Option<bool>,
     /// Load-time token count for this turn's authored request content, excluding
-    /// tools inherited from another turn and live assistant replies.
+    /// tools supplied by another turn and live assistant replies.
     pub input_tokens: u64,
     /// Load-time token count for this turn's tool definitions, when present.
     pub tool_tokens: u64,
@@ -260,13 +260,10 @@ pub struct Turn {
     pub branch_ids: SmallVec<[BranchId; 0]>,
     /// Audio duration used by ASR metrics such as RTFx.
     pub audio_duration_seconds: Option<f64>,
-    /// Unified ordered dispatch body handles — the authoritative storage for the
-    /// prebuilt-body, token-native, and message-array representations
-    /// (segment-unification design §2/§9 stage 3). Loaders and endpoint-bind
-    /// lowering write it directly through [`Turn::dispatch_body`]; the disjoint
-    /// segment [`domain`](crate::dataset::SegmentStore::domain) of each handle is
-    /// the discriminant that replaced the former five-field precedence: `message`
-    /// handles format as an array, a leading `raw` handle is a complete body
+    /// Unified ordered dispatch body handles for prebuilt-body, token-native,
+    /// and message-array representations. The disjoint segment
+    /// [`domain`](crate::dataset::SegmentStore::domain) determines dispatch:
+    /// `message` handles format as an array, a leading `raw` handle is a complete body
     /// (endpoint bypass), a `token-ids` handle is the token-native path. A raw
     /// body may coexist with its token-ids handle (`[raw, token]`); the raw body
     /// wins dispatch and the token handle stays reachable for validation and
@@ -306,10 +303,8 @@ impl Default for Turn {
 }
 
 impl Turn {
-    /// Build the ordered unified [`body`](Turn::body) handles from a turn's
-    /// prebuilt-body, token-native, and message representations
-    /// (segment-unification design §2/§9 stage 3). Loaders and endpoint-bind
-    /// lowering call this to write `body` directly.
+    /// Build ordered [`body`](Turn::body) handles from prebuilt-body,
+    /// token-native, and message representations.
     ///
     /// Ordering encodes dispatch precedence and keeps every handle reachable: a
     /// complete `raw_payload` leads (endpoint bypass), a `raw_token_ids` handle
@@ -476,22 +471,18 @@ mod tests {
             &[raw, token]
         );
 
-        // Raw only.
         assert_eq!(Turn::dispatch_body(Some(raw), None, &[]).as_slice(), &[raw]);
 
-        // Token-native only.
         assert_eq!(
             Turn::dispatch_body(None, Some(token), &[]).as_slice(),
             &[token]
         );
 
-        // Ordered message handles when there is neither a raw body nor tokens.
         assert_eq!(
             Turn::dispatch_body(None, None, &[msg_a, msg_b]).as_slice(),
             &[msg_a, msg_b]
         );
 
-        // Content-only / raw_messages-only turns keep an empty body.
         assert!(Turn::dispatch_body(None, None, &[]).is_empty());
     }
 

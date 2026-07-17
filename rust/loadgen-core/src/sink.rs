@@ -3,18 +3,12 @@
 
 //! Transport-neutral dispatch seam.
 //!
-//! A scheduling driver produces requests of some concrete type `R` and drives
-//! them through [`RequestSink`]; measurements flow back through
+//! A scheduler drives transport-native requests through [`RequestSink`];
+//! measurements flow through
 //! [`RequestObserver`] into a [`TraceCollector`](crate::collector::TraceCollector).
 //!
-//! `R` is the *transport-native* request and is defined by the transport, not
-//! by this crate:
-//!   - online HTTP uses a slim request type owned by the load generator;
-//!   - the simulated engine uses the mocker's `DirectRequest`.
-//!
-//! Each such type implements [`Dispatchable`], so this crate carries **no**
-//! dependency on any engine/router/KV types — those live behind the trait, in
-//! whichever crate defines the concrete request.
+//! Each request type implements [`Dispatchable`], keeping engine and wire types
+//! behind the trait.
 
 use uuid::Uuid;
 
@@ -128,9 +122,7 @@ pub trait RequestObserver {
     fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus);
 }
 
-/// What every dispatchable request exposes to the sink and collector,
-/// independent of transport. Concrete request types (a slim HTTP request, the
-/// mocker's `DirectRequest`, …) implement this; this crate never names them.
+/// Transport-independent request metadata exposed to sinks and observers.
 pub trait Dispatchable: Send + Sync {
     /// Stable per-request identifier used to correlate observer events.
     fn uuid(&self) -> Uuid;
@@ -147,9 +139,6 @@ pub trait Dispatchable: Send + Sync {
 /// request that completes with an error terminal status returns `Ok(())` after
 /// emitting `obs.on_terminal(..)`.
 ///
-/// `R` is the transport-native request; a sink is implemented once per
-/// transport (e.g. `impl RequestSink<Request> for TransportSink`).
-///
 /// `?Send`: the sink is driven on a single-threaded `LocalSet` (the hyper
 /// transport is `!Send`, holding `Rc<dyn Clock>`), so neither the sink nor its
 /// dispatch future is required to be `Send`.
@@ -164,8 +153,6 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    /// A minimal in-crate request implementing the seam — proves the trait is
-    /// usable with zero engine/transport deps.
     struct TinyRequest {
         uuid: Uuid,
         input_length: usize,

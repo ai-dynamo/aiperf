@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Cancellation timing. Port of
-//! `AioHttpClient._request_with_cancellation`: the cancel timer starts once the
-//! request body is sent, and on timeout the request future is dropped and
-//! recorded as a 499 cancellation.
+//! Post-send cancellation timing.
 
 use std::future::Future;
 use std::rc::Rc;
@@ -84,7 +81,6 @@ mod tests {
         let clock = Rc::new(SimClock::new());
         let clk: Rc<dyn Clock> = clock.clone();
         let outcome = drive_sim(clock.clone(), async move {
-            // Resolves immediately (before the 1ms cancel timer).
             let ready = async { 42u32 };
             race_cancel(clk, 1_000_000, ready).await
         });
@@ -105,7 +101,6 @@ mod tests {
         let body_clock: Rc<dyn Clock> = clock.clone();
 
         let outcome = drive_sim(clock.clone(), async move {
-            // Polling the single-frame body stamps send completion at t=250ns.
             clock_for_body.advance_to(250);
             let mut body = Box::pin(TimedBody::with_completion(
                 Bytes::from_static(b"complete request"),

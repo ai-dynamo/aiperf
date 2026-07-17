@@ -48,7 +48,7 @@ pub struct Dataset {
     segments: Arc<dyn SegmentStore>,
     metadata: DatasetMetadata,
     /// Precomputed profiling-phase [`BodyPlan`] per `[conversation position][turn
-    /// index]` for eligible static message-array turns (segment spec §3a). Empty
+    /// index]` for eligible static message-array turns. Empty
     /// until [`precompute_body_plans`](Dataset::precompute_body_plans) runs after
     /// endpoint-bind lowering; a `None` slot (or an empty outer vector) means the
     /// turn falls back to per-dispatch formatting. Keyed by dense position so the
@@ -74,9 +74,6 @@ impl Dataset {
         sampling_strategy: impl Into<String>,
         default_context_mode: ConversationContextMode,
     ) -> Result<Self> {
-        // Segment-unification §9 stage 3: each turn's unified `body` handles are
-        // now written directly by the loaders and endpoint-bind lowering, so
-        // there is no derive-from-legacy-fields pass here.
         let mut index = HashMap::with_capacity(conversations.len());
         for (position, conversation) in conversations.iter().enumerate() {
             if conversation.session_id.as_str().is_empty() {
@@ -179,7 +176,7 @@ impl Dataset {
     }
 
     /// Lower every static content turn's message to a pre-serialized `Message`
-    /// segment for the bound endpoint (segment spec §3/§3a/§5), so dispatch
+    /// segment for the bound endpoint, so dispatch
     /// splices the stored wire instead of re-rendering and re-serializing the
     /// turn's content on every request.
     ///
@@ -241,8 +238,8 @@ impl Dataset {
     }
 
     /// Build and cache the profiling-phase [`BodyPlan`] for every eligible static
-    /// message-array turn against the run's default prepared endpoint (segment
-    /// spec §3a), so dispatch clones the cached plan instead of calling the
+    /// message-array turn against the run's default prepared endpoint, so
+    /// dispatch clones the cached plan instead of calling the
     /// endpoint formatter (and building a fresh `serde_json::Value`) per request.
     ///
     /// Run once at load, immediately after
@@ -556,9 +553,7 @@ fn validate_turn(
             context()
         )));
     }
-    // The unified dispatch body (segment-unification §9 stage 3) carries at most
-    // a leading raw body, a token-native handle, and message handles; classify
-    // them by segment domain and reject any other domain leaking into the body.
+    // The body admits only raw, token-ID, and message segment domains.
     let mut body_has_raw = false;
     let mut body_token_ids: Option<Handle> = None;
     let mut body_has_messages = false;
@@ -696,11 +691,6 @@ fn validate_turn(
     Ok(())
 }
 
-/// Whether a turn renders its request message from `content` and carries none of
-/// the representations that must stay on the live render path (segment spec §3a
-/// carve-outs). A content turn with no per-turn endpoint override, no complete
-/// raw body, no token-native IDs, no preformatted `raw_messages`, and no
-/// already-set `messages` is the lowerable case.
 /// Assemble the endpoint turns for one static-context turn exactly as
 /// `ConversationSession::endpoint_turns` does for these two modes, so a plan
 /// precomputed from them is byte-identical to the dispatch-time plan. Restricted
@@ -779,10 +769,6 @@ pub(crate) fn report_build_progress(phase: &str, done: usize, total: usize) {
 }
 
 fn turn_is_lowerable(turn: &Turn) -> bool {
-    // An empty `body` means the turn carries no prebuilt raw body, token-native
-    // IDs, or already-lowered/authored message handles — the only representations
-    // recorded on `body`. Combined with a non-empty `content` and no preformatted
-    // `raw_messages` or per-turn endpoint override, this is the lowerable case.
     !turn.content.is_empty()
         && turn.body.is_empty()
         && turn.raw_messages.is_none()
@@ -1115,10 +1101,6 @@ mod tests {
         .unwrap();
     }
 
-    // Segment-unification §9 stage 3 decision (must-fix #1): a raw body may
-    // coexist with its token-ids handle. `dispatch_body` records `[raw, token]`
-    // so the raw body wins dispatch while the token handle stays reachable, and
-    // the load-time token-count validation still fires in the coexistence case.
     #[test]
     fn coexisting_raw_body_and_token_ids_keep_the_token_count_validation() {
         let mut pool = SegmentPool::new();
@@ -1144,7 +1126,6 @@ mod tests {
             ConversationContextMode::DeltasWithoutResponses,
         )
         .unwrap();
-        // Raw leads (dispatch bypass) with the token handle retained after it.
         assert_eq!(
             dataset.conversations()[0].turns[0].body.as_slice(),
             &[raw, token]

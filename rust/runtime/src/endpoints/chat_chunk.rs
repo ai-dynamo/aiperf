@@ -3,15 +3,8 @@
 
 //! Typed OpenAI chat-completion SSE chunk codec.
 //!
-//! AIPerf owns its wire layer (a stable external spec), so it can benchmark any
-//! OpenAI-compatible server without depending on a specific server's internal
-//! protocol types. These structs deserialize the streaming chunk shape; unknown
-//! fields are ignored by serde. SSE byte-framing (splitting the stream into
-//! `data:` events) lives in the transport layer; callers deserialize the `data`
-//! payload straight into [`ChatChunk`]. This is the OpenAI chat *dialect* codec,
-//! so it lives in `aiperf-endpoints` beside the untyped [`crate::endpoints::ChatEndpoint`]
-//! parser and the [`crate::endpoints::UsageView`] token reconciler; `aiperf-transport-http`
-//! re-exports these types from `sse` for its streaming callers.
+//! The transport frames SSE bytes; callers deserialize each `data:` payload
+//! into [`ChatChunk`]. Unknown provider fields are ignored.
 
 use serde::Deserialize;
 
@@ -117,12 +110,7 @@ pub struct Usage {
 }
 
 impl Usage {
-    /// Return a provider cache-hit count across supported usage shapes.
-    ///
-    /// This is the typed-chunk fast path; the authoritative reconciler across
-    /// every provider dialect (Anthropic disjoint accounting, Gemini/Cohere
-    /// envelopes, nested detail objects) is [`crate::endpoints::UsageView`], used by the
-    /// non-streaming/prepared response path.
+    /// Return a cache-hit count from supported OpenAI-compatible usage shapes.
     pub fn cached_tokens(&self) -> Option<u32> {
         self.prompt_tokens_details
             .as_ref()

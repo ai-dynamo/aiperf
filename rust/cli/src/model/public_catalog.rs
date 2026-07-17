@@ -1,14 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The public-dataset catalog — per-dataset source/format/option metadata.
+//! Embedded public-dataset source, format, and option metadata.
 //!
-//! Ported from `src/aiperf/orchestrator/rust_wire.py::_public_dataset`, whose
-//! per-dataset metadata comes from the Python plugin registry
-//! (`get_public_dataset_loader_metadata` + `_PUBLIC_NATIVE_FORMATS`). That
-//! metadata is static, so it is captured once into
-//! `resources/public_datasets.json` and embedded here (like the metric
-//! metadata). The runtime-derived `max_conversations` option is computed by the
-//! loader, not stored.
+//! `max_conversations` is computed at runtime rather than stored in the catalog.
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -40,9 +34,10 @@ pub fn lookup(name: &str) -> Option<&'static PublicMeta> {
     CATALOG.get(name)
 }
 
-/// Compute `max_conversations` (`_public_max_conversations`): `entries` wins for
-/// entries-first loaders; otherwise a streaming loader uses the request cap;
-/// otherwise `entries`.
+/// Compute `max_conversations`.
+///
+/// Entries-first loaders prefer `entries`; streaming loaders otherwise use the
+/// request cap.
 pub fn max_conversations(
     meta: &PublicMeta,
     entries: Option<u32>,

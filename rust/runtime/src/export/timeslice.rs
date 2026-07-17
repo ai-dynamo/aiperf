@@ -3,16 +3,15 @@
 
 //! Native-Rust timeslice sink: `profile_export_aiperf_timeslices.{json,csv}`.
 //!
-//! Ports the Python `exporters/timeslice_metrics_{json,csv}_exporter.py`. The
-//! native-v2 report already embeds per-series timeslices
+//! The native-v2 report embeds per-series timeslices
 //! (`MetricSeries.timeslices`, each `{start_ns,end_ns,complete,stats}`); this
-//! sink regroups them into the legacy per-slice metric map and serializes to the
-//! two files byte-for-byte. Only emitted when the run produced timeslices.
+//! sink regroups them into the compatibility per-slice metric map and serializes
+//! the two files byte-for-byte. It emits nothing when the run has no timeslices.
 //!
 //! # Parity oracle (byte-exact source of truth)
 //! - Regrouping: `orchestrator/native_report.py::_project_native_timeslices`
-//!   (~L195) — per-metric native slices are aligned into one legacy slice record
-//!   keyed by `(start_ns, end_ns, complete)`, sorted by that tuple. Each metric's
+//!   (~L195) — per-metric native slices are aligned into one compatibility slice
+//!   record keyed by `(start_ns, end_ns, complete)`, sorted by that tuple. Each metric's
 //!   summary series is selected exactly as `_summary_series` (~L791): the single
 //!   series when there is one, otherwise the unique unlabeled aggregate series,
 //!   else the metric contributes no slices. Per-slice stats are lowered by
@@ -116,10 +115,10 @@ pub struct TimesliceExportConfig {
     pub scalar_tags: std::collections::HashSet<String>,
 }
 
-/// Legacy per-slice, per-metric statistics lowered to the outer-orchestrator
+/// Per-slice, per-metric statistics lowered to the outer-orchestrator
 /// contract. Every numeric field is either finite or structurally absent.
 #[derive(Debug, Clone, Default)]
-struct LegacyStats {
+struct SliceStats {
     avg: Option<f64>,
     min: Option<f64>,
     max: Option<f64>,
@@ -140,10 +139,10 @@ struct SliceMetric {
     header: String,
     /// Metric display unit copied from the report metric entry.
     unit: String,
-    stats: LegacyStats,
+    stats: SliceStats,
 }
 
-/// One regrouped legacy slice keyed by `(start_ns, end_ns, complete)`.
+/// One regrouped compatibility slice keyed by `(start_ns, end_ns, complete)`.
 #[derive(Debug, Clone)]
 struct SliceGroup {
     start_ns: i64,
@@ -173,7 +172,7 @@ impl Exporter for TimesliceExporter {
     ) -> anyhow::Result<()> {
         let slices = regroup_timeslices(report, &cfg.timeslice)?;
         // Python raises `DataExporterDisabled` when no timeslices exist, so the
-        // legacy files are never created. Mirror that: emit nothing.
+        // compatibility files are never created. Mirror that: emit nothing.
         if slices.is_empty() {
             return Ok(());
         }
@@ -196,7 +195,7 @@ impl Exporter for TimesliceExporter {
     }
 }
 
-/// Regroup the report's per-series timeslices into legacy per-slice records.
+/// Regroup the report's per-series timeslices into compatibility per-slice records.
 ///
 /// Mirrors `_project_native_timeslices`: iterate metrics in report (`BTreeMap`)
 /// order, drop the frontend-projected INTERNAL/EXPERIMENTAL metrics
@@ -306,11 +305,11 @@ fn ordered_percentiles(percentiles: &BTreeMap<String, ReportValue>) -> Vec<(&'st
         .collect()
 }
 
-/// Lower one type-specific report stats block to the legacy stat set, matching
+/// Lower one type-specific report stats block to the compatibility stat set, matching
 /// `_legacy_stats`. `is_scalar` controls `count` suppression.
-fn lower_stats(stats: &ReportStats, is_scalar: bool) -> LegacyStats {
+fn lower_stats(stats: &ReportStats, is_scalar: bool) -> SliceStats {
     match stats {
-        ReportStats::Distribution(dist) => LegacyStats {
+        ReportStats::Distribution(dist) => SliceStats {
             avg: finite_opt(dist.avg),
             min: finite_opt(dist.min),
             max: finite_opt(dist.max),
@@ -325,24 +324,24 @@ fn lower_stats(stats: &ReportStats, is_scalar: bool) -> LegacyStats {
         },
         ReportStats::Scalar(scalar) => {
             let value = finite(scalar.value);
-            LegacyStats {
+            SliceStats {
                 avg: value,
                 min: value,
                 max: value,
-                ..LegacyStats::default()
+                ..SliceStats::default()
             }
         }
         ReportStats::Counter(counter) => {
             let total = finite(counter.total);
-            LegacyStats {
+            SliceStats {
                 avg: total,
                 min: total,
                 max: total,
                 sum: total,
-                ..LegacyStats::default()
+                ..SliceStats::default()
             }
         }
-        ReportStats::Histogram(hist) => LegacyStats {
+        ReportStats::Histogram(hist) => SliceStats {
             avg: finite_opt(hist.avg),
             sum: finite(hist.sum),
             count: if is_scalar {
@@ -351,12 +350,12 @@ fn lower_stats(stats: &ReportStats, is_scalar: bool) -> LegacyStats {
                 Some(hist.count as i64)
             },
             percentiles: ordered_percentiles(&hist.percentiles),
-            ..LegacyStats::default()
+            ..SliceStats::default()
         },
     }
 }
 
-/// Serialize the regrouped slices to the legacy JSON shape. Insertion order is
+/// Serialize the regrouped slices to the compatibility JSON shape. Insertion order is
 /// preserved by `serde_json`'s `preserve_order` feature; `to_string_pretty`
 /// matches orjson's two-space indent byte-for-byte. The frontend-projected
 /// `input_config` (if present) is wrapped after the `timeslices` array, in
@@ -466,7 +465,7 @@ fn render_csv(slices: &[SliceGroup]) -> anyhow::Result<String> {
 /// Present stats in `STAT_KEYS` order (`count` is intentionally excluded from
 /// the CSV). Percentiles are interleaved between `sum` and `std`, in canonical
 /// numeric order.
-fn csv_stat_rows(stats: &LegacyStats) -> Vec<(&'static str, f64)> {
+fn csv_stat_rows(stats: &SliceStats) -> Vec<(&'static str, f64)> {
     let mut rows = Vec::new();
     if let Some(value) = stats.avg {
         rows.push(("avg", value));

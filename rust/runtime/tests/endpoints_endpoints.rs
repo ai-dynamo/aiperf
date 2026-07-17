@@ -9,8 +9,6 @@ use aiperf_runtime::endpoints::{
 };
 use serde_json::{Map, Value, json};
 
-/// Materialize a formatter's [`BodyPlan`] into a decoded JSON value so the
-/// structural assertions below keep inspecting fields as before stage B.
 fn plan_body(plan: aiperf_runtime::body_plan::BodyPlan) -> Value {
     serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
 }
@@ -231,14 +229,8 @@ fn completions_and_embeddings_formatting() {
     assert!(body.get("max_tokens").is_none());
 }
 
-/// Golden-byte gate (stage B): the materialized `BodyPlan` bytes must be
-/// byte-identical to `serde_json::to_vec` of the equivalent hand-built object,
-/// proving field order, the `stream_options`/`include_usage:false` merge, and
-/// the extra-body fold all survive the plan bridge unchanged.
 #[test]
 fn body_plan_materializes_byte_identical_to_hand_built_objects() {
-    // Chat: exercises message array + max_completion_tokens + extra merge that
-    // overwrites `stream_options` in place with include_usage:false preserved.
     let mut req = request(
         EndpointType::Chat,
         vec![Turn {
@@ -272,7 +264,6 @@ fn body_plan_materializes_byte_identical_to_hand_built_objects() {
         serde_json::to_vec(&expected).unwrap().as_slice()
     );
 
-    // Completions: string-array prompt stays a literal (not spliced as wires).
     let mut req = request(EndpointType::Completions, vec![text_turn("p")]);
     req.turns[0].max_tokens = Some(4);
     let bytes = CompletionsEndpoint
@@ -291,7 +282,6 @@ fn body_plan_materializes_byte_identical_to_hand_built_objects() {
         serde_json::to_vec(&expected).unwrap().as_slice()
     );
 
-    // Embeddings: string-array input literal, model-first ordering.
     let req = request(EndpointType::Embeddings, vec![text_turn("embed")]);
     let bytes = EmbeddingsEndpoint
         .format_payload(&req)
@@ -304,7 +294,6 @@ fn body_plan_materializes_byte_identical_to_hand_built_objects() {
         serde_json::to_vec(&expected).unwrap().as_slice()
     );
 
-    // Responses: input array + instructions ordering.
     let mut req = request(EndpointType::Responses, vec![text_turn("q")]);
     req.system_message = Some("sys".to_string());
     let bytes = ResponsesEndpoint

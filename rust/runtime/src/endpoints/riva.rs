@@ -3,8 +3,8 @@
 
 //! Runner-protocol-v2-only NVIDIA Riva endpoint factories.
 //!
-//! The factories stay on the open [`crate::endpoints::EndpointFactory`] seam; protobuf RPC
-//! bindings live in `aiperf-transport-grpc`.
+//! The factories use the open [`crate::endpoints::EndpointFactory`] seam;
+//! protobuf RPC bindings live in `aiperf_runtime::transport::grpc`.
 
 use std::collections::BTreeMap;
 use std::fmt;

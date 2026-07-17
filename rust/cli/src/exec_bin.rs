@@ -2,18 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Resolve the `aiperf` binary to re-exec for one run's execution.
 //!
-//! There is no separate execution binary anymore: the entry point re-execs
-//! **itself** (`aiperf --execute`) for each run/probe/cell. The happy path is
-//! therefore `current_exe()`. A single non-"runner" override, `AIPERF_EXEC_BIN`,
-//! lets dev/test point the execution child at a different-features build (e.g. a
-//! `--features dynosim` binary) without rebuilding the entry point.
+//! `AIPERF_EXEC_BIN` can select a feature-specific build; otherwise the entry
+//! point re-execs itself with `aiperf --execute`.
 
 use std::path::PathBuf;
 
-/// Resolve the execution binary to spawn in `--execute`/`--cell` mode:
+/// Resolve the execution binary for `--execute` and `--cell`.
 ///
-/// 1. `$AIPERF_EXEC_BIN` (explicit override — dev/test point at a specific build),
-/// 2. `current_exe()` (this same `aiperf` binary — the normal path).
+/// 1. `$AIPERF_EXEC_BIN`
+/// 2. `current_exe()`
 ///
 /// Falls back to the bare name `aiperf` only if `current_exe()` is unavailable,
 /// so a spawn failure surfaces the OS error naming the path.
@@ -47,8 +44,6 @@ mod tests {
         assert_eq!(resolve().unwrap(), tmp.path());
 
         unsafe { std::env::remove_var("AIPERF_EXEC_BIN") };
-        // Without an override the resolver yields this test binary's own path
-        // (current_exe) and never errors.
         let resolved = resolve().unwrap();
         assert!(resolved.is_absolute() || !resolved.as_os_str().is_empty());
     }

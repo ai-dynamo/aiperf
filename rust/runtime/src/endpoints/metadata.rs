@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Static endpoint capability metadata ported from `src/aiperf/plugin/plugins.yaml`.
+//! Static endpoint capability metadata.
 
 use serde::{Deserialize, Serialize};
 
@@ -76,7 +76,7 @@ pub struct EndpointDescriptor {
 pub enum EndpointType {
     /// OpenAI Chat Completions.
     Chat,
-    /// Legacy OpenAI Completions.
+    /// OpenAI Completions.
     Completions,
     /// OpenAI Responses API.
     Responses,
@@ -171,8 +171,8 @@ impl EndpointType {
 }
 
 impl EndpointDescriptor {
-    /// Closed-enum view for legacy [`EndpointConfig`] / dataset paths.
-    pub fn legacy_type(self) -> Option<EndpointType> {
+    /// Closed-enum view for protocol-v1 [`EndpointConfig`] and dataset paths.
+    pub fn compatibility_type(self) -> Option<EndpointType> {
         EndpointType::from_canonical_id(self.id)
     }
 

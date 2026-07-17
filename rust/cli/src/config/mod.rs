@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Native `aiperf config` subcommands: `init` (scaffold from an embedded
-//! template), `validate` (resolve a config through the native surface), and
-//! `expand` (preview sweep variations). Ports `config/cli_runner.py` +
-//! `config/templates/*` so the config workflow needs no Python.
+//! Native `aiperf config` subcommands.
 
 mod templates_data;
 
@@ -12,7 +9,6 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use templates_data::TEMPLATES;
 
-/// `aiperf config <subcommand>`.
 #[derive(Debug, Parser)]
 #[command(name = "config", disable_help_subcommand = true)]
 struct ConfigCli {
@@ -84,7 +80,6 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
     }
 }
 
-/// `aiperf config init`.
 fn init(args: InitArgs) -> anyhow::Result<i32> {
     if args.list {
         list_templates(args.category.as_deref());
@@ -122,7 +117,6 @@ fn init(args: InitArgs) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-/// Print the template catalog grouped by category.
 fn list_templates(category: Option<&str>) {
     let mut cats: std::collections::BTreeMap<&str, Vec<&templates_data::Template>> =
         std::collections::BTreeMap::new();
@@ -141,8 +135,6 @@ fn list_templates(category: Option<&str>) {
     println!();
 }
 
-/// `aiperf config validate`: resolve the config through the native YAML surface
-/// (which validates it) and report success/failure.
 fn validate(args: ValidateArgs) -> anyhow::Result<i32> {
     match crate::yaml::resolve(
         &args.config_file,
@@ -159,7 +151,6 @@ fn validate(args: ValidateArgs) -> anyhow::Result<i32> {
     }
 }
 
-/// `aiperf config expand`: preview the sweep variations a config produces.
 fn expand(args: ExpandArgs) -> anyhow::Result<i32> {
     let Some(path) = args.config else {
         anyhow::bail!("config expand requires --config <file>");
@@ -178,8 +169,7 @@ fn expand(args: ExpandArgs) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-/// Remove the leading SPDX / schema comment header (Python `strip_spdx_header`):
-/// drop leading `# SPDX-` and `# yaml-language-server:` comment lines.
+/// Remove leading SPDX and YAML-language-server comment lines.
 fn strip_spdx_header(content: &str) -> String {
     let mut lines = content.lines().peekable();
     while let Some(line) = lines.peek() {

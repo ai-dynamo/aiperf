@@ -1,21 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! S4 — deterministic `(cell_id, cell_count)` work partition.
+//! Deterministic `(cell_id, cell_count)` work partition.
 //!
 //! A [`CellPartition`] is the seam that lets `cell_count` cells produce the same
 //! trace *set* as a single cell with different *ownership*: every cell selects the
 //! trace instances it owns from the one seed space, so identical
-//! `(workload_seed, cell_count, partition)` inputs yield byte-stable artifacts
-//! (roadmap `specs/2026-07-12-cellular-ready-seams-and-roadmap.md`, S4).
-//!
-//! Today only the identity partition ships — [`ModuloCellPartition::direct`],
-//! `(cell_id, cell_count) = (0, 1)`, which owns the entire instance space (the
-//! single-process "cell of one"). The trait is object-safe so the runtime holds a
-//! `Rc<dyn CellPartition>`; the deferred cellular controller drops in a per-cell
-//! partition behind the same seam without touching any caller. A future
-//! block/weighted partition is likewise a pure add — hence a trait, not a match on
-//! a "kind".
+//! `(workload_seed, cell_count, partition)` inputs yield byte-stable artifacts.
 
 use std::fmt::{self, Display, Formatter};
 
@@ -45,16 +36,15 @@ pub trait CellPartition {
     /// `(base, identifier, cell_id)`, never on execution order or thread, so a
     /// cell's selection/derivation stream is reproducible regardless of how many
     /// other cells exist or which thread runs it. Content identity is untouched —
-    /// only per-cell *selection* streams key off the cell (roadmap S4).
+    /// only per-cell selection streams key off the cell.
     fn derive_cell_root(&self, base: RngRoot, identifier: &str) -> RngRoot;
 }
 
 /// Round-robin partition: cell `k` owns every instance index `i` with
 /// `i % cell_count == cell_id`.
 ///
-/// This is the Tier-0 "Direct" partition. The identity case `(0, 1)`
-/// ([`direct`](Self::direct)) owns the whole instance space and is what ships
-/// single-process today. Round-robin keeps each cell's owned indices ascending, so
+/// The identity case `(0, 1)` ([`direct`](Self::direct)) owns the whole instance
+/// space. Round-robin keeps each cell's owned indices ascending, so
 /// a cell's `n`-th issued instance is exactly `n * cell_count + cell_id` — the
 /// mapping the issuance authority uses to reconstruct a dense global dispatch
 /// ordinal from a cell-local counter.

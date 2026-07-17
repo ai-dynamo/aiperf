@@ -3,17 +3,8 @@
 
 //! Runner-owned direct Graph-IR input adapters.
 //!
-//! Python projects the authored file source without acquisition or parsing.
-//! This module performs an
-//! identity-only format lookup, then gives the untouched object to exactly one
-//! selected adapter. The adapter owns the sole strict full decode and lowers
-//! directly to [`GraphInputBundle`]; no protocol-v1 DTO, linear
-//! [`crate::dataset::Dataset`],
-//! conversation, or second graph-source representation exists in this path.
-//!
-//! A future linked distribution injects another [`GraphInputAdapter`]
-//! through the resolver. Its private authored fields remain invisible to the
-//! coordinator.
+//! The resolver reads only the format identity; the selected adapter owns strict
+//! decoding and lowers directly to [`GraphInputBundle`].
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -27,7 +18,7 @@ use crate::graph::recorded::{
     compile_weka_trace_input,
 };
 use crate::graph::tstar::{
-    PermutationDraw, RecycleDrawMode, legacy_random_seed, legacy_shuffle_seed,
+    PermutationDraw, RecycleDrawMode, sampler_random_seed, sampler_shuffle_seed,
 };
 use crate::rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
@@ -43,13 +34,7 @@ use crate::engine::protocol::{
 
 /// Recorded-graph trajectory-start (`t*`) window bound to a prepared input.
 ///
-/// Carries the C1 protocol-v2 synthesis knobs
-/// (`trajectory_start_min_ratio` / `trajectory_start_max_ratio` /
-/// `t_star_random_seed`) forward to the graph phase runtime, where each phase
-/// samples a per-trace `t*` via [`crate::graph::tstar::WindowTStarSampler`] and
-/// applies the warmup/profiling snapshot split. The default `[0.0, 0.0]` window
-/// with seed `0` yields `t* = 0` for every trace, i.e. full native replay:
-/// profiling runs the whole graph unchanged and warmup is empty.
+/// A `[0.0, 0.0]` window yields full replay with `t* = 0`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TStarWindow {
     /// Lower window bound as a fraction of each trace's replayable span.
@@ -60,24 +45,9 @@ pub struct TStarWindow {
     /// (`_seed_for_trace_lane`). This is `t_star_random_seed`, and is DISTINCT
     /// from the dataset-sampler run root below.
     pub random_seed: u64,
-    /// The RESOLVED run root seed (`config.random_seed`) the dataset-sampling
-    /// recycle draw derives its child generator from. Legacy `ShuffleSampler` /
-    /// `RandomSampler` seed their generators from the run root
-    /// (`rng.init(config.random_seed)`), NOT `t_star_random_seed`; the
-    /// per-strategy child seed is salted off this root in
-    /// [`TStarWindow::recycle_draw`] ([`crate::graph::tstar::legacy_shuffle_seed`]
-    /// for shuffle, [`crate::graph::tstar::legacy_random_seed`] for random), so a
-    /// future sampler adds a salt rather than a new field. Resolved ONCE at
-    /// construction (an absent run seed substitutes a single entropy value there,
-    /// documented at the construction site) so every draw site sharing this
-    /// `Copy` window agrees. Defaults to `0`.
+    /// Run-root seed used to derive strategy-specific recycle generators.
     pub run_random_seed: u64,
-    /// Resolved dataset-sampling strategy governing WHICH corpus template a
-    /// freed recycle lane serves. `Sequential` (the default) keeps the historic
-    /// `x % total` cursor draw; `Shuffle` routes through the legacy
-    /// persistent-epoch shuffle (without replacement); `Random` routes through
-    /// the legacy CPython MT19937 `choice` draw (with replacement). See
-    /// [`GraphSamplingStrategy`].
+    /// Strategy selecting the next corpus template for a freed recycle lane.
     pub sampling_strategy: GraphSamplingStrategy,
 }
 
@@ -87,16 +57,16 @@ impl TStarWindow {
     /// The child generator seed is salted off [`TStarWindow::run_random_seed`] per
     /// strategy, so `Sequential`/`Shuffle`/`RandomSampler` all derive from the SAME
     /// run root with different salts. Building a fresh draw at each site is safe:
-    /// the draw is a pure function of `(mode, child_seed)`, so the pressure stage
+    /// the draw is a pure function of `(mode, child_seed)`, so pressure warmup
     /// and the profiling recycle (built independently) agree draw-for-draw.
     pub fn recycle_draw(&self) -> PermutationDraw {
         match self.sampling_strategy.draw_mode() {
             RecycleDrawMode::Sequential => PermutationDraw::sequential(),
             RecycleDrawMode::Shuffle => {
-                PermutationDraw::shuffle(legacy_shuffle_seed(self.run_random_seed))
+                PermutationDraw::shuffle(sampler_shuffle_seed(self.run_random_seed))
             }
             RecycleDrawMode::Random => {
-                PermutationDraw::random(legacy_random_seed(self.run_random_seed))
+                PermutationDraw::random(sampler_random_seed(self.run_random_seed))
             }
         }
     }
@@ -104,34 +74,21 @@ impl TStarWindow {
 
 /// Resolved dataset-sampling strategy for the recorded-graph recycle draw.
 ///
-/// Port of the `sequential`/`shuffle`/`random` values of the Python
-/// `DatasetSamplingStrategy` dynamic enum (`aiperf/plugin/enums.py:53`).
-/// `Sequential`/`Shuffle`/`Random` reproduce legacy agentx `SequentialSampler`
-/// (`x % total`), `ShuffleSampler` (persistent-epoch shuffle, without
-/// replacement), and `RandomSampler` (CPython MT19937 `choice`, WITH replacement)
-/// BYTE-EXACT. Extension seam: a new sampling policy adds a variant here, a
-/// [`RecycleDrawMode`] branch, and a derive salt, never a hardcoded mode string
-/// elsewhere.
+/// `Sequential`, `Shuffle`, and `Random` preserve the configured sampler's
+/// byte-exact draw sequence.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GraphSamplingStrategy {
-    /// Historic cursor-with-wrap draw (`x % total`); byte-unchanged default
-    /// (legacy `SequentialSampler`).
+    /// Cursor-with-wrap draw (`x % total`).
     #[default]
     Sequential,
-    /// Legacy `ShuffleSampler` persistent-epoch shuffle (without replacement).
+    /// Persistent-epoch shuffle without replacement.
     Shuffle,
-    /// Legacy `RandomSampler`: CPython MT19937 `choice` draw (WITH replacement),
-    /// seeded from `rng.derive("dataset.sampler.random")`. No longer coerced to
-    /// `Shuffle` — see [`crate::graph::tstar::legacy_random_seed`] and
-    /// [`crate::graph::tstar::PermutationDraw::random`].
+    /// CPython MT19937 `choice` draw with replacement.
     Random,
 }
 
 impl GraphSamplingStrategy {
-    /// Parse a wire strategy string, defaulting unknown/absent values to
-    /// [`GraphSamplingStrategy::Sequential`] so an older or partial wire request
-    /// keeps the byte-unchanged sequential draw. Matches the Python enum values
-    /// `sequential`/`shuffle`/`random` (`aiperf/plugin/enums.py:54`).
+    /// Parse a wire strategy, selecting sequential behavior for unknown values.
     pub fn parse(value: Option<&str>) -> Self {
         match value {
             Some("shuffle") => Self::Shuffle,
@@ -140,11 +97,7 @@ impl GraphSamplingStrategy {
         }
     }
 
-    /// Map the resolved wire strategy to the byte-exact legacy sampler family the
-    /// recycle draw reproduces. Port of `graph_ir_replay.py:_draw_is_shuffled`
-    /// (lines 821-834) generalized to three modes: `sequential` (and any unknown
-    /// value) take the byte-identical `x % total` draw, `shuffle` the
-    /// persistent-epoch shuffle, `random` the with-replacement CPython draw.
+    /// Map the wire strategy to its byte-exact draw mode.
     pub fn draw_mode(self) -> RecycleDrawMode {
         match self {
             Self::Sequential => RecycleDrawMode::Sequential,
@@ -155,22 +108,13 @@ impl GraphSamplingStrategy {
 }
 
 /// Recorded-graph cache-bust marker target.
-///
-/// Port of the subset of agentx's `CacheBustTarget`
-/// (`ajc/agentx:src/aiperf/common/enums`) that the native recorded-graph path
-/// honors. agentx supports SYSTEM_{PREFIX,SUFFIX} and FIRST_TURN_{PREFIX,SUFFIX};
-/// the `inferencex-agentx-mvp` scenario locks `first_turn_prefix`, which is the
-/// only target the native runner materializes today. `None` (the default) is a
-/// byte-unchanged no-op. Extension seam: a new target adds one variant here, one
-/// `parse` arm, and one marker-placement arm in
-/// [`crate::engine::graph_execution`] — nothing else changes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CacheBustTarget {
     /// No marker; recorded content is sent verbatim.
     #[default]
     None,
     /// Prepend a per-conversation `[rid:<digest>]\n\n` marker to the first user
-    /// message of every request (agentx `FIRST_TURN_PREFIX`).
+    /// message of every request.
     FirstTurnPrefix,
 }
 
@@ -317,13 +261,7 @@ impl BuiltinRunnerGraphInputAdapterResolver {
     }
 }
 
-/// Strictly decode an authored graph-input object from its raw JSON text.
-///
-/// `aiperf` no longer links serde_json with the globally side-effecting
-/// `arbitrary_precision` feature (recorded-trace hash ids above `u64::MAX` are
-/// now captured token-by-token via `RawValue` inside `aiperf-graph`), so
-/// streaming `from_str` decodes struct `f64` fields — the recorded-trace
-/// `max_osl`/`idle_gap_cap_seconds` knobs — directly again.
+/// Decode graph input from raw JSON without `arbitrary_precision`.
 fn decode_graph_input<T>(raw: &RawValue) -> serde_json::Result<T>
 where
     T: serde::de::DeserializeOwned,
@@ -726,24 +664,14 @@ fn prepare_recorded_file(
     let idle_gap_cap_seconds = synthesis
         .as_ref()
         .map_or(Some(60.0), |value| value.idle_gap_cap_seconds);
-    // The trajectory-start window travels to the phase runtime, which samples a
-    // per-trace `t*` and applies the warmup/profiling snapshot split. The C1
-    // defaults `[0.0, 0.0]` with seed `0` collapse to `t* = 0` (full replay).
+    // The default window collapses to `t* = 0` and full replay.
     let t_star_window = synthesis
         .as_ref()
         .map_or_else(TStarWindow::default, |value| TStarWindow {
             start_min_ratio: value.trajectory_start_min_ratio,
             start_max_ratio: value.trajectory_start_max_ratio,
             random_seed: value.t_star_random_seed,
-            // Legacy `ShuffleSampler`/`RandomSampler` seed their generators from the
-            // RUN root (`rng.init(config.random_seed)`), not `t_star_random_seed`;
-            // the per-strategy child seed is salted off this root in
-            // `TStarWindow::recycle_draw`. When the run root is absent legacy uses
-            // `default_rng(None)`/`Random(None)` (non-deterministic); the scenario
-            // always threads a seed, so an absent run seed substitutes ONE entropy
-            // value HERE (resolved once, shared by every draw site through the `Copy`
-            // window — mirroring `content_root_seed` at the site below), keeping the
-            // pressure->profiling recycle order internally consistent.
+            // Resolve absent run seeds once so every recycle site shares one order.
             run_random_seed: context
                 .run_random_seed
                 .unwrap_or_else(|| RngRoot::new(None).derive_seed_or_entropy("dataset.sampler")),
@@ -1254,9 +1182,6 @@ mod tests {
 
     #[test]
     fn recorded_request_carries_tstar_window_on_synthesis() {
-        // A protocol-v2 recorded-graph dataset request carries the trajectory
-        // start (t*) window and derived seed on its synthesis block; the strict
-        // recorded decode retains them for C2 to bind.
         let RecordedDatasetInput::File(input) = serde_json::from_value(json!({
             "type": "file",
             "format": "weka_trace",

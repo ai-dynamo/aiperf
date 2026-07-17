@@ -3,8 +3,7 @@
 
 //! GPU telemetry records and exact phase-boundary snapshots.
 //!
-//! The Rust record keeps a dynamic metric map so later source implementations
-//! do not require a wire schema change.
+//! A dynamic metric map lets sources share one wire schema.
 
 use std::collections::BTreeMap;
 

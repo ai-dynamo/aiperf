@@ -1,34 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Stage G — a cellular run over a NON-synthetic `file`/`path` dataset ships the
-//! dataset SOURCE controller->cell over HTTP + streaming zstd, and each cell
+//! A cellular run over a non-synthetic `file`/`path` dataset ships the
+//! dataset source from controller to cells over HTTP with streaming zstd, and each cell
 //! recompiles it deterministically.
 //!
 //! A synthetic cellular run regenerates the identical dataset in every cell from
 //! the shared seed, so nothing needs shipping. A `file`/`path` dataset cannot be
 //! regenerated and its path is controller-local (unreachable by a k8s cell), so the
-//! controller serves the source over the SAME HTTP+zstd plane the per-record
-//! artifact uploads use (Stage E/F), and the cell downloads + recompiles it before
+//! controller serves the source over the same HTTP+zstd plane as per-record
+//! artifact uploads, and the cell downloads and recompiles it before
 //! `build_file_dataset` runs.
 //!
-//! True multi-HOST (k8s) cannot run in-sandbox; this drives the exact same
-//! mechanism same-host via the [`AIPERF_CELL_ARTIFACT_HTTP_FORCE`] seam: the
+//! [`AIPERF_CELL_ARTIFACT_HTTP_FORCE`] exercises the transport over loopback: the
 //! controller binds its artifact server on loopback, registers the dataset source,
 //! injects the authority into each locally-launched cell, and the cells `GET
 //! /dataset/{name}` it back over real TCP + zstd.
 //!
-//! # The two things this proves
-//!
-//! 1. **The dataset went over HTTP+zstd** — the controller's serve handler logs one
-//!    `served dataset source over HTTP … content_encoding=zstd` line (target
-//!    `aiperf_cellular_artifact`, surfaced at `info` via `AIPERF_LOG`),
-//!    forwarded into `logs/aiperf.log`. The single-cell baseline (no controller)
-//!    produces none.
-//! 2. **SET parity** — the merged `records.jsonl` over the shipped file has the same
-//!    dataset-deterministic conversation SET as a single-cell run over the same file
-//!    (compile is content-addressed + shared-seed + shared-tokenizer, so every cell
-//!    yields the identical fixed conversation list the sampler slices tile).
+//! The controller logs `served dataset source over HTTP … content_encoding=zstd`
+//! for the transfer. The merged records must match the single-cell
+//! dataset-deterministic conversation set.
 
 mod common;
 use common::*;
@@ -120,8 +111,7 @@ fn aiperf_log(r: &RunResult) -> String {
 }
 
 /// The HTTP+zstd dataset-serve observable lines: one per served source, naming the
-/// dataset and the encoding. The load-bearing proof the source crossed a real HTTP
-/// socket compressed, not a shared filesystem.
+/// dataset and encoding.
 fn dataset_serve_observables(r: &RunResult) -> Vec<String> {
     aiperf_log(r)
         .lines()
@@ -180,7 +170,6 @@ async fn test_cellular_dataset_shipping_matches_single_cell() {
         "1-cell baseline must be single-process (no cellular sidecar)"
     );
 
-    // --- THE HTTP+zstd DATASET-SHIP PROOF -----------------------------------------
     let observables = dataset_serve_observables(&cellular);
     assert!(
         !observables.is_empty(),
@@ -211,7 +200,6 @@ async fn test_cellular_dataset_shipping_matches_single_cell() {
         observables.join("\n")
     );
 
-    // --- SET PARITY ---------------------------------------------------------------
     let recs_base = baseline.artifacts.jsonl();
     let recs_cell = cellular.artifacts.jsonl();
     assert_eq!(

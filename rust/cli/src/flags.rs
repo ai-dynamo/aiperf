@@ -1,16 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The `aiperf profile` CLI flag surface (clap), byte-exact to the Python names.
+//! The `aiperf profile` CLI flag surface.
 //!
-//! This is the CLI half of the pre-translation input contract. Flag long-names
-//! and aliases mirror `src/aiperf/config/flags/cli_config.py` (which in turn
-//! keeps GenAI-Perf aliases). The loader ([`crate::load`]) maps these into the
-//! native [`crate::model::BenchmarkRun`].
+//! The loader maps these flags into [`crate::model::BenchmarkRun`].
 //!
-//! Only the flags needed for the single-run synthetic path are modeled today;
-//! the surface grows as sections are ported. Sweep-capable numeric flags are
-//! taken as `String` so a comma-list (`--concurrency 10,20,30`) can be detected
-//! and rejected as multi-run rather than mis-parsed.
+//! Sweep-capable numeric flags use `String` so comma-separated values can be
+//! detected before scalar parsing.
 
 use std::path::PathBuf;
 
@@ -227,12 +222,10 @@ pub struct ProfileFlags {
     pub synthesis_idle_gap_cap: Option<f64>,
 
     /// URL-selection strategy for multi-URL runs (`--url-strategy`, default
-    /// `round_robin`). A runtime knob Python does not project into the request;
-    /// accepted for CLI parity.
+    /// `round_robin`).
     #[arg(long = "url-strategy")]
     pub url_strategy: Option<String>,
-    /// Disable auto fixed-schedule detection (`--no-fixed-schedule`). A trace-only
-    /// toggle with no request effect on the common path; accepted for parity.
+    /// Disable auto fixed-schedule detection (`--no-fixed-schedule`).
     #[arg(long = "no-fixed-schedule", default_value_t = false)]
     pub no_fixed_schedule: bool,
 
@@ -241,7 +234,6 @@ pub struct ProfileFlags {
     #[arg(long = "dataset-filter", num_args = 1..)]
     pub dataset_filter: Option<Vec<String>>,
 
-    // --- Adaptive search / sweep-space (Tier 3) ------------------------------
     /// Search recipe id (`--search-recipe`, e.g. `concurrency-ramp`).
     #[arg(long = "search-recipe")]
     pub search_recipe: Option<String>,
@@ -374,8 +366,6 @@ pub struct ProfileFlags {
     #[arg(long = "stream", default_value_t = false)]
     pub stream: bool,
 
-    // --- Service / UI / logging flags (accepted for CLI parity; the native
-    //     entry point does not project these into the runner request) ----------
     /// Controller API host (`--api-host`).
     #[arg(long = "api-host")]
     pub api_host: Option<String>,
@@ -601,7 +591,7 @@ pub struct ProfileFlags {
     #[arg(long = "request-timeout-seconds")]
     pub request_timeout_seconds: Option<f64>,
 
-    /// Emit legacy `max_tokens` (`--use-legacy-max-tokens`).
+    /// Emit `max_tokens` (`--use-legacy-max-tokens`).
     #[arg(long = "use-legacy-max-tokens", default_value_t = false)]
     pub use_legacy_max_tokens: bool,
 
@@ -776,9 +766,7 @@ pub struct ProfileFlags {
 
     /// Auto-normalize fixed-schedule timestamps (`--fixed-schedule-auto-offset`).
     /// Accepts a bare flag (`--fixed-schedule-auto-offset` ⇒ `Some(true)`) or an
-    /// explicit value; absent ⇒ `None` (derive from start/end offsets). Matches
-    /// Python's store-true `--fixed-schedule-auto-offset` while preserving the
-    /// None-means-derive behavior at `load.rs`.
+    /// explicit value; absent derives the value from the start/end offsets.
     #[arg(
         long = "fixed-schedule-auto-offset",
         num_args = 0..=1,
@@ -1022,7 +1010,7 @@ pub struct ProfileFlags {
     #[arg(long = "dry-run-seed")]
     pub dry_run_seed: Option<u64>,
     /// Analytic latency curve (`--dry-run-latency-model`): `linear` (default) or
-    /// `aiconfigurator_polynomial` (Dynamo mocker perf-model port).
+    /// `aiconfigurator_polynomial`.
     #[arg(long = "dry-run-latency-model")]
     pub dry_run_latency_model: Option<String>,
     /// KV-cache utilization in `[0,1]` for the polynomial decode curve
@@ -1041,7 +1029,6 @@ impl ProfileFlags {
     /// Parse `profile` flags from an argv slice (program name already stripped,
     /// i.e. the tokens after `aiperf profile`).
     pub fn parse_from_args(args: &[String]) -> Result<Self, clap::Error> {
-        // clap expects argv[0] to be the binary name.
         let mut argv = vec!["profile".to_string()];
         argv.extend_from_slice(args);
         Self::try_parse_from(argv)

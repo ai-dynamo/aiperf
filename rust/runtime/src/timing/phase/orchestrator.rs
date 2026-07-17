@@ -163,7 +163,6 @@ impl ClockPhaseOrchestrator {
             return Err(PhaseOrchestratorError::AlreadyRun);
         }
 
-        // Mirrors Python's `phase_orchestrator.py` "Initialized N phase(s)" line.
         let phase_names: Vec<&str> = self.inner.configs.iter().map(|c| c.id.as_str()).collect();
         tracing::info!(
             "Initialized {} phase(s): {:?}",
@@ -425,9 +424,8 @@ impl Display for PhaseOrchestratorError {
 /// Drive an orchestrator to completion under the standard signal-cancellation
 /// discipline, armed only under a wall clock.
 ///
-/// Both the scheduled and graph phase entries call this instead of re-wiring the
-/// run loop, so the SIGINT/SIGTERM → graceful-drain listener cannot be attached
-/// to one path and forgotten on the other. On the first delivered signal the
+/// Scheduled and graph phase entries share this path so both install the
+/// SIGINT/SIGTERM graceful-drain listener. On the first delivered signal the
 /// active phase drains through the cancellation latch and yields
 /// `PhaseStats { was_cancelled: true }`; the listener is aborted when the run
 /// returns.

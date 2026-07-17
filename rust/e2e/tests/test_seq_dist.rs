@@ -3,7 +3,6 @@
 mod common;
 use common::*;
 
-/// Test sequence length distribution.
 #[tokio::test]
 async fn test_sequence_length_distribution() {
     let h = AIPerfHarness::new().await;

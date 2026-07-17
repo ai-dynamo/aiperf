@@ -9,8 +9,8 @@
 //! HTTP one), but the cell-issuer injection (`CellularAutonomousIssuer`) and the
 //! records shipper (`CellRecordsShipper`) live in the shared `execute_native_inner`
 //! loop above the transport — so a gRPC cell ships its partition exactly as an HTTP
-//! cell does, and the controller merges them identically. This test proves that end
-//! to end: `aiperf profile --config <grpc> --cells N` runs the mock's KServe OIP v2
+//! cell does, and the controller merges them identically. The test runs
+//! `aiperf profile --config <grpc> --cells N` against the mock's KServe OIP v2
 //! gRPC target across N cells and reproduces the single-cell run's
 //! dataset-deterministic metrics byte-for-byte.
 //!
@@ -92,10 +92,7 @@ async fn test_grpc_cellular_run_from_python_frontend() {
         REQUEST_COUNT,
         "merged gRPC cellular report must carry every cell's records"
     );
-    // Non-vacuous proof the CONTROLLER (multi-cell) path actually ran: the
-    // cellular-heartbeat.json sidecar is written only by the controller after
-    // aggregating the cells' shipped heartbeats. Its presence proves --cells reached
-    // the runner and gRPC cells shipped partitions back — not a single-process run.
+    // Only the controller writes the heartbeat after aggregating cell heartbeats.
     assert!(
         r.artifacts
             .find_file("**/cellular-heartbeat.json")
@@ -109,7 +106,7 @@ async fn test_grpc_cellular_run_from_python_frontend() {
 /// exactly. Same seed → same instance space; the 3-cell run partitions it across
 /// cells and the controller merges, so the input/output sequence-length
 /// distributions must be byte-identical. Wall-clock metrics are intentionally not
-/// compared. This proves the gRPC cell-ship + merge path is correct, not just live.
+/// compared.
 #[tokio::test]
 async fn test_grpc_cellular_matches_single_cell() {
     let run = |cells: u32| async move {
@@ -140,8 +137,7 @@ async fn test_grpc_cellular_matches_single_cell() {
     let (_h1, baseline) = run(1).await;
     let (_h3, cellular) = run(CELLS).await;
 
-    // Guard against a vacuous pass: the 3-cell run must go through the controller.
-    // (The 1-cell run is single-process; only the multi-cell run emits the sidecar.)
+    // Only the multi-cell controller emits the sidecar.
     assert!(
         cellular
             .artifacts

@@ -62,8 +62,8 @@ impl Serialize for MetricValue {
 }
 
 /// Deserializes exactly what [`Serialize`] emits, decoded from a self-describing
-/// format: a float is [`Finite`](MetricValue::Finite), the string `"+inf"` is
-/// [`PosInf`](MetricValue::PosInf), and nil is [`Absent`](MetricValue::Absent).
+/// format: a finite float is [`Finite`](MetricValue::Finite), the string `"+inf"`
+/// is [`PosInf`](MetricValue::PosInf), and nil is [`Absent`](MetricValue::Absent).
 /// The `Serialize` impl only ever writes those three forms (`serialize_f64` /
 /// `serialize_str` / `serialize_none`), so the visitor handles exactly those and
 /// nothing else. Requires `deserialize_any`; the cellular wire uses MessagePack
@@ -82,8 +82,16 @@ impl<'de> Deserialize<'de> for MetricValue {
                 formatter.write_str("a float, the string \"+inf\", or nil")
             }
 
-            fn visit_f64<E>(self, value: f64) -> Result<MetricValue, E> {
-                Ok(MetricValue::Finite(value))
+            fn visit_f64<E>(self, value: f64) -> Result<MetricValue, E>
+            where
+                E: de::Error,
+            {
+                match MetricValue::from_f64(value, false) {
+                    finite @ MetricValue::Finite(_) => Ok(finite),
+                    MetricValue::PosInf | MetricValue::Absent => {
+                        Err(E::custom("metric float must be finite"))
+                    }
+                }
             }
 
             fn visit_str<E>(self, value: &str) -> Result<MetricValue, E>
@@ -121,5 +129,30 @@ mod tests {
             MetricValue::PosInf
         );
         assert_eq!(MetricValue::from_f64(7.5, false).as_f64(), Some(7.5));
+    }
+
+    #[test]
+    fn messagepack_round_trips_boundary_values() {
+        for value in [
+            MetricValue::Finite(7.5),
+            MetricValue::PosInf,
+            MetricValue::Absent,
+        ] {
+            let encoded = rmp_serde::to_vec(&value).expect("encode metric value");
+            let decoded: MetricValue =
+                rmp_serde::from_slice(&encoded).expect("decode metric value");
+            assert_eq!(decoded, value);
+        }
+    }
+
+    #[test]
+    fn messagepack_rejects_non_finite_float_forms() {
+        for value in [f64::NAN, f64::NEG_INFINITY, f64::INFINITY] {
+            let encoded = rmp_serde::to_vec(&value).expect("encode raw float");
+            assert!(
+                rmp_serde::from_slice::<MetricValue>(&encoded).is_err(),
+                "{value:?} must not decode as a finite metric value"
+            );
+        }
     }
 }

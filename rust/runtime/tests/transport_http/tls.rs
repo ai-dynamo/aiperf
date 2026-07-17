@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Real-loopback parity for Python's SSL verification switch.
+//! Real-loopback TLS verification tests.
 
 mod common;
 
@@ -90,11 +90,8 @@ fn transport_with_fixed_lookup(
 async fn spawn_untrusted_https(
     require_client_auth: bool,
 ) -> (String, SocketAddr, tokio::task::JoinHandle<()>) {
-    // In the monocrate both rustls crypto providers are linked (aws-lc-rs via
-    // the HTTP transport, ring via the gRPC transport's tonic), so there is no
-    // unambiguous process default for the `rustls::ServerConfig::builder()` and
-    // `WebPkiClientVerifier::builder` calls below. Pin the same provider the
-    // client side uses. `install_default` is process-global and idempotent.
+    // HTTP and gRPC features link different rustls crypto providers, so install
+    // the HTTP provider explicitly for process-global test builders.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let certificates = CertificateDer::pem_slice_iter(CHAIN.as_bytes())
         .collect::<Result<Vec<_>, _>>()

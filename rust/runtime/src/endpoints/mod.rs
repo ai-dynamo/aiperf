@@ -9,7 +9,7 @@
 //! this crate; dialect-owned authentication headers are exposed through [`Endpoint`].
 //! KServe HTTP/inference-protocol and NVIDIA Riva ASR/TTS/NLP dialects are
 //! open-registry, protocol-v2-only factories; their native gRPC wire bindings
-//! live in `aiperf-transport-grpc`.
+//! live in `aiperf_runtime::transport::grpc`.
 
 mod anthropic;
 mod chat;

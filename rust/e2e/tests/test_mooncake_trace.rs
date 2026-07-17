@@ -3,23 +3,13 @@
 mod common;
 use common::*;
 
-// Integration tests for the Mooncake trace custom dataset type.
-//
-// Ports `tests/integration/test_mooncake_trace.py`. Each test builds a
-// Mooncake-shaped JSONL trace file, runs `aiperf profile` with
-// `--custom-dataset-type mooncake_trace --fixed-schedule`, and asserts the
-// request count and that all output artifacts were produced.
-
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-/// Write a Mooncake trace JSONL file for testing.
 fn create_mooncake_trace_file(dir: &Path, traces: &[Value]) -> PathBuf {
     write_jsonl(dir, "traces.jsonl", traces)
 }
 
-/// Mirror of the Python `result.has_all_outputs` property: json, csv, inputs,
-/// and jsonl artifacts must all be present.
 fn has_all_outputs(r: &RunResult) -> bool {
     !r.artifacts.json().is_null()
         && !r.artifacts.csv().is_empty()
@@ -27,11 +17,9 @@ fn has_all_outputs(r: &RunResult) -> bool {
         && !r.artifacts.jsonl().is_empty()
 }
 
-/// Basic Mooncake trace with input_length, output_length, and hash_ids.
 #[tokio::test]
 async fn test_basic_mooncake_trace_with_input_length() {
     let h = AIPerfHarness::new().await;
-    // Real trace data from mooncake_trace.jsonl (first 5 lines)
     let traces = vec![
         json!({"timestamp": 0, "input_length": 6755, "output_length": 500, "hash_ids": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]}),
         json!({"timestamp": 0, "input_length": 7319, "output_length": 490, "hash_ids": [0, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]}),
@@ -55,11 +43,9 @@ async fn test_basic_mooncake_trace_with_input_length() {
     assert!(has_all_outputs(&r));
 }
 
-/// Mooncake trace with literal text inputs instead of input_length.
 #[tokio::test]
 async fn test_mooncake_trace_with_text_input() {
     let h = AIPerfHarness::new().await;
-    // Each trace is a single-turn conversation; timestamp required for --fixed-schedule
     let traces = vec![
         json!({"timestamp": 0, "text_input": "What is the capital of France?", "output_length": 20}),
         json!({"timestamp": 100, "text_input": "Explain quantum computing briefly.", "output_length": 30}),
@@ -83,7 +69,6 @@ async fn test_mooncake_trace_with_text_input() {
     assert!(has_all_outputs(&r));
 }
 
-/// Mooncake trace with OpenAI-compatible messages field.
 #[tokio::test]
 async fn test_mooncake_trace_with_messages_field() {
     let h = AIPerfHarness::new().await;
@@ -108,7 +93,6 @@ async fn test_mooncake_trace_with_messages_field() {
     assert!(has_all_outputs(&r));
 }
 
-/// Mooncake trace with messages and tools fields.
 #[tokio::test]
 async fn test_mooncake_trace_with_messages_and_tools() {
     let h = AIPerfHarness::new().await;
@@ -132,24 +116,19 @@ async fn test_mooncake_trace_with_messages_and_tools() {
     assert!(has_all_outputs(&r));
 }
 
-/// Mooncake trace with session_id for multi-turn conversations.
 #[tokio::test]
 async fn test_mooncake_trace_multi_turn_with_session_id() {
     let h = AIPerfHarness::new().await;
-    // First turn of each session needs timestamp; subsequent turns use delay
     let traces = vec![
-        // Session 1: Two-turn conversation (starts at t=0)
         json!({"session_id": "session-1", "timestamp": 0, "input_length": 100, "output_length": 40}),
         json!({"session_id": "session-1", "delay": 500, "input_length": 150, "output_length": 50}),
-        // Session 2: Single-turn (starts at t=100)
         json!({"session_id": "session-2", "timestamp": 100, "input_length": 200, "output_length": 60}),
-        // Session 3: Three-turn conversation (starts at t=200)
         json!({"session_id": "session-3", "timestamp": 200, "input_length": 80, "output_length": 30}),
         json!({"session_id": "session-3", "delay": 300, "input_length": 120, "output_length": 45}),
         json!({"session_id": "session-3", "delay": 400, "input_length": 90, "output_length": 35}),
     ];
     let trace_file = create_mooncake_trace_file(h.artifact_dir.path(), &traces);
-    let request_count = traces.len(); // Each turn is a request
+    let request_count = traces.len();
 
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
@@ -164,11 +143,6 @@ async fn test_mooncake_trace_multi_turn_with_session_id() {
     assert!(has_all_outputs(&r));
 }
 
-/// text_input traces work with the synthesis speedup parameter.
-///
-/// Regression test for the bug where synthesis would add input_length to traces
-/// with text_input, causing validation errors. Speedup should work with
-/// text_input since it only modifies timestamps, not the text content.
 #[tokio::test]
 async fn test_mooncake_trace_text_input_with_synthesis_speedup() {
     let h = AIPerfHarness::new().await;
@@ -182,7 +156,6 @@ async fn test_mooncake_trace_text_input_with_synthesis_speedup() {
     let trace_file = create_mooncake_trace_file(h.artifact_dir.path(), &traces);
     let request_count = traces.len();
 
-    // Use synthesis-speedup-ratio to compress timeline
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
          --input-file {} --custom-dataset-type mooncake_trace \
@@ -193,7 +166,6 @@ async fn test_mooncake_trace_text_input_with_synthesis_speedup() {
         request_count,
     ));
 
-    // Should complete without validation errors
     assert_eq!(r.artifacts.request_count() as usize, request_count);
     assert!(has_all_outputs(&r));
 }

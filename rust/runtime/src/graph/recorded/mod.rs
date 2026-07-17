@@ -30,11 +30,8 @@ pub use weka::compile_weka_trace_input;
 ///
 /// Dynamo/WEKA captures record u64 cache-block hashes, and Dynamo mints small
 /// negative virtual identities for non-replay turns; `i128` losslessly covers
-/// that entire domain as a `Copy` machine integer. This replaces the former
-/// `BigInt` representation, which heap-allocated, parsed, cloned, compared, and
-/// hashed every one of the millions of per-block hashes on the lowering hot
-/// path. `i128::Display` is identical to `BigInt::Display` for every recorded
-/// value, so content-seed derivation stays byte-exact.
+/// that entire domain as an allocation-free `Copy` machine integer.
+/// Decimal display preserves byte-exact content-seed derivation.
 pub(crate) type BlockHash = i128;
 
 /// Corpus used to reconstruct recorded token blocks.

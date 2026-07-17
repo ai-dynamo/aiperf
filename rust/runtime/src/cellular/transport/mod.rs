@@ -4,12 +4,6 @@
 //! The cross-node communication seam — heartbeats and partitions from cells to the
 //! controller.
 //!
-//! The roadmap keeps a *cell* transport- and deployment-neutral: the concept is
-//! "get a serialized [`CellMessage`] from a cell to the aggregator", not any fixed
-//! wire (`specs/2026-07-12-cellular-ready-seams-and-roadmap.md`, S2/S3 "Later"; the
-//! velo realization is `specs/2026-07-15-velo-cell-transport-design.md`).
-//!
-//! Two sides behind two traits:
 //! - [`CellClient`] (the cell) sends messages. It is **async** — the velo impl
 //!   ([`velo_transport::VeloCellClient`]) drives an async messaging client. A cell
 //!   sends a handful of heartbeats plus one final partition, never on its
@@ -19,29 +13,22 @@
 //!   registers named velo handlers that push each decoded message into one channel.
 //!
 //! **Wire encoding.** Message bodies are MessagePack (`rmp-serde`) carried as
-//! velo *raw* payloads — NOT velo's typed (JSON) payloads — because the sketches
+//! velo raw payloads rather than velo's typed JSON payloads because the sketches
 //! in [`MetricsHeartbeat`] anchor `min = +inf` and the records carry NaN metric
-//! values, neither of which JSON can round-trip. velo owns framing and (for a large
-//! partition) transparent large-payload staging, so this module no longer does its
-//! own length-prefixing.
-//!
-//! A cell that is a thread rather than a process would implement the same two
-//! traits over an in-process channel — the controller and merge logic are unchanged.
+//! values, neither of which JSON can round-trip.
 
 use serde::{Deserialize, Serialize};
 
 use crate::cellular::heartbeat::MetricsHeartbeat;
 use crate::cellular::shard::{ColumnStorePartition, RecordsShardPartition};
 
-/// Discovery-free connection seam: velo transport construction + the
-/// bootstrap-PeerInfo exchange that lets a cell reach the controller from one
-/// operator-hardcoded coordinate. Gated on the `velo` feature.
+/// Discovery-free Velo construction and endpoint-based controller connection.
 #[cfg(feature = "velo")]
 pub mod connect;
-/// Velo distribution for the dataset fan-out data plane (ultimate spec §3).
+/// Velo distribution for the dataset fan-out data plane.
 #[cfg(feature = "velo")]
 pub mod dataset_velo;
-/// Velo distribution for the monotonic phaser control plane (ultimate spec §4).
+/// Velo distribution for the monotonic phaser control plane.
 #[cfg(feature = "velo")]
 pub mod phaser_velo;
 /// The velo-backed cell↔controller transport (cell client + controller
@@ -66,7 +53,7 @@ pub enum CellMessage {
     /// carries its own `cell_id`.
     Partition(RecordsShardPartition),
     /// The cell's pre-accumulated column-store partition, sent once at run end in
-    /// place of [`Partition`] when the cell ran metrics-only exact-fold (Stage C): it
+    /// place of [`Partition`] when the cell ran metrics-only exact folding: it
     /// folded its records into its own EXACT accumulator and dropped them, so it has
     /// no record `Vec` to ship — it ships the folded store instead. The controller
     /// appends every cell's store ([`merge_store_partitions`](crate::cellular::merge_store_partitions))
@@ -87,7 +74,7 @@ pub const HANDLER_HEARTBEAT: &str = "aiperf.cell.heartbeat";
 /// reply is an rmp [`CellAck`]).
 pub const HANDLER_PARTITION: &str = "aiperf.cell.partition";
 /// velo handler name: cell → controller column-store partition ship (unary; the
-/// reply is an rmp [`CellAck`]). The Stage-C exact-fold sibling of
+/// reply is an rmp [`CellAck`]). The exact-fold sibling of
 /// [`HANDLER_PARTITION`]: a metrics-only cell ships its folded store, not a record
 /// `Vec`.
 pub const HANDLER_STORE_PARTITION: &str = "aiperf.cell.store_partition";
@@ -117,7 +104,7 @@ pub struct CellPartitionShip {
     pub partition: RecordsShardPartition,
 }
 
-/// A cell's column-store partition ship — the Stage-C exact-fold sibling of
+/// A cell's column-store partition ship — the exact-fold sibling of
 /// [`CellPartitionShip`]. Carries the shipping velo instance's own serialized
 /// `velo::PeerInfo` (rmp-encoded) alongside the folded store so the controller can
 /// `register_peer` it and route the ack back (the cell ships from a *fresh* velo

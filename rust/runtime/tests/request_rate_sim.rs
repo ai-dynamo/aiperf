@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Deterministic request-rate multi-turn policy proofs over `SimClock`.
+//! Deterministic request-rate multi-turn policy coverage over `SimClock`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -73,8 +73,7 @@ impl TurnDispatcher for SimDispatcher {
         self.seen.borrow_mut().push(SeenTurn {
             conversation_id: turn.conversation_id.clone(),
             turn_index: turn.turn_index,
-            // Native prepared turns carry their message history in the
-            // materialized `request_body`, not the legacy `messages` vec.
+            // Prepared turns carry message history in `request_body`.
             roles: turn
                 .request_body
                 .as_ref()

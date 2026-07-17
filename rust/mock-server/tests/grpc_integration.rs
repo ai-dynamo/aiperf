@@ -1,13 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end wire test for the mock server's KServe gRPC target.
-//!
-//! Drives a real tonic client over h2 against a running `serve_grpc`, using
-//! AIPerf's own KServe encode/decode helpers (`aiperf_runtime::transport::grpc`) — the
-//! exact codec the product client uses — so this closes the client↔server loop
-//! and exercises the real HTTP/2 framing, trailers, and prost round-trip that
-//! the in-crate unit tests (which call handlers directly) do not.
+//! KServe gRPC wire tests using AIPerf's production protobuf codec over h2.
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -67,7 +61,6 @@ impl Decoder for RawDec {
     }
 }
 
-/// Bind an ephemeral port, then start `serve_grpc` on it. Returns the address.
 async fn spawn_grpc() -> SocketAddr {
     let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
     let addr = probe.local_addr().expect("local addr");
@@ -83,13 +76,10 @@ async fn spawn_grpc() -> SocketAddr {
     tokio::spawn(async move {
         let _ = serve_grpc(addr, state).await;
     });
-    // Give the accept loop a moment to bind.
     tokio::time::sleep(Duration::from_millis(100)).await;
     addr
 }
 
-/// Spawn a mock gRPC server in NON-LLM embedding mode: `ModelInfer` returns an
-/// `FP32` embedding tensor of `dim` values instead of generated text.
 async fn spawn_grpc_embedding(dim: usize) -> SocketAddr {
     let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
     let addr = probe.local_addr().expect("local addr");
@@ -208,7 +198,6 @@ async fn model_stream_infer_round_trip() {
     assert!(!assembled.is_empty());
 }
 
-/// Read the FP32 values of a named output tensor.
 fn output_fp32(response: &Value, name: &str) -> Vec<f64> {
     let outputs = response
         .get("outputs")
@@ -232,9 +221,6 @@ fn output_fp32(response: &Value, name: &str) -> Vec<f64> {
         .collect()
 }
 
-/// A non-LLM embedding model: STRING input tensor named `query` in, FP32
-/// `text_embeddings`-shaped vector out, over the real gRPC `ModelInfer` wire.
-/// Mirrors a Triton `python`-backend embedder (Yingge's `clip-l14` case).
 #[tokio::test]
 async fn model_infer_embedding_round_trip() {
     const DIM: usize = 768;
@@ -243,8 +229,6 @@ async fn model_infer_embedding_round_trip() {
     let mut grpc = Grpc::new(channel);
     grpc.ready().await.expect("channel ready");
 
-    // Input tensor named "query" (not the default "text_input"), exactly as the
-    // product `kserve_v2_embeddings` endpoint sends it with `v2_input_name=query`.
     let payload = json!({
         "inputs": [
             {"name": "query", "datatype": "BYTES", "shape": [1], "data": ["a photo of a cat"]}
@@ -274,7 +258,6 @@ async fn model_infer_embedding_round_trip() {
         "all embedding values finite"
     );
 
-    // Determinism: the same query yields the same vector (hash-seeded generator).
     grpc.ready().await.expect("channel ready again");
     let response2 = grpc
         .unary(Request::new(body), path, RawBytesCodec)

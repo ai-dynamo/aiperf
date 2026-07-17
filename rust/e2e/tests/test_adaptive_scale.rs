@@ -8,7 +8,6 @@ use std::path::Path;
 use aiperf_mock_server::config::MockServerConfig;
 use serde_json::Value;
 
-/// Load a JSONL file into a vec of `Value`, skipping blank lines.
 fn load_jsonl(path: &Path) -> Vec<Value> {
     let text = std::fs::read_to_string(path).expect("read jsonl file");
     text.lines()
@@ -17,13 +16,6 @@ fn load_jsonl(path: &Path) -> Vec<Value> {
         .collect()
 }
 
-/// Verify the packaged CLI path discovers a boundary under controlled load.
-///
-/// This is intentionally a deterministic saturation contract test, not a
-/// production realism benchmark. The mock server adds a quadratic TTFT penalty
-/// as active in-flight requests rise, giving adaptive scale a stable boundary
-/// to discover without monkeypatching strategy internals across the subprocess
-/// boundary.
 #[tokio::test]
 async fn test_adaptive_scale_subprocess_contract_with_deterministic_saturation() {
     let mut cfg = MockServerConfig::default();

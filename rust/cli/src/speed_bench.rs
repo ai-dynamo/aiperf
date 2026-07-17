@@ -1,11 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Native `aiperf speed-bench-report` — pure-Rust port of
-//! `aiperf.analysis.speed_bench_report`. No Python: scans aiperf run directories
-//! for `profile_export_aiperf.json` + `server_metrics_export.json`, extracts the
-//! SPEED-Bench category/model/metric, and assembles a `{model: {category:
-//! value}}` matrix emitted as a byte-exact CSV (`--format csv|table|both`) and a
-//! plain-text table.
+//! SPEED-Bench report generation from AIPerf run directories.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -43,8 +38,6 @@ const ACCEPT_RATE_METRICS: &[&str] = &[
     "trtllm:spec_accept_rate",
 ];
 
-/// Discover run directories: a path is a run dir if it contains the profile
-/// JSON, else its sorted child dirs that do (mirrors `find_run_dirs`).
 fn find_run_dirs(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut run_dirs = Vec::new();
     for p in paths {
@@ -72,7 +65,6 @@ fn load_json(path: &Path) -> Option<Value> {
     serde_json::from_slice(&bytes).ok()
 }
 
-/// Category = first `datasets[].format`/`.dataset` with a known prefix stripped.
 fn extract_category(profile: &Value) -> Option<String> {
     let datasets = profile.get("input_config")?.get("datasets")?.as_array()?;
     for entry in datasets {
@@ -91,7 +83,6 @@ fn extract_category(profile: &Value) -> Option<String> {
     None
 }
 
-/// Model = first non-empty `input_config.models.items[].name`, else "unknown".
 fn extract_model(profile: &Value) -> String {
     profile
         .get("input_config")
@@ -109,7 +100,6 @@ fn extract_model(profile: &Value) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// A named metric's first-series stat (`_get_metric_stat`).
 fn metric_stat(metrics: &Value, name: &str, stat: &str) -> Option<f64> {
     metrics
         .get(name)?
@@ -135,7 +125,6 @@ fn extract_accept_length(server: &Value) -> Option<f64> {
             return Some(a / d + 1.0);
         }
     }
-    // Fuzzy fallback: metric name containing spec+accept+length.
     if let Some(obj) = metrics.as_object() {
         for (name, data) in obj {
             let lower = name.to_lowercase();
@@ -218,14 +207,12 @@ fn build_report(
             "throughput" => extract_throughput(&profile),
             _ => None,
         };
-        // NaN → None (mirrors the post-pass scrub in generate_report).
         let value = value.filter(|v| !v.is_nan());
         results.entry(model).or_default().insert(category, value);
     }
     results
 }
 
-/// Column set + order from the categories present (`detect_columns`).
 fn detect_columns(results: &BTreeMap<String, BTreeMap<String, Option<f64>>>) -> Vec<String> {
     let all: BTreeSet<&String> = results.values().flat_map(|m| m.keys()).collect();
     let subset_of = |set: &[&str]| all.iter().all(|c| set.contains(&c.as_str()));
@@ -243,12 +230,10 @@ fn detect_columns(results: &BTreeMap<String, BTreeMap<String, Option<f64>>>) -> 
     } else if subset_of(SPEC_AL_BENCHMARKS) {
         filtered(SPEC_AL_BENCHMARKS)
     } else {
-        all.into_iter().cloned().collect() // BTreeSet is already sorted
+        all.into_iter().cloned().collect()
     }
 }
 
-/// CSV cell for `{v:.2f}` or empty. Uses banker's-rounding-free `{:.2}` which
-/// matches Python's `format(v, ".2f")` for these magnitudes.
 fn fmt2(v: Option<f64>) -> String {
     v.map(|x| format!("{x:.2}")).unwrap_or_default()
 }
@@ -290,7 +275,6 @@ fn write_csv(
     Ok(())
 }
 
-/// Plain-text table (the `print_table` no-rich fallback).
 fn print_table(results: &BTreeMap<String, BTreeMap<String, Option<f64>>>, columns: &[String]) {
     let mut header = vec!["Model".to_string()];
     header.extend(columns.iter().cloned());

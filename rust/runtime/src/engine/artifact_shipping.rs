@@ -1,51 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Cross-host cellular per-record artifact shipping over HTTP + streaming zstd
-//! (Stage E, reopened).
-//!
-//! # Why this exists
-//!
-//! Same-host `--cells N` writes each cell's per-record artifacts into a
-//! controller-local `temp_root/cell-{id}` dir and concatenates them at finalize
-//! ([`crate::engine::shard_artifacts::concatenate_cell_artifacts`],
-//! Stage D). A cross-host (k8s) pod writes to its OWN pod filesystem, unreachable
-//! by the controller, so Stage E originally DROPPED those files (the
-//! "shared-storage-only" product boundary).
-//!
-//! That conclusion was too conservative. The Python aiperf reference
-//! (`../new-config-kube`) ships per-node records BETWEEN nodes over HTTP with
-//! **streaming zstd**, bounded-memory, proven at 250k–1M request scale. This
-//! module ports that memory discipline to the Rust runner: a controller-side HTTP
-//! upload server and a cell-side streaming-zstd HTTP client. A cell POSTs each of
-//! its per-record artifact files (+ `inputs.json`) to the controller with
-//! `Content-Encoding: zstd`; the controller streaming-decompresses each to
-//! `temp_root/cell-{id}/{file}` via `.part` + atomic rename; then the EXISTING
-//! Stage D concat runs unchanged (the files are now controller-local).
-//!
-//! # The load-bearing property: bounded memory on BOTH ends
-//!
-//! Neither side ever holds a whole artifact file (or its whole compressed image)
-//! in RAM. Ported from the Python reference (`compression.py:131-161`,
-//! `results.py:195-224`, `progress_download.py:88-116`):
+//! Bounded-memory cross-host artifact shipping over HTTP and streaming zstd.
 //!
 //! - **Send** ([`FileCompressor`]): read the file in [`CHUNK_SIZE`]-byte chunks
 //!   through a `zstd::stream::read::Encoder` and yield each compressed chunk. The
 //!   client streams those chunks into the request body over a bounded channel
-//!   (backpressure caps in-flight bytes) — improving on the Python leg, which
-//!   uploaded the artifact bytes uncompressed.
+//!   so backpressure caps in-flight bytes.
 //! - **Receive** ([`decode_channel_to_file`]): stream the request body frames
 //!   into a `zstd::stream::write::Decoder` writing to a `.part` file, then atomic
 //!   `rename` to the final path (crash-safe: a partial upload never leaves a
 //!   truncated final file). Bounded [`CHUNK_SIZE`] chunks throughout.
 //!
-//! # Transport is for artifact FILES only
-//!
-//! Metrics summaries still ship via the velo `StorePartition` (Stage C). This HTTP
-//! plane carries ONLY the per-record artifact files (records/raw/CSV/parquet/
-//! outputs) and the per-session `inputs.json`. The controller derives the cell→
-//! controller address from the same k8s bootstrap/DNS coordinate the velo
-//! controller already publishes (see [`crate::engine::cellular_controller`]).
+//! Metrics summaries use velo; this HTTP plane carries per-record artifacts and
+//! `inputs.json`.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
@@ -65,22 +33,18 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 
-/// The read/compress/write chunk size, in bytes — mirrors the Python reference
-/// (`CHUNK_SIZE = 65536`). Both the compressor's read buffer and the decoder's
+/// The read/compress/write chunk size. Both the compressor's read buffer and the decoder's
 /// per-frame write are bounded by this, so peak per-transfer memory is O(chunk),
 /// independent of the artifact file size.
 pub const CHUNK_SIZE: usize = 65536;
 
-/// The zstd compression level — mirrors the Python reference (`ZSTD_LEVEL = 3`).
-/// Level 3 is zstd's default: a good ratio/speed balance for the large,
+/// The zstd compression level. Level 3 balances compression ratio and speed for
 /// line-oriented JSONL/CSV artifacts this ships.
 pub const ZSTD_LEVEL: i32 = 3;
 
 /// The `Content-Encoding` value a cell sets when it streams a zstd-compressed
 /// artifact body; the controller streaming-decompresses only when it matches.
 pub const ZSTD_CONTENT_ENCODING: &str = "zstd";
-
-// -- multi-file dataset manifest (Stage G, directory / segmented-prefix) -----------
 
 /// The wire manifest a cross-host cell fetches (`GET /dataset-manifest`) to learn
 /// the exact file set that makes up a directory or segmented-prefix graph trace,
@@ -107,13 +71,10 @@ pub struct DatasetManifest {
     pub files: Vec<String>,
 }
 
-// -- streaming zstd core ----------------------------------------------------------
-
 /// A bounded streaming compressor over one artifact file: each
 /// [`next_chunk`](Self::next_chunk) yields at most [`CHUNK_SIZE`] bytes of the
 /// zstd frame, reading the source incrementally so the whole file is never
-/// resident. Ported from the Python `ZstdCompressor(level=3).compressobj()` chunk
-/// loop (`compression.py:131-161`).
+/// resident.
 pub struct FileCompressor {
     encoder: zstd::stream::read::Encoder<'static, io::BufReader<std::fs::File>>,
     buf: Box<[u8]>,
@@ -150,10 +111,8 @@ fn part_path_for(final_path: &Path) -> PathBuf {
 }
 
 /// A bounded streaming decompressor writing to a `.part` file, atomically renamed
-/// onto the final path by [`finish`](Self::finish). Ported from the Python
-/// `ZstdDecompressor().decompressobj()` → `.part` → `os.replace` leg
-/// (`progress_download.py:88-116`): a crashed/partial transfer leaves a `.part`
-/// file, never a truncated final artifact.
+/// onto the final path by [`finish`](Self::finish). A failed transfer leaves a
+/// `.part` file, never a truncated final artifact.
 pub struct DecompressToFile {
     decoder: zstd::stream::write::Decoder<'static, io::BufWriter<std::fs::File>>,
     part_path: PathBuf,
@@ -267,8 +226,6 @@ fn decode_channel_to_file(
     }
 }
 
-// -- path / filename validation ---------------------------------------------------
-
 /// Validate a client-supplied relative artifact path against a cell-scoped
 /// allowlist, rejecting anything that is not exactly one of the run's known
 /// artifact relative paths. Fails closed on:
@@ -300,8 +257,6 @@ fn validate_artifact_relpath(rel: &str, allowed: &HashSet<String>) -> Result<Pat
     Ok(path.to_path_buf())
 }
 
-// -- controller-side upload server ------------------------------------------------
-
 /// Shared state for the controller's artifact upload server: where cell files land
 /// (`temp_root/cell-{id}/{rel}`), the per-run allowlist of relative artifact paths,
 /// and the set of cells that have signaled upload completion.
@@ -309,15 +264,15 @@ struct UploadState {
     temp_root: PathBuf,
     allowed: HashSet<String>,
     /// The non-synthetic dataset SOURCE files the controller may serve to cells
-    /// over `GET /dataset/{name}` (Stage G), keyed by the file name a cell
+    /// over `GET /dataset/{name}`, keyed by the file name a cell
     /// requests. A cross-host cell cannot read the controller-local dataset path,
     /// so the controller streams the source over the same HTTP + zstd plane the
     /// per-record artifact uploads use; the cell then recompiles it locally. Empty
     /// for a synthetic run (each cell regenerates the dataset from the shared seed)
     /// and for a same-host run (cells read the controller-local path directly).
     datasets: HashMap<String, PathBuf>,
-    /// The multi-file dataset manifest served at `GET /dataset-manifest` (Stage G,
-    /// directory / segmented-prefix traces). `None` for a synthetic / same-host /
+    /// The multi-file dataset manifest served at `GET /dataset-manifest`.
+    /// `None` for a synthetic / same-host /
     /// no-dataset run (the route then `404`s); `Some` even for a single file, so a
     /// cell always learns the layout kind and file set from one place.
     manifest: Option<DatasetManifest>,
@@ -333,7 +288,7 @@ struct UploadState {
 
 /// The controller-side HTTP server cells POST their zstd-compressed artifact files
 /// to. Bind, per-cell dir landing, streaming decode, and a cell-completion barrier
-/// (`/cell/{id}/done`) the controller awaits before running the Stage D concat.
+/// (`/cell/{id}/done`) the controller awaits before concatenation.
 pub struct ArtifactUploadServer {
     local_addr: SocketAddr,
     state: Arc<UploadState>,
@@ -355,12 +310,12 @@ impl ArtifactUploadServer {
     }
 
     /// Like [`start`](Self::start), plus a map of dataset SOURCE files the server
-    /// may stream to cells over `GET /dataset/{name}` (Stage G, cross-host
+    /// may stream to cells over `GET /dataset/{name}` (cross-host
     /// non-synthetic datasets). `datasets` maps the requested file name to the
     /// controller-local absolute source path; a name absent from the map is served
     /// `404`, so a cell can only ever fetch a source file the run explicitly
     /// registered. An empty map disables dataset serving (the same route still
-    /// exists but always `404`s), keeping a synthetic or same-host run unchanged.
+    /// exists but always returns `404`).
     pub async fn start_with_datasets(
         bind: SocketAddr,
         temp_root: PathBuf,
@@ -375,8 +330,7 @@ impl ArtifactUploadServer {
     /// segmented-prefix graph trace registers every shard in `datasets` (keyed by
     /// its flat relative name) AND a `manifest` describing the layout kind and file
     /// set, so a cell can fetch the manifest, then each shard, and reconstruct the
-    /// tree. `None` keeps the manifest route `404` (synthetic / same-host / no
-    /// dataset), unchanged from the pre-manifest server.
+    /// tree. `None` makes the manifest route return `404`.
     pub async fn start_with_dataset_plan(
         bind: SocketAddr,
         temp_root: PathBuf,
@@ -394,10 +348,7 @@ impl ArtifactUploadServer {
         let app = Router::new()
             .route("/cell/{cell_id}/artifact/{*file}", post(upload_artifact))
             .route("/cell/{cell_id}/done", post(cell_done))
-            // Stage G: stream a registered non-synthetic dataset source to a cell
-            // with streaming zstd (the cross-host dataset-ship leg).
             .route("/dataset/{name}", get(serve_dataset))
-            // Stage G (multi-file): the directory / segmented-prefix file set.
             .route("/dataset-manifest", get(serve_dataset_manifest))
             // The body is streamed frame by frame (bounded); lift the default 2 MB
             // request-body cap so a large records.jsonl upload is not truncated.
@@ -433,7 +384,7 @@ impl ArtifactUploadServer {
     /// Wait until `cell_count` distinct cells have signaled `/done`, or `timeout`
     /// elapses. This is the controller's artifact barrier: every cell POSTs all its
     /// files THEN posts `/done`, so once all cells are done the per-cell dirs are
-    /// complete and the Stage D concat can run.
+    /// complete and concatenation can run.
     pub async fn wait_for_cells(
         &self,
         cell_count: u32,
@@ -536,9 +487,8 @@ async fn upload_artifact(
     drop(tx);
     match writer.await {
         Ok(Ok(())) => {
-            // The load-bearing HTTP+zstd proof: one line per received artifact,
-            // naming the cell, the file, the wire encoding, and the on-wire byte
-            // count. Emitted on a dedicated `target` so a test can raise just this
+            // Emit wire encoding and byte count on a dedicated target so operators
+            // can enable this event
             // to `info` (`AIPERF_RUNNER_LOG=warn,aiperf_cellular_artifact=info`)
             // without unmuting the whole runner. See
             // [`crate::engine::cellular_cell::CELL_ARTIFACT_HTTP_FORCE_ENV`].
@@ -584,11 +534,10 @@ async fn cell_done(
 }
 
 /// `GET /dataset/{name}` — stream the registered dataset source file `name`
-/// (Stage G) to the cell with `Content-Encoding: zstd`, bounded memory
+/// to the cell with `Content-Encoding: zstd`, bounded memory
 /// ([`FileCompressor`], one [`CHUNK_SIZE`] chunk at a time). A name absent from
 /// the run's dataset allowlist is `404` (a cell can only fetch a source the
-/// controller registered). Mirror of the upload leg in reverse: the whole file is
-/// never resident on either end.
+/// controller registered). The whole file is never resident on either end.
 async fn serve_dataset(
     State(state): State<Arc<UploadState>>,
     AxumPath(name): AxumPath<String>,
@@ -624,9 +573,7 @@ async fn serve_dataset(
         }
     });
 
-    // The load-bearing HTTP+zstd proof for the dataset leg: one line per served
-    // source, on the shared `aiperf_cellular_artifact` target so a test can raise
-    // just this to `info` without unmuting the whole runner.
+    // Use the shared artifact target so this event can be enabled independently.
     tracing::info!(
         target: "aiperf_cellular_artifact",
         dataset = %name,
@@ -641,8 +588,8 @@ async fn serve_dataset(
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
 }
 
-/// `GET /dataset-manifest` — the registered multi-file [`DatasetManifest`] (Stage
-/// G) as JSON, so a cell learns the layout kind and file set before fetching each
+/// `GET /dataset-manifest` returns the registered multi-file [`DatasetManifest`]
+/// as JSON, so a cell learns the layout kind and file set before fetching each
 /// shard via `GET /dataset/{name}`. `404` when no manifest is registered (a
 /// synthetic / same-host / no-dataset run).
 async fn serve_dataset_manifest(
@@ -655,8 +602,6 @@ async fn serve_dataset_manifest(
         )
     })
 }
-
-// -- cell-side HTTP client --------------------------------------------------------
 
 /// Ship one cell's per-record artifact files (+ `inputs.json`) to the controller
 /// over HTTP with streaming zstd, then POST the per-cell `/done` marker.
@@ -751,7 +696,7 @@ async fn post_done(authority: &str, cell_id: u32) -> Result<()> {
 
 /// Open an HTTP/1.1 connection to `authority` (DNS-resolved), send `request`, and
 /// return its status after draining the response. Uses a raw hyper client
-/// connection (no `hyper-util` legacy `Client` feature needed).
+/// connection.
 async fn send_request<B>(authority: &str, request: hyper::Request<B>) -> Result<StatusCode>
 where
     B: hyper::body::Body + Send + 'static,
@@ -798,7 +743,7 @@ where
         .with_context(|| format!("sending {label} request"))
 }
 
-/// Fetch a controller dataset source over `GET /dataset/{name}` (Stage G) and
+/// Fetch a controller dataset source over `GET /dataset/{name}` and
 /// stream it to `dest`, decompressing when the response is `Content-Encoding:
 /// zstd`. Bounded memory: response frames flow through a bounded channel into a
 /// blocking streaming decode (`.part` + atomic rename), so a crashed transfer
@@ -851,8 +796,8 @@ pub async fn fetch_dataset_to_file(authority: &str, name: &str, dest: &Path) -> 
     }
 }
 
-/// Fetch the multi-file dataset [`DatasetManifest`] over `GET /dataset-manifest`
-/// (Stage G). The response is a small JSON body (the file NAMES, not their bytes),
+/// Fetch the multi-file dataset [`DatasetManifest`] over `GET /dataset-manifest`.
+/// The response is a small JSON body containing file names, not file bytes,
 /// so it is collected whole; each named file is then streamed by
 /// [`reconstruct_shipped_dataset`] with the bounded-memory [`fetch_dataset_to_file`].
 pub async fn fetch_dataset_manifest(authority: &str) -> Result<DatasetManifest> {
@@ -896,8 +841,7 @@ pub async fn fetch_dataset_manifest(authority: &str) -> Result<DatasetManifest> 
 /// Validate a manifest-supplied relative file name: it must be a single, non-empty
 /// `Normal` path component (no `/`, no `..`, no absolute root). The loaders never
 /// recurse, so every shipped name is a flat file name; this fails closed on any
-/// traversal attempt even though the manifest comes from the (trusted) controller —
-/// defense in depth mirroring [`validate_artifact_relpath`].
+/// traversal attempt even though the manifest comes from the trusted controller.
 fn validate_dataset_relname(name: &str) -> Result<()> {
     ensure!(!name.is_empty(), "empty dataset file name");
     let path = Path::new(name);
@@ -911,7 +855,7 @@ fn validate_dataset_relname(name: &str) -> Result<()> {
 }
 
 /// Reconstruct a shipped directory / segmented-prefix / single-file graph trace
-/// (Stage G) under `dest_dir` and return the local path `datasets/0.path` should
+/// under `dest_dir` and return the local path `datasets/0.path` should
 /// point at.
 ///
 /// Fetches every file named in `manifest` (in order) via the bounded-memory
@@ -948,8 +892,6 @@ pub async fn reconstruct_shipped_dataset(
     }
 }
 
-// -- allowlist / relative-path derivation -----------------------------------------
-
 /// The relative artifact paths a run may ship over HTTP, derived from its
 /// `ArtifactSpec` — every per-record file (records/raw/CSV/parquet/outputs) plus
 /// the per-session `inputs.json`. Both the controller's server allowlist and the
@@ -977,8 +919,6 @@ pub fn shippable_relatives(artifacts: &crate::engine::protocol::ArtifactSpec) ->
 mod tests {
     use super::*;
 
-    /// Deterministic pseudo-random bytes spanning several [`CHUNK_SIZE`] windows,
-    /// so the round-trip exercises multi-chunk streaming (not a single read).
     fn sample_bytes(len: usize) -> Vec<u8> {
         let mut out = Vec::with_capacity(len);
         let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -992,9 +932,6 @@ mod tests {
         out
     }
 
-    /// Collect a file's whole zstd frame as bounded chunks, asserting each chunk
-    /// respects [`CHUNK_SIZE`] (the memory property) — the streaming compressor
-    /// never emits an unbounded buffer.
     fn compress_to_chunks(path: &Path) -> Vec<Vec<u8>> {
         let mut compressor = FileCompressor::open(path).unwrap();
         let mut chunks = Vec::new();
@@ -1011,8 +948,6 @@ mod tests {
 
     #[test]
     fn streaming_zstd_round_trips_byte_for_byte() {
-        // A file larger than several chunks so both the compressor and the decoder
-        // stream across many bounded windows.
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("source.bin");
         let payload = sample_bytes(CHUNK_SIZE * 5 + 12345);
@@ -1021,10 +956,8 @@ mod tests {
         let chunks = compress_to_chunks(&src);
         assert!(chunks.len() >= 2, "payload must span multiple chunks");
 
-        // Decompress the chunks into a .part-staged final file.
         let dest = dir.path().join("nested").join("dest.bin");
         let mut sink = DecompressToFile::create(&dest).unwrap();
-        // The .part exists mid-transfer; the final does not yet.
         assert!(
             part_path_for(&dest).exists(),
             ".part staged during transfer"
@@ -1035,7 +968,6 @@ mod tests {
         }
         sink.finish().unwrap();
 
-        // Byte-for-byte round trip; .part cleaned up by the rename.
         assert_eq!(std::fs::read(&dest).unwrap(), payload);
         assert!(
             !part_path_for(&dest).exists(),
@@ -1064,11 +996,9 @@ mod tests {
         allowed.insert("profile_export.jsonl".to_owned());
         allowed.insert("inputs.json".to_owned());
 
-        // Accept an exact allowed relative path.
         assert!(validate_artifact_relpath("profile_export.jsonl", &allowed).is_ok());
         assert!(validate_artifact_relpath("inputs.json", &allowed).is_ok());
 
-        // Reject traversal, absolute, and non-allowlisted names.
         for bad in [
             "../etc/passwd",
             "/etc/passwd",
@@ -1086,8 +1016,6 @@ mod tests {
 
     #[test]
     fn plain_uncompressed_sink_round_trips() {
-        // The non-zstd receive leg (a client that omitted Content-Encoding) still
-        // stages via .part and atomic-renames.
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("plain.bin");
         let payload = sample_bytes(1000);
@@ -1098,15 +1026,6 @@ mod tests {
         assert_eq!(std::fs::read(&dest).unwrap(), payload);
     }
 
-    /// Deterministic lost-wakeup regression: fill the barrier to completion (every
-    /// cell's `/done` recorded) BEFORE any waiter registers, then assert
-    /// `wait_for_cells` returns promptly rather than blocking until the timeout.
-    ///
-    /// With the previous `Notify::notify_waiters()` barrier this deadlocked: the
-    /// final cell's notification fired with no waiter parked and was dropped, so the
-    /// barrier blocked for the whole timeout despite every upload having landed. The
-    /// `watch`-based barrier is version-tracked, so the pre-completed state is
-    /// observed on the first `borrow_and_update` and the wait returns immediately.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn wait_for_cells_returns_when_completed_before_waiter_registers() {
         use std::time::{Duration, Instant};
@@ -1121,16 +1040,12 @@ mod tests {
         .unwrap();
 
         let cell_count = 3u32;
-        // Complete the barrier up-front, exactly as concurrent `cell_done` handlers
-        // would have — the wakeups all fire before the waiter below exists.
         server.state.done.send_modify(|done| {
             for id in 0..cell_count {
                 done.insert(id);
             }
         });
 
-        // A generous timeout: if the wakeup were lost the wait would block the full
-        // 30s; the assertion proves it returns near-instantly instead.
         let start = Instant::now();
         server
             .wait_for_cells(cell_count, Duration::from_secs(30))
@@ -1145,9 +1060,6 @@ mod tests {
         server.shutdown().await;
     }
 
-    /// The barrier times out (rather than hanging forever) when a cell never posts
-    /// `/done`, and the error names the missing cell so an operator can see which pod
-    /// died mid-upload.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn wait_for_cells_times_out_and_names_missing_cells() {
         use std::time::Duration;
@@ -1161,7 +1073,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Two of three cells finish; cell 2 never does.
         server.state.done.send_modify(|done| {
             done.insert(0);
             done.insert(1);
@@ -1180,30 +1091,22 @@ mod tests {
         server.shutdown().await;
     }
 
-    /// End-to-end in-process integration (no k8s): stand up the controller upload
-    /// server on localhost, have two "cells" ship real per-record JSONL artifacts
-    /// with streaming zstd, then assert (1) the controller's per-cell dirs are
-    /// byte-identical to the source files, and (2) the existing Stage D concat over
-    /// the uploaded dirs equals the batch concat over the SOURCE union (set parity).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn in_process_ship_then_concat_matches_batch_over_union() {
         use crate::engine::protocol::ArtifactSpec;
         use crate::engine::shard_artifacts::concatenate_cell_artifacts;
 
         let root = tempfile::tempdir().unwrap();
-        // Two source "cell" dirs (as if each cell wrote to its OWN pod fs).
         let cell_count = 2u32;
         let source_root = root.path().join("sources");
         let records_rel = "profile_export.jsonl";
         let inputs_rel = "inputs.json";
-        // Cell 0 and cell 1 write disjoint record rows + an identical inputs.json.
         let source_dirs: Vec<PathBuf> = (0..cell_count)
             .map(|id| source_root.join(format!("cell-{id}")))
             .collect();
         for (id, dir) in source_dirs.iter().enumerate() {
             std::fs::create_dir_all(dir).unwrap();
             let mut records = std::fs::File::create(dir.join(records_rel)).unwrap();
-            // A few JSONL rows, larger than a chunk to exercise multi-chunk streaming.
             for row in 0..2000 {
                 writeln!(
                     records,
@@ -1212,7 +1115,6 @@ mod tests {
                 )
                 .unwrap();
             }
-            // Identical inputs.json in every cell (per-session full-dataset doc).
             std::fs::write(
                 dir.join(inputs_rel),
                 b"{\"schema\":\"inputs\",\"data\":[1,2,3]}",
@@ -1220,7 +1122,6 @@ mod tests {
             .unwrap();
         }
 
-        // Controller: allowlist + landing root.
         let artifacts = ArtifactSpec {
             records_path: Some(PathBuf::from(records_rel)),
             raw_path: None,
@@ -1244,19 +1145,16 @@ mod tests {
         .unwrap();
         let authority = server.local_addr().to_string();
 
-        // Every cell ships its files over HTTP + zstd.
         for (id, dir) in source_dirs.iter().enumerate() {
             ship_cell_artifacts(&authority, id as u32, dir, &relatives)
                 .await
                 .unwrap();
         }
-        // The controller's barrier releases once all cells posted /done.
         server
             .wait_for_cells(cell_count, std::time::Duration::from_secs(10))
             .await
             .unwrap();
 
-        // (1) Per-cell landed files are byte-identical to the sources.
         for (id, src_dir) in source_dirs.iter().enumerate() {
             let landed_dir = controller_root.join(format!("cell-{id}"));
             for rel in [records_rel, inputs_rel] {
@@ -1272,7 +1170,6 @@ mod tests {
             }
         }
 
-        // (2) Stage D concat over the UPLOADED dirs == concat over the SOURCE dirs.
         let controller_dirs: Vec<PathBuf> = (0..cell_count)
             .map(|id| controller_root.join(format!("cell-{id}")))
             .collect();
@@ -1297,7 +1194,6 @@ mod tests {
             line_set(&merged_from_source.join(records_rel)),
             "merged-from-uploaded records line SET == batch over source union"
         );
-        // 2 cells * 2000 rows == 4000 merged rows.
         assert_eq!(
             std::fs::read_to_string(merged_from_uploaded.join(records_rel))
                 .unwrap()
@@ -1320,16 +1216,11 @@ mod tests {
         }
     }
 
-    /// Stage G multi-file round-trip: the controller registers a DIRECTORY trace
-    /// (its shards + a `dir` manifest); a cell fetches the manifest, reconstructs
-    /// every shard under a cell-local dir preserving names, and gets back a path
-    /// pointing at that dir — byte-identical to the source shards.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn manifest_directory_reconstructs_identical_tree() {
         let dir = tempfile::tempdir().unwrap();
         let src_dir = dir.path().join("shards");
         std::fs::create_dir_all(&src_dir).unwrap();
-        // Two shards, each larger than a chunk so both legs stream multi-chunk.
         let mut datasets = HashMap::new();
         let mut names = Vec::new();
         for shard in ["a.json", "b.json"] {
@@ -1362,7 +1253,6 @@ mod tests {
         .unwrap();
         let authority = server.local_addr().to_string();
 
-        // The cell fetches the manifest and reconstructs.
         let fetched = fetch_dataset_manifest(&authority).await.unwrap();
         assert_eq!(fetched, manifest, "manifest round-trips over HTTP");
 
@@ -1382,7 +1272,6 @@ mod tests {
                 "shard {shard} landed byte-identical"
             );
         }
-        // The reconstructed dir contains exactly the shard set (no strays / .part).
         let mut landed: Vec<String> = std::fs::read_dir(&cell_dir)
             .unwrap()
             .map(|e| e.unwrap().file_name().to_str().unwrap().to_owned())
@@ -1393,9 +1282,6 @@ mod tests {
         server.shutdown().await;
     }
 
-    /// Stage G segmented-prefix round-trip: the `prefix` manifest points the
-    /// rewritten path at `<dest>/<base_name>` (the stem beside its landed shards),
-    /// so the cell's Dynamo loader re-globs them.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn manifest_prefix_points_path_at_stem_beside_shards() {
         let dir = tempfile::tempdir().unwrap();
@@ -1438,8 +1324,6 @@ mod tests {
         server.shutdown().await;
     }
 
-    /// Shipping an unknown/traversal path is rejected by the server (defense in
-    /// depth): even a malicious cell cannot land bytes outside its allowlisted set.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn server_rejects_unallowed_upload() {
         let root = tempfile::tempdir().unwrap();
@@ -1456,21 +1340,14 @@ mod tests {
         let src = root.path().join("payload.bin");
         std::fs::write(&src, b"hello").unwrap();
 
-        // Not in the allowlist → the upload fails.
         let unknown = upload_one(&authority, 0, "secret.parquet", &src).await;
         assert!(unknown.is_err(), "unallowed artifact must be rejected");
         server.shutdown().await;
     }
 
-    /// Stage G round-trip: the controller serves a non-synthetic dataset SOURCE
-    /// file over `GET /dataset/{name}` with streaming zstd, a cell downloads it to
-    /// a cell-local path, and the landed bytes are byte-identical to the source.
-    /// An unregistered name is `404` (a cell can only fetch a registered source).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn serve_then_download_round_trips_dataset_bytes() {
         let dir = tempfile::tempdir().unwrap();
-        // A JSONL dataset larger than several chunks so both legs stream across
-        // many bounded windows (not a single read).
         let src = dir.path().join("prompts.jsonl");
         let mut file = std::fs::File::create(&src).unwrap();
         for row in 0..2000 {
@@ -1506,7 +1383,6 @@ mod tests {
             "no lingering .part after atomic rename"
         );
 
-        // An unregistered source name is rejected (404 → client error).
         let missing = dir.path().join("cell").join("unknown.jsonl");
         assert!(
             fetch_dataset_to_file(&authority, "unknown.jsonl", &missing)
@@ -1518,12 +1394,6 @@ mod tests {
         server.shutdown().await;
     }
 
-    /// Compile-equivalence: recompiling the SHIPPED dataset bytes yields the same
-    /// conversation list as compiling the original controller-local file. The
-    /// compiler is a pure function of the file bytes + seed + tokenizer (a file
-    /// source is `std::fs::read` of the path; segments are content-addressed), so
-    /// byte-identical shipped bytes give a byte-identical fixed conversation list —
-    /// the invariant the `PartitionedSampler` slices tile across cells.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn compiled_dataset_matches_between_original_and_shipped_file() {
         use crate::dataset::{

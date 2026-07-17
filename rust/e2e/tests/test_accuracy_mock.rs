@@ -1,17 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end accuracy-dataset tests: drive `aiperf profile` against a mock
-//! server loaded with a ground-truth dataset and verify the raw per-record
-//! output carries the expected answers.
-//!
-//! The dataset is a single combined JSONL file both sides read: `aiperf`
-//! consumes it as a `single_turn` input file (the `text` field becomes the user
-//! prompt), and the mock consumes it as its `--accuracy-dataset` (the same
-//! `text` plus `ground_truth`). Because ground truth never crosses the wire in
-//! AIPerf, the mock loads it independently and keys on the prompt — this test
-//! proves that whole path deterministically.
-
 mod common;
 use common::*;
 
@@ -19,8 +8,6 @@ use aiperf_mock_server::accuracy::AccuracyFormat;
 use aiperf_mock_server::config::MockServerConfig;
 use serde_json::{Value, json};
 
-/// Reconstruct the streamed assistant `content` from one raw record by
-/// concatenating every `choices[0].delta.content` token across its SSE frames.
 fn record_content(record: &Value) -> String {
     let mut out = String::new();
     if let Some(responses) = record.get("responses").and_then(Value::as_array) {
@@ -53,7 +40,6 @@ fn record_content(record: &Value) -> String {
     out
 }
 
-/// Reconstruct the streamed `reasoning_content` from one raw record.
 fn record_reasoning(record: &Value) -> String {
     let mut out = String::new();
     if let Some(responses) = record.get("responses").and_then(Value::as_array) {
@@ -82,9 +68,6 @@ fn record_reasoning(record: &Value) -> String {
     out
 }
 
-/// Write a combined `{text, ground_truth, task}` JSONL dataset into `dir`,
-/// returning its path. Every gold answer is `B` so a record's correctness is
-/// readable from its content alone, independent of which prompt it used.
 fn write_accuracy_dataset(dir: &std::path::Path, n: usize) -> std::path::PathBuf {
     let records: Vec<Value> = (0..n)
         .map(|i| {
@@ -109,8 +92,6 @@ fn accuracy_cfg(dataset: &std::path::Path) -> MockServerConfig {
     }
 }
 
-/// Ground truth is wired through: at correct-rate 1.0 every raw record's
-/// streamed content is exactly the grader-formatted correct answer.
 #[tokio::test]
 async fn accuracy_correct_ground_truth_in_raw_records() {
     let ds_dir = tempfile::TempDir::new().unwrap();
@@ -140,17 +121,6 @@ async fn accuracy_correct_ground_truth_in_raw_records() {
     }
 }
 
-/// Sharded transport (`--workers-max 4` → thread-per-core `workers > 1`) preserves
-/// per-record correctness against the deterministic oracle: every raw record still
-/// carries the correct grader-formatted answer, identical to the single-worker
-/// `accuracy_correct_ground_truth_in_raw_records` tally (6/6 correct). This drives
-/// the sharded scheduled dispatch path through the product binary end-to-end.
-///
-/// (This exercises the mock-oracle `single_turn` path, which shards its dispatch;
-/// the static-accuracy Python-evaluator path — where the last `workers = 1` clamp
-/// was removed — needs a pinned Python/lighteval evaluator not runnable here and is
-/// verified in-crate by the fixture-evaluator lib integration test
-/// `static_accuracy_workers_gt_1_shards_and_tally_matches_single_thread`.)
 #[tokio::test]
 async fn accuracy_correct_ground_truth_sharded_workers() {
     let ds_dir = tempfile::TempDir::new().unwrap();
@@ -180,9 +150,6 @@ async fn accuracy_correct_ground_truth_sharded_workers() {
     }
 }
 
-/// The seeded correct-rate is honored end-to-end: at 0.5, roughly half the
-/// records carry the correct `(B)` answer and the rest a different letter — and
-/// every record is a well-formed multiple-choice answer.
 #[tokio::test]
 async fn accuracy_seeded_correct_rate_split() {
     let ds_dir = tempfile::TempDir::new().unwrap();
@@ -215,15 +182,13 @@ async fn accuracy_seeded_correct_rate_split() {
             correct += 1;
         }
     }
-    // Binomial(24, 0.5): mean 12, sd ~2.4 — allow a wide band.
+    // The wide band avoids flakiness from a small binomial sample.
     assert!(
         (5..=19).contains(&correct),
         "correct={correct}/{n} outside expected band"
     );
 }
 
-/// CoT mode streams reasoning in the separate `reasoning_content` field while
-/// the answer stays clean in `content` (reasoning-model shape).
 #[tokio::test]
 async fn accuracy_cot_streams_reasoning_separately() {
     let ds_dir = tempfile::TempDir::new().unwrap();
@@ -256,13 +221,9 @@ async fn accuracy_cot_streams_reasoning_separately() {
     }
 }
 
-/// A dedicated `match_key` matches on a stable fragment embedded in a larger
-/// wire prompt (substring mode), proving robust matching for re-templated /
-/// few-shot-wrapped prompts end-to-end.
 #[tokio::test]
 async fn accuracy_match_key_matches_embedded_fragment() {
     let ds_dir = tempfile::TempDir::new().unwrap();
-    // The `text` (what aiperf sends) is a big blob; the row keys on `q_id_N`.
     let records: Vec<Value> = (0..6)
         .map(|i| {
             json!({
@@ -280,7 +241,6 @@ async fn accuracy_match_key_matches_embedded_fragment() {
 
     let mut cfg = accuracy_cfg(&dataset);
     cfg.accuracy_correct_rate = 1.0;
-    // Substring is the default, but be explicit about what's under test.
     cfg.accuracy_match = aiperf_mock_server::accuracy::AccuracyMatch::Substring;
 
     let h = AIPerfHarness::new_with(cfg).await;
@@ -305,10 +265,6 @@ async fn accuracy_match_key_matches_embedded_fragment() {
     }
 }
 
-/// The mock's live `/accuracy` tally matches the actual served run: `matched`
-/// equals the raw-record count and `correct` equals the number of records that
-/// carry the correct answer. This is the oracle a user compares against what
-/// AIPerf's own grader reports.
 #[tokio::test]
 async fn accuracy_live_endpoint_matches_raw_records() {
     let ds_dir = tempfile::TempDir::new().unwrap();
@@ -359,16 +315,13 @@ async fn accuracy_live_endpoint_matches_raw_records() {
     );
 }
 
-/// Adversarial mode emits the parser-choking shapes (github #1010 `object:null`
-/// frame, #1136 reasoning-only content, boxed/whitespace/case mangling). The
-/// whole run must still COMPLETE — a brittle parser would crash a worker.
 #[tokio::test]
 async fn accuracy_adversarial_responses_do_not_crash_the_run() {
     let ds_dir = tempfile::TempDir::new().unwrap();
     let n = 24;
     let dataset = write_accuracy_dataset(ds_dir.path(), n);
     let mut cfg = accuracy_cfg(&dataset);
-    cfg.fast = false; // exercise the real streaming loop (null-object frame path)
+    cfg.fast = false;
     cfg.ttft = 0.0;
     cfg.itl = 0.0;
     cfg.accuracy_correct_rate = 1.0;
@@ -383,7 +336,6 @@ async fn accuracy_adversarial_responses_do_not_crash_the_run() {
         h.mock.url,
         dataset.display(),
     ));
-    // The core assertion: the run survives every adversarial shape.
     assert!(
         r.success(),
         "adversarial run crashed (parser not robust): {}",

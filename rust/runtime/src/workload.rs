@@ -28,8 +28,7 @@ impl SkeletonWorkload {
     /// run loop can pull requests on demand and let the stop conditions (not a fixed
     /// list length) decide when to stop.
     ///
-    /// The prompt is `input_tokens` whitespace-separated words; tokenizer-exact
-    /// input/output lengths are deferred to a later increment.
+    /// The prompt contains `input_tokens` whitespace-separated words.
     pub fn make_request(&self) -> Request {
         Request {
             uuid: Uuid::new_v4(),

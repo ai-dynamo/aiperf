@@ -1,17 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Pre-translation: parse `profile` flags or a YAML config into the native
-//! [`BenchmarkRun`].
+//! Parse `profile` flags or YAML config into a [`BenchmarkRun`].
 //!
-//! This is the reverse of Python's `rust_wire` projection: instead of lowering a
-//! domain config into a wire dict, it builds the one native object (which *is*
-//! the wire request) directly from the input surface. Both surfaces normalize to
-//! [`Inputs`] and share one [`build`] core, so the wire defaults live in exactly
-//! one place. The flag surface lives here; the YAML surface lives in
-//! [`crate::yaml`].
-//!
-//! Defaults are the Python single-run synthetic defaults, proven byte-exact
-//! against the golden vectors in `tools/parity/golden/`.
+//! Flag and YAML inputs normalize to [`Inputs`] and share [`build`], keeping wire
+//! defaults in one place.
 
 use std::path::PathBuf;
 
@@ -32,8 +24,7 @@ use crate::model::tokenizer::Tokenizer;
 use crate::model::transport::Transport;
 use crate::model::{BenchmarkConfig, BenchmarkRun, Resolved};
 
-/// Exact-match placeholder words used as an entire model name (Python
-/// `tokenizer_fake_names._FAKE_MODEL_EXACT`).
+/// Exact-match placeholder words used as an entire model name.
 const FAKE_MODEL_EXACT: &[&str] = &[
     "test",
     "mock",
@@ -44,9 +35,7 @@ const FAKE_MODEL_EXACT: &[&str] = &[
     "placeholder",
 ];
 
-/// Compound placeholder markers, each requiring a `-` separator so real names
-/// (e.g. "contestant") don't false-positive (Python
-/// `tokenizer_fake_names._FAKE_MODEL_SUBSTRINGS`).
+/// Placeholder markers requiring separators to avoid matching real names.
 const FAKE_MODEL_SUBSTRINGS: &[&str] = &[
     "mock-",
     "-mock",
@@ -60,10 +49,7 @@ const FAKE_MODEL_SUBSTRINGS: &[&str] = &[
     "model-id",
 ];
 
-/// Return true if `name` looks like an LLM-hallucinated placeholder model name.
-/// Byte-exact port of `aiperf.common.tokenizer_fake_names::is_fake_model_name`:
-/// reject path-like input, lowercase + `_`→`-` normalize, then match the exact
-/// or substring sets.
+/// Return whether `name` is a placeholder rather than a model identifier.
 fn is_fake_model_name(name: &str) -> bool {
     if name.is_empty() {
         return false;
@@ -78,8 +64,6 @@ fn is_fake_model_name(name: &str) -> bool {
     FAKE_MODEL_SUBSTRINGS.iter().any(|s| normalized.contains(s))
 }
 
-// Python single-run synthetic defaults (see `src/aiperf/config/endpoint.py`,
-// `dataset/*`), proven against the goldens.
 const DEFAULT_TIMEOUT_SECONDS: f64 = 21600.0;
 const DEFAULT_CONNECTION_LIMIT: u32 = 2500;
 const DEFAULT_KEEPALIVE_TIMEOUT: f64 = 300.0;
@@ -116,7 +100,7 @@ pub(crate) struct Warmup {
     pub grace_period: Option<f64>,
 }
 
-/// Normalized inputs both surfaces (flags / YAML) resolve to before building.
+/// Normalized profile inputs.
 pub(crate) struct Inputs {
     pub model_names: Vec<String>,
     pub urls: Vec<String>,
@@ -124,7 +108,7 @@ pub(crate) struct Inputs {
     pub transport: crate::model::transport::Transport,
     pub streaming: bool,
     pub timeout_seconds: Option<f64>,
-    pub use_legacy_max_tokens: bool,
+    pub use_max_tokens_compat: bool,
     pub use_server_token_count: bool,
     pub download_video_content: bool,
     /// Extra request-body inputs (endpoint.extra).
@@ -293,14 +277,8 @@ pub(crate) fn default_isl() -> Distribution {
     }
 }
 
-/// Resolve `profile` flags into one native run, or a clear error.
-///
-/// Rejects multi-run (any comma-list sweep axis) since multi-run/orchestration
-/// is deferred.
 /// Map `--export-level` (`summary`/`records`/`raw`, or unset) to the per-record
-/// format list plus the raw-JSONL flag. Shared by the flags path and the
-/// `--config` override so both interpret the flag identically (Python
-/// `_converter_runtime`). `raw` forces `profile_export_raw.jsonl` on.
+/// format list plus the raw-JSONL flag.
 pub(crate) fn export_level_formats(level: Option<&str>) -> anyhow::Result<(Vec<String>, bool)> {
     Ok(match level {
         None => (vec!["jsonl".to_string()], false),
@@ -346,17 +324,12 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         parse_single::<f64>("--benchmark-duration", flags.benchmark_duration.as_deref())?;
     let num_conversations =
         parse_single::<u32>("--num-conversations", flags.num_conversations.as_deref())?;
-    // Explicit dataset entry count wins over conversations/request-count for the
-    // synthetic dataset size (Python `_resolve_entries`), but does NOT set the
-    // profiling-phase session bound.
+    // Explicit entries determine dataset size but do not create a session bound.
     let num_dataset_entries = parse_single::<u32>(
         "--num-dataset-entries",
         flags.num_dataset_entries.as_deref(),
     )?;
 
-    // Export level maps to the per-record format list + raw flag (Python
-    // `_converter_runtime`): summary => no per-record files; records => JSONL;
-    // raw => JSONL + raw JSONL. Unset keeps the default JSONL.
     let (records_formats, export_raw) = export_level_formats(flags.export_level.as_deref())?;
     // Fixed-schedule replays each timestamped entry once, so the request bound is
     // the schedule length (the input file's non-empty line count).
@@ -444,12 +417,11 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         },
         streaming: flags.streaming,
         timeout_seconds: flags.request_timeout_seconds,
-        use_legacy_max_tokens: flags.use_legacy_max_tokens,
+        use_max_tokens_compat: flags.use_legacy_max_tokens,
         use_server_token_count: flags.use_server_token_count,
         download_video_content: flags.download_video_content,
         extra: parse_extra_inputs(&flags.extra_inputs)?,
-        // The `--server-metrics` flag value is normalized to `.../metrics` here
-        // (mirroring Python's flag converter); the YAML surface keeps it raw.
+        // Flag URLs normalize here; YAML values remain authored until sidecar construction.
         server_metrics_urls: flags
             .server_metrics
             .iter()
@@ -476,9 +448,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         prefill_concurrency: flags.prefill_concurrency,
         prefill_ramp: flags.prefill_concurrency_ramp_duration,
         gpu_telemetry_enabled: !flags.no_gpu_telemetry,
-        // `--gpu-telemetry` accepts a mix of DCGM scrape URLs and (optionally) a
-        // custom-metrics CSV. Python's `_converter_telemetry` classifies any item
-        // ending in `.csv` as the metrics file; everything else is a scrape URL.
+        // A `.csv` value selects custom metrics; all other values are scrape URLs.
         gpu_telemetry_urls: flags
             .gpu_telemetry
             .iter()
@@ -586,10 +556,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         grace_period: flags.benchmark_grace_period,
         warmup,
         random_seed: flags.random_seed,
-        // `--random-seed` sets both the run seed and the dataset sampling seed.
         dataset_random_seed: flags.random_seed,
-        // No flag surface for runtime worker/cell counts; the flag path keeps the
-        // runner defaults (auto workers, single cell).
         runtime_workers: None,
         runtime_workers_min: None,
         runtime_cells: flags.cells.unwrap_or(1),
@@ -632,8 +599,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     build(inputs)
 }
 
-/// Build the one native run from normalized inputs. This is the single place the
-/// wire defaults live; both the flag and YAML surfaces funnel through here.
+/// Build one run from normalized inputs.
 pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     let primary_model = inputs.model_names[0].clone();
 
@@ -653,7 +619,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         urls: inputs.urls.iter().map(|u| normalize_url(u)).collect(),
         endpoint_type: EndpointType(inputs.endpoint_type),
         streaming: inputs.streaming,
-        use_legacy_max_tokens: inputs.use_legacy_max_tokens,
+        use_legacy_max_tokens: inputs.use_max_tokens_compat,
         use_server_token_count: inputs.use_server_token_count,
         timeout_seconds: inputs.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECONDS),
         connection_reuse: inputs.connection_reuse.unwrap_or(ConnectionReuse::Pooled),
@@ -679,14 +645,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         response_field: None,
     };
 
-    // Placeholder-model → builtin tokenizer fallback (ports
-    // `tokenizer_validator._resolve_tokenizer_names` +
-    // `tokenizer_fake_names.is_fake_model_name`): when `--tokenizer` is unset
-    // and EVERY model name looks like an LLM-hallucinated placeholder
-    // (`mock-model`, `test-model`, …), Python substitutes the zero-network
-    // `builtin` tiktoken tokenizer instead of attempting a doomed HF Hub lookup.
-    // Explicit `--tokenizer` always wins; a single real model keeps the
-    // model-name-derived tokenizer.
+    // Placeholder-only model sets use the offline builtin tokenizer unless overridden.
     let tokenizer_name = inputs.tokenizer_name.clone().unwrap_or_else(|| {
         if inputs.model_names.iter().all(|m| is_fake_model_name(m)) {
             "builtin".to_string()
@@ -707,16 +666,13 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         let meta = crate::model::public_catalog::lookup(name)
             .ok_or_else(|| anyhow::anyhow!("unknown public dataset {name:?}"))?;
         let mut options = meta.options.clone();
-        // `--dataset-filter key=value` pairs merge into the loader options
-        // (Python `rust_wire` `options.update(dataset.filters)`).
+        // Explicit filters override catalog loader options.
         if let Some(filters) = &inputs.dataset_filters {
             for (k, v) in filters {
                 options.insert(k.clone(), v.clone());
             }
         }
-        // exgentic/exgentic_v2 loaders carry a `fixed_schedule` option (Python
-        // `rust_wire`: `options["fixed_schedule"] = any(FixedSchedulePhase ...)`).
-        // A public run is fixed-schedule only when `--fixed-schedule` was set.
+        // Exgentic loaders require the fixed-schedule decision in their options.
         if matches!(meta.format.as_str(), "exgentic" | "exgentic_v2") {
             options.insert(
                 "fixed_schedule".to_string(),
@@ -745,11 +701,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         })
     } else if inputs.input_file.is_some() || inputs.inline_records.is_some() {
         Dataset::File(crate::model::dataset::FileDataset {
-            // Emit `format` only when the user selected a `--custom-dataset-type`.
-            // Otherwise leave it unset so the runtime auto-detects the loader
-            // structurally (Python's `_explicit_format` → `_infer_dataset_type`).
-            // Inline records have no file to probe, so they keep Python's inline
-            // fallback of the default `single_turn`.
+            // Path-backed inputs are auto-detected; inline records require a format.
             format: inputs.custom_dataset_type.clone().or_else(|| {
                 inputs
                     .inline_records
@@ -759,8 +711,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             sampling: Sampling(inputs.sampling.clone()),
             options: {
                 let mut o = serde_json::Map::new();
-                // Trace loaders carry a default KV block size (mirrors
-                // `_authored_dataset_v2`: mooncake=512, bailian=16).
+                // Trace formats define different default KV block sizes.
                 let format = inputs
                     .custom_dataset_type
                     .as_deref()
@@ -782,9 +733,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 }
                 o
             },
-            // Path-backed and inline-records datasets are mutually exclusive
-            // (matching Python's `_authored_dataset_v2`: `records` only when
-            // `path` is absent).
+            // Path-backed and inline-record datasets are mutually exclusive.
             path: inputs.input_file.as_ref().map(|p| absolute_path(p)),
             // Fixed-schedule derives the count into the phase's `requests`, not
             // the dataset's `entries`; otherwise the explicit count (if any).
@@ -931,9 +880,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         wp.common.agentic_cache_warmup_duration = inputs.agentic_cache_warmup_duration;
         phases.push(wp);
     } else if let Some(dur) = inputs.agentic_cache_warmup_duration {
-        // `--agentic-cache-warmup-duration` with no explicit warmup auto-creates a
-        // minimal concurrency-1 warmup phase carrying the duration (Python
-        // `_authored_phases`); nothing else on it.
+        // A cache-warmup duration requires a phase even when no warmup is authored.
         let mut wp = build_phase(
             "warmup", true, 1, None, None, None, None, None, None, None, None,
         );
@@ -944,25 +891,19 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
 
     let endpoint_type = endpoint.endpoint_type.0.clone();
     let endpoint_urls = endpoint.urls.clone();
-    // DynoSim co-simulation opens no sockets, so every online sidecar is forced
-    // off (mirrors `_authored_sidecars`); other transports keep the default
-    // GPU-telemetry + server-metrics scraping.
     let is_dynosim = inputs.transport.is_dynosim();
     // Both DynoSim and the dry-run fake leaf open no sockets, so every online
     // sidecar (GPU telemetry, server-metrics scraping, network-latency probing)
     // is forced off for either. Per-record artifacts, however, stay available for
     // dry-run (it fabricates a real RequestRecord), so those key off `is_dynosim`.
     let no_server_sidecars = is_dynosim || inputs.transport.is_dry_run();
-    // Sketch mode is enabled by the `--sketch-metrics` flag OR the
-    // `AIPERF_METRICS_SKETCH` env var (Python reads it via
-    // `Environment.METRICS.SKETCH`, so both surfaces must honor it).
+    // The environment and CLI independently enable sketch retention.
     let sketch_metrics = inputs.sketch_metrics || env_sketch_enabled();
     // DynoSim forces all sidecars off; otherwise GPU-telemetry and
     // server-metrics scraping are enabled by default and independently toggled.
     let gpu_enabled = inputs.gpu_telemetry_enabled && !no_server_sidecars;
     let server_enabled = inputs.server_metrics_enabled && !no_server_sidecars;
-    // Network-latency calibration: fixed mean or automatic probe (disabled by
-    // default). Lowered into a sidecar mirroring `_network_latency`.
+    // A fixed mean takes precedence over active network probing.
     let mut network_latency_cfg = crate::model::telemetry::NetworkLatencyConfig::default();
     let network_latency_sidecar = if no_server_sidecars {
         None
@@ -1004,9 +945,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     };
     let server_cfg = crate::model::telemetry::ServerMetricsConfig {
         enabled: inputs.server_metrics_enabled,
-        // The raw config value lands in `cfg.server_metrics.urls` verbatim (the
-        // flag path normalizes at the input stage, mirroring Python's converter;
-        // the YAML path keeps the authored value raw). Only the sidecar normalizes.
+        // Config preserves authored URLs; sidecar construction normalizes them.
         urls: inputs.server_metrics_urls.clone(),
         formats: inputs
             .server_metrics_formats
@@ -1032,9 +971,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         }),
         slos: (!inputs.slos.is_empty()).then(|| inputs.slos.clone()),
         artifacts: Some({
-            // Sketch retention keeps no per-record values, and DynoSim emits its
-            // own backend Dynamo artifacts, so both drop every per-record file and
-            // force trace off (mirrors `_authored_artifacts`).
+            // Sketch retention and DynoSim do not provide per-record values.
             let per_record = !sketch_metrics && !is_dynosim;
             let has = |f: &str| inputs.records_formats.iter().any(|x| x == f);
             Artifacts {
@@ -1061,8 +998,6 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         server_metrics: Some(server_cfg),
         network_latency: Some(network_latency_cfg),
         sidecars: Some(sidecars),
-        // Always-emitted top-level cfg fields (match Python's unconditional
-        // serialization; carry the scenario/trajectory/unsafe flag values).
         accuracy: inputs.accuracy.clone(),
         endpoint_profiles: serde_json::Map::new(),
         failure_policy: None,
@@ -1073,13 +1008,9 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     };
 
     let benchmark_id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
-    // The genai-perf-v1 envelope echoes the config; the runner treats it as an
-    // opaque passthrough, so a projection of the native cfg (best-effort vs
-    // Python's exclude_unset dump) keeps the aiperf-v1 exports emitting.
+    // The genai-perf-v1 envelope requires an echoed config projection.
     let mut input_config = serde_json::to_value(&cfg).unwrap_or(serde_json::Value::Null);
-    // Redact endpoint credentials in the echoed config (Python
-    // `EndpointConfig` field_serializer). The runtime keeps the real
-    // `cfg.endpoint.api_key` for HTTP auth; this only masks the export copy.
+    // Redaction applies only to the export copy, not runtime authentication.
     crate::redact::redact_input_config(&mut input_config);
     let mut export = crate::model::export::Export::build(
         &endpoint_type,
@@ -1088,8 +1019,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         input_config,
         serde_json::json!({}),
     );
-    // Sketch retention keeps no per-record values, so the per-record OTLP sink is
-    // suppressed (mirrors `rust_wire`, which drops otel under sketch).
+    // The per-record OTLP sink is unavailable under sketch retention.
     if let Some(url) = &inputs.otel_url
         && !sketch_metrics
     {
@@ -1104,11 +1034,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     }
     export.mlflow = crate::model::export::MlflowExport::build(&inputs.mlflow, &benchmark_id);
     export.wandb = crate::model::export::WandbExport::build(&inputs.wandb, &benchmark_id);
-    // Server-metrics summary + parquet sinks (rust_wire.py
-    // `_server_metrics_frontend_projection` / `_parquet_frontend_projection`).
-    // Formats come from the populated `cfg.server_metrics` block; `input_config`
-    // is the same cfg projection (cfg.export is still None here, so serializing
-    // cfg is safe).
+    // Export formats use server-metrics config before export insertion.
     let sm_formats = cfg
         .server_metrics
         .as_ref()
@@ -1193,8 +1119,7 @@ fn build_phase(
     }
 }
 
-/// Parse repeatable `Name:value` header flags into a map (split on the first
-/// colon; surrounding whitespace on the value trimmed, matching Python).
+/// Parse repeatable `Name:value` header flags, splitting on the first colon.
 fn parse_headers(raw: &[String]) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
     let mut headers = std::collections::BTreeMap::new();
     for entry in raw {
@@ -1206,8 +1131,7 @@ fn parse_headers(raw: &[String]) -> anyhow::Result<std::collections::BTreeMap<St
     Ok(headers)
 }
 
-/// Parse repeatable `--extra-inputs key:value` into a typed JSON map (int/float/
-/// bool inference, else string), mirroring the Python CLI.
+/// Parse repeatable `--extra-inputs key:value` into a typed JSON map.
 fn parse_extra_inputs(
     raw: &[String],
 ) -> anyhow::Result<serde_json::Map<String, serde_json::Value>> {
@@ -1282,8 +1206,7 @@ fn build_adaptive_scale(
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(Some(AdaptiveScale {
         control_variable,
-        // The flag surface is integer-typed on both bounds (int flags / the
-        // concurrency axis), matching Python's flag-path int serialization.
+        // Flag bounds serialize as integers.
         minimum: flags.adaptive_control_min.unwrap_or(1).into(),
         maximum: maximum.into(),
         assessment_period_seconds: flags.adaptive_assessment_period.unwrap_or(30.0),
@@ -1323,13 +1246,7 @@ pub(crate) fn default_media_dim() -> Distribution {
     }
 }
 
-/// Build the synthetic image spec when any `--image-*` flag is set.
-/// Default a media `batch_size` per Python `_apply_implicit_media_batch`
-/// (`_converter_dataset.py`): an explicit `--*-batch-size` wins; otherwise a
-/// *shape* trigger flag (width/height/length/duration/fps/synth-type/source/…,
-/// but NOT format or codec) defaults it to 1; otherwise it stays 0. This is why
-/// `--video-codec`/`--image-format` alone build the media spec but keep
-/// `batch_size = 0`.
+/// Resolve media batch size from an explicit value or shape-triggering fields.
 fn implicit_media_batch(explicit: Option<u32>, shape_trigger: bool) -> u32 {
     match explicit {
         Some(b) => b,
@@ -1383,10 +1300,7 @@ fn build_image_spec(flags: &ProfileFlags) -> Option<ImageSpec> {
     })
 }
 
-/// Build the prefix-prompts block from the shared/user or pool flags.
-/// Parse `--dataset-filter key=value` flags into a filters map (Python
-/// `_parse_dataset_filters`): split on the first `=`, reject duplicates, require
-/// `--public-dataset`. Returns `None` when no filter is set.
+/// Parse `--dataset-filter key=value`, rejecting duplicates and non-public use.
 fn parse_dataset_filters(
     flags: &ProfileFlags,
 ) -> anyhow::Result<Option<serde_json::Map<String, serde_json::Value>>> {
@@ -1414,11 +1328,7 @@ fn parse_dataset_filters(
     Ok(Some(map))
 }
 
-/// Build the recorded-graph synthesis block from the `--synthesis-*` flags
-/// (Python `_apply_synthesis` + `_project_trajectory_knobs`). Present only when a
-/// synthesis flag is set; it carries the full `SynthesisConfig` (defaults filled),
-/// the resolved sampling strategy, the trajectory-start window, and the t* seed.
-/// Only attached to a FILE dataset by the caller (synthetic runs drop it).
+/// Build recorded-graph synthesis configuration when any synthesis flag is set.
 fn build_synthesis(flags: &ProfileFlags) -> Option<serde_json::Value> {
     let any = flags.synthesis_speedup_ratio.is_some()
         || flags.synthesis_prefix_len_multiplier.is_some()
@@ -1492,9 +1402,7 @@ fn build_synthesis(flags: &ProfileFlags) -> Option<serde_json::Value> {
     Some(serde_json::Value::Object(m))
 }
 
-/// Build the accuracy block from the `--accuracy-*` flags. Present only when
-/// `--accuracy-benchmark` is set (Python `AccuracyConfig`); `enable_cot` is
-/// tri-state (`--accuracy-enable-cot`/`--accuracy-no-enable-cot`/unset→null).
+/// Build accuracy configuration when `--accuracy-benchmark` is set.
 fn build_accuracy(flags: &ProfileFlags) -> Option<crate::model::config::Accuracy> {
     let benchmark = flags.accuracy_benchmark.clone()?;
     let enable_cot = if flags.accuracy_enable_cot {
@@ -1515,10 +1423,7 @@ fn build_accuracy(flags: &ProfileFlags) -> Option<crate::model::config::Accuracy
     })
 }
 
-/// Build the rankings block (`RankingsConfig`) from the `--rankings-*` flags.
-/// Present only when at least one flag is set; each sub-field is a set-only
-/// `{mean, stddev}` distribution (Python `_build_rankings` + `_mean_stddev_pair`)
-/// or the config default `{value}` when unset.
+/// Build rankings distributions when any rankings flag is set.
 fn build_rankings(flags: &ProfileFlags) -> Option<crate::model::dataset::Rankings> {
     let any = flags.rankings_passages_mean.is_some()
         || flags.rankings_passages_stddev.is_some()
@@ -1680,7 +1585,6 @@ fn build_video_spec(flags: &ProfileFlags) -> Option<VideoSpec> {
     })
 }
 
-/// Parse `--model-selection-strategy`.
 /// Parse `k<sep>v` pairs (e.g. `env:prod`, `svc=aiperf`) into ordered tuples.
 fn parse_kv(items: &[String], sep: char) -> anyhow::Result<Vec<(String, String)>> {
     items
@@ -1693,9 +1597,7 @@ fn parse_kv(items: &[String], sep: char) -> anyhow::Result<Vec<(String, String)>
         .collect()
 }
 
-/// Parse a duration into seconds, mirroring Python `loader/duration.py`:
-/// a bare number is seconds; `Ns`/`Nm`/`Nh` are seconds/minutes/hours; `inf` is
-/// infinity. Used by the YAML duration fields (they accept e.g. `30s`, `5m`).
+/// Parse seconds from a number, `Ns`, `Nm`, `Nh`, or `inf`.
 pub(crate) fn parse_duration_secs(s: &str) -> anyhow::Result<f64> {
     let t = s.trim();
     if t.eq_ignore_ascii_case("inf") {
@@ -1716,9 +1618,7 @@ pub(crate) fn parse_duration_secs(s: &str) -> anyhow::Result<f64> {
     Ok(v * mult)
 }
 
-/// Parse a `--seq-dist` string into weighted `(isl, osl)` pairs, mirroring
-/// Python's `DistributionParser` semicolon form: `isl[|std],osl[|std]:prob`
-/// entries separated by `;` (probabilities are percentages).
+/// Parse semicolon-separated `isl[|std],osl[|std]:prob` entries.
 pub(crate) fn parse_seq_dist(s: &str) -> anyhow::Result<Vec<crate::model::dataset::SeqDistEntry>> {
     use crate::model::dataset::{Distribution, SeqDistEntry};
     let dim = |part: &str| -> anyhow::Result<Distribution> {
@@ -1750,17 +1650,14 @@ pub(crate) fn parse_seq_dist(s: &str) -> anyhow::Result<Vec<crate::model::datase
         .collect()
 }
 
-/// Whether the `AIPERF_METRICS_SKETCH` env var enables sketch retention, matching
-/// pydantic-settings' bool parsing (`1`/`true`/`t`/`yes`/`y`/`on`, case-insensitive)
-/// used by Python's `Environment.METRICS.SKETCH`.
+/// Return whether `AIPERF_METRICS_SKETCH` enables sketch retention.
 fn env_sketch_enabled() -> bool {
     std::env::var("AIPERF_METRICS_SKETCH")
         .map(|v| is_truthy_env(&v))
         .unwrap_or(false)
 }
 
-/// Parse a pydantic-settings-style boolean env value (`1`/`true`/`t`/`yes`/`y`/
-/// `on`, case-insensitive, surrounding whitespace ignored).
+/// Parse `1`/`true`/`t`/`yes`/`y`/`on`, ignoring case and whitespace.
 pub(crate) fn is_truthy_env(v: &str) -> bool {
     matches!(
         v.trim().to_ascii_lowercase().as_str(),
@@ -1845,8 +1742,7 @@ fn count_schedule_entries(path: &std::path::Path) -> anyhow::Result<u64> {
     Ok(text.lines().filter(|l| !l.trim().is_empty()).count() as u64)
 }
 
-/// Make a dataset path absolute (Python uses `path.absolute()`: cwd-join without
-/// symlink resolution). Falls back to the input on cwd errors.
+/// Make a dataset path absolute without resolving symlinks.
 fn absolute_path(path: &std::path::Path) -> String {
     if path.is_absolute() {
         return path.to_string_lossy().into_owned();
@@ -1857,8 +1753,7 @@ fn absolute_path(path: &std::path::Path) -> String {
     }
 }
 
-/// Normalize a base URL to include a scheme (Python prepends `http://` when the
-/// user omits one, e.g. `127.0.0.1:8000` → `http://127.0.0.1:8000`).
+/// Add `http://` when a base URL omits its scheme.
 pub(crate) fn normalize_url(url: &str) -> String {
     if url.contains("://") {
         url.to_string()
@@ -1873,8 +1768,7 @@ fn reject_sweep(flag: &str, value: Option<&str>) -> anyhow::Result<()> {
         && v.contains(',')
     {
         anyhow::bail!(
-            "multi-run not yet supported: `{flag} {v}` describes a sweep; \
-             run a single value or use the Python frontend"
+            "`{flag} {v}` describes a sweep but reached the single-run resolver"
         );
     }
     Ok(())
@@ -1899,9 +1793,7 @@ mod tests {
     use super::{is_fake_model_name, is_truthy_env};
 
     #[test]
-    fn fake_model_name_matches_python() {
-        // Placeholders (Python `is_fake_model_name` docstring examples + the
-        // exact/substring sets) resolve the tokenizer to `builtin`.
+    fn fake_model_name_is_classified() {
         for t in [
             "mock-model",
             "test-model",
@@ -1916,7 +1808,6 @@ mod tests {
         ] {
             assert!(is_fake_model_name(t), "{t:?} should be a placeholder");
         }
-        // Real names / path-like input are never placeholders.
         for f in [
             "Qwen/Qwen3-0.6B",
             "./local-model",
@@ -1931,7 +1822,7 @@ mod tests {
     }
 
     #[test]
-    fn truthy_env_matches_pydantic() {
+    fn truthy_env_is_classified() {
         for t in ["1", "true", "TRUE", "t", "yes", "Y", "on", "  On  "] {
             assert!(is_truthy_env(t), "{t:?} should be truthy");
         }

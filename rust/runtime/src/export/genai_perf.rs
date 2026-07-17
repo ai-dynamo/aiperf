@@ -5,11 +5,10 @@
 //!
 //! Emits the two canonical AIPerf summary artifacts — `<stem>_aiperf.json`
 //! (`schema_version = "1.4"`) and `<stem>_aiperf.csv` — byte-for-byte identical
-//! to the Python exporters this sink replaces, so downstream plotters, uploaders,
-//! and the multi-run search layer keep working across the native transition. The
+//! to the Python exporters so downstream plotters, uploaders, and the multi-run
+//! search layer consume either output. The
 //! parity oracle is the AIPerf Python exporter suite, NOT the external NVIDIA
-//! genai-perf tool; the [`Exporter`] type name is retained only because the
-//! foundation wired the registry against it.
+//! genai-perf tool.
 //!
 //! # Byte-exact grounding (Python `path:line`, main checkout `src/aiperf/`)
 //! - JSON serialization: `exporters/metrics_json_exporter.py:109-114` —

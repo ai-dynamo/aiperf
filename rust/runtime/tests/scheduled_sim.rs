@@ -155,8 +155,7 @@ impl TurnDispatcher for SimDispatcher {
         self.seen.borrow_mut().push(SeenTurn {
             conversation_id: turn.conversation_id.clone(),
             turn_index: turn.turn_index,
-            // Native prepared turns carry their message history in the
-            // materialized `request_body`, not the legacy `messages` vec.
+            // Prepared turns carry message history in `request_body`.
             roles: turn
                 .request_body
                 .as_ref()

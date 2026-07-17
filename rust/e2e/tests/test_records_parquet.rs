@@ -1,15 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Full-stack e2e for the per-record Parquet sidecar.
-//!
-//! Runs a real `python -m aiperf profile` against the in-process mock server with
-//! `artifacts.records: [jsonl, parquet]` selected via a YAML config file, then
-//! reads the emitted `profile_export.parquet` back with the arrow/parquet reader
-//! and cross-checks it against the sibling `profile_export.jsonl`: one Parquet row
-//! per JSONL record, the expected wide schema, and the `aiperf.schema_version`
-//! file metadata.
-
 mod common;
 use std::collections::HashMap;
 use std::path::Path;
@@ -21,9 +12,6 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 const REQUEST_COUNT: u32 = 12;
 const CONCURRENCY: u32 = 3;
 
-/// Read every row of a Parquet file into a single concatenated column set plus the
-/// file's key-value metadata. Small e2e runs fit in one row group / batch, but we
-/// still drain every batch so the assertions are independent of batch splitting.
 fn read_parquet(
     path: &Path,
 ) -> (
@@ -42,14 +30,12 @@ fn read_parquet(
                 .collect()
         })
         .unwrap_or_default();
+    // Drain every batch so row checks are independent of row-group splitting.
     let reader = builder.build().expect("parquet reader");
     let batches: Vec<_> = reader.map(|b| b.expect("parquet batch")).collect();
     (batches, metadata)
 }
 
-/// Build a YAML config selecting the JSONL + Parquet per-record formats. The
-/// harness appends `--artifact-dir`/`--tokenizer`; no `--export-level` is passed,
-/// so the config's `artifacts.records` list is not overridden by the CLI.
 fn parquet_config(url: &str, records_line: &str) -> String {
     format!(
         "schemaVersion: \"2.0\"\n\
@@ -75,11 +61,8 @@ fn parquet_config(url: &str, records_line: &str) -> String {
     )
 }
 
-/// End-to-end: a benchmark with `records: [jsonl, parquet]` emits a readable
-/// per-record Parquet that mirrors the JSONL.
 #[tokio::test]
 async fn test_records_parquet_sidecar_mirrors_jsonl() {
-    // Flaky on macOS in CI like the other artifact e2es; skip there.
     if cfg!(target_os = "macos") {
         return;
     }
@@ -87,8 +70,6 @@ async fn test_records_parquet_sidecar_mirrors_jsonl() {
     let h = AIPerfHarness::new().await;
     let tmp = tempfile::TempDir::new().unwrap();
     let cfg_file = tmp.path().join("records_parquet.yaml");
-    // Request all three per-record formats at once so the run also proves they
-    // coexist and agree on row count.
     std::fs::write(
         &cfg_file,
         parquet_config(
@@ -107,7 +88,6 @@ async fn test_records_parquet_sidecar_mirrors_jsonl() {
         r.stderr
     );
 
-    // The JSONL sidecar is still produced and gives us the ground-truth row count.
     let jsonl = r.artifacts.jsonl();
     assert!(
         !jsonl.is_empty(),
@@ -132,7 +112,6 @@ async fn test_records_parquet_sidecar_mirrors_jsonl() {
         jsonl.len()
     );
 
-    // Wide schema: fixed metadata columns + a per-metric column (request_latency).
     let schema = batches[0].schema();
     for column in [
         "session_num",
@@ -153,8 +132,6 @@ async fn test_records_parquet_sidecar_mirrors_jsonl() {
         );
     }
 
-    // Spot-check typed values on the first batch: ids are non-empty, phase is a
-    // known value, and at least one request_latency is finite/positive.
     let batch = &batches[0];
     let ids = batch
         .column(schema.index_of("x_request_id").unwrap())
@@ -190,7 +167,6 @@ async fn test_records_parquet_sidecar_mirrors_jsonl() {
         "at least one request_latency should be finite and positive"
     );
 
-    // Self-describing file metadata.
     assert_eq!(
         metadata.get("aiperf.schema_version").map(String::as_str),
         Some("1.0"),
@@ -201,8 +177,6 @@ async fn test_records_parquet_sidecar_mirrors_jsonl() {
         "parquet should carry the aiperf.units metadata map"
     );
 
-    // The CSV sidecar mirrors the same records: one data row per JSONL record,
-    // metadata + {metric}_value/{metric}_unit + error columns.
     let csv_path = r
         .artifacts
         .find_file("**/profile_export_records.csv")
@@ -210,8 +184,6 @@ async fn test_records_parquet_sidecar_mirrors_jsonl() {
     let csv_text = std::fs::read_to_string(&csv_path).unwrap();
     let mut csv_lines = csv_text.lines();
     let header: Vec<&str> = csv_lines.next().expect("csv header").split(',').collect();
-    // Metric columns carry the unit in the header (summary-CSV style), e.g.
-    // `Request Latency (ms)`; there are no per-metric `_unit` columns.
     for column in [
         "session_num",
         "x_request_id",
@@ -238,7 +210,6 @@ async fn test_records_parquet_sidecar_mirrors_jsonl() {
         data_rows.len(),
         jsonl.len()
     );
-    // At least one Request Latency cell parses as a positive number.
     let latency_col = header
         .iter()
         .position(|c| *c == "Request Latency (ms)")

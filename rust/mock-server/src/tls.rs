@@ -3,8 +3,7 @@
 
 //! TLS/HTTPS termination for the mock server's HTTP and gRPC listeners.
 //!
-//! The mock has always served cleartext. This module adds an optional rustls
-//! frontend so it is a valid target for AIPerf's HTTPS/`grpcs` transports:
+//! The optional rustls frontend supports AIPerf's HTTPS and `grpcs` transports:
 //! the runner's HTTP client
 //! (`aiperf_runtime::transport::http::client::connection::rustls_config`) negotiates
 //! ALPN `h2` then `http/1.1` and, with `endpoint.ssl_verify=false`, installs a
@@ -12,16 +11,11 @@
 //! the server side only needs to advertise the same two ALPN protocols. The
 //! tonic `grpcs` client (`aiperf_runtime::transport::grpc::transport`) negotiates `h2`.
 //!
-//! Provider selection mirrors the runner: rustls cannot infer a process-global
+//! Rustls cannot infer a process-global
 //! crypto provider when both `aws-lc-rs` and `ring` are linked (the full runner
 //! links both), so every `ServerConfig` is built with an explicit
 //! `aws_lc_rs::default_provider()` — the same provider the client's
 //! `rustls_config` selects.
-//!
-//! Extensibility: the acceptor is a `tokio_rustls::TlsAcceptor` shared by both
-//! the HTTP ([`serve_http`]) and gRPC ([`crate::grpc::serve_grpc`]) accept
-//! loops, so a future third listener (or mTLS via a client-auth verifier) is a
-//! new `ServerConfig` builder arm here, not a change at each call site.
 
 use std::io::BufReader;
 use std::path::Path;
@@ -45,17 +39,14 @@ const ALPN_PROTOCOLS: &[&[u8]] = &[b"h2", b"http/1.1"];
 
 /// Subject-alternative names baked into a `--tls-self-signed` certificate.
 /// Both loopback forms the runner may dial (`https://127.0.0.1:...` and
-/// `https://localhost:...`); with `ssl_verify=false` the SANs are not checked,
-/// but a rustls client that *does* verify (the e2e's danger-accept fallback
-/// aside) still resolves the hostname.
+/// `https://localhost:...`).
 const SELF_SIGNED_SANS: &[&str] = &["127.0.0.1", "localhost"];
 
 /// Build the TLS acceptor implied by `config`, or `None` for cleartext.
 ///
 /// Precedence: an explicit `--tls-cert`/`--tls-key` pair wins; otherwise
 /// `--tls-self-signed` mints an in-memory cert. Supplying only one of
-/// cert/key is a configuration error. Returns `Ok(None)` when no TLS flag is
-/// set (the unchanged cleartext path).
+/// cert/key is a configuration error. Returns `Ok(None)` when no TLS flag is set.
 pub fn build_acceptor(config: &MockServerConfig) -> anyhow::Result<Option<TlsAcceptor>> {
     match (&config.tls_cert, &config.tls_key) {
         (Some(cert), Some(key)) => Ok(Some(acceptor_from_files(cert, key)?)),
@@ -67,10 +58,7 @@ pub fn build_acceptor(config: &MockServerConfig) -> anyhow::Result<Option<TlsAcc
     }
 }
 
-/// A [`TlsAcceptor`] backed by a freshly-minted in-memory self-signed cert for
-/// `127.0.0.1`/`localhost`. Public so integration/e2e tests can stand up an
-/// HTTPS mock without a cert file on disk, driving the exact server-side path
-/// `--tls-self-signed` uses.
+/// Build a [`TlsAcceptor`] with an in-memory certificate for loopback clients.
 pub fn self_signed_acceptor() -> anyhow::Result<TlsAcceptor> {
     let (certs, key) = self_signed_material()?;
     acceptor_from_material(certs, key)
@@ -122,8 +110,7 @@ fn acceptor_from_material(
     certs: Vec<CertificateDer<'static>>,
     key: PrivateKeyDer<'static>,
 ) -> anyhow::Result<TlsAcceptor> {
-    // Explicit provider: with both aws-lc-rs and ring linked, rustls refuses to
-    // pick a process-global default. Matches the client's `rustls_config`.
+    // Both providers may be linked, so rustls requires an explicit choice.
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let mut server_config = rustls::ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
@@ -135,15 +122,10 @@ fn acceptor_from_material(
     Ok(TlsAcceptor::from(Arc::new(server_config)))
 }
 
-/// The mock's HTTP accept loop, shared by the cleartext and TLS frontends.
+/// Serve HTTP/1.1 and HTTP/2 with optional TLS termination.
 ///
-/// Factored out of `main::serve` so the single connection-handling policy —
-/// `TCP_NODELAY`, per-connection hyper auto HTTP/1+2 handshake, optional h2
-/// `max_concurrent_streams`, upgrade support — is identical whether or not TLS
-/// is terminated, and so integration/e2e tests can drive the same loop over a
-/// self-signed acceptor. When `acceptor` is `Some`, each accepted TCP stream is
-/// wrapped in a rustls handshake (ALPN selecting h2 vs http/1.1) before hyper
-/// sees it; when `None`, cleartext is served exactly as before.
+/// A positive `max_concurrent_streams` overrides Hyper's HTTP/2 setting; zero
+/// preserves Hyper's default and does not affect HTTP/1.1.
 pub async fn serve_http(
     listener: tokio::net::TcpListener,
     router: axum::Router,
@@ -159,7 +141,7 @@ pub async fn serve_http(
                 continue;
             }
         };
-        // Disable Nagle for low-latency streaming.
+        // Nagle delays small streaming frames.
         let _ = stream.set_nodelay(true);
 
         let tower_service = match make_service.clone().call(peer).await {
@@ -182,9 +164,6 @@ pub async fn serve_http(
                     .http2()
                     .max_concurrent_streams(max_concurrent_streams);
             }
-            // The TLS and cleartext arms serve structurally-identical hyper
-            // connections over different stream types; the handshake failure
-            // handling is the same WARN the cleartext path already emits.
             match acceptor {
                 Some(acceptor) => {
                     let tls_stream = match acceptor.accept(stream).await {
@@ -238,7 +217,6 @@ mod tests {
 
     #[test]
     fn self_signed_acceptor_builds() {
-        // Exercises the full aws-lc-rs ServerConfig assembly + ALPN wiring.
         self_signed_acceptor().expect("build self-signed acceptor");
     }
 

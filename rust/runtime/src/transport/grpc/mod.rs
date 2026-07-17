@@ -1,13 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Clock-injected native gRPC transport for runner protocol v2.
+//! Clock-injected gRPC transport.
 //!
-//! Endpoint JSON remains transport-neutral in `aiperf-endpoints`. Open
-//! [`GrpcEndpointBinding`] factories lower that canonical JSON to protobuf
-//! bytes and decode protobuf responses back to the same JSON shape consumed by
-//! endpoint parsers. The transport itself is protobuf-agnostic and operates on
-//! raw framed messages over Tonic.
+//! [`GrpcEndpointBinding`] factories convert canonical endpoint JSON to
+//! protobuf bytes and decode responses back to endpoint JSON. The wire client
+//! operates on unframed message bytes over Tonic.
 
 pub mod binding;
 pub mod codec;

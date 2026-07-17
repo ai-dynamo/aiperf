@@ -3,9 +3,8 @@
 
 //! Transition-validated phase lifecycle over an injected clock.
 //!
-//! Rust intentionally removes
-//! Python's wall-clock/performance-clock duality: every timestamp and deadline
-//! comes from the same [`Clock`](crate::clock::Clock).
+//! Every timestamp and deadline comes from the same
+//! [`Clock`](crate::clock::Clock).
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -33,9 +32,8 @@ pub enum PhaseState {
 
 /// Why a phase reached [`PhaseState::Complete`].
 ///
-/// Python overloaded one `grace_period_triggered` bit for three paths. Keeping
-/// distinct reasons prevents reports from mislabeling user cancellation as a
-/// grace timeout while retaining dedicated compatibility booleans in stats.
+/// Distinct reasons prevent reports from mislabeling user cancellation as a
+/// grace timeout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PhaseCompletionReason {
@@ -295,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_transition_guards_match_python_ordering() {
+    fn invalid_transition_guards_enforce_lifecycle_ordering() {
         let (_, mut lifecycle) = lifecycle(None, GracePeriod::Disabled);
         assert_eq!(
             lifecycle.mark_sending_complete(false),

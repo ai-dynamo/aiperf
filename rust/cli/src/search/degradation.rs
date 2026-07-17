@@ -1,14 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! The `degradation_knee_detect` post-process handler for the `concurrency-ramp`
-//! recipe.
+//! `degradation_knee_detect` handler for the `concurrency-ramp` recipe.
 //!
-//! Pure-Rust port of `aiperf.search_recipes.post_process::DegradationKneeDetect.process`
-//! (`src/aiperf/search_recipes/post_process.py:88-208`). Reads the sweep
-//! aggregate's per-combination metric series (via [`crate::search::extract`]),
-//! takes the lowest-swept value as the baseline, and reports the first swept
-//! value whose metric exceeds `baseline * (1 + threshold_pct)` as the
-//! degradation knee — written as `degradation_knee.json`.
+//! Uses the lowest swept value as the baseline and reports the first metric
+//! above `baseline * (1 + threshold_pct)` in `degradation_knee.json`.
 
 use serde_json::{Map, Value};
 
@@ -29,9 +24,8 @@ pub struct DegradationKneeSpec {
 /// Build the degradation-knee artifact from a parsed sweep aggregate.
 ///
 /// Errors when the aggregate carries no rows for the swept parameter/metric, or
-/// when the baseline value is non-finite / non-positive (mirrors the Python
-/// `ValueError` guards: a NaN/inf/zero baseline collapses the cutoff comparison
-/// so "no knee in range" is indistinguishable from junk data).
+/// when the baseline is non-finite or non-positive, which makes the cutoff
+/// comparison undefined.
 pub fn process(sweep_json: &Value, spec: &DegradationKneeSpec) -> anyhow::Result<Value> {
     let points = extract_points(sweep_json, &spec.swept_param, &spec.metric_tag, &spec.stat)?;
     let (baseline_x, baseline_y) = points[0];
@@ -129,7 +123,6 @@ mod tests {
 
     #[test]
     fn finds_first_knee_past_cutoff() {
-        // baseline 10 * 1.2 = 12; first y > 12 is at concurrency 19 (y=13).
         let out = process(
             &agg(&[(1, 10.0), (7, 11.5), (19, 13.0), (52, 40.0)]),
             &spec(),

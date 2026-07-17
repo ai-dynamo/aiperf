@@ -1,21 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Corpus sampling for recorded trace reconstruction, byte-exact vs agentx.
+//! Byte-exact corpus sampling for recorded trace reconstruction.
 //!
-//! Each KV block's token window is drawn exactly as agentx's
-//! `HashIdRandomGenerator` + `sample_tokens_from_corpus`
+//! Each KV block follows `HashIdRandomGenerator` and `sample_tokens_from_corpus`
 //! (`dataset/loader/hash_ids_synthesis.py`, `dataset/generator/prompt.py`,
 //! `common/hash_id_random_generator.py`): a per-block CPython MT19937 seeded from
 //! `sha256(f"{corpus_child_seed}:{trace_id}:{hash_id}")[:8]` draws a start offset
 //! via `randrange(corpus_len)`, and the block is `[sep] + corpus[start..]`
 //! (wrapping), where `sep` is the tokenizer's block-separation token (BOS/EOS)
-//! and consumes one slot. `corpus_child_seed` is agentx's
+//! and consumes one slot. `corpus_child_seed` is
 //! `rng.derive("dataset.coding_content.corpus")` — `sha256(f"{root}:{id}")[:8]`.
 //!
 //! Truncating a full `block_size` window to a message's partial-tail length is
 //! prefix-stable (the same seed yields the same start, so a shorter window is a
-//! prefix of the longer one), matching agentx's per-message `final_block_size`.
+//! prefix of the longer one).
 
 use std::collections::HashMap;
 
@@ -50,8 +49,8 @@ pub(crate) struct CorpusContentSynthesizer<'a> {
     tokenizer: &'a dyn TextTokenizer,
     corpus: Vec<u32>,
     hash_seed: u64,
-    /// Block-separation token prepended to every block (agentx's
-    /// `tokenizer.block_separation_token_id`, i.e. BOS or EOS), consuming one
+    /// Block-separation token prepended to every block
+    /// (`tokenizer.block_separation_token_id`, i.e. BOS or EOS), consuming one
     /// slot of the window. `None` when the tokenizer exposes neither.
     sep_token: Option<u32>,
     // Two-level so a cache-hit probe on the lowering hot path allocates nothing:
@@ -85,11 +84,10 @@ impl<'a> CorpusContentSynthesizer<'a> {
         Ok(Self {
             tokenizer,
             corpus: tokens,
-            // agentx: `_hash_id_corpus_rng = HashIdRandomGenerator.from_base_rng(
-            // rng.derive("dataset.coding_content.corpus"))`, whose base seed is the
-            // sha256-derived corpus child seed — NOT the BLAKE3 RngRoot algebra.
+            // Hash synthesis uses the SHA-256-derived corpus child seed, not
+            // the BLAKE3 RngRoot algebra.
             hash_seed: PythonRandomGenerator::derive_child_seed(root_seed, hash_namespace),
-            // The agentx weka replay's actual per-turn windows carry NO block
+            // WEKA per-turn windows carry no block
             // separator: each block is a full `block_size`-token window (verified
             // against the real sent prompt — the reconstruction is byte-exact only
             // with no sep, whereas a BOS-consuming window is one token short per
@@ -147,8 +145,8 @@ impl RecordedContentSynthesizer for CorpusContentSynthesizer<'_> {
     }
 
     fn decode(&self, tokens: &[u32]) -> Result<String, RecordedTraceError> {
-        // agentx decodes synthesized token sequences with `skip_special_tokens=True`
-        // (`parallel_decode`), so the per-block separator (BOS/EOS) is consumed as a
+        // `parallel_decode` uses `skip_special_tokens=True`, so the per-block
+        // separator (BOS/EOS) is consumed as a
         // window slot but never appears in the sent text. Strip it here to match.
         if let Some(sep) = self.sep_token
             && tokens.contains(&sep)
@@ -165,7 +163,7 @@ impl RecordedContentSynthesizer for CorpusContentSynthesizer<'_> {
     }
 }
 
-/// Draw one KV block's tokens byte-exactly as agentx: seed a CPython MT from
+/// Draw one KV block's tokens byte-exactly: seed a CPython MT from
 /// `sha256(f"{hash_seed}:{scope}:{hash}")[:8]` (big-endian), optionally prepend
 /// `sep` (consuming one slot), then take a wrapping `window_len`-token window
 /// starting at `randrange(corpus_len)`.
@@ -232,8 +230,7 @@ mod tests {
 
     #[test]
     fn per_block_window_matches_agentx_hash_id_sampling() {
-        // agentx `HashIdRandomGenerator.reseed_for_hash_id` +
-        // `sample_tokens_from_corpus` over a synthetic pool `0..pool_len`.
+        // The golden vectors cover HashIdRandomGenerator reseeding.
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/data/agentx_block_golden.json"

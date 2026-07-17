@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Velo distribution for the dataset data plane
-//! (`specs/2026-07-15-ultimate-cellular-velo-runtime-design.md` §3).
+//! Velo distribution for the dataset data plane.
 //!
 //! Makes the in-process [`DatasetPublisher`]/[`DatasetIndex`] a distributed fan-out: the
 //! controller generates the dataset once and `add`s chunks; each cell subscribes over
@@ -11,12 +10,10 @@
 //! handlers, identical in shape to [`phaser_velo`](super::phaser_velo):
 //!
 //! - `aiperf.dataset.subscribe` (unary, cell → controller): the cell sends its
-//!   `PeerInfo`; the controller atomically attaches a broadcast consumer (snapshot + live
-//!   split at the §3.1 seam), returns the snapshot, and spawns a pump forwarding the tail.
+//!   `PeerInfo`; the controller atomically attaches a broadcast consumer, returns
+//!   the snapshot, and spawns a pump forwarding the tail.
 //! - `aiperf.dataset.chunk` (fire-and-forget, controller → cell): one pushed chunk event.
 //!
-//! Per §3.5 a production fan-out broadcasts chunk *handles* and pulls the bulk over the
-//! HTTP+zstd plane; for small synthetic request sets the chunk itself rides the broadcast.
 //! The payload is opaque `Vec<u8>` (the cell decodes its own request shape).
 
 use bytes::Bytes;
@@ -140,7 +137,7 @@ pub struct DatasetClient;
 impl DatasetClient {
     /// Subscribe to the controller's dataset broadcast and build this cell's owned index
     /// (the requests where `owns(request_id)`), draining to `finalize`. RAM is O(owned)
-    /// — the cell's ~1/N shard — even though every chunk is observed (§3.4).
+    /// even though every chunk is observed.
     pub async fn build_owned_index(
         velo: std::sync::Arc<Velo>,
         controller: &PeerInfo,

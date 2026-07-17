@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! S3 substrate — a deterministic, mergeable t-digest quantile sketch.
+//! Deterministic, mergeable t-digest quantile sketch.
 //!
 //! The cellular runtime's live lane reports **sketch-derived** percentiles; the
-//! final report stays exact from the S2 partitions. The roadmap freezes the sketch
-//! type as a **t-digest** (`specs/2026-07-12-cellular-ready-seams-and-roadmap.md`,
-//! S3) so an in-process merge today and a cross-cell heartbeat merge later are the
-//! same associative operation.
+//! final report stays exact from record partitions.
 //!
 //! This is the "merging" t-digest (Dunning): values become weight-1 centroids;
 //! [`compress`](TDigest::compress) sorts by mean and greedily clusters adjacent

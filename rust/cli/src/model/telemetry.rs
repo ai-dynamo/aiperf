@@ -1,13 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Typed telemetry/side-channel config blocks and the lowered `sidecars` block.
+//! Typed telemetry and side-channel policies.
 //!
-//! GPU telemetry and server-metrics scraping are **default-enabled** in Config
-//! v2, so their `cfg.*` blocks and the lowered `cfg.sidecars` entries appear on
-//! every non-DynoSim run. Ported from
-//! `src/aiperf/orchestrator/rust_wire.py::{_gpu_telemetry,_server_metrics,
-//! _network_latency,_authored_sidecars}` and the `GPU`/`SERVER_METRICS`/
-//! `NETWORK_LATENCY` environment defaults.
+//! GPU telemetry and server-metrics scraping are enabled by default on
+//! non-DynoSim runs.
 
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +11,7 @@ use serde::{Deserialize, Serialize};
 const COLLECTION_INTERVAL_NS: u64 = 333_000_000;
 /// Default reachability timeout: 10 s in nanoseconds.
 const REACHABILITY_TIMEOUT_NS: u64 = 10_000_000_000;
-/// Default DCGM exporter endpoints (`Environment.GPU.DEFAULT_DCGM_ENDPOINTS`).
+/// Default DCGM exporter endpoints.
 const DEFAULT_DCGM_ENDPOINTS: [&str; 2] = ["localhost:9400", "localhost:9401"];
 
 /// K8s pod-discovery policy for server metrics (`cfg.server_metrics.discovery`).
@@ -156,7 +152,7 @@ pub struct ServerMetricsSidecar {
     pub parquet_wire_path: Option<String>,
 }
 
-/// The RTT-calibration probe (`_network_latency` automatic branch).
+/// RTT-calibration probe.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NetworkLatencyProbe {
     /// Ping interval, nanoseconds.
@@ -271,8 +267,7 @@ impl ServerMetricsSidecar {
         }
     }
 
-    /// Apply the output formats, deriving the per-format artifact paths
-    /// (`_server_metrics`: `jsonl` → jsonl_path, `parquet` → parquet_wire_path).
+    /// Apply output formats and derive their artifact paths.
     pub fn with_formats(mut self, formats: Vec<String>) -> Self {
         self.jsonl_path = formats
             .iter()
@@ -287,11 +282,9 @@ impl ServerMetricsSidecar {
     }
 }
 
-/// Normalize a scrape target to end with `/metrics`, exactly reproducing
-/// `normalize_metrics_endpoint_url`: prepend `http://` only when the URL does
-/// not already start with `http://`/`https://` (so a `grpc://` URL becomes the
-/// intentional `http://grpc://.../metrics`), strip trailing slashes, then append
-/// `/metrics` unless already present.
+/// Normalize a scrape target to end with `/metrics`.
+///
+/// Non-HTTP schemes are treated as bare hosts and prefixed with `http://`.
 pub fn normalize_metrics_url(url: &str) -> String {
     let mut url = if url.starts_with("http://") || url.starts_with("https://") {
         url.to_string()
@@ -320,13 +313,10 @@ mod tests {
             normalize_metrics_url("localhost:9400"),
             "http://localhost:9400/metrics"
         );
-        // A non-http scheme is treated as a bare host and prefixed (the same
-        // quirk Python has for grpc:// endpoints).
         assert_eq!(
             normalize_metrics_url("grpc://127.0.0.1:8001"),
             "http://grpc://127.0.0.1:8001/metrics"
         );
-        // A custom path still gets /metrics appended.
         assert_eq!(
             normalize_metrics_url("http://h:9/custom"),
             "http://h:9/custom/metrics"

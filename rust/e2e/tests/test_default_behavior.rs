@@ -3,10 +3,6 @@
 mod common;
 use common::*;
 
-/// Test that only providing the model and nothing else still works.
-///
-/// NOTE: We still have to provide the server's url due to the nature of it
-/// being on a non-default port.
 #[tokio::test]
 async fn test_default_behavior() {
     let h = AIPerfHarness::new().await;

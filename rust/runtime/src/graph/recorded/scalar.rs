@@ -138,10 +138,9 @@ mod tests {
     /// direct `from_str` into any struct that has `f64` fields (the deserializer
     /// sees a map where it expects a float and errors), corrupts minijinja template
     /// rendering of numeric values, and makes `Value::Number::as_u64()` return
-    /// `None` for numbers that fit in u64.  The WEKA/Dynamo hash-precision
-    /// problem that originally motivated the feature is now handled via
-    /// `RawValue`-based parsing in `source.rs`; this test catches any accidental
-    /// re-enablement.
+    /// `None` for numbers that fit in u64. WEKA/Dynamo hash precision uses
+    /// `RawValue`-based parsing in `source.rs`; this test prevents accidental
+    /// enablement.
     #[test]
     fn serde_json_arbitrary_precision_not_enabled() {
         // 1. Direct from_str into a struct with an f64 field must succeed.

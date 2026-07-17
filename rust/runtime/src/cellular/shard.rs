@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! S2 — the records-shard seam and its serializable partitions.
+//! Records-shard capture and serializable partitions.
 //!
 //! A [`RecordsShard`] captures a cell's completed records locally and exports a
-//! serializable [`RecordsShardPartition`] at a phase boundary
-//! (`specs/2026-07-12-cellular-ready-seams-and-roadmap.md`, S2). The controller
-//! merges every cell's partition into the final report.
+//! serializable [`RecordsShardPartition`] at a phase boundary. The controller
+//! merges every cell partition into the final report.
 //!
 //! Two partition forms, because two properties are wanted:
 //!
@@ -18,8 +17,7 @@
 //!   (summed in absolute-slot order) and the ragged columns (summed in
 //!   ingest/`append_order`) then match a single-cell run, the merged report is
 //!   byte-identical to the same run executed as one cell.
-//! - [`ColumnStorePartition`] carries a cell's pre-accumulated [`ColumnStore`] —
-//!   the roadmap's serializable "the store *is* the partition" form. Its merge
+//! - [`ColumnStorePartition`] carries a cell's pre-accumulated [`ColumnStore`]. Its merge
 //!   ([`merge_store_partitions`]) is [`ColumnStore::append_store`]: associative and
 //!   **deterministic at a fixed topology**, but because it concatenates rows its
 //!   floating-point summation order differs from a single-cell run, so its
@@ -224,11 +222,7 @@ impl Display for RecordsMergeError {
 
 impl std::error::Error for RecordsMergeError {}
 
-/// S2 seam: a shard captures a cell's completed records and exports them as a
-/// serializable, mergeable partition at a phase boundary.
-///
-/// Object-safe so the runtime can hold `Box<dyn RecordsShard>`; the deferred
-/// per-cell records-shard drops in behind this trait unchanged.
+/// Captures a cell's completed records as a serializable, mergeable partition.
 pub trait RecordsShard {
     /// Captures one completed record into this shard.
     fn capture(&mut self, record: RecordIngest);
@@ -240,7 +234,7 @@ pub trait RecordsShard {
     fn cell_id(&self) -> u32;
 }
 
-/// The Tier-0 in-process records shard: one cell's captured record buffer.
+/// One cell's in-process record buffer.
 #[derive(Debug)]
 pub struct DirectRecordsShard {
     cell_id: u32,
@@ -286,8 +280,7 @@ impl RecordsShard for DirectRecordsShard {
     }
 }
 
-/// One cell's pre-accumulated column store — the roadmap's serializable "store is
-/// the partition" form, for cheap live/summary shipping.
+/// One cell's pre-accumulated column store for summary shipping.
 ///
 /// Merge ([`merge_store_partitions`]) is [`ColumnStore::append_store`]:
 /// deterministic at a fixed topology. It concatenates rows, so its summaries match
@@ -500,13 +493,10 @@ mod tests {
 
     #[test]
     fn merged_cell_records_are_byte_identical_to_a_single_cell_run() {
-        // The flagship S2 contract: re-ingesting every cell's records in global
-        // dispatch order reproduces a single-cell run byte-for-byte, including the
-        // last-ULP floating-point reductions.
+        // Global dispatch-order re-ingestion must reproduce single-cell reductions.
         let records: Vec<_> = (0..24).map(record).collect();
         let direct = accumulator_over(&records);
 
-        // Round-robin ownership (cell k owns i % 3 == k), as the S4 partition would.
         let mut cells = [
             DirectRecordsShard::new(0),
             DirectRecordsShard::new(1),
@@ -539,9 +529,8 @@ mod tests {
     fn multi_phase_merge_is_byte_identical_to_a_single_cell_run() {
         // A cell stamps the GLOBAL cumulative slot (its phase's global base plus its
         // phase-local index), so warmup fills `[0, W)` and profiling `[W, W+P)` — the
-        // same absolute slots a single-cell run assigns. warmup=5 is NOT a multiple of
-        // the 2 cells — the regime where the earlier cumulative-count bug drew the
-        // wrong instances; here the global slot ties each record to its 1-cell slot.
+        // same absolute slots a single-cell run assigns. Warmup is intentionally
+        // not a multiple of the cell count.
         let (warmup_n, profiling_n, cell_count) = (5usize, 7usize, 2usize);
         // Distinct content per (phase, phase-relative position).
         let content = |warmup: bool, pos: usize| {
@@ -723,9 +712,8 @@ mod tests {
     #[test]
     fn sketch_store_partitions_merge_matches_single_sketch_and_carry_the_count() {
         use crate::metrics_core::MetricsStorageMode;
-        // Step 1 (tier T1): a sketch cell folds every record into a bounded t-digest
-        // STORE that retains no rows, then ships it (the same `ColumnStorePartition`
-        // wire form exact-fold uses). The controller merges N of them associatively.
+        // Each sketch cell folds records into a bounded t-digest store with no rows.
+        // The controller merges the stores associatively.
         // Counts/sums/min/max stay exact; percentiles are t-digest-approximate; and the
         // true record total travels WITH the store — a sketch store's `record_count()`
         // is 0, so `ingested_count()` is the only surviving total across ship+merge.
@@ -735,7 +723,7 @@ mod tests {
         };
         let records: Vec<_> = (0..30).map(record).collect();
 
-        // Baseline: a single sketch over every record.
+        // Compare against one sketch over every record.
         let mut single = MetricsAccumulator::with_config(sketch_cfg());
         for r in &records {
             single.process_record(r);
@@ -802,7 +790,7 @@ mod tests {
         }
     }
 
-    /// Relative-tolerance float comparison for the Stage-C store-merge parity bar:
+    /// Relative-tolerance float comparison for store-merge parity:
     /// sums/means may drift a few ULPs from the reordered f64 summation (`~1e-9`).
     fn rel_close_f64(a: f64, b: f64, context: &str) {
         if a == b {
@@ -826,7 +814,7 @@ mod tests {
 
     #[test]
     fn cell_message_store_partition_round_trips_through_messagepack() {
-        // The Stage-C wire variant: a folded ColumnStorePartition carried inside a
+        // A folded ColumnStorePartition carried inside a
         // CellMessage must survive the exact rmp-serde path the velo transport uses,
         // preserving the store's NaN-sparse columns (present-vs-absent semantics).
         use crate::cellular::transport::CellMessage;
@@ -854,7 +842,7 @@ mod tests {
 
     #[test]
     fn n_store_partitions_merge_within_tolerance_of_the_union() {
-        // Stage-C parity bar: N cells each fold their round-robin share into a
+        // N cells each fold their round-robin share into a
         // LOCAL-dense EXACT accumulator, ship the folded store over the wire, and the
         // controller appends them. The merged summary must be WITHIN TOLERANCE of a
         // single accumulator fed the union — counts/min/max/percentiles/std bit-exact

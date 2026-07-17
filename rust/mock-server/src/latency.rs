@@ -31,7 +31,6 @@ use aiperf_runtime::rng::RandomGenerator;
 use crate::config::MockServerConfig;
 use crate::scheduler::BatchScheduler;
 
-/// Milliseconds → integer nanoseconds, floored at 0.
 #[inline]
 fn ms_to_ns(ms: f64) -> i64 {
     (ms * 1_000_000.0).max(0.0) as i64
@@ -45,7 +44,6 @@ fn lognormal_jitter(rng: &mut RandomGenerator, cv: f64) -> f64 {
         return 1.0;
     }
     let sigma = (1.0 + cv * cv).ln().sqrt();
-    // Box-Muller: z ~ N(0, 1) from two uniforms.
     let u1: f64 = rng.random().max(1e-12);
     let u2: f64 = rng.random();
     let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
@@ -72,21 +70,15 @@ fn seeded_rng(seed: u64, salt: u64) -> RandomGenerator {
 
 /// Per-request latency scheduler. Owned exclusively by one request.
 pub struct LatencySimulator {
-    /// Shared `RealClock` timeline; `now_ns` reads and target math run on it.
     anchor: RealClockAnchor,
-    /// Request start, in ns on `anchor`'s timeline.
     start_ns: i64,
-    /// Effective analytic TTFT (base + ISL + concurrency terms, jittered once), ns.
     ttft_ns: i64,
-    /// Effective analytic ITL (base + OSL + concurrency terms, jittered once), ns.
     itl_ns: i64,
-    /// Set in scheduler mode; admission drives timing instead of the delays above.
     sched: Option<Arc<BatchScheduler>>,
     request_key: String,
     isl: usize,
     /// Prompt tokens served from the KV cache; they skip prefill work.
     cached_tokens: usize,
-    // Base values + CVs for scheduler-mode positive jitter.
     ttft_base_ms: f64,
     itl_base_ms: f64,
     ttft_cv: f64,
@@ -109,7 +101,6 @@ impl LatencySimulator {
         request_key: String,
         cached_tokens: usize,
     ) -> Self {
-        // Deterministic per-request jitter seed: FNV-1a hash of the unique key.
         let mut seed: u64 = 0xcbf2_9ce4_8422_2325;
         for b in request_key.as_bytes() {
             seed ^= *b as u64;
@@ -118,16 +109,13 @@ impl LatencySimulator {
 
         let mut rng = seeded_rng(seed, 1);
         let active = active_inflight as f64;
-        // Prefix-cached tokens skip prefill, so the per-ISL-token TTFT term
-        // scales with the uncached suffix only.
+        // Cached tokens do not contribute prefill work.
         let eff_isl = isl.saturating_sub(cached_tokens);
         let ttft_ms = (cfg.ttft
             + cfg.ttft_per_isl_token_ms * eff_isl as f64
             + cfg.ttft_concurrency_quad_ms * active * active)
             * lognormal_jitter(&mut rng, cfg.ttft_jitter_cv);
-        // ITL jitter is applied once per request here (the Python model
-        // resamples per token); identical unless itl_jitter_cv is set with the
-        // scheduler off, and it preserves the lock-free cumulative-target design.
+        // One ITL jitter sample preserves cumulative, lock-free token targets.
         let itl_ms =
             (cfg.itl + cfg.itl_per_osl_token_ms * osl as f64 + cfg.itl_concurrency_lin_ms * active)
                 * lognormal_jitter(&mut rng, cfg.itl_jitter_cv);

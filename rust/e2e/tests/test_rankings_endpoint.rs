@@ -5,11 +5,6 @@ use common::*;
 
 use std::path::{Path, PathBuf};
 
-/// Create a rankings dataset for testing.
-///
-/// Mirrors `tests/integration/utils.py::create_rankings_dataset`: writes
-/// `num_entries` single-turn rankings records (query + passages) to a
-/// `rankings.jsonl` file inside `dir`.
 fn create_rankings_dataset(dir: &Path, num_entries: usize) -> PathBuf {
     let mut records = Vec::new();
     for i in 0..num_entries {
@@ -22,8 +17,6 @@ fn create_rankings_dataset(dir: &Path, num_entries: usize) -> PathBuf {
     }
     write_jsonl(dir, "rankings.jsonl", &records)
 }
-
-// IntegrationTestDefaults: workers_max = 1, concurrency = 2, request_count = 10, ui = "simple".
 
 #[tokio::test]
 async fn test_rankings_with_custom_dataset_nim_rankings() {

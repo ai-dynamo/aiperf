@@ -5,9 +5,8 @@
 //!
 //! Builds an `aiconfigurator` timing engine and installs it on the mocker's
 //! `MockEngineArgs::perf_model`, keeping the embedded-Python AIC bridge in the
-//! consumer rather than in the pure-Rust simulator. The one-time Python compile
-//! and pure-Rust prediction behavior is ported from dynamo's
-//! `lib/bindings/python/rust/llm/aic_callback.rs`.
+//! consumer rather than in the pure-Rust simulator. The callback follows
+//! `dynamo/lib/bindings/python/rust/llm/aic_callback.rs`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};

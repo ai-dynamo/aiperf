@@ -3,15 +3,7 @@
 mod common;
 use common::*;
 
-// End-to-end integration test for SPAWN-mode DAG branches.
-//
-// Unlike FORK mode (which inherits the parent's accumulated messages and pins
-// the child to the parent's worker), SPAWN-mode children:
-// - Start with an EMPTY accumulator (no parent context merged in).
-// - Route freely (no sticky pin to the parent's worker).
-//
-// This test drives the full aiperf subprocess over a minimal root+spawn-child
-// fixture and asserts both invariants on the wire payloads and run stats.
+// SPAWN-mode children start with fresh context and are not sticky-routed.
 
 use serde_json::Value;
 
@@ -81,10 +73,8 @@ async fn test_spawn_child_has_fresh_context_and_is_not_sticky_pinned() {
     assert!(r.success(), "run failed: {}", r.stderr);
 
     let raw = r.artifacts.raw_records();
-    // Exactly 2 wire requests: root + one spawn-mode child.
     assert_eq!(raw.len(), 2, "Expected 2 raw records, got {}", raw.len());
 
-    // Classify by distinguishing system prompt.
     let mut root_rec: Option<&Value> = None;
     let mut child_rec: Option<&Value> = None;
     for rec in &raw {
@@ -99,7 +89,6 @@ async fn test_spawn_child_has_fresh_context_and_is_not_sticky_pinned() {
     let root_rec = root_rec.expect("root record not found");
     let child_rec = child_rec.expect("spawn-mode child record not found");
 
-    // Root's payload is untouched: just its own [sys, user].
     assert_eq!(
         roles_contents(&root_rec["payload"]["messages"]),
         vec![
@@ -108,9 +97,6 @@ async fn test_spawn_child_has_fresh_context_and_is_not_sticky_pinned() {
         ]
     );
 
-    // Critical: SPAWN child must NOT inherit root's context. Its messages are
-    // exactly its own [sys, user] with no root-* entries and no captured
-    // assistant text from root.
     assert_eq!(
         roles_contents(&child_rec["payload"]["messages"]),
         vec![
@@ -120,17 +106,13 @@ async fn test_spawn_child_has_fresh_context_and_is_not_sticky_pinned() {
         "SPAWN-mode child must start with a fresh context (no parent turn_list inherited)"
     );
 
-    // Parent linkage is still stamped on the child (via Credit.parent_
-    // correlation_id) — mode only changes context-inheritance and routing, not
-    // the tree-shape bookkeeping.
+    // SPAWN changes context ownership and routing, not parent linkage.
     assert!(root_rec["metadata"]["parent_correlation_id"].is_null());
     assert_eq!(
         child_rec["metadata"]["parent_correlation_id"],
         root_rec["metadata"]["x_correlation_id"]
     );
 
-    // Stats are mode-agnostic: the orchestrator counted one dispatched child and
-    // one completed.
     let json = r.artifacts.json();
     let branch_stats = &json["branch_stats"];
     assert!(!branch_stats.is_null(), "branch_stats must exist");

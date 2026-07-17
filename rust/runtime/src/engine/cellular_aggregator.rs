@@ -55,8 +55,8 @@ pub const AGG_CHILD_COUNT_ENV: &str = "AIPERF_AGG_CHILD_COUNT";
 pub const CELL_AGG_FANOUT_ENV: &str = "AIPERF_CELL_AGG_FANOUT";
 
 /// Env var overriding the base loopback port aggregators bind (`base + agg_id`);
-/// default [`DEFAULT_AGG_BASE_PORT`]. Local execution only — k8s aggregators would use
-/// the operator's DNS/ports (a follow-on, like the controller's own k8s bind).
+/// default [`DEFAULT_AGG_BASE_PORT`]. Local execution only; Kubernetes aggregators use
+/// operator-provided DNS and ports.
 pub const CELL_AGG_BASE_PORT_ENV: &str = "AIPERF_CELL_AGG_BASE_PORT";
 
 /// The default base loopback port for local aggregators.

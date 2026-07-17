@@ -3,9 +3,8 @@
 
 //! Phase-boundary server counter attribution and continuous gauge aggregation.
 //!
-//! Boundary snapshots intentionally implement
-//! the native telemetry-spec addendum: counters and histogram totals use exact
-//! phase start/end values, while continuous records supply gauge distributions,
+//! Counters and histogram totals use exact phase start/end snapshots, while
+//! continuous records supply gauge distributions,
 //! timeslices, and histogram bucket-mean learning.
 
 use std::collections::{BTreeMap, HashMap};
@@ -285,13 +284,9 @@ impl ServerMetricsAccumulator {
             .collect::<std::collections::BTreeSet<String>>()
             .into_iter()
             .collect();
-        // Derive the atlas metrics once per successful endpoint so every derived
-        // series inherits the credential-free `endpoint_url` of the scraped
-        // endpoint it was computed from. The Python native-report validator
-        // rejects any server-metric series without an endpoint present in the
-        // per-endpoint collection metadata, so a cross-endpoint aggregate with
-        // no owner is not representable; per-endpoint attribution also matches
-        // how backend-specific names (vLLM vs SGLang) live on distinct scrapes.
+        // Derive atlas metrics per endpoint because every series must reference
+        // an endpoint in the collection metadata; a cross-endpoint aggregate
+        // has no representable owner.
         for endpoint in &endpoints_successful {
             let atlas_view = PhaseMetricView {
                 phase,
@@ -624,7 +619,7 @@ fn retain_latest_gauges(
     }
 }
 
-/// Python-compatible collection metadata for one server-metrics endpoint.
+/// Compatibility collection metadata for one server-metrics endpoint.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServerMetricsEndpointInfo {
     /// All successful fetches, including duplicate bodies.
@@ -1308,9 +1303,7 @@ mod tests {
             125.0
         );
 
-        // Every derived series must inherit the scraped endpoint's URL: the
-        // Python native-report validator rejects any server-metric series that
-        // omits `endpoint_url` or references an endpoint absent from the
+        // Every derived series must reference its scraped endpoint in the
         // per-endpoint collection metadata.
         for name in [
             "prefix_cache_hit_rate",

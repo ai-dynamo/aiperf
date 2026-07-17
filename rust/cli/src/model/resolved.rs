@@ -1,12 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Typed `run.resolved` facts — resolution results Python computes before the
-//! runner sees them.
+//! Typed facts resolved before runner execution.
 //!
-//! On the single-run synthetic path almost everything is `null`; the runner
-//! reads `gpu_custom_metrics` / `gpu_dcgm_mappings` for the custom-telemetry CSV
-//! and `gpu_telemetry_mode` for the DCGM source mode. Every field is present in
-//! the wire object (Python does not exclude nulls here), so none is skipped.
+//! The runner reads GPU fields for custom telemetry and DCGM source selection.
+//! Every field is present in the wire object, including nulls.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,9 +11,9 @@ use serde::{Deserialize, Serialize};
 /// (custom metric bags, comm config) stay as `Value`; the rest are typed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Resolved {
-    /// Whether Python created the artifact directory.
+    /// Whether the artifact directory was created during resolution.
     pub artifact_dir_created: bool,
-    /// Legacy comm configuration (unused on the native path).
+    /// Opaque communication configuration unused by native execution.
     pub comm_config: Option<serde_json::Value>,
     /// Concrete dataset file paths, when resolved.
     pub dataset_file_paths: Option<Vec<String>>,

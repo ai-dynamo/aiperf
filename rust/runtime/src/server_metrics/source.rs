@@ -5,9 +5,8 @@
 //!
 //! JSON rejection, OpenMetrics-to-classic parser fallback, the one-shot
 //! `/prometheus/metrics` compatibility path, and terminal incompatibility
-//! classification are implemented here. The runtime
-//! drives this source sequentially, so the inherited concurrent auto-disable
-//! race and response-hash synchronization are intentionally absent.
+//! classification are implemented here. The runtime drives this source
+//! sequentially.
 
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter, Result as FmtResult};
@@ -42,7 +41,7 @@ pub enum ServerMetricsScrapeOutcome {
     Record(ServerMetricsRecord),
     /// A valid empty or unsupported-only exposition; the source remains active.
     Empty,
-    /// The source was previously classified as terminally incompatible.
+    /// The source is terminally incompatible.
     Disabled,
 }
 
@@ -342,7 +341,7 @@ impl ServerMetricsSource for PrometheusHttpSource {
     }
 }
 
-/// Apply the inherited URL normalization rule exactly once.
+/// Normalize a server-metrics URL exactly once.
 pub fn normalize_metrics_url(value: &str) -> String {
     let mut normalized = if value.starts_with("http://") || value.starts_with("https://") {
         value.to_string()

@@ -3,11 +3,7 @@
 mod common;
 use common::*;
 
-// Tests for Ctrl+C (SIGINT) benchmark cancellation functionality.
-//
-// These tests verify graceful cancellation via Ctrl+C:
-// - First Ctrl+C stops issuing new credits and waits for in-flight requests
-// - Results are written to files with was_cancelled=True
+// Ctrl+C stops admission, drains in-flight requests, and writes cancelled results.
 
 use std::io::Read;
 use std::process::{Command, Stdio};
@@ -54,8 +50,7 @@ fn run_with_sigint(
         .spawn()
         .unwrap_or_else(|e| panic!("failed to spawn `{bin}`: {e}"));
 
-    // Shared, incrementally-appended capture so we can watch for the PROFILING
-    // marker while still collecting the full stream.
+    // Incremental capture permits waiting for profiling without blocking either pipe.
     let out_buf = Arc::new(Mutex::new(String::new()));
     let err_buf = Arc::new(Mutex::new(String::new()));
 
@@ -89,7 +84,7 @@ fn run_with_sigint(
         }
     });
 
-    // Overall safety deadline so a hung child can never wedge the test.
+    // The hard deadline prevents a hung child from wedging the test.
     let hard_deadline = Instant::now() + Duration::from_secs(120);
 
     if wait_for_profiling {
@@ -114,10 +109,8 @@ fn run_with_sigint(
 
     std::thread::sleep(sigint_delay);
 
-    // Deliver the first Ctrl+C (SIGINT) for graceful cancellation.
     send_sigint(&child);
 
-    // Wait for the process to flush partial artifacts and exit.
     let status = loop {
         match child.try_wait().expect("try_wait after SIGINT") {
             Some(s) => break s,
@@ -189,22 +182,18 @@ async fn test_ctrl_c_graceful_cancel_writes_results() {
         true,
     );
 
-    // All output files should be written.
     assert!(!r.artifacts.json().is_null(), "JSON export should exist");
     assert!(!r.artifacts.csv().is_empty(), "CSV export should exist");
     let jsonl = r.artifacts.jsonl();
     assert!(!r.artifacts.inputs().is_null(), "Inputs file should exist");
 
-    // was_cancelled flag should be True.
     assert!(
         r.artifacts.was_cancelled(),
         "was_cancelled flag should be True after Ctrl+C"
     );
 
-    // Should have some completed requests (partial results).
     assert!(!jsonl.is_empty(), "Should have some completed requests");
 
-    // Each record should have metrics computed.
     for record in &jsonl {
         assert!(
             record.get("metrics").is_some(),

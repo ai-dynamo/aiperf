@@ -227,21 +227,12 @@ impl ActuatorFactory for UsersActuatorFactory {
 
 /// Id-keyed registry of adaptive control-variable actuator factories.
 ///
-/// Mirrors the `with_builtin_*` pattern of the dataset [`LoaderRegistry`] and
-/// [`SamplerRegistry`], backed by the shared [`TransactionalRegistry`] so that
-/// duplicate ids are rejected and batch registration commits atomically. Replaces
-/// the former hardcoded `match config.control_variable` in
-/// [`build_adaptive_with_origins`].
-///
-/// [`LoaderRegistry`]: crate::dataset::LoaderRegistry
-/// [`SamplerRegistry`]: crate::dataset::SamplerRegistry
+/// The shared [`TransactionalRegistry`] rejects duplicate identifiers and commits
+/// batch registration atomically.
 #[derive(Clone)]
 pub struct ActuatorRegistry {
-    // `Arc<dyn … + Send + Sync>` (not `Rc`) so the enclosing
-    // [`AIPerfRegistry`](crate::extensions::AIPerfRegistry) that now owns this
-    // registry stays `Send + Sync`. Factories are stateless, so requiring the
-    // shared handle be thread-safe costs nothing; only the built actuators they
-    // return (`Rc<dyn ControlActuator>`) remain thread-local.
+    // Factories are stateless and thread-safe because AIPerfRegistry is Send +
+    // Sync; built actuators remain worker-local Rc values.
     factories: TransactionalRegistry<Arc<dyn ActuatorFactory + Send + Sync>>,
 }
 
@@ -417,10 +408,8 @@ pub fn build_adaptive_with_origins(
 /// Build the controller runtime over an explicitly injected actuator and
 /// terminal-record sampler.
 ///
-/// Scheduled workloads normally use [`build_adaptive_with_origins`] to create
-/// both from local issuer state. Graph and future remote placements instead
-/// inject placement-backed actuators and feed the same sampler from completed
-/// native records, leaving the controller and artifact contract unchanged.
+/// Callers may inject placement-backed actuators and feed the sampler from
+/// completed native records without changing the controller or artifact contract.
 pub fn build_adaptive_scale(
     config: AdaptiveRunConfig,
     clock: Rc<dyn Clock>,
@@ -541,8 +530,7 @@ mod tests {
             let actuator = registry
                 .build(id, build_context())
                 .unwrap_or_else(|error| panic!("building {id:?} actuator failed: {error}"));
-            // The built actuator's variable id is the identity probe: it must equal
-            // the id used to resolve the factory, matching the pre-refactor match.
+            // Factory lookup and the built actuator must expose the same identifier.
             assert_eq!(actuator.variable(), id);
         }
     }

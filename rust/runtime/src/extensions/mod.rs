@@ -129,19 +129,9 @@ pub struct BuiltinAIPerfRegistryFactory;
 
 impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
     fn build(&self) -> Result<AIPerfRegistry, ExtensionError> {
-        // The whole stock distribution is ONE ordered list of per-component
-        // built-in [`AIPerfExtension`] values applied over an empty base. The
-        // only conditional compilation here is the feature-gate line on each
-        // optional extension: gating a component out of this list removes it
-        // from the registry and therefore from the auto-derived `--capabilities`
-        // catalog with no separate bookkeeping.
-        //
-        // Built-in extensions are applied through [`with_builtin_extensions`],
-        // which composes their implementations without recording provenance
-        // names: the native report's `run.extensions` array is reserved for
-        // third-party add-ons layered on top of the stock build.
-        //
-        // [`with_builtin_extensions`]: AIPerfRegistry::with_builtin_extensions
+        // Feature gates remove optional components from both the registry and
+        // the derived `--capabilities` catalog. Built-in names are omitted from
+        // `run.extensions`, which records add-ons only.
         AIPerfRegistry::empty_or_base().with_builtin_extensions([
             &BuiltinLoadersExtension as &dyn AIPerfExtension,
             &BuiltinSamplersExtension,
@@ -275,7 +265,7 @@ impl AIPerfRegistry {
     ///
     /// This is the composition-root starting point: built-in and third-party
     /// [`AIPerfExtension`] values populate the category registries from here.
-    /// It contributes nothing to the registered set and no provenance names.
+    /// It contributes no entries or extension names.
     pub fn empty_or_base() -> Self {
         Self {
             dataset_formats: LoaderRegistry::new(),
@@ -296,8 +286,8 @@ impl AIPerfRegistry {
     /// This is the stock loaders/samplers/endpoints universe with empty
     /// transport/workload sub-registries; it is the base a custom distribution
     /// layers additional [`AIPerfExtension`] values on top of. The built-in
-    /// components are applied through [`Self::with_builtin_extensions`] so this
-    /// base contributes zero provenance names.
+    /// components are applied through [`Self::with_builtin_extensions`] without
+    /// recording extension names.
     pub fn builtin() -> Result<Self, ExtensionError> {
         Self::empty_or_base().with_builtin_extensions([
             &BuiltinLoadersExtension as &dyn AIPerfExtension,
@@ -319,8 +309,7 @@ impl AIPerfRegistry {
         self.register_extension_inner(extension, true)
     }
 
-    /// Apply one built-in extension transactionally without recording a
-    /// provenance name.
+    /// Apply one built-in extension transactionally without recording its name.
     ///
     /// Built-in components are baked into the stock distribution rather than
     /// layered on top of it, so the native report's `run.extensions` array (fed
@@ -422,8 +411,8 @@ impl AIPerfRegistry {
 
     /// Register one statically linked endpoint factory during startup.
     ///
-    /// A new frozen value replaces the old catalog only after the descriptor
-    /// and every alias pass atomic collision validation.
+    /// The catalog changes only after the descriptor and aliases pass collision
+    /// validation.
     pub fn register_endpoint_factory<F>(&mut self, factory: F) -> Result<(), ExtensionError>
     where
         F: EndpointFactory + 'static,
@@ -451,7 +440,7 @@ impl AIPerfRegistry {
     /// Clone the authoritative catalog behind the protocol-v1 dataset lookup
     /// trait. The adapter holds no names or implementations of its own.
     pub fn endpoint_resolver(&self) -> Arc<dyn DatasetEndpointResolver> {
-        Arc::new(LegacyDatasetEndpointResolver {
+        Arc::new(DatasetEndpointResolverAdapter {
             endpoints: self.endpoints.clone(),
             default: EndpointId::new("chat").expect("built-in default ID is valid"),
         })
@@ -464,12 +453,12 @@ impl AIPerfRegistry {
 }
 
 #[derive(Clone, Debug)]
-struct LegacyDatasetEndpointResolver {
+struct DatasetEndpointResolverAdapter {
     endpoints: EndpointRegistry,
     default: EndpointId,
 }
 
-impl DatasetEndpointResolver for LegacyDatasetEndpointResolver {
+impl DatasetEndpointResolver for DatasetEndpointResolverAdapter {
     fn resolve(&self, name: Option<&str>) -> crate::dataset::Result<Arc<dyn Endpoint>> {
         let id = match name {
             Some(name) => EndpointId::new(name),
@@ -477,7 +466,7 @@ impl DatasetEndpointResolver for LegacyDatasetEndpointResolver {
         }
         .map_err(|error| DatasetError::Validation(error.to_string()))?;
         self.endpoints
-            .legacy_endpoint(&id)
+            .compatibility_endpoint(&id)
             .map_err(|error| DatasetError::Validation(error.to_string()))
     }
 
@@ -486,9 +475,9 @@ impl DatasetEndpointResolver for LegacyDatasetEndpointResolver {
         endpoint_type: crate::endpoints::EndpointType,
     ) -> crate::dataset::Result<Arc<dyn Endpoint>> {
         let id = EndpointId::new(endpoint_type.canonical_id())
-            .expect("legacy endpoint canonical IDs are valid");
+            .expect("protocol-v1 endpoint canonical IDs are valid");
         self.endpoints
-            .legacy_endpoint(&id)
+            .compatibility_endpoint(&id)
             .map_err(|error| DatasetError::Validation(error.to_string()))
     }
 }

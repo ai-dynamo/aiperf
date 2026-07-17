@@ -3,10 +3,8 @@
 mod common;
 use common::*;
 
-/// Image retrieval with synthetic images completes expected requests.
 #[tokio::test]
 async fn test_basic_image_retrieval() {
-    // NOTE: mock server endpoint path for image retrieval is different from the default
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model nvidia/page-elements-v2 \

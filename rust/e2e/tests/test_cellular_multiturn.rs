@@ -1,25 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end coverage for MULTI-TURN cellular (`--cells N`) runs, reached through the
-//! ordinary Python frontend.
+//! End-to-end coverage for multi-turn cellular (`--cells N`) runs.
 //!
 //! Multi-turn cellular budgets by CONVERSATION (session), not per turn: the controller
 //! slices the phase `sessions` (`--num-conversations`) budget per cell with the same
 //! `owned_positions` round-robin the sampler uses for its per-conversation stride, so
 //! each cell single-passes its OWNED conversation slice. It is sound only on the
 //! exact-fold merge (order-independent store concatenation), where a multi-turn
-//! conversation's variable per-turn dispatch ordinal no longer matters. These tests
-//! prove both halves from `aiperf profile`:
-//!
-//! 1. [`test_cellular_multi_turn_exact_fold_matches_single_cell`] — an UP-FRONT-capable
-//!    multi-turn dataset (`inputs_json`, whose per-turn bodies are authored, so its
-//!    `inputs.json` is generated without dispatching and the run stays exact-fold) runs
-//!    `--cells N` and reproduces the 1-cell run's dataset-deterministic metrics + the
-//!    per-record row SET.
-//! 2. [`test_cellular_multi_turn_retain_is_rejected`] — a live-reply multi-turn synthetic
-//!    dataset (whose `inputs.json` must be captured DURING the run, forcing the retain
-//!    path) is REJECTED with a clear message, rather than silently mis-merging.
+//! conversation's variable per-turn dispatch ordinal no longer matters.
+//! Authored `inputs_json` runs use exact folding and must match the single-cell
+//! deterministic records. Live-reply datasets require retained records and are rejected.
 //!
 //! Requires the launched `aiperf` (`AIPERF_EXEC_BIN`) to include the `velo`
 //! cell transport (the default runner build).
@@ -181,7 +172,6 @@ async fn test_cellular_multi_turn_exact_fold_matches_single_cell() {
         "1-cell baseline must be single-process (no cellular sidecar)"
     );
 
-    // Every conversation's every turn dispatched exactly once in both runs.
     let base_records = record_multiset(&baseline);
     let cell_records = record_multiset(&cellular);
     assert_eq!(
@@ -194,9 +184,7 @@ async fn test_cellular_multi_turn_exact_fold_matches_single_cell() {
         "multi-turn {CELLS}-cell merged per-record row SET must equal the 1-cell run's"
     );
 
-    // Dataset-deterministic summary metrics must match within tolerance (counts/min/max
-    // exact; the integer sequence-length averages are exact under the order-independent
-    // concat merge).
+    // Integer sequence-length aggregates are order-independent.
     for metric in ["input_sequence_length", "output_sequence_length"] {
         let base = &baseline.artifacts.json()[metric];
         let cell = &cellular.artifacts.json()[metric];

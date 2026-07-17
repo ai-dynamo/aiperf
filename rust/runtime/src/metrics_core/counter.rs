@@ -4,9 +4,7 @@
 //! Phase-boundary counter arithmetic shared by telemetry producers.
 //!
 //! AIPerf owns phase transitions, so cumulative GPU and server counters are
-//! sampled synchronously at the start and end barriers. This replaces the
-//! inherited timestamp-search reconstruction while preserving the important
-//! reset clamp.
+//! sampled synchronously at the start and end barriers and reset-clamped.
 
 /// A validated phase-boundary counter delta.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -3,18 +3,13 @@
 mod common;
 use common::*;
 
-// Integration tests for the multi-run confidence reporting feature.
-// Ported from `tests/integration/test_multi_run_confidence.py`.
-
 use std::path::{Path, PathBuf};
 
 use aiperf_mock_server::config::MockServerConfig;
 
-/// Mirror of the Python `IntegrationTestDefaults` fields used here.
 const WORKERS_MAX: u32 = 8;
 const UI: &str = "simple";
 
-/// Return the sorted `run_*` directories under `<dir>/profile_runs`, if any.
 fn run_dirs(artifact_dir: &Path) -> Vec<PathBuf> {
     let profile_runs = artifact_dir.join("profile_runs");
     let mut dirs: Vec<PathBuf> = match std::fs::read_dir(&profile_runs) {
@@ -35,13 +30,11 @@ fn run_dirs(artifact_dir: &Path) -> Vec<PathBuf> {
     dirs
 }
 
-/// Parse a JSON file into a `serde_json::Value`.
 fn read_json(path: &Path) -> serde_json::Value {
     let bytes = std::fs::read(path).expect("read json artifact");
     serde_json::from_slice(&bytes).expect("parse json artifact")
 }
 
-/// Build a mock-server config with a forced error rate.
 fn error_rate_config(error_rate: f64) -> MockServerConfig {
     let mut cfg = MockServerConfig::default();
     cfg.fast = true;
@@ -65,7 +58,6 @@ async fn test_multi_run_basic() {
 
     let dir = h.artifact_path();
 
-    // Verify per-run artifacts exist.
     let profile_runs_dir = dir.join("profile_runs");
     assert!(
         profile_runs_dir.exists(),
@@ -79,7 +71,6 @@ async fn test_multi_run_basic() {
     assert_eq!(dirs[1].file_name().unwrap(), "run_0002");
     assert_eq!(dirs[2].file_name().unwrap(), "run_0003");
 
-    // Verify each run has artifacts.
     for run_dir in &dirs {
         let json_file = run_dir.join("profile_export_aiperf.json");
         let csv_file = run_dir.join("profile_export_aiperf.csv");
@@ -90,7 +81,6 @@ async fn test_multi_run_basic() {
         assert_eq!(run_data["request_count"]["avg"].as_f64().unwrap(), 10.0);
     }
 
-    // Verify aggregate artifacts exist.
     let aggregate_dir = dir.join("aggregate");
     assert!(aggregate_dir.exists(), "aggregate directory should exist");
 
@@ -99,7 +89,6 @@ async fn test_multi_run_basic() {
     assert!(agg_json.exists(), "Aggregate JSON should exist");
     assert!(agg_csv.exists(), "Aggregate CSV should exist");
 
-    // Verify aggregate JSON schema.
     let agg_data = read_json(&agg_json);
 
     assert_eq!(agg_data["metadata"]["aggregation_type"], "confidence");
@@ -129,7 +118,6 @@ async fn test_multi_run_basic() {
         3
     );
 
-    // Check metrics structure.
     let metrics = agg_data["metrics"].as_object().expect("metrics object");
     assert!(!metrics.is_empty(), "Should have aggregated metrics");
 
@@ -164,7 +152,7 @@ async fn test_multi_run_basic() {
 }
 
 #[tokio::test]
-async fn test_backward_compatibility_single_run() {
+async fn test_single_run_uses_root_artifacts() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
@@ -177,7 +165,6 @@ async fn test_backward_compatibility_single_run() {
 
     let dir = h.artifact_path();
 
-    // Verify NO multi-run directory structure.
     assert!(
         !dir.join("profile_runs").exists(),
         "profile_runs should not exist for single run"
@@ -187,7 +174,6 @@ async fn test_backward_compatibility_single_run() {
         "aggregate should not exist for single run"
     );
 
-    // Verify standard artifacts exist at root level.
     assert!(
         dir.join("profile_export_aiperf.json").exists(),
         "Standard JSON should exist at root"
@@ -291,7 +277,6 @@ async fn test_multi_run_with_warmup() {
 
     assert_eq!(r.exit_code, 0);
 
-    // Verify each run has correct request count (warmup excluded).
     for run_dir in run_dirs(h.artifact_path()) {
         let json_file = run_dir.join("profile_export_aiperf.json");
         let run_data = read_json(&json_file);
@@ -318,7 +303,6 @@ async fn test_aggregate_csv_format() {
     let csv_content = std::fs::read_to_string(&agg_csv).expect("read aggregate csv");
     let lines: Vec<&str> = csv_content.trim().split('\n').collect();
 
-    // Check header.
     let header = lines[0];
     let required_columns = [
         "metric",
@@ -337,18 +321,12 @@ async fn test_aggregate_csv_format() {
         assert!(header.contains(col), "CSV should have {col} column");
     }
 
-    // Check at least one data row.
     assert!(lines.len() > 1, "CSV should have data rows");
 }
-
-// =========================================================================
-// Negative Test Cases - Failure Scenarios
-// =========================================================================
 
 #[tokio::test]
 async fn test_multi_run_with_partial_failures() {
     let h = AIPerfHarness::new().await;
-    // Allow non-zero exit if some runs fail.
     let _r = h.run_timeout(
         &format!(
             "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \

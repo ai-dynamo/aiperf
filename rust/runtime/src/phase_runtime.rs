@@ -184,9 +184,8 @@ pub trait ScheduledPhaseResources {
 
 /// Asynchronous control-plane work synchronized to one phase's hard barriers.
 ///
-/// Sidecars are intentionally outside [`RequestObserver`]: low-rate telemetry,
-/// profilers, and future extension runtimes may need a forced sample before
-/// issuance and after every return without adding work to the per-token path.
+/// Sidecars are outside [`RequestObserver`] so low-rate telemetry and profilers
+/// can force samples at phase boundaries without adding per-token work.
 /// The phase driver awaits [`start`](Self::start) before it can issue the first
 /// turn and awaits [`finish`](Self::finish) after dispatch has fully drained.
 pub trait ScheduledPhaseSidecar {
@@ -730,11 +729,8 @@ async fn run_scheduled_phases_inner(
         .enumerate()
         .map(|(index, config)| (config.id.clone(), (index, config.kind)))
         .collect::<BTreeMap<_, _>>();
-    // Emit a one-shot lifecycle marker on STDERR when the profiling phase
-    // starts. By this point readiness has completed and the SIGINT/SIGTERM
-    // listener below is armed, so a lifecycle owner (the Python orchestrator)
-    // that relays this line can safely deliver an interrupt knowing the run is
-    // actually profiling and can be cancelled gracefully into partial results.
+    // Emit the profiling marker only after readiness and signal cancellation
+    // are active, so an immediate interrupt can still produce partial results.
     let observer: Rc<dyn PhaseObserver> = Rc::new(ProfilingBannerObserver::new(observer));
     let reports = Rc::new(RefCell::new(Vec::new()));
     let execution_factory = Rc::new(ScheduledPhaseExecutionFactory {
@@ -819,9 +815,6 @@ impl PhaseObserver for ProfilingBannerObserver {
         if config.kind == PhaseKind::Profiling && !self.announced.replace(true) {
             eprintln!("{PROFILING_BANNER}");
         }
-        // Phase-lifecycle narrative mirroring Python's NOTICE lines
-        // (`timing/phase/runner.py::_format_phase_started`). Emitted at INFO
-        // (tracing has no NOTICE level).
         let requests = optional_count(stats.total_expected_requests);
         let duration_s = stats
             .expected_duration_ns
@@ -841,7 +834,6 @@ impl PhaseObserver for ProfilingBannerObserver {
     }
 
     fn on_sending_complete(&self, stats: PhaseStats) {
-        // Mirrors `_format_phase_sending_complete`.
         tracing::info!(
             "Phase {} sending complete | sent={}, completed={}, in_flight={}",
             stats.phase_id,
@@ -853,7 +845,6 @@ impl PhaseObserver for ProfilingBannerObserver {
     }
 
     fn on_phase_complete(&self, stats: PhaseStats, branch_stats: Option<PhaseBranchStats>) {
-        // Mirrors `_format_phase_complete`.
         let elapsed_s = match (stats.start_ns, stats.requests_end_ns) {
             (Some(start), Some(end)) => (end - start) as f64 / 1e9,
             _ => 0.0,
@@ -873,14 +864,12 @@ impl PhaseObserver for ProfilingBannerObserver {
     }
 
     fn on_phases_complete(&self, stats: Vec<PhaseStats>) {
-        // Mirrors `phase_orchestrator.py`'s "All credits completed" NOTICE.
         tracing::info!("All credits completed");
         self.inner.on_phases_complete(stats);
     }
 }
 
-/// Render an optional expected count as a number or `unbounded` (Python renders
-/// the same "no target" case rather than `None`).
+/// Render an optional expected count as a number or `unbounded`.
 fn optional_count(value: Option<u64>) -> String {
     value.map_or_else(|| "unbounded".to_owned(), |v| v.to_string())
 }

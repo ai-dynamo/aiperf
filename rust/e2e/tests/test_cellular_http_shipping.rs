@@ -1,17 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Stage F — full multi-PROCESS proof that a cellular run ships its per-record
+//! A cellular run ships its per-record
 //! artifacts between real processes over **HTTP + streaming zstd** and the
 //! controller reassembles them correctly.
 //!
-//! True multi-HOST (k8s) cannot run in-sandbox, but multi-PROCESS on localhost
-//! proves the exact same mechanism: real `aiperf --cell` subprocesses, the
+//! `AIPERF_CELL_ARTIFACT_HTTP_FORCE` exercises the transport on localhost with
+//! real `aiperf --cell` subprocesses, the
 //! real controller HTTP artifact upload server bound on loopback, real zstd over a
-//! real TCP socket, and the real Stage D concat. The only residue this cannot
-//! exercise is cross-host DNS — not the shipping mechanism itself.
-//!
-//! # How the same-host HTTP path is reached
+//! TCP socket, and controller artifact concatenation.
 //!
 //! The cross-host HTTP artifact path is normally gated to k8s (a `tcp://` velo
 //! coordinate). The test/dev force seam
@@ -24,18 +21,9 @@
 //! (flag unset) is byte-unchanged (shared-FS concat), which
 //! `test_cellular::test_cellular_matches_single_cell` continues to guard.
 //!
-//! # The two things this proves
-//!
-//! 1. **SET parity** — the final merged per-record artifacts (records/raw/CSV/
-//!    parquet/outputs) have the same dataset-deterministic row SET as a single-cell
-//!    exact-fold baseline for the same seed, and `inputs.json` is byte-identical.
-//! 2. **The bytes went over HTTP+zstd** (not a shared filesystem) — the controller's
-//!    upload handler emits one `received artifact upload over HTTP … content_encoding=zstd`
-//!    line per cell × file (target `aiperf_cellular_artifact`, surfaced at `info` via
-//!    `AIPERF_LOG`). The runner's stderr is forwarded into `logs/aiperf.log`,
-//!    which this test greps to prove the observable fired for every cell. Without
-//!    this the test could not distinguish HTTP shipping from the shared-FS concat —
-//!    which is the whole point.
+//! Merged per-record artifacts must match the single-cell deterministic row set,
+//! and `inputs.json` must be byte-identical. The upload handler logs
+//! `received artifact upload over HTTP … content_encoding=zstd` for each transfer.
 
 mod common;
 use std::collections::BTreeSet;
@@ -336,8 +324,7 @@ fn aiperf_log(r: &RunResult) -> String {
 }
 
 /// The HTTP+zstd artifact-upload observable lines: one per received cell × file, each
-/// naming the cell, the encoding, and the on-wire byte count. This is the load-bearing
-/// proof the bytes crossed a real HTTP socket compressed, not a shared filesystem.
+/// naming the cell, encoding, and on-wire byte count.
 fn upload_observables(r: &RunResult) -> Vec<String> {
     aiperf_log(r)
         .lines()
@@ -346,7 +333,7 @@ fn upload_observables(r: &RunResult) -> Vec<String> {
         .collect()
 }
 
-/// Stage F: a same-host multi-PROCESS `--cells N` run with the HTTP-force seam ships
+/// A same-host multi-process `--cells N` run with the HTTP-force seam ships
 /// every per-record artifact over real HTTP+zstd between real cell subprocesses and the
 /// controller, and the merged result matches a single-cell exact-fold baseline.
 #[tokio::test]
@@ -380,9 +367,7 @@ async fn test_cellular_http_shipping_matches_single_cell() {
         cellular.stderr
     );
 
-    // Topology guard: the multi-cell run went through the controller (which alone
-    // writes cellular-heartbeat.json); the baseline did not. Without this a stripped
-    // `--cells` would make both runs single-process and pass by construction.
+    // Only the controller writes cellular-heartbeat.json.
     assert!(
         cellular
             .artifacts
@@ -398,12 +383,6 @@ async fn test_cellular_http_shipping_matches_single_cell() {
         "1-cell baseline must be single-process (no cellular sidecar)"
     );
 
-    // --- THE HTTP+zstd PROOF ------------------------------------------------------
-    //
-    // The controller's upload handler logged one `received artifact upload over HTTP
-    // … content_encoding=zstd` line per received cell × file. Assert the observable
-    // fired for EVERY cell, and always with the zstd encoding — this is what
-    // distinguishes real HTTP shipping from the shared-FS concat.
     let observables = upload_observables(&cellular);
     assert!(
         !observables.is_empty(),
@@ -460,11 +439,7 @@ async fn test_cellular_http_shipping_matches_single_cell() {
         observables.join("\n")
     );
 
-    // --- SET PARITY ---------------------------------------------------------------
-
-    // 1) inputs.json — byte-identical (seeded, timing-free full-dataset document). It
-    //    crossed the wire over HTTP+zstd for each cell; the controller copied one
-    //    cell's shipped copy verbatim.
+    // The controller copies one cell's identical seeded inputs document.
     let inputs_base = std::fs::read(
         baseline
             .artifacts
@@ -485,7 +460,6 @@ async fn test_cellular_http_shipping_matches_single_cell() {
          cellular run (seeded, timing-free)"
     );
 
-    // 2) records.jsonl — same count, same deterministic SET (order-independent).
     let recs_base = baseline.artifacts.jsonl();
     let recs_cell = cellular.artifacts.jsonl();
     assert_eq!(
@@ -504,7 +478,6 @@ async fn test_cellular_http_shipping_matches_single_cell() {
         "records.jsonl deterministic row SET diverged after HTTP shipping"
     );
 
-    // 3) raw.jsonl — same count, same deterministic request-payload SET.
     let raw_base = baseline.artifacts.raw_records();
     let raw_cell = cellular.artifacts.raw_records();
     assert_eq!(
@@ -519,7 +492,6 @@ async fn test_cellular_http_shipping_matches_single_cell() {
         "raw.jsonl request-payload SET diverged after HTTP shipping"
     );
 
-    // 4) records CSV — identical header, row count, and deterministic content SET.
     let (bh, br, bs) = read_records_csv_projection(&baseline);
     let (ch, cr, cs) = read_records_csv_projection(&cellular);
     assert_eq!(bh, ch, "records CSV header diverged");
@@ -533,7 +505,6 @@ async fn test_cellular_http_shipping_matches_single_cell() {
         "records CSV deterministic content SET diverged after HTTP shipping"
     );
 
-    // 5) outputs.json — same deterministic (identity + generated text) SET.
     let ob = outputs(&baseline);
     let oc = outputs(&cellular);
     assert_eq!(ob.len(), oc.len(), "outputs.json row count diverged");
@@ -543,7 +514,6 @@ async fn test_cellular_http_shipping_matches_single_cell() {
         "outputs.json deterministic (text) SET diverged after HTTP shipping"
     );
 
-    // 6) parquet — identical schema, row count, and deterministic-column SET.
     let pb = read_parquet_projection(
         &baseline
             .artifacts

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Process proof that typed protocol-v2 failures never echo authored credentials.
+//! Protocol-v2 credential-redaction process coverage.
 
 use std::io::Write;
 use std::process::{Command, Output, Stdio};

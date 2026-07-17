@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Online HTTP dispatch over the `aiperf-transport-http` (hyper) client.
+//! Online HTTP dispatch over Hyper.
 //!
 //! [`TransportSink`] implements `loadgen_core`'s [`RequestSink`] using the
-//! Rust-native `aiperf-transport-http` client (hyper + the `aiperf-clock` `Clock`). It
-//! is single-threaded (`!Send`, `Rc`-based) and driven on a `LocalSet`;
+//! clock-injected HTTP client. It is single-threaded (`!Send`, `Rc`-based) and
+//! driven on a `LocalSet`;
 //! admit/token times are stamped from the same clock origin the run loop uses for
 //! arrival, so all events share one timeline.
 //!
@@ -52,10 +52,9 @@ mod endpoint_dispatch;
 
 use endpoint_dispatch::EndpointDispatchHooks;
 
-/// Return true only for an SSE message that the current OpenAI-chat parser
-/// would record as a token. This mirrors the Python worker callback: role-only,
-/// usage-only, finish-only, malformed, and `[DONE]` messages do not release
-/// prefill capacity.
+/// Return true only for an SSE message that releases prefill capacity.
+///
+/// Role-only, usage-only, finish-only, malformed, and `[DONE]` messages do not.
 fn is_meaningful_chat_token(message: &SseMessage) -> bool {
     let Some(data) = message.data() else {
         return false;
@@ -175,9 +174,8 @@ pub struct TransportSink {
     /// path already needs, so those hot paths opt out. Defaults to `true` to
     /// preserve capture for every consumer that does not explicitly opt out.
     capture_wire_responses: bool,
-    /// Worker-local metric accumulator for the scheduled runner's measured
-    /// execution path. Unset until [`configure_measurement`] is called; the
-    /// legacy `execute_turn(observer)` and `TurnDispatcher` paths never touch it.
+    /// Worker-local metric accumulator for measured execution. Unset until
+    /// [`configure_measurement`] is called.
     ///
     /// [`configure_measurement`]: RequestExecutor::configure_measurement
     measurement: WorkerMeasurement,
@@ -317,8 +315,8 @@ impl TransportSink {
         match endpoint_path {
             None => Ok(selected_url.clone()),
             Some(path) if path.starts_with('/') => {
-                // Python parity: expand the sole supported path template and
-                // remove a duplicate `/v1` prefix.
+                // Expand the supported path template before removing a duplicate
+                // `/v1` prefix.
                 let template_remainder = path.replace("{model_name}", "");
                 anyhow::ensure!(
                     !template_remainder.contains('{') && !template_remainder.contains('}'),
@@ -441,8 +439,6 @@ impl TransportSink {
             )
             .await;
 
-        // Parse the collected SSE messages into per-token arrival times, stamped
-        // from the transport clock (real inter-token timing).
         let mut done = false;
         let mut response_text = String::new();
         let mut model_response = ModelResponseMetadata::default();
@@ -834,9 +830,7 @@ impl RequestExecutor for TransportSink {
     }
 
     fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
-        // The workers==1 sink runs on the coordinator reactor, so its single
-        // observer accumulates on the coordinator thread exactly as the
-        // superseded single-observer path did — only its owner moved.
+        // The workers==1 observer accumulates on the coordinator thread.
         self.measurement
             .configure(self.clock.clone(), config, origin_ns);
         Ok(())
@@ -880,12 +874,8 @@ impl RequestExecutor for TransportSink {
     }
 
     async fn prewarm(&self, turn: PreparedTurn) -> Result<()> {
-        // One discarded warmup round-trip through this sink's real dispatch
-        // path, so the first timed request pays none of the connection /
-        // body-materialization / tokenizer / JIT setup cost. Not recorded (the
-        // no-op observer discards every callback and the DispatchResult is
-        // dropped); a warmup transport error is non-fatal because the timed run
-        // reports any persistent failure itself.
+        // Warm connection and materialization state without recording metrics;
+        // persistent failures are reported by the timed run.
         let observer = PrewarmObserver;
         let _ = self.dispatch_collect(turn, &observer, &|_| {}).await;
         Ok(())
@@ -1401,8 +1391,6 @@ mod tests {
                     skipped.model_response.wire_responses.is_empty(),
                     "capture disabled: no raw chunks retained"
                 );
-                // The measured facts the metrics path needs are still populated
-                // regardless of capture, so opting out is observably lossless.
                 assert_eq!(
                     captured.completion_tokens, skipped.completion_tokens,
                     "completion usage must not depend on wire-response capture"

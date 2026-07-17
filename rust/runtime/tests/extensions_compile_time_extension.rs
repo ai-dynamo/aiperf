@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Cross-crate proof that a linked package can implement and register a leaf trait.
+//! Cross-crate extension registration contracts.
 
 use std::collections::BTreeMap;
 
