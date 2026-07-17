@@ -133,6 +133,15 @@ impl EnvelopeV2 {
     }
 }
 
+/// Default thread-per-core worker count when `runtime.workers` is unset: the
+/// machine's available parallelism, so a load run uses every core. Falls back to
+/// `1` when the platform cannot report parallelism.
+fn default_worker_count() -> u64 {
+    std::thread::available_parallelism()
+        .map(|n| n.get() as u64)
+        .unwrap_or(1)
+}
+
 /// Exact outer BenchmarkRun shape accepted by the product wire.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -270,7 +279,10 @@ impl BenchmarkRunWireV2 {
             .runtime
             .get("workers")
             .and_then(Value::as_u64)
-            .unwrap_or(1);
+            // Unset `runtime.workers` auto-selects the machine's parallelism so a
+            // load run uses every core (thread-per-core), instead of a single
+            // worker. An explicit `runtime.workers` (including `1`) always wins.
+            .unwrap_or_else(default_worker_count);
         ensure!(
             worker_count > 0 && worker_count <= usize::MAX as u64,
             "run.cfg.runtime.workers must be a positive usize"
