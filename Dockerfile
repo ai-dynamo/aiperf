@@ -99,25 +99,13 @@ RUN uv pip install --python "${VIRTUAL_ENV}/bin/python" "maturin[patchelf]"
 # .github/workflows/nightly.yml); the wheel-artifact extraction uses the default.
 ARG AIPERF_RUNNER_PROFILE=offline
 
-# The `dynosim` feature path-depends on the external ai-dynamo/dynamo repo. For
-# the offline profile, fetch it adjacent to the workspace at a pinned rev,
-# mirroring how ai-dynamo stages its external native deps (nixl/ucx/gdrcopy are
-# git-cloned at ARG-pinned refs in its wheel_builder). rust/aiperf/Cargo.toml
-# resolves `../../../../../dynamo-aiperf-native/lib/mocker`, which from
-# /workspace/rust/aiperf lands at /dynamo-aiperf-native — hence the target dir.
-# REF is pinned to an exact SHA (shallow fetch-by-rev) for a reproducible build;
-# a branch name also works. Override REPO/REF to build against a different tree.
-# The online profile disables dynosim, so the checkout is skipped entirely.
+# The `dynosim` feature git-depends on the external ai-dynamo/dynamo repo at a
+# pinned rev (see rust/runtime/Cargo.toml's dynamo-mocker/dynamo-kv-router deps).
+# cargo fetches it directly during the build — no adjacent checkout is staged.
+# To move the pin, bump the rev in rust/runtime/Cargo.toml (REPO/REF below are
+# retained for reference and must be kept in sync with that manifest).
 ARG DYNAMO_AIPERF_NATIVE_REPO=https://github.com/ai-dynamo/dynamo.git
 ARG DYNAMO_AIPERF_NATIVE_REF=14e2cf76b04736e9b99412dfbe76cf1af45ae67a
-RUN if [ "${AIPERF_RUNNER_PROFILE}" = "offline" ]; then \
-        git init -q /dynamo-aiperf-native \
-        && git -C /dynamo-aiperf-native remote add origin "${DYNAMO_AIPERF_NATIVE_REPO}" \
-        && git -C /dynamo-aiperf-native fetch --depth 1 origin "${DYNAMO_AIPERF_NATIVE_REF}" \
-        && git -C /dynamo-aiperf-native checkout -q FETCH_HEAD; \
-    else \
-        echo "AIPERF_RUNNER_PROFILE=${AIPERF_RUNNER_PROFILE}: skipping dynamo-aiperf-native checkout"; \
-    fi
 
 # Copy the frontend sources plus the Rust workspace the interned wheel compiles.
 # The single wheel's pyproject.toml is the repo-root one (maturin backend,
@@ -128,10 +116,10 @@ RUN if [ "${AIPERF_RUNNER_PROFILE}" = "offline" ]; then \
 # `python-source = "src"` packages the src-layout frontend.
 COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md /workspace/
 COPY src /workspace/src
-COPY Cargo.toml Cargo.lock /workspace/
 # .cargo/config.toml sets `--cfg tokio_unstable`, required to compile dynosim's
 # dynamo-runtime dependency (it uses Tokio's unstable runtime-metrics API).
 COPY .cargo /workspace/.cargo
+# The Cargo workspace (manifest + lockfile + all member crates) lives under rust/.
 COPY rust /workspace/rust
 
 # Build the unified `aiperf` binary (entry point + execution engine, lto=fat) per
@@ -147,9 +135,9 @@ RUN cd /workspace \
          online)  CLI_FEATURES="--features parquet" ;; \
          *) echo "unknown AIPERF_RUNNER_PROFILE='${AIPERF_RUNNER_PROFILE}' (expected 'offline' or 'online')" >&2; exit 1 ;; \
        esac \
-    && cargo build --release -p aiperf-cli ${CLI_FEATURES} \
+    && cargo build --manifest-path rust/Cargo.toml --release -p aiperf-cli ${CLI_FEATURES} \
     && maturin build --release --out /dist \
-    && python tools/wheel_repack.py --wheel-dir /dist --binary target/release/aiperf
+    && python tools/wheel_repack.py --wheel-dir /dist --binary rust/target/release/aiperf
 
 # Export-only stage: scratch-based so `docker buildx build --target
 # wheel-artifact --output type=local,dest=<dir>` writes only the wheel file

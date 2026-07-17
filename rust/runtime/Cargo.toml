@@ -138,10 +138,14 @@ tokio-rustls = "0.26"
 tokio-stream = "0.1"
 tower-http = { version = "0.6", features = ["fs"] }
 webpki-roots = "0.26"
-dynamo-mocker = { path = "../../../../../dynamo-aiperf-native/lib/mocker", optional = true, default-features = false }
+# dynosim's Dynamo native deps are fetched from the upstream ai-dynamo/dynamo git
+# repo at a pinned rev (no sibling checkout required). REPO/REV mirror the
+# Dockerfile's DYNAMO_AIPERF_NATIVE_REPO/DYNAMO_AIPERF_NATIVE_REF build args; bump
+# both together when moving the pin.
+dynamo-mocker = { git = "https://github.com/ai-dynamo/dynamo.git", rev = "14e2cf76b04736e9b99412dfbe76cf1af45ae67a", package = "dynamo-mocker", optional = true, default-features = false }
 # AIC timing bridge (feature `dynamo-aic-forward-pass`): the embedded-Python AIC
 # runtime lives here in the consumer, not in the pure-Rust mocker.
-dynamo-kv-router = { path = "../../../../../dynamo-aiperf-native/lib/kv-router", default-features = false, optional = true }
+dynamo-kv-router = { git = "https://github.com/ai-dynamo/dynamo.git", rev = "14e2cf76b04736e9b99412dfbe76cf1af45ae67a", package = "dynamo-kv-router", default-features = false, optional = true }
 aiconfigurator-core = { git = "https://github.com/ai-dynamo/aiconfigurator.git", rev = "ffbab15797d3a3f14c382e937c0ab0c1c5cbc530", package = "aiconfigurator-core", features = ["embed-python"], optional = true }
 pyo3 = { version = "0.23.4", features = ["auto-initialize"], optional = true }
 parking_lot = { version = "0.12", optional = true }

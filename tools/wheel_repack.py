@@ -12,7 +12,7 @@ directory (PEP 427), so the ``aiperf`` command becomes the ELF binary itself wit
 no Python launcher shim.
 
 Usage:
-    python tools/wheel_repack.py --wheel-dir dist --binary target/release/aiperf
+    python tools/wheel_repack.py --wheel-dir dist --binary rust/target/release/aiperf
 
 The wheel is edited in place (rewritten). Re-running on an already-repacked wheel
 replaces the injected binary, so the step is idempotent.
@@ -127,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--binary",
         type=Path,
-        default=Path("target/release/aiperf"),
+        default=Path("rust/target/release/aiperf"),
         help="path to the compiled aiperf binary to inject",
     )
     args = parser.parse_args(argv)

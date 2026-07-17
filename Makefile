@@ -36,6 +36,13 @@
 
 SHELL := /bin/bash
 
+# The Cargo workspace lives under rust/ (the repo root itself is not a Cargo
+# workspace). Drive cargo through --manifest-path and read build artifacts from
+# rust/target/ so make targets work when invoked from the repo root.
+CARGO_MANIFEST := rust/Cargo.toml
+CARGO := cargo --manifest-path $(CARGO_MANIFEST)
+RUST_TARGET := rust/target
+
 # Default the make-driven workflow to the native Rust execution path. These are
 # already the code defaults (src/aiperf/common/environment.py); exporting them
 # here makes every make-invoked `aiperf` run use the Rust entry point + hot path
@@ -163,15 +170,15 @@ install-app: bundle-cli #? install the project in editable mode and place the na
 	# Editable installs don't process the wheel's `.data/scripts/` entry, so the
 	# `aiperf` command must be placed on the venv PATH explicitly. This mirrors what
 	# the wheel-repack does for a real install (see `wheel`).
-	cp target/release/aiperf $(VENV_PATH)/bin/aiperf
+	cp $(RUST_TARGET)/release/aiperf $(VENV_PATH)/bin/aiperf
 	chmod +x $(VENV_PATH)/bin/aiperf
 
 native-cli: #? build the unified native Rust `aiperf` binary (entry point + execution engine).
-	cargo build --release -p aiperf-cli $(CLI_FEATURES)
+	$(CARGO) build --release -p aiperf-cli $(CLI_FEATURES)
 
 install-native: native-cli #? install the pure-Rust `aiperf` into dist/native-bin (no Python on the profile/config path).
 	mkdir -p dist/native-bin
-	cp target/release/aiperf dist/native-bin/aiperf
+	cp $(RUST_TARGET)/release/aiperf dist/native-bin/aiperf
 	@echo "Pure-Rust aiperf installed to dist/native-bin/. Add it to PATH:"
 	@echo "  export PATH=\"$$(pwd)/dist/native-bin:$$PATH\""
 	@echo "Then: aiperf profile --model M --url 127.0.0.1:8000 --endpoint-type chat --concurrency 1,2,4 --request-count 100"
@@ -191,14 +198,14 @@ install-native: native-cli #? install the pure-Rust `aiperf` into dist/native-bi
 #   make bundle-cli CLI_FEATURES="--features full,search-pyo3"
 CLI_FEATURES ?= --features full
 bundle-cli: #? build the unified aiperf binary (CLI_FEATURES-selectable) for packaging.
-	cargo build --release -p aiperf-cli $(CLI_FEATURES)
+	$(CARGO) build --release -p aiperf-cli $(CLI_FEATURES)
 
 wheel: bundle-cli #? build the single aiperf wheel (maturin, manylinux) and repack the native binary into it.
 	$(activate_venv) && uv pip install "maturin[patchelf]" \
 		&& maturin build --release --out dist
 	# maturin can't install a native executable as the `aiperf` console script, so
-	# repack the built wheel to inject target/release/aiperf into its scripts dir.
-	$(activate_venv) && python tools/wheel_repack.py --wheel-dir dist --binary target/release/aiperf
+	# repack the built wheel to inject $(RUST_TARGET)/release/aiperf into its scripts dir.
+	$(activate_venv) && python tools/wheel_repack.py --wheel-dir dist --binary $(RUST_TARGET)/release/aiperf
 
 docker: #? build the docker image.
 	docker build -t $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_TAG) $(args) .
@@ -210,13 +217,13 @@ version: #? print the version of the project.
 	@PATH="$(UV_PATH):$(PATH)" uv version
 
 mock-server-native: #? build the high-throughput native Rust `aiperf-mock-server` binary.
-	cargo build --release -p aiperf-mock-server
+	$(CARGO) build --release -p aiperf-mock-server
 
 install-mock-server: mock-server-native #? install the native Rust `aiperf-mock-server` command on the venv PATH.
 	# The mock server is the native Rust binary (crate `aiperf-mock-server`). Place
 	# it on the venv PATH as `aiperf-mock-server`, mirroring how `install-app` puts
 	# the native `aiperf` binary on PATH.
-	cp target/release/aiperf-mock-server $(VENV_PATH)/bin/aiperf-mock-server
+	cp $(RUST_TARGET)/release/aiperf-mock-server $(VENV_PATH)/bin/aiperf-mock-server
 	chmod +x $(VENV_PATH)/bin/aiperf-mock-server
 
 check-mock-server-install: #? verify the native `aiperf-mock-server` command is installed and runnable.

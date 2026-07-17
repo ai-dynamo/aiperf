@@ -8,14 +8,14 @@ resolver = "3"
 # BOTH the entry point and the execution engine, re-execing itself (`aiperf
 # --execute`) over the protocol-v2 stdio seam for each run/probe/cell.
 members = [
-    "rust/loadgen-core",
-    "rust/runtime",
-    "rust/cli",
-    "rust/mock-server",
-    "rust/e2e",
+    "loadgen-core",
+    "runtime",
+    "cli",
+    "mock-server",
+    "e2e",
     # pyo3 cdylib compiled into the single interned `aiperf` wheel (aiperf._native);
     # the unified `aiperf` binary rides along as interned package data.
-    "rust/pyext",
+    "pyext",
 ]
 
 [workspace.package]
@@ -25,8 +25,8 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 # internal crates
-loadgen-core = { path = "rust/loadgen-core" }
-aiperf-runtime = { path = "rust/runtime" }
+loadgen-core = { path = "loadgen-core" }
+aiperf-runtime = { path = "runtime" }
 
 # external (shared versions)
 anyhow = "1"
