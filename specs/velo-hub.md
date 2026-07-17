@@ -59,6 +59,9 @@ benefit; the module sits beside `cellular` and shares its feature flag.
 ```rust
 pub trait HubPlugin: Send + Sync {
     fn prefix(&self) -> &str;                                   // e.g. "/discovery"
+    fn required_abi(&self) -> HubAbiRequirement {               // ABI negotiation
+        HubAbiRequirement::current()
+    }
     fn router(&self) -> axum::Router;                           // HTTP surface
     fn register_velo_handlers(&self, velo: &Arc<Velo>)          // velo surface
         -> Result<(), HubError>;
@@ -70,6 +73,23 @@ identity), an `axum::Router` nested under that prefix, and a
 `register_velo_handlers` hook that installs its velo handlers on the shared
 instance. A plugin is expected to route both surfaces into **one shared handler
 function** so the HTTP and velo paths cannot diverge.
+
+### ABI/version negotiation
+
+The plugin surface carries a version contract. `HUB_ABI_VERSION` is the hub's
+current contract version, and `required_abi` returns the inclusive
+`HubAbiRequirement { min, max }` range a plugin was built against. The default
+(`HubAbiRequirement::current`) pins a plugin to exactly the ABI it compiled
+against — the safe default — so existing plugins compile unchanged; a plugin that
+has verified it tolerates a wider window opts into `HubAbiRequirement::range(min,
+max)` explicitly. `Hub::register` checks the requirement **first**, before it
+touches any hub state, and rejects a plugin whose range excludes
+`HUB_ABI_VERSION` with `HubError::IncompatibleAbi { prefix, required, supported }`
+(a `Display` message naming the mismatch). Because the check precedes the prefix
+insert and handler install, an incompatible plugin needs no rollback — the hub is
+left exactly as before, alongside the existing duplicate-prefix and
+velo-handler-failure rollbacks. `DiscoveryPlugin` declares `current()` explicitly
+as the worked example.
 
 ### The hub host
 
@@ -150,8 +170,6 @@ untouched and keep working as-is:
   partition / store-partition handlers (`cellular::transport::velo_transport`)
   become a `HubPlugin` that registers exactly those velo handlers, making the hub
   the connect anchor the controller is today (the `:9500` role).
-- **Compat/version negotiation** on `register` (beyond duplicate-prefix
-  rejection), so a plugin can declare a required hub ABI.
 - **Wiring the hub into the engine bootstrap** (`engine::cellular_controller`) so
   a real run stands up a hub instead of the two standalone servers.
 
