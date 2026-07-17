@@ -117,10 +117,6 @@ pub struct ModelResponseMetadata {
     pub error_kind: Option<String>,
     /// Human-readable transport/provider failure detail.
     pub error_message: Option<String>,
-    /// Decoded endpoint response frames retained inside Rust for operation-
-    /// specific normalization. These values are never forwarded as raw SSE and
-    /// must not enter diagnostics or public artifacts.
-    pub wire_responses: Vec<Value>,
 }
 
 /// Terminal result returned by a [`TurnDispatcher`].
@@ -927,13 +923,8 @@ impl ScheduledRuntime {
 
         let runtime = self.clone();
         self.scheduler.execute_async(Box::pin(async move {
-            // Every post-dispatch consumer here needs only the Copy `uuid`; the
-            // one exception (the optional lifecycle observer's `on_terminal`)
-            // reads the full turn from `credit.turn`, which `from_issued_turn`
-            // already deep-cloned unconditionally. Capturing `uuid` up front and
-            // sourcing the full turn from `credit` lets us MOVE the original
-            // `turn` into dispatch instead of deep-cloning its message history +
-            // maps on every request (the top profiled allocation hotspot).
+            // Capture the copyable UUID so dispatch can own `turn`; `credit.turn`
+            // retains the lifecycle snapshot.
             let turn_uuid = turn.uuid;
             let recorder = runtime.recorder.clone();
             let clock = runtime.clock.clone();
@@ -1031,9 +1022,6 @@ impl ScheduledRuntime {
                 }
             };
             if let Some(observer) = runtime.turn_lifecycle_observer.borrow().as_ref() {
-                // `credit.turn` is the same unconditionally-cloned turn snapshot,
-                // taken before dispatch and never mutated, so it is byte-identical
-                // to the original turn the observer previously observed at issue.
                 observer.on_terminal(&credit.turn, &outcome);
             }
             runtime

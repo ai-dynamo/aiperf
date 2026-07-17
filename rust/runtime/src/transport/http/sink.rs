@@ -164,16 +164,6 @@ pub struct TransportSink {
     start_ns: Cell<i64>,
     connection_reuse: ConnectionReuseStrategy,
     prepared_endpoints: Option<Rc<PreparedEndpointTable>>,
-    /// Whether to retain each raw SSE/non-streaming chunk as a generic
-    /// `serde_json::Value` in `ModelResponseMetadata::wire_responses`.
-    ///
-    /// Only the evaluation/agentic consumers read `wire_responses`; scheduled,
-    /// request-rate, and user-centric performance runs write it and never read
-    /// it. Retaining it there re-parses every streamed chunk into an
-    /// allocation-heavy `Value` on top of the typed `ChatChunk` the metrics
-    /// path already needs, so those hot paths opt out. Defaults to `true` to
-    /// preserve capture for every consumer that does not explicitly opt out.
-    capture_wire_responses: bool,
     /// Worker-local metric accumulator for measured execution. Unset until
     /// [`configure_measurement`] is called.
     ///
@@ -269,20 +259,8 @@ impl TransportSink {
             start_ns: Cell::new(start_ns),
             connection_reuse: config.connection_reuse,
             prepared_endpoints: None,
-            capture_wire_responses: true,
             measurement: WorkerMeasurement::default(),
         })
-    }
-
-    /// Enable or disable retention of raw wire responses (`wire_responses`).
-    ///
-    /// Defaults to `true`. Scheduling/performance sinks whose results are never
-    /// inspected by the evaluation/agentic consumers set this to `false` to
-    /// skip the redundant per-chunk generic-`Value` parse on the streaming hot
-    /// path.
-    pub fn with_wire_response_capture(mut self, capture: bool) -> Self {
-        self.capture_wire_responses = capture;
-        self
     }
 
     /// Install worker-local prepared endpoint bindings.
@@ -452,11 +430,6 @@ impl TransportSink {
                         continue;
                     }
                     let Some(data) = msg.data() else { continue };
-                    if self.capture_wire_responses
-                        && let Ok(value) = serde_json::from_str::<Value>(data)
-                    {
-                        model_response.wire_responses.push(value);
-                    }
                     let Ok(chunk) = serde_json::from_str::<ChatChunk>(data) else {
                         continue;
                     };
@@ -480,9 +453,6 @@ impl TransportSink {
                 Response::Text(response) => {
                     done = true;
                     if let Some(value) = response.json() {
-                        if self.capture_wire_responses {
-                            model_response.wire_responses.push(value.clone());
-                        }
                         let parsed = parse_non_streaming_response(&value);
                         response_text.push_str(&parsed.0);
                         prompt_tokens = parsed.1;
@@ -1347,59 +1317,4 @@ mod tests {
             .await;
     }
 
-    #[tokio::test]
-    async fn wire_response_capture_flag_gates_raw_chunk_retention() {
-        let local = tokio::task::LocalSet::new();
-        local
-            .run_until(async {
-                let base = crate::test_util::spawn_mock().await;
-                let clock = RealClock::new();
-                let make_req = || Request {
-                    uuid: Uuid::new_v4(),
-                    input_length: 4,
-                    max_output_tokens: 2,
-                    prompt_text: Some("hello world".to_string()),
-                    request_body: None,
-                    request_body_bytes: None,
-                    headers: BTreeMap::new(),
-                    parameters: BTreeMap::new(),
-                    endpoint_path: None,
-                    streaming: true,
-                    x_correlation_id: None,
-                    is_final_turn: true,
-                    cancel_after_ns: None,
-                    url_index: None,
-                };
-                let observer = RecordingObserver::default();
-                let noop = |_ttft_ns: i64| {};
-
-                let captured = TransportSink::new(clock.clone(), clock.now_ns(), &base, "m", false)
-                    .dispatch_collect_with_hooks(make_req(), &observer, noop)
-                    .await
-                    .unwrap();
-                assert!(
-                    !captured.model_response.wire_responses.is_empty(),
-                    "capture defaults on: streamed chunks must be retained"
-                );
-
-                let skipped = TransportSink::new(clock.clone(), clock.now_ns(), &base, "m", false)
-                    .with_wire_response_capture(false)
-                    .dispatch_collect_with_hooks(make_req(), &observer, noop)
-                    .await
-                    .unwrap();
-                assert!(
-                    skipped.model_response.wire_responses.is_empty(),
-                    "capture disabled: no raw chunks retained"
-                );
-                assert_eq!(
-                    captured.completion_tokens, skipped.completion_tokens,
-                    "completion usage must not depend on wire-response capture"
-                );
-                assert_eq!(
-                    captured.response_text, skipped.response_text,
-                    "decoded text must not depend on wire-response capture"
-                );
-            })
-            .await;
-    }
 }

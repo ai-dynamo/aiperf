@@ -195,7 +195,6 @@ pub async fn run_fixed_schedule_online_with_ancillary(
     let start_ns = clock.now_ns();
     let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
         TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
-            .with_wire_response_capture(false)
             .with_prepared_endpoints(chat_dispatch_table()),
     );
     run_scheduled_workload_with_ancillary(
@@ -224,7 +223,6 @@ pub async fn run_user_centric_online(
     let start_ns = clock.now_ns();
     let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
         TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
-            .with_wire_response_capture(false)
             .with_prepared_endpoints(chat_dispatch_table()),
     );
     let workload: Rc<dyn Workload> = Rc::new(UserCentricWorkload::new(config, conversations)?);
@@ -260,7 +258,6 @@ pub async fn run_single_turn_dataset_online(
     let start_ns = clock.now_ns();
     let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
         TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
-            .with_wire_response_capture(false)
             .with_prepared_endpoints(prepared_endpoints),
     );
     let workload: Rc<dyn Workload> =

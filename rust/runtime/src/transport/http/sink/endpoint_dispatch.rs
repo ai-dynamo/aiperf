@@ -322,7 +322,6 @@ impl TransportSink {
                 continue;
             };
             if let Some(value) = &server_response.json {
-                model_response.wire_responses.push(value.clone());
                 absorb_wire_response_metadata(value, &mut model_response);
             }
             let parsed = match parse_endpoint_response(endpoint, &server_response) {

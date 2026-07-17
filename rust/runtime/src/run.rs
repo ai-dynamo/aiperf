@@ -894,8 +894,7 @@ async fn run_paced_adaptive_with_metrics(
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
     let sink: Rc<dyn HttpRequestDispatcher> = Rc::new(
-        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, false)?
-            .with_wire_response_capture(false),
+        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, false)?,
     );
     run_paced_with_backend(
         clock,
@@ -932,7 +931,6 @@ async fn run_user_centric_adaptive_online(
     let start_ns = clock.now_ns();
     let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
         TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
-            .with_wire_response_capture(false)
             .with_prepared_endpoints(crate::test_util::chat_dispatch_table()),
     );
     run_user_centric_adaptive_with_backend(
@@ -967,7 +965,6 @@ pub(crate) async fn run_single_turn_dataset_online(
     let start_ns = clock.now_ns();
     let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
         TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
-            .with_wire_response_capture(false)
             .with_prepared_endpoints(prepared_endpoints),
     );
     let workload: Rc<dyn Workload> =
