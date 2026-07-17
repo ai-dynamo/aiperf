@@ -45,6 +45,8 @@ pub mod endpoints;
 pub mod extensions;
 pub mod gpu_telemetry;
 pub mod graph;
+#[cfg(feature = "cellular")]
+pub mod hub;
 pub mod metrics_core;
 pub mod network_latency;
 pub mod rng;
