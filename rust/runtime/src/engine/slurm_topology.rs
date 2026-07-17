@@ -214,10 +214,8 @@ fn resolve_controller_host_from_env() -> Result<String, SlurmTopologyError> {
     }
     let raw = std::env::var("SLURM_JOB_NODELIST")
         .map_err(|_| SlurmTopologyError::MissingEnv("SLURM_JOB_NODELIST"))?;
-    expand_nodelist(&raw)
-        .into_iter()
-        .next()
-        .ok_or_else(|| SlurmTopologyError::EmptyNodelist(raw))
+    let first = expand_nodelist(&raw).into_iter().next();
+    first.ok_or(SlurmTopologyError::EmptyNodelist(raw))
 }
 
 /// Expand a SLURM `SLURM_JOB_NODELIST` hostlist into concrete hostnames.
