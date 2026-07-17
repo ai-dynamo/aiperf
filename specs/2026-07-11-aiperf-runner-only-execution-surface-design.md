@@ -7,11 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Codex
-**Status:** built — sole native executable, protocol-v2-only, canonical transport/workload
-matrix composed from frozen registries. The strict request envelope and discovery contract
-described historically here are **superseded by**
-`2026-07-13-benchmarkrun-wire-and-runner-catalog-design.md`, which owns the current
-BenchmarkRun-shaped wire and the plugins.yaml-shaped runner catalog.
+**Status:** built — sole native executable, protocol-v2-only, transport and workload composed
+from two independent frozen registries (no pair object, no compatibility predicate: any registered
+workload runs over any registered transport). The strict request envelope and discovery contract
+are owned by `2026-07-13-benchmarkrun-wire-and-runner-catalog-design.md` (the current
+BenchmarkRun-shaped wire and the plugins.yaml-shaped runner catalog).
 **Decision:** every end-user AIPerf execution backed by the native Rust implementation enters
 through the `aiperf` binary's versioned execution operation (`aiperf --execute`, the internal hidden
 mode the entry point re-execs). There is no separate second Rust executable, Python inference
@@ -56,12 +56,13 @@ BenchmarkRun-shaped run (protocol v2)
     v
 aiperf --execute   (the aiperf binary's execution engine)
     |
-    +-- RunnerRegistry
+    +-- AIPerfRegistry   (one seam: endpoints, loaders, samplers,
+    |     |               transports, workloads, exporters, actuators)
     |     +-- endpoint factories
     |     +-- dataset/sampler factories
     |     +-- transport factories
-    |     +-- workload factories  (own their prepare/lowering)
-    |     `-- descriptor compatibility predicate  (no pair objects)
+    |     `-- workload factories  (own their prepare/lowering; resolve the
+    |                              transport's execution factory by id)
     |
     +-- validate
     |     `-- authored run -> validated plan (+ deferred checks)
@@ -80,43 +81,46 @@ Transport and workload are orthogonal selections. A new transport does not acqui
 duplicate every workload DTO, and a new workload does not acquire its own transport. Factories
 lower the versioned run into today's real seams—`Clock`, `RequestSink<R>`, `TurnDispatcher`,
 `GraphSink`, phase/runtime traits, observers, and reporters—not an aspirational parallel harness.
-Transport × workload compatibility is a **descriptor predicate**
-(`validate_descriptor_compatibility`: `semantic_responses`, `required_transport_features`,
-`clock_kinds`), not a reified pair object — the coordinator resolves each axis by id and composes
-them inline, so it still never matches on transport or workload strings.
 
-> **History reversal (2026-07-14).** This section originally specified an explicit `RunnerPairFactory`
-> ("open double dispatch") that reified each transport×workload cell. That mechanism is **struck**: a
-> per-cell object is the O(transport × workload) anti-pattern the orthogonal-axes design exists to
-> avoid. The decided design keeps only transport and workload factories joined by the compatibility
-> predicate; the workload factory owns `prepare`/`validate_run` and receives the validated transport.
-> The "coordinator never string-matches" invariant is preserved (map lookups by id + the predicate).
-> The prose below has been rewritten to the target; the `RunnerPairFactory` type still exists in code
-> until it is deleted in Stage 1 of `2026-07-14-unified-execution-substrate-design.md` §2.3 (which owns
-> the rationale and staged plan). Where §1 says "current code truth," read the pair removal as decided-
-> but-pending that stage.
+Transport and workload are **two independent registries with no admission gate between them**:
+every registered workload runs over every registered transport. There is no `RunnerPairFactory`,
+no `pairs` map, no `register_pair`, no `validate_descriptor_compatibility` predicate, and no
+`supported_pairs` catalog field — all of these are removed from the tree. The **workload factory
+owns** `prepare`/`validate_run`; it receives the validated transport and its id and resolves the
+transport's execution factory from `RunnerExecutionFactories` keyed by `transport_id`, and is
+otherwise transport-blind. Selection is map lookups by id, never a `match` on transport or workload
+strings, so the "coordinator never string-matches" invariant is preserved without any reified cell.
+A constraint a transport genuinely cannot satisfy (for example a token-native gRPC body for an
+endpoint that does not stream) surfaces where it is exercised, not as a registry-time compatibility
+rejection.
 
 ---
 
 ## 1. Current code truth
 
 `aiperf --execute` (the `aiperf` binary's hidden execution mode; crate `aiperf-cli`, execution layer
-`aiperf_runtime::engine` under `rust/runtime/src/engine/`) is the sole strict Rust
-execution surface on the product path. It
+`aiperf_runtime::engine` under `rust/runtime/src/engine/`, gated by the `engine` Cargo feature) is
+the sole strict Rust execution surface on the product path. It
 speaks **protocol v2 only**: it reads one stdin request, composes the stock application, and
 `run_v2` rejects any non-v2 or malformed request as a v2 failure envelope. `--capabilities` is the
 only command-line operation and writes the plugins.yaml-shaped catalog (§8).
 
 ### 1.1 Product-reachable, built matrix
 
-The frozen registry (`registry.rs::BuiltinRunnerRegistryFactory`) registers the `http` and `grpc`
-transports and the `scheduled` and `graph` workloads; the executable matrix is the descriptor-compatible
-cross-product (no pair objects). The base build's executable protocol-v2 combinations:
+The unified `AIPerfRegistry` (composed by `extensions::BuiltinAIPerfRegistryFactory`) registers the
+`http` and `grpc` transports and the `scheduled` and `graph` workloads as two independent axes.
+Because there is no pair gate, the executable matrix is the **full cross-product**: any registered
+workload runs over any registered transport, with transport-specific execution resolved inside the
+workload's `prepare`. The base build's executable protocol-v2 combinations:
 
-| Runner distribution | Executable protocol-v2 pairs |
+| Runner distribution | Executable protocol-v2 combinations |
 |---|---|
-| Base | `http + scheduled`, `http + graph`, `grpc + scheduled` |
-| `dynosim` feature | every base pair plus `dynosim_offline + {scheduled, graph}` and `dynosim_online + {scheduled, graph}` |
+| Base | `http + scheduled`, `http + graph`, `grpc + scheduled`, `grpc + graph` |
+| `dynosim` feature | every base combination plus `dynosim_offline + {scheduled, graph}` and `dynosim_online + {scheduled, graph}` |
+
+`grpc + graph` needs no hand-added cell: a `dag_jsonl`/`weka_trace`/`dynamo_trace` graph dataset
+dispatches over Tonic because graph nodes hold `Rc<dyn Dispatcher>` and the graph endpoint runtime
+builds a gRPC dispatcher. Proven by `rust/cli/tests/test_graph_grpc.rs`.
 
 `http` is a `RealClock` hyper transport (`aiperf_runtime::transport_http`) with h1/h2c/UDS/TLS/SSE,
 connection reuse, and post-send cancellation. `grpc` is a `RealClock` Tonic transport
@@ -140,23 +144,23 @@ branch.
 
 The current product wire is the **performance path**: scheduled and graph execution selected from
 Config shape and `transport.type`. The stateful `agentic`, static-accuracy, provider-neutral
-`evaluation`, and telemetry-watch pairs have left the product wire as Config sheds them; the
-`http + static_accuracy` adapter remains in-tree behind a distribution gate
-(`online_execution::register_http_static_accuracy_pair*`) but is not registered by the base image.
-Any workload the linked registry does not compose fails closed.
+`evaluation`, and telemetry-watch workloads have left the product wire as Config sheds them; the
+static-accuracy adapter remains in-tree behind a distribution gate
+(`online_execution::register_http_static_accuracy*`) but is not registered by the base image.
+Any workload the linked registry does not register fails closed.
 
 ### 1.3 Composition structure
 
-Runner composition is two orthogonal registries joined by a predicate: transport and workload
-factories validate their own raw configuration; `validate_descriptor_compatibility` gates the
-combination; the **workload factory owns** `prepare`/`validate_run` (receiving the validated transport
-and its id) and returns one `PreparedRunnerOperation`. Online execution uses a direct
-`OnlineWorkloadAdapter -> PreparedOnlineHarness` transition. The coordinator does not match on
-transport or workload strings or convert v2 values through a v1 DTO. (The `RunnerPairFactory`
-pair-object mechanism is struck by design — deleted in Stage 1 per §0's note.) Startup-only typed lowering into shared
-runtime values is the single adapter load, not a second wire conversion. `RunnerApplication` freezes
-the linked registry at bootstrap; duplicate IDs are rejected and capabilities are derived from the
-frozen factories, never a handwritten static array.
+Runner composition is two orthogonal registries with no gate between them: transport and workload
+factories validate their own raw configuration, and the **workload factory owns**
+`prepare`/`validate_run` (receiving the validated transport and its id, resolving the transport's
+execution factory from `RunnerExecutionFactories` by `transport_id`) and returns one
+`PreparedRunnerOperation`. Online execution uses a direct `OnlineWorkloadAdapter ->
+PreparedOnlineHarness` transition. The coordinator does not match on transport or workload strings or
+convert v2 values through a v1 DTO. Startup-only typed lowering into shared runtime values is the
+single adapter load, not a second wire conversion. `RunnerApplication` freezes the unified
+`AIPerfRegistry` at bootstrap; duplicate IDs are rejected and capabilities are derived from the
+frozen registered set, never a handwritten static array.
 
 ---
 
@@ -166,8 +170,9 @@ frozen factories, never a handwritten static array.
 2. **Fresh process per run.** Validation may use a separate short-lived process, but execution
    retains one fresh child per variation/trial.
 3. **No Python inference fallback.** Missing runner capabilities fail before execution.
-4. **Orthogonal transport/workload selection.** The run describes both; compatibility is validated
-   by the descriptor predicate composing the two registries (no pair object).
+4. **Orthogonal transport/workload selection.** The run describes both; the two registries are
+   independent axes with no admission gate (any workload over any transport, no pair object and no
+   compatibility predicate).
 5. **Trait-backed registries.** Transport and workload IDs select statically linked factories, not
    central string branches or a closed enum of implementation kinds.
 6. **Exact-image handshake.** Capability and execution processes identify the exact selected runner
@@ -275,10 +280,13 @@ ABI.
 
 Transport factories (`registry.rs::RunnerTransportFactory`) expose a deterministic descriptor
 (`id`, `description`, `clock` family, statically compiled `features`) and `validate` / `prepare`
-methods. The exact internal prepared-transport traits remain split along today's typed
-`RequestSink<HttpRequest>`, gRPC binding, `TurnDispatcher`, and `GraphSink` boundaries; this spec
-does not require an aspirational universal `Transport`/`Harness` trait. It requires the runner
-factory to lower into those current seams without string matching or a second transport/clock path.
+methods. Transport dispatch is unified under one `Dispatcher` trait (implemented once per transport
+by `TransportSink` and `GrpcTransportSink`); the graph placement holds `Rc<dyn Dispatcher>`. The
+prepared-transport placement seams otherwise remain split along the typed `RequestExecutor`
+(per-request) and `TracePlacement` (per-trace) boundaries — merging those two placement traits into
+one `WorkerPool` is the deferred aiperf-v2 work (`2026-07-14-unified-execution-substrate-design.md`
+Stage 2). The runner factory lowers into these current seams without string matching or a second
+transport/clock path.
 
 The mutable builder freezes before validation or execution. Duplicate IDs are rejected. Transport
 descriptors and feature flags are enumerated deterministically into the catalog.
@@ -356,9 +364,10 @@ count, duration gate, firing-gate inputs, and deterministic merge order; graph e
 materialization and response/metric configuration; and optional offline trace/event-source inputs
 required by the Dynamo transport.
 
-It supports `http` through `drive_real` and the dynosim transports through `drive_sim_with_source`.
-Each graph worker owns its metric accumulator, endpoint binding table, and prepared sink; workers
-merge once in deterministic order. The graph adapters pass authored `dag_jsonl` directly to the
+It supports `http` and `grpc` through `drive_real` (the graph endpoint runtime builds an HTTP or a
+gRPC `Rc<dyn Dispatcher>`) and the dynosim transports through `drive_sim_with_source`. Each graph
+worker owns its metric accumulator, endpoint binding table, and prepared sink; workers merge once in
+deterministic order. The graph adapters pass authored `dag_jsonl` directly to the
 registered graph-input adapter, producing `GraphTracePlan`s and one frozen segment store without a
 `Dataset`, `Conversation`, `DagMetadata`, Python resolver, or protocol-v1 intermediate. Unsupported
 phase lists, arrival/slot actuators, or other unbuilt Graph consumers fail validation rather than
@@ -390,22 +399,22 @@ image excludes them.
 
 ---
 
-## 7. Compatibility matrix
+## 7. Reachability matrix
 
-The built-in target matrix is:
+The built-in matrix is the full cross-product of the two registries (no admission gate):
 
 | Transport | `scheduled` | `graph` |
 |---|:---:|:---:|
 | `http` | yes | yes |
-| `grpc` | yes | no |
+| `grpc` | yes | yes |
 | `dynosim_offline` | yes | yes |
 | `dynosim_online` | yes | yes |
 
-The matrix is derived from workload requirements and transport descriptors at registry freeze; it is
-not a handwritten runtime switch. The catalog serializes only the linked, executable transports and
-workloads. A linked factory may add a new ID/pair without editing a core enum, subject to its trait
-and Config schema. The `dynosim_*` transports appear only in a feature-bearing build; `grpc`
-currently pairs with `scheduled` only.
+The catalog serializes the linked, executable transports and workloads as two independent
+inventories — **not** a `supported_pairs` cross-product. Any registered workload runs over any
+registered transport; a linked factory may add a new transport or workload ID without editing a core
+enum, subject to its trait and Config schema. The `dynosim_*` transports appear only in a
+feature-bearing build.
 
 ---
 
@@ -446,9 +455,10 @@ conversion to any legacy path.
 
 The `validate` operation:
 
-1. resolves transport/workload/endpoint IDs through frozen registries;
+1. resolves transport/workload/endpoint IDs through the frozen registries (an unregistered id fails
+   closed);
 2. strictly deserializes their owned configs;
-3. validates transport/workload compatibility through the descriptor predicate and the compiled feature set;
+3. validates that requested optional transport features are compiled in;
 4. validates every rule possible without external dataset/evaluator/server IO;
 5. returns `completeness` plus typed deferred checks.
 
@@ -464,7 +474,7 @@ The `execute` operation repeats static validation and then:
 3. validates fixed timing, graph inputs, and other deferred content;
 4. prepares a worker-local endpoint table and compiled templates/selectors;
 5. prepares the transport clock/sink/engine without beginning workload events;
-6. completes transport/workload compatibility validation using prepared facts;
+6. surfaces any genuinely transport-specific limitation at its point of use with prepared facts;
 7. creates the run artifact directory and materializes authorized user files;
 8. starts supervised sidecars and the runtime;
 9. executes and finalizes reports/artifacts.
@@ -539,9 +549,9 @@ is authoritative.
 
 1. Capability and execute processes agree on the exact linked runner image.
 2. Unknown versions/operations/fields fail with exit `2` and one typed response where possible.
-3. Transports/workloads/endpoints in the catalog exactly equal the frozen registries.
-4. Supported pairs are computed from descriptors/requirements and deterministically serialized.
-5. A custom factory/extension appears in validation and execution without Python registration.
+3. Transports/workloads/endpoints in the catalog exactly equal the frozen registries (two
+   independent inventories, no `supported_pairs` field).
+4. A custom factory/extension appears in validation and execution without Python registration.
 
 ### Reachability matrix
 
@@ -549,12 +559,14 @@ is authoritative.
    telemetry, and native-v2.
 2. `http + graph`: real Graph-IR transport subprocess and deterministic worker merge.
 3. `grpc + scheduled`: real Tonic subprocess with per-lane runtime/LocalSet and native-v2.
-4. `dynosim_offline + {scheduled, graph}`: all applicable scheduled workloads and Graph-IR DES with
+4. `grpc + graph`: a graph dataset dispatching graph nodes over Tonic
+   (`rust/cli/tests/test_graph_grpc.rs`).
+5. `dynosim_offline + {scheduled, graph}`: all applicable scheduled workloads and Graph-IR DES with
    ramps, cancellation, adaptive controls, trace formats, topologies, routers, artifacts, and exact
    parity.
-5. `dynosim_online + {scheduled, graph}`: wall-clock apples-to-apples parity with Dynamo's live
+6. `dynosim_online + {scheduled, graph}`: wall-clock apples-to-apples parity with Dynamo's live
    driver.
-6. Unregistered transport/workload combinations fail static validation.
+7. An unregistered transport or workload id fails static validation.
 
 ### Side effects and failure
 
@@ -638,41 +650,3 @@ This design is complete when:
 
 The exact runner catalog — not library presence or this design record — is the authority for what
 the selected runner can execute.
-
----
-
-## Addendum — 2026-07-14
-
-Superseded by `2026-07-14-unified-execution-substrate-design.md` (Stage 1, built): the
-**`RunnerPairFactory` mechanism** this spec referenced — and the
-**`validate_descriptor_compatibility` predicate together with the `supported_pairs`
-inventory** it derived — are **removed from the tree**. This addendum revises the
-composition *mechanism* only; the completion criteria in §14 and the product-reachability
-matrix (scheduled/graph over http/grpc, dynosim behind the feature) are unchanged.
-
-What changed, and why:
-
-- **No pair object, no compatibility predicate, no pair inventory.** There is no
-  `RunnerPairFactory`, no `pairs: BTreeMap<(transport_id, workload_id), …>` map, no
-  `register_pair`, no `validate_descriptor_compatibility`, and no `supported_pairs`
-  catalog field. `git grep` for any of these in `rust/runtime/src/engine` returns nothing.
-- **Two independent registries, no gate.** The runner now exposes a transport registry
-  and a workload registry as **orthogonal axes with no admission gate between them**:
-  every workload runs over every transport. `prepare` / `validate_run` moved onto the
-  workload factory (`RunnerWorkloadFactory`), which resolves the transport's
-  dispatcher/placement from `RunnerExecutionFactories` keyed by `transport_id` and is
-  otherwise transport-blind. Selection is map lookups by id — never a `match` on
-  transport/workload strings — so this spec's Invariant (no runtime string switch) is
-  **preserved**; only the reified-cell mechanism is gone.
-- **Genuinely transport-specific limits surface at point-of-use, not as admission.**
-  The earlier design admitted the transport × workload cross-product up-front via the
-  descriptor predicate. With the flatten, there is no up-front cross-product admission at
-  all; any constraint a transport genuinely cannot satisfy (e.g. a token-native gRPC body
-  for an endpoint that does not stream) surfaces where it is exercised, not as a
-  registry-time compatibility rejection.
-- **`grpc + graph` falls out for free.** The visible symptom this unlocks — a `dag_jsonl`
-  graph dataset dispatching over Tonic — needs no hand-added cell; it is proven by
-  `rust/runtime/tests/test_graph_grpc.rs`.
-
-The body above is retained as the historical record of the pair-factory design; where it
-and this addendum conflict, the addendum is authoritative.
