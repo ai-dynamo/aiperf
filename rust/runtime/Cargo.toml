@@ -98,6 +98,7 @@ regex.workspace = true
 rustc-hash.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["preserve_order", "raw_value"] }
+serde_yaml = "0.9"
 sha2.workspace = true
 smallvec.workspace = true
 tiktoken-rs.workspace = true
@@ -152,6 +153,10 @@ parking_lot = { version = "0.12", optional = true }
 # Statistics-driven benchmark harness for the synthetic prompt generator
 # (`benches/prompt_gen.rs`). Dev-only: the shipped runner links no criterion.
 criterion = { workspace = true }
+# Global allocator for the `weka_bench` example so its timings mirror the
+# production `aiperf` binary (which installs mimalloc); the allocation-heavy
+# recorded-trace lowering is sensitive to allocator throughput.
+mimalloc = "0.1"
 # Cross-language parity tests load committed JSON reference fixtures and digest
 # token streams to compare against the Python reference generator.
 serde_json = { workspace = true }

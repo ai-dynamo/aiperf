@@ -79,7 +79,7 @@ pub(super) struct PromptMessageKey {
 }
 
 /// Per-trace prompt-message reuse cache consumed by [`emit_prompt`].
-pub(super) type PromptMessageCache = HashMap<PromptMessageKey, Handle>;
+pub(super) type PromptMessageCache = rustc_hash::FxHashMap<PromptMessageKey, Handle>;
 
 #[derive(Debug)]
 struct Geometry {
@@ -579,7 +579,7 @@ mod parity_tests {
 
         let mut content = FixedContent;
         let mut pool = SegmentPool::new();
-        let mut cache = PromptMessageCache::new();
+        let mut cache = PromptMessageCache::default();
         let parent_path = emit_prompt(
             &nodes[0],
             &tags[0],
@@ -612,7 +612,7 @@ mod parity_tests {
         let node = node("tiny", 0, &[], 7, 1);
         let mut content = FixedContent;
         let mut pool = SegmentPool::new();
-        let mut cache = PromptMessageCache::new();
+        let mut cache = PromptMessageCache::default();
         let path = emit_prompt(
             &node,
             &[],

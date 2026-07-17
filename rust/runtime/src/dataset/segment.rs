@@ -476,6 +476,40 @@ impl SegmentPool {
         )
     }
 
+    /// Append every segment of `other` after this pool's arena without any
+    /// cross-pool deduplication, shifting each appended segment's internal
+    /// parent handle by the pre-append length. Returns the base offset applied
+    /// to `other`'s handles, so a caller can shift the segment handles baked
+    /// into a graph built against `other` by the same constant.
+    ///
+    /// This is the merge side of a parallel per-trace lowering: independent
+    /// traces each intern into a private pool, then their disjoint arenas are
+    /// concatenated here. Because segment identity is content-addressed and the
+    /// rendered wire is handle-numbering-invariant, a disjoint concat yields
+    /// byte-identical reconstructed content; it only forgoes the cross-trace
+    /// dedup a single shared pool would have applied (a storage optimization,
+    /// not a correctness property).
+    pub fn concat_disjoint(&mut self, other: SegmentPool) -> Result<u32> {
+        let base =
+            u32::try_from(self.arena.len()).map_err(|_| DatasetError::SegmentCapacityExceeded)?;
+        self.arena.reserve(other.arena.len());
+        self.ids.reserve(other.arena.len());
+        for mut segment in other.arena {
+            if let Some(parent) = segment.parent {
+                let shifted = parent
+                    .index()
+                    .checked_add(base)
+                    .ok_or(DatasetError::SegmentCapacityExceeded)?;
+                segment.parent = Some(Handle::new(shifted));
+            }
+            let index = u32::try_from(self.arena.len())
+                .map_err(|_| DatasetError::SegmentCapacityExceeded)?;
+            self.ids.insert(segment.id, Handle::new(index));
+            self.arena.push(segment);
+        }
+        Ok(base)
+    }
+
     /// Freeze the arena and discard the write-only hash map.
     pub fn freeze(self) -> InMemorySegmentStore {
         InMemorySegmentStore {

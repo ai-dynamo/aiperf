@@ -3,7 +3,7 @@
 
 //! Protocol-v2 executable workloads for the native online transports.
 //!
-//! Workload factories lower authored input into [`NativeRunSpec`] and resolve
+//! Workload factories lower authored input into `NativeRunSpec` and resolve
 //! execution and readiness policy from the validated transport.
 
 use std::collections::BTreeMap;
@@ -1199,6 +1199,9 @@ fn build_common_plan(
             outputs_path: run.artifacts.outputs_path.clone(),
             inputs_path: run.artifacts.inputs_path.clone(),
             trace: run.artifacts.trace,
+            // Scheduled-path dataset-analysis wiring is owned by a later task; the
+            // graph path populates this from the protocol request directly.
+            dataset_analysis_path: None,
         },
         sidecars,
         user_files: run.artifacts.user_files.clone(),

@@ -282,8 +282,8 @@ impl NativeEndpointPlan {
     }
 
     /// Server-token-count policy of the primary (default) endpoint, used for
-    /// run-level tokenizer-free input accounting. Mirrors Python's single
-    /// `cfg.endpoint.use_server_token_count`; falls back to `false` when no
+    /// run-level tokenizer-free input accounting. Uses the default endpoint's
+    /// `use_server_token_count`; falls back to `false` when no
     /// default profile resolves.
     pub(crate) fn use_server_token_count(&self) -> bool {
         let Self::Prepared(profiles) = self;
@@ -390,13 +390,10 @@ impl NativeDatasetPlan {
     }
 }
 
-/// Process coordinates selected for one static-accuracy evaluator.
-///
-/// This protocol-neutral value keeps protocol-v2 adapters from projecting
-/// through the protocol-v1 [`AccuracySpec`] wire DTO.
+/// Process launch parameters for one static-accuracy evaluator.
 #[derive(Clone, Debug)]
 pub struct StaticAccuracyEvaluatorProcessSpec {
-    /// Absolute Python executable selected by the Python orchestrator.
+    /// Absolute Python executable used to launch the evaluator.
     pub python_executable: PathBuf,
     /// Importable evaluator worker module.
     pub worker_module: String,
@@ -840,7 +837,7 @@ fn wants_per_record_artifacts(
 /// or
 /// [`MessageArrayWithoutResponses`](crate::dataset::ConversationContextMode::MessageArrayWithoutResponses)
 /// with more than one turn — because a later turn's body then splices the live reply.
-/// This mirrors the per-conversation rule in
+/// This uses the per-conversation rule in
 /// [`NativeDatasetConversationSource::build_input_payloads`] so the cheap gate check
 /// and the actual generation agree.
 fn dataset_supports_up_front_inputs(dataset: &Dataset) -> bool {
@@ -918,63 +915,8 @@ pub(crate) fn exact_fold_enabled_by_env() -> bool {
     }
 }
 
-/// Gate for the exact-mode per-record fold-and-drop path.
-///
-/// The single gate for BOTH executors. The scheduled path (`execute_native_inner`)
-/// builds [`ExactFoldInputs`] from its live consumers; the graph path
-/// (`execute_graph_native`) passes `false` for the consumers it structurally never
-/// wires (live sink / heartbeat / adaptive / accuracy), so the same function reduces
-/// to the graph-relevant `!sketch && !unstreamable_parquet` check.
-///
-/// Exact-fold folds each completed record's metric scalars into the EXACT accumulator
-/// (keeping the NaN-sparse columns for exact percentiles/timeslices/series) and drops
-/// heavy per-record data during the run when no consumer requires retained records.
-/// It is selected only when all conditions hold:
-///
-/// - no per-record file artifacts / per-record OTLP (`wants_per_record_artifacts`)
-///   that read retained records;
-/// - not sketch mode (sketch has its own bounded fold with a different storage mode);
-/// - not adaptive, and no live sink / heartbeat lane — all three consume retained or
-///   per-turn record clones the fold-and-drop path does not keep;
-/// - the env switch is not forcing record retention.
-///
-/// The thread-per-core sharded arm (`workers > 1`) is not a disqualifier:
-/// each shard folds into its own exact accumulator stamped with a
-/// LOCAL-dense `0..N_shard` fold ordinal (its per-capture `fold_dispatch_next`
-/// counter, independent of the `CellularAutonomousIssuer`'s strided GLOBAL ordinal
-/// used only on the retain path), so the shards' dense stores concatenate through the
-/// existing `append_store` merge. The merged summary is WITHIN NUMERICAL TOLERANCE of
-/// the sharded-retain summary — counts, min/max, and percentiles stay exact (they are
-/// order-independent set operations); sums/means/rates may drift a few ULPs from the
-/// reordered f64 summation. `shardable` is an explicit input axis but does not gate
-/// exact-fold.
-///
-/// A cellular child (`AIPERF_CELL_*`) is likewise not a disqualifier
-/// for a metrics-only run: the cell folds its records into its own dense-LOCAL exact
-/// accumulator (exactly like a shard) and ships that folded STORE to the controller
-/// (a `CellMessage::StorePartition`) instead of the full record `Vec`, and the
-/// controller appends every cell's store (`merge_store_partitions`) into the merged
-/// report — the same within-tolerance bar as the in-process sharded merge.
-///
-/// A same-host cellular run emits per-record file artifacts (records/raw/CSV/
-/// parquet/outputs): exact-fold does not
-/// disqualify on `wants_per_record_artifacts` alone (the streaming lane writes each row),
-/// so a cell writes its merged per-record artifacts into its controller-local
-/// `temp_root/cell-{id}` dir (its artifact_dir) exactly like a single-process run, and
-/// the controller concatenates every cell dir into the real artifact dir at finalize
-/// (`cellular_controller::run_cellular` → `shard_artifacts::concatenate_cell_artifacts`).
-/// A cellular run that hits `wants_per_record_artifacts` (e.g. a lite build's Parquet)
-/// keeps its cells on retain, and the batch tail still writes those files into the cell
-/// dir for the same concat. Only a CROSS-HOST (k8s) run still drops them — the cell pod
-/// writes to its own filesystem, unreachable by the controller (warned at startup by
-/// `warn_dropped_per_record_artifacts`).
-/// `is_cellular` is an explicit input axis but (like `shardable`) deliberately
-/// not read here — it does not gate exact-fold.
-///
-/// (The scheduled path never carries a graph dataset — that is a separate executor —
-/// so "not graph" is implicit here.)
-///
-/// Named fields prevent transposed boolean arguments from silently changing the gate.
+// Exact-fold is eligible when no downstream consumer requires retained records.
+// Sharded and cellular execution merge worker-local exact stores independently.
 fn exact_fold_eligible(inputs: ExactFoldInputs) -> bool {
     !inputs.sketch_mode
         && !inputs.has_accuracy
@@ -984,40 +926,15 @@ fn exact_fold_eligible(inputs: ExactFoldInputs) -> bool {
         && !inputs.wants_per_record_artifacts
 }
 
-/// Named disqualifiers for the exact-fold eligibility gate ([`exact_fold_eligible`]).
-///
-/// Each field requires the retain-then-batch path; the gate is eligible only
-/// when every field is `false`.
+// Inputs considered by exact-fold eligibility.
 #[derive(Clone, Copy, Debug)]
 struct ExactFoldInputs {
     /// Sketch storage mode: has its own bounded t-digest fold path.
     sketch_mode: bool,
-    /// The thread-per-core sharded arm (`workers > 1`). This explicit input is
-    /// deliberately not read by [`exact_fold_eligible`]: each
-    /// shard folds into its own exact accumulator with a LOCAL-dense fold ordinal and
-    /// the dense stores concatenate through `append_store`, so a sharded metrics-only
-    /// run selects exact-fold. A sharded run with per-record artifacts also
-    /// stays eligible: each shard streams its rows into a per-shard temp file and
-    /// the coordinator concatenates them at finalize; only artifacts with no streaming
-    /// lane (via `wants_per_record_artifacts`) keep a run on retain. `shardable`
-    /// itself does not gate exact-fold.
+    /// Recorded for call-site clarity; does not affect eligibility.
     #[allow(dead_code)]
     shardable: bool,
-    /// A cellular child (`AIPERF_CELL_*`). This explicit input is deliberately
-    /// not read by [`exact_fold_eligible`]: a metrics-only
-    /// cellular run folds into its own dense-LOCAL exact accumulator and ships the
-    /// folded STORE (`CellMessage::StorePartition`) to the controller, which appends
-    /// every cell's store into the merged report. A same-host cellular child
-    /// emits per-record file artifacts: each cell writes them (streaming lane
-    /// under exact-fold, or the retain batch tail) into its controller-local
-    /// `temp_root/cell-{id}` dir, and the controller CONCATENATES them into the real
-    /// artifact dir at finalize (`shard_artifacts::concatenate_cell_artifacts`), plus
-    /// copies one cell's `inputs.json` (`copy_cell_inputs_json`). Cross-host cells
-    /// cannot expose their local artifact directories to the controller and warn
-    /// through `warn_dropped_per_record_artifacts`. Like `shardable`, this axis does
-    /// not force retain: a requested per-record artifact keeps the cell on retain via
-    /// `wants_per_record_artifacts` only when the artifact has no streaming lane, exactly
-    /// as the single-process path.
+    /// Recorded for call-site clarity; does not affect eligibility.
     #[allow(dead_code)]
     is_cellular: bool,
     /// A static/stateful accuracy run: retains records for post-run scoring.
@@ -1047,11 +964,8 @@ struct ExactFoldInputs {
 /// upstream by [`validate_graph_request`], so `live_streaming_wired` is always false
 /// here and its absence is a structural invariant we assert rather than a flag we read.
 ///
-/// Deliberately NOT consulted: `native_otel_enabled` and `HeartbeatLane::enabled_by_env`.
-/// Those are raw config/env probes the Python frontend sets for ANY run with an OTEL
-/// metrics URL / heartbeat env — they do NOT reflect whether the graph path turned them
-/// into a per-record consumer (it never does). Asserting on them false-tripped a
-/// legitimate summary-only graph run that merely had OTEL export configured.
+/// `native_otel_enabled` and `HeartbeatLane::enabled_by_env` do not identify
+/// per-record consumers and therefore do not affect this decision.
 fn graph_exact_fold_drop_is_safe(live_streaming_wired: bool) -> bool {
     !live_streaming_wired
 }
@@ -1556,7 +1470,15 @@ async fn execute_graph_native(
     // so it passes them as `false` and the shared `exact_fold_eligible` reduces to the
     // graph-relevant `!sketch && !unstreamable_parquet` check. `inputs_need_retain` is
     // false because the graph path never writes `inputs.json`.
+    // The dry-run dataset analysis is a per-record consumer: it reads the FULL
+    // retained record set (clean + errored) to build the length, timeline, and
+    // prefix-cache sections, so requesting it forces retain mode on the graph
+    // path (exact-fold would drop the clean records mid-run). Threaded as a local
+    // disqualifier on `graph_exact_fold` rather than a shared `ExactFoldInputs`
+    // field to keep the change scoped to the graph path.
+    let wants_dataset_analysis = request.artifacts.dataset_analysis_path.is_some();
     let graph_exact_fold = exact_fold_enabled_by_env()
+        && !wants_dataset_analysis
         && exact_fold_eligible(ExactFoldInputs {
             sketch_mode: request.metrics.sketch,
             shardable: false,
@@ -1640,10 +1562,8 @@ async fn execute_graph_native(
     // consumer a graph run could carry — the live-streaming record extension — is rejected
     // upstream by `validate_graph_request`, so this tripwire asserts on that structural
     // fact (no live-streaming consumer wired), NOT on the raw `native_otel_enabled` /
-    // `HeartbeatLane::enabled_by_env()` config/env probes. Those flags are set by the
-    // Python frontend for ANY run with an OTEL metrics URL / heartbeat env and do NOT
-    // reflect whether the graph path built the corresponding consumer (it never does), so
-    // asserting on them false-tripped a legitimate summary-only graph run with OTEL export.
+    // `HeartbeatLane::enabled_by_env()` config/env probes, which do not indicate
+    // whether graph execution built a corresponding consumer.
     debug_assert!(
         !graph_fold
             || graph_exact_fold_drop_is_safe(
@@ -1783,6 +1703,21 @@ async fn execute_graph_native(
     // `AIPERF_RUNTIME_EXACT_FOLD=0` on a non-sketch run) writes them from the full Vec here.
     if !graph_fold {
         write_graph_artifacts(&request, &captured, &metrics_config)?;
+        // Dataset analysis reads the full retained record set. `wants_dataset_analysis`
+        // forced the retain path above, so `captured` holds every clean + errored record.
+        if let Some(relative) = &request.artifacts.dataset_analysis_path {
+            let base = artifact_path(&request.artifact_dir, relative, "dataset_analysis_path")?;
+            let analysis_request = crate::engine::dataset_analysis_writer::DatasetAnalysisRequest {
+                path: base,
+                options: crate::dataset::analysis::AnalysisOptions::default(),
+                per_conversation: false,
+            };
+            crate::engine::dataset_analysis_writer::write_dataset_analysis(
+                &analysis_request,
+                &captured,
+                &input,
+            )?;
+        }
     }
     let server_metrics_report = write_sidecar_records(
         gpu_telemetry,
@@ -2465,7 +2400,7 @@ pub(crate) async fn execute_scheduled_shard(
             });
             let mut record_processors = vec![record_processor];
             // Static-accuracy captures its terminal responses on the profiling phase
-            // only (mirrors the single-thread arm); each shard feeds its own
+            // only; each shard feeds its own
             // processor, drained into the outcome after the run.
             if phase.common().name == "profiling"
                 && let Some(accuracy_processor) = &shard_accuracy_processor
@@ -2714,7 +2649,7 @@ async fn execute_native_inner(
     // Exact-fold folds each completed record into the exact accumulator and
     // drops the heavy per-record data mid-run, but only on the single-thread
     // `DirectIssuanceAuthority` path with no per-record artifacts. Computed once here
-    // (mirroring `sketch_mode`): the single-thread arm reads it to build the capture and
+    // like `sketch_mode`: the single-thread arm reads it to build the capture and
     // pick the finalize, the sharded arm's gate rejects it (`shardable`), and the
     // cellular-shipping guard reads it below. Heartbeat presence is probed from the env
     // rather than the (file-truncating) lane so this stays a pre-branch decision.
@@ -2993,9 +2928,9 @@ async fn execute_native_inner(
             // lane at completion; flush and close it now that every record has
             // folded. A no-op when no lane is attached (sketch, or no lane artifact).
             capture.finish_record_lane()?;
-            // Exact-fold folded each profiling record's OTLP histogram at completion
-            //; take that accumulator for the report tail. `None` in sketch
-            // mode / when native OTLP is off.
+            // Exact-fold accumulates profiling-record OTLP histograms at completion;
+            // take that accumulator for the report tail. It is absent in sketch mode
+            // and when native OTLP is disabled.
             folded_otel = capture.take_otel();
             let (streamed, errored) = capture.take_streamed();
             accumulator
@@ -3015,8 +2950,7 @@ async fn execute_native_inner(
         // capture. The retain path keeps the during-run capture (`take_input_sessions`).
         let input_sessions = if exact_fold && request.artifacts.inputs_path.is_some() {
             // Exact-fold emits a FULL-dataset inputs.json (every conversation in the
-            // resident dataset), matching the Python frontend's up-front inputs export,
-            // whereas the during-run capture records ONLY the conversations a run
+            // resident dataset), whereas the during-run capture records ONLY the conversations a run
             // actually dispatched. The two agree for a full-coverage run, but a
             // partial-coverage run (a request-bounded phase that stops before touching
             // every conversation) yields a strictly larger inputs.json under exact-fold.
@@ -3863,7 +3797,7 @@ pub(crate) async fn build_file_dataset(
         load.max_output_tokens = synthesis.max_osl;
     }
     // An empty format means `--custom-dataset-type` was not supplied; defer to
-    // structural auto-detection (Python's `_infer_dataset_type`). A non-empty
+    // structural auto-detection. A non-empty
     // format is an explicit, honored loader selection.
     let explicit_format = (!spec.format.is_empty()).then_some(spec.format.as_str());
     registry
@@ -5108,7 +5042,7 @@ impl RunCapture {
     /// has no `AIPERF_CELL_PHASE_ORDINAL_BASES` env var, yet its `W` sub-cell
     /// threads still need each phase's global base so profiling ordinals do not
     /// collide with warmup's `[0, W)` block. The sharded runtime computes the
-    /// bases from the phase `requests` budgets (mirroring
+    /// bases from the phase `requests` budgets (the same policy as
     /// [`crate::engine::cellular_controller::phase_ordinal_bases`]) and injects the same
     /// map into every thread's capture. Controller children use the global,
     /// partition-independent environment bases for every thread.
@@ -5877,7 +5811,7 @@ impl AdaptiveTerminalRecordSource for RunCapture {
 /// Feeds each completed online turn's finished worker record into the adaptive
 /// window sampler.
 ///
-/// This mirrors `graph_phase_runtime`'s `sampler.on_record(&record.ingest)` feed
+/// This uses `graph_phase_runtime`'s `sampler.on_record(&record.ingest)` feed
 /// for the scheduled online path, where token/usage/terminal facts are recorded
 /// worker-locally and the coordinator's callback observer only sees arrivals.
 /// It runs after normal measurement and credit return, keeping token
@@ -7231,7 +7165,7 @@ mod tests {
     fn graph_exact_fold_gate_streams_artifacts_and_rejects_sketch_and_lite_parquet() {
         use crate::engine::protocol::ArtifactSpec;
 
-        // Mirror the production graph caller (`execute_graph_native`): the graph path
+        // The production graph caller wires none of the retain-forcing consumers:
         // wires NONE of the retain-forcing per-record consumers, so it feeds the shared
         // `exact_fold_eligible` gate `false` for them and `wants_per_record_artifacts`
         // with `inputs_need_retain = false` (the graph path never writes inputs.json).
@@ -7514,6 +7448,7 @@ mod tests {
             outputs_path: Some(PathBuf::from("outputs.json")),
             inputs_path: Some(PathBuf::from("inputs.json")),
             trace: false,
+            dataset_analysis_path: None,
         };
         // `inputs_need_retain == false`: inputs.json is up-front-able for this shape.
         #[cfg(feature = "parquet")]

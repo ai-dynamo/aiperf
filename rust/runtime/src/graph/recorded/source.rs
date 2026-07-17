@@ -47,10 +47,21 @@ pub(crate) async fn load_weka_documents(
             // trace per line (the published `semianalysisai/cc-traces-weka-*`
             // `traces.jsonl` shape). A trailing-characters failure switches to
             // line-delimited parsing.
+            let label = path.display().to_string();
+            let is_gzip = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("gz"));
+            if is_gzip {
+                // Compressed bytes can't be whole-parsed in place; stream-decode.
+                return read_json_lines_raw(path);
+            }
             let bytes = fs::read(path).map_err(|error| source_error(path, error))?;
-            match parse_whole_json_raw(&bytes, &path.display().to_string()) {
+            match parse_whole_json_raw(&bytes, &label) {
                 Ok(value) => Ok(vec![value]),
-                Err(_) => read_json_lines_raw(path),
+                // Split the JSONL corpus from the bytes already in memory rather
+                // than re-opening and re-reading the (multi-gigabyte) file.
+                Err(_) => parse_json_lines_from_slice(&bytes, &label),
             }
         }
         DatasetSource::Bytes(bytes) => {
@@ -69,7 +80,7 @@ pub(crate) async fn load_weka_documents(
 }
 
 /// Load Dynamo request-trace documents as untouched JSON text. See
-/// [`load_weka_documents`] for why the wide-hash formats stay as [`RawValue`]s.
+/// `load_weka_documents` for why the wide-hash formats stay as [`RawValue`]s.
 pub(crate) async fn load_dynamo_documents(
     config: &LoadConfig,
 ) -> Result<Vec<Box<RawValue>>, RecordedTraceError> {
@@ -140,11 +151,8 @@ fn values_from_inline(value: &Value) -> Result<Vec<Value>, RecordedTraceError> {
     })
 }
 
-/// Fan an already-decoded inline [`Value`] out into per-document raw tokens.
-///
-/// Inline sources are used by tests and authored configs, never by the wide-hash
-/// product path, so serializing the `Value` back to raw text is lossless for
-/// every hash that already fit through `Value` decoding.
+// Inline values have already passed through serde_json::Value, so converting
+// them back to raw tokens preserves every representable hash.
 fn raws_from_inline(value: &Value) -> Vec<Box<RawValue>> {
     match value {
         Value::Array(values) => values.iter().map(raw_from_value).collect(),
@@ -179,6 +187,33 @@ fn parse_json_lines_raw(
 /// The aiperf-trace path uses `T = Value` (hashes fit in `u64`); the Dynamo
 /// schema uses `T = Box<RawValue>` to capture each record as untouched raw JSON
 /// text so wide `input_sequence_hashes` survive before any `f64` coercion.
+/// Split an in-memory JSONL buffer into one decoded value per non-empty line.
+///
+/// JSONL escapes interior newlines, so a raw `\n` split is a safe record
+/// boundary. This avoids the second full file read that
+/// [`read_json_lines_raw`] would incur after an in-memory whole-JSON probe.
+fn parse_json_lines_from_slice<T: DeserializeOwned>(
+    bytes: &[u8],
+    label: &str,
+) -> Result<Vec<T>, RecordedTraceError> {
+    let mut values = Vec::new();
+    for (index, raw_line) in bytes.split(|&byte| byte == b'\n').enumerate() {
+        let line = std::str::from_utf8(raw_line)
+            .map_err(|error| {
+                RecordedTraceError(format!("{label}: not valid UTF-8 JSONL: {error}"))
+            })?
+            .trim();
+        if line.is_empty() {
+            continue;
+        }
+        let value: T = serde_json::from_str(line).map_err(|error| {
+            RecordedTraceError(format!("{label}: invalid JSON line {}: {error}", index + 1))
+        })?;
+        values.push(value);
+    }
+    Ok(values)
+}
+
 fn parse_json_lines_from<T: DeserializeOwned>(
     mut reader: impl BufRead,
     label: &str,
@@ -274,16 +309,16 @@ pub enum RecordedTracePathKind {
 
 /// The exact ordered on-disk file set the recorded-trace loader for `format`
 /// reads for a `Path` source, plus the layout kind and the original path's file
-/// name. This is the shipping-side mirror of the loaders in this module — it
-/// reuses their own enumeration ([`json_documents_in_dir`] /
-/// [`discover_dynamo_segments`]), so the set the controller ships is byte-for-byte
+/// name. This is the shipping counterpart to the loaders in this module; it
+/// reuses their own enumeration (`json_documents_in_dir` /
+/// `discover_dynamo_segments`), so the set the controller ships is byte-for-byte
 /// the set a 1-cell run reads (no over/under-ship).
 ///
 /// `format` must be one of the graph recorded formats:
 /// - `weka_trace` / `aiperf_trace`: a single file, or a directory of `.json`
-///   files (see [`load_weka_documents`] / [`load_aiperf_documents`]);
+///   files (see `load_weka_documents` / `load_aiperf_documents`);
 /// - `dynamo_trace`: a single file, a directory of `.jsonl`/`.jsonl.gz`, or a
-///   segmented-prefix stem (see [`discover_dynamo_segments`]);
+///   segmented-prefix stem (see `discover_dynamo_segments`);
 /// - `dag_jsonl`: a single file ONLY — its loader (`load_raw_rows`) reads one file
 ///   via `std::fs::read`, so a directory/prefix is unreadable and rejected here.
 ///
