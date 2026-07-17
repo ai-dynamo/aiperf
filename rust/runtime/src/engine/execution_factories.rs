@@ -15,9 +15,7 @@ use std::sync::Arc;
 use crate::engine::control_plane_http::{
     ControlPlaneHttpProviderFactory, NativeControlPlaneHttpProviderFactory,
 };
-use crate::engine::graph_execution::{
-    NativeRunnerGraphPlacementFactory, GraphPlacementFactory,
-};
+use crate::engine::graph_execution::{GraphPlacementFactory, NativeRunnerGraphPlacementFactory};
 use crate::engine::readiness::{
     NativeHttpReadinessPlanFactory, NativeHttpReadinessTransportFactory,
     OnlineReadinessPlanFactory, ReadinessTransportFactory,

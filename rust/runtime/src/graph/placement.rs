@@ -33,9 +33,18 @@ pub const DEFAULT_GRAPH_WORKER_QUEUE_CAPACITY: usize = 256;
 /// not be `Send` or `Sync`: it never leaves that worker's `LocalSet`.
 pub trait TracePlacementFactory: Send + Sync {
     /// Construct the backend owned by `worker_id`.
+    ///
+    /// `clock` overrides the backend's time source. Thread-per-core workers pass
+    /// `None` and let the factory build a `RealClock` bound to each worker's own
+    /// reactor (the `!Send` clock cannot cross the thread boundary, so it is
+    /// reconstructed from a `Send` anchor). The single-reactor inline placement
+    /// passes `Some(injected_clock)` — the run's `SimClock` under a virtual run —
+    /// so its `Clock::sleep`s are virtual-time events the idle-pump can advance
+    /// rather than real timerfd sleeps (which would panic on the IO-less pump).
     fn create_backend(
         &self,
         worker_id: usize,
+        clock: Option<Rc<dyn crate::clock::Clock>>,
     ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError>;
 }
 
@@ -253,6 +262,57 @@ impl Drop for ThreadPerCoreTracePlacement {
     }
 }
 
+/// Single-reactor whole-trace placement: every trace runs inline on the
+/// caller's current-thread reactor, spawning no worker OS threads.
+///
+/// The thread-per-core placement is the online default because it fans traces
+/// across cores for throughput, but it is fundamentally incompatible with a
+/// virtual [`crate::clock::SimClock`]: each worker thread owns its own reactor,
+/// and the coordinator's `drive_sim` idle-pump can only advance the sleepers of
+/// the *one* reactor it drives. Under sim, work placed on worker threads simply
+/// never has its virtual-time arrivals advanced, so the replay stalls after the
+/// first root node. This placement collapses all per-trace execution onto the
+/// coordinator's single reactor — the same reactor `drive_sim` drives — so every
+/// node's `Clock::sleep` is a schedulable virtual-time event. The coordinator
+/// still `spawn_local`s each `execute_trace`, so independent traces overlap
+/// concurrently on that one reactor exactly as they would across worker threads.
+///
+/// One backend is built eagerly on the current thread (it is `!Send`, so it can
+/// never leave this reactor) and shared by every concurrent trace, mirroring how
+/// a thread-per-core worker's single backend serves all traces routed to it.
+pub struct LocalTracePlacement {
+    backend: Rc<dyn TracePlacement>,
+}
+
+impl LocalTracePlacement {
+    /// Build the current-thread backend from `factory` (worker slot `0`) over the
+    /// injected `clock` — the run's single reactor clock, so a virtual `SimClock`
+    /// drives the backend's sleeps in virtual time.
+    pub fn new(
+        factory: Arc<dyn TracePlacementFactory>,
+        clock: Rc<dyn crate::clock::Clock>,
+    ) -> Result<Self, GraphPlacementError> {
+        Ok(Self {
+            backend: factory.create_backend(0, Some(clock))?,
+        })
+    }
+}
+
+#[async_trait(?Send)]
+impl TracePlacement for LocalTracePlacement {
+    async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
+        self.backend.execute_trace(plan).await
+    }
+
+    fn cancel_inflight(&self) -> Result<(), TraceError> {
+        self.backend.cancel_inflight()
+    }
+
+    fn set_prefill_limit(&self, limit: usize) -> Result<(), TraceError> {
+        self.backend.set_prefill_limit(limit)
+    }
+}
+
 enum WorkerCommand {
     Execute {
         plan: GraphTracePlan,
@@ -291,7 +351,7 @@ fn worker_thread(
     };
     let local = LocalSet::new();
     runtime.block_on(local.run_until(async move {
-        let backend = match factory.create_backend(worker_id) {
+        let backend = match factory.create_backend(worker_id, None) {
             Ok(backend) => backend,
             Err(error) => {
                 let _ = ready.send(Err(format!(
@@ -407,6 +467,7 @@ mod tests {
         fn create_backend(
             &self,
             worker_id: usize,
+            _clock: Option<Rc<dyn crate::clock::Clock>>,
         ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
             Ok(Rc::new(RecordingWorker {
                 worker_id,
@@ -431,6 +492,7 @@ mod tests {
         fn create_backend(
             &self,
             worker_id: usize,
+            _clock: Option<Rc<dyn crate::clock::Clock>>,
         ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
             Ok(Rc::new(FanoutWorker {
                 worker_id,
@@ -481,6 +543,7 @@ mod tests {
         fn create_backend(
             &self,
             _worker_id: usize,
+            _clock: Option<Rc<dyn crate::clock::Clock>>,
         ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
             Ok(Rc::new(CancellableWorker {
                 state: self.state.clone(),

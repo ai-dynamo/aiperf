@@ -16,6 +16,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
 
+use crate::graph::runtime::RunOutcome;
+
 /// A sleepable time source.
 pub trait Clock {
     /// Current time in nanoseconds (virtual for sim, monotonic for real).
@@ -36,5 +38,25 @@ pub trait Clock {
     /// downstream `drive_real` pump).
     fn is_virtual(&self) -> bool {
         false
+    }
+
+    /// Drive `body` to completion over this clock's reactor discipline — the
+    /// executor half of the `{clock}` seam. Callers select real vs virtual
+    /// execution by which clock they construct, never by branching on
+    /// [`is_virtual`](Clock::is_virtual): the clock IS the driver.
+    ///
+    /// The default drives on a current-thread tokio runtime whose IO/timer
+    /// reactor wakes real sleepers (the [`RealClock`](crate::clock::real_clock::RealClock)
+    /// discipline). [`SimClock`](crate::clock::sim_clock::SimClock) overrides it
+    /// with the deterministic idle-pump that fast-forwards virtual time to each
+    /// next event; a non-`false` [`RunOutcome::deadlocked`] there means the run
+    /// parked with no schedulable virtual-time event.
+    fn drive(self: Rc<Self>, body: Pin<Box<dyn Future<Output = ()> + '_>>) -> RunOutcome {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime for real-clock run driver");
+        tokio::task::LocalSet::new().block_on(&runtime, body);
+        RunOutcome { deadlocked: false }
     }
 }

@@ -23,8 +23,8 @@ use crate::engine::execution_factories::ExecutionFactories;
 use crate::engine::graph_input::GraphInputAdapterResolver;
 use crate::engine::protocol::Catalog;
 use crate::engine::protocol_v2::{
-    DeferredCheckV2, PROTOCOL_V2, RunTerminalV2, RunValidationV2, DiagnosticV2,
-    EnvelopeV2, FailureStageV2, OperationV2, ValidationCompletenessV2,
+    DeferredCheckV2, DiagnosticV2, EnvelopeV2, FailureStageV2, OperationV2, PROTOCOL_V2,
+    RunTerminalV2, RunValidationV2, ValidationCompletenessV2,
 };
 use crate::engine::redaction::redact_diagnostic;
 use crate::engine::registry::{

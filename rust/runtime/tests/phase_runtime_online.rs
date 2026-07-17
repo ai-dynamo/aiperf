@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use aiperf_runtime::clock::{Clock, RealClock};
-use aiperf_runtime::transport::http::TransportSink;
 use aiperf_runtime::phase_runtime::{ScheduledPhasePlan, run_scheduled_phases};
 use aiperf_runtime::scheduled::{
     ScheduledAncillaryPolicies, SingleTurnDatasetWorkload, TurnDispatcher, Workload,
@@ -17,6 +16,7 @@ use aiperf_runtime::scheduled::{
 use aiperf_runtime::timing::{
     GracePeriod, NoopPhaseObserver, PhaseConfig, PhaseKind, PhaseObserver, StopConfig,
 };
+use aiperf_runtime::transport::http::TransportSink;
 use axum::{Router, http::header, response::IntoResponse, routing::post};
 
 mod common;

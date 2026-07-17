@@ -20,8 +20,8 @@ pub mod sse;
 pub mod trace;
 
 pub use dispatch::{
-    DispatchResult, Dispatcher, MeasuredContext, MeasuredOutcome, PreparedEndpointBinding, PreparedTurn,
-    Request, RequestExecutor,
+    DispatchResult, Dispatcher, MeasuredContext, MeasuredOutcome, PreparedEndpointBinding,
+    PreparedTurn, Request, RequestExecutor,
 };
 pub use error::{ErrorDetails, ErrorKind};
 pub use record::RequestRecord;

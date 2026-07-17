@@ -170,6 +170,16 @@ impl Clock for SimClock {
     fn is_virtual(&self) -> bool {
         true
     }
+
+    fn drive(
+        self: Rc<Self>,
+        body: Pin<Box<dyn Future<Output = ()> + '_>>,
+    ) -> crate::graph::runtime::RunOutcome {
+        // The idle-pump advances virtual time to each next event, so the body's
+        // `Clock::sleep`s resolve instantly in wall time. `body` is already built
+        // against this clock; the driver's own `Handle` clock is unused.
+        crate::graph::runtime::drive_sim(self, move |_handle| body)
+    }
 }
 
 /// Sleep future parked on the ns-exact virtual clock (woken by `advance_to`).

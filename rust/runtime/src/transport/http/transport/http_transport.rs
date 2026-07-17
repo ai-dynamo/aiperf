@@ -11,6 +11,7 @@ use http::Method;
 
 use crate::clock::Clock;
 
+use crate::transport::core::SseMessage;
 use crate::transport::core::{ConnectionReuseStrategy, ErrorDetails, RequestRecord, TraceData};
 use crate::transport::http::client::cancellation::{CancelOutcome, race_cancel_after_send};
 use crate::transport::http::client::connection::{SendCompletion, with_timeout};
@@ -19,7 +20,6 @@ use crate::transport::http::client::http_client::{
 };
 use crate::transport::http::client::pool::{ConnectionManager, ConnectionPool};
 use crate::transport::http::config::ClientConfig;
-use crate::transport::core::SseMessage;
 use crate::transport::http::models::RequestConfig;
 use crate::transport::http::transport::headers::build_headers;
 use crate::transport::http::transport::url::build_url;
