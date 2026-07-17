@@ -144,7 +144,8 @@ mod tests {
         let plugin = ArtifactHubPlugin::new(landing.clone(), allowed);
         let slot = plugin.receiver_slot();
         let mut hub = Hub::new(velo);
-        hub.register(Box::new(plugin)).expect("register artifact plugin");
+        hub.register(Box::new(plugin))
+            .expect("register artifact plugin");
         assert_eq!(hub.prefixes().collect::<Vec<_>>(), vec!["/artifact"]);
         let receiver = slot
             .lock()

@@ -2236,6 +2236,95 @@ mod tests {
     use super::*;
     use crate::engine::cellular_kind::is_graph_dataset;
 
+    /// The hub-mode bootstrap (`AIPERF_CELLULAR_HUB` path): `build_cellular_hub` mounts
+    /// the cell↔controller + `/artifact` + discovery plugins on one velo, serves the
+    /// co-bound HTTP surface, and returns a working transport + artifact receiver. A
+    /// real cell dials the SAME `tcp://` coordinate, registers, ships a heartbeat, and
+    /// streams an artifact — all over the single hub anchor, proving the toggle path is
+    /// wire-equivalent to the standalone planes.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn hub_mode_bootstrap_serves_register_and_artifact() {
+        use crate::cellular::transport::CellClient;
+        use crate::cellular::transport::connect::{BindSpec, build_velo, connect_controller};
+        use crate::cellular::transport::velo_transport::VeloCellClient;
+        use crate::cellular::{CellMessage, ControllerTransport};
+        use crate::engine::artifact_stream_velo::ship_cell_artifacts_velo;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("cell-src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let rel = "inputs.json";
+        std::fs::write(src_dir.join(rel), vec![3u8; 50_000]).unwrap();
+        let landing = dir.path().join("landing");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let endpoint = format!("tcp://{addr}");
+        let velo = build_velo(BindSpec::TcpListener(listener))
+            .await
+            .expect("hub velo");
+        let start = velo.event_manager().new_event().expect("start event");
+        let start_handle = start.handle();
+        let spec_for: SpecFor = std::sync::Arc::new(|cell_id: u32| Some(vec![cell_id as u8, 0x5A]));
+        let allowed: std::collections::HashSet<String> = [rel.to_owned()].into_iter().collect();
+
+        let (mut transport, receiver, _server) = build_cellular_hub(
+            velo,
+            spec_for,
+            1,
+            start_handle,
+            endpoint.clone(),
+            Some((landing.clone(), allowed)),
+        )
+        .await
+        .expect("build hub");
+        let receiver = receiver.expect("artifact receiver mounted");
+
+        // A cell dials the hub by its tcp:// coordinate (the same anchor), registers,
+        // and ships a heartbeat surfaced by the hub-mounted cell↔controller handlers.
+        let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
+        let controller_peer = connect_controller(&cell_velo, &endpoint)
+            .await
+            .expect("connect to hub");
+        let mut cell =
+            VeloCellClient::connect(cell_velo, controller_peer.clone()).expect("connect");
+        let reply = cell.register(0).await.expect("register");
+        assert_eq!(reply.envelope, vec![0_u8, 0x5A]);
+
+        use crate::cellular::heartbeat::HeartbeatAccumulator;
+        let mut acc = HeartbeatAccumulator::new();
+        acc.observe(Some(20.0), Some(5.0), Some(50.0));
+        let hb = acc.snapshot(1, Default::default(), Default::default());
+        cell.send(&CellMessage::Heartbeat {
+            cell_id: 0,
+            heartbeat: Box::new(hb),
+        })
+        .await
+        .expect("ship heartbeat");
+        match transport.recv().await.expect("recv").expect("some") {
+            CellMessage::Heartbeat { cell_id, .. } => assert_eq!(cell_id, 0),
+            other => panic!("expected heartbeat, got {other:?}"),
+        }
+
+        // And the `/artifact` plugin streams a file over the same anchor.
+        let ship_velo = build_velo(BindSpec::TcpLoopback).await.expect("ship velo");
+        let ship_peer = connect_controller(&ship_velo, &endpoint)
+            .await
+            .expect("connect ship");
+        ship_cell_artifacts_velo(&ship_velo, &ship_peer, 0, &src_dir, &[rel.to_owned()])
+            .await
+            .expect("ship artifact over hub");
+        receiver
+            .wait_for_cells(1, std::time::Duration::from_secs(30))
+            .await
+            .expect("artifact barrier");
+        assert_eq!(
+            std::fs::read(landing.join("cell-0").join(rel)).unwrap(),
+            vec![3u8; 50_000],
+            "hub-mode artifact landed byte-identical"
+        );
+    }
+
     #[test]
     fn rejects_non_shipping_run_shapes() {
         for ok in [

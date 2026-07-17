@@ -133,9 +133,9 @@ impl HubPlugin for CellControllerHubPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cellular::transport::CellClient;
     use crate::cellular::transport::connect::{BindSpec, build_velo};
     use crate::cellular::transport::velo_transport::VeloCellClient;
-    use crate::cellular::transport::CellClient;
     use crate::cellular::{CellMessage, ControllerTransport};
     use crate::hub::Hub;
 
@@ -161,7 +161,8 @@ mod tests {
         let slot = plugin.transport_slot();
 
         let mut hub = Hub::new(velo);
-        hub.register(Box::new(plugin)).expect("register cell plugin");
+        hub.register(Box::new(plugin))
+            .expect("register cell plugin");
         // The plugin's HTTP prefix is mounted.
         assert_eq!(hub.prefixes().collect::<Vec<_>>(), vec!["/cell"]);
         // The transport was captured at registration.
