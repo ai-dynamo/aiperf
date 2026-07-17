@@ -316,6 +316,129 @@ pub fn turn_stats(turns: &[AnalyzedTurn]) -> TurnStats {
     TurnStats { by_index: rows }
 }
 
+/// Concurrency (inflight-request) statistics over an execution timeline.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConcurrencyStats {
+    /// Peak number of simultaneously inflight requests.
+    pub peak: u64,
+    /// Time-weighted average inflight count over the run duration.
+    pub time_weighted_avg: f64,
+    /// Inflight count at each change point, as `(rel_seconds, inflight)` pairs
+    /// where `rel_seconds` is measured from the first request start.
+    pub samples: Vec<(f64, u64)>,
+}
+
+/// Throughput statistics over an execution timeline.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ThroughputStats {
+    /// Completed requests per second over the run duration.
+    pub requests_per_s: f64,
+    /// Output tokens per second over the run duration.
+    pub output_tokens_per_s: f64,
+    /// Wall-clock run duration in seconds (`max end - min start`).
+    pub run_duration_s: f64,
+}
+
+/// Queue/backlog statistics over an execution timeline.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct QueueStats {
+    /// Per-record `start_ns - admit_ns` queue delay in milliseconds, over
+    /// records with an admission time, when non-empty.
+    pub queue_delay_ms: Option<StatSummary>,
+}
+
+/// Execution-timeline summary: concurrency, throughput, and queue backlog.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TimelineStats {
+    /// Inflight-concurrency statistics.
+    pub concurrency: ConcurrencyStats,
+    /// Throughput statistics.
+    pub throughput: ThroughputStats,
+    /// Queue/backlog statistics.
+    pub queue: QueueStats,
+}
+
+/// Compute the [`TimelineStats`] over a set of observed records. Concurrency is
+/// derived by a sweep line over `[start_ns, end_ns)` intervals; on ties an end
+/// event is processed before a start event so a back-to-back handoff does not
+/// inflate the peak. Returns `None` for empty input. When the run duration is
+/// zero, rate outputs are `0.0` rather than non-finite.
+pub fn timeline_stats(records: &[AnalyzedRecord]) -> Option<TimelineStats> {
+    if records.is_empty() {
+        return None;
+    }
+
+    let min_start = records.iter().map(|r| r.start_ns).min().unwrap();
+    let max_end = records.iter().map(|r| r.end_ns).max().unwrap();
+    let duration_ns = (max_end - min_start).max(0) as f64;
+    let run_duration_s = duration_ns / 1e9;
+
+    // Sweep-line events: +1 at start, -1 at end. Ties process -1 before +1.
+    let mut events: Vec<(i64, i64)> = Vec::with_capacity(records.len() * 2);
+    for r in records {
+        events.push((r.start_ns, 1));
+        events.push((r.end_ns, -1));
+    }
+    events.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+    let mut inflight: i64 = 0;
+    let mut peak: i64 = 0;
+    let mut integral = 0.0f64;
+    let mut prev_ns = min_start;
+    let mut samples: Vec<(f64, u64)> = Vec::new();
+    for (ns, delta) in events {
+        // Accumulate time-weighted integral over the segment just ended.
+        integral += inflight as f64 * (ns - prev_ns) as f64;
+        prev_ns = ns;
+        inflight += delta;
+        peak = peak.max(inflight);
+        let rel_s = (ns - min_start) as f64 / 1e9;
+        // Record inflight at this change point, coalescing same-instant events.
+        if let Some(last) = samples.last_mut() {
+            if (last.0 - rel_s).abs() < f64::EPSILON {
+                last.1 = inflight as u64;
+                continue;
+            }
+        }
+        samples.push((rel_s, inflight as u64));
+    }
+
+    let time_weighted_avg = if duration_ns > 0.0 {
+        integral / duration_ns
+    } else {
+        0.0
+    };
+
+    let count = records.len() as f64;
+    let total_output: u64 = records.iter().map(|r| r.output_tokens).sum();
+    let (requests_per_s, output_tokens_per_s) = if run_duration_s > 0.0 {
+        (count / run_duration_s, total_output as f64 / run_duration_s)
+    } else {
+        (0.0, 0.0)
+    };
+
+    let queue_delays: Vec<f64> = records
+        .iter()
+        .filter_map(|r| r.admit_ns.map(|a| (r.start_ns - a) as f64 / 1e6))
+        .collect();
+
+    Some(TimelineStats {
+        concurrency: ConcurrencyStats {
+            peak: peak.max(0) as u64,
+            time_weighted_avg,
+            samples,
+        },
+        throughput: ThroughputStats {
+            requests_per_s,
+            output_tokens_per_s,
+            run_duration_s,
+        },
+        queue: QueueStats {
+            queue_delay_ms: stat_summary(&queue_delays),
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,6 +516,39 @@ mod tests {
         assert_eq!(l.grand_total_tokens, 540);
         assert_eq!(l.isl.unwrap().max, 200.0);
         assert_eq!(l.osl.unwrap().min, 20.0);
+    }
+
+    fn rec(conv: &str, ti: usize, start: i64, end: i64, out: u64) -> AnalyzedRecord {
+        AnalyzedRecord {
+            conversation_id: conv.into(),
+            turn_index: ti,
+            start_ns: start,
+            end_ns: end,
+            admit_ns: Some(start),
+            first_token_ns: Some(start),
+            input_tokens: 10,
+            output_tokens: out,
+            token_arrival_ns: vec![],
+        }
+    }
+
+    #[test]
+    fn timeline_concurrency_and_throughput() {
+        // r0 [0,2s), r1 [1,3s) overlap → peak concurrency 2. 2 requests over 3s.
+        let recs = vec![
+            rec("a", 0, 0, 2_000_000_000, 5),
+            rec("b", 0, 1_000_000_000, 3_000_000_000, 5),
+        ];
+        let t = timeline_stats(&recs).unwrap();
+        assert_eq!(t.concurrency.peak, 2);
+        assert!((t.throughput.run_duration_s - 3.0).abs() < 1e-9);
+        assert!((t.throughput.requests_per_s - 2.0 / 3.0).abs() < 1e-9);
+        assert!((t.throughput.output_tokens_per_s - 10.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn timeline_empty_is_none() {
+        assert!(timeline_stats(&[]).is_none());
     }
 
     #[test]
