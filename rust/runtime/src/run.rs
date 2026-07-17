@@ -893,9 +893,13 @@ async fn run_paced_adaptive_with_metrics(
     let base_urls = parse_base_urls(&base_url)?;
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
-    let sink: Rc<dyn HttpRequestDispatcher> = Rc::new(
-        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, false)?,
-    );
+    let sink: Rc<dyn HttpRequestDispatcher> = Rc::new(TransportSink::new_multi(
+        clock.clone(),
+        start_ns,
+        &base_urls,
+        model,
+        false,
+    )?);
     run_paced_with_backend(
         clock,
         start_ns,
