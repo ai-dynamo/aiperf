@@ -74,6 +74,14 @@ pub struct LocalGraphTraceExecutionBackend<M: WireMessage> {
     flags: ExecutorFlags,
     cancelled: Cell<bool>,
     active: RefCell<Vec<Weak<TraceContext>>>,
+    /// Force the general [`TraceExecutor`] even for an eligible flat plan
+    /// (parity-oracle only; production leaves this `false`).
+    force_full: bool,
+    /// Live flat-path abort latches, tripped alongside `TraceContext`s on cancel.
+    flat_aborts: RefCell<Vec<Weak<crate::graph::flat::FlatAbort>>>,
+    /// Test probe: set true when the general executor arm runs.
+    #[cfg(test)]
+    executor_built: Cell<bool>,
 }
 
 impl<M: WireMessage> LocalGraphTraceExecutionBackend<M> {
@@ -92,7 +100,18 @@ impl<M: WireMessage> LocalGraphTraceExecutionBackend<M> {
             flags: ExecutorFlags::default(),
             cancelled: Cell::new(false),
             active: RefCell::new(Vec::new()),
+            force_full: false,
+            flat_aborts: RefCell::new(Vec::new()),
+            #[cfg(test)]
+            executor_built: Cell::new(false),
         }
+    }
+
+    /// Force the general `TraceExecutor` for every plan, bypassing the flat
+    /// fast path. Used by the byte-parity oracle to drive the full arm.
+    pub(crate) fn with_force_full(mut self, force_full: bool) -> Self {
+        self.force_full = force_full;
+        self
     }
 
     /// Inject node prefill/cancellation policy.
@@ -120,6 +139,32 @@ impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBacken
         if self.cancelled.get() {
             return Err(local_cancellation(&plan.trace.id));
         }
+
+        // Flat fast path: an eligible single-node trace runs as one admitted,
+        // measured dispatch over the same sink, with no scheduler / channel
+        // store / trace context. Cancellation rides a `TraceContext`-free latch.
+        if !self.force_full && crate::graph::flat::is_flat_graph(&plan.graph) {
+            let trace_id = plan.trace.id.clone();
+            let abort = crate::graph::flat::FlatAbort::new();
+            self.flat_aborts.borrow_mut().push(Rc::downgrade(&abort));
+            let actor = crate::graph::flat::FlatGraphActor::new(
+                self.sink.clone(),
+                self.materializer.clone(),
+                self.node_policy.clone(),
+            );
+            let result = actor.run(plan, &abort).await;
+            self.flat_aborts
+                .borrow_mut()
+                .retain(|weak| !weak.ptr_eq(&Rc::downgrade(&abort)));
+            return match result {
+                // Match the general executor: a cancelled trace reports Cancelled.
+                Ok(()) if abort.is_tripped() => Err(local_cancellation(&trace_id)),
+                other => other,
+            };
+        }
+
+        #[cfg(test)]
+        self.executor_built.set(true);
         let handle = Handle::new(self.clock.clone());
         let executor = TraceExecutor::new_with_policies(
             Rc::new(plan.graph),
@@ -150,6 +195,14 @@ impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBacken
             .collect::<Vec<_>>();
         for context in active {
             context.set_abort(local_cancellation(&context.trace.id));
+        }
+        for abort in self
+            .flat_aborts
+            .borrow()
+            .iter()
+            .filter_map(Weak::upgrade)
+        {
+            abort.trip();
         }
         Ok(())
     }
@@ -241,7 +294,10 @@ mod tests {
                 LocalGraphTraceExecutionBackend::new(clock, Rc::new(EmptyMaterializer), sink)
                     .with_node_policy(Rc::new(PrefillSlotNodePolicy::new(Rc::new(SlotPool::new(
                         0,
-                    ))))),
+                    )))))
+                    // Pin to the general executor so this test keeps exercising the
+                    // active-context drain path its name describes.
+                    .with_force_full(true),
             );
             let executing = backend.clone();
             let task = tokio::task::spawn_local(async move {
@@ -258,6 +314,66 @@ mod tests {
                 .await
                 .unwrap_err();
             assert!(matches!(error, TraceError::Cancelled(_)));
+        }));
+    }
+
+    #[test]
+    fn flat_arm_selected_for_single_node_and_force_full_uses_executor() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(tokio::task::LocalSet::new().run_until(async {
+            let clock: Rc<dyn Clock> = Rc::new(crate::clock::SimClock::new());
+            let sink: Rc<dyn GraphSink<OpenAiChatMessage>> = Rc::new(EchoSink);
+
+            // Default policy admits immediately; a 1-node no-input plan completes
+            // through the flat arm without building a TraceExecutor.
+            let flat = Rc::new(LocalGraphTraceExecutionBackend::new(
+                clock.clone(),
+                Rc::new(EmptyMaterializer),
+                sink.clone(),
+            ));
+            flat.execute_trace(blocked_plan("flat")).await.unwrap();
+            assert!(!flat.executor_built.get(), "single-node plan takes the flat arm");
+
+            let full = Rc::new(
+                LocalGraphTraceExecutionBackend::new(clock, Rc::new(EmptyMaterializer), sink)
+                    .with_force_full(true),
+            );
+            full.execute_trace(blocked_plan("full")).await.unwrap();
+            assert!(full.executor_built.get(), "force_full routes to the executor");
+        }));
+    }
+
+    #[test]
+    fn flat_arm_latches_cancellation() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(tokio::task::LocalSet::new().run_until(async {
+            let clock: Rc<dyn Clock> = Rc::new(crate::clock::SimClock::new());
+            let sink: Rc<dyn GraphSink<OpenAiChatMessage>> = Rc::new(EchoSink);
+            // 0 prefill slots block admission; the only exit is the flat abort latch.
+            let backend = Rc::new(
+                LocalGraphTraceExecutionBackend::new(clock, Rc::new(EmptyMaterializer), sink)
+                    .with_node_policy(Rc::new(PrefillSlotNodePolicy::new(Rc::new(SlotPool::new(
+                        0,
+                    ))))),
+            );
+            let executing = backend.clone();
+            let task = tokio::task::spawn_local(async move {
+                executing.execute_trace(blocked_plan("flat-cancel")).await
+            });
+            tokio::task::yield_now().await;
+            backend.cancel_inflight().unwrap();
+            let error = task.await.unwrap().unwrap_err();
+            assert!(
+                matches!(error, TraceError::Cancelled(_)),
+                "flat arm reports Cancelled like the executor arm"
+            );
+            assert!(!backend.executor_built.get(), "cancellation stayed on the flat arm");
         }));
     }
 }
