@@ -186,8 +186,8 @@ pub fn run_cellular(
     // controller-local `temp_root/cell-{id}` dirs, which the controller concatenates into
     // the real artifact dir at finalize. A cross-host (k8s) pod writes to its
     // own filesystem, so those files stay unreachable by the controller — still dropped.
-    let launcher = std::env::var(crate::engine::cell_launcher::CELL_LAUNCHER_ENV)
-        .unwrap_or_default();
+    let launcher =
+        std::env::var(crate::engine::cell_launcher::CELL_LAUNCHER_ENV).unwrap_or_default();
     let is_k8s = launcher == "k8s";
     // SLURM places each cell task on its own allocation node, so it is a cross-host
     // deployment exactly like k8s: cells cannot read the controller's local scratch,
@@ -946,10 +946,8 @@ fn controller_bind_and_endpoint(cross_host: bool, temp_root: &Path) -> Result<(B
         // unset here (the operator injects it into the cell pods only), so the
         // coordinate stays empty and the k8s cells derive their authority from the
         // operator-injected value instead.
-        let coordinate = std::env::var(
-            crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV,
-        )
-        .unwrap_or_default();
+        let coordinate = std::env::var(crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV)
+            .unwrap_or_default();
         return Ok((
             BindSpec::TcpBind(std::net::SocketAddr::from(([0, 0, 0, 0], port))),
             coordinate,

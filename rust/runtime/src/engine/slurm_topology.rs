@@ -86,7 +86,10 @@ impl Display for SlurmTopologyError {
                 "missing SLURM environment variable `{var}` (is this running under srun/sbatch?)"
             ),
             Self::InvalidEnv { var, value } => {
-                write!(f, "SLURM environment variable `{var}` is not an integer: {value:?}")
+                write!(
+                    f,
+                    "SLURM environment variable `{var}` is not an integer: {value:?}"
+                )
             }
             Self::TooFewTasks(ntasks) => write!(
                 f,
@@ -200,10 +203,7 @@ fn parse_env_u32(var: &'static str) -> Result<u32, SlurmTopologyError> {
     let raw = std::env::var(var).map_err(|_| SlurmTopologyError::MissingEnv(var))?;
     raw.trim()
         .parse()
-        .map_err(|_| SlurmTopologyError::InvalidEnv {
-            var,
-            value: raw,
-        })
+        .map_err(|_| SlurmTopologyError::InvalidEnv { var, value: raw })
 }
 
 fn resolve_controller_host_from_env() -> Result<String, SlurmTopologyError> {
@@ -347,18 +347,12 @@ mod tests {
 
     #[test]
     fn expand_top_level_bare_comma_list() {
-        assert_eq!(
-            expand_nodelist("c1,c2,c3"),
-            vec!["c1", "c2", "c3"]
-        );
+        assert_eq!(expand_nodelist("c1,c2,c3"), vec!["c1", "c2", "c3"]);
     }
 
     #[test]
     fn expand_bracket_with_suffix() {
-        assert_eq!(
-            expand_nodelist("dgx[1-2]-ib"),
-            vec!["dgx1-ib", "dgx2-ib"]
-        );
+        assert_eq!(expand_nodelist("dgx[1-2]-ib"), vec!["dgx1-ib", "dgx2-ib"]);
     }
 
     #[test]
@@ -379,10 +373,7 @@ mod tests {
         assert!(topo.is_controller());
         assert_eq!(topo.cell_count(), 3);
         assert_eq!(topo.cell_id(), None);
-        assert_eq!(
-            topo.controller_coordinate(9500),
-            "tcp://node01:9500"
-        );
+        assert_eq!(topo.controller_coordinate(9500), "tcp://node01:9500");
     }
 
     #[test]
@@ -431,7 +422,12 @@ mod tests {
         // complete — the invariant ModuloCellPartition depends on.
         let ntasks = 6;
         let mut ids: Vec<u32> = (1..ntasks)
-            .map(|rank| SlurmTopology::new(rank, ntasks, "n0").unwrap().cell_id().unwrap())
+            .map(|rank| {
+                SlurmTopology::new(rank, ntasks, "n0")
+                    .unwrap()
+                    .cell_id()
+                    .unwrap()
+            })
             .collect();
         ids.sort_unstable();
         assert_eq!(ids, (0..ntasks - 1).collect::<Vec<_>>());
