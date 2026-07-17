@@ -269,13 +269,13 @@ where
     E: PreparedEndpointBehavior + 'static,
 {
     let endpoint = Arc::new(endpoint);
-    let compatibility_config = EndpointConfig::from_raw(endpoint_type, config.to_raw());
-    let headers = endpoint.format_headers(&compatibility_config);
+    let legacy_config = EndpointConfig::from_raw(endpoint_type, config.to_raw());
+    let headers = endpoint.format_headers(&legacy_config);
     Ok(Box::new(PreparedAliasEndpoint {
         endpoint,
         descriptor,
         config,
-        compatibility_config,
+        legacy_config,
         headers,
         readiness_path,
     }))
@@ -286,7 +286,7 @@ struct PreparedAliasEndpoint<E> {
     endpoint: Arc<E>,
     descriptor: &'static EndpointDescriptor,
     config: EffectiveEndpointConfig,
-    compatibility_config: EndpointConfig,
+    legacy_config: EndpointConfig,
     headers: BTreeMap<String, String>,
     readiness_path: &'static str,
 }
@@ -321,7 +321,7 @@ where
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
         self.endpoint
-            .parse_response_with_config(response, &self.compatibility_config)
+            .parse_response_with_config(response, &self.legacy_config)
     }
 
     fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
@@ -330,7 +330,7 @@ where
 
     fn extract_response_data(&self, record: &RequestRecord) -> EndpointResult<Vec<ParsedResponse>> {
         self.endpoint
-            .extract_response_data_with_config(record, &self.compatibility_config)
+            .extract_response_data_with_config(record, &self.legacy_config)
     }
 
     fn build_assistant_turn(&self, record: &RequestRecord) -> EndpointResult<Option<Turn>> {

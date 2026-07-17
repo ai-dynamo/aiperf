@@ -3,9 +3,8 @@
 
 //! Byte-exact CPython `random.Random` Mersenne Twister.
 //!
-//! This is the generator behind AgentX `RandomSampler`
-//! (`dataset/dataset_samplers.py`), which samples the recorded-graph corpus WITH
-//! replacement via `random.Random(seed).choice(ids)`. numpy's PCG64
+//! AgentX random sampling draws with replacement via
+//! `random.Random(seed).choice(ids)`. NumPy-compatible PCG64
 //! ([`crate::rng::numpy_pcg64`]) drives the shuffle/`t*` draws; the with-replacement
 //! `RandomSampler` uses CPython's stdlib `random` instead, a DIFFERENT algorithm,
 //! so it needs its own byte-exact implementation.
@@ -18,9 +17,7 @@
 //!     `genrand_uint32() >> (32 - k)`), `Random._randbelow_with_getrandbits`, and
 //!     `Random.choice` (`seq[_randbelow(len(seq))]`).
 //!
-//! Python is the fixed reference; this Rust conforms to it. Parity is pinned by
-//! committed golden vectors (`tests/data/random_sampler_vectors.json`,
-//! replayed in [`crate::graph::tstar`] and below).
+//! Committed golden vectors pin the stream.
 
 /// Mersenne Twister state size (`N` in `_randommodule.c`).
 const N: usize = 624;

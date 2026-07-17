@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native Rust AIPerf metrics engine.
-//!
-//! This crate is the IO-free metrics plane described by `specs/metrics.md`, plus
-//! the first-class accuracy accumulator/analyzer from `specs/accuracy.md`.
+//! IO-free AIPerf metrics engine with accuracy accumulation and analysis.
 
 pub mod accumulator;
 pub mod accuracy;

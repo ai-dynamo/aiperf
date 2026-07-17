@@ -1,40 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native-Rust server-metrics summary sink: `server_metrics_export.json` + `.csv`.
+//! Server-metrics summary sink for `server_metrics_export.json` and `.csv`.
 //!
-//! The native-v2 report carries the server-metrics metadata
-//! (`summary.server_metrics`) and the labeled/typed series (gauge/counter/
-//! histogram) under `report.server_metrics`; this sink serializes them to the
-//! two compatibility files byte-for-byte.
-//!
-//! Parity oracle (byte-exact source of truth), grounded at `path:line`:
-//! - JSON: `aiperf/server_metrics/json_exporter.py::_generate_content` /
-//!   `_build_hybrid_metrics` — the hybrid `ServerMetricsExportData` shape emitted
-//!   via `orjson.dumps(..., OPT_INDENT_2)` with `exclude_none=True`. Pydantic
-//!   field order is reproduced by an insertion-ordered map; two-space indent is
-//!   matched by `serde_json::to_string_pretty` (`serde_json` runs with
-//!   `preserve_order`).
-//! - CSV: `aiperf/server_metrics/csv_exporter.py::_generate_content` /
-//!   `_write_section` / `_write_info_section` — comment header lines terminated
-//!   with `\n`, CSV rows with `\r\n` (Python `csv.writer` default), the
-//!   `# schema_version: 1.0` line, per-type stat columns, union-find label
-//!   column ordering, vertical clustering sort, and the transposed `_info`
-//!   section.
-//! - Unit display: `aiperf/server_metrics/units.py::infer_unit` (re-inferred here
-//!   through `crate::server_metrics::infer_unit`) then
-//!   `BaseMetricUnit.display_name` (member name lowercased, `_per_second`→`/s`),
-//!   implemented by [`display_unit`]. The native report's own `unit` field is
-//!   deliberately not trusted — the Python compat path re-infers, so this sink
-//!   does too, keeping byte parity.
-//! - Data mapping: `aiperf/orchestrator/native_report.py::_project_server_metrics`
-//!   describes how the native-v2 series/metadata map onto the Python models this
-//!   sink reproduces without the Python round-trip.
-//!
-//! # Extension seam
-//! Unit display policy is the one plausibly variable rule; it is isolated in
-//! [`display_unit`] over `crate::server_metrics::infer_unit`. Everything else is
-//! a fixed byte-for-byte contract against both compatibility artifacts.
+//! JSON uses schema 1.1, insertion-ordered fields, two-space indentation, and
+//! omits absent values. CSV uses schema 1.0, LF comment headers, CRLF records,
+//! per-type stat columns, union-find label ordering, vertical clustering, and a
+//! transposed `_info` section. Units are inferred from metric names and
+//! descriptions; the report's stored unit is intentionally ignored.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -55,7 +28,7 @@ mod tests;
 const JSON_FILE: &str = "server_metrics_export.json";
 const CSV_FILE: &str = "server_metrics_export.csv";
 
-/// Hybrid JSON schema version, pinned to `ServerMetricsExportData.SCHEMA_VERSION`.
+/// JSON schema version.
 const JSON_SCHEMA_VERSION: &str = "1.1";
 /// CSV comment-header schema version, pinned to the `# schema_version:` line.
 const CSV_SCHEMA_VERSION: &str = "1.0";
@@ -63,9 +36,7 @@ const CSV_SCHEMA_VERSION: &str = "1.0";
 /// Fixed percentile ladder shared by gauge stats and histogram estimates.
 const PERCENTILES: [u32; 9] = [1, 5, 10, 25, 50, 75, 90, 95, 99];
 
-/// Server-metrics summary export policy. The Python frontend projects these onto
-/// the wire `cfg.export.server_metrics` block; an absent block decodes to
-/// all-disabled defaults.
+/// Server-metrics summary export policy; an absent wire block disables all formats.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ServerMetricsExportConfig {
@@ -73,21 +44,17 @@ pub struct ServerMetricsExportConfig {
     pub json: bool,
     /// Emit `server_metrics_export.csv`.
     pub csv: bool,
-    /// AIPerf package version (`aiperf.__version__`) that generated the export,
-    /// projected by the frontend. The native report carries only the Rust crate
-    /// version (`0.0.0` in dev), so the frontend supplies the authoritative
-    /// package version; when absent the sink falls back to the report's field.
+    /// AIPerf package version supplied by the caller; falls back to the report.
     /// Rendered into the JSON `aiperf_version` field and the CSV `# aiperf_version:`
-    /// comment header, matching `ServerMetricsExportData.aiperf_version`.
+    /// comment header.
     #[serde(default)]
     pub aiperf_version: Option<String>,
     /// Benchmark run identity (UUID) shared across export formats. Rendered into
     /// the JSON `benchmark_id` field and the CSV `# benchmark_id:` header; absent
-    /// when the frontend does not supply one.
+    /// when the caller does not supply one.
     #[serde(default)]
     pub benchmark_id: Option<String>,
-    /// User configuration used for this run (`cfg.model_dump(exclude_unset=True)`
-    /// on the Python side). Emitted verbatim as the JSON `input_config` object.
+    /// User configuration emitted verbatim as the JSON `input_config` object.
     #[serde(default)]
     pub input_config: Value,
 }
@@ -111,8 +78,7 @@ impl Exporter for ServerMetricsExporter {
         cfg: &ExportConfig,
     ) -> anyhow::Result<()> {
         let policy = &cfg.server_metrics;
-        // Python raises `DataExporterDisabled` (skips both files) when no server
-        // metrics were collected; mirror that as a clean no-op.
+        // Missing metadata or metric data produces no artifacts.
         let Some(meta) = report.summary.server_metrics.as_ref() else {
             return Ok(());
         };
@@ -132,17 +98,12 @@ impl Exporter for ServerMetricsExporter {
     }
 }
 
-
-/// Returns the finite payload of a present report value, dropping non-finite
-/// tails so `exclude_none`-style omission matches the Python compat path (a JSON
-/// null becomes `None` and is dropped, never emitted).
+/// Return finite values and omit non-finite tails.
 fn finite(value: ReportValue) -> Option<f64> {
     crate::export::finite_guarded(value)
 }
 
-/// Python `BaseMetricUnit.display_name`: enum member name lowercased with
-/// `_per_second` rewritten to `/s`. The Python exporters serialize this string,
-/// not the report's stable `Unit::as_str` spelling.
+/// Infer the artifact's display-unit spelling from the metric name and description.
 fn display_unit(name: &str, description: &str) -> Option<&'static str> {
     let description = (!description.is_empty()).then_some(description);
     infer_unit(name, description).map(|unit| match unit {
@@ -189,9 +150,8 @@ fn display_unit(name: &str, description: &str) -> Option<&'static str> {
     })
 }
 
-/// Original Prometheus semantic type for a family, preferring the metadata table
-/// and falling back to the native stats shape (which cannot tell gauge from an
-/// exporter-untyped scalar, defaulting to `gauge`).
+/// Prometheus family type from metadata, or from the stats shape when absent.
+/// Scalar stats default to `gauge`.
 fn prometheus_type(meta: &ReportServerMetricsMetadata, name: &str, entry: &MetricEntry) -> String {
     if let Some(kind) = meta.metric_types.get(name) {
         return kind.clone();
@@ -204,8 +164,7 @@ fn prometheus_type(meta: &ReportServerMetricsMetadata, name: &str, entry: &Metri
     .to_string()
 }
 
-/// Python `str(dict)` repr over a label map (BTreeMap iteration matches the
-/// native report's sorted keys). Used only as a deterministic sort tie-break.
+/// Deterministic single-quoted label-map representation used as a sort tie-break.
 fn python_labels_repr(labels: Option<&BTreeMap<String, String>>) -> String {
     match labels {
         None => String::new(),
@@ -224,12 +183,11 @@ fn python_labels_repr(labels: Option<&BTreeMap<String, String>>) -> String {
     }
 }
 
-/// The two datetime rendering pieces are grouped so the fractional-second rule
-/// (present only when microseconds are non-zero) can be unit-tested in isolation.
+/// Render local time with a fractional part only for non-zero microseconds.
 fn python_isoformat_from_ns(ns: i64) -> String {
     use chrono::{Local, TimeZone};
-    // Mirror CPython `datetime.fromtimestamp(ns / 1e9)`: divide as f64, then
-    // round the fractional part to whole microseconds.
+    // Divide nanoseconds through f64 and round the fractional second to the
+    // nearest microsecond.
     let seconds_f = ns as f64 / 1e9;
     let mut seconds = seconds_f.floor() as i64;
     let mut micros = ((seconds_f - seconds as f64) * 1e6).round() as i64;
@@ -245,8 +203,7 @@ fn python_isoformat_from_ns(ns: i64) -> String {
     isoformat_naive(naive, micros as u32)
 }
 
-/// Python `datetime.isoformat()` for a naive datetime: `YYYY-MM-DDTHH:MM:SS`,
-/// plus a six-digit `.ffffff` fraction only when microseconds are non-zero.
+/// Render seconds plus an optional six-digit microsecond fraction.
 fn isoformat_naive(naive: chrono::NaiveDateTime, micros: u32) -> String {
     let base = naive.format("%Y-%m-%dT%H:%M:%S").to_string();
     if micros == 0 {
@@ -255,7 +212,6 @@ fn isoformat_naive(naive: chrono::NaiveDateTime, micros: u32) -> String {
         format!("{base}.{micros:06}")
     }
 }
-
 
 /// Builds the hybrid `server_metrics_export.json` content.
 fn build_json(
@@ -268,10 +224,7 @@ fn build_json(
         "schema_version".into(),
         Value::String(JSON_SCHEMA_VERSION.into()),
     );
-    // `aiperf_version` is the frontend-projected package version; the report's
-    // own field (the Rust crate version) is a fallback only when the projection
-    // is absent (e.g. unit tests). `None` would be dropped, but one of the two
-    // always carries a version string.
+    // The configured package version takes precedence over the report fallback.
     root.insert(
         "aiperf_version".into(),
         Value::String(
@@ -285,7 +238,7 @@ fn build_json(
         root.insert("benchmark_id".into(), Value::String(benchmark_id.clone()));
     }
     root.insert("summary".into(), build_json_summary(report, meta));
-    // `metrics_phase` is kept at `profiling` for backward compatibility.
+    // `metrics_phase` is always `profiling`.
     root.insert("metrics_phase".into(), Value::String("profiling".into()));
     root.insert(
         "metrics".into(),
@@ -307,7 +260,7 @@ fn build_json(
 
     let mut content = serde_json::to_string_pretty(&Value::Object(root))
         .expect("server-metrics JSON is always serializable");
-    // orjson emits no trailing newline; `to_string_pretty` matches.
+    // JSON output has no trailing newline.
     content.truncate(content.trim_end().len());
     content
 }
@@ -347,8 +300,7 @@ fn build_json_summary(report: &NativeReport, meta: &ReportServerMetricsMetadata)
         Value::String(python_isoformat_from_ns(end_ns)),
     );
 
-    // Endpoint collection metadata is keyed by the endpoints that actually
-    // contributed a profiling series (`_build_hybrid_metrics`), sorted by URL.
+    // Include only endpoints that contributed profiling series, sorted by URL.
     let mut endpoints: BTreeSet<&str> = BTreeSet::new();
     for entry in report.server_metrics.values() {
         for series in &entry.series {
@@ -630,8 +582,7 @@ fn histogram_timeslices(slices: &[ReportTimeslice]) -> Option<Value> {
     (!projected.is_empty()).then_some(Value::Array(projected))
 }
 
-/// Common timeslice head: `start_ns`, `end_ns`, and `is_complete` only when the
-/// slice is partial (`None if complete else False`).
+/// Emit `start_ns`, `end_ns`, and `is_complete: false` only for partial slices.
 fn timeslice_head(slice: &ReportTimeslice) -> Map<String, Value> {
     let mut map = Map::new();
     map.insert("start_ns".into(), Value::from(slice.start_ns));
@@ -642,15 +593,13 @@ fn timeslice_head(slice: &ReportTimeslice) -> Map<String, Value> {
     map
 }
 
-/// Inserts a finite f64. `serde_json::Number::from_f64` never fails for finite
-/// input; a non-finite slip becomes JSON null, matching `scrub_non_finite`.
+/// Insert finite values as JSON numbers and any non-finite value as JSON null.
 fn insert_f64(map: &mut Map<String, Value>, key: &str, value: f64) {
     let number = serde_json::Number::from_f64(value)
         .map(Value::Number)
         .unwrap_or(Value::Null);
     map.insert(key.to_string(), number);
 }
-
 
 /// One CSV row's worth of metric facts (one native series).
 struct CsvMetricInfo<'a> {
@@ -668,7 +617,7 @@ impl CsvMetricInfo<'_> {
     }
 }
 
-/// Gauge/unknown stat columns (model field order).
+/// Gauge and unknown stat-column order.
 const GAUGE_STAT_KEYS: [&str; 13] = [
     "avg", "min", "max", "std", "p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99",
 ];
@@ -702,7 +651,7 @@ fn stat_keys(kind: &str) -> &'static [&'static str] {
     }
 }
 
-/// A single CSV cell value awaiting `_format_number`.
+/// A CSV statistic before formatting.
 enum StatCell {
     Absent,
     Int(u64),
@@ -710,7 +659,7 @@ enum StatCell {
 }
 
 impl StatCell {
-    /// Python `_format_number`: `None`→"", int→exact, real→four decimals.
+    /// Format absent values as empty, integers exactly, and reals to four decimals.
     fn format(&self) -> String {
         match self {
             StatCell::Absent => String::new(),
@@ -841,8 +790,7 @@ fn build_csv(report: &NativeReport, policy: &ServerMetricsExportConfig) -> Strin
     }
 
     // Each section is serialized independently, then joined by a blank `\r\n`
-    // line (Python's `writer.writerow([])` between sections); the csv crate
-    // cannot emit a bare zero-field record without quoting it as `""`.
+    // line; the csv crate cannot emit a bare zero-field record without quoting it.
     let mut sections: Vec<Vec<u8>> = Vec::new();
     for kind in ["gauge", "counter", "histogram", "unknown"] {
         if let Some(metrics) = by_type.get(kind) {
@@ -969,9 +917,8 @@ fn write_info_section<W: std::io::Write>(
     }
 }
 
-/// Union-find label-column ordering: exclusive labels before shared "bridge"
-/// labels within each co-occurrence family, families ordered by their minimum
-/// member, matching `_get_optimal_label_order`.
+/// Order exclusive labels before shared bridge labels within each co-occurrence
+/// family, with families ordered by their minimum member.
 fn optimal_label_order(metrics: &[CsvMetricInfo<'_>]) -> Vec<String> {
     let label_sets: Vec<BTreeSet<String>> = metrics
         .iter()
@@ -1042,8 +989,7 @@ fn optimal_label_order(metrics: &[CsvMetricInfo<'_>]) -> Vec<String> {
     result
 }
 
-/// Vertical clustering key: fill-pattern bitmap over the label columns, then
-/// name / endpoint / label-repr, matching `_get_vertical_sort_key`.
+/// Cluster rows by label fill pattern, then name, endpoint, and label representation.
 fn vertical_sort_key(
     metric: &CsvMetricInfo<'_>,
     label_order: &[String],

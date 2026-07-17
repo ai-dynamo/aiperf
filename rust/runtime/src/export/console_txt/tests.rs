@@ -3,8 +3,7 @@
 
 //! Golden tests for the console-txt sink.
 //!
-//! Byte-exact `golden/*.txt` files are authoritative Python-oracle output after
-//! `rich.text.Text.from_markup(...).plain`; they are not blessable.
+//! Byte-exact `golden/*.txt` files pin warning text and are not blessable.
 //! `golden/*.regression.txt` files cover approximate Rich box layout and may be
 //! regenerated with `BLESS=1`.
 
@@ -14,7 +13,6 @@ use crate::metrics_core::{
     ReportDistributionStats, ReportError, ReportStats, ReportValue,
 };
 use std::collections::BTreeMap;
-
 
 fn empty_report() -> NativeReport {
     NativeReport::new(&AccumulatorSummary::new(), None)
@@ -105,7 +103,6 @@ fn assert_regression(name: &str, actual: &str) {
     assert_eq!(actual, expected, "regression golden {name}");
 }
 
-
 #[test]
 fn osl_mismatch_body_is_byte_exact() {
     let mut report = empty_report();
@@ -159,7 +156,6 @@ fn osl_mismatch_reports_na_when_diff_absent() {
     assert!(warning.body.contains("Average mismatch: N/A"));
 }
 
-
 #[test]
 fn usage_discrepancy_body_is_byte_exact() {
     let mut report = empty_report();
@@ -185,7 +181,6 @@ fn usage_discrepancy_absent_when_zero() {
         .insert("request_count".to_string(), counter_entry(10.0));
     assert!(detect_usage_discrepancy(&zero).is_none());
 }
-
 
 #[test]
 fn max_completion_tokens_body_is_byte_exact() {
@@ -272,7 +267,7 @@ fn detect_api_errors_runs_both_detectors_in_order() {
     ];
     let warnings = detect_api_errors(&report);
     assert_eq!(warnings.len(), 2);
-    // MaxCompletionTokens is emitted first (Python `DETECTORS` order).
+    // MaxCompletionTokens is emitted first by contract.
     assert_eq!(
         warnings[0].title,
         "Unsupported Parameter: max_completion_tokens"
@@ -287,7 +282,6 @@ fn detect_api_errors_runs_both_detectors_in_order() {
 fn no_api_error_warnings_on_empty_report() {
     assert!(detect_api_errors(&empty_report()).is_empty());
 }
-
 
 #[test]
 fn error_summary_table_absent_without_errors() {
@@ -318,7 +312,7 @@ fn error_code_zero_renders_na() {
     let mut report = empty_report();
     report.errors = vec![error(Some(0), "Type", "msg", 1)];
     let table = error_summary_table(&report, 140).expect("error table");
-    // Python treats a falsy code (0) as N/A.
+    // Code zero renders as absent.
     assert!(table.contains("N/A"));
 }
 
@@ -347,9 +341,7 @@ fn full_render_regression() {
         2,
     )];
 
-    // Project one registered metric (request_latency) exactly as the frontend
-    // would; osl_mismatch_* / request_count stay unregistered here (rendered as
-    // raw tags in the DEFAULT group, matching Python's unregistered-tag path).
+    // Keep the warning counters unregistered to exercise raw default-group tags.
     let mut metrics = BTreeMap::new();
     metrics.insert(
         "request_latency".to_string(),
@@ -415,7 +407,12 @@ fn set_cell_size_crops_wide_glyph_on_boundary() {
 /// column is fully right-stripped. Regenerate with `BLESS=1`.
 #[test]
 fn unicode_table_render_regression() {
-    let left = [Justify::Right, Justify::Right, Justify::Left, Justify::Right];
+    let left = [
+        Justify::Right,
+        Justify::Right,
+        Justify::Left,
+        Justify::Right,
+    ];
     let emoji = render_table(
         "NVIDIA AIPerf | Error Summary",
         &["Code", "Type", "Message", "Count"],
@@ -451,7 +448,7 @@ fn unicode_table_render_regression() {
 }
 
 #[test]
-fn number_formatting_matches_python() {
+fn number_formatting_matches_contract() {
     assert_eq!(comma_int(1_234_567), "1,234,567");
     assert_eq!(comma_int(0), "0");
     assert_eq!(comma_int(-1_000), "-1,000");

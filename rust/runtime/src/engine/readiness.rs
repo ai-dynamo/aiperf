@@ -3,11 +3,9 @@
 
 //! Prepared online endpoint readiness over injected Clock and transport seams.
 //!
-//! Python Config v2 owns authoring. The selected endpoint factory owns the
-//! exact readiness request. This module expands those policies once into an
-//! immutable plan, then drives every `(profile URL, model)` target before the
-//! runner creates its exclusive artifact directory. No fallback inference
-//! payload or endpoint-kind match lives in the driver.
+//! The selected endpoint factory expands authored readiness policy into an
+//! immutable plan and drives every `(profile URL, model)` target before artifact
+//! creation.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

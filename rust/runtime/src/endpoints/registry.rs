@@ -49,9 +49,7 @@ use crate::endpoints::tier2::{
     RawEndpointFactory, SolidoRagEndpoint, TemplateEndpointFactory, VideoGenerationEndpoint,
 };
 
-pub(crate) fn compatibility_descriptor_for(
-    endpoint_type: EndpointType,
-) -> &'static EndpointDescriptor {
+pub(crate) fn legacy_descriptor_for(endpoint_type: EndpointType) -> &'static EndpointDescriptor {
     match endpoint_type {
         EndpointType::Chat => ChatEndpoint.descriptor(),
         EndpointType::Completions => CompletionsEndpoint.descriptor(),
@@ -191,7 +189,7 @@ pub enum EndpointRegistryError {
     /// A dense endpoint key is outside the worker-local table.
     UnknownEndpointKey(EndpointKey),
     /// A protocol-v1 caller selected a factory without an [`Endpoint`] adapter.
-    NoCompatibilityAdapter(EndpointId),
+    NoLegacyAdapter(EndpointId),
 }
 
 impl Display for EndpointRegistryError {
@@ -225,7 +223,7 @@ impl Display for EndpointRegistryError {
             Self::UnknownEndpointKey(key) => {
                 write!(formatter, "endpoint key {} is not prepared", key.index())
             }
-            Self::NoCompatibilityAdapter(id) => write!(
+            Self::NoLegacyAdapter(id) => write!(
                 formatter,
                 "endpoint {id:?} has no protocol-v1 Endpoint compatibility adapter"
             ),
@@ -242,7 +240,7 @@ impl Error for EndpointRegistryError {
             | Self::UnknownEndpoint { .. }
             | Self::TooManyPreparedEndpoints
             | Self::UnknownEndpointKey(_)
-            | Self::NoCompatibilityAdapter(_) => None,
+            | Self::NoLegacyAdapter(_) => None,
         }
     }
 }
@@ -277,7 +275,7 @@ pub trait EndpointFactory: fmt::Debug + Send + Sync {
     -> EndpointResult<Box<dyn PreparedEndpoint>>;
 
     /// Return the decoded-JSON adapter for protocol-v1 callers.
-    fn compatibility_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
+    fn legacy_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
         None
     }
 }
@@ -391,7 +389,7 @@ pub trait PreparedEndpointBehavior: Endpoint {
     ) -> EndpointResult<BodyPlan>;
 }
 
-pub(crate) fn format_compatibility_payload<E>(
+pub(crate) fn format_legacy_payload<E>(
     endpoint: &E,
     request: &RequestInfo,
 ) -> EndpointResult<BodyPlan>
@@ -463,7 +461,7 @@ pub trait PreparedEndpoint: fmt::Debug {
     fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan>;
 
     /// Whether static bind-time inputs fully determine the body, allowing the
-    /// [`BodyPlan`] to be cached (segment spec §3a).
+    /// [`BodyPlan`] to be cached.
     ///
     /// Dialects using dispatch identity, raw payloads, or token IDs return
     /// `false`. This runtime property is absent from the capability wire.
@@ -520,23 +518,23 @@ where
         &self,
         config: EffectiveEndpointConfig,
     ) -> EndpointResult<Box<dyn PreparedEndpoint>> {
-        let compatibility_config = EndpointConfig::from_raw(
+        let legacy_config = EndpointConfig::from_raw(
             self.endpoint
                 .descriptor()
-                .compatibility_type()
+                .legacy_type()
                 .expect("protocol-v1 Endpoint factory must map to EndpointType"),
             config.to_raw(),
         );
-        let headers = self.endpoint.format_headers(&compatibility_config);
+        let headers = self.endpoint.format_headers(&legacy_config);
         Ok(Box::new(StatelessPreparedEndpoint {
             endpoint: self.endpoint.clone(),
             config,
-            compatibility_config,
+            legacy_config,
             headers,
         }))
     }
 
-    fn compatibility_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
+    fn legacy_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
         Some(self.endpoint.clone())
     }
 }
@@ -545,7 +543,7 @@ where
 struct StatelessPreparedEndpoint<E> {
     endpoint: Arc<E>,
     config: EffectiveEndpointConfig,
-    compatibility_config: EndpointConfig,
+    legacy_config: EndpointConfig,
     headers: BTreeMap<String, String>,
 }
 
@@ -571,13 +569,12 @@ where
     }
 
     fn readiness_policy(&self, model: &str) -> EndpointResult<ReadinessPolicy> {
-        self.endpoint
-            .readiness_policy(&self.compatibility_config, model)
+        self.endpoint.readiness_policy(&self.legacy_config, model)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
         self.endpoint
-            .parse_response_with_config(response, &self.compatibility_config)
+            .parse_response_with_config(response, &self.legacy_config)
     }
 
     fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
@@ -586,7 +583,7 @@ where
 
     fn extract_response_data(&self, record: &RequestRecord) -> EndpointResult<Vec<ParsedResponse>> {
         self.endpoint
-            .extract_response_data_with_config(record, &self.compatibility_config)
+            .extract_response_data_with_config(record, &self.legacy_config)
     }
 
     fn build_assistant_turn(&self, record: &RequestRecord) -> EndpointResult<Option<Turn>> {
@@ -850,14 +847,14 @@ impl EndpointRegistry {
     }
 
     /// Resolve the adapter used by protocol-v1 materializers.
-    pub fn compatibility_endpoint(
+    pub fn legacy_endpoint(
         &self,
         id: &EndpointId,
     ) -> Result<Arc<dyn Endpoint>, EndpointRegistryError> {
         let canonical = self.canonical_id(id)?.clone();
         self.resolve_factory(&canonical)?
-            .compatibility_endpoint()
-            .ok_or(EndpointRegistryError::NoCompatibilityAdapter(canonical))
+            .legacy_endpoint()
+            .ok_or(EndpointRegistryError::NoLegacyAdapter(canonical))
     }
 
     fn unknown(&self, id: &EndpointId) -> EndpointRegistryError {

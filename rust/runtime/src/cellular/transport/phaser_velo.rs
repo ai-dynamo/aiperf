@@ -13,7 +13,8 @@
 //!   consumer (snapshot + live receiver split at the seam), returns the snapshot as the
 //!   reply, and spawns a **pump** task that forwards the live tail to the cell.
 //! - `aiperf.phaser.event` (fire-and-forget, controller → cell): each live
-//!   [`BroadcastEvent<PhaseEvent>`] the pump pushes, delivered into the cell's live
+//!   [`BroadcastEvent`](crate::cellular::broadcast::BroadcastEvent)`<PhaseEvent>` the pump
+//!   pushes, delivered into the cell's live
 //!   channel.
 //!
 //! The replay/live split happens under the broadcast's one lock (see
@@ -186,12 +187,11 @@ mod tests {
     use crate::cellular::phaser::PhaseTransition;
     use crate::cellular::transport::connect::{BindSpec, build_velo, connect_controller};
 
-    /// End-to-end over two in-process velo instances: the controller advances the phaser
-    /// and a cell subscribing over velo observes the full generation sequence — replay
-    /// for what preceded its subscribe, live for what follows.
+    // End-to-end over two in-process velo instances: the controller advances the phaser
+    // and a cell subscribing over velo observes the full generation sequence — replay
+    // for what preceded its subscribe, live for what follows.
     #[tokio::test]
     async fn cell_observes_replay_then_live_generations_over_velo() {
-        // Controller velo on a loopback port; a phaser it will drive.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let coordinate = format!("tcp://{}", listener.local_addr().expect("addr"));
         let controller_velo = build_velo(BindSpec::TcpListener(listener))
@@ -204,7 +204,6 @@ mod tests {
         phaser.advance(PhaseTransition::Started);
         phaser.advance(PhaseTransition::ShardsAvailable(4));
 
-        // Cell velo dials the controller and subscribes.
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
         let controller_peer = connect_controller(&cell_velo, &coordinate)
             .await
@@ -213,11 +212,9 @@ mod tests {
             .await
             .expect("subscribe");
 
-        // Replay: the cell reaches generation 2 immediately.
         sub.await_generation(2).await.expect("replayed to gen 2");
         assert!(sub.seen_generation() >= 2);
 
-        // Live: advancing now pushes to the cell.
         phaser.advance(PhaseTransition::PhaseAdvance("profiling".into())); // gen 3
         phaser.advance(PhaseTransition::PhaseAdvance("drain".into())); // gen 4
         sub.await_generation(4).await.expect("live to gen 4");

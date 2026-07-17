@@ -249,13 +249,13 @@ pub struct ConversationMetadata {
 ///
 /// This is the dataset-derived analog of the during-run `record_input_payload`
 /// capture: the session id is the authored conversation id and each payload is the
-/// exact canonical body [`crate::transport::http::transport::prepare_request`] would
+/// exact canonical body `crate::transport::http::transport::prepare_request` would
 /// retain as `canonical_body()` when the same turn is dispatched, so an
 /// `inputs.json` written from these bytes is byte-identical to the capture-based
 /// output (see [`NativeDatasetConversationSource::materialize_input_payloads`]).
 #[derive(Clone, Debug)]
 pub struct UpFrontInputSession {
-    /// Authored conversation id (mirrors `SampledSession::conversation_id`).
+    /// Authored conversation id shared with `SampledSession::conversation_id`.
     pub session_id: String,
     /// One canonical request body per turn, ordered by turn index.
     pub payloads: Vec<Bytes>,
@@ -527,12 +527,9 @@ fn normalize_endpoint_name(name: &str) -> String {
     name.trim().to_ascii_lowercase().replace(['-', '/'], "_")
 }
 
-/// Lower every static content turn to a pre-serialized `Message` segment for the
-/// run's default prepared endpoint (segment spec §5), so dispatch splices the
-/// stored wire instead of re-rendering. Endpoints whose body is not a per-turn
-/// message array (embeddings, completions, media, …) have no lowerer and are
-/// left on the live render path; per-turn endpoint overrides are skipped inside
-/// the lowering pass itself.
+/// Pre-serialize static message turns for the default prepared endpoint.
+/// Endpoints without per-turn message arrays remain on the live rendering path,
+/// and per-turn endpoint overrides are not lowered.
 fn lower_static_messages(
     dataset: &mut NativeDataset,
     endpoint_resolver: &dyn PreparedTurnEndpointResolver,
@@ -544,10 +541,8 @@ fn lower_static_messages(
             .lower_messages_for_endpoint(&lowerer)
             .map_err(|error| anyhow!("failed to lower static messages: {error}"))?;
     }
-    // Segment spec §3a: after lowering, precompute and cache each eligible static
-    // turn's BodyPlan against the default prepared endpoint so dispatch clones it
-    // instead of reformatting. Runs on the same (lowered) segment store dispatch
-    // sees, so a cache hit is byte-identical to the live formatter output.
+    // Cache eligible static body plans against the default prepared endpoint
+    // after lowering so dispatch can reuse byte-identical plans.
     dataset
         .precompute_body_plans(resolved.endpoint, primary_model_name)
         .map_err(|error| anyhow!("failed to precompute body plans: {error}"))?;
@@ -880,14 +875,9 @@ impl RuntimeSessionBackend for NativeSessionBackend {
         response: TurnResponse,
     ) -> Result<TurnToSend> {
         if response.terminal == ReplayTerminalStatus::Completed {
-            // Lower the captured live reply once, here at capture (segment spec §5),
-            // so every later multi-turn dispatch splices the stored wire instead of
-            // re-serializing the reply body through `RenderedMessage::Value` on each
-            // request. The shape is bound to the run's DEFAULT prepared endpoint —
-            // the same commit `lower_static_messages` makes at load — never the
-            // per-turn override. Non-message-array dialects (completions, embeddings,
-            // …) have no lowerer, so the reply stays on the live render path.
-            // Resolving the shape does not touch the session and precedes the mutable borrow.
+            // Lower a completed reply once against the default prepared endpoint
+            // so subsequent turns splice its stored wire. Dialects without message
+            // arrays remain on the live rendering path.
             let lowerer = match &self.endpoint {
                 NativeSessionEndpoint::Prepared {
                     endpoint_resolver, ..
@@ -1907,10 +1897,8 @@ mod tests {
 
     #[tokio::test]
     async fn captured_reply_is_lowered_once_and_spliced_identically_each_dispatch() {
-        // Segment spec §5: a live reply captured after turn 0 is lowered once at
-        // capture and its stored wire is spliced verbatim into the context of every
-        // later dispatch. A 3-turn conversation surfaces reply-0 in both the turn-1
-        // and turn-2 request bodies, so byte-drift between dispatches would show up.
+        // The three-turn fixture exposes the first reply in two later request
+        // bodies, detecting any byte drift between dispatches.
         let registry = LoaderRegistry::with_builtin_formats().unwrap();
         let source = DatasetSource::Inline(json!([{
             "session_id": "native",

@@ -264,9 +264,9 @@ impl WindowSampler for TumblingWindowSampler {
                     return;
                 };
                 let Some(first) = request.token_times_ns.first() else {
-                    // Python's credit-return path classifies a completed response
-                    // without request_latency_ns as an error: role/usage/finish
-                    // frames alone are not a successful inference sample.
+                    // A completed response without token timing is an error;
+                    // role, usage, and finish frames alone are not a successful
+                    // inference sample.
                     self.errors += 1;
                     return;
                 };

@@ -64,8 +64,7 @@ pub trait PromptGeneratorFactory: Send + Sync {
 /// [`tokenize_corpus_chunked`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CorpusSource {
-    /// The embedded Shakespeare ("sonnet") corpus, matching Python's default
-    /// `DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"`.
+    /// The embedded Shakespeare ("sonnet") product-default corpus.
     Sonnet,
     /// A caller-supplied corpus body (custom-corpus configs and tests).
     Custom(String),
@@ -82,9 +81,7 @@ impl CorpusSource {
 
 /// Corpus-token generator with prefix block reuse.
 ///
-/// Matches Python `PromptGenerator`
-/// (`src/aiperf/dataset/generator/prompt.py`): the default corpus is the
-/// Shakespeare sonnet text, tokenized once through the character-chunked
+/// The default Shakespeare corpus is tokenized once through the character-chunked
 /// [`tokenize_corpus_chunked`] policy, then sampled with wrap-around and prefix
 /// block reuse to produce exact-length synthetic prompts.
 #[derive(Debug, Clone)]
@@ -93,8 +90,7 @@ pub struct CorpusPromptGeneratorFactory {
 }
 
 impl CorpusPromptGeneratorFactory {
-    /// Use the embedded Shakespeare ("sonnet") corpus — the product default and
-    /// the byte-for-byte equivalent of Python's default `PromptGenerator`.
+    /// Use the embedded Shakespeare ("sonnet") product-default corpus.
     pub fn sonnet() -> Self {
         Self {
             corpus: CorpusSource::Sonnet,
@@ -120,7 +116,7 @@ impl CorpusPromptGeneratorFactory {
 }
 
 impl Default for CorpusPromptGeneratorFactory {
-    /// The default corpus is the Shakespeare sonnet text, matching Python AIPerf.
+    /// The default corpus is the Shakespeare sonnet text.
     fn default() -> Self {
         Self::sonnet()
     }

@@ -15,16 +15,13 @@ fn runner_filename() -> &'static str {
     "aiperf"
 }
 
-/// Return the `_bin/aiperf` metadata value.
-///
-/// Wheel installation and executable discovery do not use this value.
+/// Package-relative executable path reported in build metadata.
 #[pyfunction]
 fn runner_relpath() -> &'static str {
     "_bin/aiperf"
 }
 
-/// Cargo profile this extension (and, by the same maturin build, the wheel) was
-/// compiled with.
+/// Cargo profile used to compile this extension.
 #[pyfunction]
 fn build_profile() -> &'static str {
     if cfg!(debug_assertions) {

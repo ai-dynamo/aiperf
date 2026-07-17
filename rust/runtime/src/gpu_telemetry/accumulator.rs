@@ -235,8 +235,7 @@ impl GpuTelemetryAccumulator {
     /// Materializes the raw per-GPU scrape records in deterministic time order.
     ///
     /// Native-v2 reporting stays columnar through [`summarize_phase`](Self::summarize_phase).
-    /// This colder clone path serves the telemetry JSONL artifact consumed by
-    /// Python plot and user-extension code.
+    /// This colder clone path serves telemetry JSONL artifact consumers.
     pub fn records(&self) -> Vec<GpuTelemetryRecord> {
         let mut records = self
             .series
@@ -633,7 +632,7 @@ mod tests {
 
     /// Records carrying custom-CSV signal names only surface when their specs
     /// are registered: the summarizer iterates registered specs, so a scraped
-    /// value whose name has no spec is silently dropped. This mirrors the
+    /// value whose name has no spec is silently dropped, consistent with the
     /// runner projecting `custom_metrics` (from the `--gpu-telemetry` CSV) into
     /// the accumulator so all default + custom fields report.
     #[test]
@@ -689,10 +688,8 @@ mod tests {
         }
     }
 
-    /// Python deduplicates custom CSV rows against the default catalog before
-    /// projecting them, so the runner never receives a name that collides with
-    /// a built-in. The registration guard still fails closed if it ever does,
-    /// rather than silently shadowing a built-in spec.
+    /// Registration fails closed on empty or built-in names rather than
+    /// silently shadowing a built-in specification.
     #[test]
     fn duplicate_and_empty_custom_specs_are_rejected() {
         assert_eq!(

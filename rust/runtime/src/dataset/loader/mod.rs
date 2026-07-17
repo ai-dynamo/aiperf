@@ -129,7 +129,8 @@ pub struct LoadConfig {
 /// file (`$HF_TOKEN_PATH`, else `$HF_HOME/token`, else `~/.cache/huggingface/token`)
 /// so gated public datasets authenticate without an explicit env var.
 fn resolve_hf_token() -> Option<String> {
-    if let Ok(token) = std::env::var("HF_TOKEN").or_else(|_| std::env::var("HUGGING_FACE_HUB_TOKEN"))
+    if let Ok(token) =
+        std::env::var("HF_TOKEN").or_else(|_| std::env::var("HUGGING_FACE_HUB_TOKEN"))
     {
         let token = token.trim().to_string();
         if !token.is_empty() {

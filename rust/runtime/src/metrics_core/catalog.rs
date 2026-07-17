@@ -3,11 +3,9 @@
 
 //! Static metric catalog and dependency validation.
 //!
-//! The catalog is data over the columnar engine: each row declares identity,
-//! units, flags, kind, aggregation, and true metric dependencies. Computation is
-//! implemented in [`crate::metrics_core::accumulator`]. Registry validation and dependency
-//! ordering are handled here; the metric catalog is documented in
-//! `specs/metrics.md`.
+//! Each catalog row declares identity, units, flags, kind, aggregation, and metric
+//! dependencies. This module validates the registry and dependency order;
+//! accumulation is implemented in [`crate::metrics_core::accumulator`].
 
 use crate::metrics_core::{MetricValueType, Unit};
 use bitflags::bitflags;
@@ -346,7 +344,7 @@ bitflags! {
         const ERROR_ONLY = 1 << 1;
         /// Requires produced output tokens.
         const PRODUCES_TOKENS_ONLY = 1 << 2;
-        /// Bit 3 is reserved to match the Python enum layout.
+        /// Larger values are preferable; bit 3 remains reserved.
         const LARGER_IS_BETTER = 1 << 4;
         /// Internal helper metric.
         const INTERNAL = 1 << 5;
@@ -2001,9 +1999,7 @@ pub struct RecordMetricColumn {
 }
 
 impl RecordMetricColumn {
-    /// The records-CSV column name: `{header} ({unit})`, matching the summary CSV
-    /// (`aiperf_runtime::export::genai_perf::format_metric_name` /
-    /// `metrics_csv_exporter.py::_format_metric_name`). The unit is omitted when it
+    /// The records-CSV column name: `{header} ({unit})`. The unit is omitted when it
     /// is empty or `count`/`requests` (case-insensitive), and the parenthesized
     /// unit stands alone when the header is empty.
     pub fn csv_display_name(&self) -> String {

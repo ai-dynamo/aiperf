@@ -825,7 +825,10 @@ fn wants_per_record_artifacts(
     };
     #[cfg(not(feature = "parquet"))]
     let parquet_needs_retain = artifacts.records_parquet_path.is_some();
-    inputs_need_retain || parquet_needs_retain
+    // Dataset-analysis (`--dry-run`) reads the full retained record set to derive its
+    // per-turn / length / cache-reuse sections, so it disqualifies exact-fold on BOTH
+    // the scheduled and graph paths (the graph path double-gates already — harmless).
+    inputs_need_retain || parquet_needs_retain || artifacts.dataset_analysis_path.is_some()
 }
 
 /// Whether every conversation in `dataset` can have its `inputs.json` request bodies
@@ -3253,6 +3256,26 @@ async fn execute_native_inner(
         if let Some(outputs_path) = &request.artifacts.outputs_path {
             let outputs_path = artifact_path(&request.artifact_dir, outputs_path, "outputs_path")?;
             write_outputs_json(&outputs_path, &captured, &metrics_config)?;
+        }
+        // Dataset analysis (`--dry-run`) reads the full retained record set. Requesting
+        // it forces the retain path via `wants_per_record_artifacts`, so `exact_fold` is
+        // disabled and `captured` holds every clean + errored record here. Sketch mode
+        // folds and drops records, leaving only the errored subset, so skip it there
+        // (dry-run defaults to exact; T11 gating rejects the sketch combination).
+        if !sketch_mode {
+            if let Some(relative) = &request.artifacts.dataset_analysis_path {
+                let base = artifact_path(&request.artifact_dir, relative, "dataset_analysis_path")?;
+                let analysis_request =
+                    crate::engine::dataset_analysis_writer::DatasetAnalysisRequest {
+                        path: base,
+                        options: crate::dataset::analysis::AnalysisOptions::default(),
+                        per_conversation: false,
+                    };
+                crate::engine::dataset_analysis_writer::write_dataset_analysis_from_records(
+                    &analysis_request,
+                    &captured,
+                )?;
+            }
         }
     }
     if let Some(inputs_path) = &request.artifacts.inputs_path {

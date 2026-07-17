@@ -609,8 +609,8 @@ mod gate_tests {
     use super::*;
     use crate::clock::sim_clock::SimClock;
 
-    /// The gate wires the shared `aiperf-timing` duration condition to the worker
-    /// clock: not expired before the bound, expired once elapsed reaches it.
+    // The gate wires the shared `aiperf-timing` duration condition to the worker
+    // clock: not expired before the bound, expired once elapsed reaches it.
     #[test]
     fn duration_gate_expires_at_the_bound() {
         let clock = Rc::new(SimClock::new());

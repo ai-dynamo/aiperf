@@ -7,7 +7,7 @@ use super::templates::TemplateRenderer;
 use super::vocab::*;
 use crate::graph::recorded::RecordedTraceError;
 
-/// `_gen_ml_training_code`: a full fine-tuning training script.
+/// A full fine-tuning training script.
 pub(super) fn training_code(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let model = r.pick(MODELS)?;
     let imp = r.sample(ML_IMPORTS, 3)?;
@@ -75,7 +75,7 @@ tokenizer.save_pretrained("./final_model")
     ))
 }
 
-/// `_gen_ml_inference_code`: a generation/inference script.
+/// A generation/inference script.
 pub(super) fn inference_code(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let model = r.pick(MODELS)?;
     let cls1 = ["AutoModelForCausalLM", "AutoModelForSeq2SeqLM"][r.index(2)?];
@@ -124,7 +124,7 @@ print({v3}[0])
     ))
 }
 
-/// `_gen_ml_config`: a training/LoRA/quantization JSON config blob.
+/// A training, LoRA, or quantization JSON configuration.
 pub(super) fn config(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let model = r.pick(MODELS)?;
     let lr = ["1e-05", "2e-05", "5e-05", "0.0001", "0.0003"][r.index(5)?];
@@ -180,7 +180,7 @@ pub(super) fn config(r: &mut TemplateRenderer) -> Result<String, RecordedTraceEr
     ))
 }
 
-/// `_gen_ml_training_log`: a synthetic step/eval/GPU training log.
+/// A synthetic step, evaluation, and GPU training log.
 pub(super) fn training_log(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let model_full = r.pick(MODELS)?;
     let model = model_full.rsplit('/').next().unwrap_or(model_full);
@@ -228,7 +228,7 @@ pub(super) fn training_log(r: &mut TemplateRenderer) -> Result<String, RecordedT
     Ok(lines.join("\n") + "\n")
 }
 
-/// `_gen_cuda_error`: a CUDA traceback plus a PyTorch memory-summary table.
+/// A CUDA traceback plus a PyTorch memory-summary table.
 pub(super) fn cuda_error(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let err = r.pick(CUDA_ERRORS)?;
     let model_full = r.pick(MODELS)?;
@@ -242,8 +242,7 @@ pub(super) fn cuda_error(r: &mut TemplateRenderer) -> Result<String, RecordedTra
     let m = r.sample(ML_METHODS, 2)?;
     let (m1, m2) = (m[0], m[1]);
 
-    // Inline draws, in the exact left-to-right / top-to-bottom order Python
-    // evaluates them inside the f-string body.
+    // Inline draws preserve left-to-right, top-to-bottom order.
     let line1 = r.number(50, 300)?;
     let line2 = r.number(1400, 1600)?;
     let line3 = r.number(800, 1200)?;

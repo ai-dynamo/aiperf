@@ -131,16 +131,16 @@ mod tests {
         assert_eq!(hash_i128_from_raw_text("\"42\""), None);
     }
 
-    /// Guard: `serde_json`'s `arbitrary_precision` feature must NOT be enabled.
-    ///
-    /// With `arbitrary_precision` on, every JSON number is stored as a private
-    /// `{"$serde_json::private::Number":"..."}` map internally.  This breaks
-    /// direct `from_str` into any struct that has `f64` fields (the deserializer
-    /// sees a map where it expects a float and errors), corrupts minijinja template
-    /// rendering of numeric values, and makes `Value::Number::as_u64()` return
-    /// `None` for numbers that fit in u64. WEKA/Dynamo hash precision uses
-    /// `RawValue`-based parsing in `source.rs`; this test prevents accidental
-    /// enablement.
+    // Guard: `serde_json`'s `arbitrary_precision` feature must NOT be enabled.
+    //
+    // With `arbitrary_precision` on, every JSON number is stored as a private
+    // `{"$serde_json::private::Number":"..."}` map internally.  This breaks
+    // direct `from_str` into any struct that has `f64` fields (the deserializer
+    // sees a map where it expects a float and errors), corrupts minijinja template
+    // rendering of numeric values, and makes `Value::Number::as_u64()` return
+    // `None` for numbers that fit in u64. WEKA/Dynamo hash precision uses
+    // `RawValue`-based parsing in `source.rs`; this test prevents accidental
+    // enablement.
     #[test]
     fn serde_json_arbitrary_precision_not_enabled() {
         // 1. Direct from_str into a struct with an f64 field must succeed.

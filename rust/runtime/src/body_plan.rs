@@ -82,7 +82,7 @@ impl BodyPlan {
         Self::Fields(SmallVec::new())
     }
 
-    /// A one-field degenerate plan wrapping a complete prebuilt body.
+    /// Construct a plan wrapping a complete prebuilt body.
     pub fn raw(handle: Handle) -> Self {
         Self::Raw(handle)
     }
@@ -151,19 +151,10 @@ impl BodyPlan {
         self.literal(name, Value::Bool(value))
     }
 
-    /// Decompose a fully-built endpoint body object into a plan: every top-level
-    /// array-of-objects field (a message array) becomes spliceable
-    /// [`Wires`](FieldValue::Wires), everything else a [`Literal`]. Materializing
-    /// the result is byte-identical to `serde_json::to_vec(object)`. This is the
-    /// adapter for formatters that build a `Value`; direct plan authors skip it.
+    /// Convert non-empty top-level arrays of objects to spliceable wires; retain
+    /// all other values as literals.
     ///
-    /// The only failure mode is `serde_json::to_vec` on a message element, so it
-    /// returns a neutral [`serde_json::Error`] rather than a `dataset`-scoped
-    /// error — this lets endpoint formatters `?` it into their `EndpointError`
-    /// without a `dataset -> endpoints` dependency (the two crates are layered
-    /// the other way around).
-    ///
-    /// [`Literal`]: FieldValue::Literal
+    /// Returns serialization errors from array elements unchanged.
     pub fn from_object(
         object: &serde_json::Map<String, Value>,
     ) -> std::result::Result<Self, serde_json::Error> {
@@ -184,19 +175,8 @@ impl BodyPlan {
         Ok(plan)
     }
 
-    /// Replace a named message-array field's value with spliceable pre-serialized
-    /// wires, preserving the field's existing position.
-    ///
-    /// Content lowering builds the body object with the message array as an
-    /// empty-array placeholder so [`from_object`] fixes the field's insertion
-    /// position and classifies it as a
-    /// [`Literal`](FieldValue::Literal) `[]`, then swaps in the real
-    /// [`Wires`](FieldValue::Wires) here. An empty wire list is left untouched:
-    /// `Literal([])` and `Wires([])` both materialize to `[]` byte-for-byte, so
-    /// the empty-array carve-out (an empty message array must stay `[]`) holds
-    /// either way.
-    ///
-    /// [`from_object`]: BodyPlan::from_object
+    /// Replace an existing message-array field with pre-serialized wires while
+    /// preserving field order. Empty wire lists leave the field unchanged.
     pub fn splice_message_wires(&mut self, name: &str, wires: SmallVec<[Bytes; 1]>) {
         if wires.is_empty() {
             return;

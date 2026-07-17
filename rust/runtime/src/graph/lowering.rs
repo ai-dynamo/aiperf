@@ -316,9 +316,8 @@ impl<'a> GraphBuilder<'a> {
             .collect::<HashMap<_, _>>();
         let mut expanded_branches = HashMap::<String, BranchExpansion>::new();
 
-        // Python dispatches pre-session SPAWNs before root turn zero. Insertion
-        // order is the LocalSet's deterministic same-instant order, so expand
-        // these START entries first.
+        // Pre-session SPAWN entries precede root turn zero; insertion order
+        // preserves deterministic same-instant execution.
         for branch_id in &conversation.turns[0].branch_ids {
             let branch = branches.get(branch_id.as_str()).ok_or_else(|| {
                 GraphLoweringError::Branch(format!(

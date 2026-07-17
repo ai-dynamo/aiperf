@@ -7,7 +7,7 @@ use super::templates::TemplateRenderer;
 use super::vocab::*;
 use crate::graph::recorded::RecordedTraceError;
 
-/// `_gen_error_traceback`: dispatch across the per-language traceback variants.
+/// Dispatch across per-language traceback variants.
 ///
 /// When `lang` is `Some`, the traceback kind is fixed by the language
 /// (`lang_to_kind`, where typescript maps to the `node` kind) with NO random
@@ -435,11 +435,10 @@ fn diff_hunks_typescript(c: &DiffCtx) -> (String, String, String) {
     (hunk1, hunk2, hunk3)
 }
 
-/// `_gen_git_diff`: a commit diff assembled from per-language hunk builders.
+/// A commit diff assembled from per-language hunk builders.
 ///
-/// The hunk language is chosen by the `lang` parameter (Python's `language`
-/// argument selects `lang_hunks[language]`), NOT by a random draw — `None`
-/// (the pool path) resolves to the python hunks.
+/// The hunk language is selected by `lang`, not by a random draw; `None`
+/// resolves to the Python hunks.
 pub(super) fn git_diff(
     r: &mut TemplateRenderer,
     lang: Option<usize>,

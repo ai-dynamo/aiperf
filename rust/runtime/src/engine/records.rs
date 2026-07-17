@@ -142,7 +142,7 @@ struct RecordError {
 struct ClassifiedRecordError {
     /// HTTP or pseudo-status code; `Some(499)` for post-send cancellation.
     code: Option<u16>,
-    /// Stable error type mirrored into the Python `ErrorDetails.type`.
+    /// Stable error type used by request records and error summaries.
     error_type: &'static str,
     /// Human-readable message.
     message: String,
@@ -202,8 +202,7 @@ fn error_kind_type_name(kind: ErrorKind) -> &'static str {
 /// keyed by `(code, stable type, message)`.
 ///
 /// This preserves the HTTP 499 post-send cancellation code and its
-/// `RequestCancellationError` type in the aggregated `error_summary`, which the
-/// Python native-report projection reads from the report `errors` array. Only
+/// `RequestCancellationError` type in the aggregated `error_summary`. Only
 /// profiling-phase records are grouped so the summary matches the profiling
 /// `error_request_count`.
 pub fn group_record_errors(records: &[CapturedRecord]) -> Vec<ReportError> {
@@ -331,13 +330,13 @@ pub fn write_records_jsonl(
 /// Write finalized request metrics as a wide, columnar Parquet sidecar beside
 /// the per-request JSONL.
 ///
-/// This is a faithful columnar mirror of [`write_records_jsonl`]: it reuses the
-/// exact same [`record_metrics`] projection and [`classify_record_error`]
+/// This columnar artifact reuses the same [`record_metrics`] projection and
+/// [`classify_record_error`]
 /// classification (no logic is duplicated), so the Parquet metric columns and
 /// error triple agree with the JSONL row for the same record. The columnar
 /// assembly lives in [`crate::export::per_record_parquet`] because the runner has
-/// no direct `arrow`/`parquet` dependency. `include_trace` mirrors the JSONL's
-/// conditional `trace_data`, appending flat `trace_*` columns.
+/// no direct `arrow`/`parquet` dependency. `include_trace` controls the same
+/// conditional trace data as JSONL, appended as flat `trace_*` columns.
 #[cfg(feature = "parquet")]
 pub(crate) fn write_records_parquet(
     path: &Path,
@@ -655,13 +654,6 @@ pub fn record_json_value(
         .context("serializing live native metric record")
 }
 
-/// Write Python-compatible raw request/response records in dispatch order.
-///
-/// The request payload is serialized through [`RawValue`], which validates the
-/// one-time captured JSON while preserving its original bytes verbatim in the
-/// enclosing JSONL object. The response side uses the captured terminal
-/// transport record, so no SSE frame, status, response header, or
-/// structured transport error is reconstructed from aggregate metrics.
 /// Serialize one raw request/response row (compact JSON + trailing newline) into
 /// `writer`, exactly as [`write_raw_records_jsonl`] emits each line. Shared by the
 /// batch writer and the streaming
@@ -1027,7 +1019,7 @@ fn native_error_value(record: &RecordIngest) -> Option<Value> {
     })
 }
 
-/// Feed one record's [`record_metrics`] projection into the per-record OTLP
+/// Feed one record's `record_metrics` projection into the per-record OTLP
 /// histogram accumulator. The record's terminal error, if any, is classified into
 /// the spec
 /// `error.type` attribute; successful records contribute no `error.type` and
@@ -1212,7 +1204,7 @@ mod tests {
         assert!(path.exists());
         assert!(std::fs::metadata(&path).unwrap().len() > 0);
 
-        // Empty records write no file (mirrors the aiperf writer contract).
+        // Empty record sets write no file.
         let empty = directory.path().join("empty.parquet");
         write_records_parquet(&empty, &[], &MetricsConfig::default(), false).unwrap();
         assert!(!empty.exists());

@@ -788,11 +788,8 @@ async fn load_hugging_face_revision_rows(
     Ok(rows)
 }
 
-/// Load an unpinned HuggingFace dataset, preferring the Dataset Viewer `/rows`
-/// API and falling back to the pinned Parquet-artifact path at `main` when it
-/// fails (e.g. a viewer-disabled config, or a `500` scan-size limit on large
-/// datasets like `voxpopuli`). The fallback is what Python's `datasets` library
-/// effectively does, so unpinned datasets load the same way.
+// Load an unpinned Hugging Face dataset through the Dataset Viewer, falling
+// back to revision artifacts at main when the viewer is unavailable.
 async fn load_hugging_face_rows(
     config: &LoadConfig,
     dataset: &str,
@@ -958,7 +955,9 @@ fn hf_hub_download_dataset_file(
     ))
     .get(path)
     .map_err(|error| {
-        DatasetError::Validation(format!("downloading hf://{dataset}@{commit}/{path}: {error}"))
+        DatasetError::Validation(format!(
+            "downloading hf://{dataset}@{commit}/{path}: {error}"
+        ))
     })
 }
 

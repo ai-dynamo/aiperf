@@ -1,12 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Cross-language parity: the Rust sonnet-corpus tokenization must match the
-//! Python `PromptGenerator._initialize_corpus`
-//! (`src/aiperf/dataset/generator/prompt.py`) byte-for-byte.
+//! Sonnet-corpus tokenization contract.
 //!
 //! The reference fixture `tests/data/sonnet_corpus_parity.json` defines the
-//! Python `PromptGenerator` tokenized-corpus digest for the built-in tiktoken
+//! expected tokenized-corpus digest for the built-in tiktoken
 //! `o200k_base` tokenizer. This test rebuilds the corpus through
 //! `aiperf_runtime::dataset::corpus::tokenize_sonnet_corpus` with the equivalent Rust
 //! `TiktokenTokenizer::builtin()` and asserts an identical token count,

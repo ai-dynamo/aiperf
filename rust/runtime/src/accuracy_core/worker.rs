@@ -38,9 +38,7 @@ const REQUIRED_CAPABILITIES: &[&str] = &["load", "next_problems", "grade_batch",
 /// `env_clear()`; callers add anything else explicitly through
 /// [`WorkerProcessConfig::env`].
 const FORWARDED_ENVIRONMENT_KEYS: &[&str] = &[
-    // Executable lookup for a bare `python` program name plus any subprocess the
-    // interpreter spawns; clearing this without restoring it breaks program
-    // resolution outright (the fixture tests exec `python` off PATH).
+    // Executable lookup for the interpreter and any subprocesses it spawns.
     "PATH",
     // Runtime home used for cache/config discovery and tempfile fallback.
     "HOME",

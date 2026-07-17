@@ -7,7 +7,7 @@ use super::templates::TemplateRenderer;
 use super::vocab::*;
 use crate::graph::recorded::RecordedTraceError;
 
-/// `_gen_json_response`: dispatch across the JSON-shaped structural variants.
+/// Dispatch across the JSON-shaped structural variants.
 pub(super) fn render(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     match r.index(3)? {
         0 => object(r),

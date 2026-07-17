@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Golden byte-parity tests for the accuracy CSV sink.
+//! Golden byte-contract tests for the accuracy CSV sink.
 //!
-//! Expected bytes follow `accuracy/accuracy_data_exporter.py`: `csv.writer` Excel
-//! dialect, CRLF terminators, and `f"{ratio:.4f}"`.
+//! Fixtures pin minimal quoting, CRLF terminators, and four-decimal ratios.
 
 use std::collections::BTreeMap;
 
@@ -58,7 +57,7 @@ fn export_to_temp(report: &NativeReport) -> (tempfile::TempDir, std::path::PathB
 
 #[test]
 fn overall_and_sorted_tasks_match_python_bytes() {
-    // Out-of-order insertion validates the alphabetical order from Python's sorted().
+    // Out-of-order insertion validates alphabetical task order.
     let mut per_task = BTreeMap::new();
     per_task.insert(TaskId::new("math"), rollup(6, 5, 1));
     per_task.insert(TaskId::new("code"), rollup(4, 2, 1));
@@ -70,9 +69,7 @@ fn overall_and_sorted_tasks_match_python_bytes() {
     let (_dir, path) = export_to_temp(&report);
     let bytes = std::fs::read(&path).expect("read csv");
 
-    // Python exporter formatting over identical values:
-    //   csv.writer(["task","correct","total","unparsed","accuracy"]) + rows,
-    //   f"{7/10:.4f}"=0.7000, f"{2/4:.4f}"=0.5000, f"{5/6:.4f}"=0.8333, CRLF.
+    // Values use four decimals and rows use CRLF.
     let expected = "task,correct,total,unparsed,accuracy\r\n\
          OVERALL,7,10,2,0.7000\r\n\
          code,2,4,1,0.5000\r\n\

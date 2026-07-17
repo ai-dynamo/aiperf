@@ -6,7 +6,7 @@
 //! Serves the Riva speech and language services AIPerf's native gRPC client
 //! dials (`aiperf_runtime::endpoints::riva` and
 //! `aiperf_runtime::transport::grpc::riva_binding`). It routes by gRPC method
-//! path over the shared hyper h2c stack and reuses [`crate::grpc::ProstCodec`].
+//! path over the shared hyper h2c stack and reuses `crate::grpc::ProstCodec`.
 //! The wire
 //! contract is guaranteed by construction: every request/response message is the
 //! exact prost struct the runner's Riva codec

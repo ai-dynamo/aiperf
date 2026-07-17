@@ -117,7 +117,7 @@ Other active implementation seams include `SegmentStore`, `PromptMaterializer`, 
 - Route all measurement and scheduling time through `Clock`.
 - Preserve SSE as bytes until complete lines are available; a UTF-8 code point may span network chunks.
 - HTTP loopback traffic must never use ambient proxy settings.
-- Request and reconcile authoritative server usage when the endpoint provides it. Keep absent usage fields absent.
+- Capture endpoint `usage` verbatim in the `usage_*` metrics; keep absent usage fields absent. The visible token counts (input/output/reasoning sequence lengths) use client tokenization, with endpoint `usage` authoritative for them only under `use_server_token_count`.
 - Keep numeric values finite or explicitly absent at serialization boundaries.
 - Use strict serde DTOs with unknown-field rejection for protocol-v2 requests.
 - Use `anyhow` in CLI/application layers. Library APIs use explicit error types with `Display` implementations.

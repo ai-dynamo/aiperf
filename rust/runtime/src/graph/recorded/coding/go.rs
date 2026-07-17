@@ -7,7 +7,7 @@ use super::templates::TemplateRenderer;
 use super::vocab::*;
 use crate::graph::recorded::RecordedTraceError;
 
-/// `_gen_go_code`: dispatch across the Go structural variants.
+/// Dispatch across the Go structural variants.
 pub(super) fn render(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     match r.index(4)? {
         0 => go_struct(r),

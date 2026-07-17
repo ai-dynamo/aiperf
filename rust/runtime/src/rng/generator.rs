@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Rust-native random generator wrapper used by AIPerf workload components.
+//! Random-generator wrapper used by AIPerf workload components.
 //!
 //! One `rand_pcg::Pcg64` instance drives scalar and batch operations, while
 //! wrapper code preserves bounds, replacement, and rejection-sampling behavior
@@ -432,7 +432,7 @@ impl RandomGenerator {
     /// Sample one index against precomputed cumulative weights, consuming a
     /// single uniform draw. `cumulative` must be the running sums produced by
     /// [`cumulative_weights`] over already-validated weights; its last element
-    /// is the total. This mirrors `weighted_index` bit-for-bit (same draw, same
+    /// is the total. This uses `weighted_index`'s draw and boundary
     /// selected index) while skipping that method's per-draw O(n) validation and
     /// re-accumulation, so repeated draws over a fixed weight vector stay cheap.
     fn weighted_index_cached(&mut self, cumulative: &[f64]) -> usize {

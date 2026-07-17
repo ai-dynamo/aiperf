@@ -5,10 +5,8 @@
 //!
 //! This module also hosts the shared conversation scaffolding used by the two
 //! conversation renderers (`conversations` and `conversations_advanced`): the
-//! natural-language bridge/request pools, the
-//! per-conversation identifier bundle (`ConvIds`, Python `_conv_ids`), the
-//! `conv_bridge`/`conv_user_msg` fillers (Python `_conv_bridge`/`_conv_user_msg`
-//! backed by `_SafeFormatMap`), and the 18-way `coding_conversation` dispatch.
+//! natural-language bridge/request pools, per-conversation identifiers,
+//! placeholder-preserving fillers, and 18-way conversation dispatch.
 
 use super::templates::TemplateRenderer;
 use super::vocab::*;
@@ -274,7 +272,7 @@ pub(super) const FOLLOWUP_QUESTIONS: &[&str] = &[
 /// `_LANGUAGES`: the language pool driving per-conversation code renderers.
 pub(super) const LANGUAGES: &[&str] = &["python", "go", "rust", "typescript"];
 
-/// Per-conversation identifier bundle (Python `_conv_ids`, a `dict[str, str]`).
+/// Per-conversation identifier bundle.
 #[derive(Clone, Copy)]
 pub(super) struct ConvIds {
     pub cls: &'static str,
@@ -284,7 +282,7 @@ pub(super) struct ConvIds {
     pub error: &'static str,
 }
 
-/// `_conv_ids`: draw the shared identifiers reused across a conversation's turns.
+/// Draw shared identifiers reused across a conversation's turns.
 pub(super) fn conv_ids(r: &mut TemplateRenderer) -> Result<ConvIds, RecordedTraceError> {
     Ok(ConvIds {
         cls: r.pick(CLASSES)?,
@@ -295,7 +293,7 @@ pub(super) fn conv_ids(r: &mut TemplateRenderer) -> Result<ConvIds, RecordedTrac
     })
 }
 
-/// `_SafeFormatMap`-style substitution: fill the five conversation identifiers,
+/// Fill the five conversation identifiers,
 /// leaving any other `{...}` placeholder untouched.
 fn safe_fill(template: &str, ids: &ConvIds) -> String {
     template
@@ -306,8 +304,7 @@ fn safe_fill(template: &str, ids: &ConvIds) -> String {
         .replace("{error}", ids.error)
 }
 
-/// `str.format`-style substitution for `_gen_user_prompt` (all five identifiers
-/// are always supplied; `{type}` is never referenced by a template).
+/// Fill all identifiers used by a standalone prompt.
 fn fill_all(
     template: &str,
     module: &str,
@@ -324,7 +321,7 @@ fn fill_all(
         .replace("{error}", error)
 }
 
-/// `_conv_bridge`: pick one phrase from `pool` and fill in the shared identifiers.
+/// Pick one bridge phrase and fill shared identifiers.
 pub(super) fn conv_bridge(
     r: &mut TemplateRenderer,
     pool: &'static [&'static str],
@@ -334,7 +331,7 @@ pub(super) fn conv_bridge(
     Ok(safe_fill(template, ids))
 }
 
-/// `_conv_user_msg`: pick a user-request template and fill in the identifiers.
+/// Pick a user-request template and fill identifiers.
 pub(super) fn conv_user_msg(
     r: &mut TemplateRenderer,
     ids: &ConvIds,
@@ -343,7 +340,7 @@ pub(super) fn conv_user_msg(
     Ok(safe_fill(template, ids))
 }
 
-/// `_gen_user_prompt`: a single natural-language request, optionally suffixed
+/// A single natural-language request, optionally suffixed
 /// with a code/error/constraint context block ~30% of the time.
 pub(super) fn user_prompt(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let template = r.pick(USER_REQUESTS)?;
@@ -352,8 +349,7 @@ pub(super) fn user_prompt(r: &mut TemplateRenderer) -> Result<String, RecordedTr
     let method = r.pick(METHODS)?;
     let var = r.pick(VARS)?;
     let error = r.pick(ERRORS)?;
-    // Drawn for RNG-stream parity with Python's `type=r.choice(_TYPES)` kwarg;
-    // no `_USER_REQUESTS` template references `{type}`.
+    // This unused draw is part of the deterministic RNG stream.
     let _type = r.pick(TYPES)?;
 
     let mut base = fill_all(template, module, cls, method, var, error);
@@ -364,7 +360,7 @@ pub(super) fn user_prompt(r: &mut TemplateRenderer) -> Result<String, RecordedTr
     Ok(base)
 }
 
-/// `_gen_prompt_context`: a short code snippet, error-output block, or a
+/// A short code snippet, error-output block, or a
 /// one-line constraint appended to a user prompt.
 fn prompt_context(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     match r.index(3)? {
@@ -418,8 +414,7 @@ fn prompt_context(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError
     }
 }
 
-/// `_gen_coding_conversation`: dispatch across all 18 conversation renderers
-/// (10 base + 8 advanced), in the same order as the Python `choice([...])` list.
+/// Dispatch across all 18 conversation renderers in stable index order.
 pub(super) fn coding_conversation(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     match r.index(18)? {
         0 => conversations::conv_bugfix(r),

@@ -119,8 +119,8 @@ pub struct Turn {
     pub extra_body: Option<Map<String, Value>>,
     /// Prebuilt raw request body used by the raw endpoint reconstruction path.
     pub raw_payload: Option<Value>,
-    /// Message wires serialized at load and spliced verbatim at dispatch
-    /// (segment spec §3/§3a/§5); never serialized as part of the turn.
+    /// Message wires serialized at load and spliced verbatim at dispatch; never
+    /// serialized as part of the turn.
     #[serde(skip)]
     pub lowered: Option<SmallVec<[Bytes; 1]>>,
 }

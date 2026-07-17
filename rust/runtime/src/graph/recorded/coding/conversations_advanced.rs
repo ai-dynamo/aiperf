@@ -7,7 +7,7 @@
 //!
 //! Like the base conversations, each renderer joins `[User]`/`[Assistant]` turns
 //! with `\n\n` and draws bridge phrases, embedded tool/config/error blocks, and
-//! identifiers in the exact order the Python f-string list evaluates them.
+//! identifiers in their draw order.
 
 use super::prompts_conv::{
     BRIDGE_ANALYZE, BRIDGE_ARCHITECTURE_TRADEOFF, BRIDGE_DATA_ARCHITECTURE, BRIDGE_DEPLOY,
@@ -20,13 +20,12 @@ use super::vocab::{TABLES, lang_index};
 use super::{cicd_docs, errors_diff, json_blocks, sql, tool, tool_long};
 use crate::graph::recorded::RecordedTraceError;
 
-/// Lowercase hex digits, mirroring Python `r.choice('abcdef')`.
+/// Lowercase hex-digit choice alphabet.
 const HEX_LOWER: &[&str] = &["a", "b", "c", "d", "e", "f"];
-/// Decimal digits, mirroring Python `r.choice('0123456789')`.
+/// Decimal-digit choice alphabet.
 const DIGITS: &[&str] = &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
-/// `_gen_conv_migration`: multi-file migration — search usages, update each file,
-/// run tests.
+/// Multi-file migration conversation.
 pub(super) fn conv_migration(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
@@ -77,7 +76,7 @@ pub(super) fn conv_migration(r: &mut TemplateRenderer) -> Result<String, Recorde
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_deploy`: deployment troubleshooting — inspect pod, config, logs,
+/// Deployment troubleshooting — inspect pod, config, logs,
 /// fix, verify.
 pub(super) fn conv_deploy(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
@@ -186,7 +185,7 @@ Let me verify the health check is passing now.
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_security`: vulnerability investigation — find, analyze, fix, test.
+/// Vulnerability investigation — find, analyze, fix, test.
 pub(super) fn conv_security(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
@@ -223,7 +222,7 @@ pub(super) fn conv_security(r: &mut TemplateRenderer) -> Result<String, Recorded
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_distributed`: distributed-systems debugging — inconsistency,
+/// Distributed-systems debugging — inconsistency,
 /// analyze replication, fix consensus.
 pub(super) fn conv_distributed(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
@@ -273,7 +272,7 @@ pub(super) fn conv_distributed(r: &mut TemplateRenderer) -> Result<String, Recor
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_observability`: observability gap — add tracing, metrics,
+/// Observability gap — add tracing, metrics,
 /// structured logging.
 pub(super) fn conv_observability(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
@@ -330,7 +329,7 @@ Let me also add the telemetry configuration.
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_db_optimize`: database optimization — EXPLAIN, read ORM code, add
+/// Database optimization — EXPLAIN, read ORM code, add
 /// index, benchmark.
 pub(super) fn conv_db_optimize(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
@@ -375,8 +374,7 @@ Let me run EXPLAIN ANALYZE to see the query plan.
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_architecture_review`: read multiple files, deep multi-paragraph
-/// analysis, refactor.
+/// Architecture-review conversation.
 pub(super) fn conv_architecture_review(
     r: &mut TemplateRenderer,
 ) -> Result<String, RecordedTraceError> {
@@ -425,7 +423,7 @@ pub(super) fn conv_architecture_review(
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_incident_response`: production incident — diagnose, fix, add
+/// Production incident — diagnose, fix, add
 /// monitoring, post-mortem.
 pub(super) fn conv_incident_response(
     r: &mut TemplateRenderer,

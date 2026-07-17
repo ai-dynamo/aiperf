@@ -19,6 +19,7 @@
 pub mod bench;
 pub mod channel_store;
 pub mod channels;
+pub mod conditional;
 pub mod context;
 pub mod dag_source;
 pub mod errors;

@@ -424,7 +424,7 @@ impl AIPerfRegistry {
     /// Clone the authoritative catalog behind the protocol-v1 dataset lookup
     /// trait. The adapter holds no names or implementations of its own.
     pub fn endpoint_resolver(&self) -> Arc<dyn DatasetEndpointResolver> {
-        Arc::new(DatasetEndpointResolverAdapter {
+        Arc::new(LegacyDatasetEndpointResolver {
             endpoints: self.endpoints.clone(),
             default: EndpointId::new("chat").expect("built-in default ID is valid"),
         })
@@ -437,12 +437,12 @@ impl AIPerfRegistry {
 }
 
 #[derive(Clone, Debug)]
-struct DatasetEndpointResolverAdapter {
+struct LegacyDatasetEndpointResolver {
     endpoints: EndpointRegistry,
     default: EndpointId,
 }
 
-impl DatasetEndpointResolver for DatasetEndpointResolverAdapter {
+impl DatasetEndpointResolver for LegacyDatasetEndpointResolver {
     fn resolve(&self, name: Option<&str>) -> crate::dataset::Result<Arc<dyn Endpoint>> {
         let id = match name {
             Some(name) => EndpointId::new(name),
@@ -450,7 +450,7 @@ impl DatasetEndpointResolver for DatasetEndpointResolverAdapter {
         }
         .map_err(|error| DatasetError::Validation(error.to_string()))?;
         self.endpoints
-            .compatibility_endpoint(&id)
+            .legacy_endpoint(&id)
             .map_err(|error| DatasetError::Validation(error.to_string()))
     }
 
@@ -461,7 +461,7 @@ impl DatasetEndpointResolver for DatasetEndpointResolverAdapter {
         let id = EndpointId::new(endpoint_type.canonical_id())
             .expect("protocol-v1 endpoint canonical IDs are valid");
         self.endpoints
-            .compatibility_endpoint(&id)
+            .legacy_endpoint(&id)
             .map_err(|error| DatasetError::Validation(error.to_string()))
     }
 }

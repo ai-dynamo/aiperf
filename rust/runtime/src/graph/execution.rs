@@ -74,10 +74,8 @@ pub struct LocalGraphTraceExecutionBackend<M: WireMessage> {
     flags: ExecutorFlags,
     cancelled: Cell<bool>,
     active: RefCell<Vec<Weak<TraceContext>>>,
-    /// Force the general [`TraceExecutor`] even for an eligible flat plan during
-    /// byte-parity validation; production leaves this `false`.
+    // Forces the general executor when enabled.
     force_full: bool,
-    /// Live flat-path abort latches, tripped alongside `TraceContext`s on cancel.
     flat_aborts: RefCell<Vec<Weak<crate::graph::flat::FlatAbort>>>,
     /// Test probe: set true when the general executor arm runs.
     #[cfg(test)]
@@ -107,9 +105,7 @@ impl<M: WireMessage> LocalGraphTraceExecutionBackend<M> {
         }
     }
 
-    /// Force the general `TraceExecutor` for every plan, bypassing the flat fast
-    /// path. Test-only: external parity runs use the `AIPERF_DISABLE_FLATGRAPH`
-    /// kill-switch instead (see [`crate::graph::flat::flatgraph_disabled`]).
+    /// Force the general executor for every plan.
     #[cfg(test)]
     pub(crate) fn with_force_full(mut self, force_full: bool) -> Self {
         self.force_full = force_full;
@@ -203,12 +199,7 @@ impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBacken
         for context in active {
             context.set_abort(local_cancellation(&context.trace.id));
         }
-        for abort in self
-            .flat_aborts
-            .borrow()
-            .iter()
-            .filter_map(Weak::upgrade)
-        {
+        for abort in self.flat_aborts.borrow().iter().filter_map(Weak::upgrade) {
             abort.trip();
         }
         Ok(())
@@ -342,14 +333,20 @@ mod tests {
                 sink.clone(),
             ));
             flat.execute_trace(blocked_plan("flat")).await.unwrap();
-            assert!(!flat.executor_built.get(), "single-node plan takes the flat arm");
+            assert!(
+                !flat.executor_built.get(),
+                "single-node plan takes the flat arm"
+            );
 
             let full = Rc::new(
                 LocalGraphTraceExecutionBackend::new(clock, Rc::new(EmptyMaterializer), sink)
                     .with_force_full(true),
             );
             full.execute_trace(blocked_plan("full")).await.unwrap();
-            assert!(full.executor_built.get(), "force_full routes to the executor");
+            assert!(
+                full.executor_built.get(),
+                "force_full routes to the executor"
+            );
         }));
     }
 
@@ -380,7 +377,10 @@ mod tests {
                 matches!(error, TraceError::Cancelled(_)),
                 "flat arm reports Cancelled like the executor arm"
             );
-            assert!(!backend.executor_built.get(), "cancellation stayed on the flat arm");
+            assert!(
+                !backend.executor_built.get(),
+                "cancellation stayed on the flat arm"
+            );
         }));
     }
 }

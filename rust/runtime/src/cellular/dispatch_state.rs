@@ -150,16 +150,13 @@ mod tests {
     async fn indexed_request_issues_once_then_dedups() {
         let index = index_of(&[7]).await;
         let mut tracker = DispatchTracker::new();
-        // First issue → Issue(payload), now InFlight.
         assert_eq!(
             tracker.on_issue(7, &index),
             DispatchDecision::Issue("req-7".to_string())
         );
         assert_eq!(tracker.state(7), Some(RequestState::InFlight));
         assert_eq!(tracker.issued(), 1);
-        // Re-issue while in flight → Duplicate (exactly-once-issue).
         assert_eq!(tracker.on_issue(7, &index), DispatchDecision::Duplicate);
-        // Complete, then re-issue → still Duplicate.
         tracker.on_complete(7);
         assert_eq!(tracker.state(7), Some(RequestState::Done));
         assert_eq!(tracker.completed(), 1);

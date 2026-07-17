@@ -3,11 +3,8 @@
 
 //! Hash-derived random-number substrate for AIPerf.
 //!
-//! AIPerf's reproducibility contract is order-independent derivation: a component
-//! names its stream, and the stream depends only on the run root seed and that
-//! identifier. This crate owns that BLAKE3 seed algebra plus the Rust-native
-//! `Pcg64` generator wrappers used by dataset composition and timing policies,
-//! with the same seams available to scheduler and graph synthesis code.
+//! Streams are derived solely from the run root seed and component identifier
+//! using BLAKE3, then consumed through `Pcg64` wrappers.
 
 pub mod derive;
 pub mod dist;

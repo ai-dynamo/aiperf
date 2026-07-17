@@ -1,13 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Seeded Poisson inter-arrival schedule, emitted as JSONL for cross-language parity.
+//! Seeded Poisson inter-arrival schedule emitted as JSONL.
 //!
 //! Drives the real `aiperf_runtime::timing` Poisson interval generator (the one the scheduled
 //! runtime uses), seeding it from the `timing.request.poisson_interval` stream derived
-//! off a root seed with the BLAKE3 algebra. The Python side
-//! (`tools/poisson_intervals.py`, backed by `aiperf.common.rng_parity`) reproduces this
-//! byte-for-byte. Interval nanoseconds are integers, so JSONL lines compare exactly.
+//! off a root seed with the BLAKE3 algebra. Integer nanoseconds make JSONL
+//! comparisons exact.
 //!
 //! Usage: `cargo run -p aiperf-runtime --example poisson_intervals -- <root_seed> <rate> <count>`
 

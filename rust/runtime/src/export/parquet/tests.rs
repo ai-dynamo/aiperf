@@ -6,9 +6,8 @@
 //! The primary test writes a synthetic wire JSONL, runs the sink, reads the
 //! Parquet back with the `parquet`/`arrow` reader, and asserts the column schema,
 //! the row values (including gauge/counter deltas and histogram normalization),
-//! and the `aiperf.schema_version` metadata. A second, availability-gated test
-//! cross-checks the Rust-produced file against the exact Python exporter logic via
-//! `.venv/bin/python` when a suitable interpreter is present.
+//! and the `aiperf.schema_version` metadata. An availability-gated integration
+//! test independently reconstructs the expected table when its dependencies exist.
 
 use std::fs::File;
 use std::io::Write as _;
@@ -234,7 +233,7 @@ fn writes_schema_rows_and_metadata() {
         vec![None, None, Some(2.0), Some(3.0), Some(4.0), None, None]
     );
 
-    // The parity anchor: schema-level key-value metadata carries schema_version 1.0.
+    // Schema-level key-value metadata carries schema_version 1.0.
     let schema_version = schema
         .metadata()
         .get("aiperf.schema_version")
@@ -277,18 +276,13 @@ fn empty_in_range_data_skips_file_creation() {
         .unwrap();
     assert!(
         !dir.path().join(OUTPUT_FILENAME).exists(),
-        "no rows should mean no file, matching the Python exporter"
+        "no rows should mean no file"
     );
 }
 
-/// Cross-check the Rust-produced Parquet against the exact Python exporter logic.
+/// Cross-check the produced Parquet against an independent table reconstruction.
 ///
-/// Availability-gated: requires a Python interpreter with `pyarrow` and the
-/// `aiperf` package importable. Point `AIPERF_VENV_PYTHON` at such an interpreter
-/// (or place one at `<workspace>/.venv/bin/python`); the test is skipped when none
-/// is found. When present, it rebuilds the oracle rows with the real
-/// `ServerMetricsParquetExporter` row-collection + schema and asserts the Rust
-/// table matches column-for-column.
+/// The test is skipped unless `pyarrow` and the AIPerf package are importable.
 #[test]
 fn cross_check_against_python_exporter() {
     let Some(python) = locate_python() else {
@@ -302,8 +296,7 @@ fn cross_check_against_python_exporter() {
     ParquetExporter
         .export(&report, dir.path(), &enabled_cfg())
         .unwrap();
-    // The sink consumes (deletes) the wire file once rendered; the Python oracle
-    // below reads the same wire, so re-materialize it for the cross-check.
+    // The sink consumes the wire file, so restore it for the independent check.
     write_wire(dir.path(), WIRE_JSONL);
 
     let script = dir.path().join("cross_check.py");

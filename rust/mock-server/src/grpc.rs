@@ -15,7 +15,7 @@
 //!
 //! A KServe
 //! `ModelInferRequest` is lowered to a synthetic [`ChatCompletionRequest`] and
-//! run through [`crate::handlers::RequestCtx`], so token generation, latency /
+//! run through `crate::handlers::RequestCtx`, so token generation, latency /
 //! prefix-cache / scheduler pacing, and `/metrics` accounting are shared with
 //! the HTTP handlers. `text_input` (BYTES) carries
 //! the prompt and an optional `max_tokens` (INT32) tensor caps output; the reply
@@ -398,7 +398,7 @@ fn build_infer_response(
     }
 }
 
-/// An `FP32` embedding output tensor of shape `[1, dim]`, mirroring a Triton
+/// An `FP32` embedding output tensor of shape `[1, dim]` using the Triton
 /// `python`-backend embedder's single `text_embeddings` output. The KServe wire
 /// carries `FP32` as `fp32_contents`, so the client decodes the vector directly
 /// (matching `aiperf_runtime::transport::grpc::codec` typed-contents decode).

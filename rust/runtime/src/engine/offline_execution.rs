@@ -891,11 +891,8 @@ pub(crate) fn dynosim_scheduled_validate_run(
             && run.artifacts.user_files.is_empty(),
         "dynosim scheduled execution does not project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
     );
-    // The artifact target directory may already exist: the Python CLI creates it
-    // for its own logs before launching the runner, exactly as on the online HTTP
-    // path. Each backend-owned Dynamo artifact still rejects a pre-existing file
-    // of its own name in `emit_backend_artifacts`, so no output is silently
-    // overwritten.
+    // The artifact directory may already exist because the parent creates it for
+    // logging. Backend artifacts still reject pre-existing output files.
     Ok(())
 }
 
@@ -1479,11 +1476,8 @@ pub(crate) fn prepare_dynosim_graph(
             && run.artifacts.user_files.is_empty(),
         "dynosim direct graph rejects common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
     );
-    // The artifact target directory may already exist: the Python CLI
-    // creates it for its own logs before launching the runner, exactly as on
-    // the online HTTP path. Each backend-owned Dynamo artifact still rejects
-    // a pre-existing file of its own name in `emit_backend_artifacts`, so no
-    // output is silently overwritten.
+    // The artifact directory may already exist because the parent creates it for
+    // logging. Backend artifacts still reject pre-existing output files.
     let model = run.models.items[0].name.clone();
     let tokenizer_spec = lower_authored_tokenizer(&workload.tokenizer, tokenizers.as_ref())?;
     let tokenizer = load_tokenizer(Some(&tokenizer_spec.name))?;
@@ -2110,10 +2104,8 @@ fn prepare_output_parent(path: &Path) -> Result<()> {
 }
 
 fn create_artifact_target(path: &Path) -> Result<()> {
-    // The directory may already exist (the Python CLI creates it for its own
-    // logs before launching the runner, as on the online HTTP path). Create it
-    // idempotently; each backend-owned Dynamo artifact still refuses to
-    // overwrite a pre-existing file of its own name during emission.
+    // The artifact directory may already exist because the parent creates it for
+    // logging. Backend artifacts still reject pre-existing output files.
     std::fs::create_dir_all(path)
         .with_context(|| format!("creating offline artifact target {}", path.display()))
 }

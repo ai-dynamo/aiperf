@@ -3,12 +3,9 @@
 
 //! Protocol-neutral sidecar policy and direct authored-input adapters.
 //!
-//! Protocol v1 re-exports the policy values for compatibility. Protocol v2
-//! retains each sidecar body as raw JSON until the injected resolver selects
-//! exactly one adapter, performs the sole strict decode, and stores the typed
-//! result in [`PreparedSidecarInputs`]. Runtime resource preparation is a
-//! separate seam: it may open sockets or supervise Python workers only after
-//! every authored input has passed this side-effect-free stage.
+//! Sidecar bodies remain raw JSON until the selected adapter performs strict
+//! decoding into [`PreparedSidecarInputs`]. Runtime resources are prepared only
+//! after validation.
 
 use std::any::Any;
 use std::collections::BTreeMap;
@@ -60,16 +57,16 @@ impl ContentServerSpec {
     }
 }
 
-/// Canonical Python live-results extension configuration.
+/// Live-results extension configuration.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LiveStreamingSpec {
-    /// Absolute interpreter selected by the Python Config-v2 parent.
+    /// Absolute interpreter used to launch the worker.
     pub python_executable: PathBuf,
     /// Importable strict-stdio worker module.
     #[serde(default = "default_live_streaming_worker_module")]
     pub worker_module: String,
-    /// Bounded Rust-to-Python queue capacity with drop-oldest overflow.
+    /// Bounded worker queue capacity with drop-oldest overflow.
     pub buffer_capacity: usize,
     /// Canonical OpenTelemetry streaming settings.
     pub otel: OTelStreamingSpec,
@@ -81,7 +78,7 @@ fn default_live_streaming_worker_module() -> String {
     "aiperf.post_processors.native_streaming_worker".to_string()
 }
 
-/// OpenTelemetry settings forwarded to the canonical Python processor.
+/// OpenTelemetry settings forwarded to the live processor.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OTelStreamingSpec {
@@ -100,7 +97,7 @@ pub struct OTelStreamingSpec {
     pub gen_ai_provider: Option<String>,
 }
 
-/// Live MLflow settings forwarded to the canonical Python fanout.
+/// MLflow settings forwarded to the live fanout.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MLflowStreamingSpec {
@@ -188,7 +185,7 @@ pub struct ServerMetricsSpec {
     /// Slim JSONL output relative to the run directory when requested.
     #[serde(default)]
     pub jsonl_path: Option<PathBuf>,
-    /// Full-record handoff relative to the run directory for Python Parquet rendering.
+    /// Full-record handoff relative to the run directory for Parquet rendering.
     #[serde(default)]
     pub parquet_wire_path: Option<PathBuf>,
 }
@@ -197,13 +194,13 @@ pub struct ServerMetricsSpec {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ServerMetricsFormatSpec {
-    /// Aggregate JSON rendered by Python's canonical exporter.
+    /// Aggregate JSON.
     Json,
-    /// Aggregate CSV rendered by Python's canonical exporter.
+    /// Aggregate CSV.
     Csv,
     /// Slim per-scrape JSONL written by Rust.
     Jsonl,
-    /// Raw time-series Parquet rendered by Python's canonical exporter.
+    /// Raw time-series Parquet.
     Parquet,
 }
 
@@ -216,7 +213,7 @@ pub enum GpuTelemetrySourceSpec {
         /// Metrics endpoint; `/metrics` is appended when absent.
         url: String,
     },
-    /// Canonical Python collector or user extension supervised by Rust.
+    /// Collector or user extension supervised as a worker process.
     Python {
         /// Registered Config-v2 collector name.
         collector: String,
@@ -226,7 +223,7 @@ pub enum GpuTelemetrySourceSpec {
         /// Optional custom DCGM metrics definition.
         #[serde(default)]
         metrics_file: Option<PathBuf>,
-        /// Absolute interpreter selected by the Python orchestrator.
+        /// Absolute interpreter used to launch the worker.
         python_executable: PathBuf,
         /// Importable strict-stdio worker module.
         worker_module: String,
@@ -237,7 +234,7 @@ pub enum GpuTelemetrySourceSpec {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GpuTelemetryMetricSpec {
-    /// Stable normalized field name emitted by the Python collector.
+    /// Stable normalized field name emitted by the collector.
     pub name: String,
     /// Human-readable metric label.
     pub header: String,

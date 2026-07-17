@@ -3,15 +3,9 @@
 
 //! DCGM-style custom GPU-metrics CSV loading.
 //!
-//! Behavior matches the canonical Python loader
-//! `src/aiperf/gpu_telemetry/metrics_config.py::MetricsConfigLoader`
-//! (`parse_custom_metrics_csv`, `build_custom_metrics_from_csv`,
-//! `_infer_unit_from_help`, `_title_case_metric_name`) and its default
-//! dedup catalog `src/aiperf/gpu_telemetry/constants.py::DCGM_TO_FIELD_MAPPING`.
-//!
 //! A `--gpu-telemetry <file>.csv` supplies additional DCGM exporter fields that
 //! the native [`DcgmPrometheusDecoder`](crate::gpu_telemetry::parser::DcgmPrometheusDecoder)
-//! would otherwise drop (only the built-in [`DCGM_METRICS`](crate::gpu_telemetry::fields::DCGM_METRICS)
+//! would otherwise drop (only the built-in [`crate::gpu_telemetry::fields::DCGM_METRICS`]
 //! source fields are decoded). Loading a CSV yields two products:
 //!
 //! * [`LoadedCustomMetrics::decoder_fields`] — a `source_field -> `
@@ -35,8 +29,7 @@ use crate::metrics_core::Unit;
 
 /// One custom DCGM source field resolved from a metrics CSV.
 ///
-/// Custom fields carry no collector scaling (Python's custom collector reports
-/// raw exporter values), so [`scale`](Self::scale) is always `1.0`.
+/// Custom fields carry raw exporter values, so [`scale`](Self::scale) is `1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CustomDcgmField {
     /// Normalized telemetry name (`DCGM_FI_DEV_SM_CLOCK` -> `sm_clock`).
@@ -90,10 +83,7 @@ impl std::error::Error for CustomMetricsError {
 
 /// Reads and parses a DCGM-style custom metrics CSV at `path`.
 ///
-/// Mirrors `MetricsConfigLoader.build_custom_metrics_from_csv`: a missing file
-/// is an error (Python opens the file inside `parse_custom_metrics_csv`; the
-/// native front door validates `.csv` existence at parse time, and this final
-/// read is the fail-closed backstop). Malformed *rows* are skipped, not fatal.
+/// A missing file is an error; malformed rows are skipped.
 pub fn load_custom_dcgm_metrics(path: &Path) -> Result<LoadedCustomMetrics, CustomMetricsError> {
     let text = std::fs::read_to_string(path).map_err(|source| CustomMetricsError::Read {
         path: path.to_path_buf(),
@@ -106,9 +96,7 @@ pub fn load_custom_dcgm_metrics(path: &Path) -> Result<LoadedCustomMetrics, Cust
 ///
 /// Split out from the IO so the row-level parsing rules stay unit-testable.
 pub fn parse_custom_metrics(text: &str) -> LoadedCustomMetrics {
-    // Dedup against the built-in DCGM catalog by both source field and
-    // normalized name, matching Python's `existing_dcgm_fields` /
-    // `existing_field_names` guards (a built-in field must not be re-added).
+    // A built-in field must not be re-added under its source field or normalized name.
     let builtin_source_fields: BTreeSet<&str> =
         DCGM_METRICS.iter().map(|spec| spec.source_field).collect();
     let builtin_names: BTreeSet<&str> = DCGM_METRICS.iter().map(|spec| spec.name).collect();
@@ -122,8 +110,7 @@ pub fn parse_custom_metrics(text: &str) -> LoadedCustomMetrics {
             continue;
         }
 
-        // Split on the first two commas only, preserving commas in the help
-        // message (`line.split(",", 2)` in Python).
+        // Split on the first two commas only, preserving commas in the help message.
         let parts: Vec<&str> = line.splitn(3, ',').map(str::trim).collect();
         if parts.len() != 3 {
             continue;
@@ -215,7 +202,7 @@ fn infer_unit_from_help(help_msg: &str) -> Unit {
     Unit::Count
 }
 
-/// Maps a lowercased unit token to a native [`Unit`] (Python `unit_mapping`).
+/// Maps a lowercased unit token to a native [`Unit`].
 fn unit_from_token(token: &str) -> Unit {
     match token {
         "w" => Unit::Watt,
@@ -241,8 +228,7 @@ const ACRONYMS: &[&str] = &[
     "gpu", "xid", "sm", "nvlink", "pci", "pcie", "cpu", "ram", "vram", "ecc",
 ];
 
-/// Title-cases a metric display name (`_title_case_metric_name`), keeping known
-/// acronyms fully uppercase and every other word Python-`str.capitalize`-cased.
+/// Title-cases a metric display name, preserving known uppercase acronyms.
 fn title_case_metric_name(name: &str) -> String {
     name.split_whitespace()
         .map(|word| {
@@ -256,7 +242,7 @@ fn title_case_metric_name(name: &str) -> String {
         .join(" ")
 }
 
-/// Replicates Python `str.capitalize`: first character upper, all others lower.
+/// Uppercases the first character and lowercases the remainder.
 fn capitalize(word: &str) -> String {
     let mut chars = word.chars();
     match chars.next() {
@@ -271,7 +257,7 @@ mod tests {
 
     #[test]
     fn basic_csv_dedups_defaults_and_registers_custom_fields_with_units() {
-        // Mirrors `custom_gpu_metrics_csv` in test_custom_gpu_metrics.rs.
+        // Valid custom metrics.
         let csv = "# Custom GPU Metrics Test File\n\
              DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)\n\
              DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency (in MHz)\n\
@@ -307,7 +293,7 @@ mod tests {
 
     #[test]
     fn invalid_rows_are_skipped_but_valid_custom_survives() {
-        // Mirrors `custom_gpu_metrics_csv_invalid`.
+        // Invalid rows are skipped.
         let csv = "INVALID_FIELD, gauge, Invalid field name\n\
              DCGM_FI_DEV_GPU_UTIL, invalid_type, Invalid metric type\n\
              DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)\n";
@@ -319,7 +305,7 @@ mod tests {
 
     #[test]
     fn defaults_in_csv_are_deduplicated() {
-        // Mirrors `custom_gpu_metrics_csv_with_defaults`.
+        // Missing optional columns use defaults.
         let csv = "DCGM_FI_DEV_GPU_UTIL, gauge, GPU utilization (in %)\n\
              DCGM_FI_DEV_POWER_USAGE, gauge, Power draw (in W)\n\
              DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)\n\

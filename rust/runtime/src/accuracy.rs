@@ -605,8 +605,7 @@ pub async fn grade_and_finalize_accuracy_report(
 /// Grade every profiling response captured by the ordinary scheduled runtime.
 ///
 /// The processor records one row per issued request rather than one row per
-/// dataset problem. Sequential cycling therefore preserves Python's
-/// `session_num % len(conversations)` multi-pass behavior while retaining a
+/// dataset problem. Sequential cycling uses modulo conversation selection while retaining a
 /// unique request correlation ID for every native accuracy record.
 pub async fn grade_accuracy_responses(
     processor: &AccuracyRecordProcessor,

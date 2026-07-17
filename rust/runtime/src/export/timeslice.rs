@@ -1,64 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native-Rust timeslice sink: `profile_export_aiperf_timeslices.{json,csv}`.
+//! Timeslice sink for `profile_export_aiperf_timeslices.{json,csv}`.
 //!
-//! The native-v2 report embeds per-series timeslices
-//! (`MetricSeries.timeslices`, each `{start_ns,end_ns,complete,stats}`); this
-//! sink regroups them into the compatibility per-slice metric map and serializes
-//! the two files byte-for-byte. It emits nothing when the run has no timeslices.
-//!
-//! # Byte-exact compatibility source
-//! - Regrouping: `orchestrator/native_report.py::_project_native_timeslices`
-//!   (~L195) — per-metric native slices are aligned into one compatibility slice
-//!   record keyed by `(start_ns, end_ns, complete)`, sorted by that tuple. Each metric's
-//!   summary series is selected exactly as `_summary_series` (~L791): the single
-//!   series when there is one, otherwise the unique unlabeled aggregate series,
-//!   else the metric contributes no slices. Per-slice stats retain the current
-//!   type-specific output shape.
-//! - JSON: `timeslice_metrics_json_exporter.py::_generate_content` (~L57) →
-//!   `TimesliceData` (`export_models.py` L125) with dynamic per-metric fields,
-//!   `orjson.dumps(..., OPT_INDENT_2)`. `is_complete` is emitted only for partial
-//!   slices (`false`); complete slices omit it. Each metric object is a
-//!   `JsonMetricResult` (`export_models.py` L24) whose field order is
-//!   `unit, avg, p1, p5, p10, p25, p50, p75, p90, p95, p99, min, max, std, count,
-//!   sum`, absent fields dropped. `count` is suppressed for AGGREGATE/DERIVED
-//!   (scalar) metrics (`record_models.py::to_json_result` L99).
-//! - CSV: `timeslice_metrics_csv_exporter.py::_generate_content` (~L52) — tidy
-//!   long format `Timeslice,Start_NS,End_NS,Metric,Unit,Stat,Value`, metrics
-//!   sorted by tag, one row per present stat in `STAT_KEYS` order
-//!   (`constants.py` L23: `avg,min,max,sum,p1,p5,p10,p25,p50,p75,p90,p95,p99,std`;
-//!   note `count` is intentionally absent from CSV), CRLF line terminators,
-//!   values `f"{float:.2f}"` (`_format_number` L96).
-//!
-//! # Frontend-owned metric identity (headers, filters, and scalar metrics)
-//! Metric VALUES come from the native report, but three registry-derived facts
-//! are frontend-owned and projected into `cfg.export.timeslice`, matching the
-//! flagship genai-perf v1 sink exactly (the Rust metric catalog is NOT consulted):
-//! - `header_map` — the CSV `Metric` display name (`MetricRegistry` header),
-//!   falling back to the tag string for metrics Python never registered
-//!   (`active_*`/`effective_*`/`credit_*`), which Python names by their snake tag.
-//! - `filtered_tags` — the registered INTERNAL/EXPERIMENTAL tags Python drops
-//!   (`_prepare_metrics`); a tag outside this set is always kept, so unregistered
-//!   native-runtime metrics reach both files exactly as Python emits them.
-//! - `scalar_tags` — the registered AGGREGATE/DERIVED tags whose JSON `count` is
-//!   dropped (`to_json_result`).
-//!
-//! # Frontend-owned `input_config`
-//! The Python JSON collection wraps the slice array in
-//! `TimesliceCollectionExportData` with an additional `input_config` object
-//! projected from the full `BenchmarkConfig`. The native report carries no such
-//! config, so the Python frontend projects it (the exact
-//! `TimesliceCollectionExportData` value, `model_dump(mode="json",
-//! exclude_unset=True, exclude_none=True)` then `scrub_non_finite`) into
-//! `cfg.export.timeslice.input_config`; this sink wraps it after the
-//! `timeslices` array to reproduce the Python output byte-for-byte. An absent
-//! projection (`Null`, e.g. the unit-golden path) emits only
-//! `{"timeslices": [...]}`. The CSV carries no `input_config`.
-//!
-//! Non-finite tails (`ReportValue::NonFinite`) are treated as structurally
-//! absent, matching the Python projection where a native `null` reaches
-//! `_optional_number` as `None` and is dropped from both files.
+//! Per-series slices are grouped by `(start_ns, end_ns, complete)` and sorted by
+//! that tuple. Each metric uses its sole series or unique unlabeled aggregate.
+//! JSON omits `is_complete` for complete slices and orders metric fields as
+//! `unit, avg, p1, p5, p10, p25, p50, p75, p90, p95, p99, min, max, std, count,
+//! sum`; scalar counts and absent fields are omitted. CSV uses
+//! `Timeslice,Start_NS,End_NS,Metric,Unit,Stat,Value`, tag-sorted metrics, fixed
+//! stat order, CRLF records, and two-decimal values. Non-finite values are absent.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
@@ -77,10 +28,7 @@ const PERCENTILE_ORDER: [&str; 9] = ["p1", "p5", "p10", "p25", "p50", "p75", "p9
 
 /// Timeslice export policy. Enabled when the run produced timeslices.
 ///
-/// The `input_config` object is frontend-owned: the native report carries no
-/// authored `BenchmarkConfig`, so the Python frontend projects it verbatim (the
-/// exact value `TimesliceCollectionExportData` emits) and the JSON sink wraps it
-/// after the `timeslices` array, reproducing the Python output byte-for-byte.
+/// The caller supplies `input_config`, metric headers, filtered tags, and scalar tags.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct TimesliceExportConfig {
@@ -90,27 +38,16 @@ pub struct TimesliceExportConfig {
     pub csv: bool,
     /// Filename stem (before the `_timeslices` suffix); default `profile_export_aiperf`.
     pub stem: Option<String>,
-    /// Frontend-projected `input_config` object (the authored `BenchmarkConfig`
-    /// serialized exactly as `TimesliceCollectionExportData` emits it). Wrapped
-    /// after the JSON `timeslices` array; `Null` (absent projection, e.g. unit
-    /// tests) omits the key, matching `exclude_none`. The CSV is unaffected.
+    /// Input configuration inserted after `timeslices`; `Null` omits the key.
     #[serde(default)]
     pub input_config: Value,
-    /// Frontend-projected `{tag: header}` for every registered metric class,
-    /// derived exactly as `native_report._metric_result`
-    /// (`MetricRegistry.get_class_or_none(tag).header`). A tag absent here falls
-    /// back to the tag string in the CSV `Metric` column, matching Python's
-    /// `else tag` branch — native-runtime metrics (`active_*`/`effective_*`/
-    /// `credit_*`) are unregistered, so Python emits their snake tag.
+    /// Display header by metric tag; absent tags use the raw tag.
     #[serde(default)]
     pub header_map: std::collections::HashMap<String, String>,
-    /// Registered tags the Python file exporters drop (`_prepare_metrics`:
-    /// INTERNAL / EXPERIMENTAL, honoring the dev show-flags). A tag outside this
-    /// set is always kept, including native-runtime tags Python never registered.
+    /// Metric tags omitted from both artifacts.
     #[serde(default)]
     pub filtered_tags: std::collections::HashSet<String>,
-    /// Registered scalar-metric tags (`MetricType.AGGREGATE` / `DERIVED`) whose
-    /// `count` field the Python JSON drops.
+    /// Scalar metric tags whose JSON `count` field is omitted.
     #[serde(default)]
     pub scalar_tags: std::collections::HashSet<String>,
 }
@@ -169,8 +106,7 @@ impl Exporter for TimesliceExporter {
         cfg: &ExportConfig,
     ) -> anyhow::Result<()> {
         let slices = regroup_timeslices(report, &cfg.timeslice)?;
-        // Python raises `DataExporterDisabled` when no timeslices exist, so the
-        // compatibility files are never created. Mirror that: emit nothing.
+        // Empty timeslice sets produce no artifacts.
         if slices.is_empty() {
             return Ok(());
         }
@@ -193,18 +129,8 @@ impl Exporter for TimesliceExporter {
     }
 }
 
-/// Mirrors `_project_native_timeslices`: iterate metrics in report (`BTreeMap`)
-/// order, drop the frontend-projected INTERNAL/EXPERIMENTAL metrics
-/// (`_prepare_metrics`, `cfg.filtered_tags`), select the summary series
-/// (`_summary_series`), and fold each series timeslice into the
-/// `(start_ns, end_ns, complete)` group. The result is sorted by that key.
-///
-/// Filtering, the CSV display header, and the scalar-metric `count`-drop are
-/// frontend-owned (`cfg.filtered_tags` / `cfg.header_map` / `cfg.scalar_tags`),
-/// reproducing `_prepare_metrics`, `native_report._metric_result`, and
-/// `record_models.to_json_result` exactly — the Rust metric catalog is NOT
-/// consulted, since native-runtime tags Python never registered
-/// (`active_*`/`effective_*`/`credit_*`) must be kept and named by their tag.
+/// Filter configured tags, select summary series, and group slices by
+/// `(start_ns, end_ns, complete)` in sorted order.
 fn regroup_timeslices(
     report: &NativeReport,
     cfg: &TimesliceExportConfig,
@@ -224,7 +150,7 @@ fn regroup_timeslices(
         };
 
         // Display header: the frontend `MetricRegistry` header, falling back to
-        // the tag string for unregistered metrics (Python's `else tag`).
+        // the tag string for unregistered metrics.
         let header = cfg
             .header_map
             .get(tag)
@@ -285,7 +211,7 @@ fn finite_opt(value: Option<ReportValue>) -> Option<f64> {
 }
 
 /// Present, finite value of a required [`ReportValue`]; non-finite lowers to
-/// `None` (the Python projection drops it rather than serializing a sentinel).
+/// `None`.
 fn finite(value: ReportValue) -> Option<f64> {
     crate::export::finite_passthrough(value)
 }
@@ -356,7 +282,7 @@ fn lower_stats(stats: &ReportStats, is_scalar: bool) -> SliceStats {
 /// matches orjson's two-space indent byte-for-byte. The frontend-projected
 /// `input_config` (if present) is wrapped after the `timeslices` array, in
 /// `TimesliceCollectionExportData` field order; a `Null` projection omits the
-/// key (the unit-golden path), matching Python's `exclude_none`.
+/// key.
 fn render_json(slices: &[SliceGroup], input_config: &Value) -> anyhow::Result<String> {
     let mut array = Vec::with_capacity(slices.len());
     for slice in slices {
@@ -414,8 +340,7 @@ fn number_value(value: f64) -> Value {
     serde_json::Number::from_f64(value).map_or(Value::Null, Value::Number)
 }
 
-/// Serialize the regrouped slices to the tidy/long CSV, matching the Python
-/// `csv.writer` output: CRLF terminators, minimal quoting, `.2f` values.
+/// Serialize regrouped slices with CRLF, minimal quoting, and two-decimal values.
 fn render_csv(slices: &[SliceGroup]) -> anyhow::Result<String> {
     let mut writer = crlf_csv_writer(Vec::new());
 
@@ -483,8 +408,7 @@ fn csv_stat_rows(stats: &SliceStats) -> Vec<(&'static str, f64)> {
 }
 
 /// Join `name` onto the run's artifact directory, rejecting any stem that would
-/// escape it, then write `content` verbatim (no trailing newline, matching the
-/// Python exporters).
+/// escape it, then write `content` without a trailing newline.
 fn write_artifact(artifact_dir: &Path, name: &str, content: &str) -> anyhow::Result<()> {
     let mut components = Path::new(name).components();
     ensure!(

@@ -1,28 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Byte-exact AgentX `RandomGenerator` compatibility.
+//! AgentX random-generator contract.
 //!
-//! The reference implementation in `aiperf/common/random_generator.py` wraps a
-//! `random.Random(child_seed)` (CPython Mersenne Twister) and a
-//! `numpy.random.default_rng(child_seed)` (PCG64), seeded from the SAME child
-//! seed, and routes each operation to one backend:
+//! CPython Mersenne Twister and NumPy-compatible PCG64 are seeded from the same
+//! child seed, with operations routed as follows:
 //!
 //! - CPython MT ([`crate::rng::python_mt::PythonMt19937`]): `random`, `choice`,
 //!   `sample`, `randrange`, `randint`, `uniform`, `choices`.
 //! - numpy PCG64 ([`crate::rng::numpy_pcg64::NumpyPcg64`]): `shuffle` (in place).
 //!
-//! Child-seed derivation mirrors `_RNGManager.derive(identifier)`:
+//! Child seeds are derived as
 //! `child = int.from_bytes(sha256(f"{root_seed}:{identifier}").digest()[:8],
 //! "big")`.
 //!
 //! This is the substrate the procedural coding corpus
-//! ([`crate::graph::recorded::coding`]) must use to reproduce agentx's generated
-//! text byte-for-byte; the canonical BLAKE3 + `rand_pcg` [`crate::rng::generator`]
-//! is a DIFFERENT stream and cannot match agentx.
-//!
-//! Python (`random.Random` / `numpy`) is the fixed reference; this Rust conforms.
-//! Parity is pinned by committed golden vectors
+//! (`crate::graph::recorded::coding`) uses for its generated text. The BLAKE3
+//! plus `rand_pcg` stream is intentionally different. Committed golden vectors
 //! (`tests/data/agentx_rng_golden.json`).
 
 use sha2::{Digest, Sha256};
@@ -32,7 +26,7 @@ use crate::rng::numpy_pcg64::NumpyPcg64;
 use crate::rng::python_mt::PythonMt19937;
 
 /// agentx `RandomGenerator`: a CPython-MT generator and a numpy-PCG64 generator,
-/// both seeded from one child seed, each owning the operations it backs in Python.
+/// both seeded from one child seed with disjoint operation sets.
 pub struct PythonRandomGenerator {
     /// The child seed both backends were constructed from.
     seed: u64,
@@ -43,8 +37,7 @@ pub struct PythonRandomGenerator {
 }
 
 impl PythonRandomGenerator {
-    /// Construct both backends from one child seed (mirrors
-    /// `RandomGenerator.__init__`: `random.Random(seed)` + `default_rng(seed)`).
+    /// Construct both backends from one child seed.
     pub fn from_child_seed(seed: u64) -> Self {
         Self {
             seed,

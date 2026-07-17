@@ -93,8 +93,8 @@ fn all_nine_riva_endpoints_are_open_protocol_v2_dialects() {
                 if reason == "Riva endpoints do not define a model-readiness RPC"
         ));
         assert!(matches!(
-            registry.compatibility_endpoint(&EndpointId::new(id).unwrap()),
-            Err(EndpointRegistryError::NoCompatibilityAdapter(_))
+            registry.legacy_endpoint(&EndpointId::new(id).unwrap()),
+            Err(EndpointRegistryError::NoLegacyAdapter(_))
         ));
     }
 

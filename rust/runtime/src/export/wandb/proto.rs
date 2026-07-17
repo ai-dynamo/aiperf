@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Minimal hand-written `prost` mirror of the W&B `wandb_internal.proto`
-//! `Record` messages we emit into the offline `.wandb` transaction log.
+//! Minimal `prost` subset of W&B 0.28.0 `wandb_internal.proto`.
 //!
 //! Only the field numbers and wire types matter for byte-fidelity, so we vendor
 //! exactly the subset the offline table upload needs rather than compiling the

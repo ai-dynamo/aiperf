@@ -109,7 +109,7 @@ impl NetworkLatencyRun {
         self.sidecar.is_some()
     }
 
-    /// Write every active-probe sample in the Python compatibility shape.
+    /// Write every active-probe sample in the compatibility shape.
     pub(crate) fn write_records_jsonl(&self, path: &Path) -> Result<()> {
         let Some(sidecar) = &self.sidecar else {
             return Ok(());

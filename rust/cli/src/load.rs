@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Parse `profile` flags or YAML config into a [`BenchmarkRun`].
 //!
-//! Flag and YAML inputs normalize to [`Inputs`] and share [`build`], keeping wire
+//! Flag and YAML inputs normalize to `Inputs` and share `build`, keeping wire
 //! defaults in one place.
 
 use std::path::PathBuf;

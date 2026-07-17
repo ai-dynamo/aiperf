@@ -6,7 +6,7 @@
 //! Each captured OTLP `ExportMetricsServiceRequest` is decoded with the
 //! authoritative `opentelemetry-proto` crate (not the sink's own hand-written
 //! prost subset), so a wrong field tag would fail decode. Assertions are pinned
-//! to `strategies/genai_semconv.py` line ranges cited inline.
+//! to the GenAI semantic-convention contract.
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -113,9 +113,7 @@ fn sample_report() -> NativeReport {
     NativeReport::new(&summary, None)
 }
 
-/// Build the export config with the resource attributes the Python frontend
-/// projects (`otel_metrics_results_processor._build_resource_attributes`,
-/// `otel_metrics_results_processor.py:433-450`).
+/// Build export configuration with the configured resource attributes.
 fn sample_config(endpoint: String) -> ExportConfig {
     let mut resource_attributes = BTreeMap::new();
     resource_attributes.insert(
@@ -235,7 +233,7 @@ fn export_emits_genai_semconv_metrics_with_exact_names_attrs_and_bounds() {
     let rm = &resource_metrics[0];
 
     // Resource attributes: service.name is sink-constant; the rest are projected
-    // (otel_metrics_results_processor.py:436-449).
+    // Configured resource attributes are preserved.
     let resource_attrs = &rm.resource.as_ref().expect("resource").attributes;
     assert_eq!(string_attr(resource_attrs, "service.name"), Some("aiperf"));
     assert_eq!(
@@ -256,26 +254,26 @@ fn export_emits_genai_semconv_metrics_with_exact_names_attrs_and_bounds() {
     );
     assert_eq!(string_attr(resource_attrs, "team"), Some("perf"));
 
-    // Meter/scope name matches otel_streaming_fanout.py:199 get_meter("aiperf.records").
+    // Instrumentation scope is stable.
     let sm = &rm.scope_metrics[0];
     assert_eq!(sm.scope.as_ref().unwrap().name, "aiperf.records");
 
     let by_name: BTreeMap<&str, &Metric> =
         sm.metrics.iter().map(|m| (m.name.as_str(), m)).collect();
 
-    // Spec metric names present (genai_semconv.py:182-208 METRIC_NAME_MAP).
+    // Semantic-convention metric names are present.
     let duration = by_name["gen_ai.client.operation.duration"];
     let ttft = by_name["gen_ai.client.operation.time_to_first_chunk"];
     let itl = by_name["gen_ai.client.operation.time_per_output_chunk"];
     let usage = by_name["gen_ai.client.token.usage"];
 
-    // Units (genai_semconv.py:183-207).
+    // Metric units are stable.
     assert_eq!(duration.unit, "s");
     assert_eq!(ttft.unit, "s");
     assert_eq!(itl.unit, "s");
     assert_eq!(usage.unit, "{token}");
 
-    // Explicit bucket boundaries (genai_semconv.py:92-175).
+    // Explicit bucket boundaries are stable.
     assert_eq!(
         histogram(duration).data_points[0].explicit_bounds,
         super::DURATION_BOUNDS
@@ -294,7 +292,7 @@ fn export_emits_genai_semconv_metrics_with_exact_names_attrs_and_bounds() {
     );
 
     // bucket_counts length must be bounds+1 (OTLP invariant), all zero in the
-    // aggregate (documented fidelity gap vs Python per-record path).
+    // aggregate, which cannot reconstruct bucket counts.
     let duration_dp = &histogram(duration).data_points[0];
     assert_eq!(
         duration_dp.bucket_counts.len(),
@@ -303,7 +301,7 @@ fn export_emits_genai_semconv_metrics_with_exact_names_attrs_and_bounds() {
     assert!(duration_dp.bucket_counts.iter().all(|&c| c == 0));
 
     // Duration attributes: gen_ai.operation.name/provider.name/request.model
-    // (genai_semconv.py:303-316, _map_operation_name chat, provider override).
+    // Chat operation mapping and provider override.
     let duration_attrs = &duration_dp.attributes;
     assert_eq!(
         string_attr(duration_attrs, "gen_ai.operation.name"),
@@ -325,7 +323,7 @@ fn export_emits_genai_semconv_metrics_with_exact_names_attrs_and_bounds() {
     assert_eq!(duration_dp.sum, Some(0.32 * 4.0));
 
     // Token usage carries two data points discriminated by gen_ai.token.type
-    // (genai_semconv.py:216-219 TOKEN_USAGE_SPECIAL_CASE); values are identity.
+    // Input and output token values are unscaled.
     let usage_hist = histogram(usage);
     assert_eq!(usage_hist.data_points.len(), 2);
     let token_types: Vec<Option<&str>> = usage_hist
@@ -356,7 +354,7 @@ fn disabled_or_endpointless_config_does_not_run() {
 
 #[test]
 fn provider_defaults_to_other_when_absent() {
-    // Mirrors genai_semconv.infer_provider_name fallback (genai_semconv.py:411-412).
+    // Missing provider uses `_OTHER`.
     let (endpoint, rx) = spawn_capture_server();
     let report = sample_report();
     let mut cfg = sample_config(endpoint);

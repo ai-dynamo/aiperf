@@ -11,7 +11,7 @@
 use crate::timing::{BernoulliFixedDelay, CancellationPolicy, RoundRobinUrlSelector, UrlSelector};
 use anyhow::{Result, bail};
 
-/// Python's `RATE_RAMP_UPDATE_INTERVAL` default, expressed in nanoseconds.
+/// Default rate-ramp update interval, in nanoseconds.
 pub const RATE_RAMP_UPDATE_INTERVAL_NS: u64 = 100_000_000;
 
 /// Ancillary policy configuration for one run phase.

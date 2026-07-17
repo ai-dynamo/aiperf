@@ -171,8 +171,8 @@ impl<T: Clone> Broadcast<T> {
 mod tests {
     use super::*;
 
-    /// Every consumer's (replay ⊎ live) equals the producer's full `add` order,
-    /// regardless of when it attached — the core contract.
+    // Every consumer's (replay ⊎ live) equals the producer's full `add` order,
+    // regardless of when it attached — the core contract.
     #[tokio::test]
     async fn replay_plus_live_reconstructs_full_order_for_every_attach_time() {
         let b = Broadcast::<u32>::new();
@@ -197,10 +197,10 @@ mod tests {
         assert_eq!(d.collect_until_finalized().await, full);
     }
 
-    /// The attach seam: an item added "concurrently" with an attach lands in exactly
-    /// one of {replay, live} — never both, never neither. We can't truly race a
-    /// `parking_lot::Mutex` deterministically, but we assert the boundary invariant by
-    /// interleaving attach and add and checking each consumer sees a gap-free prefix.
+    // The attach seam: an item added "concurrently" with an attach lands in exactly
+    // one of {replay, live} — never both, never neither. We can't truly race a
+    // `parking_lot::Mutex` deterministically, but we assert the boundary invariant by
+    // interleaving attach and add and checking each consumer sees a gap-free prefix.
     #[tokio::test]
     async fn no_gap_or_duplicate_at_the_attach_seam() {
         let b = Broadcast::<u32>::new();

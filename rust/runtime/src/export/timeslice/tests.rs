@@ -1,15 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Golden byte-parity tests for the timeslice sink.
+//! Golden byte-contract tests for the timeslice sink.
 //!
-//! Expected `timeslices.{json,csv}` bytes follow the Python serializers
-//! (`timeslice_metrics_json_exporter._generate_content` and
-//! `timeslice_metrics_csv_exporter._generate_content`) for the same synthetic
-//! slice values. The single deviation
-//! is the Python JSON's outer `input_config` object, which the native report
-//! cannot carry (see the module docs); the pinned JSON is the exact per-slice
-//! payload minus that key.
+//! Fixtures pin JSON field order, omission rules, and CSV formatting.
 
 use std::collections::BTreeMap;
 
@@ -243,7 +237,7 @@ const EXPECTED_JSON: &str = r#"{
   ]
 }"#;
 
-/// Exact Python `csv.writer` output (CRLF terminators, `.2f` values). `count` is
+/// Exact CSV bytes with CRLF and two-decimal values. `count` is
 /// intentionally absent; INTERNAL `credit_drop_latency` is filtered.
 fn expected_csv() -> String {
     let rows = [

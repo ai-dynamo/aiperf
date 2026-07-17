@@ -91,12 +91,9 @@ impl BlockMeta {
 /// gives O(1) membership + metadata; a `BTreeMap` keyed by the policy's eviction
 /// key gives O(log n) selection of the next victim.
 ///
-/// Fidelity note: a new block frees space *before* it is inserted, so the
-/// incoming (in-flight) block is never its own eviction victim — the mock's
-/// stand-in for SGLang reference-counting the running request's nodes. Blocks of
-/// *prior* requests are not pinned, so a very long prompt under tight capacity
-/// can still evict its own earlier blocks mid-scan (as a real undersized cache
-/// would).
+/// Space is freed before insertion, so the incoming in-flight block cannot evict
+/// itself. Earlier blocks remain unpinned, allowing a long prompt to evict its own
+/// prior blocks under tight capacity.
 struct BlockCache {
     policy: EvictionPolicy,
     blocks: HashMap<u64, BlockMeta>,

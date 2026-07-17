@@ -3,10 +3,10 @@
 
 //! Endpoint adapters for request formatting, response parsing, and input extraction.
 //!
-//! The crate owns decoded JSON body construction and decoded JSON response parsing for
+//! The module owns decoded JSON body construction and decoded JSON response parsing for
 //! provider endpoint dialects, including OpenAI-compatible APIs and Anthropic Messages.
 //! Transport concerns such as URL assembly, SSE framing, and cancellation remain outside
-//! this crate; dialect-owned authentication headers are exposed through [`Endpoint`].
+//! this module; dialect-owned authentication headers are exposed through [`Endpoint`].
 //! KServe HTTP/inference-protocol and NVIDIA Riva ASR/TTS/NLP dialects are
 //! open-registry, protocol-v2-only factories; their native gRPC wire bindings
 //! live in `aiperf_runtime::transport::grpc`.

@@ -105,7 +105,7 @@ mod tests {
     use serde_json::{Value, json};
     use std::sync::Arc;
 
-    /// Two-node chain in which n1 splices n0's reply through the segment store.
+    // Two-node chain in which n1 splices n0's reply through the segment store.
     #[test]
     fn chain_flows_reply_into_successor_prompt() {
         let tokenizer = crate::dataset::TiktokenTokenizer::builtin();

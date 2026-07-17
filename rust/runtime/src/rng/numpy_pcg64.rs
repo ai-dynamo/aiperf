@@ -3,9 +3,8 @@
 
 //! NumPy-compatible `SeedSequence` + PCG64 bit generator.
 //!
-//! This implements the byte-exact seeding and generation path that
-//! `numpy.random.default_rng(int_seed)` uses, built solely to reproduce
-//! Python's `np.random.default_rng(seed).uniform(lo, hi)` t* values in Rust.
+//! This implements the byte-exact seeding and generation path for
+//! `numpy.random.default_rng(int_seed).uniform(lo, hi)` draws.
 //! It is deliberately independent of `crate::rng::generator` (BLAKE3 +
 //! `rand_pcg`), which uses different seeding and a different output stream and
 //! is NOT numpy-compatible.
@@ -64,12 +63,12 @@ pub struct NumpyPcg64 {
     state: u128,
     /// The 128-bit (odd) LCG increment.
     inc: u128,
-    /// Whether `uinteger` holds a buffered high-32 word, mirroring
+    /// Whether `uinteger` holds a buffered high-32 word from
     /// `pcg64_state.has_uint32` (`pcg64.h`). Freshly seeded generators start
     /// with an empty buffer, matching `default_rng`.
     has_uint32: bool,
     /// The buffered high-32 word consumed by the next [`NumpyPcg64::next_u32`]
-    /// call, mirroring `pcg64_state.uinteger` (`pcg64.h`).
+    /// call, as specified by `pcg64_state.uinteger` in upstream `pcg64.h`.
     uinteger: u32,
 }
 
@@ -193,7 +192,7 @@ impl NumpyPcg64 {
 
     /// In-place Fisher-Yates shuffle matching numpy's 1-d `shuffle` fast path
     /// (`_generator.pyx` `_shuffle_raw`): draws each swap partner with
-    /// [`NumpyPcg64::random_interval_u32`]. `slice.len()` must fit in `u32`.
+    /// `NumpyPcg64::random_interval_u32`. `slice.len()` must fit in `u32`.
     pub fn shuffle<T>(&mut self, x: &mut [T]) {
         let n = x.len();
         for i in (1..n).rev() {

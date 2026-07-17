@@ -1437,38 +1437,27 @@ impl<B: ListMetricBackend> ColumnStore<B> {
                     .first_output_token_ns
                     .map(|timestamp| timestamp - record.start_ns),
             );
-            // Python's server-count path reads every token field from one final
-            // usage object, treats completion_tokens as OSL, and subtracts
-            // reasoning only for the visible-output count. Keep the observed
-            // count in its private column for discrepancy reporting, but make
-            // endpoint usage authoritative wherever it exists.
-            let output_sequence_length = record
-                .usage
-                .completion_tokens
-                .or_else(|| record.tokens.output_sequence_length());
-            self.set_optional_u64(row, MetricTag::OutputSequenceLength, output_sequence_length);
-            self.set_optional_u64(row, MetricTag::InputSequenceLength, record.tokens.input);
-            let reasoning_tokens = record
-                .usage
-                .reasoning_tokens
-                .or(record.tokens.reasoning)
-                .unwrap_or(0);
-            let output_tokens = record
-                .usage
-                .completion_tokens
-                .map(|completion| completion.saturating_sub(reasoning_tokens))
-                .or(record.tokens.output);
-            if output_tokens.is_some_and(|tokens| tokens > 0) {
-                self.set_optional_u64(row, MetricTag::OutputTokenCount, output_tokens);
-            }
+            // OSL, output-token, and reasoning counts are pure passthroughs of the
+            // per-mode-reconciled `token_counts` (client tokenization by default;
+            // server `usage` under `use_server_token_count`, reconciled in
+            // `metrics.rs`), byte-exact with the Python `output_sequence_length` /
+            // `output_token_count` / `reasoning_token_count` record metrics.
+            // Endpoint `usage` stays on the record for the `usage_*` metrics and the
+            // client/server discrepancy diagnostics (`observed_output_sequence_length`)
+            // only; it is NOT authoritative for these visible counts.
             self.set_optional_u64(
                 row,
-                MetricTag::ReasoningTokenCount,
-                record.usage.reasoning_tokens.or(record.tokens.reasoning),
+                MetricTag::OutputSequenceLength,
+                record.tokens.output_sequence_length(),
             );
+            self.set_optional_u64(row, MetricTag::InputSequenceLength, record.tokens.input);
+            if record.tokens.output.is_some_and(|tokens| tokens > 0) {
+                self.set_optional_u64(row, MetricTag::OutputTokenCount, record.tokens.output);
+            }
+            self.set_optional_u64(row, MetricTag::ReasoningTokenCount, record.tokens.reasoning);
             // ICL remains an observed content-chunk metric. Endpoint usage may
             // change OSL/TPOT/throughput but never pads this timestamp vector;
-            // this preserves Python's adjacent-content-response definition.
+            // ICL is defined by adjacent content responses.
             let arrivals = token_arrivals_ns;
             if arrivals.windows(2).all(|pair| pair[1] >= pair[0]) {
                 self.set_ragged_values_iter(

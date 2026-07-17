@@ -3,10 +3,8 @@
 
 //! Domain-neutral metric series supplied by telemetry side channels.
 //!
-//! GPU, server, and network collectors depend on this IO-free representation;
-//! the core metrics engine never depends back on those producer domains. New
-//! telemetry implementations can populate the same structs without changing
-//! the native reporter.
+//! GPU, server, and network collectors populate this IO-free representation
+//! without introducing reverse dependencies into the metrics engine.
 
 use std::collections::BTreeMap;
 

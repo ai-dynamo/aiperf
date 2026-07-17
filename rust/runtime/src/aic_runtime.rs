@@ -3,10 +3,8 @@
 
 //! Native AIC runtime construction for AIPerf's DynoSim co-simulation path.
 //!
-//! Builds an `aiconfigurator` timing engine and installs it on the mocker's
-//! `MockEngineArgs::perf_model`, keeping the embedded-Python AIC bridge in the
-//! consumer rather than in the pure-Rust simulator. The callback follows
-//! `dynamo/lib/bindings/python/rust/llm/aic_callback.rs`.
+//! Builds an `aiconfigurator` timing engine and installs it on
+//! `MockEngineArgs::perf_model`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -212,12 +210,10 @@ fn build_engine(args: &MockEngineArgs) -> Result<Arc<AicEngine>> {
     Ok(engine)
 }
 
-/// Estimate the engine-wide offline KV capacity through the same Python helper
-/// used by canonical replay.
+/// Estimate engine-wide offline KV capacity.
 ///
 /// The helper returns a rank-local count. Offline replay owns one global engine
-/// pool, so attention-DP scales the result exactly as in
-/// `lib/bindings/python/rust/llm/replay.rs:1668-1715`.
+/// pool, so attention-DP scales the result by its world size.
 fn estimate_engine_num_gpu_blocks(args: &MockEngineArgs) -> Result<usize> {
     let backend = args
         .aic_backend

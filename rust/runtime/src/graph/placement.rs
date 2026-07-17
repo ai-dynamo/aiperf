@@ -276,7 +276,7 @@ impl Drop for ThreadPerCoreTracePlacement {
 /// concurrently on that one reactor exactly as they would across worker threads.
 ///
 /// One backend is built eagerly on the current thread (it is `!Send`, so it can
-/// never leave this reactor) and shared by every concurrent trace, mirroring how
+/// never leave this reactor) and shared by every concurrent trace, matching how
 /// a thread-per-core worker's single backend serves all traces routed to it.
 pub struct LocalTracePlacement {
     backend: Rc<dyn TracePlacement>,

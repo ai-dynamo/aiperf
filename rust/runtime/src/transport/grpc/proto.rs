@@ -1,12 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Checked-in Prost representation of the vendored KServe OIP v2 schema.
+//! Prost DTOs for the KServe OIP v2 schema.
 //!
-//! The authoritative schema is
-//! `proto/grpc_predict_v2.proto`, vendored from KServe's
-//! `open_inference_grpc/grpc_predict_v2.proto`. Keeping generated-equivalent
-//! Rust checked in avoids a build-time `protoc` dependency.
+//! Protobuf field numbers are wire-contract values. The definitions are checked
+//! in so builds do not require `protoc`.
 
 use std::collections::BTreeMap;
 

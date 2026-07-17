@@ -2,13 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Deterministic per-trace `t*` sampling for snapshot-at-`t*` warmup partition.
 //!
-//! The sampling and seed derivation must remain byte-exact with
-//! `graph_ir_source.py:_sample_t_star` and `_seed_for_trace_lane`.
-//!
 //! A sampling instant `t*` splits a trace's firings into a warmup prefix
 //! (`arrival_offset_us < t*`) and a profiled set. `t*` is drawn uniformly over
-//! `[start_min_ratio, start_max_ratio] * trace_duration`, with a LANE-salted,
-//! NumPy-compatible RNG preserves deterministic cross-language draws.
+//! `[start_min_ratio, start_max_ratio] * trace_duration`; a lane-salted,
+//! NumPy-compatible RNG preserves deterministic draws.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -32,8 +29,7 @@ pub trait TStarSampler {
 
 /// Window-based `t*` sampler: `t* = uniform(min*dur, max*dur)`.
 ///
-/// Per `graph_ir_source.py:_sample_t_star`, a
-/// zero-or-negative duration or a collapsed window (`hi <= lo`, e.g. the
+/// A zero-or-negative duration or collapsed window (`hi <= lo`, e.g. the
 /// default `[0, 0]`) yields a no-draw exact instant; otherwise a lane-salted
 /// numpy-compatible uniform draw. The result is a float (no integer-microsecond
 /// truncation).
@@ -64,8 +60,8 @@ impl TStarSampler for WindowTStarSampler {
 
 /// Derive a per-(trace, lane) RNG seed.
 ///
-/// Per `graph_ir_source.py:_seed_for_trace_lane`, SHA-256 the ASCII string
-/// `"{base_seed}:{trace_id}:{lane}"` and take the low 8 bytes big-endian. This
+/// SHA-256 the ASCII string `"{base_seed}:{trace_id}:{lane}"` and take the first
+/// 8 bytes big-endian. This
 /// keeps per-(trace, lane) `t*` values deterministic given `base_seed` yet
 /// decorrelated across both traces and lanes.
 pub fn seed_for_trace_lane(base_seed: u64, trace_id: &str, lane: u64) -> u64 {
@@ -79,9 +75,8 @@ pub fn seed_for_trace_lane(base_seed: u64, trace_id: &str, lane: u64) -> u64 {
 
 /// Derive the `ShuffleSampler` child RNG seed from the run root.
 ///
-/// Per `_RNGManager.derive` and `dataset_samplers.py:ShuffleSampler`,
-/// SHA-256 the ASCII string `"{root_seed}:dataset.sampler.shuffle"` and take the
-/// low 8 bytes big-endian. The argument is the run root seed
+/// SHA-256 `"{root_seed}:dataset.sampler.shuffle"` and take the first 8 bytes
+/// big-endian. The argument is the run root seed
 /// (`rng.init(config.random_seed)`), NOT `t_star_random_seed`.
 pub fn sampler_shuffle_seed(root_seed: u64) -> u64 {
     let mut hasher = Sha256::new();
@@ -94,9 +89,8 @@ pub fn sampler_shuffle_seed(root_seed: u64) -> u64 {
 
 /// Derive the `RandomSampler` child RNG seed from the run root.
 ///
-/// Per `_RNGManager.derive` and `dataset_samplers.py:RandomSampler`,
-/// SHA-256 the ASCII string `"{root_seed}:dataset.sampler.random"` and take the
-/// low 8 bytes big-endian. This uses the same run-root derivation as
+/// SHA-256 `"{root_seed}:dataset.sampler.random"` and take the first 8 bytes
+/// big-endian. This uses the same run-root derivation as
 /// [`sampler_shuffle_seed`] with a different salt. The result seeds a [`PythonMt19937`]
 /// (`random.Random(seed)`), NOT a numpy PCG64.
 pub fn sampler_random_seed(root_seed: u64) -> u64 {
@@ -110,8 +104,7 @@ pub fn sampler_random_seed(root_seed: u64) -> u64 {
 
 /// Persistent-epoch shuffle state for one corpus size.
 ///
-/// `ShuffleSampler` (`dataset/dataset_samplers.py:66`) shuffles
-/// `arange(total)` in place at init (pass 0) with ONE generator, then re-shuffles
+/// Shuffle `arange(total)` in place for pass zero, then re-shuffle
 /// that SAME persistent generator each time the cursor wraps (pass 1, 2, ...).
 /// This is a CONTINUOUS-STATE generator: pass `k` is `arange(total)` after
 /// `k + 1` in-place `numpy Generator.shuffle` calls, NOT a fresh per-pass seed.
@@ -149,14 +142,12 @@ impl ShuffleEpochs {
 
 /// Persistent with-replacement draw state for one corpus size.
 ///
-/// `RandomSampler` (`dataset/dataset_samplers.py`) seeds ONE
-/// `random.Random(rng.derive("dataset.sampler.random"))` at init and calls
+/// Seed one CPython-compatible MT19937 stream and call
 /// `choice(ids)` per draw — `ids[self._randbelow(len(ids))]`, i.e. a positional
 /// stream of `randbelow(total)` from a single persistent MT19937 (see
 /// [`PythonMt19937`]). We keep that generator alive and memoize its emitted
 /// prefix, so the x-th draw is `randbelow(total)` at stream position `x`,
-/// independent of the order in which positions are requested (mirroring the
-/// [`ShuffleEpochs`] incremental cache).
+/// independent of the order in which positions are requested.
 struct RandomStream {
     /// The single persistent generator (`random.Random(child_seed)`).
     generator: PythonMt19937,
@@ -185,7 +176,7 @@ impl RandomStream {
 
 /// Resolved recycle-draw mode.
 ///
-/// Each variant reproduces one `dataset_samplers.py` sampler byte-exactly.
+/// Each variant defines one recycle-draw contract.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecycleDrawMode {
     /// `SequentialSampler`: the cursor-with-wrap `x % total` draw.
@@ -196,33 +187,9 @@ pub enum RecycleDrawMode {
     Random,
 }
 
-/// Strategy-aware corpus-index remap shared by every graph recycle draw site.
-///
-/// Reproduces `SequentialSampler`, `ShuffleSampler`, and `RandomSampler`
-/// (`dataset/dataset_samplers.py`) byte-exactly at the single remap point every
-/// cross-trace draw in the pressure lane fan-out, the pass-0 lane resolve, AND
-/// the profiling recycle draw routes through, so `--dataset-sampling-strategy`
-/// governs WHICH corpus template a freed lane serves without changing the draw
-/// COUNTERS (only the counter -> index remap changes):
-/// - `Sequential` (the default) returns `x % total` unchanged;
-/// - `Shuffle` (without replacement) returns `epoch[x / total][x % total]` where
-///   each epoch is the running array after one more in-place shuffle of the SAME
-///   persistent numpy generator (the continuous-state model — see
-///   [`ShuffleEpochs`]), seeded once with [`sampler_shuffle_seed`]`(run_root)`;
-/// - `Random` (WITH replacement) returns the x-th `randbelow(total)` of a single
-///   persistent CPython MT19937 (see [`RandomStream`]), seeded once with
-///   [`sampler_random_seed`]`(run_root)`.
-///
-/// The per-`total` state is cached in a `RefCell` (single event-loop mutation);
-/// the derivation is deterministic given `(base_seed, total)`, so two instances
-/// with the same mode and base seed produce identical draws regardless of call
-/// order (the cache is a pure optimization). Reused by both the runner's
-/// `PressureDraw` (pressure/pass-0 draws) and the
-/// [`crate::graph::workload::CyclingGraphTraceSource`] /
-/// `PartitionedGraphTraceSource` profiling recycle, so the profiling recycle
-/// continues the same order pressure warmup replays under (a freed profiling
-/// lane never re-serves a template pressure warmup already drew under a
-/// different order).
+/// Maps corpus draw ordinals using sequential, persistent-epoch shuffle, or
+/// persistent with-replacement sampling. State is cached per corpus size, while
+/// results remain deterministic for a given mode and seed.
 pub struct PermutationDraw {
     /// The resolved sampler family.
     mode: RecycleDrawMode,
@@ -237,7 +204,7 @@ pub struct PermutationDraw {
 }
 
 impl PermutationDraw {
-    /// The byte-unchanged sequential draw (`x % total`); no permutation, no seed.
+    /// Construct a sequential `x % total` draw.
     pub fn sequential() -> Self {
         Self::with_mode(RecycleDrawMode::Sequential, 0)
     }
@@ -298,13 +265,9 @@ impl PermutationDraw {
     }
 }
 
-/// Return the trace's intrinsic wall-clock span in microseconds.
-///
-/// Per `graph/analysis/snapshot.py:trace_duration_us`, return the largest
-/// `arrival_offset_us` across the trace's node firings, `0.0` when no node
-/// carries timing. Recorded-graph adapters store the offset as
-/// `node.metadata["arrival_offset_us"]` (a u64; see
-/// `graph/recorded/trie/mod.rs:190`). Every node in the resolved graph fires
+/// Return the largest `arrival_offset_us` across node firings, or zero when no
+/// node carries timing. Recorded graphs store this offset in node metadata.
+/// Every node in the resolved graph fires
 /// exactly once in the static elaboration, so the max over nodes equals the max
 /// over firings.
 pub fn trace_duration_us(parsed: &ParsedGraph, trace: &TraceRecord) -> f64 {
@@ -569,7 +532,7 @@ mod tests {
     #[test]
     fn window_draw_matches_numpy_reference() {
         // seed_for_trace_lane(0,"trace-7",0)=5561269195474234662; lo=200, hi=800.
-        // python: float(np.random.default_rng(seed).uniform(200.0, 800.0))
+        // NumPy-compatible expected draw.
         let sampler = WindowTStarSampler {
             start_min_ratio: 0.2,
             start_max_ratio: 0.8,

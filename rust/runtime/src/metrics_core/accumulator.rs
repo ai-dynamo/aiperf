@@ -130,9 +130,8 @@ pub struct MetricsConfig {
     /// Absolute OSL mismatch cap in tokens.
     pub osl_mismatch_max_tokens: f64,
     /// Source input-token accounting from server-reported `usage.prompt_tokens`
-    /// instead of client-side tokenization. Mirrors the endpoint
-    /// `use_server_token_count` flag and Python's server-token-count computation,
-    /// which sets `TokenCounts.input = usage.prompt_tokens` (tokenizer-free); output
+    /// instead of client-side tokenization. When enabled,
+    /// `TokenCounts.input = usage.prompt_tokens`; output
     /// is already server-authoritative in the accumulator regardless.
     pub use_server_token_count: bool,
     /// Per-record retention mode. [`MetricsStorageMode::Sketch`] streams each value
@@ -935,9 +934,8 @@ impl MetricsAccumulator {
         // The client-vs-server diff metrics only mean something when the client
         // does its own tokenization. Under `use_server_token_count` the server
         // count is authoritative and overwrites the local input count, so every
-        // difference collapses to a meaningless zero. Python disallows the
-        // `USAGE_DIFF_ONLY` metric family in that mode
-        // (`base_metrics_processor.py`), so the tags must be absent, not zero.
+        // difference collapses to a meaningless zero, so the tags must be
+        // absent rather than zero.
         if self.config.use_server_token_count {
             return;
         }
@@ -1979,11 +1977,17 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_completion_usage_reconciles_token_metrics_without_padding_icl() {
+    fn default_mode_uses_client_token_counts_endpoint_usage_only_feeds_discrepancy() {
         let mut record = successful_record(1_000_000_000, 1_100_000_000);
         // Three observed chunks yield two exact ICL samples and a locally
-        // tokenized OSL of ten. One endpoint usage object is authoritative for
-        // twenty completion tokens, four of which are reasoning tokens.
+        // tokenized OSL of ten (client `tokens.output=9` + `reasoning=1`). One
+        // endpoint usage object reports twenty completion tokens (four reasoning).
+        // In DEFAULT mode (no `use_server_token_count`) the visible token metrics
+        // are byte-exact with the Python record metrics: they come from the CLIENT
+        // `token_counts`, NOT from endpoint usage. Endpoint usage feeds only the
+        // usage_* metrics and the client/server discrepancy diagnostic. Server
+        // usage becomes authoritative only under `use_server_token_count`, which
+        // the `metrics.rs` observer applies when building the ingest record.
         record.usage.completion_tokens = Some(20);
         record.usage.reasoning_tokens = Some(4);
 
@@ -1991,21 +1995,25 @@ mod tests {
         accumulator.process_record(&record);
         let summary = accumulator.summarize();
 
+        // Client OSL (9 output + 1 reasoning), not server completion_tokens (20).
         assert_eq!(
             summary.finite_value(MetricTag::TotalOutputSequenceLength),
-            Some(20.0)
+            Some(10.0)
         );
+        // Client output tokens (9), not server (20 - 4 = 16).
         assert_eq!(
             summary.finite_value(MetricTag::TotalOutputTokens),
-            Some(16.0)
+            Some(9.0)
         );
+        // Client reasoning (1), not server (4).
         assert_eq!(
             summary.finite_value(MetricTag::TotalReasoningTokens),
-            Some(4.0)
+            Some(1.0)
         );
+        // Throughput follows the client OSL of 10 over the 0.1s window.
         assert_eq!(
             summary.finite_value(MetricTag::OutputTokenThroughput),
-            Some(200.0)
+            Some(100.0)
         );
         let itl_ms = summary
             .result(MetricTag::InterTokenLatency)
@@ -2015,7 +2023,8 @@ mod tests {
             .avg
             .as_f64()
             .unwrap();
-        assert!((itl_ms - 80.0 / 19.0).abs() < 1e-12);
+        // (100ms - 20ms) / (osl - 1) with client osl = 10.
+        assert!((itl_ms - 80.0 / 9.0).abs() < 1e-12);
         assert_eq!(
             summary
                 .result(MetricTag::E2eOutputTokenThroughput)
@@ -2023,8 +2032,10 @@ mod tests {
                 .distribution()
                 .unwrap()
                 .avg,
-            MetricValue::Finite(200.0)
+            MetricValue::Finite(100.0)
         );
+        // The discrepancy still compares server usage (20) against the client
+        // OSL (10): |20 - 10| / 10 * 100 = 100%.
         assert_eq!(
             summary
                 .result(MetricTag::UsageCompletionTokensDiffPct)
@@ -2033,7 +2044,7 @@ mod tests {
                 .unwrap()
                 .avg,
             MetricValue::Finite(100.0),
-            "usage discrepancy must retain the pre-reconciliation local count"
+            "usage discrepancy compares server usage against the client count"
         );
         let icl = accumulator
             .column_store()

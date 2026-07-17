@@ -178,12 +178,12 @@ impl ServerMetricsRun {
         }
     }
 
-    /// Write Python-compatible slim scrape records.
+    /// Write slim scrape records.
     pub(crate) fn write_slim_jsonl(&self, path: &Path) -> Result<()> {
         JsonlServerMetricsArtifactSink.write(path, self.state.accumulator.borrow().records(), true)
     }
 
-    /// Write full records used only by Python's canonical Parquet renderer.
+    /// Write full records for Parquet rendering.
     pub(crate) fn write_parquet_wire_jsonl(&self, path: &Path) -> Result<()> {
         JsonlServerMetricsArtifactSink.write(path, self.state.accumulator.borrow().records(), false)
     }

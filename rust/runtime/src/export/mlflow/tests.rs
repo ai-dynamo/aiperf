@@ -1,12 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Parity and backend tests for the native MLflow exporter.
+//! Contract and backend tests for the MLflow exporter.
 //!
-//! The metric-key/param/tag assertions match the Python exporter
-//! (`exporters/mlflow_data_exporter.py`, cited inline). REST behavior is proven
-//! against an in-process recording HTTP server (a plain `TcpListener`, no live
-//! MLflow), and the `file://` FileStore path against a temp directory.
+//! Metric, parameter, and tag payloads are asserted directly. REST behavior uses
+//! an in-process recording HTTP server, and FileStore behavior uses a temp directory.
 
 use super::*;
 
@@ -81,8 +79,7 @@ fn sample_report() -> NativeReport {
             ),
         ),
     );
-    // A non-finite avg must be skipped, but a finite tail below it must remain
-    // (matches Python skipping None values, `mlflow_data_exporter.py:340`).
+    // A non-finite average is omitted while finite sibling stats remain.
     metrics.insert(
         "adj_request_latency".to_string(),
         entry(
@@ -145,8 +142,7 @@ fn sample_config(tracking_uri: &str) -> MlflowExportConfig {
 
 #[test]
 fn metric_payload_key_scheme_matches_python() {
-    // Parity: `_build_metric_payload` (`mlflow_data_exporter.py:335`) uses
-    // `metric.tag` for avg and `metric.tag.<stat>` for the rest.
+    // Averages use the bare metric tag; other stats use `tag.stat`.
     let report = sample_report();
     let cfg = sample_config("http://unused");
     let payload = build_metric_payload(&report, &cfg);
@@ -172,14 +168,14 @@ fn metric_payload_key_scheme_matches_python() {
     // Scalar value -> bare tag.
     assert_eq!(payload.get("request_throughput"), Some(&1.5));
 
-    // Synthetic completed/expected counters (`mlflow_data_exporter.py:350`).
+    // Synthetic completed and expected request metrics.
     assert_eq!(payload.get("aiperf.completed_requests"), Some(&3.0));
     assert_eq!(payload.get("aiperf.total_expected_requests"), Some(&4.0));
 }
 
 #[test]
 fn tag_payload_matches_python() {
-    // Parity: `_build_tag_payload` (`mlflow_data_exporter.py:386`).
+    // System tags precede user tags.
     let report = sample_report();
     let cfg = sample_config("http://unused");
     let tags = build_tag_payload(&report, &cfg);
@@ -191,7 +187,7 @@ fn tag_payload_matches_python() {
 
 #[test]
 fn run_name_prefers_cli_then_benchmark_then_epoch() {
-    // `_derive_default_run_name` (`mlflow_data_exporter.py:324`).
+    // Run-name precedence is explicit name, benchmark prefix, then epoch.
     let mut cfg = sample_config("http://unused");
     assert_eq!(resolve_run_name(&cfg), "my-run");
     cfg.run_name = None;
@@ -506,8 +502,7 @@ fn rest_upload_reuses_existing_experiment_without_create() {
 
 #[test]
 fn rest_upload_times_out_on_dead_server() {
-    // Bind then immediately drop the listener so the port refuses connects;
-    // a refused connect returns Err fast (spec §6 best-effort).
+    // Bind and drop the listener so connection attempts fail immediately.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = format!("http://{}", listener.local_addr().unwrap());
     drop(listener);
@@ -563,7 +558,7 @@ fn file_store_writes_mlruns_layout() {
         .find(|p| p.is_dir())
         .expect("run dir");
 
-    // metrics/params/tags files (`file_store.py` folder layout).
+    // Metrics, parameters, and tags each occupy their FileStore subtree.
     assert!(run_dir.join("metrics/request_latency").exists());
     assert!(run_dir.join("metrics/request_latency.p50").exists());
     assert!(run_dir.join("params/endpoint.type").exists());

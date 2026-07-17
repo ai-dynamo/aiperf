@@ -1,11 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Golden-vector generator for the Python parity RNG.
+//! Golden-vector generator for deterministic RNG contracts.
 //!
-//! Emits a JSON document of seeded RNG outputs to stdout. The Python parity backend
-//! (`aiperf.common.rng_parity`) replays the identical operation script and asserts
-//! byte-exact equality in `tests/unit/common/test_rng_parity.py`. Floats are emitted as
+//! Emits seeded RNG outputs as JSON. Floats use
 //! their raw IEEE-754 `u64` bit patterns (`f64::to_bits`) so the comparison is exact and
 //! never subject to decimal-formatting drift.
 //!

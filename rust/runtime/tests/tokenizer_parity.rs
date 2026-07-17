@@ -1,19 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Byte-parity of [`HuggingFaceTokenizer`] against a Python `transformers`
-//! reference over an adversarial input battery (encode + chat-template).
-//!
-//! `tools/parity/dump_tokenizer_parity.py` defines the per-model tokenizer
-//! directories and reference IDs. The test requires locally cached model files
-//! and is `#[ignore]` by default. Run it with:
-//!
-//! ```text
-//! HF_HUB_OFFLINE=1 python3 tools/parity/dump_tokenizer_parity.py /tmp/tok_parity.json
-//! cargo test -p aiperf-runtime --test tokenizer_parity -- --ignored --nocapture
-//! ```
-//!
-//! Override the golden path with `TOKENIZER_PARITY_GOLDEN`.
+//! Hugging Face tokenizer byte-contract tests over adversarial encode and chat
+//! template inputs. Locally cached model files are required, so the test is
+//! ignored by default. `TOKENIZER_PARITY_GOLDEN` overrides the fixture path.
 
 use std::path::Path;
 

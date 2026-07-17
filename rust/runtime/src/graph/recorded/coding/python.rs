@@ -7,7 +7,7 @@ use super::templates::TemplateRenderer;
 use super::vocab::*;
 use crate::graph::recorded::RecordedTraceError;
 
-/// `_gen_python_code`: dispatch across the Python structural variants.
+/// Dispatch across the Python structural variants.
 pub(super) fn render(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     match r.index(5)? {
         0 => class(r),

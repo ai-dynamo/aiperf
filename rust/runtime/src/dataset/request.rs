@@ -227,10 +227,7 @@ impl BuiltinEndpointResolver {
                 "duplicate endpoint registration {authored:?}"
             )));
         }
-        let endpoint_type = endpoint
-            .descriptor()
-            .compatibility_type()
-            .expect("endpoint type");
+        let endpoint_type = endpoint.descriptor().legacy_type().expect("endpoint type");
         let endpoint: Arc<dyn Endpoint> = Arc::new(endpoint);
         self.endpoint_types
             .entry(endpoint_type)
@@ -912,8 +909,7 @@ impl ConversationSession {
         materializer.materialize(self, endpoint, model_endpoint, phase, overrides)
     }
 
-    /// Materialize the current request directly through a prepared open
-    /// endpoint binding without constructing a protocol-v1 endpoint value.
+    /// Materialize the current request through a prepared endpoint binding.
     pub fn materialize_prepared(
         &self,
         materializer: &dyn RequestMaterializer,
@@ -1081,14 +1077,8 @@ fn split_snapshot(mut turn: EndpointTurn) -> Vec<EndpointTurn> {
 }
 
 pub(crate) fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<EndpointTurn> {
-    // A static content turn lowered at load carries both its `content` and the
-    // pre-serialized `Message` handle(s) written onto
-    // `messages`. Its wires are routed to `lowered` for verbatim splicing rather
-    // than parsed into `raw_messages` and re-serialized; the content is still
-    // resolved below so the warmup first-turn re-render path stays available. An
-    // authored `messages` turn (no content) keeps the raw_messages render path
-    // unchanged, and `raw_messages` and lowering never coexist (validation +
-    // load-time carve-out).
+    // Lowered content uses stored message wires; authored message arrays continue
+    // through raw_messages. Validation guarantees the representations do not coexist.
     let message_handles = body_message_handles(turn, store)?;
     let lowered_content = !turn.content.is_empty() && !message_handles.is_empty();
     let mut raw_messages = Vec::new();
@@ -1341,7 +1331,7 @@ mod tests {
                 .resolve_type(EndpointType::Messages)
                 .unwrap()
                 .descriptor()
-                .compatibility_type()
+                .legacy_type()
                 .expect("endpoint type"),
             EndpointType::Messages
         );
@@ -1924,10 +1914,8 @@ mod tests {
             .resolve(session.endpoint_override().unwrap())
             .unwrap();
         let mut configured = model_endpoint();
-        configured.endpoint.endpoint_type = endpoint
-            .descriptor()
-            .compatibility_type()
-            .expect("endpoint type");
+        configured.endpoint.endpoint_type =
+            endpoint.descriptor().legacy_type().expect("endpoint type");
         let request = session
             .materialize(
                 &EndpointRequestMaterializer,

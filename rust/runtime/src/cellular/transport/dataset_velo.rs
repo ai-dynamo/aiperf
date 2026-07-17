@@ -3,11 +3,14 @@
 
 //! Velo distribution for the dataset data plane.
 //!
-//! Makes the in-process [`DatasetPublisher`]/[`DatasetIndex`] a distributed fan-out: the
-//! controller generates the dataset once and `add`s chunks; each cell subscribes over
-//! velo and receives **replay-on-attach** (every chunk so far in the subscribe reply)
-//! then the **live tail** (pushed as more chunks land), and builds its owned index. Two
-//! handlers, identical in shape to [`phaser_velo`](super::phaser_velo):
+//! Makes the in-process
+//! [`DatasetPublisher`](crate::cellular::dataset_session::DatasetPublisher) /
+//! [`DatasetIndex`](crate::cellular::dataset_session::DatasetIndex) a distributed
+//! fan-out: the controller generates the dataset once and `add`s chunks; each cell
+//! subscribes over velo and receives **replay-on-attach** (every chunk so far in the
+//! subscribe reply) then the **live tail** (pushed as more chunks land), and builds
+//! its owned index. Two handlers, identical in shape to
+//! [`phaser_velo`](crate::cellular::transport::phaser_velo):
 //!
 //! - `aiperf.dataset.subscribe` (unary, cell → controller): the cell sends its
 //!   `PeerInfo`; the controller atomically attaches a broadcast consumer, returns

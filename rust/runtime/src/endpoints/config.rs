@@ -12,7 +12,7 @@ use url::Url;
 
 use crate::endpoints::metadata::{EndpointDescriptor, EndpointType};
 use crate::endpoints::models::{EndpointError, EndpointResult};
-use crate::endpoints::registry::compatibility_descriptor_for;
+use crate::endpoints::registry::legacy_descriptor_for;
 
 /// Wire request content type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,7 +59,7 @@ pub struct RawEndpointConfig {
     pub wait_for_model_mode_set: bool,
     /// Emit `max_tokens` instead of `max_completion_tokens` for chat.
     #[serde(rename = "use_legacy_max_tokens")]
-    pub use_max_tokens: bool,
+    pub use_legacy_max_tokens: bool,
     /// Request usage in streaming frames when supported.
     pub use_server_token_count: bool,
     /// Headers merged into every request before per-turn header overrides.
@@ -89,7 +89,7 @@ impl Default for RawEndpointConfig {
             wait_for_model_mode: "inference".to_string(),
             wait_for_model_interval_set: false,
             wait_for_model_mode_set: false,
-            use_max_tokens: false,
+            use_legacy_max_tokens: false,
             use_server_token_count: false,
             headers: BTreeMap::new(),
             api_key: None,
@@ -119,7 +119,7 @@ impl fmt::Debug for RawEndpointConfig {
                 &self.wait_for_model_interval_set,
             )
             .field("wait_for_model_mode_set", &self.wait_for_model_mode_set)
-            .field("use_max_tokens", &self.use_max_tokens)
+            .field("use_legacy_max_tokens", &self.use_legacy_max_tokens)
             .field("use_server_token_count", &self.use_server_token_count)
             .field("header_names", &self.headers.keys().collect::<Vec<_>>())
             .field("has_api_key", &self.api_key.is_some())
@@ -164,7 +164,7 @@ pub struct EndpointConfig {
     pub wait_for_model_mode_set: bool,
     /// Emit `max_tokens` instead of `max_completion_tokens` for chat.
     #[serde(rename = "use_legacy_max_tokens")]
-    pub use_max_tokens: bool,
+    pub use_legacy_max_tokens: bool,
     /// Request usage in streaming frames when supported.
     pub use_server_token_count: bool,
     /// Headers merged into every request before per-turn header overrides.
@@ -199,7 +199,7 @@ impl fmt::Debug for EndpointConfig {
                 &self.wait_for_model_interval_set,
             )
             .field("wait_for_model_mode_set", &self.wait_for_model_mode_set)
-            .field("use_max_tokens", &self.use_max_tokens)
+            .field("use_legacy_max_tokens", &self.use_legacy_max_tokens)
             .field("use_server_token_count", &self.use_server_token_count)
             .field("header_names", &self.headers.keys().collect::<Vec<_>>())
             .field("has_api_key", &self.api_key.is_some())
@@ -231,7 +231,7 @@ impl From<&EndpointConfig> for RawEndpointConfig {
             wait_for_model_mode: config.wait_for_model_mode.clone(),
             wait_for_model_interval_set: config.wait_for_model_interval_set,
             wait_for_model_mode_set: config.wait_for_model_mode_set,
-            use_max_tokens: config.use_max_tokens,
+            use_legacy_max_tokens: config.use_legacy_max_tokens,
             use_server_token_count: config.use_server_token_count,
             headers: config.headers.clone(),
             api_key: config.api_key.clone(),
@@ -257,7 +257,7 @@ impl From<EndpointConfig> for RawEndpointConfig {
             wait_for_model_mode: config.wait_for_model_mode,
             wait_for_model_interval_set: config.wait_for_model_interval_set,
             wait_for_model_mode_set: config.wait_for_model_mode_set,
-            use_max_tokens: config.use_max_tokens,
+            use_legacy_max_tokens: config.use_legacy_max_tokens,
             use_server_token_count: config.use_server_token_count,
             headers: config.headers,
             api_key: config.api_key,
@@ -285,7 +285,7 @@ impl EndpointConfig {
             wait_for_model_mode: raw.wait_for_model_mode,
             wait_for_model_interval_set: raw.wait_for_model_interval_set,
             wait_for_model_mode_set: raw.wait_for_model_mode_set,
-            use_max_tokens: raw.use_max_tokens,
+            use_legacy_max_tokens: raw.use_legacy_max_tokens,
             use_server_token_count: raw.use_server_token_count,
             headers: raw.headers,
             api_key: raw.api_key,
@@ -299,7 +299,7 @@ impl EndpointConfig {
             self.endpoint_type = EndpointType::Template;
         }
         let endpoint_type = self.endpoint_type;
-        let descriptor = compatibility_descriptor_for(endpoint_type);
+        let descriptor = legacy_descriptor_for(endpoint_type);
         let raw = RawEndpointConfig::from(self).validate_against(
             descriptor.supports_streaming,
             descriptor.requires_form_data,
@@ -343,12 +343,12 @@ impl RawEndpointConfig {
                 "endpoint.path must start with a leading slash".to_string(),
             ));
         }
-        let extra_template = self
+        let legacy_template = self
             .extra
             .as_ref()
             .and_then(|extra| extra.get("payload_template"))
             .and_then(Value::as_str);
-        if require_template && self.template.is_none() && extra_template.is_none() {
+        if require_template && self.template.is_none() && legacy_template.is_none() {
             return Err(EndpointError::InvalidConfig(
                 "template or extra.payload_template is required when endpoint type is 'template'"
                     .to_string(),

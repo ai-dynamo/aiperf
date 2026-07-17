@@ -1,13 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Accuracy accumulator and analyzer.
-//!
-//! This is the first-class accumulator/analyzer pair described in
-//! `specs/accuracy.md`: graded
-//! responses carry a real correlation id, are summarized over the same phase/time
-//! windows as performance metrics, and can be joined with optional metric or energy
-//! summaries by an analyzer.
+//! Accuracy accumulation and analysis over the same phase and time windows as
+//! performance metrics.
 
 use crate::metrics_core::{AccumulatorSummary, ExportContext, MetricTag, Phase};
 use petgraph::algo::toposort;
@@ -105,7 +100,7 @@ impl GradingResult {
     /// Builds a grading result from a lighteval-style numeric score.
     pub fn from_score(score: f64, unparsed: bool, ground_truth: impl Into<String>) -> Self {
         Self {
-            // Python's lighteval bridge uses a strict `score > 0.5` decision.
+            // A score must be strictly greater than 0.5 to count as correct.
             // Keeping that boundary here makes every native score consumer share
             // one policy.
             correct: score.is_finite() && score > LIGHTEVAL_CORRECTNESS_THRESHOLD,

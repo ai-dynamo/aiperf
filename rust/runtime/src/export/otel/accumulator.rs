@@ -3,29 +3,13 @@
 
 //! Per-record GenAI-semconv histogram accumulator.
 //!
-//! This is the native analogue of the Python per-record OTel path
-//! (`strategies/metric_results.py::MetricResultsStrategy.process`,
-//! `strategies/genai_semconv.py`, `otel_metrics_results_processor.py`). The
-//! aggregate report cannot reconstruct a per-bucket distribution from
-//! avg/min/max/percentiles. This accumulator receives the exact per-request metric
-//! projection the runner
-//! computes for each captured record (the same projection the live-streaming
-//! sink forwards to Python), buckets each observation into the semconv explicit
-//! histograms, and is merged at run end. The sink emits populated
-//! `bucket_counts` (+ `count`/`sum`/`min`/`max`) that a collector aggregating
-//! Python's per-record stream would compute.
+//! Aggregate stats cannot reconstruct bucket counts, so this accumulator receives
+//! each captured record, buckets observations into explicit semantic-convention
+//! histograms, and merges at run end.
 //!
-//! # Parity contract
-//! - Each duration observation is converted to seconds exactly as Python's
-//!   `convert_metric_value` (`_ns_to_s`) does. The runner projects display units
-//!   (`ms` for latency), so the net `ms -> s` conversion is byte-equivalent to
-//!   Python's `ns -> s` on the same underlying nanoseconds
-//!   (`genai_semconv.py:60-76`, `metric_results.py:57-59`).
-//! - Token counts are identity-scaled (`genai_semconv._identity`).
-//! - Duration histograms are keyed by the spec `error.type` attribute (absent on
-//!   success); token histograms carry only `gen_ai.token.type`, mirroring
-//!   `_build_duration_attributes` vs `_build_token_usage_attributes`
-//!   (`genai_semconv.py:303-330`).
+//! Duration values are converted from report display units to seconds. Token
+//! counts are unscaled. Duration histograms include `error.type` only on errors;
+//! token histograms include only `gen_ai.token.type`.
 //! - Bucket selection uses OTLP le-semantics: an observation `v` lands in the
 //!   first bucket whose upper bound satisfies `v <= bound`, else the overflow
 //!   bucket. The buckets vector length is `bounds.len() + 1` (OTLP invariant).
@@ -181,8 +165,7 @@ impl OtelRecordAccumulator {
     /// Observe one record's projected per-request metrics.
     ///
     /// `metrics` maps the aiperf metric name to `(display_value, unit)` — the
-    /// exact projection the runner computes for the record (and forwards to the
-    /// Python live-streaming sink). `error_type` is the record's spec
+    /// exact projection the runner computes for the record. `error_type` is the record's spec
     /// `error.type` (`None` on success), applied to the duration histograms
     /// only. Token direction is selected first-present across the direction's
     /// key aliases, matching the aggregate sink's key resolution.
@@ -287,9 +270,8 @@ impl OtelRecordAccumulator {
 
 /// Classify a record's terminal error into the spec `error.type` value.
 ///
-/// Matches `genai_semconv._classify_error_type` (`genai_semconv.py:254-295`) over
-/// the HTTP or pseudo status code, transport error type, and message. Cause-chain
-/// details are unavailable, so timeout and cancellation heuristics scan the message.
+/// Uses HTTP or pseudo status, transport error type, and message. Cause-chain
+/// details are unavailable, so timeout and cancellation heuristics scan text.
 /// Called only when the record actually errored.
 pub fn classify_spec_error_type(code: Option<u16>, type_name: &str, message: &str) -> String {
     if let Some(code) = code {

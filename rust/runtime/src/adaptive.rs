@@ -125,12 +125,8 @@ pub struct ActuatorBuildContext {
     pub user_target: Option<Rc<dyn UserTarget>>,
 }
 
-/// Factory that builds one adaptive [`ControlActuator`] from run inputs.
-///
-/// Each control variable is an implementable seam rather than a hardcoded match
-/// arm: a distribution can register an additional control variable by linking a
-/// new factory into an [`ActuatorRegistry`] without editing the construction
-/// site. Factories carry no run state; they are registered once at startup.
+/// Stateless factory registered by control-variable identifier to construct one
+/// adaptive [`ControlActuator`].
 pub trait ActuatorFactory {
     /// Stable control-variable id keying this factory in the registry.
     ///

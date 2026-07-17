@@ -28,7 +28,7 @@ pub trait GpuTelemetryDecoder {
 
 /// Decoder for the Prometheus text emitted by NVIDIA's DCGM exporter.
 ///
-/// Beyond the built-in [`DCGM_METRICS`](crate::gpu_telemetry::fields::DCGM_METRICS)
+/// Beyond the built-in [`crate::gpu_telemetry::fields::DCGM_METRICS`]
 /// catalog, the decoder honors an optional `source_field -> `
 /// [`CustomDcgmField`] map loaded from a `--gpu-telemetry` metrics CSV so extra
 /// exporter fields (e.g. `DCGM_FI_DEV_SM_CLOCK`) are extracted and named. Built-in
@@ -88,7 +88,7 @@ impl GpuTelemetryDecoder for DcgmPrometheusDecoder {
             };
             let base_name = sample.name.strip_suffix("_total").unwrap_or(&sample.name);
             // Built-in fields win over custom CSV rows so a custom entry can
-            // never shadow a default mapping (Python dedups the same way).
+            // never shadow a default mapping.
             let (name, scale): (&str, f64) = if let Some(spec) = dcgm_metric_spec(base_name) {
                 (spec.name, spec.scale)
             } else if let Some(custom) = self.custom_fields.get(base_name) {

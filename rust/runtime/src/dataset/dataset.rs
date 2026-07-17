@@ -301,7 +301,7 @@ impl Dataset {
                         .enumerate()
                     {
                         // Per-turn override, raw body, and token-native turns take
-                        // the live path (mirrors the dispatch fallback branches).
+                        // the live path and dispatch fallback branches.
                         if turn.endpoint.is_some()
                             || raw_body_handle(turn, store)?.is_some()
                             || token_ids_handle(turn, store)?.is_some()

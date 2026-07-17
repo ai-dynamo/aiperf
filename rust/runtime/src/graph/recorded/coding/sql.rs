@@ -7,7 +7,7 @@ use super::templates::TemplateRenderer;
 use super::vocab::*;
 use crate::graph::recorded::RecordedTraceError;
 
-/// `_gen_sql_query`: dispatch across the SQL statement variants.
+/// Dispatch across the SQL statement variants.
 pub(super) fn query(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let t = r.sample(TABLES, 3)?;
     let (t1, t2, t3) = (t[0], t[1], t[2]);

@@ -1,36 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! OpenTelemetry OTLP/HTTP metrics emitter (native Rust).
+//! OpenTelemetry OTLP/HTTP metrics emitter.
 //!
-//! Emits the GenAI-semconv metric surface defined by
-//! `post_processors/otel_metrics_results_processor.py`,
-//! `otel_streaming_fanout.py`, `strategies/genai_semconv.py`,
-//! and `strategies/metric_results.py`: the GenAI client
-//! histograms (`gen_ai.client.operation.duration`,
+//! Emits the OpenTelemetry GenAI semantic-convention client histograms
+//! (`gen_ai.client.operation.duration`,
 //! `gen_ai.client.operation.time_to_first_chunk`,
 //! `gen_ai.client.operation.time_per_output_chunk`,
 //! `gen_ai.client.token.usage`) over OTLP/HTTP to the configured collector, with
-//! the same resource attributes (`service.name`, `service.instance.id`,
+//! the configured resource attributes (`service.name`, `service.instance.id`,
 //! `aiperf.benchmark.id`, `aiperf.endpoint.type`, `aiperf.model.name`, …), the
-//! same per-datapoint GenAI attributes (`gen_ai.operation.name`,
+//! per-datapoint GenAI attributes (`gen_ai.operation.name`,
 //! `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.token.type`), and the
 //! same explicit histogram bucket boundaries.
 //!
-//! # Fidelity: populated per-record histograms (approach a)
-//! The Python plane records **one histogram observation per request during the
-//! run** (`MetricResultsStrategy.process` → `instrument.record`), so its exported
-//! histograms carry exact per-bucket counts. This sink reproduces that: the
-//! runner feeds each captured record's projected per-request metrics into an
-//! [`OtelRecordAccumulator`] (the same projection the live-streaming sink
-//! forwards to Python), which buckets every observation into the semconv
+//! # Per-record histograms
+//! The runner feeds each captured record's projected metrics into an
+//! [`OtelRecordAccumulator`], which buckets every observation into the semconv
 //! explicit histograms and is merged at run end. The finalized accumulator rides
 //! on the report as a transient, non-serialized side channel
 //! ([`NativeReport::otel_per_record`]); this sink then emits OTLP `Histogram`
-//! data points with **populated `bucket_counts`** (+ `count`/`sum`/`min`/`max`)
-//! that a collector aggregating Python's per-record stream would compute, under
-//! the exact **metric names, attributes, and explicit bucket boundaries** Python
-//! emits.
+//! data points with populated `bucket_counts`, `count`, `sum`, `min`, and `max`.
 //!
 //! When the accumulator is absent, including for synthetic reports, the sink
 //! falls back to the aggregate
@@ -39,25 +29,23 @@
 //! distribution across buckets).
 //!
 //! # Wire format
-//! Encodes the OTLP `ExportMetricsServiceRequest` protobuf ([`proto`], a minimal
+//! Encodes the OTLP `ExportMetricsServiceRequest` protobuf (`proto`, a minimal
 //! hand-written subset over the crate's existing `prost` — no OTel SDK is linked
 //! into the shipped runner) and POSTs it as `application/x-protobuf`. The commit
 //! site is synchronous with no ambient runtime, so this sink drives its own
 //! short-lived `current_thread` tokio runtime and enforces a hard wall-clock
-//! [`tokio::time::timeout`] so an unreachable collector cannot hang shutdown
-//! (design §6). Time fields use the report's own run-timeline timestamps; the
-//! sink never calls `SystemTime::now`.
+//! [`tokio::time::timeout`] so an unreachable collector cannot hang shutdown.
+//! Time fields use the report's own run-timeline timestamps; the sink never calls
+//! `SystemTime::now`.
 //!
-//! # Config projection
+//! # Configuration
 //! The runner decodes [`OtelExportConfig`] from the `cfg.export.otel` wire block.
-//! The frontend projects these fields from `cfg.otel`:
+//! The wire block supplies:
 //! - `enabled`  = `cfg.otel.metrics_url is not None`
 //! - `endpoint` = the normalized OTLP/HTTP metrics URL (`…/v1/metrics`)
-//! - `provider` = `cfg.otel.gen_ai_provider` (else omit → inferred `_OTHER`)
-//! - `resource_attributes` = the exact map `_build_resource_attributes()` builds
-//!   (`service.instance.id`, `aiperf.benchmark.id`, `aiperf.endpoint.type`,
-//!   `aiperf.model.name`, plus `cfg.otel.custom_resource_attributes`). `service.
-//!   name` is always `aiperf` and is set by this sink, so Python need not send it.
+//! - `provider` = optional provider override, otherwise `_OTHER`
+//! - `resource_attributes` = `service.instance.id`, benchmark, endpoint, model,
+//!   and custom attributes. The sink adds `service.name=aiperf`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -74,35 +62,28 @@ mod accumulator;
 use accumulator::{BucketHistogram, DurationKind, TokenKind};
 pub use accumulator::{OtelRecordAccumulator, classify_spec_error_type};
 
-/// OTLP/HTTP metrics export policy. Disabled unless the frontend provides an
-/// OTLP endpoint. Fields mirror the `cfg.otel` surface the emitter needs; every
-/// other GenAI/resource fact is derived from [`OtelExportConfig::resource_attributes`]
-/// and the [`NativeReport`] so the projected wire surface stays exactly these
-/// four fields (see the module docs' projection table).
+/// OTLP/HTTP metrics export policy. Disabled without an endpoint.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct OtelExportConfig {
-    /// Whether OTLP metric export is enabled (frontend sets true when an OTLP
-    /// endpoint is configured).
+    /// Whether OTLP metric export is enabled.
     pub enabled: bool,
     /// Normalized OTLP/HTTP metrics endpoint (`http(s)://host[:port]/v1/metrics`).
     pub endpoint: Option<String>,
     /// Optional GenAI provider-name override (`gen_ai.provider.name`); `_OTHER`
-    /// when absent, matching `genai_semconv.infer_provider_name`'s fallback.
+    /// when absent.
     pub provider: Option<String>,
-    /// Resource attributes the frontend built (`service.instance.id`,
+    /// Resource attributes (`service.instance.id`,
     /// `aiperf.benchmark.id`, `aiperf.endpoint.type`, `aiperf.model.name`, and
     /// `--otel-resource-attributes`). `service.name=aiperf` is added by the sink.
     #[serde(default)]
     pub resource_attributes: BTreeMap<String, String>,
 }
 
-/// Instrumentation scope name Python's fanout uses (`get_meter("aiperf.records")`).
+/// Instrumentation scope name.
 const SCOPE_NAME: &str = "aiperf.records";
 
-/// OTLP request timeout mirroring the Python default
-/// (`Environment.OTEL.REQUEST_TIMEOUT_SECONDS`, floored at 1s). A single hard
-/// bound so an unreachable collector cannot hang shutdown.
+/// Hard OTLP request timeout.
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The OTLP/HTTP metrics [`Exporter`].
@@ -226,10 +207,7 @@ struct EmitContext {
     end_ns: u64,
 }
 
-/// One GenAI duration histogram: (Rust report metric key, spec metric name,
-/// explicit bucket boundaries). Mirrors `genai_semconv.METRIC_NAME_MAP`
-/// (`strategies/genai_semconv.py:182-208`) keyed by the Rust report's aggregate
-/// metric names, which are byte-identical to the Python latency tags.
+/// One GenAI duration histogram: report key, semantic-convention name, and bounds.
 struct DurationSpec {
     report_key: &'static str,
     spec_name: &'static str,
@@ -237,24 +215,24 @@ struct DurationSpec {
     kind: DurationKind,
 }
 
-/// `genai_semconv.py:92-107` — `_DURATION_BUCKET_BOUNDARIES`.
+/// Operation-duration histogram boundaries.
 const DURATION_BOUNDS: &[f64] = &[
     0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
 ];
 
-/// `genai_semconv.py:109-133` — `_TTFT_BUCKET_BOUNDARIES`.
+/// Time-to-first-chunk histogram boundaries.
 const TTFT_BOUNDS: &[f64] = &[
     0.001, 0.005, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.14, 0.16, 0.18, 0.2, 0.25, 0.3, 0.35,
     0.4, 0.45, 0.5, 0.75, 1.0, 2.0, 5.0,
 ];
 
-/// `genai_semconv.py:135-159` — `_TIME_PER_OUTPUT_CHUNK_BUCKET_BOUNDARIES`.
+/// Time-per-output-chunk histogram boundaries.
 const TIME_PER_OUTPUT_CHUNK_BOUNDS: &[f64] = &[
     0.001, 0.005, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.14, 0.16, 0.18, 0.2, 0.25, 0.3, 0.35,
     0.4, 0.45, 0.5, 0.75, 1.0, 2.0, 5.0,
 ];
 
-/// `genai_semconv.py:161-175` — `_TOKEN_USAGE_BUCKET_BOUNDARIES`.
+/// Token-usage histogram boundaries.
 const TOKEN_USAGE_BOUNDS: &[f64] = &[
     1.0, 4.0, 16.0, 64.0, 256.0, 1024.0, 4096.0, 16384.0, 65536.0, 262144.0, 1048576.0, 4194304.0,
     16777216.0,
@@ -282,10 +260,7 @@ const DURATION_METRICS: &[DurationSpec] = &[
     },
 ];
 
-/// Report metric key carrying the **input** token count. Python's semconv map
-/// names this source `input_token_count`; the aiperf metric that actually
-/// carries input-token counts is Input Sequence Length. Both keys are accepted
-/// so the emitter fires whichever the report exposes.
+/// Accepted report keys for input token count.
 const INPUT_TOKEN_KEYS: &[&str] = &["input_token_count", "input_sequence_length"];
 
 /// Report metric key carrying the **output** token count.
@@ -316,9 +291,7 @@ fn duration_metric(
 }
 
 /// Build the merged `gen_ai.client.token.usage` histogram (unit `{token}`) with
-/// `gen_ai.token.type=input` and `type=output` data points, matching
-/// `genai_semconv.TOKEN_USAGE_SPECIAL_CASE` (`genai_semconv.py:216-219`) where
-/// two aiperf metrics collapse into one spec histogram.
+/// `gen_ai.token.type=input` and `type=output` data points.
 fn token_usage_metric(report: &NativeReport, ctx: &EmitContext) -> Option<proto::Metric> {
     let mut points = Vec::new();
     for point in token_points(report, INPUT_TOKEN_KEYS, "input", ctx) {
@@ -386,7 +359,7 @@ fn duration_metric_from_records(
 
 /// Build the merged `gen_ai.client.token.usage` histogram from the per-record
 /// accumulator, one data point per `gen_ai.token.type`. Token usage carries no
-/// `error.type` attribute (mirroring `_build_token_usage_attributes`).
+/// `error.type` attribute.
 fn token_usage_metric_from_records(
     records: &OtelRecordAccumulator,
     ctx: &EmitContext,
@@ -411,9 +384,8 @@ fn token_usage_metric_from_records(
 
 /// The run-level GenAI attribute set (`gen_ai.operation.name`,
 /// `gen_ai.provider.name`, `gen_ai.request.model`) shared by every per-record
-/// data point. Mirrors `_build_duration_attributes` (`genai_semconv.py:303-316`)
-/// minus the per-record `error.type`, which the caller appends. The model comes
-/// from run config (`cfg.get_model_names()[0]`), constant across records.
+/// data point. The caller appends per-record `error.type`; the model is constant
+/// across the run.
 fn base_attributes(ctx: &EmitContext) -> Vec<proto::KeyValue> {
     let mut attrs = vec![
         key_value("gen_ai.operation.name", &ctx.operation_name),
@@ -449,9 +421,8 @@ fn populated_histogram_point(
 
 /// Build the GenAI per-datapoint attribute set common to every metric:
 /// `gen_ai.operation.name`, `gen_ai.provider.name`, and `gen_ai.request.model`
-/// (from the series' `model` label when present, else the resource model).
-/// Mirrors `_build_duration_attributes` (`genai_semconv.py:303-316`), minus the
-/// per-record `error.type` — the aggregate report has no per-error breakdown.
+/// (from the series' `model` label when present, else the resource model). The
+/// aggregate report has no per-error breakdown.
 fn duration_attributes(ctx: &EmitContext, series: &MetricSeries) -> Vec<proto::KeyValue> {
     let mut attrs = vec![
         key_value("gen_ai.operation.name", &ctx.operation_name),
@@ -469,7 +440,7 @@ fn duration_attributes(ctx: &EmitContext, series: &MetricSeries) -> Vec<proto::K
     attrs
 }
 
-/// Assemble a `Histogram`-shaped [`proto::Metric`] with cumulative temporality.
+/// Assemble a `Histogram`-shaped `proto::Metric` with cumulative temporality.
 fn histogram_metric(
     name: &str,
     unit: &str,
@@ -487,8 +458,7 @@ fn histogram_metric(
 }
 
 /// Build one aggregate histogram data point. `bucket_counts` are all zero: the
-/// aggregate cannot reconstruct the per-bucket distribution (the documented
-/// fidelity gap vs the Python per-record path). `count`/`sum`/`min`/`max` carry
+/// aggregate cannot reconstruct the per-bucket distribution. `count`/`sum`/`min`/`max` carry
 /// the aggregate; non-finite tails are omitted. Returns `None` for empty
 /// distributions so no zero-count point is emitted.
 fn histogram_point(
@@ -535,8 +505,7 @@ fn finite(value: Option<ReportValue>) -> Option<f64> {
 
 /// Multiplier converting a report display unit to seconds. The report has
 /// already applied the metric's ns→display scaling; latency metrics display in
-/// `ms`, so the net conversion to the spec's `s` is `ms→s`. Equivalent to
-/// Python's `_ns_to_s` applied to the raw per-record value.
+/// `ms`, so the net conversion to the spec's `s` is `ms→s`.
 fn seconds_scale(unit: &str) -> f64 {
     match unit {
         "ns" => 1e-9,
@@ -548,10 +517,7 @@ fn seconds_scale(unit: &str) -> f64 {
     }
 }
 
-/// Map `aiperf.endpoint.type` to `gen_ai.operation.name`, matching
-/// `genai_semconv._map_operation_name` (`genai_semconv.py:227-239`): chat →
-/// `chat`, completions → `text_completion`, embeddings → `embeddings`, else
-/// `chat`.
+/// Map chat, completion, and embedding endpoints to GenAI operation names.
 fn operation_name(cfg: &OtelExportConfig) -> String {
     let endpoint_type = cfg
         .resource_attributes
@@ -566,9 +532,8 @@ fn operation_name(cfg: &OtelExportConfig) -> String {
     .to_string()
 }
 
-/// Build the OTLP resource attributes: `service.name=aiperf` (constant, matching
-/// `_build_resource_attributes` `otel_metrics_results_processor.py:436`) plus
-/// everything the frontend projected. A projected `service.name` overrides.
+/// Build resource attributes with default `service.name=aiperf`; configured
+/// values override defaults.
 fn resource_attributes(cfg: &OtelExportConfig) -> Vec<proto::KeyValue> {
     let mut merged: BTreeMap<String, String> = BTreeMap::new();
     merged.insert("service.name".to_string(), "aiperf".to_string());
@@ -677,8 +642,7 @@ where
         .map_err(|error| anyhow::anyhow!("otel: send: {error}"))
 }
 
-/// Wrap a TCP stream in TLS using webpki roots (mirrors the transport-http
-/// rustls config).
+/// Wrap a TCP stream using the shared webpki and rustls configuration.
 async fn tls_connect(
     tcp: tokio::net::TcpStream,
     host: &str,

@@ -4,8 +4,8 @@
 //! Production composition of scheduled workloads through the phase driver.
 //!
 //! [`run_scheduled_phases`] connects the transport-neutral
-//! [`TurnDispatcher`](crate::scheduled::TurnDispatcher) and
-//! [`Workload`](crate::scheduled::Workload) seams to
+//! [`crate::scheduled::TurnDispatcher`] and
+//! [`crate::scheduled::Workload`] seams to
 //! `crate::timing::{PhaseRunner, PhaseOrchestrator}`. The adapter records sends,
 //! first tokens, and terminal returns at the dispatcher boundary, so workload
 //! implementations remain schedule generators and do not learn phase lifecycle
@@ -786,12 +786,8 @@ async fn run_scheduled_phases_inner(
     })
 }
 
-/// The lifecycle marker relayed to a signal-forwarding lifecycle owner.
-///
-/// The Python orchestrator waits for this exact substring before it delivers a
-/// Ctrl+C during integration testing, and operators on the simple UI use it to
-/// know the measured phase has begun. It is written to STDERR because the
-/// runner reserves STDOUT for its single terminal JSON line.
+/// Emitted to stderr when the first profiling phase starts; stdout is reserved
+/// for terminal JSON.
 const PROFILING_BANNER: &str = "AIPerf System is PROFILING";
 
 /// Observer decorator that emits [`PROFILING_BANNER`] once, when the first

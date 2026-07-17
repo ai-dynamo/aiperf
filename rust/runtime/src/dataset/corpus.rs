@@ -10,13 +10,12 @@
 //! embed and one tokenization routine here prevents the two corpus consumers
 //! from drifting apart and avoids embedding the ~5 MB asset twice.
 //!
-//! Chunk tokenization matches `PromptGenerator._initialize_corpus`
-//! (`src/aiperf/dataset/generator/prompt.py:89-153`): lines are
-//! stripped, empty lines dropped, accumulated into character-bounded chunks,
+//! Chunk tokenization strips lines, drops empty lines, accumulates
+//! character-bounded chunks,
 //! each chunk joined with a single space and tokenized independently, and the
 //! per-chunk token vectors concatenated. Character-based (not CPU-based)
 //! chunking is what makes the token boundaries — and therefore every sampled
-//! prompt — reproducible across machines and across the Python/Rust split.
+//! prompt — reproducible across machines.
 
 use crate::dataset::error::Result;
 use crate::dataset::tokenizer::TextTokenizer;
@@ -27,20 +26,17 @@ use crate::dataset::tokenizer::TextTokenizer;
 pub const SHAKESPEARE_CORPUS: &str =
     include_str!("../../../../src/aiperf/dataset/generator/assets/shakespeare.txt");
 
-/// Fixed per-chunk character budget matching Python's `MAX_CHARS_PER_CHUNK`
-/// (`src/aiperf/dataset/generator/prompt.py:120`). Fixed — never CPU-derived —
-/// so tokenization boundaries are identical on every host.
+/// Fixed per-chunk character budget; never CPU-derived.
 pub const MAX_CHARS_PER_CHUNK: usize = 10_000;
 
 /// Tokenize the embedded Shakespeare corpus with the run's tokenizer.
 ///
-/// Equivalent to constructing a Python `PromptGenerator` with the default
-/// `DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"`.
+/// Tokenize the default embedded corpus.
 pub fn tokenize_sonnet_corpus(tokenizer: &dyn TextTokenizer) -> Result<Vec<u32>> {
     tokenize_corpus_chunked(SHAKESPEARE_CORPUS, tokenizer)
 }
 
-/// Tokenize an arbitrary corpus body using Python's character-chunked algorithm.
+/// Tokenize an arbitrary corpus body with character-bounded chunks.
 ///
 /// Applying the identical stripping/chunking/join policy to custom corpora keeps
 /// a caller-supplied corpus on the same reproducibility contract as the default

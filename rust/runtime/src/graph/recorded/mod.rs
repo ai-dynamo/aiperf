@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native recorded-trace adapters shared by WEKA and Dynamo inputs.
-//!
-//! Both formats normalize into one [`RecordedRequest`] list and traverse the
-//! same content-parent, idle-warp, interval-order, message, and segment path.
-//! Format selection remains runner-owned; this module contains no registry.
+//! Recorded-trace compilation shared by WEKA, Dynamo, and AIPerf trace inputs.
 
 mod aiperf_trace;
 mod coding;
@@ -37,9 +33,9 @@ pub(crate) type BlockHash = i128;
 /// Corpus used to reconstruct recorded token blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptCorpus {
-    /// Procedural coding/tool transcript corpus used by recorded production traces.
+    /// Procedural coding and tool-transcript corpus.
     Coding,
-    /// Deterministically chunked Shakespeare corpus used by parity fixtures.
+    /// Deterministically chunked Shakespeare corpus.
     Sonnet,
 }
 

@@ -41,7 +41,7 @@ pub struct GeneratedMedia {
 ///
 /// Native generators own pixels, samples, frames, and codec invocation; this
 /// value leaves the final delivery representation open. The default publisher
-/// produces Python-compatible inline values, while an online content-server
+/// produces inline values, while an online content-server
 /// publisher can persist image/video bytes and return URLs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyntheticMediaFormat {

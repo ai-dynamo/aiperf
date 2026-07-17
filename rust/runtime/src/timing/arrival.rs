@@ -22,10 +22,6 @@
 //!   ([`WhenBehind::KeepAbsolute`], the graph policy: the schedule is honored and
 //!   the loop bursts to catch up).
 //!
-//! [`next_arrival_target`] is stateless because interval draw timing is observable
-//! when the generator is shared with ramp and adaptive actuators. The caller
-//! controls exactly when each draw occurs.
-//!
 //! Draw timing is observable when a generator is shared with live ramp actuators;
 //! callers must preserve whether the draw occurs at the start or tail of an
 //! iteration and whether closed-loop backpressure peeks the next target.
@@ -55,8 +51,7 @@ pub enum WhenBehind {
 /// `prev_target_ns` is the previously returned target, or `None` for the first
 /// arrival. `draw_interval_ns` is called to draw the next inter-arrival interval —
 /// exactly once, and only when an interval is needed (never for
-/// [`FirstArrival::AtStart`]'s first arrival), so the caller's generator advances
-/// on precisely the ticks it would have without this helper.
+/// [`FirstArrival::AtStart`]'s first arrival).
 ///
 /// See the module docs for the policy axes. The result is pure in its inputs; the
 /// caller stores it as the next `prev_target_ns` and performs its own wait.
@@ -85,9 +80,9 @@ pub fn next_arrival_target(
 mod tests {
     use super::*;
 
-    /// The scheduled / dynosim policy: first arrival one interval in, and a target
-    /// that has fallen behind re-anchors to `now` with no catch-up burst. Mirrors
-    /// the `crate::run` / `crate::request_rate` loops' `next_target_ns` arithmetic.
+    // The scheduled / dynosim policy: first arrival one interval in, and a target
+    // that has fallen behind re-anchors to `now` with no catch-up burst. Uses
+    // the `crate::run` / `crate::request_rate` loops' `next_target_ns` arithmetic.
     #[test]
     fn after_interval_reanchor_matches_scheduled_loop() {
         let start = 1_000;
@@ -134,9 +129,9 @@ mod tests {
         assert_eq!(t3, 5_100);
     }
 
-    /// The graph policy: first arrival at `start` exactly (no interval drawn), and
-    /// an absolute schedule that never re-anchors — the caller bursts to catch up.
-    /// Mirrors `IntervalGraphArrival::wait_for_arrival`.
+    // The graph policy: first arrival at `start` exactly (no interval drawn), and
+    // an absolute schedule that never re-anchors — the caller bursts to catch up.
+    // Uses the same arrival policy as `IntervalGraphArrival::wait_for_arrival`.
     #[test]
     fn at_start_keep_absolute_matches_graph_loop() {
         let start = 1_000;
@@ -173,8 +168,8 @@ mod tests {
         assert_eq!(t2, 1_200);
     }
 
-    /// Saturating arithmetic guards against a pathological interval overflowing the
-    /// timeline rather than panicking.
+    // Saturating arithmetic guards against a pathological interval overflowing the
+    // timeline rather than panicking.
     #[test]
     fn saturates_on_overflow() {
         let t = next_arrival_target(

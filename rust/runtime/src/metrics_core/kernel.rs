@@ -47,7 +47,7 @@ impl DistributionStats {
     /// deviation is the streaming Welford estimate; the percentiles are the
     /// t-digest's approximation of the same linear-interpolation band
     /// [`linear_distribution`] computes exactly. Returns `None` for an empty sketch,
-    /// mirroring the exact path.
+    /// preserving the exact path.
     pub fn from_sketch(tag: impl Into<String>, sketch: &TagSketch, ddof: usize) -> Option<Self> {
         let count = sketch.count();
         if count == 0 {

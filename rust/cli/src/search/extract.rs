@@ -2,13 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Sweep-aggregate point extraction for curve and surface handlers.
 //!
-//! Both walk the sweep aggregate's `per_combination_metrics` rows and pull
-//! `(swept_value, metric_mean)` pairs (or `(concurrency, osl, metric_mean)`
-//! triples), tolerating two layouts: a multi-trial
-//! `"<metric_tag>_<stat>"` block and a single-trial tag-only block. In both
-//! cases the value read is the block's `mean`; the
-//! requested `stat` is never read here because single-trial blocks carry no
-//! per-stat percentiles.
+//! Multi-trial rows select `"<metric_tag>_<stat>"`; single-trial rows fall back
+//! to the tag-only block. Both layouts store the extracted scalar in `mean`.
 
 use serde_json::Value;
 

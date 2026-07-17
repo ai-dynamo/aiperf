@@ -255,7 +255,7 @@ pub fn chop_trie_at_frontier(
 
 /// Edge set for the handoff chop: keep inter-survivor, re-root at residuals.
 ///
-/// Mirrors [`chop_edges`] structurally; the divergence is the re-root
+/// Shares [`chop_edges`]' structure; the divergence is the re-root
 /// offset — the t* chop rebases to the recorded absolute offset (`arrival - t*`)
 /// because nothing was replayed yet, while the frontier chop uses the
 /// residual-of-recorded-gap because pressure already consumed the recorded leads.
@@ -339,21 +339,8 @@ fn frontier_edges(
     (new_edges, kept_pred_residuals)
 }
 
-/// The per-session chain key a trie node belongs to.
-///
-/// Recorded builders mint node ids with `:` as the ordinal separator
-/// (weka `{scope}:{turn_index}` — `graph/recorded/weka/mod.rs:170`; aiperf_trace
-/// `{chain}:{turn}`; dynamo `{session_id}:{k}`), so a `_`-based id split does not
-/// recover the enclosing session chain and would make
-/// every recorded node its own singleton. Instead group by the AUTHORITATIVE
-/// chain identity the trie lowerer stamps into
-/// `metadata["conversation_id"]` (= the weka scope / dynamo `session_id` /
-/// aiperf_trace agent-or-session, written at `graph/recorded/trie/mod.rs:170`),
-/// with `metadata["turn_index"]` as the ordinal.
-///
-/// A node lacking `metadata["conversation_id"]` (e.g. a synthetic/dag
-/// graph that reaches this path) forms a defensive singleton keyed by its own
-/// id.
+// Recorded nodes use metadata["conversation_id"] as their chain identity.
+// Nodes without that metadata form singleton chains keyed by node ID.
 fn chain_key(node_id: &str, node: &LlmNode) -> String {
     node.metadata
         .get("conversation_id")
@@ -364,7 +351,7 @@ fn chain_key(node_id: &str, node: &LlmNode) -> String {
 /// Return `{node_id: node}` of each chain-live-at-`t*` boundary turn.
 ///
 /// Chains are the per-session linear paths keyed by `metadata["conversation_id"]`
-/// ([`chain_key`]), ordered by recorded arrival. A chain is LIVE when it has
+/// (`chain_key`), ordered by recorded arrival. A chain is LIVE when it has
 /// BOTH a node arriving before `t*` and a node arriving at/after `t*`; its
 /// boundary is the LAST pre-`t*` node. Chains with no pre-`t*` node need no
 /// priming (profiling replays them from their own start); chains entirely
@@ -496,8 +483,8 @@ mod tests {
         }
     }
 
-    /// 3-node chain n0 -> n1 -> n2 at arrival offsets 0 / 1e6 / 2e6 us, edges
-    /// START->n0, n0->n1, n1->n2, n2->END.
+    // 3-node chain n0 -> n1 -> n2 at arrival offsets 0 / 1e6 / 2e6 us, edges
+    // START->n0, n0->n1, n1->n2, n2->END.
     fn fixture() -> ParsedGraph {
         let mut nodes = BTreeMap::new();
         nodes.insert("n0".to_owned(), node(0, &[]));
@@ -587,10 +574,10 @@ mod tests {
         assert!(chopped.graph.edges.is_empty());
     }
 
-    /// Node with `metadata["conversation_id"] = chain`, arrival, inputs, optional
-    /// min-start-delay, and optional `max_tokens`, so warmup preservation/clearing
-    /// is observable. Chain identity comes from the conversation_id metadata (as
-    /// the recorded trie lowerer writes it), NOT the node id's `_`-suffix.
+    // Node with `metadata["conversation_id"] = chain`, arrival, inputs, optional
+    // min-start-delay, and optional `max_tokens`, so warmup preservation/clearing
+    // is observable. Chain identity comes from the conversation_id metadata (as
+    // the recorded trie lowerer writes it), NOT the node id's `_`-suffix.
     fn wnode(
         chain: &str,
         arrival_us: u64,
@@ -606,10 +593,10 @@ mod tests {
         n
     }
 
-    /// Four chains at `t* = 1.5e6`: `chainA` straddles t* (boundary = chainA_1),
-    /// `chainB` entirely pre-t* (not live), `chainC` entirely post-t* (no prime),
-    /// `chainD` straddles with a node-level min-start-delay + max_tokens on its
-    /// boundary (boundary = chainD_1).
+    // Four chains at `t* = 1.5e6`: `chainA` straddles t* (boundary = chainA_1),
+    // `chainB` entirely pre-t* (not live), `chainC` entirely post-t* (no prime),
+    // `chainD` straddles with a node-level min-start-delay + max_tokens on its
+    // boundary (boundary = chainD_1).
     fn warmup_fixture() -> ParsedGraph {
         let mut nodes = BTreeMap::new();
         nodes.insert("chainA_0".to_owned(), wnode("chainA", 0, &[], None, None));
@@ -728,9 +715,9 @@ mod tests {
         );
     }
 
-    /// A recorded-id node: id uses the Rust `:` ordinal separator and carries
-    /// the authoritative chain identity in `metadata["conversation_id"]` (as the
-    /// recorded trie lowerer writes it, `graph/recorded/trie/mod.rs:170`).
+    // A recorded-id node: id uses the Rust `:` ordinal separator and carries
+    // the authoritative chain identity in `metadata["conversation_id"]` (as the
+    // recorded trie lowerer writes it, `graph/recorded/trie/mod.rs:170`).
     fn rnode(conversation_id: &str, arrival_us: u64) -> LlmNode {
         let mut n = node(arrival_us, &[]);
         n.metadata
@@ -738,10 +725,10 @@ mod tests {
         n
     }
 
-    /// One recorded session chain "root" with two `:`-ordinal-id turns straddling
-    /// `t*`: `root:0` (arrival 0, pre-t*) and `root:1` (arrival 2e6, post-t*).
-    /// Both carry `metadata["conversation_id"] = "root"`. The chain is LIVE, so
-    /// its boundary must be the LAST pre-t* node, `root:0`.
+    // One recorded session chain "root" with two `:`-ordinal-id turns straddling
+    // `t*`: `root:0` (arrival 0, pre-t*) and `root:1` (arrival 2e6, post-t*).
+    // Both carry `metadata["conversation_id"] = "root"`. The chain is LIVE, so
+    // its boundary must be the LAST pre-t* node, `root:0`.
     #[test]
     fn warmup_boundary_groups_colon_recorded_ids_by_conversation_id() {
         let mut nodes = BTreeMap::new();
@@ -763,10 +750,10 @@ mod tests {
         );
     }
 
-    /// A nested subagent chain: the subagent's conversation_id is the PARENT
-    /// turn id (`root:1`), and its own turns are `root:1:0` / `root:1:1`. Grouping
-    /// by `conversation_id` metadata (not id-suffix) is what makes this correct —
-    /// an id-suffix split of `root:1:0` on any separator would misgroup it.
+    // A nested subagent chain: the subagent's conversation_id is the PARENT
+    // turn id (`root:1`), and its own turns are `root:1:0` / `root:1:1`. Grouping
+    // by `conversation_id` metadata (not id-suffix) is what makes this correct —
+    // an id-suffix split of `root:1:0` on any separator would misgroup it.
     #[test]
     fn warmup_boundary_groups_nested_subagent_chain_by_conversation_id() {
         let mut nodes = BTreeMap::new();
@@ -791,10 +778,10 @@ mod tests {
         );
     }
 
-    /// Fallback: a node with NO `conversation_id` metadata (e.g. a synthetic/dag
-    /// graph reaching this path) forms a defensive singleton keyed by its own id.
-    /// Two such nodes never group, so a lone
-    /// straddle across two DIFFERENT synthetic ids yields no boundary.
+    // Fallback: a node with NO `conversation_id` metadata (e.g. a synthetic/dag
+    // graph reaching this path) forms a defensive singleton keyed by its own id.
+    // Two such nodes never group, so a lone
+    // straddle across two DIFFERENT synthetic ids yields no boundary.
     #[test]
     fn warmup_boundary_falls_back_to_node_id_without_conversation_id() {
         let mut nodes = BTreeMap::new();
@@ -828,9 +815,9 @@ mod tests {
         assert!(warmup.graph.edges.is_empty());
     }
 
-    /// Linear chain `n0 -> n1 -> n2 -> n3` at arrivals 0/1e6/2e6/3e6 us, edges
-    /// START->n0, n0->n1, n1->n2, n2->n3, n3->END (each inter-node edge carries
-    /// an end-anchored `delay_after_predecessor_us = 1e6`).
+    // Linear chain `n0 -> n1 -> n2 -> n3` at arrivals 0/1e6/2e6/3e6 us, edges
+    // START->n0, n0->n1, n1->n2, n2->n3, n3->END (each inter-node edge carries
+    // an end-anchored `delay_after_predecessor_us = 1e6`).
     fn frontier_fixture() -> ParsedGraph {
         let mut nodes = BTreeMap::new();
         nodes.insert("n0".to_owned(), node(0, &[]));
@@ -963,10 +950,10 @@ mod tests {
         );
     }
 
-    /// AND-fan-in `j` depends on both `a1` (recorded chain pred) and `x` (a
-    /// binding pred). Dropping `x` while `a1` survives exercises the
-    /// fold-into-kept-survivor path: `j` is NOT re-rooted (it keeps a1->j) but
-    /// x->j's residual is folded into `j.min_start_delay_us`.
+    // AND-fan-in `j` depends on both `a1` (recorded chain pred) and `x` (a
+    // binding pred). Dropping `x` while `a1` survives exercises the
+    // fold-into-kept-survivor path: `j` is NOT re-rooted (it keeps a1->j) but
+    // x->j's residual is folded into `j.min_start_delay_us`.
     fn fold_fixture() -> ParsedGraph {
         let mut nodes = BTreeMap::new();
         nodes.insert("a0".to_owned(), node(0, &[]));

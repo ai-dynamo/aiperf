@@ -3,8 +3,8 @@
 
 //! The velo-backed cell↔controller transport.
 //!
-//! Realizes the [`CellClient`] / [`ControllerTransport`] seam over the official
-//! `ai-dynamo/velo` messaging framework (v0.5.0). Four named handlers on the
+//! Realizes the [`CellClient`] / [`ControllerTransport`] seam over the Velo 0.5
+//! messaging framework. Four named handlers on the
 //! controller carry the whole protocol:
 //!
 //! - [`HANDLER_REGISTER`] (unary): a cell sends its [`CellRegister`] (its own
@@ -237,8 +237,9 @@ impl ControllerTransport for VeloControllerTransport {
 
 /// A cell's velo client to the controller. Built from a velo instance and the
 /// controller's resolved [`PeerInfo`] (obtained via the bootstrap in
-/// [`super::connect`]); [`register`](Self::register) fetches the cell's launch
-/// spec, and [`CellClient::send`] ships heartbeats and the final partition.
+/// [`connect`](crate::cellular::transport::connect)); [`register`](Self::register)
+/// fetches the cell's launch spec, and [`CellClient::send`] ships heartbeats and the
+/// final partition.
 pub struct VeloCellClient {
     velo: Arc<Velo>,
     controller: PeerInfo,
@@ -371,8 +372,6 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cell_registers_ships_heartbeat_and_partition() {
-        // Controller: bind velo, expose a spec_for that returns a known spec byte
-        // per cell_id.
         let controller_velo = build_velo(BindSpec::TcpLoopback)
             .await
             .expect("controller velo");
@@ -387,8 +386,6 @@ mod tests {
             VeloControllerTransport::bind_controller(controller_velo, spec_for, 1, start_handle)
                 .expect("bind");
 
-        // Cell: bind velo, register (controller peer handed directly, as the
-        // bootstrap would), verify the spec reply, then ship a heartbeat + partition.
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
         let mut cell = VeloCellClient::connect(cell_velo, controller_peer).expect("connect");
 
@@ -406,7 +403,6 @@ mod tests {
             .await
             .expect("ship partition");
 
-        // Controller receives both, in ship order.
         let mut heartbeats = 0;
         let mut partitions = 0;
         for _ in 0..2 {
@@ -427,10 +423,10 @@ mod tests {
         assert_eq!((heartbeats, partitions), (1, 1));
     }
 
-    /// A cell ships its partition from a DIFFERENT velo instance than the one it
-    /// registered with (mirroring the real cell: spec-fetch instance is gone by
-    /// ship time). The partition ship carries its peer, so the controller can ack
-    /// the fresh instance even though it only saw the register instance.
+    // A cell ships its partition from a DIFFERENT velo instance than the one it
+    // registered with (as in a real cell, the spec-fetch instance is gone by
+    // ship time). The partition ship carries its peer, so the controller can ack
+    // the fresh instance even though it only saw the register instance.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ship_from_a_fresh_instance_is_acked() {
         let controller_velo = build_velo(BindSpec::TcpLoopback)
@@ -447,12 +443,10 @@ mod tests {
             VeloControllerTransport::bind_controller(controller_velo, spec_for, 1, start_handle)
                 .expect("bind");
 
-        // Register with instance A.
         let cell_a = build_velo(BindSpec::TcpLoopback).await.expect("cell A");
         let client_a = VeloCellClient::connect(cell_a, controller_peer.clone()).expect("connect A");
         client_a.register(0).await.expect("register");
 
-        // Ship from a fresh instance B — the controller never saw B via register.
         let cell_b = build_velo(BindSpec::TcpLoopback).await.expect("cell B");
         let mut client_b = VeloCellClient::connect(cell_b, controller_peer).expect("connect B");
         client_b
@@ -466,9 +460,9 @@ mod tests {
         }
     }
 
-    /// A metrics-only cell ships a folded `StorePartition` through
-    /// `CellMessage::StorePartition` → rmp raw payload →
-    /// `HANDLER_STORE_PARTITION` → ack, preserving its record count for append-merge.
+    // A metrics-only cell ships a folded `StorePartition` through
+    // `CellMessage::StorePartition` → rmp raw payload →
+    // `HANDLER_STORE_PARTITION` → ack, preserving its record count for append-merge.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cell_ships_folded_store_partition() {
         use crate::cellular::shard::ColumnStorePartition;
@@ -514,9 +508,9 @@ mod tests {
         }
     }
 
-    /// The synchronized-start barrier: two cells register, the controller's
-    /// `await_all_registered` releases once both have, and both cells' `await_start`
-    /// resolve after the controller triggers the START event.
+    // The synchronized-start barrier: two cells register, the controller's
+    // `await_all_registered` releases once both have, and both cells' `await_start`
+    // resolve after the controller triggers the START event.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn synchronized_start_releases_all_cells_together() {
         let controller_velo = build_velo(BindSpec::TcpLoopback)
@@ -546,7 +540,6 @@ mod tests {
         controller.await_all_registered().await;
         start.trigger().expect("trigger start");
 
-        // Both cells' awaits resolve now that START fired.
         cell_a
             .await_start(reply_a.start_event)
             .await

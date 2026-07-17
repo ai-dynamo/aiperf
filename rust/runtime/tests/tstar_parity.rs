@@ -3,8 +3,7 @@
 
 //! Golden-vector verification for `t*` sampling.
 //!
-//! `tools/gen_tstar_parity_vectors.py` records each reference `t_star_us` as its
-//! f64 bit pattern. Every row must match [`WindowTStarSampler`] bit-exactly.
+//! Fixtures record each `t_star_us` as its `f64` bit pattern.
 
 use aiperf_runtime::graph::tstar::{TStarSampler, WindowTStarSampler};
 

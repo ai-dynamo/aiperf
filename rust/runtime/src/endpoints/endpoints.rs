@@ -19,7 +19,7 @@ use crate::endpoints::models::{
 };
 use crate::endpoints::registry::{
     PreparedEndpointBehavior, PreparedReadinessRequest, PreparedRequest, ReadinessMethod,
-    ReadinessPolicy, ReadinessSuccess, format_compatibility_payload,
+    ReadinessPolicy, ReadinessSuccess, format_legacy_payload,
 };
 
 /// Warmup prefix used by the completions endpoint.
@@ -233,7 +233,7 @@ impl Endpoint for ChatEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_compatibility_payload(self, request_info)
+        format_legacy_payload(self, request_info)
     }
 
     fn readiness_policy(
@@ -349,7 +349,7 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         let last = turns.last().expect("non-empty turns");
         let mut payload = Map::new();
         // Empty-array placeholder fixes the field's insertion position; the real
-        // spliced wires replace it after decomposition (segment spec §5).
+        // spliced wires replace it after decomposition.
         payload.insert("messages".into(), Value::Array(Vec::new()));
         payload.insert(
             "model".into(),
@@ -365,7 +365,7 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         }
         if let Some(max_tokens) = last.max_tokens {
             payload.insert(
-                if endpoint.use_max_tokens {
+                if endpoint.use_legacy_max_tokens {
                     "max_tokens"
                 } else {
                     "max_completion_tokens"
@@ -391,7 +391,7 @@ impl Endpoint for ResponsesEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_compatibility_payload(self, request_info)
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -502,7 +502,7 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         let input_wires = format_responses_input_wires(request, turns)?;
         let mut payload = Map::new();
         // Empty-array placeholder fixes the field's insertion position; the real
-        // spliced wires replace it after decomposition (segment spec §5).
+        // spliced wires replace it after decomposition.
         payload.insert("input".into(), Value::Array(Vec::new()));
         payload.insert(
             "model".into(),
@@ -539,7 +539,7 @@ impl Endpoint for CompletionsEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_compatibility_payload(self, request_info)
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -619,7 +619,7 @@ impl Endpoint for EmbeddingsEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_compatibility_payload(self, request_info)
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -664,7 +664,7 @@ impl Endpoint for ChatEmbeddingsEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_compatibility_payload(self, request_info)
+        format_legacy_payload(self, request_info)
     }
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
         parse_embeddings_response(response, false)
@@ -705,7 +705,7 @@ enum RenderedMessage {
     Value(Value),
 }
 
-/// Assemble message-array wires while preserving load-time bytes (segment spec §5).
+/// Assemble message-array wires while preserving load-time bytes.
 ///
 /// `render_first` forces the first turn to render to a mutable value even when it
 /// has serialized bytes, allowing warmup to prepend the system prompt.
@@ -862,7 +862,7 @@ pub(crate) fn format_messages_array_wires(
     serialize_rendered_messages(out)
 }
 
-/// Load-time content-to-wire lowering seam (segment spec §3/§3a).
+/// Load-time content-to-wire lowering seam.
 ///
 /// Each result must equal the dispatch serializer's bytes, including Responses
 /// discriminants and replay filters.
@@ -1189,7 +1189,7 @@ fn absorb_chat_choice(
                     tool_calls_by_index.insert(idx, cloned);
                 }
             }
-            absorb_function_call(message.get("function_call"), tool_calls_by_index);
+            absorb_legacy_function_call(message.get("function_call"), tool_calls_by_index);
         }
         Some("chat.completion.chunk") => {
             let Some(delta) = choice.get("delta").and_then(Value::as_object) else {
@@ -1205,13 +1205,13 @@ fn absorb_chat_choice(
                     }
                 }
             }
-            merge_function_call_delta(delta.get("function_call"), tool_calls_by_index);
+            merge_legacy_function_call_delta(delta.get("function_call"), tool_calls_by_index);
         }
         _ => {}
     }
 }
 
-fn absorb_function_call(
+fn absorb_legacy_function_call(
     value: Option<&Value>,
     tool_calls_by_index: &mut BTreeMap<i64, Map<String, Value>>,
 ) {
@@ -1221,7 +1221,7 @@ fn absorb_function_call(
     let idx = tool_calls_by_index.len() as i64;
     tool_calls_by_index.insert(idx, json!({"type":"function","function":{"name":function_call.get("name").and_then(Value::as_str).unwrap_or(""),"arguments":function_call.get("arguments").and_then(Value::as_str).unwrap_or("")}}).as_object().unwrap().clone());
 }
-fn merge_function_call_delta(
+fn merge_legacy_function_call_delta(
     value: Option<&Value>,
     tool_calls_by_index: &mut BTreeMap<i64, Map<String, Value>>,
 ) {

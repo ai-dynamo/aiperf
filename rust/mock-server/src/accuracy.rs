@@ -9,12 +9,12 @@
 //! and adversarial responses.
 //!
 //! ## Answer formats — must match `src/aiperf/accuracy/graders/`
-//! - [`AccuracyFormat::Mmlu`]/[`AccuracyFormat::MmluPro`]: `multiple_choice.py`
-//!   / `mmlu_pro.py` — `The answer is (B)` (clean tier-1) or a bare first-line
+//! - [`AccuracyFormat::Mmlu`]/[`AccuracyFormat::MmluPro`]: `The answer is (B)`
+//!   (clean tier-1) or a bare first-line
 //!   letter.
-//! - [`AccuracyFormat::Gsm8k`]: `gsm8k_grader.py` — `#### 42`.
-//! - [`AccuracyFormat::Math`]: `math.py` — `\boxed{42}`.
-//! - [`AccuracyFormat::ExactMatch`]: `exact_match.py` — strict, case-sensitive
+//! - [`AccuracyFormat::Gsm8k`]: `#### 42`.
+//! - [`AccuracyFormat::Math`]: `\boxed{42}`.
+//! - [`AccuracyFormat::ExactMatch`]: strict, case-sensitive
 //!   `pred.strip() == gold.strip()`; any prefix or case change fails.
 //! - [`AccuracyFormat::Passthrough`]: gold verbatim.
 //!
@@ -549,7 +549,7 @@ pub struct AccuracyLiveSnapshot {
     pub adversarial: u64,
     /// How many answered responses were rendered as chain-of-thought.
     pub cot: u64,
-    /// Per-task breakdown, mirroring AIPerf's per-task accuracy table.
+    /// Per-task accuracy breakdown.
     pub tasks: BTreeMap<String, TaskAccuracy>,
 }
 

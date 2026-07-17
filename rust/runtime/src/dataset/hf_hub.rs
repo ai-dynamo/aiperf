@@ -280,8 +280,8 @@ mod tests {
         assert!(!is_weight_file("config.json"));
     }
 
-    /// The download filter must never pull a weight/image/ignored file, even one
-    /// wearing a tokenizer-ish name (`tokenizer.safetensors`).
+    // The download filter must never pull a weight/image/ignored file, even one
+    // wearing a tokenizer-ish name (`tokenizer.safetensors`).
     #[test]
     fn downloadable_filter_excludes_weights_images_and_ignored() {
         assert!(is_downloadable_tokenizer_file("tokenizer.json"));
@@ -298,9 +298,9 @@ mod tests {
         assert!(!is_downloadable_tokenizer_file("TOKENIZER.JSON"));
     }
 
-    /// The classifier matches by suffix and admits sub-paths; it is not a
-    /// path-traversal defense (the hub never serves such siblings, hf-hub owns
-    /// cache-path safety, and `validate_repository_id` guards the id itself).
+    // The classifier matches by suffix and admits sub-paths; it is not a
+    // path-traversal defense (the hub never serves such siblings, hf-hub owns
+    // cache-path safety, and `validate_repository_id` guards the id itself).
     #[test]
     fn classifier_is_suffix_based_not_a_path_guard() {
         assert!(is_tokenizer_file("onnx/tokenizer.json"));

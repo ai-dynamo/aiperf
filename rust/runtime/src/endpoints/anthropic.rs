@@ -19,7 +19,7 @@ use crate::endpoints::models::{
     ServerResponse, Turn,
 };
 use crate::endpoints::registry::{
-    PreparedEndpointBehavior, PreparedRequest, format_compatibility_payload,
+    PreparedEndpointBehavior, PreparedRequest, format_legacy_payload,
 };
 use crate::endpoints::{Endpoint, EndpointConfig, RawEndpointConfig};
 
@@ -83,7 +83,7 @@ impl Endpoint for MessagesEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
-        format_compatibility_payload(self, request_info)
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -219,7 +219,7 @@ impl PreparedEndpointBehavior for MessagesEndpoint {
             ),
         );
         // Empty-array placeholder fixes the field's insertion position; the real
-        // spliced wires replace it after decomposition (segment spec §5).
+        // spliced wires replace it after decomposition.
         payload.insert("messages".into(), Value::Array(Vec::new()));
         payload.insert(
             "max_tokens".into(),

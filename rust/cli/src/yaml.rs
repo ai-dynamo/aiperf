@@ -56,17 +56,8 @@ pub(crate) fn resolve_expanded_value(
     load::build(inputs)
 }
 
-/// Apply explicit `aiperf profile` flags over a config-file-derived run.
-///
-/// The `--config` path builds the run from the file; explicit command-line flags
-/// take precedence. Without this, operational flags beside `--config` are
-/// silently dropped — e.g. `--config foo.yaml --export-level raw` would never
-/// write `profile_export_raw.jsonl`, and `--cells 4` would run single-process.
-///
-/// Only options the user actually set (a `Some`/non-empty flag) override; unset
-/// flags keep the config's value. Content that belongs in the config (model,
-/// dataset shape, endpoint, phases) is intentionally NOT overridden here — those
-/// are authored in the file, not layered from the CLI.
+/// Apply explicitly authored operational CLI flags over a config-derived run;
+/// model, dataset, endpoint, and phase content remains config-owned.
 fn apply_cli_overrides(
     inputs: &mut Inputs,
     overrides: Option<&crate::flags::ProfileFlags>,
@@ -170,11 +161,7 @@ struct ConfigFile {
     /// Top-level deterministic run seed (`randomSeed`).
     #[serde(default, alias = "randomSeed")]
     random_seed: Option<u64>,
-    /// Canonical top-level worker/cell runtime policy (`runtime.cells`). Config
-    /// authors `runtime:` at the top level, so the resolver must fold it onto
-    /// `benchmark.runtime` (which is `None` for a top-level-authored `runtime:`)
-    /// before `into_inputs`; otherwise `runtime.cells` never reaches the run
-    /// envelope and cellular mode never engages.
+    /// Top-level worker/cell runtime policy (`runtime.cells`).
     #[serde(default)]
     runtime: Option<RuntimeSection>,
 }

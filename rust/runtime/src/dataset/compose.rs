@@ -399,7 +399,7 @@ pub struct SessionIdGenerator {
 
 impl SessionIdGenerator {
     /// Construct a generator; the seed value selects deterministic mode but does
-    /// not alter the counter sequence, matching Python AIPerf.
+    /// not alter the counter sequence.
     pub fn new(seed: Option<u64>, prefix: impl Into<String>) -> Self {
         Self {
             deterministic: seed.is_some(),

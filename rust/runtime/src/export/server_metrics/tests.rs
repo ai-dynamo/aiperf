@@ -1,16 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Golden byte-parity tests for the server-metrics summary sink.
+//! Golden byte-contract tests for the server-metrics summary sink.
 //!
-//! The `.json` / `.csv` fixtures under `src/tests/golden/` pin the output of
-//! Python `ServerMetricsJsonExporter` / `ServerMetricsCsvExporter`
-//! (`aiperf/server_metrics/{json,csv}_exporter.py`) for the same synthetic
-//! server-metric values. The oracle uses `TZ=UTC` and whole-second
-//! phase boundaries, so the two summary datetimes are `datetime.fromtimestamp`
-//! renders in UTC; the sink renders in the process-local zone (matching Python
-//! on the same host), so the JSON test substitutes those two fields with the
-//! sink's own render to stay timezone-portable while byte-pinning everything else.
+//! The JSON and CSV fixtures pin field order, number formatting, omission, and
+//! record delimiters. The JSON test substitutes process-local datetime values so
+//! the remaining bytes stay timezone-portable.
 
 use std::collections::BTreeMap;
 
@@ -241,9 +236,7 @@ fn full_policy() -> ServerMetricsExportConfig {
     ServerMetricsExportConfig {
         json: true,
         csv: true,
-        // `None` exercises the fallback to the report's own version string, the
-        // value pinned in the golden bytes; the frontend-projected package version
-        // is covered by the real-run parity diff.
+        // `None` exercises the report-version fallback pinned by the fixture.
         aiperf_version: None,
         benchmark_id: Some("bench-123".to_string()),
         input_config: json!({"model": "llama", "concurrency": 4}),
@@ -327,7 +320,7 @@ fn export_writes_both_files_and_gates_on_policy() {
 #[test]
 fn empty_server_metrics_writes_nothing() {
     let mut report = synthetic_report();
-    // No metadata -> Python raises DataExporterDisabled -> sink no-ops.
+    // Missing metadata produces no artifacts.
     report.summary.server_metrics = None;
     let base = std::env::temp_dir().join(format!("aiperf_sm_empty_{}", std::process::id()));
     std::fs::create_dir_all(&base).unwrap();

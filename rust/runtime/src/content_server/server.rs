@@ -52,7 +52,7 @@ pub struct ContentServerConfig {
     pub max_tracked_records: usize,
 }
 
-/// Running server boundary retained by the runner's resource bundle.
+/// Control interface for a running content server.
 #[async_trait]
 pub trait ContentServerRuntime: fmt::Debug + Send {
     /// Current listener status.

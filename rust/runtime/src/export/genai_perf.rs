@@ -1,47 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! AIPerf v1 summary-export compatibility sink.
+//! AIPerf v1 summary sink.
 //!
-//! Emits the two canonical AIPerf summary artifacts — `<stem>_aiperf.json`
-//! (`schema_version = "1.4"`) and `<stem>_aiperf.csv` — byte-for-byte identical
-//! to the Python exporters so downstream plotters, uploaders, and the multi-run
-//! search layer consume either output. Byte compatibility is validated against
-//! the AIPerf Python exporter suite, not the external NVIDIA genai-perf tool.
-//!
-//! # Byte-exact grounding (Python `path:line`, main checkout `src/aiperf/`)
-//! - JSON serialization: `exporters/metrics_json_exporter.py:109-114` —
-//!   `model_dump(mode="json", exclude_unset=True, exclude_none=True)` then
-//!   `orjson.dumps(scrub_non_finite(payload), OPT_INDENT_2)`. serde_json's
-//!   `to_string_pretty` is byte-identical to orjson `OPT_INDENT_2` (2-space
-//!   indent, shortest-round-trip float repr, no trailing newline); the `aiperf`
-//!   crate's `serde_json` carries the `preserve_order` feature so an insertion-
-//!   ordered [`serde_json::Map`] reproduces Pydantic field order exactly.
-//! - Top-level key order: `models/export_models.py:293-349` (`JsonExportData`
-//!   field declaration order). Declared metric fields precede undeclared
-//!   ("extra") metric tags, which Pydantic appends last in dict-insertion order.
-//! - Per-metric object key order: `models/export_models.py:36-66`
-//!   (`JsonMetricResult`): `unit, avg, p1, p5, p10, p25, p50, p75, p90, p95,
-//!   p99, min, max, std, count, sum`. `count` is dropped for AGGREGATE/DERIVED
-//!   scalars (`record_models.py:99-123` `to_json_result`).
+//! Emits `<stem>_aiperf.json` with schema 1.4 and `<stem>_aiperf.csv`. JSON uses
+//! two-space indentation, shortest-round-trip floats, insertion-ordered fields,
+//! and no trailing newline. Declared metrics precede extra tags. Per-metric keys
+//! are ordered `unit, avg, p1, p5, p10, p25, p50, p75, p90, p95, p99, min, max,
+//! std, count, sum`; scalar `count` is omitted.
 //! - Value shapes per native metric type: distribution →
 //!   count/avg/min/max/std/percentiles;
 //!   scalar → avg=min=max=value; counter → avg=min=max=sum=total; histogram →
 //!   count/sum/avg/percentiles.
-//! - Non-finite discipline: `common/finite.py` + the null round-trip. A native
-//!   `ReportValue::NonFinite` serializes to JSON `null` in the native-v2 report,
-//!   which Python reads back as `None` (`native_report.py:862-865`
-//!   `_optional_number`), so `exclude_none` drops it. This sink therefore treats
-//!   `NonFinite` as ABSENT (omitted from JSON, empty string in CSV) to match the
-//!   Python output, not as a present `null`.
-//! - INTERNAL/EXPERIMENTAL filtering: `exporters/metrics_base_exporter.py:30-65`
-//!   (`_prepare_metrics`) drops those flag classes from both artifacts.
-//! - CSV layout: `exporters/metrics_csv_exporter.py` — two sections split on
-//!   percentile presence (`_has_percentiles`), rows sorted by tag, request
-//!   header `["Metric", *STAT_KEYS]`, a blank row between sections, system
-//!   header `["Metric","Value"]`. `STAT_KEYS` order is `constants.py:23-38`.
-//!   `_format_number` renders `None`→`""`, floats via `f"{v:.2f}"`.
-//!   `_format_metric_name` appends ` (unit)` unless the unit is `count`/`requests`.
+//! Non-finite values are absent in JSON and empty in CSV. Configured internal and
+//! experimental tags are omitted. CSV separates metrics with percentiles from
+//! scalar system metrics, sorts rows by tag, inserts one blank record between
+//! sections, renders missing numbers empty and finite numbers to two decimals,
+//! and omits `count` and `requests` units from display names.
 //!
 //! # Extension seam
 //! Every new summary artifact is a new [`Exporter`]; this module owns only the
@@ -56,25 +31,12 @@ use crate::metrics_core::{MetricEntry, MetricSeries, NativeReport, ReportStats, 
 use chrono::{Local, TimeZone};
 use serde_json::{Map, Value};
 
-/// AIPerf v1 summary-export policy. Disabled unless the frontend requests the
-/// `genai_perf` summary; `stem` is the profile-export filename stem
+/// AIPerf v1 summary-export policy. `stem` is the profile-export filename stem
 /// (`profile_export` → `profile_export_aiperf.{json,csv}`).
 ///
-/// The sink owns all assembly and serialization; the remaining fields are
-/// frontend-owned data values the native report alone cannot reconstruct, so
-/// the artifacts reproduce the Python exporters byte-for-byte:
-/// - `header_map` — the display header for every registered metric tag, derived
-///   exactly as `native_report._metric_result`
-///   (`MetricRegistry.get_class_or_none(tag).header`); an absent key falls back
-///   to the tag string, matching Python's `else tag` branch.
-/// - `filtered_tags` — the registered tags the Python file exporters drop
-///   (`metrics_base_exporter._prepare_metrics`: INTERNAL / EXPERIMENTAL classes,
-///   honoring the dev show-flags). A tag outside this set is always kept,
-///   including native-runtime tags Python never registered.
-/// - `scalar_tags` — registered tags whose Python `MetricType` is `AGGREGATE` /
-///   `DERIVED`, for which `record_models.to_json_result` drops `count`.
-/// - `envelope` — `benchmark_id`, `aiperf_version`, `input_config`, and
-///   `run_info` serialized exactly as `MetricsJsonExporter` emits them.
+/// The report cannot reconstruct display metadata or the run envelope, so callers
+/// provide headers, filtered tags, scalar tags, benchmark identity, version,
+/// input configuration, and run information.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GenaiPerfExportConfig {
@@ -82,9 +44,9 @@ pub struct GenaiPerfExportConfig {
     pub enabled: bool,
     /// Filename stem for the compat artifacts (before the `_aiperf` suffix).
     pub stem: String,
-    /// Frontend-projected `{tag: header}` for every registered metric class.
+    /// Display header by registered metric tag.
     pub header_map: HashMap<String, String>,
-    /// Registered tags the Python file exporters drop from both artifacts.
+    /// Registered tags omitted from both artifacts.
     pub filtered_tags: HashSet<String>,
     /// Registered scalar-metric tags whose `count` field is dropped.
     pub scalar_tags: HashSet<String>,
@@ -105,13 +67,8 @@ impl Default for GenaiPerfExportConfig {
     }
 }
 
-/// Frontend-owned top-level fields of Python's `JsonExportData` the native
-/// report cannot reconstruct. Each is projected as the exact JSON value the
-/// Python `MetricsJsonExporter` emits (`model_dump(mode="json",
-/// exclude_unset=True, exclude_none=True)` then `scrub_non_finite`), so the sink
-/// splices them verbatim in `JsonExportData` declaration order. Absent fields
-/// (`benchmark_id` / `run_info` when the run omits them) stay `None` and are not
-/// serialized, matching `exclude_none`.
+/// Caller-supplied top-level fields that the report cannot reconstruct. Values
+/// are inserted verbatim in declaration order; absent values are omitted.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GenaiPerfEnvelope {
@@ -125,14 +82,10 @@ pub struct GenaiPerfEnvelope {
     pub run_info: Option<Value>,
 }
 
-/// JSON export schema version. Pinned to the Python `JsonExportData.SCHEMA_VERSION`
-/// (`export_models.py:291`), independent of the native-v2 report schema (`2.0`).
+/// JSON export schema version, independent of native report schema 2.0.
 const JSON_SCHEMA_VERSION: &str = "1.4";
 
-/// `JsonExportData` declared metric-field order (`export_models.py:305-329`).
-/// Declared metrics serialize in this order; any report metric not listed here
-/// is an "extra" appended after all declared fields in alphabetical (native
-/// report `BTreeMap`) order, matching Pydantic `extra="allow"` semantics.
+/// Declared metric-field order. Extra report metrics follow alphabetically.
 const JSON_METRIC_ORDER: &[&str] = &[
     "request_throughput",
     "request_latency",
@@ -161,12 +114,10 @@ const JSON_METRIC_ORDER: &[&str] = &[
     "total_error_isl",
 ];
 
-/// Percentile labels in `JsonMetricResult` declaration order
-/// (`export_models.py:39-46`). Also the ascending order fetched from the native
-/// distribution stats map.
+/// Percentile labels in artifact order.
 const PERCENTILE_LABELS: [&str; 9] = ["p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99"];
 
-/// CSV request-section per-row stat order (`constants.py:23-38` `STAT_KEYS`).
+/// CSV request-section stat order.
 const STAT_KEYS: [&str; 14] = [
     "avg", "min", "max", "sum", "p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "std",
 ];
@@ -225,8 +176,7 @@ struct Projected {
 }
 
 impl Projected {
-    /// True when any percentile is present — the CSV request/system split
-    /// predicate (`metrics_csv_exporter.py:_has_percentiles`).
+    /// True when any percentile is present, selecting the request section.
     fn has_percentiles(&self) -> bool {
         self.percentiles.iter().any(Option::is_some)
     }
@@ -238,11 +188,8 @@ fn finite(value: Option<ReportValue>) -> Option<f64> {
     value.and_then(crate::export::finite_guarded)
 }
 
-/// Select the summary series for a metric (`native_report.py:791-806`
-/// `_summary_series`): the lone series, or the single unlabeled aggregate when
-/// several labeled series exist. Every degenerate case (no series, no aggregate,
-/// or multiple ambiguous aggregates — the last of which Python raises on) skips
-/// the metric entirely rather than aborting the best-effort export.
+/// Select the sole series or unique unlabeled aggregate. Degenerate shapes omit
+/// only that metric.
 fn summary_series(entry: &MetricEntry) -> Option<&MetricSeries> {
     match crate::export::summary_series(&entry.series) {
         crate::export::SummarySeries::Selected(series) => Some(series),
@@ -252,11 +199,8 @@ fn summary_series(entry: &MetricEntry) -> Option<&MetricSeries> {
 
 /// Project one report metric into the flat stat set, applying the native
 /// metric-type value shape and the `count`-drop rule for scalar metrics.
-/// The display header and scalar-metric `count`-drop are frontend-owned
-/// (`cfg.header_map` / `cfg.scalar_tags`), reproducing `native_report._metric_result`
-/// and `record_models.to_json_result` exactly. Returns `None` when the metric
-/// has no usable series or a required scalar / counter value is non-finite
-/// (Python would raise; we skip).
+/// The configured header and scalar-tag set control display and `count` omission.
+/// Metrics without a usable series or finite required value are skipped.
 fn project(name: &str, entry: &MetricEntry, cfg: &GenaiPerfExportConfig) -> Option<Projected> {
     let series = summary_series(entry)?;
     let header = cfg
@@ -266,9 +210,7 @@ fn project(name: &str, entry: &MetricEntry, cfg: &GenaiPerfExportConfig) -> Opti
         .unwrap_or_else(|| name.to_owned());
     let mut projected = project_stats(&series.stats, entry.unit.clone(), header)?;
 
-    // `to_json_result` (record_models.py:99-123) drops `count` for AGGREGATE /
-    // DERIVED scalar metrics, where it would trivially be 1. The scalar
-    // classification is the Python `MetricType`, projected as `cfg.scalar_tags`.
+    // Scalar metrics omit their trivial count of one.
     if cfg.scalar_tags.contains(name) {
         projected.count = None;
     }
@@ -277,11 +219,8 @@ fn project(name: &str, entry: &MetricEntry, cfg: &GenaiPerfExportConfig) -> Opti
 }
 
 /// Map one series' [`ReportStats`] into the flat v1 stat set, applying the
-/// native metric-type value shape. Returns `None` when a required scalar or counter value is
-/// non-finite (Python would raise; the best-effort export skips instead). The
-/// `cfg.scalar_tags` `count`-drop is a request-metric concern applied by the
-/// caller, not here, so this helper is reusable for GPU-telemetry series where
-/// `count` is always retained.
+/// native metric-type value shape. A non-finite required scalar or counter value
+/// omits the metric. Scalar `count` omission is applied by the caller.
 fn project_stats(stats: &ReportStats, unit: String, header: String) -> Option<Projected> {
     let mut projected = Projected {
         header,
@@ -332,11 +271,7 @@ fn project_stats(stats: &ReportStats, unit: String, header: String) -> Option<Pr
     Some(projected)
 }
 
-/// Collect the exportable metrics in report (alphabetical `BTreeMap`) order,
-/// after filtering and projection. Filtering is frontend-owned
-/// (`cfg.filtered_tags`, the Python `_prepare_metrics` INTERNAL / EXPERIMENTAL
-/// drop set); a tag outside that set is always kept, including native-runtime
-/// tags Python never registered.
+/// Collect exportable metrics in alphabetical report order after configured filtering.
 fn collect_metrics(
     metrics: &BTreeMap<String, MetricEntry>,
     cfg: &GenaiPerfExportConfig,
@@ -401,8 +336,7 @@ struct TelemetryEndpoint {
     gpus: HashMap<String, TelemetryGpu>,
 }
 
-/// Project the report's GPU-telemetry series into the Python `TelemetryExportData`
-/// shape (`native_report.py:_project_gpu_telemetry`, `620-720`). A series is
+/// Project the report's GPU-telemetry series into the summary telemetry shape. A series is
 /// GPU telemetry iff it carries an `endpoint_url` and string `gpu` / `gpu_uuid`
 /// / `model_name` labels — this excludes request metrics and the unlabeled
 /// `total_gpu_*` aggregates while naturally including custom (`sm_clock`, …)
@@ -535,13 +469,11 @@ fn render_telemetry_data(report: &NativeReport) -> Option<Value> {
     Some(Value::Object(telemetry))
 }
 
-/// Format a run-timeline nanosecond timestamp as Python
-/// `datetime.fromtimestamp(ns/1e9).isoformat()` does (`native_report.py:705-709`):
+/// Format a run-timeline timestamp with CPython
+/// `datetime.fromtimestamp(ns / 1e9).isoformat()` semantics:
 /// local-timezone ISO-8601 with microsecond precision, dropping the fractional
-/// part when it is zero. `None`/negative clamps to the epoch, matching the
-/// oracle's guard. These are wall-clock values and inherently non-reproducible
-/// across machines/timezones (as in Python); byte-exact parity is on the
-/// `endpoints` subtree, which the tests and product consume.
+/// part when it is zero. Missing or negative values clamp to the epoch. Wall-clock
+/// values vary across machines and time zones.
 fn format_native_time(ns: Option<i64>) -> String {
     let ns = ns.filter(|value| *value >= 0).unwrap_or(0);
     let seconds = ns / 1_000_000_000;
@@ -563,20 +495,14 @@ fn format_native_time(ns: Option<i64>) -> String {
     }
 }
 
-/// Render `<stem>_aiperf.json` byte-for-byte against the Python
-/// `MetricsJsonExporter`. The top-level map is assembled in `JsonExportData`
-/// declaration order (`export_models.py:293-349`): `schema_version`,
-/// `aiperf_version`, `benchmark_id`, the declared metric slots, `input_config`,
-/// `run_info`, `was_cancelled`, `error_summary`, `warmup_metrics`, then the
-/// undeclared ("extra") metric tags Pydantic appends last in native-report
-/// (alphabetical) order. Frontend-owned scalars (`aiperf_version`,
-/// `benchmark_id`, `input_config`, `run_info`) are spliced from `cfg.envelope`;
+/// Render `<stem>_aiperf.json` in this field order: `schema_version`,
+/// `aiperf_version`, `benchmark_id`, declared metrics, `input_config`, `run_info`,
+/// `was_cancelled`, `error_summary`, `warmup_metrics`, then alphabetical extras.
+/// Caller-owned values are spliced from `cfg.envelope`;
 /// the sink pins `schema_version` and derives `was_cancelled` / `error_summary`
 /// from the [`NativeReport`]. `telemetry_data` is projected from the report's
 /// GPU-telemetry series (see [`render_telemetry_data`]) and omitted when the run
-/// carried none. `start_time` / `end_time` / `branch_stats` remain `None` on the
-/// native compatibility path (the Python oracle passes `start_ns=end_ns=0`, no
-/// DAG stats) and are therefore omitted by `exclude_none`.
+/// carried none. Absent `start_time`, `end_time`, and `branch_stats` are omitted.
 fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
     let collected = collect_metrics(&report.metrics, cfg);
     let mut by_name: HashMap<&str, &Projected> = HashMap::new();
@@ -589,8 +515,7 @@ fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
         "schema_version".to_owned(),
         Value::String(JSON_SCHEMA_VERSION.to_owned()),
     );
-    // aiperf_version: the frontend package version; the report's own field is a
-    // fallback only when the frontend projection is absent (e.g. unit tests).
+    // The configured package version takes precedence over the report fallback.
     let aiperf_version = cfg
         .envelope
         .aiperf_version
@@ -601,7 +526,7 @@ fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
         root.insert("benchmark_id".to_owned(), benchmark_id.clone());
     }
 
-    // Declared metric fields in JsonExportData order.
+    // Declared metric fields precede extras.
     let declared: HashSet<&str> = JSON_METRIC_ORDER.iter().copied().collect();
     for tag in JSON_METRIC_ORDER {
         if let Some(projected) = by_name.get(tag) {
@@ -609,14 +534,12 @@ fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
         }
     }
 
-    // `telemetry_data` is the declared `JsonExportData` field immediately after
-    // the last metric slot and before `input_config` (`export_models.py`), so it
-    // is spliced here. Omitted when the run collected no GPU telemetry.
+    // Telemetry follows declared metrics and is omitted when empty.
     if let Some(telemetry) = render_telemetry_data(report) {
         root.insert("telemetry_data".to_owned(), telemetry);
     }
 
-    // Frontend-owned envelope values, spliced verbatim in declaration order.
+    // Caller-owned envelope values are inserted verbatim in declaration order.
     if let Some(input_config) = &cfg.envelope.input_config {
         root.insert("input_config".to_owned(), input_config.clone());
     }
@@ -628,8 +551,7 @@ fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
         "was_cancelled".to_owned(),
         Value::Bool(report.summary.was_cancelled),
     );
-    // error_summary is always set (an empty array when the run had no errors),
-    // matching the Python oracle's explicit `error_summary=[]`.
+    // `error_summary` is always present, including as an empty array.
     root.insert("error_summary".to_owned(), error_summary(report));
 
     // Warmup metrics (declared field), alphabetical by tag.
@@ -655,9 +577,7 @@ fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
         .expect("v1 summary JSON value is always serializable")
 }
 
-/// Build the `error_summary` array from the report's grouped errors, matching
-/// `export_python_compatibility_reports`'s `ErrorDetailsCount` projection under
-/// `exclude_unset` / `exclude_none`: each item is
+/// Build `error_summary` from grouped errors. Each item is
 /// `{"error_details": {code?, type, message}, "count": N}` with `code` present
 /// only when the report carried one.
 fn error_summary(report: &NativeReport) -> Value {
@@ -677,9 +597,7 @@ fn error_summary(report: &NativeReport) -> Value {
     Value::Array(items)
 }
 
-/// Format a metric's display name (`metrics_csv_exporter.py:115-120`
-/// `_format_metric_name`): append ` (unit)` unless the unit is empty or one of
-/// `count`/`requests` (case-insensitive).
+/// Append ` (unit)` unless the unit is empty, `count`, or `requests`.
 fn format_metric_name(header: &str, unit: &str) -> String {
     let lower = unit.to_ascii_lowercase();
     if unit.is_empty() || lower == "count" || lower == "requests" {
@@ -691,8 +609,7 @@ fn format_metric_name(header: &str, unit: &str) -> String {
     }
 }
 
-/// Format one CSV stat value (`metrics_csv_exporter.py:122-136` `_format_number`):
-/// absent → empty string, finite float → `{:.2}` (matches Python `f"{v:.2f}"`).
+/// Format absent CSV stats as empty and finite values to two decimals.
 fn format_number(value: Option<f64>) -> String {
     match value {
         Some(number) => format!("{number:.2}"),
@@ -717,9 +634,8 @@ fn stat_value(projected: &Projected, stat: &str) -> Option<f64> {
 
 /// Render `<stem>_aiperf.csv`: request section (metrics with percentiles), a
 /// blank row, then the system section (scalar metrics), each sorted by tag. The
-/// Python `csv.writer` excel dialect (CRLF terminator, minimal quoting) is
-/// reproduced by the `csv` crate; the empty separator row is emitted manually
-/// because the crate would otherwise write a quoted empty field.
+/// CSV uses CRLF with minimal quoting. The empty separator record is emitted
+/// manually because the crate would quote a zero-field record.
 fn render_csv(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> anyhow::Result<String> {
     let collected = collect_metrics(&report.metrics, cfg);
 
@@ -751,8 +667,7 @@ fn render_csv(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> anyhow::Res
             writer.write_record(&row)?;
         }
         out.extend_from_slice(&writer.into_inner()?);
-        // Blank separator row between sections: a bare CRLF (Python
-        // `writer.writerow([])`), only when a system section follows.
+        // A bare CRLF separates request and system sections.
         if !system.is_empty() {
             out.extend_from_slice(b"\r\n");
         }
@@ -773,7 +688,6 @@ fn render_csv(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> anyhow::Res
     Ok(String::from_utf8(out)?)
 }
 
-/// A CRLF-terminated CSV writer over an in-memory buffer, matching Python's
-/// default `csv.writer` excel dialect (`\r\n` terminator, minimal quoting).
+/// A CRLF-terminated, minimally quoted CSV writer over an in-memory buffer.
 #[cfg(test)]
 mod tests;

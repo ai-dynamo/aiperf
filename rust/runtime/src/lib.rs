@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Rust-native AIPerf load-generation runtime.
+//! AIPerf load-generation runtime.
 //!
 //! The crate composes endpoint, transport, scheduling, workload, reporting,
 //! accuracy, and extension subsystems for the `aiperf` binary.
-//! With the `dynosim` Cargo feature, [`dynosim`] composes the
+//! With the `dynosim` Cargo feature, the `dynosim` module composes the
 //! same workloads and observers with `SimClock` plus Dynamo's passive mock
 //! engine for deterministic, socket-free co-simulation.
 

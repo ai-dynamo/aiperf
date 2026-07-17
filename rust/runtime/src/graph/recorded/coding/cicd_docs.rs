@@ -7,11 +7,9 @@ use super::templates::TemplateRenderer;
 use super::vocab::*;
 use crate::graph::recorded::RecordedTraceError;
 
-/// `_gen_cicd_output`: a five-step CI pipeline transcript for a random toolchain.
+/// A five-step CI pipeline transcript for a random toolchain.
 ///
-/// `lang` selects the toolchain (`lang_toolchain[language]`); Python still
-/// eagerly evaluates the `r.choice(list(lang_toolchain.values()))` default, so
-/// the selecting draw fires regardless of `lang`.
+/// `lang` selects the toolchain; the selection draw is consumed regardless.
 pub(super) fn cicd_output(
     r: &mut TemplateRenderer,
     lang: Option<usize>,
@@ -101,7 +99,7 @@ Pipeline {status} in {elapsed}s
     ))
 }
 
-/// `_gen_config_file`: dispatch across the config-file kinds. The candidate kind
+/// Dispatch across config-file kinds. The candidate kind
 /// list depends on `lang` (`_lang_to_kinds`), so the `choice` index range and
 /// mapping change with language; `None` uses the full 4-kind list.
 pub(super) fn config_file(
@@ -217,7 +215,7 @@ fn config_dockerfile(
     let env1_val = r.number(1, 100)?;
     let env2_val = r.pick(MODULES)?;
     let port = r.number(3000, 9999)?;
-    // `docker_lang = language or "python"`: None falls through to python.
+    // `None` selects Python.
     let (base_image, install_cmd, run_cmd) = match lang {
         Some(1) => {
             let go_ver = format!("1.{}", r.number(21, 23)?);
@@ -293,7 +291,7 @@ clean:
     ))
 }
 
-/// `_gen_markdown_doc`: an API-reference markdown page for a random class + language example.
+/// An API-reference page for a random class and language example.
 pub(super) fn markdown_doc(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let cls = r.pick(CLASSES)?;
     let m = r.sample(METHODS, 2)?;
@@ -459,7 +457,7 @@ Performs the {m2} operation.
     ))
 }
 
-/// `_gen_test_output`: dispatch across test-runner transcripts (pytest/go/cargo).
+/// Dispatch across pytest, Go, and Cargo test transcripts.
 pub(super) fn test_output(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let mod_ = r.pick(MODULES)?;
     let cls = r.pick(CLASSES)?;

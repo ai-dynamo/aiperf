@@ -2,18 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Sweep aggregation and terminal table.
 //!
-//! With one trial per variation, each group's stats come directly from the
-//! cell's `native-v2.json` summary keyed by metric tag, so
-//! `best_configurations`/`pareto_optimal` are
-//! always empty (their guards look for flattened `{tag}_{stat}` keys the
-//! single-trial projection never produces) and no confidence math runs.
-//! Multi-trial runs (`--num-profile-runs >= 2`) compute confidence aggregates
-//! via [`crate::sweep::confidence`]. The non-sweep path writes
-//! `<base>/aggregate/profile_export_aiperf_aggregate.{json,csv}` (+ a collated
-//! detailed JSON when `--convergence-metric` is set), and the sweep path writes
-//! per-variation confidence aggregates plus the cross-variation
-//! `sweep_aggregate` with `best_configurations`/`pareto_optimal`. The
-//! Student-t inverse CDF uses an approximately `1e-10` bisection tolerance.
+//! Single-trial runs project report summaries directly. Multi-trial runs compute
+//! confidence aggregates through [`crate::sweep::confidence`] and write
+//! per-variation and cross-variation outputs.
 
 use std::collections::BTreeSet;
 use std::io::IsTerminal;

@@ -88,7 +88,7 @@ pub struct CorrelationContext {
 pub struct AdaptiveEvent {
     /// Schema version.
     pub schema_version: u32,
-    /// Clock timestamp retained for Python-schema compatibility.
+    /// Clock timestamp retained by the artifact schema.
     pub timestamp: i64,
     /// Clock timestamp in nanoseconds.
     pub timestamp_ns: i64,

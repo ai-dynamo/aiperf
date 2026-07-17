@@ -3,12 +3,8 @@
 
 //! Base multi-turn conversation renderers.
 //!
-//! Each renderer stitches `[User]`/`[Assistant]` turns together with `\n\n`
-//! (Python `"\n\n".join(turns)`), drawing bridge phrases and per-language tool
-//! blocks in the exact order the Python f-string list evaluates them so the
-//! seeded RNG stream stays byte-for-byte aligned. The conversation's chosen
-//! language (`r.choice(_LANGUAGES)`) is threaded into every per-language
-//! sub-generator.
+//! Each renderer joins `[User]`/`[Assistant]` turns with `\n\n` and preserves
+//! bridge, tool-block, and language draw order for deterministic output.
 
 use super::prompts_conv::{
     BRIDGE_ANALYZE, BRIDGE_EXPLAIN, BRIDGE_FIX, BRIDGE_PERF, BRIDGE_REFACTOR, BRIDGE_SUMMARY,
@@ -20,7 +16,7 @@ use super::vocab::lang_index;
 use super::{cicd_docs, errors_diff, ml, tool, tool_long};
 use crate::graph::recorded::RecordedTraceError;
 
-/// `_gen_conv_bugfix`: read → fix → test → summarize.
+/// Bug-fix conversation.
 pub(super) fn conv_bugfix(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
@@ -44,7 +40,7 @@ pub(super) fn conv_bugfix(r: &mut TemplateRenderer) -> Result<String, RecordedTr
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_review`: diff → read → fix → follow-up question.
+/// Review conversation.
 pub(super) fn conv_review(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
@@ -66,7 +62,7 @@ pub(super) fn conv_review(r: &mut TemplateRenderer) -> Result<String, RecordedTr
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_feature`: search → read → implement → write test → run test.
+/// Feature conversation.
 pub(super) fn conv_feature(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
@@ -94,7 +90,7 @@ pub(super) fn conv_feature(r: &mut TemplateRenderer) -> Result<String, RecordedT
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_debug`: error report → read → search → fix → summarize.
+/// Debugging conversation.
 pub(super) fn conv_debug(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
@@ -123,7 +119,7 @@ pub(super) fn conv_debug(r: &mut TemplateRenderer) -> Result<String, RecordedTra
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_qa`: read → explain → follow-up → apply.
+/// Question-and-answer conversation.
 pub(super) fn conv_qa(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
     let ids = conv_ids(r)?;
@@ -146,7 +142,7 @@ pub(super) fn conv_qa(r: &mut TemplateRenderer) -> Result<String, RecordedTraceE
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_refactor`: multi-file refactoring — search callers, read multiple
+/// Multi-file refactoring conversation — search callers, read multiple
 /// files, edit each.
 pub(super) fn conv_refactor(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
@@ -182,7 +178,7 @@ pub(super) fn conv_refactor(r: &mut TemplateRenderer) -> Result<String, Recorded
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_perf`: performance investigation — profile, read hot path,
+/// Performance investigation conversation — profile, read hot path,
 /// optimize, benchmark.
 pub(super) fn conv_perf(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
@@ -216,7 +212,7 @@ pub(super) fn conv_perf(r: &mut TemplateRenderer) -> Result<String, RecordedTrac
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_cicd`: CI/CD debugging — failing pipeline, read logs, fix config,
+/// CI/CD debugging conversation — failing pipeline, read logs, fix config,
 /// re-run.
 pub(super) fn conv_cicd(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));
@@ -252,8 +248,7 @@ pub(super) fn conv_cicd(r: &mut TemplateRenderer) -> Result<String, RecordedTrac
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_ml_debug`: ML/GPU debugging — CUDA error, read training code, fix,
-/// re-run. This renderer never draws a language; the edit is always Python.
+/// ML/GPU debugging conversation. The edit language is always Python.
 pub(super) fn conv_ml_debug(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let ids = conv_ids(r)?;
 
@@ -302,7 +297,7 @@ pub(super) fn conv_ml_debug(r: &mut TemplateRenderer) -> Result<String, Recorded
     Ok(turns.join("\n\n"))
 }
 
-/// `_gen_conv_test_write`: test-writing session — read code, write tests,
+/// Test-writing conversation — read code, write tests,
 /// iterate on failures.
 pub(super) fn conv_test_write(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     let lang = Some(lang_index(r.pick(LANGUAGES)?));

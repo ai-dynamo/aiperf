@@ -326,7 +326,7 @@ fn adapter_descriptors_round_trip_closed_endpoint_types() {
     for endpoint_type in endpoint_types {
         let id = EndpointId::new(endpoint_type.canonical_id()).unwrap();
         let descriptor = registry.resolve_factory(&id).unwrap().descriptor();
-        assert_eq!(descriptor.compatibility_type(), Some(endpoint_type), "{id}");
+        assert_eq!(descriptor.legacy_type(), Some(endpoint_type), "{id}");
         assert_eq!(descriptor.id, endpoint_type.canonical_id(), "{id}");
         assert!(!descriptor.description.is_empty(), "{id}");
         assert!(!descriptor.metrics_title.is_empty(), "{id}");

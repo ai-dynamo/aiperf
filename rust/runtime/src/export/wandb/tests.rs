@@ -4,11 +4,8 @@
 //! Tests for the offline `.wandb` W&B sink.
 //!
 //! The run-dir layout, the `wandb.Table` file contract, and the tag/config
-//! projection are asserted with pure Rust. When a wandb-bearing interpreter is
-//! discoverable (`$AIPERF_WANDB_PYTHON` or the sibling `.venv`), the emitted
-//! `.wandb` file is additionally decoded with the SDK's own `DataStore` + proto
-//! and its `RunRecord`/`Summary`/`Exit` contents are checked — the strongest
-//! oracle available offline (this wandb build has no `sync --dryrun`).
+//! projection are asserted directly. When a W&B SDK interpreter is available,
+//! it additionally decodes the emitted file and checks run, summary, and exit records.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -96,7 +93,7 @@ fn export_writes_run_dir_layout() {
     assert_eq!(wandb_files.len(), 1);
     assert!(std::fs::metadata(&wandb_files[0]).unwrap().len() > 7);
 
-    // The media table file exists and matches the Python `wandb.Table` shape.
+    // The media table file uses the W&B table shape.
     let table_path = run_dir
         .join("files")
         .join("media/table/summary_metrics.table.json");
@@ -257,7 +254,7 @@ print(json.dumps({"len": len(r.run.config.update[0].value_json)}))
     assert_eq!(decoded["len"], 80_002);
 }
 
-/// Discover a wandb-bearing Python for the decode oracle, or `None`.
+/// Locate an optional W&B SDK interpreter for independent decoding.
 fn wandb_python() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("AIPERF_WANDB_PYTHON") {
         let p = PathBuf::from(p);

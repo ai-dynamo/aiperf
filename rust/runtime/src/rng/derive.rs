@@ -115,10 +115,8 @@ impl RngRoot {
     }
 }
 
-/// Derive a `u64` seed from one UTF-8 key string.
-///
-/// The function is the shared primitive: BLAKE3 digest, first eight bytes,
-/// big-endian. Changing this reshuffles every deterministic stream.
+/// Derive a `u64` from the first eight bytes of a BLAKE3 digest in big-endian
+/// order. Changing this reshuffles every deterministic stream.
 pub fn derive_seed_u64(key: &str) -> u64 {
     derive_seed_parts(&[key.as_bytes()])
 }

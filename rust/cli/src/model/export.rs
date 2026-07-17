@@ -473,9 +473,8 @@ mod tests {
     fn static_metadata_loads() {
         assert!(META.console_metrics.len() > 50);
         // `console_metrics` is a superset of `header_map`: the sweepline metrics
-        // (`effective_*`, `active_*`, `tokens_in_flight`) are rendered in the
-        // console Effective/Active tables (Python `analysis/sweepline.py` inline
-        // `MetricResult`s) but are keyed here for console grouping only.
+        // (`effective_*`, `active_*`, `tokens_in_flight`) are keyed only for
+        // console grouping.
         assert!(META.console_metrics.len() >= META.header_map.len());
         // Every genai-perf header tag also carries console metadata.
         for tag in META.header_map.keys() {

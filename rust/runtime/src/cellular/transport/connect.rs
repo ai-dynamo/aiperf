@@ -120,7 +120,7 @@ pub fn parse_endpoint(coordinate: &str) -> Result<Endpoint> {
 }
 
 /// Connect to the controller at `coordinate`, retrying until it is reachable or
-/// [`CONNECT_TIMEOUT`] elapses, and return its `PeerInfo`. Wraps `velo.connect`.
+/// `CONNECT_TIMEOUT` elapses, and return its `PeerInfo`. Wraps `velo.connect`.
 pub async fn connect_controller(velo: &Velo, coordinate: &str) -> Result<PeerInfo> {
     let endpoint = parse_endpoint(coordinate)?;
     let deadline = tokio::time::Instant::now() + CONNECT_TIMEOUT;
@@ -149,11 +149,7 @@ mod tests {
         ));
         assert!(parse_endpoint("http://nope").is_err());
         assert!(parse_endpoint("tcp://not-an-addr").is_err());
-        // Kubernetes coordinates are DNS names, not numeric IPs. `localhost`
-        // always resolves, so it stands in for the `<pod>.<svc>.<ns>.svc.
-        // cluster.local:PORT` FQDN the operator sets; a numeric-only parse
-        // (the pre-fix behavior) would reject it and every k8s cell would
-        // crashloop on "parsing tcp endpoint".
+        // `localhost` stands in for the DNS name supplied by Kubernetes.
         assert!(matches!(
             parse_endpoint("tcp://localhost:9500").unwrap(),
             Endpoint::Tcp(_)
@@ -165,8 +161,8 @@ mod tests {
         ));
     }
 
-    /// A cell `connect`s the controller by TCP address alone (no PeerInfo), and the
-    /// returned peer is the controller's real identity.
+    // A cell `connect`s the controller by TCP address alone (no PeerInfo), and the
+    // returned peer is the controller's real identity.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn connect_controller_bootstraps_by_endpoint() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

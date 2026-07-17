@@ -10,8 +10,8 @@
 //! serves the [`transport`](crate::cellular::transport) endpoint the cells ship
 //! their records-shard partitions and heartbeats back over, merges every cell's
 //! records in global dispatch-ordinal order into the single authoritative
-//! `native-v2.json`, and fails the run loudly if any cell exits non-zero. To the
-//! Python orchestrator this is still one run behind one v2 request.
+//! `native-v2.json`, and fails the run loudly if any cell exits non-zero. The
+//! controller exposes cellular execution as one protocol-v2 run.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -540,7 +540,7 @@ pub fn run_cellular(
         // via env. On k8s the aggregators are operator-created pods (fed their envelope by
         // the `aiperf aggregator` frontend, bound on `0.0.0.0`), so the controller expects
         // rather than spawns — `aggregator_children` stays empty and pod liveness is the
-        // operator's concern (monitor.py classifies the `aggregators` job's failures).
+        // operator's concern.
         let mut aggregator_children = match aggregator_count {
             Some(agg_count) if !is_k8s => spawn_aggregators(
                 envelope,
@@ -1292,53 +1292,10 @@ fn cellular_will_use_exact_fold(envelope: &serde_json::Value) -> bool {
     true
 }
 
-/// Whitelists a cellular run to the supported cell topology:
-/// the shared online-scheduled executor over the `http` or `grpc` transport, on
-/// **synthetic, file, or public single-turn** datasets. There is no bespoke HTTP layer — a cell
-/// runs the same `execute.rs` path as any single-process run, differing only by an
-/// injected [`IssuanceAuthority`] and an env-gated records sink (`CellRecordsShipper`).
-/// The partition/issuance seam is transport-neutral; this whitelist reflects wiring
-/// coverage, not an HTTP special case. Two invariants underpin byte parity and each
-/// fails closed here:
-///
-/// - **The online-scheduled executor ships a partition, over HTTP *or* gRPC.** Both
-///   `http` and `grpc` transports run the SAME `execute_native_inner` scheduled loop —
-///   the transport differs only in the `RequestExecutorFactory` the coordinator selects
-///   (`HttpExecutionFactory` vs `GrpcExecutionFactory`), while the
-///   cell-issuer injection ([`CellularAutonomousIssuer`]) and the env-gated records sink
-///   ([`CellRecordsShipper`]) live in that shared loop, above the transport. So gRPC
-///   ships a partition exactly as HTTP does and is admitted here. The `dynosim`
-///   offline/online executors are a genuinely separate SimClock driver
-///   (`offline_execution.rs`) that does not inject the cell issuer or ship records, so a
-///   `dynosim_*` transport lacks cell issuance and record shipping and is rejected.
-///   Synthetic, `file`, and `public` linear datasets
-///   ARE wired: synthetic regenerates from the shared seed, a cross-host `file`/`path`
-///   source ships controller->cell over HTTP+zstd and recompiles
-///   deterministically per cell, and `public` URL/HF each cell fetches itself. Graph
-///   programs (dag_jsonl/weka_trace/dynamo_trace) take the whole-trace partition below.
-///   Multi-turn `file` traces (per-conversation partition, like the graph path) remain a
-///   rejected by the single-turn guard.
-/// - **One sampler draw must equal one dispatched turn.** [`PartitionedSampler`]
-///   partitions by conversation *draw*, but the issuer stamps a per-*turn* ordinal
-///   ([`CellularAutonomousIssuer`]); a multi-turn conversation makes the two diverge,
-///   so the merged report silently reorders (or, for variable turn counts, draws a
-///   different instance set). Only `turns == 1` (the default) is sound.
-///
-/// For a `file`/`public` dataset the turn count is NOT driven by the top-level `turns`
-/// config field — it is compiled by the dataset FORMAT plus `session_id` grouping in the
-/// loader. `multi_turn` (`dataset/loader/simple.rs`), the trace formats (`mooncake_trace`,
-/// `bailian_trace`, `burst_gpt`, `sagemaker_data_capture` in `dataset/loader/trace.rs`),
-/// `inputs_json` (`dataset/loader/raw_payload.rs`), and the multi-turn public shapes
-/// (`sharegpt`, `hf_conversation`, `mt_bench`, ... in `dataset/loader/public.rs`) all
-/// group rows into MULTI-turn conversations regardless of `turns`. So the top-level
-/// `turns == 1` check alone does not establish single-turn for a file/public dataset; it is
-/// backstopped by [`CELLULAR_SINGLE_TURN_FILE_FORMATS`], an explicit allowlist of the
-/// formats whose loaders compile exactly one turn per conversation. The
-/// whitelist fails closed: an absent or unlisted format is rejected, so a
-/// session-grouping or ambiguous format cannot pass validation.
-///
-/// [`PartitionedSampler`]: crate::dataset::sampler
-/// [`CellularAutonomousIssuer`]: crate::cellular::CellularAutonomousIssuer
+// Reject cellular shapes without supported issuance and partitioning. HTTP and
+// gRPC support single-turn linear datasets; graph programs use whole-trace
+// partitioning. File and public datasets require an allowlisted single-turn
+// format because loader grouping is independent of the top-level turn count.
 fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
     if let Some(transport) = envelope
         .pointer("/run/cfg/transport/type")
@@ -1822,39 +1779,8 @@ fn warn_dropped_sidecar_telemetry(envelope: &serde_json::Value) {
     }
 }
 
-/// The per-record FILE artifacts a cellular run will DROP because the deployment
-/// cannot deliver a cell's files to the controller — empty unless this is a
-/// cross-host run that requested them. This is the single source of truth for the
-/// concat gate (`!is_k8s`) and the
-/// operator warning ([`warn_dropped_per_record_artifacts`]) both derive from, so the
-/// two never drift.
-///
-/// Same-host (`--cells N`, local launcher) drops nothing: every cell runs its ordinary
-/// execute path with a controller-local `temp_root/cell-{id}` dir as its artifact_dir,
-/// writes its merged per-record artifacts there, and the controller concatenates them
-/// into the real artifact dir at finalize (`concatenate_cell_artifacts`) — so this
-/// returns empty for `!is_k8s` even when files are requested. A k8s pod's cell dir
-/// lives on its OWN pod filesystem, unreachable by the controller, so its per-record
-/// files are dropped.
-///
-/// **Why not ship the bytes over velo (the deliberate boundary, not a TODO).** k8s
-/// cellular is the substrate for the largest distributed runs (300k–1M concurrency in
-/// the project's own durability ramps); per-record artifacts (records.jsonl, one row
-/// per request) scale with total request count and reach tens–hundreds of GB summed
-/// across cells. velo is a control plane, and its transparent large-payload path
-/// (`velo::…::rendezvous::DataStore`, `StageMode::InMemory`) buffers each payload
-/// whole in RAM on both ends, so shipping it
-/// as-is would put the sum of every shard's largest file in the single controller's RAM.
-/// Even hand-rolled sub-threshold chunk-to-disk (which would bound memory) would still
-/// funnel every cell's bulk artifact bytes through one controller node and require that
-/// node to hold the SUM of all shards on local disk — coupling the latency-sensitive
-/// coordination plane (heartbeats + small metric partitions) to a bulk-data plane, and
-/// reinventing, worse, what a shared filesystem provides natively. The intended
-/// cross-host mechanism is **shared object storage** (a ReadWriteMany PVC or S3-style
-/// bucket the operator mounts into every cell pod AND the controller): the cell's
-/// local writes then land each shard in the shared location and the
-/// controller concatenates them with no bulk data on the
-/// control plane.
+// Cross-host cells cannot return local per-record files through the control
+// plane; bulk artifacts require shared storage.
 fn dropped_cross_host_artifacts(envelope: &serde_json::Value, is_k8s: bool) -> Vec<&'static str> {
     if !is_k8s {
         // Same-host concatenates them (`concatenate_cell_artifacts`); nothing dropped.

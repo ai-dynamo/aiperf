@@ -1,14 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Checked-in Prost representation of the Riva speech and NLP wire messages.
+//! Prost DTOs for Riva speech and NLP messages.
 //!
-//! Field numbers are grounded in the complete schemas vendored by reference
-//! commit `a391cfe27` under
-//! `src/aiperf/transports/grpc/proto/riva/riva_{common,audio,asr,tts,nlp}.proto`.
-//! Keeping generated-equivalent Rust checked in avoids a build-time `protoc`
-//! dependency. Fields not consumed by the reference serializers remain valid
-//! unknown protobuf fields and are intentionally skipped during decoding.
+//! Protobuf field numbers are wire-contract values. The definitions are checked
+//! in so builds do not require `protoc`; unknown fields are skipped during
+//! decoding.
 
 use prost::Message;
 
@@ -441,7 +438,7 @@ pub struct AnalyzeIntentResponse {
     /// Extracted slots.
     #[prost(message, repeated, tag = "2")]
     pub slots: Vec<TokenClassValue>,
-    /// Legacy inferred domain text.
+    /// Inferred domain text.
     #[prost(string, tag = "3")]
     pub domain_str: String,
     /// Inferred domain classification.
@@ -458,7 +455,7 @@ pub struct AnalyzeEntitiesRequest {
     /// Text to analyze.
     #[prost(string, tag = "1")]
     pub query: String,
-    /// Optional language policy; unused by the reference endpoint.
+    /// Optional language policy.
     #[prost(message, optional, tag = "2")]
     pub options: Option<AnalyzeEntitiesOptions>,
     /// Optional request identity.

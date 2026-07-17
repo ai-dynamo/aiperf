@@ -9,7 +9,7 @@
 //! Algorithms follow the NumPy 1.26.4 C source
 //! (`src/distributions/distributions.c`, `_generator.pyx`), cited per method;
 //! the normal-ziggurat tables are extracted verbatim in
-//! [`crate::rng::ziggurat_constants`]. Golden-vector tested against numpy.
+//! `crate::rng::ziggurat_constants`. Golden-vector tested against numpy.
 
 use crate::rng::numpy_pcg64::NumpyPcg64;
 use crate::rng::ziggurat_constants::{

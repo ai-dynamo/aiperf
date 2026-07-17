@@ -366,7 +366,7 @@ impl VersionedChannelStore {
     /// prompt from just its `PromptItem::Splice` channels, so reducing every
     /// channel in the store on every fire is O(channels × history) wasted work on
     /// the profiled allocation hot path. The result over the covered channels is
-    /// identical to [`snapshot_at_seq`] restricted to those keys — reducers are
+    /// identical to [`Self::snapshot_at_seq`] restricted to those keys — reducers are
     /// strictly per-channel, and a splice key that is not declared state (or has
     /// no visible write) is omitted here exactly as the full-store snapshot omits
     /// it, so the materializer's `.get(key)` sees the same value or the same
@@ -521,7 +521,7 @@ fn reduce_value_channel(
 /// Reduce one channel over just the entries with `write_seq <= max_seq`, reading
 /// the log by reference.
 ///
-/// Mirrors [`reduce_all`]'s ordering and init/tuple split exactly, but folds the
+/// Uses [`reduce_all`]'s ordering and init/tuple split, but folds the
 /// sequence filter in and never materializes an intermediate `Vec<LogEntry>` — it
 /// borrows each entry and clones only the reducer inputs the reducer consumes.
 /// Returns `None` when no entry is visible at `max_seq` (the caller omits the

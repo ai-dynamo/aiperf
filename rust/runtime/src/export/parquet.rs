@@ -1,30 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native-Rust server-metrics Parquet sink: `server_metrics_export.parquet`.
+//! Server-metrics Parquet sink for `server_metrics_export.parquet`.
 //!
-//! # Parity target (documented honestly)
-//! Parquet byte-identity across writers (pyarrow vs arrow-rs) is **not** a goal:
-//! row-group layout, encodings, and page/compression defaults differ. The target
-//! is **schema + data + `aiperf.schema_version` equality**: identical column
-//! names/types/order, identical row values (including the delta arithmetic and
-//! histogram bucket normalization), and the `aiperf.schema_version = 1.0`
-//! key-value metadata. This is verifiable by reading both files back with pyarrow
-//! and asserting equal tables (see `parquet/tests.rs`).
-//!
-//! # Data path
-//! The aggregated [`NativeReport`] does not carry the raw server-metric rows; they
-//! come from the wire JSONL in the artifact dir. This sink reads that file, rebuilds
-//! the endpoint/metric hierarchy in first-seen (insertion) order exactly like the
-//! Python dicts, applies the profiling-boundary time filter taken from
-//! `report.summary.server_metrics.profiling`, computes gauge/counter/histogram
-//! deltas, and writes the normalized (one-row-per-bucket) Parquet table.
-//!
-//! Compatibility oracles:
-//! - `src/aiperf/server_metrics/parquet_exporter.py` (schema, metadata, deltas)
-//! - `src/aiperf/server_metrics/storage.py` (hierarchy, scalar/histogram series)
-//! - `src/aiperf/server_metrics/units.py` + `common/enums/metric_enums.py`
-//!   (`infer_unit` + `BaseMetricUnit.display_name`)
+//! The artifact contract covers column names, types, order, row values, and
+//! `aiperf.schema_version = 1.0` metadata; physical Parquet encoding is writer
+//! dependent. Raw rows come from the private wire JSONL. Endpoints and metrics
+//! retain first-seen order, profiling boundaries are inclusive, counters and
+//! histograms are emitted as non-negative deltas, gauges retain raw values, and
+//! each histogram bucket occupies one row.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -45,18 +29,16 @@ mod units;
 #[cfg(test)]
 mod tests;
 
-/// Wire-file basename written by the runner into the artifact dir. Mirrors
-/// `orchestrator/rust_wire.py::SERVER_METRICS_PARQUET_WIRE_PATH`.
+/// Wire-file basename written by the runner into the artifact directory.
 const WIRE_FILENAME: &str = ".aiperf-server-metrics-parquet-wire.jsonl";
 
-/// Output basename. Mirrors `cfg.artifacts.server_metrics_export_parquet_file`.
+/// Output basename.
 const OUTPUT_FILENAME: &str = "server_metrics_export.parquet";
 
 /// Schema version stamped into the file's key-value metadata.
 const SCHEMA_VERSION: &str = "1.0";
 
-/// Reserved column names that a Prometheus label may not collide with. Mirrors
-/// `parquet_exporter.py::_get_reserved_names`.
+/// Reserved column names that a Prometheus label may not collide with.
 const RESERVED_NAMES: &[&str] = &[
     "endpoint_url",
     "metric_name",
@@ -92,11 +74,8 @@ impl Exporter for ParquetExporter {
         let (start_ns, end_ns) = profiling_boundary(report)?;
         let wire_path = resolve_wire_path(artifact_dir);
         let hierarchy = Hierarchy::from_wire_file(&wire_path)?;
-        // The wire JSONL is a private runner→sink intermediate, not a user
-        // artifact; remove it once consumed so it never lingers in the run
-        // directory.
-        // Best-effort: a cleanup failure never aborts the export (the native-v2
-        // report is the committed authority).
+        // Remove the private wire input after reading it. Cleanup failures do not
+        // abort export.
         if let Err(error) = std::fs::remove_file(&wire_path) {
             tracing::debug!(
                 "server-metrics parquet: could not remove wire file {}: {error}",
@@ -122,15 +101,10 @@ impl Exporter for ParquetExporter {
     }
 }
 
-/// Resolve the runner-emitted parquet wire file for a given export directory.
+/// Resolve the Parquet wire file for an export directory.
 ///
-/// The wire JSONL is an **input** the runner writes into the run's artifact root,
-/// whereas the export directory handed to a sink
-/// may be an OUTPUT redirect (the `AIPERF_EXPORT_SUBDIR` parity harness points
-/// sinks at `<artifact_root>/<subdir>/` so Rust outputs coexist with the Python
-/// files). The wire file is never redirected, so resolve it in `artifact_dir`
-/// first and fall back to the parent directory when the subdir redirect is in
-/// effect. Normal runs (no redirect) match on the first probe.
+/// The wire input remains in the run artifact root when sink output is redirected
+/// to a child directory, so probe the configured directory and then its parent.
 fn resolve_wire_path(artifact_dir: &Path) -> std::path::PathBuf {
     let direct = artifact_dir.join(WIRE_FILENAME);
     if direct.exists() {
@@ -145,9 +119,7 @@ fn resolve_wire_path(artifact_dir: &Path) -> std::path::PathBuf {
     direct
 }
 
-/// Resolve the profiling `[start_ns, end_ns]` filter. Mirrors the Python
-/// `_render_server_metrics_parquet` guard (`results.start_ns >= results.end_ns`
-/// is a hard error) reading `metadata["profiling"]`.
+/// Resolve a positive profiling `[start_ns, end_ns]` filter.
 fn profiling_boundary(report: &NativeReport) -> Result<(i64, i64)> {
     let range = report
         .summary
@@ -166,7 +138,6 @@ fn profiling_boundary(report: &NativeReport) -> Result<(i64, i64)> {
     Ok((range.start_ns, range.end_ns))
 }
 
-
 /// One raw scrape record from the wire JSONL. Only the fields the Parquet render
 /// consumes are decoded; unknown fields (`is_duplicate`, `benchmark_phase`, trace
 /// timings, `endpoint_latency_ns`) are ignored.
@@ -178,9 +149,7 @@ struct WireRecord {
     metrics: BTreeMap<String, WireFamily>,
 }
 
-/// A metric family within a wire record. `BTreeMap` matches the sorted key order
-/// the runner emits (it serializes a `BTreeMap`), so iteration order is stable and
-/// identical to the Python dict insertion order.
+/// A metric family within a wire record, with keys in lexicographic order.
 #[derive(Debug, serde::Deserialize)]
 struct WireFamily {
     #[serde(rename = "type")]
@@ -192,16 +161,9 @@ struct WireFamily {
 
 /// One sample: scalar (`value`) or histogram (`buckets` + `sum` + `count`).
 ///
-/// All numeric fields decode through [`de_opt_f64`] / [`de_bucket_map`] rather
-/// than serde_json's built-in number deserializer. serde_json's default float
-/// parser is not always correctly rounded — for some decimals it lands 1 ULP off
-/// the IEEE-754 nearest value that Rust's `f64::from_str` and Python's `float()`
-/// both produce (e.g. `0.36366626900000004` decodes to `…da8a` via serde_json but
-/// `…da8b` via `f64::from_str`). The runner writes this wire and Python's exporter
-/// reads it with `float()`, so decoding the same bytes to a different f64 here
-/// perturbs the cumulative-sum/count/bucket deltas by ~1 ULP away from the Python
-/// output. Recovering the exact number text (the enabled `raw_value` feature) and
-/// parsing it with `f64::from_str` restores byte-for-value parity.
+/// Numeric fields retain the raw JSON token and use `f64::from_str` to obtain the
+/// correctly rounded IEEE-754 value. The default serde_json float path can differ
+/// by one ULP for some decimal tokens, which would perturb cumulative deltas.
 #[derive(Debug, serde::Deserialize)]
 struct WireSample {
     #[serde(default)]
@@ -216,9 +178,7 @@ struct WireSample {
     count: Option<f64>,
 }
 
-/// Parse a JSON number token to the correctly-rounded nearest f64 via
-/// `f64::from_str`, matching Python's `float()`. See [`WireSample`] for why the
-/// default serde_json number path is unsuitable.
+/// Parse a JSON number token to the correctly rounded nearest `f64`.
 fn parse_exact_f64<E: serde::de::Error>(raw: &serde_json::value::RawValue) -> Result<f64, E> {
     let text = raw.get().trim();
     text.parse::<f64>()
@@ -261,8 +221,7 @@ where
     }
 }
 
-
-/// Prometheus metric semantic type. Mirrors `enums.PrometheusMetricType`.
+/// Prometheus metric semantic type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MetricType {
     Counter,
@@ -273,8 +232,8 @@ enum MetricType {
 }
 
 impl MetricType {
-    /// Decode the wire `type` string. Unrecognized values map to `Unknown`,
-    /// matching `PrometheusMetricType._missing_` fallback semantics.
+    /// Decode the wire type, mapping unrecognized values to
+    /// [`MetricType::Unknown`].
     fn from_wire(value: &str) -> Self {
         match value.to_ascii_lowercase().as_str() {
             "counter" => MetricType::Counter,
@@ -285,7 +244,7 @@ impl MetricType {
         }
     }
 
-    /// The `metric_type` column value (the `PrometheusMetricType` enum's string).
+    /// The lowercase `metric_type` column value.
     fn as_str(self) -> &'static str {
         match self {
             MetricType::Counter => "counter",
@@ -301,9 +260,7 @@ impl MetricType {
         matches!(self, MetricType::Gauge | MetricType::Unknown)
     }
 
-    /// Whether `_collect_all_rows_generator` emits rows for this type. Summary is
-    /// stored but never emitted (Python handles neither the scalar nor histogram
-    /// branch for it).
+    /// Whether rows are emitted for this type. Summaries remain stored but omitted.
     fn is_scalar_emitted(self) -> bool {
         matches!(
             self,
@@ -312,8 +269,7 @@ impl MetricType {
     }
 }
 
-/// Sorted `(name, value)` label pairs uniquely identifying a series within a
-/// metric family. Mirrors `ServerMetricKey`.
+/// Sorted `(name, value)` label pairs uniquely identifying a metric series.
 type MetricKey = (String, Vec<(String, String)>);
 
 /// Build a `MetricKey` from a metric name and optional labels dict (sorted).
@@ -325,16 +281,13 @@ fn metric_key(name: &str, labels: &Option<BTreeMap<String, String>>) -> MetricKe
     (name.to_string(), sorted)
 }
 
-/// Scalar (gauge/counter/unknown) time series. Values are kept in insertion order
-/// then stably sorted by timestamp on demand, reproducing `ScalarTimeSeries`'
-/// stable-insertion behavior for equal timestamps.
+/// Scalar time series, stably sorted by timestamp when collected.
 #[derive(Debug, Default)]
 struct ScalarSeries {
     points: Vec<(i64, f64)>,
 }
 
-/// Histogram time series with a fixed bucket schema locked on first append.
-/// Mirrors `HistogramTimeSeries`.
+/// Histogram time series with its bucket schema locked on first append.
 #[derive(Debug, Default)]
 struct HistogramSeries {
     bucket_les: Vec<String>,
@@ -342,8 +295,7 @@ struct HistogramSeries {
     points: Vec<(i64, f64, f64, Vec<f64>)>,
 }
 
-/// One stored metric series (type + description + typed data), created on the
-/// first sample seen for its key. Mirrors `ServerMetricEntry`.
+/// Stored metric series created from the first sample seen for its key.
 #[derive(Debug)]
 struct MetricEntry {
     metric_type: MetricType,
@@ -368,16 +320,14 @@ impl MetricEntry {
     }
 }
 
-/// Per-endpoint metric store preserving first-seen key order. Mirrors
-/// `ServerMetricsTimeSeries.metrics` (a dict).
+/// Per-endpoint metric store preserving first-seen key order.
 #[derive(Debug, Default)]
 struct EndpointSeries {
     order: Vec<MetricKey>,
     entries: HashMap<MetricKey, MetricEntry>,
 }
 
-/// Multi-endpoint store preserving first-seen endpoint order. Mirrors
-/// `ServerMetricsHierarchy.endpoints` (a dict).
+/// Multi-endpoint store preserving first-seen endpoint order.
 #[derive(Debug, Default)]
 struct Hierarchy {
     order: Vec<String>,
@@ -385,8 +335,7 @@ struct Hierarchy {
 }
 
 impl Hierarchy {
-    /// Rebuild the hierarchy from the wire JSONL, in file order. Mirrors the
-    /// Python renderer's `for line in source: hierarchy.add_record(...)`.
+    /// Rebuild the hierarchy from wire records in file order.
     fn from_wire_file(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path).with_context(|| {
             format!(
@@ -411,9 +360,7 @@ impl Hierarchy {
         Ok(hierarchy)
     }
 
-    /// Ingest one record. Mirrors `ServerMetricsHierarchy.add_record` +
-    /// `ServerMetricsTimeSeries.append_snapshot`: empty-metrics records are
-    /// skipped; all samples (including duplicates) append to the series.
+    /// Skip empty records and append every sample, including duplicates.
     fn add_record(&mut self, record: WireRecord) {
         if record.metrics.is_empty() {
             return;
@@ -444,8 +391,7 @@ impl Hierarchy {
         }
     }
 
-    /// All non-reserved Prometheus label keys, sorted alphabetically. Mirrors
-    /// `_discover_all_label_keys` filtered by `_get_reserved_names`.
+    /// All non-reserved Prometheus label keys, sorted alphabetically.
     fn label_columns(&self) -> Vec<String> {
         let mut keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for endpoint in self.endpoints.values() {
@@ -460,14 +406,12 @@ impl Hierarchy {
         keys.into_iter().collect()
     }
 
-    /// Total stored series count. Mirrors the `metric_count` metadata.
+    /// Total stored series count.
     fn metric_count(&self) -> usize {
         self.endpoints.values().map(|e| e.order.len()).sum()
     }
 
-    /// Per-type series counts. Mirrors the `metric_type_counts` metadata (summary
-    /// is not one of the tracked keys, so it is skipped rather than panicking as
-    /// the Python dict-index would).
+    /// Per-type series counts; summary series are not included.
     fn metric_type_counts(&self) -> BTreeMap<&'static str, usize> {
         let mut counts: BTreeMap<&'static str, usize> = BTreeMap::from([
             ("gauge", 0),
@@ -486,16 +430,15 @@ impl Hierarchy {
         counts
     }
 
-    /// Configured/observed endpoint URLs, sorted. Mirrors `endpoint_urls`.
+    /// Configured or observed endpoint URLs, sorted.
     fn endpoint_urls_sorted(&self) -> Vec<String> {
         let mut urls = self.order.clone();
         urls.sort();
         urls
     }
 
-    /// Produce every export row in Python row order: endpoints in first-seen
-    /// order, metrics in first-seen key order, samples in timestamp order. Mirrors
-    /// `_collect_all_rows_generator`.
+    /// Produce rows with endpoints and metrics in first-seen order and samples in
+    /// timestamp order.
     fn collect_rows(&self, start_ns: i64, end_ns: i64) -> Vec<Row> {
         let mut rows = Vec::new();
         for endpoint_url in &self.order {
@@ -524,8 +467,7 @@ impl MetricEntry {
             if let Some(value) = sample.value {
                 scalar.points.push((timestamp_ns, value));
             }
-            // Summary/quantile samples without a scalar value are dropped, mirroring
-            // that the exporter never emits rows for them.
+            // Summary or quantile samples without scalar values are omitted.
         } else if let Some(histogram) = &mut self.histogram {
             histogram.append(timestamp_ns, sample);
         }
@@ -533,16 +475,14 @@ impl MetricEntry {
 }
 
 impl ScalarSeries {
-    /// Timestamps/values sorted stably by timestamp. Mirrors the sorted invariant
-    /// `ScalarTimeSeries` maintains (stable for equal timestamps).
+    /// Timestamps and values stably sorted by timestamp.
     fn sorted(&self) -> Vec<(i64, f64)> {
         let mut points = self.points.clone();
         points.sort_by_key(|(ts, _)| *ts);
         points
     }
 
-    /// Emit scalar rows with gauge/counter delta semantics. Mirrors
-    /// `_collect_scalar_rows`.
+    /// Emit raw gauges and non-negative counter deltas.
     fn collect_rows(
         &self,
         endpoint_url: &str,
@@ -599,8 +539,8 @@ impl ScalarSeries {
 }
 
 impl HistogramSeries {
-    /// Append a histogram sample, locking the bucket schema on the first one.
-    /// Mirrors `HistogramTimeSeries.append` (missing buckets fill with 0.0).
+    /// Append a histogram sample, locking the first bucket schema and filling
+    /// missing buckets with zero.
     fn append(&mut self, timestamp_ns: i64, sample: &WireSample) {
         let Some(buckets) = &sample.buckets else {
             return;
@@ -627,8 +567,7 @@ impl HistogramSeries {
         ));
     }
 
-    /// Emit one row per bucket per in-range timestamp with cumulative-delta
-    /// semantics. Mirrors `_collect_histogram_rows`.
+    /// Emit one row per bucket per in-range timestamp using cumulative deltas.
     fn collect_rows(
         &self,
         endpoint_url: &str,
@@ -645,7 +584,8 @@ impl HistogramSeries {
         points.sort_by_key(|(ts, ..)| *ts);
         let timestamps: Vec<i64> = points.iter().map(|(ts, ..)| *ts).collect();
 
-        // get_indices_for_filter: reference = last < start, final = last <= end.
+        // Use the last point before `start_ns` as the delta reference and include
+        // points through `end_ns`.
         let insert_start = searchsorted_left(&timestamps, start_ns);
         let reference_idx = if insert_start > 0 {
             Some(insert_start - 1)
@@ -654,7 +594,7 @@ impl HistogramSeries {
         };
         let insert_end = searchsorted_right(&timestamps, end_ns);
         if insert_end == 0 {
-            // final_idx is None -> no rows.
+            // No point occurs at or before `end_ns`.
             return;
         }
         let final_idx = insert_end - 1;
@@ -699,8 +639,7 @@ impl HistogramSeries {
     }
 }
 
-/// Sort key for a histogram bucket boundary: numeric ascending with `+Inf` last.
-/// Mirrors `storage.py::_bucket_sort_key`.
+/// Sort histogram boundaries numerically with `+Inf` last.
 fn bucket_sort_key(le: &str) -> f64 {
     if le == "+Inf" {
         f64::INFINITY
@@ -709,16 +648,15 @@ fn bucket_sort_key(le: &str) -> f64 {
     }
 }
 
-/// First index `i` with `values[i] >= target` (numpy `searchsorted(..., "left")`).
+/// First index `i` with `values[i] >= target`.
 fn searchsorted_left(values: &[i64], target: i64) -> usize {
     values.partition_point(|&v| v < target)
 }
 
-/// First index `i` with `values[i] > target` (numpy `searchsorted(..., "right")`).
+/// First index `i` with `values[i] > target`.
 fn searchsorted_right(values: &[i64], target: i64) -> usize {
     values.partition_point(|&v| v <= target)
 }
-
 
 /// One materialized Parquet row prior to columnarization.
 #[derive(Debug)]
@@ -747,9 +685,8 @@ impl Row {
     }
 }
 
-/// Build the Arrow schema with `aiperf.*` metadata. Column order mirrors
-/// `_build_pyarrow_schema`: fixed head, sorted label columns, fixed tail. All
-/// fields are nullable to match pyarrow's `pa.field(..)` defaults.
+/// Build a nullable Arrow schema with a fixed head, sorted labels, fixed tail,
+/// and `aiperf.*` metadata.
 fn build_schema(
     label_keys: &[String],
     hierarchy: &Hierarchy,
@@ -779,12 +716,8 @@ fn build_schema(
     Arc::new(Schema::new_with_metadata(fields, metadata))
 }
 
-/// Deterministic, data-derived file metadata. The `aiperf.schema_version` key is
-/// the parity anchor; the config-derived keys the Python exporter also writes
-/// (`input_config`, `benchmark_id`, `model_names`, `concurrency`, `request_rate`,
-/// host/python/pyarrow versions, `export_timestamp_utc`) are intentionally omitted
-/// here — they are not derivable from `NativeReport` + the wire file and are not
-/// part of the schema/data parity target.
+/// Deterministic metadata derivable from the report and wire input. Run config,
+/// host, writer version, and export timestamp metadata are intentionally omitted.
 fn build_metadata(
     label_keys: &[String],
     hierarchy: &Hierarchy,
@@ -853,8 +786,7 @@ fn build_metadata(
     metadata
 }
 
-/// Columnarize the rows against the schema. Mirrors the pyarrow
-/// `pa.table({col: [r.get(col) ...]})` construction.
+/// Columnarize rows against the schema.
 fn build_record_batch(
     schema: &Arc<Schema>,
     label_keys: &[String],
@@ -892,9 +824,7 @@ fn build_record_batch(
     RecordBatch::try_new(schema.clone(), columns).context("assembling parquet record batch")
 }
 
-/// Write the record batch to Parquet with Snappy compression (matching the Python
-/// `compression="snappy"`) and file-level key-value metadata mirroring the schema
-/// metadata. Byte-identity with pyarrow is not attempted (see module docs).
+/// Write Snappy-compressed Parquet with the schema metadata at file level.
 fn write_parquet(path: &Path, schema: Arc<Schema>, batch: &RecordBatch) -> Result<()> {
     super::parquet_util::write_parquet_table(path, schema, batch, "parquet export")
 }

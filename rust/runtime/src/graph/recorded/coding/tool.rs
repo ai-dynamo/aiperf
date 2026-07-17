@@ -5,7 +5,7 @@
 //!
 //! Every generator here takes a `lang: Option<usize>` language selector
 //! (`Some(0..=3)` = python/go/rust/typescript, `None` = the pool path). The pool
-//! (`_gen_tool_use_block`/`_gen_bash_output`) passes `None`; the multi-turn
+//! The pool path passes `None`; the multi-turn
 //! conversation renderers pass the conversation's chosen language, so the
 //! language-specific code branches AND file pools must be reproduced exactly.
 
@@ -13,7 +13,7 @@ use super::templates::TemplateRenderer;
 use super::vocab::*;
 use crate::graph::recorded::RecordedTraceError;
 
-/// `_gen_tool_use_block`: dispatch across the read/edit/search/bash tool variants.
+/// Dispatch across read, edit, search, and shell tool variants.
 pub(super) fn tool_use_block(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     match r.index(4)? {
         0 => tool_read(r, None),
@@ -23,7 +23,7 @@ pub(super) fn tool_use_block(r: &mut TemplateRenderer) -> Result<String, Recorde
     }
 }
 
-/// `_gen_bash_output`: dispatch across the file-explore/build-test/git-workflow variants.
+/// Dispatch across file-explore, build-test, and Git-workflow variants.
 pub(super) fn bash_output(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     match r.index(3)? {
         0 => bash_file_explore(r),

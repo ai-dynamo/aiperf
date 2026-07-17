@@ -3,7 +3,8 @@
 
 //! Strict authored protocol-v2 request and response types.
 //!
-//! Python owns structural Config-v2 expansion and serializes one authored run.
+//! The native profile layer performs structural Config-v2 expansion and
+//! serializes one authored run.
 //! The selected runner owns component discovery, strict factory-specific config
 //! decoding, preparation, execution, and reporting. Factory-owned objects stay
 //! as [`RawValue`] until their registered implementation decodes them; this is
@@ -114,7 +115,7 @@ pub struct EnvelopeV2 {
     pub protocol_version: u32,
     /// Requested process operation.
     pub operation: OperationV2,
-    /// Exact Config-v2 run, including its Python-resolved bindings.
+    /// Exact Config-v2 run, including resolved bindings.
     pub run: BenchmarkRunWireV2,
 }
 
@@ -152,7 +153,7 @@ pub struct BenchmarkRunWireV2 {
     pub artifact_dir: PathBuf,
     /// Canonical benchmark configuration.
     pub cfg: BenchmarkConfigWireV2,
-    /// Resolution facts already computed by Python.
+    /// Resolution facts computed before runner execution.
     #[serde(default)]
     pub resolved: Value,
     /// Optional sweep metadata retained without runner interpretation.
@@ -232,12 +233,11 @@ pub struct BenchmarkConfigWireV2 {
     /// Generated-content sidecar configuration.
     #[serde(default)]
     pub content_server: Value,
-    /// Prepared sidecar bag projected by Python when present.
+    /// Prepared sidecar bag, when present.
     #[serde(default)]
     pub sidecars: Value,
-    /// Native post-report export policy (genai-perf v1 compat, OTLP metrics,
-    /// MLflow). Projected by Python; absent decodes to all-disabled defaults so
-    /// the base path emits only the native-v2 report.
+    /// Native post-report export policy; absence decodes to all-disabled
+    /// defaults.
     #[serde(default)]
     pub export: Value,
 }
@@ -428,7 +428,7 @@ fn raw_value(value: Value) -> Result<Box<RawValue>> {
 pub struct AuthoredRunSpecV2 {
     /// Stable identity projected from the outer orchestrator.
     pub identity: RunIdentitySpecV2,
-    /// Exclusive artifact target selected but not yet created by Python.
+    /// Exclusive artifact target selected but not yet created.
     pub artifact_target: PathBuf,
     /// Resolved model-selection policy; empty only when the resource was absent.
     pub models: ModelsSpec,
@@ -854,7 +854,7 @@ pub struct UserFileSpecV2 {
     pub path: String,
     /// Selected serialization format.
     pub format: UserFileFormatV2,
-    /// Exact Python-rendered and serialized UTF-8 content.
+    /// Rendered and serialized UTF-8 content.
     pub content: String,
 }
 
@@ -862,9 +862,9 @@ pub struct UserFileSpecV2 {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum UserFileFormatV2 {
-    /// Pretty JSON already serialized by Python.
+    /// Pre-serialized pretty JSON.
     Json,
-    /// YAML already serialized by Python.
+    /// Pre-serialized YAML.
     Yaml,
     /// UTF-8 text.
     Text,

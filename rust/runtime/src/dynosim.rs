@@ -3,15 +3,10 @@
 
 //! Feature-gated in-process co-simulation against Dynamo's passive mock engine.
 //!
-//! This module is the application-side realization of
-//! `specs/offline-cosimulation.md`: AIPerf owns the
-//! [`SimClock`], workload loop, observers, and report; `dynamo-mocker` owns only
-//! scheduler/performance-model state behind [`SteppableReplay`]. There are no
-//! sockets, subprocesses, shared-memory rings, or secondary clocks.
-//!
-//! The dependency is intentionally compiled only with `dynosim`. The
-//! normal HTTP binary and every library crate below this application layer stay
-//! independent of Dynamo.
+//! AIPerf owns the [`SimClock`], workload loop, observers, and report;
+//! `dynamo-mocker` owns scheduler and performance-model state behind
+//! [`SteppableReplay`]. The `dynosim` feature keeps this dependency out of
+//! ordinary HTTP builds.
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
@@ -580,9 +575,7 @@ impl OfflineEngineConfig {
             // deadline, which rate/fixed/DAG co-simulation requires.
             OfflineTopology::Single => {
                 let (args, estimator) = Self::configure_aic(self.engine_args()?)?;
-                // Mirror `dynamo.replay`'s offline validation (lib/mocker
-                // replay::validate): KV routing needs more than one worker, and
-                // the single topology provisions exactly one.
+                // KV routing requires more than one worker; single topology has one.
                 anyhow::ensure!(
                     self.router_mode != OfflineRouterMode::Kv,
                     "offline replay only supports router_mode=kv with more than one worker; topology=single provisions exactly one"
@@ -615,9 +608,7 @@ impl OfflineEngineConfig {
                     "offline aggregate workers must be positive"
                 );
                 let (args, estimator) = Self::configure_aic(self.engine_args()?)?;
-                // Mirror `dynamo.replay`'s offline validation
-                // (lib/mocker replay::validate_offline_router_mode /
-                // validate_replay_args).
+                // KV routing requires multiple workers.
                 if self.router_mode == OfflineRouterMode::Kv {
                     anyhow::ensure!(
                         self.workers > 1,
@@ -661,9 +652,7 @@ impl OfflineEngineConfig {
                 let (prefill_args, decode_args) = self.disaggregated_engine_args()?;
                 let (prefill_args, estimator) = Self::configure_aic(prefill_args)?;
                 let (decode_args, _) = Self::configure_aic(decode_args)?;
-                // Mirror `dynamo.replay`'s disaggregation validation
-                // (lib/mocker replay::validate_disagg_args). The worker-type
-                // guards are omitted: aiperf's topology selection is
+                // The worker-type guards are omitted: AIPerf topology selection is
                 // authoritative and the runtime assigns prefill/decode roles.
                 anyhow::ensure!(
                     prefill_args.engine_type != EngineType::Trtllm
@@ -1497,7 +1486,7 @@ impl EngineHost {
 
     /// Default engine host over a wall clock for the in-process online driver.
     ///
-    /// Mirrors [`EngineHost::new`] but binds the native engine to any `Clock`
+    /// Bind the native engine to any `Clock`
     /// (typically `RealClock`) with no virtual look-ahead, so the engine steps
     /// only to driver-supplied real-time deadlines (`drive_real_with_source`).
     fn new_real(clock: Rc<dyn Clock>, config: &OfflineEngineConfig) -> Result<Rc<Self>> {

@@ -3,9 +3,9 @@
 
 //! Deterministic sweep-line curves for concurrency, throughput, and KV-cache load.
 //!
-//! Every curve is represented as a right-continuous step function. Event ordering,
-//! floating-point cancellation, decode-token accounting, and active-only statistics
-//! follow the contract documented in `specs/metrics.md`.
+//! Curves are right-continuous step functions with deterministic event ordering,
+//! floating-point cancellation, decode-token accounting, and active-only
+//! statistics.
 
 mod kv_cache;
 mod stats;

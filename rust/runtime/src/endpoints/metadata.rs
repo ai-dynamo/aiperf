@@ -171,8 +171,8 @@ impl EndpointType {
 }
 
 impl EndpointDescriptor {
-    /// Closed-enum view for protocol-v1 [`EndpointConfig`] and dataset paths.
-    pub fn compatibility_type(self) -> Option<EndpointType> {
+    /// Closed-enum view for protocol-v1 [`crate::endpoints::EndpointConfig`] and dataset paths.
+    pub fn legacy_type(self) -> Option<EndpointType> {
         EndpointType::from_canonical_id(self.id)
     }
 

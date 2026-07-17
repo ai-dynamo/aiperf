@@ -8,7 +8,7 @@
 //! For one request with input length `ISL` and requested output length `OSL`,
 //! given analytic `ttft_ms`/`itl_ms`, the fake dispatch begins at the request's
 //! scheduled arrival and emits `OSL` synthetic output tokens spaced by `itl_ms`
-//! after an initial `ttft_ms`. The exact observer event sequence mirrors
+//! after an initial `ttft_ms`. The observer event sequence uses
 //! [`crate::transport::http::TransportSink::dispatch_measured`]: `register_metadata` →
 //! `on_arrival` → `OSL`× `on_token` → `on_usage` → `on_terminal` →
 //! `record_response`. Downstream, TTFT = `first_token − start = ttft_ms`, ITL =
@@ -19,7 +19,7 @@
 //!
 //! The native driver reads
 //! [`uses_virtual_clock`](crate::engine::registry::NativeTransportExecution::uses_virtual_clock)
-//! and drives the selected clock through [`Clock::drive`](crate::clock::Clock::drive).
+//! and drives the selected clock through [`crate::clock::Clock::drive`].
 //!
 //! - **`clock: sim`** (default) — a `SimClock` whose idle-pump driver
 //!   fast-forwards virtual time to each next event on a single reactor. Arrival
@@ -361,7 +361,7 @@ impl TransportFactory for DryRunTransportFactoryV2 {
 /// Native execution binding for the built-in `dry_run` transport.
 ///
 /// The fake leaf carries its analytic latency params by value and builds its own
-/// [`FakeRequestExecutorFactory`] (scheduled) and [`FakeDispatcher`] (graph), so
+/// [`FakeRequestExecutorFactory`] (scheduled) and `FakeDispatcher` (graph), so
 /// `dry_run` needs no process-global execution factory and no per-transport
 /// branch in the workloads — it is a transport like any other. Readiness is
 /// skipped (no server).

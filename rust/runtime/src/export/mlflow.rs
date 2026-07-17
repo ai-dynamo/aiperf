@@ -1,13 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! MLflow run tracker (native Rust, MLflow REST + local FileStore uploader).
+//! MLflow REST and local FileStore run tracker.
 //!
 //! Creates or attaches an MLflow run and logs the configured params, per-stat
 //! metrics (`metric.tag` for avg, `metric.tag.<stat>` for the rest), tags
 //! (`aiperf.version`, `benchmark_id`, `aiperf.was_cancelled`, user tags), and
-//! uploads the artifact bundle. Two tracking backends are supported directly,
-//! without the Python SDK:
+//! uploads the artifact bundle. Two tracking backends are supported:
 //!
 //! * `http(s)://` — the MLflow REST API (`/api/2.0/mlflow/*`), with artifact
 //!   upload through the `mlflow-artifacts` proxy when the created run's
@@ -16,20 +15,12 @@
 //!   (`<root>/<experiment_id>/<run_id>/{meta.yaml,metrics,params,tags,artifacts}`),
 //!   enabling end-to-end validation with no server.
 //!
-//! Byte-compatibility source (Python paths are cited throughout): the
-//! logged metric-key scheme, param set, and tag set must match the Python
-//! exporter for an identical run. Because this sink reads the native-v2
-//! [`NativeReport`] rather than Python's `ProfileResults`, the metric *values*
-//! come from the report's typed stats while the *keys* reproduce
-//! `_build_metric_payload` (`mlflow_data_exporter.py:335`). Config-only params
-//! (endpoint/timing/CLI — none of which live in the report) are projected by the
-//! Python frontend into [`MlflowExportConfig::params`] and forwarded verbatim.
+//! Metric keys use the bare tag for averages and `tag.stat` for other selected
+//! stats. Endpoint, timing, CLI, and identity values absent from [`NativeReport`]
+//! are supplied through [`MlflowExportConfig`] and forwarded verbatim.
 //!
-//! Spec §6: the commit site is synchronous with no ambient tokio runtime, so the
-//! REST path runs on a short-lived `current_thread` runtime under one overall
-//! [`tokio::time::timeout`] — an unreachable tracking server logs a warning and
-//! returns `Err` (best-effort per the dispatcher) rather than hanging shutdown.
-//! No `spawn`/`Queue`/subprocess apparatus is used.
+//! REST export runs on a short-lived current-thread runtime under one overall
+//! timeout. Failure logs a warning and returns an error.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -38,15 +29,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::export::{ExportConfig, Exporter};
 use crate::metrics_core::{MetricEntry, NativeReport, ReportStats, ReportValue};
 
-/// Percentile stat keys the Python exporter pushes to MLflow, in
-/// `_STAT_FIELDS` order (`mlflow_data_exporter.py:333`). Only these percentiles
-/// are logged; any other percentile carried by the report is ignored so the key
-/// set matches Python exactly.
+/// Percentile keys logged to MLflow, in payload order. Other percentiles are omitted.
 const PERCENTILE_STAT_KEYS: &[&str] =
     &["p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99"];
 
-/// Default hard wall-clock budget for the whole REST conversation (spec §6),
-/// mirroring the Python `Environment.MLFLOW.EXPORT_TIMEOUT_SECONDS` default.
+/// Default hard wall-clock budget for the whole REST conversation.
 const DEFAULT_EXPORT_TIMEOUT_SECONDS: u64 = 60;
 
 /// Per-call MLflow `log-batch` limits (server-enforced): at most 1000 metrics,
@@ -55,13 +42,8 @@ const MAX_METRICS_PER_BATCH: usize = 1000;
 const MAX_PARAMS_PER_BATCH: usize = 100;
 const MAX_TAGS_PER_BATCH: usize = 100;
 
-/// MLflow export policy. `enabled` iff a tracking URI is provided (matching the
-/// Python `MLflowConfig.enabled`, `config/mlflow.py:99`).
-///
-/// The report carries neither the endpoint/timing configuration nor the
-/// benchmark identity, so the Python frontend projects those into the fields
-/// below (see the module docs and the crate-level projection note). Metric
-/// values are read from the report; params/benchmark_id/tags are projected.
+/// MLflow export policy. Metric values come from the report; configuration,
+/// benchmark identity, and user tags are supplied here.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MlflowExportConfig {
@@ -69,40 +51,30 @@ pub struct MlflowExportConfig {
     pub enabled: bool,
     /// MLflow tracking URI (`file://…` or `http(s)://…`).
     pub tracking_uri: Option<String>,
-    /// Experiment name (Python default `"aiperf"`, `config/mlflow.py:30`).
+    /// Experiment name; defaults to `"aiperf"`.
     pub experiment: Option<String>,
     /// Optional run name.
     pub run_name: Option<String>,
     /// Optional parent run id.
     pub parent_run_id: Option<String>,
-    /// User tags to attach to the run (Python `MLflowConfig.tags_dict`).
+    /// User tags to attach to the run.
     #[serde(default)]
     pub tags: BTreeMap<String, String>,
     /// Artifact globs to upload, relative to the artifact dir. When empty, the
-    /// Python defaults (`MLflowDefaults.DEFAULT_ARTIFACT_GLOBS`) are used.
+    /// built-in artifact globs are used.
     #[serde(default)]
     pub artifact_globs: Vec<String>,
-    /// Benchmark identity projected from `run.benchmark_id`; drives the
-    /// `benchmark_id` tag and the derived default run name (Python
-    /// `_derive_default_run_name`, `mlflow_data_exporter.py:324`). Absent from
-    /// the report, so it must be projected.
+    /// Benchmark identity used for the `benchmark_id` tag and default run name.
     pub benchmark_id: Option<String>,
-    /// AIPerf package version (`aiperf.__version__`) projected by the frontend
-    /// for the `aiperf.version` tag. The native report carries only the Rust
-    /// crate version, so the authoritative package version is projected here and
-    /// used in preference to `report.aiperf_version` when present.
+    /// AIPerf package version for the `aiperf.version` tag; takes precedence over
+    /// the report version.
     pub aiperf_version: Option<String>,
-    /// Pre-built param payload projected verbatim from the Python
-    /// `_build_param_payload` (`mlflow_data_exporter.py:357`). These are pure
-    /// frontend config (endpoint.type/models/urls, output.artifact_directory,
-    /// timing.mode, loadgen.*, aiperf.cli_command) and do not appear in the
-    /// native report, so the frontend assembles and redacts them.
+    /// Pre-built, redacted parameter payload forwarded verbatim.
     #[serde(default)]
     pub params: BTreeMap<String, String>,
-    /// Total expected requests, projected from `ProfileResults.total_expected`
-    /// (`mlflow_data_exporter.py:351`); absent from the report.
+    /// Total expected requests when unavailable from the report.
     pub total_expected_requests: Option<f64>,
-    /// Overall REST timeout override in seconds (spec §6).
+    /// Overall REST timeout override in seconds.
     pub export_timeout_seconds: Option<u64>,
 }
 
@@ -130,8 +102,7 @@ impl Exporter for MlflowExporter {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("MLflow tracking URI missing"))?;
 
-        // Payloads are pure functions of the report + projected config, so build
-        // them once up front (identical for REST and FileStore backends).
+        // Resolve one payload for both REST and FileStore backends.
         let plan = ExportPlan::build(report, artifact_dir, mlflow);
 
         if let Some(root) = file_store_root(tracking_uri) {
@@ -149,11 +120,11 @@ impl Exporter for MlflowExporter {
 
 /// The fully-resolved set of things to log, independent of the backend.
 struct ExportPlan {
-    /// Ordered `key -> value` metric payload (`_build_metric_payload`).
+    /// Ordered metric payload.
     metrics: BTreeMap<String, f64>,
-    /// Ordered `key -> value` param payload (forwarded from the frontend).
+    /// Ordered `key -> value` parameter payload.
     params: BTreeMap<String, String>,
-    /// Ordered `key -> value` tag payload (`_build_tag_payload`).
+    /// Ordered tag payload.
     tags: BTreeMap<String, String>,
     /// Resolved run name (never a server-generated placeholder).
     run_name: String,
@@ -183,9 +154,7 @@ impl ExportPlan {
     }
 }
 
-/// Resolve the run name: the CLI name, else the benchmark-derived default, else
-/// an epoch-stamped fallback (`_derive_default_run_name`,
-/// `mlflow_data_exporter.py:324`).
+/// Resolve the run name from the configured name, benchmark id, or current epoch.
 fn resolve_run_name(cfg: &MlflowExportConfig) -> String {
     if let Some(name) = cfg.run_name.as_deref()
         && !name.is_empty()
@@ -202,11 +171,8 @@ fn derive_default_run_name(benchmark_id: Option<&str>) -> String {
     }
 }
 
-/// Reproduce `_build_metric_payload` (`mlflow_data_exporter.py:335`): for each
-/// metric, emit `metric.tag` for `avg` and `metric.tag.<stat>` for the rest,
-/// skipping non-finite/absent values. Values come from the report's typed
-/// per-metric stats (the first series is the aggregate the Python record
-/// mirrors); the KEY scheme is byte-identical to Python.
+/// Emit a bare metric tag for the representative value and `tag.stat` for other
+/// selected finite stats. The first series is the aggregate.
 fn build_metric_payload(report: &NativeReport, cfg: &MlflowExportConfig) -> BTreeMap<String, f64> {
     let mut payload = BTreeMap::new();
     for (name, entry) in &report.metrics {
@@ -216,9 +182,7 @@ fn build_metric_payload(report: &NativeReport, cfg: &MlflowExportConfig) -> BTre
         push_stat_fields(&mut payload, name, stats);
     }
 
-    // `aiperf.completed_requests` = the completed request count. The report's
-    // `request_count` metric carries it; Python reads `ProfileResults.completed`
-    // (`mlflow_data_exporter.py:350`).
+    // `request_count` supplies the synthetic completed-request metric.
     if let Some(completed) = report
         .metrics
         .get("request_count")
@@ -226,8 +190,7 @@ fn build_metric_payload(report: &NativeReport, cfg: &MlflowExportConfig) -> BTre
     {
         payload.insert("aiperf.completed_requests".to_string(), completed);
     }
-    // `aiperf.total_expected_requests` is not in the native report; the frontend
-    // projects it (`mlflow_data_exporter.py:351`).
+    // Total expected requests comes from export configuration.
     if let Some(total) = cfg.total_expected_requests
         && total.is_finite()
     {
@@ -236,8 +199,8 @@ fn build_metric_payload(report: &NativeReport, cfg: &MlflowExportConfig) -> BTre
     payload
 }
 
-/// Emit every present-and-finite `_STAT_FIELDS` value for one metric under the
-/// Python key scheme (bare tag for `avg`, `tag.<stat>` otherwise).
+/// Emit selected finite stats using a bare tag for the representative value and
+/// `tag.stat` otherwise.
 fn push_stat_fields(payload: &mut BTreeMap<String, f64>, tag: &str, stats: &ReportStats) {
     match stats {
         ReportStats::Distribution(dist) => {
@@ -262,8 +225,7 @@ fn push_stat_fields(payload: &mut BTreeMap<String, f64>, tag: &str, stats: &Repo
                 }
             }
         }
-        // Derived/min-max scalars store their single value in the `avg` slot in
-        // the Python `JsonMetricResult` (`export_models.py:37`), so log it bare.
+        // Scalar values use the bare metric tag.
         ReportStats::Scalar(scalar) => put(payload, tag, None, scalar.value),
         // Counters (request_count/good_request_count) log their total in the
         // `avg` slot; `rate` is not a `_STAT_FIELD` and is never suffixed.
@@ -284,8 +246,7 @@ fn push_stat_fields(payload: &mut BTreeMap<String, f64>, tag: &str, stats: &Repo
     }
 }
 
-/// Insert one finite stat under the Python key scheme (bare tag for `avg`,
-/// `tag.<field>` otherwise); non-finite/absent values are dropped.
+/// Insert a finite stat under the bare tag or `tag.field`; omit non-finite values.
 fn put(payload: &mut BTreeMap<String, f64>, tag: &str, field: Option<&str>, value: ReportValue) {
     if let Some(value) = finite(value) {
         let key = match field {
@@ -312,8 +273,7 @@ fn finite(value: ReportValue) -> Option<f64> {
     crate::export::finite_guarded(value)
 }
 
-/// Reproduce `_build_tag_payload` (`mlflow_data_exporter.py:386`): version,
-/// was_cancelled, benchmark_id, then user tags (which may override).
+/// Build version, cancellation, benchmark, and user tags; user tags may override.
 fn build_tag_payload(report: &NativeReport, cfg: &MlflowExportConfig) -> BTreeMap<String, String> {
     let mut tags = BTreeMap::new();
     let aiperf_version = cfg
@@ -336,9 +296,8 @@ fn build_tag_payload(report: &NativeReport, cfg: &MlflowExportConfig) -> BTreeMa
     tags
 }
 
-/// Enumerate artifact files matching the configured globs under `artifact_dir`,
-/// deduped and sorted, each classified into its MLflow artifact subpath
-/// (`log_artifacts`/`resolve_artifact_path`, `mlflow_data_exporter.py:94`).
+/// Enumerate matching artifact files, deduplicate and sort them, and assign each
+/// to its MLflow artifact subpath.
 /// Path safety: only files that canonicalize to a descendant of `artifact_dir`
 /// are kept, so a glob can never escape the run's artifact tree.
 fn collect_artifacts(artifact_dir: &Path, cfg: &MlflowExportConfig) -> Vec<ResolvedArtifact> {
@@ -355,8 +314,7 @@ fn collect_artifacts(artifact_dir: &Path, cfg: &MlflowExportConfig) -> Vec<Resol
             .map(|c| c.as_os_str().to_string_lossy())
             .collect::<Vec<_>>()
             .join("/");
-        // The Python exporter writes/uploads its own metadata file separately;
-        // never sweep a stale one back in.
+        // Do not upload stale MLflow metadata from an earlier attempt.
         if rel_posix == "mlflow_export.json" {
             continue;
         }
@@ -391,13 +349,10 @@ fn collect_artifacts(artifact_dir: &Path, cfg: &MlflowExportConfig) -> Vec<Resol
         .collect()
 }
 
-/// Suffixes routed to the `plots` artifact subtree (`_PLOT_SUFFIXES`,
-/// `mlflow_data_exporter.py:30`).
+/// Suffixes routed to the `plots` artifact subtree.
 const PLOT_SUFFIXES: &[&str] = &["png", "jpg", "jpeg", "svg", "gif", "webp", "html"];
 
-/// Classify one artifact's destination subpath, mirroring
-/// `resolve_artifact_path` (`mlflow_data_exporter.py:94`): plots vs exports,
-/// with a leading duplicate base segment stripped.
+/// Route plots and exports while removing a duplicated leading base segment.
 fn resolve_artifact_path(relative: &Path) -> String {
     let is_plot = relative
         .extension()
@@ -426,7 +381,7 @@ fn resolve_artifact_path(relative: &Path) -> String {
 
 fn resolved_globs(cfg: &MlflowExportConfig) -> Vec<String> {
     if cfg.artifact_globs.is_empty() {
-        // `MLflowDefaults.DEFAULT_ARTIFACT_GLOBS` (`config/mlflow.py:34`).
+        // Built-in artifact selection.
         [
             "*.json",
             "*.csv",
@@ -528,7 +483,6 @@ fn file_store_root(tracking_uri: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
-
 mod rest {
     use super::{
         DEFAULT_EXPORT_TIMEOUT_SECONDS, ExportPlan, MAX_METRICS_PER_BATCH, MAX_PARAMS_PER_BATCH,
@@ -542,8 +496,8 @@ mod rest {
     use hyper::{Method, Request};
     use hyper_util::rt::TokioIo;
 
-    /// Drive the whole MLflow REST conversation under one hard timeout on a
-    /// short-lived `current_thread` runtime (spec §6).
+    /// Run the complete REST conversation on a short-lived current-thread
+    /// runtime under one hard timeout.
     pub(super) fn upload(
         tracking_uri: &str,
         cfg: &MlflowExportConfig,
@@ -856,8 +810,7 @@ mod rest {
     }
 
     /// One request/response over a fresh connection. `http://` uses plain TCP;
-    /// `https://` layers tokio-rustls with webpki roots (the same crypto
-    /// provider `transport::http` uses).
+    /// `https://` layers tokio-rustls with webpki roots and aws-lc-rs.
     async fn send_request(
         method: Method,
         url: &str,
@@ -941,8 +894,7 @@ mod rest {
     fn tls_config() -> Arc<rustls::ClientConfig> {
         let mut roots = rustls::RootCertStore::empty();
         roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        // Match `transport::http`'s aws-lc-rs provider so both TLS clients share
-        // one crypto backend within the process.
+        // Use aws-lc-rs as the process-wide TLS crypto provider.
         let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
         let config = rustls::ClientConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
@@ -953,16 +905,11 @@ mod rest {
     }
 }
 
-
 mod file_store {
     use super::{ExportPlan, MlflowExportConfig, ResolvedArtifact, unix_millis};
     use std::path::Path;
 
-    /// Write one run into the MLflow on-disk `FileStore` layout under `root`,
-    /// matching `store/tracking/file_store.py`: resolve/create the experiment
-    /// directory, create the run directory with `meta.yaml` and the
-    /// `metrics/params/tags` subtrees, write each fact as a file, copy artifacts,
-    /// then stamp the run FINISHED.
+    /// Write one run into the MLflow FileStore layout and mark it FINISHED.
     pub(super) fn write(
         root: &Path,
         cfg: &MlflowExportConfig,
@@ -981,15 +928,14 @@ mod file_store {
         let start_time = unix_millis();
         let artifact_uri = run_dir.join("artifacts").display().to_string();
 
-        // Metrics: `metrics/<key>` holds `<timestamp> <value> <step>` lines
-        // (`file_store.py:1101`).
+        // Metric files contain `<timestamp> <value> <step>` lines.
         for (key, value) in &plan.metrics {
             std::fs::write(
                 run_dir.join("metrics").join(key),
                 format!("{start_time} {value} 0\n"),
             )?;
         }
-        // Params/tags: one file per key holding the raw value (`file_store.py`).
+        // Parameter and tag files contain one raw value per key.
         for (key, value) in &plan.params {
             std::fs::write(run_dir.join("params").join(key), value)?;
         }
@@ -1002,8 +948,7 @@ mod file_store {
 
         copy_artifacts(&run_dir.join("artifacts"), &plan.artifacts)?;
 
-        // `meta.yaml` for the run (`_make_persisted_run_info_dict`,
-        // `file_store.py:149`). Status 3 == FINISHED (RunStatus proto).
+        // RunStatus field value 3 denotes FINISHED.
         let end_time = unix_millis();
         let meta = run_meta_yaml(
             &run_id,
@@ -1017,8 +962,7 @@ mod file_store {
         Ok(())
     }
 
-    /// Find an existing experiment directory by name, else create one with a
-    /// fresh integer id (`file_store.py:461`).
+    /// Find an experiment by name or create one with a fresh integer id.
     fn resolve_experiment(root: &Path, name: &str) -> anyhow::Result<String> {
         if let Ok(entries) = std::fs::read_dir(root) {
             for entry in entries.flatten() {
@@ -1066,13 +1010,12 @@ mod file_store {
         Ok(())
     }
 
-    /// Random 32-hex run id, matching MLflow's `uuid.uuid4().hex`.
+    /// Random 32-character lowercase hexadecimal run id.
     fn new_run_id() -> String {
         uuid::Uuid::new_v4().simple().to_string()
     }
 
-    /// Random positive integer experiment id, matching MLflow's
-    /// `_generate_unique_integer_id`.
+    /// Random experiment id of at most 15 decimal digits.
     fn new_experiment_id() -> String {
         // 15 decimal digits stays within MLflow's random-int range while
         // remaining collision-free for practical use.
@@ -1088,7 +1031,7 @@ mod file_store {
         start_time: u64,
         end_time: u64,
     ) -> String {
-        // Keys mirror `_make_persisted_run_info_dict`; status 3 == FINISHED.
+        // Status 3 denotes FINISHED in the MLflow RunStatus schema.
         format!(
             "artifact_uri: {artifact_uri}\n\
              end_time: {end_time}\n\

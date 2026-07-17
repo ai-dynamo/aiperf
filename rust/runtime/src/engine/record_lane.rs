@@ -14,7 +14,7 @@
 //! artifacts.
 //!
 //! Byte-parity contract: every row is produced by the same shared builders the
-//! batch writers use ([`crate::engine::records::write_record_jsonl_row`],
+//! batch writers use (`crate::engine::records::write_record_jsonl_row`,
 //! `write_raw_record_jsonl_row`, `record_csv_header`, `record_csv_row`), so a lane
 //! that sees the same record sequence emits byte-identical files. The CSV keeps the
 //! batch writer's **lazy header** (the file and header are created only at the first

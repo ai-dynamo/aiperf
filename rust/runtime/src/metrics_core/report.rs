@@ -681,11 +681,8 @@ impl ReportPairRunFacts {
     }
 }
 
-/// Serialized native-v2 run block.
-///
-/// The wrapper preserves the original `mode`/`model` Rust value through
-/// [`Deref`] while flattening additive protocol-v2 run metadata into the same
-/// JSON object required by the native report contract.
+/// Serialized native-v2 run block. [`Deref`] exposes [`ReportRunInfo`] while
+/// serialization flattens protocol-v2 metadata into the same JSON object.
 #[derive(Debug, Clone, Default, PartialEq, DeriveSerialize)]
 pub struct ReportRun {
     /// Workload-facing run identity retained by existing report producers.
@@ -844,7 +841,7 @@ pub struct ReportServerMetricsEndpointInfo {
     pub median_update_interval_ms: Option<f64>,
 }
 
-/// Metadata needed to render canonical Python server-metrics artifacts.
+/// Metadata needed to render server-metrics artifacts.
 #[derive(Debug, Clone, Default, PartialEq, DeriveSerialize)]
 pub struct ReportServerMetricsMetadata {
     /// Configured normalized endpoint URLs in stable order.

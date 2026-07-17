@@ -64,25 +64,9 @@ pub struct CyclingGraphTraceSource {
     next: Cell<u64>,
     admitted_requests: Cell<u64>,
     instance_sequence: GraphTraceInstanceSequence,
-    /// Corpus draw offset added to the session ordinal before the modulo pick.
-    ///
-    /// The bounded profiling recycle resumes where a cache-pressure warmup left
-    /// off: the WARMUP -> PROFILING handoff carries the next-undrawn corpus
-    /// position (`corpus_cursor`), and profiling seeds this offset with it so its
-    /// first draw serves template `corpus_cursor % len` instead of re-serving the
-    /// 0th. Session and static-request budgets stay anchored to the raw session
-    /// ordinal drawn from `0`; the cursor governs only which template each draw picks, never how
-    /// many sessions profiling runs. Absent a handoff this is `0` (unchanged).
+    /// Corpus draw offset inherited from an earlier phase.
     start_ordinal: u64,
-    /// Strategy-aware corpus-index remap for the profiling recycle draw.
-    ///
-    /// `Sequential` (the default, [`PermutationDraw::sequential`]) returns
-    /// `draw % len`, the cursor-with-wrap `SequentialSampler` pick.
-    /// `Shuffle`/`Random` draws derive a child generator from the run root so the
-    /// template pick continues the same sampler stream
-    /// pressure warmup draws under (both route through the shared
-    /// [`PermutationDraw`]), so a freed profiling lane never re-serves a template
-    /// pressure warmup already replayed under a different order.
+    /// Sampling strategy used to map draw ordinals to templates.
     draw: PermutationDraw,
 }
 
@@ -172,16 +156,7 @@ impl CyclingGraphTraceSource {
         self
     }
 
-    /// Route the recycle template pick through a resolved strategy-aware draw.
-    ///
-    /// `Sequential` leaves `next_trace` as the byte-identical `draw % len` pick.
-    /// `Shuffle` picks `epoch[draw / len][draw % len]` under the `ShuffleSampler`
-    /// persistent-epoch shuffle; `Random` picks the x-th `randbelow(len)` of the
-    /// `RandomSampler` CPython stream — both seeded once from the run root
-    /// (via [`crate::graph::tstar::TStarWindow::recycle_draw`]), so the profiling
-    /// recycle continues the same order pressure warmup draws under (both route
-    /// through the shared [`PermutationDraw`]). Default `sequential` (no builder
-    /// call) is the byte-unchanged product path.
+    /// Apply `draw` when mapping recycle ordinals to templates.
     pub fn with_sampling(mut self, draw: PermutationDraw) -> Self {
         self.draw = draw;
         self
@@ -366,12 +341,7 @@ impl GraphStopPolicy for UnlimitedGraphStop {
     }
 }
 
-/// Clock-native duration bound that stops new roots and drains active traces.
-///
-/// Available [`GraphStopPolicy`] seam implementation, intentionally kept but not
-/// wired by the current product: the runner bounds graph phases through the
-/// shared phase deadline (`UnlimitedGraphStop` + the phase controller), so this
-/// is the second, ready impl for a caller that wants a workload-relative stop.
+/// Workload-relative duration bound that stops new roots and drains active traces.
 #[derive(Debug, Clone, Copy)]
 pub struct DurationGraphStop {
     duration_ns: i64,
@@ -412,12 +382,7 @@ impl GraphArrivalPolicy for ImmediateGraphArrival {
     }
 }
 
-/// Clock-native authored-offset arrivals.
-///
-/// Available [`GraphArrivalPolicy`] seam implementation, intentionally kept but
-/// not wired by the current product: the runner drives arrivals from the shared
-/// `IntervalGenerator` handle (`Immediate`/`IntervalGraphArrival`), so this
-/// authored-offset pacer is the ready alternate for trace-relative schedules.
+/// Arrival policy that schedules each trace at its authored offset from the run start.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScheduledGraphArrival;
 
@@ -476,11 +441,8 @@ impl GraphArrivalPolicy for IntervalGraphArrival {
         ordinal: u64,
         _plan: &GraphTracePlan,
     ) -> Result<(), GraphWorkloadError> {
-        // The (AtStart, KeepAbsolute) arrival policy (see `crate::timing::arrival`):
-        // arrival 0 fires at `run_start` exactly, later arrivals accumulate absolutely
-        // off the prior target with no re-anchor. `prev` preserves the
-        // ordinal-keyed first-arrival branch (and its `unwrap_or(run_start)` fallback)
-        // exactly, so the closure draws on precisely the same ticks as before.
+        // The first arrival targets run_start; subsequent targets remain anchored
+        // to the prior target.
         let prev = if ordinal == 0 {
             None
         } else {
@@ -979,8 +941,6 @@ mod tests {
             &TiktokenTokenizer::builtin(),
         )
         .unwrap();
-        // No `starting_at`: byte-identical to the pre-resume behavior — first draw
-        // is the 0th template.
         let source = CyclingGraphTraceSource::new(
             vec![one_node_plan("a", handle), one_node_plan("b", handle)],
             Some(2),

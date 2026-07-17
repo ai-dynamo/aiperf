@@ -3,8 +3,6 @@
 mod common;
 use common::*;
 
-/// The endpoint POSTs a prompt plus a reference image as multipart/form-data.
-/// `request_content_type` defaults to multipart for `image_edit`.
 #[tokio::test]
 async fn test_image_edit_produces_no_streaming_metrics() {
     let h = AIPerfHarness::new().await;

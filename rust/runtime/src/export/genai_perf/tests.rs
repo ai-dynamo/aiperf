@@ -1,12 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Golden parity tests for the AIPerf v1 summary sink.
+//! Golden byte-contract tests for the AIPerf v1 summary sink.
 //!
-//! Golden strings pin the exact bytes defined by the Python oracle serializers
-//! (`orjson.dumps(..., OPT_INDENT_2)` and stdlib `csv.writer`) for the same
-//! synthetic metric values. Grounding of each shape is
-//! cited against `src/aiperf/` in the module-level docs of `genai_perf.rs`.
+//! Fixtures pin indentation, field order, CRLF records, metric shapes, and
+//! omission rules.
 
 use super::*;
 use crate::metrics_core::{
@@ -60,7 +58,6 @@ fn dist(
     )
 }
 
-/// Nine ascending percentiles keyed `p1..p99` (all finite).
 fn pcts(values: [f64; 9]) -> BTreeMap<String, ReportValue> {
     PERCENTILE_LABELS
         .iter()
@@ -69,7 +66,6 @@ fn pcts(values: [f64; 9]) -> BTreeMap<String, ReportValue> {
         .collect()
 }
 
-/// A scalar (derived) metric.
 fn scalar(unit: &str, value: f64) -> MetricEntry {
     entry(
         "scalar",
@@ -78,7 +74,6 @@ fn scalar(unit: &str, value: f64) -> MetricEntry {
     )
 }
 
-/// A counter (sum-aggregate) metric.
 fn counter(unit: &str, total: f64) -> MetricEntry {
     entry(
         "counter",
@@ -90,7 +85,6 @@ fn counter(unit: &str, total: f64) -> MetricEntry {
     )
 }
 
-/// A deterministic base report with the given metrics.
 fn report_with(metrics: BTreeMap<String, MetricEntry>) -> NativeReport {
     let mut report = NativeReport::new(&AccumulatorSummary::new(), None);
     // Pin the version so the golden strings are stable across releases.
@@ -100,8 +94,6 @@ fn report_with(metrics: BTreeMap<String, MetricEntry>) -> NativeReport {
     report
 }
 
-/// The frontend header projection for the fixtures: the display header for
-/// every metric tag exactly as the Python `MetricRegistry` would supply it.
 fn header_map() -> HashMap<String, String> {
     [
         ("request_latency", "Request Latency"),
@@ -117,11 +109,6 @@ fn header_map() -> HashMap<String, String> {
     .collect()
 }
 
-/// Export config with the sink enabled and the frontend projections the Python
-/// registry would supply: Title-Case headers, `min_request_timestamp` filtered
-/// (INTERNAL), and the derived/counter scalars whose `count` is dropped. The
-/// envelope is left empty here (the full input_config/run_info parity is proven
-/// by the end-to-end diff harness, not these synthetic fixtures).
 fn cfg(stem: &str) -> ExportConfig {
     ExportConfig {
         genai_perf: GenaiPerfExportConfig {
@@ -139,9 +126,8 @@ fn cfg(stem: &str) -> ExportConfig {
     }
 }
 
-/// The representative streaming + goodput fixture: distribution (with count),
-/// streaming distribution, derived scalars, a counter, plus an INTERNAL metric
-/// that must be filtered out (`min_request_timestamp`).
+// Representative fixture covering distributions, scalars, counters, and
+// filtering of internal metrics.
 fn streaming_report() -> NativeReport {
     let metrics = BTreeMap::from([
         (
@@ -206,8 +192,7 @@ Request Throughput (requests/sec),4.00\r\n";
 #[test]
 fn non_finite_tail_is_omitted_from_json_and_blank_in_csv() {
     // avg / max / std / p99 are non-finite (present-but-null in the native
-    // report) -> Python collapses them to None before exclude_none, so they are
-    // ABSENT in JSON and empty in CSV; p50 / min / count survive.
+    // report) and therefore absent in JSON and empty in CSV; p50/min/count survive.
     let mut percentiles = BTreeMap::new();
     percentiles.insert("p50".to_owned(), fin(150.0));
     percentiles.insert("p99".to_owned(), ReportValue::NonFinite);
@@ -321,8 +306,6 @@ fn empty_report_emits_only_scalar_top_level_fields() {
     assert_eq!(csv, "");
 }
 
-/// One GPU-labeled series (`gpu`/`gpu_uuid`/`model_name`/`hostname` + DCGM
-/// `endpoint_url`), matching the labels the GPU-telemetry accumulator emits.
 fn gpu_series(gpu: &str, uuid: &str, endpoint: &str, stats: ReportStats) -> MetricSeries {
     MetricSeries {
         labels: Some(BTreeMap::from([
@@ -337,7 +320,6 @@ fn gpu_series(gpu: &str, uuid: &str, endpoint: &str, stats: ReportStats) -> Metr
     }
 }
 
-/// Distribution (gauge) stats with a full stat set.
 fn gauge_stats(avg: f64, min: f64, max: f64, std: f64) -> ReportStats {
     ReportStats::Distribution(ReportDistributionStats {
         count: Some(2),
@@ -349,11 +331,6 @@ fn gauge_stats(avg: f64, min: f64, max: f64, std: f64) -> ReportStats {
     })
 }
 
-/// The GPU-telemetry projection mirrors Python `_project_gpu_telemetry`: series
-/// are grouped by normalized endpoint then `gpu_N`, gauges render
-/// `{unit,avg,p*,min,max,std,count}` (no `sum`), counters render
-/// `{unit,avg,min,max,sum}` all equal to the total, non-GPU metrics are skipped,
-/// and each GPU's `metrics` keeps report (alphabetical) order.
 #[test]
 fn telemetry_data_projects_gpu_series_grouped_by_endpoint_and_gpu() {
     const ENDPOINT: &str = "http://127.0.0.1:9400/dcgm1/metrics";
@@ -484,7 +461,6 @@ fn telemetry_data_projects_gpu_series_grouped_by_endpoint_and_gpu() {
     assert!(json.contains("\"telemetry_data\""));
 }
 
-/// A GPU-less report emits no `telemetry_data` block (parity with `exclude_none`).
 #[test]
 fn telemetry_data_absent_when_no_gpu_series() {
     let metrics = BTreeMap::from([("request_latency".to_owned(), scalar("ms", 1.0))]);

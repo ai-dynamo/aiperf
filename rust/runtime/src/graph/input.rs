@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Canonical direct authored-workload compilation for Graph-IR.
-//!
-//! The runner-owned authored-input adapter is the sole identity-dispatched
-//! extension point. Once selected, its `dag_jsonl` implementation calls this
-//! module's format-specific compiler directly. The source is parsed, validated,
-//! interned, and lowered to complete trace commands without becoming `Dataset`,
-//! `Conversation`, or `DagMetadata`, and therefore cannot accidentally reach a
-//! linear scheduler or a second adapter registry.
 
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -60,11 +53,6 @@ pub struct GraphInputBundle {
 }
 
 /// Parse, validate, intern, and lower one complete `dag_jsonl` source.
-///
-/// This is deliberately a format-specific compiler, not an adapter or
-/// registry. Identity dispatch and strict authored-wire decoding live in the
-/// runner's object-safe `GraphInputAdapter` seam, so a product run can
-/// never traverse two format registries or two source representations.
 pub async fn compile_dag_jsonl_input(
     config: GraphInputConfig,
     tokenizer: &dyn TextTokenizer,

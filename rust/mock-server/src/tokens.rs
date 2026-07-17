@@ -490,7 +490,7 @@ fn generate_output_tokens(
 /// for the token-native vLLM Generate endpoint.
 ///
 /// Reuses the exact same budget/variable-count logic as the text path
-/// ([`calculate_budget`] / [`calculate_variable_token_count`]) keyed on the input
+/// (`calculate_budget` / `calculate_variable_token_count`) keyed on the input
 /// token IDs, so a tuned run with `sampling_params.max_tokens = N` and a
 /// sufficiently long prompt (`0.8 * ISL >= N`) yields exactly `N` output tokens —
 /// the same exact-OSL property the chat/completions e2e paths rely on. `ignore_eos`

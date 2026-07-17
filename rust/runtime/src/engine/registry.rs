@@ -3,13 +3,9 @@
 
 //! Frozen transport/workload composition for protocol-v2 runs.
 //!
-//! Transport and workload factories validate their own authored objects. There
-//! is no transport×workload cell object and no compatibility predicate: any
-//! registered workload runs over any registered transport. The coordinator never
-//! matches on component strings; it resolves the two factories by id, dispatches
-//! run-level validation and preparation to the workload factory, and the
-//! workload selects the transport-specific execution path from the validated
-//! transport by id/type, failing closed there if it cannot serve that transport.
+//! There is no central transport/workload compatibility matrix. Each workload
+//! validates and resolves its transport-specific execution path during
+//! preparation.
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
@@ -53,10 +49,8 @@ pub enum ClockKind {
 
 /// Deterministic capability facts for one linked transport factory.
 ///
-/// These feed the `--capabilities` [`Catalog`] only. There is no
-/// transport×workload compatibility predicate: any registered workload runs over
-/// any registered transport, and transport-specific execution is resolved by the
-/// workload's `prepare_with_context` from the validated transport by id/type.
+/// These feed the `--capabilities` `Catalog` only. Each workload validates and
+/// resolves its transport-specific execution path during preparation.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct TransportDescriptor {
     /// Stable registry ID.
@@ -250,7 +244,7 @@ pub trait NativeTransportExecution: Send + Sync {
     /// Whether this transport drives the run on a virtual `SimClock` (idle-pumped
     /// deterministic virtual time) rather than the real wall clock. The single
     /// native driver layer reads this to construct the clock — and thereby select
-    /// the reactor discipline ([`Clock::drive`](crate::clock::Clock::drive)),
+    /// the reactor discipline ([`crate::clock::Clock::drive`]),
     /// graph placement, and worker count. Default real; only the `dry_run`
     /// transport with `clock: sim` overrides it.
     fn uses_virtual_clock(&self) -> bool {
@@ -511,11 +505,9 @@ impl ValidatedRunnerSelection {
 /// Protocol-v2 transport/workload registration and selection over the one
 /// unified [`AIPerfRegistry`].
 ///
-/// Transports and workloads are two independent name-keyed sub-registries of the
-/// single product registry: there is no separate runner registry, no pair table,
-/// and no compatibility predicate. Any registered workload runs over any
-/// registered transport, with transport-specific execution resolved inside the
-/// workload at prepare time.
+/// Transports and workloads are independent name-keyed sub-registries. There is
+/// no central compatibility matrix; each workload resolves and validates its
+/// transport-specific execution path during preparation.
 impl AIPerfRegistry {
     /// Register one transport factory, rejecting duplicate IDs.
     pub fn register_transport(&mut self, factory: Arc<dyn TransportFactory>) -> Result<()> {
@@ -599,12 +591,8 @@ impl AIPerfRegistry {
             .validate(&transport.config, &requirements)
             .map_err(|error| anyhow!("transport {:?}: {error:#}", transport.id.as_str()))?;
 
-        // There is no transport×workload compatibility predicate: any registered
-        // workload runs over any registered transport. The coordinator resolves
-        // the two factories by id and dispatches run-level validation and
-        // preparation to the workload, which selects the transport-specific
-        // execution path from the validated transport by id/type and fails
-        // closed there if it cannot serve that transport.
+        // Each workload resolves and validates its transport-specific execution
+        // path during preparation.
         Ok(ValidatedRunnerSelection {
             transport_id: transport.id.as_str().to_owned(),
             workload_id: workload.id.as_str().to_owned(),
@@ -930,7 +918,7 @@ struct EndpointProfileConfigV2 {
         rename = "use_legacy_max_tokens",
         alias = "useLegacyMaxTokens"
     )]
-    use_max_tokens: bool,
+    use_legacy_max_tokens: bool,
     #[serde(default)]
     use_server_token_count: bool,
     #[serde(default)]
@@ -1163,7 +1151,7 @@ impl RunContext {
             })
     }
 
-    /// Resolve the conventional profile injected by the Python projection.
+    /// Resolve the endpoint profile identified by `default`.
     pub fn default_endpoint_profile(&self) -> Result<&ValidatedEndpointProfileV2> {
         self.endpoint_profile("default")
     }
@@ -1250,7 +1238,7 @@ pub fn validate_endpoint_profiles_v2(
             wait_for_model_mode: config.wait_for_model_mode,
             wait_for_model_interval_set: true,
             wait_for_model_mode_set: true,
-            use_max_tokens: config.use_max_tokens,
+            use_legacy_max_tokens: config.use_legacy_max_tokens,
             use_server_token_count: config.use_server_token_count,
             headers: config.headers,
             api_key: config.api_key,

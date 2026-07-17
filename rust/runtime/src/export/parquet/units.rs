@@ -3,15 +3,11 @@
 
 //! Metric-unit inference for the Parquet `unit` column.
 //!
-//! Matches the compatibility contract defined by
-//! `src/aiperf/server_metrics/units.py::infer_unit` and
-//! `BaseMetricUnit.display_name` in
-//! `src/aiperf/common/enums/metric_enums.py`. `display_name` is the enum MEMBER
-//! NAME lowercased with `_per_second` rewritten to `/s` (NOT the unit's `tag`),
-//! so this module models the inferred unit as an enum whose [`Unit::display_name`]
-//! returns exactly that string.
+//! Display names are lowercase enum spellings with `_per_second` represented as
+//! `/s`. Inference checks description scale, description units, then the longest
+//! metric-name suffix and the `num_requests_` shortcut.
 //!
-//! Priority order (from `infer_unit`):
+//! Priority order:
 //!   1. scale from description (`(0-1)` -> ratio, `(0-100)` -> percent),
 //!   2. unit from description (`(in <tag>)` parenthetical, then phrase patterns),
 //!   3. suffix from the metric name (longest suffix first), then the
@@ -22,7 +18,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 /// An inferred metric unit. Only the variants `infer_unit` can produce are
-/// modeled. [`Unit::display_name`] reproduces `BaseMetricUnit.display_name`.
+/// modeled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Unit {
     Seconds,
@@ -59,8 +55,7 @@ pub(super) enum Unit {
 }
 
 impl Unit {
-    /// The `unit` column value: the Python enum member name lowercased, with
-    /// `_per_second` rewritten to `/s`.
+    /// The lowercase `unit` column value, with per-second units using `/s`.
     pub(super) fn display_name(self) -> String {
         match self {
             Unit::Seconds => "seconds",
@@ -99,8 +94,7 @@ impl Unit {
     }
 }
 
-/// Infer the unit for a metric from its name and description. Mirrors
-/// `units.py::infer_unit` priority order.
+/// Infer a unit from description scale, description units, then metric name.
 pub(super) fn infer_unit(metric_name: &str, description: &str) -> Option<Unit> {
     let description = if description.is_empty() {
         None
@@ -116,8 +110,7 @@ pub(super) fn infer_unit(metric_name: &str, description: &str) -> Option<Unit> {
     unit_from_metric_name(metric_name)
 }
 
-/// `(name suffix, unit)` pairs in the Python dict's insertion order. Matching
-/// stably sorts these by descending length (longest suffix wins).
+/// `(name suffix, unit)` pairs in stable precedence order.
 const SUFFIX_TABLE: &[(&str, Unit)] = &[
     ("_seconds", Unit::Seconds),
     ("_seconds_total", Unit::Seconds),
@@ -156,15 +149,14 @@ const SUFFIX_TABLE: &[(&str, Unit)] = &[
     ("_watts", Unit::Watt),
 ];
 
-/// Suffixes sorted by descending length (stable). Mirrors `_SORTED_SUFFIXES`.
+/// Suffixes stably sorted by descending length.
 static SORTED_SUFFIXES: LazyLock<Vec<(&'static str, Unit)>> = LazyLock::new(|| {
     let mut table = SUFFIX_TABLE.to_vec();
     table.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
     table
 });
 
-/// Infer from name suffix or the `num_requests_` shortcut. Mirrors
-/// `_parse_unit_from_metric_name`.
+/// Infer from name suffix or the `num_requests_` shortcut.
 fn unit_from_metric_name(metric_name: &str) -> Option<Unit> {
     let name_lower = metric_name.to_ascii_lowercase();
     for (suffix, unit) in SORTED_SUFFIXES.iter() {
@@ -178,7 +170,7 @@ fn unit_from_metric_name(metric_name: &str) -> Option<Unit> {
     None
 }
 
-/// Case-sensitive `(in <tag>)` unit-tag lookup. Mirrors `_UNIT_TAG_TO_UNIT`.
+/// Case-sensitive `(in <tag>)` unit-tag lookup.
 fn tag_to_unit(tag: &str) -> Option<Unit> {
     Some(match tag {
         "MiB" => Unit::Megabytes,
@@ -216,8 +208,7 @@ struct DescriptionPattern {
     unit: Unit,
 }
 
-/// Description phrase patterns, in priority order. Mirrors
-/// `_DESCRIPTION_UNIT_PATTERNS`.
+/// Description phrase patterns in priority order.
 static DESCRIPTION_PATTERNS: LazyLock<Vec<DescriptionPattern>> = LazyLock::new(|| {
     let specs: &[(&str, Unit)] = &[
         (r"(?i)(?:\bin\s+|\()seconds?(?:\b|\))", Unit::Seconds),
@@ -251,12 +242,11 @@ static DESCRIPTION_PATTERNS: LazyLock<Vec<DescriptionPattern>> = LazyLock::new(|
         .collect()
 });
 
-/// `(in <tag>)` capture regex. Mirrors `_PARENTHETICAL_IN_UNIT_PATTERN`.
+/// `(in <tag>)` capture regex.
 static PARENTHETICAL_IN_UNIT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\(in\s+([^\s)]+)\)").expect("valid parenthetical regex"));
 
-/// Infer from description text. Mirrors `_parse_unit_from_description`
-/// (parenthetical first, then the phrase patterns).
+/// Infer from description text, checking parenthetical tags before phrases.
 fn unit_from_description(description: Option<&str>) -> Option<Unit> {
     let description = description?;
     if let Some(caps) = PARENTHETICAL_IN_UNIT.captures(description) {
@@ -273,7 +263,7 @@ fn unit_from_description(description: Option<&str>) -> Option<Unit> {
     None
 }
 
-/// `(0-1)` -> ratio range regex. Mirrors `_RATIO_RANGE_PATTERN`.
+/// `(0-1)` ratio-range regex.
 static RATIO_RANGE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
         r"(?i)\(0(?:\.0)?\s*(?:[-–—]+|to)\s*1(?:\.0)?\)",
@@ -284,7 +274,7 @@ static RATIO_RANGE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid ratio range regex")
 });
 
-/// `(0-100)` -> percent range regex. Mirrors `_PERCENT_RANGE_PATTERN`.
+/// `(0-100)` percent-range regex.
 static PERCENT_RANGE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
         r"(?i)\(0(?:\.0)?\s*(?:[-–—]+|to)\s*100(?:\.0)?\)",
@@ -294,8 +284,7 @@ static PERCENT_RANGE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid percent range regex")
 });
 
-/// Detect ratio vs percent scale from range indicators. Mirrors
-/// `_parse_scale_from_description` (ratio checked first).
+/// Detect ratio before percent from range indicators.
 fn scale_from_description(description: Option<&str>) -> Option<Unit> {
     let description = description?;
     if RATIO_RANGE.is_match(description) {
@@ -320,7 +309,7 @@ mod tests {
             "longest suffix _bytes_total wins over _total"
         );
         // "_requests_total" needs a leading char, so bare "requests_total" falls
-        // through to "_total" -> count (matching Python's suffix precedence).
+        // through to "_total" -> count under longest-suffix precedence.
         assert_eq!(infer_unit("requests_total", ""), Some(Unit::Count));
         assert_eq!(infer_unit("http_requests_total", ""), Some(Unit::Requests));
         assert_eq!(infer_unit("unknown_metric", ""), None);

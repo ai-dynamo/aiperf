@@ -188,7 +188,7 @@ impl GpuTelemetryRun {
         self.sidecar.summarize(total_output_tokens, concurrency)
     }
 
-    /// Writes every retained scrape record in the established Python JSONL shape.
+    /// Writes every retained scrape record in the established JSONL shape.
     pub(crate) fn write_records_jsonl(&self, path: &Path) -> Result<()> {
         self.sidecar.write_records_jsonl(path)
     }

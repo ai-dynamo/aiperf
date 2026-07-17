@@ -36,7 +36,7 @@
 //! The autonomous issuer stamps `phase_base + within*(cells*W) + (c + cells*t)`.
 //! Controller children receive `phase_base` values through
 //! `AIPERF_CELL_PHASE_ORDINAL_BASES`; single-process runs derive them from phase
-//! request budgets with [`compute_phase_ordinal_bases`].
+//! request budgets with `compute_phase_ordinal_bases`.
 //!
 //! # Cell-local responsibilities
 //!

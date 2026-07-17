@@ -1,16 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native-Rust Weights & Biases sink (offline `.wandb` transaction log).
+//! Weights & Biases offline `.wandb` transaction-log sink.
 //!
-//! Matches `src/aiperf/exporters/wandb_data_exporter.py`. W&B has no official
-//! Rust SDK; the network-free route (spec §6 — an unreachable tracking server
-//! must never hang shutdown) writes the same offline run directory
-//! (`wandb/offline-run-<ts>-<id>/`) the Python SDK writes, containing the
-//! length-prefixed protobuf `.wandb` transaction log later shipped by
-//! `wandb sync`. Framing and message layout match
-//! `wandb/sdk/internal/datastore.py` and `wandb.proto.wandb_internal_pb2`
-//! (wandb 0.28.0) — see [`datastore`] and [`proto`].
+//! Writes `wandb/offline-run-<ts>-<id>/` with the W&B 0.28.0 length-prefixed
+//! protobuf datastore framing consumed by `wandb sync`.
 //!
 //! # What is emitted (accepted by the wandb datastore decoder)
 //! - `HeaderRecord` (datastore version stamps).
@@ -20,22 +14,19 @@
 //!   `summary_metrics/<label>/<stat>` scalar items (one per finite stat), plus
 //!   `_step` / `_runtime`.
 //! - `FilesRecord` — the `wandb.Table`-format `media/table/summary_metrics.table.json`
-//!   file, preserving the exact Python columns/rows on disk.
+//!   file, preserving table columns and rows.
 //! - `RunExitRecord`.
 //!
-//! # Parity with the Python exporter
+//! # Artifact contract
 //! - Tags: `aiperf-<version>` (from [`NativeReport::aiperf_version`]),
-//!   `benchmark-<id8>` (from the projected benchmark id), then user tags —
-//!   mirroring `_build_tags`.
+//!   `benchmark-<id8>` (from the benchmark id), then user tags.
 //! - Table columns: `["Metric", *DEFAULT_STAT_KEYS]` where
 //!   `DEFAULT_STAT_KEYS = ("avg","min","max","p99","p90","p50","std")`; one row
-//!   per metric, each stat `round(v, 2)` when finite else `null` — mirroring
-//!   `_build_metric_table_rows`.
-//! - Config: the projected full redacted `cfg.model_dump(mode="json",
-//!   exclude_none=True)` object plus `aiperf.cli_command`, split into per-key
-//!   `ConfigItem`s — mirroring `_build_config_payload`.
+//!   per metric, each finite stat rounded to two decimals and non-finite stats null.
+//! - Config: the full redacted config plus `aiperf.cli_command`, split into
+//!   per-key `ConfigItem`s.
 //!
-//! # Deferred vs Python (documented, not silent)
+//! # Omitted data
 //! - The versioned `wandb.Artifact` bundle (manifest, per-file digests,
 //!   client-artifact references, `run_table` artifact record) is **not**
 //!   reproduced; that machinery requires content-addressed staging outside this
@@ -48,9 +39,9 @@
 //!   visibility filtering are not carried in [`NativeReport`], so ordering is by
 //!   stable name and visibility is whatever the report already includes.
 //!
-//! # Python projection contract (`cfg.export.wandb`)
-//! Because [`NativeReport`] carries neither the full config blob, the redacted
-//! CLI command, nor the benchmark id, Python must project them onto the wire:
+//! # Configuration contract
+//! Because [`NativeReport`] carries neither the full config blob, redacted CLI
+//! command, nor benchmark id, callers supply:
 //! `project`, `entity`, `run_name`, `tags` (user tags only), `benchmark_id`,
 //! `config_json` (the serialized redacted config object), `cli_command`
 //! (already redacted). See [`WandbExportConfig`].
@@ -70,7 +61,7 @@ use chrono::{Datelike, Timelike, Utc};
 use crate::export::{ExportConfig, Exporter};
 use crate::metrics_core::{MetricEntry, NativeReport, ReportStats, ReportValue};
 
-/// The Python `DEFAULT_STAT_KEYS` / `STAT_COLUMN_KEYS` (console exporter).
+/// Summary table stat columns.
 const STAT_COLUMN_KEYS: [&str; 7] = ["avg", "min", "max", "p99", "p90", "p50", "std"];
 
 /// Producer version stamp written into the datastore header.
@@ -78,11 +69,8 @@ const HEADER_PRODUCER: &str = "aiperf-native-wandb";
 /// Minimum consumer able to read the streams we emit.
 const HEADER_MIN_CONSUMER: &str = "0.65.0";
 
-/// W&B export policy plus the fields Python must project (the report cannot
-/// supply the full config blob, redacted CLI command, or benchmark id).
-///
-/// Enabled iff a project is set (matching Python
-/// `WandbConfig.enabled = project is not None`).
+/// W&B export policy plus values unavailable from the report. A project enables
+/// the sink.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WandbExportConfig {
@@ -97,10 +85,8 @@ pub struct WandbExportConfig {
     pub tags: Vec<String>,
     /// Benchmark id used for the default run name and `benchmark-<id8>` tag.
     pub benchmark_id: Option<String>,
-    /// AIPerf package version (`aiperf.__version__`) projected by the frontend
-    /// for the `aiperf-<version>` tag. The native report carries only the Rust
-    /// crate version, so the authoritative package version is projected here and
-    /// used in preference to `report.aiperf_version` when present.
+    /// AIPerf package version for the `aiperf-<version>` tag; takes precedence
+    /// over the report version.
     pub aiperf_version: Option<String>,
     /// Full redacted config object (`cfg.model_dump(mode="json",
     /// exclude_none=True)`), serialized as a JSON object string. Split into
@@ -150,7 +136,7 @@ impl Exporter for WandbExporter {
         fs::create_dir_all(files_dir.join("media").join("table"))
             .with_context(|| format!("creating W&B run dir {}", run_dir.display()))?;
 
-        // Preserve the exact Python `wandb.Table` JSON on disk.
+        // Preserve the W&B table JSON shape on disk.
         let rows = build_metric_rows(report);
         let table_json = table_file_json(&rows)?;
         fs::write(files_dir.join(table_rel), table_json)
@@ -283,7 +269,7 @@ struct MetricRow {
     cells: [Option<f64>; STAT_COLUMN_KEYS.len()],
 }
 
-/// Build one row per profiling metric, mirroring `_build_metric_table_rows`.
+/// Build one row per profiling metric.
 fn build_metric_rows(report: &NativeReport) -> Vec<MetricRow> {
     report
         .metrics
@@ -459,7 +445,7 @@ fn json_number(value: f64) -> String {
         .unwrap_or_else(|| "null".to_string())
 }
 
-/// `round(value, 2)` matching the Python exporter.
+/// Round finite values to two decimals.
 fn round2(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
 }

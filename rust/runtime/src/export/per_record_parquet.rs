@@ -1,38 +1,39 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Wide, per-request Parquet sidecar to `profile_export.jsonl`.
+//! Wide per-request Parquet artifact.
 //!
 //! The runner writes row-oriented per-request `profile_export.jsonl`, one object
 //! per request with the shape `{metadata, metrics{tag:{value,unit}},
 //! trace_data?, error}`. That shape is fine for streaming/replay but awkward for
-//! analytical queries over millions of records. This module writes a **columnar
-//! mirror** of that same data: one Parquet row per request, one nullable
+//! analytical queries over millions of records. This module writes the same data
+//! columnarly: one Parquet row per request, one nullable
 //! `Float64` column per catalog record-metric, so a run can be analyzed
 //! column-wise without reshaping the JSONL.
 //!
 //! # Crate boundary
 //! The runner has no direct `arrow`/`parquet` dependency (it only forwards the
-//! `parquet` feature to this crate), and the metric [`CATALOG`] lives here, so the
+//! `parquet` feature to this crate), and the metric
+//! [`CATALOG`](crate::metrics_core::CATALOG) lives here, so the
 //! columnar assembly lives here. The runner maps each of its `CapturedRecord`s
-//! into the crate-neutral [`PerRecordRow`] and calls [`write_per_record_parquet`];
+//! into the crate-neutral
+//! [`PerRecordRow`](crate::export::per_record_parquet::PerRecordRow) and calls
+//! [`write_per_record_parquet`](crate::export::per_record_parquet::write_per_record_parquet);
 //! no metric or error logic is duplicated across the boundary.
 //!
 //! # Schema
 //! Byte identity is not a target. The target is a correct, stable, self-describing
-//! schema: fixed metadata head, one metric column per [`record_metric_columns`]
+//! schema: fixed metadata head, one metric column per
+//! [`record_metric_columns`](crate::metrics_core::record_metric_columns)
 //! entry (catalog order, null when the request produced no finite value), fixed
 //! error tail, and — only when `include_trace` — flat `trace_*` HTTP-timing
-//! columns (mirroring the JSONL's conditional `trace_data`). Per-metric units are
+//! columns. Per-metric units are
 //! constant, so they live in the `aiperf.units` file metadata rather than a
 //! redundant per-row column.
 //!
-//! # Extension seam
-//! The wide row and the metric-column derivation are the extension points: a new
-//! record-metric automatically becomes a column via [`record_metric_columns`]
-//! (which reuses the exact catalog filter the JSONL writer uses), and a new
-//! metadata/trace field is a new fixed column here plus one mapping line in the
-//! runner.
+//! Metric columns follow
+//! [`record_metric_columns`](crate::metrics_core::record_metric_columns) in
+//! catalog order; metadata and trace fields use fixed columns.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -56,9 +57,9 @@ pub use crate::metrics_core::record_metric_columns;
 /// Schema version stamped into the file's key-value metadata.
 const SCHEMA_VERSION: &str = "1.0";
 
-/// Flat HTTP-timing fields mirroring `records.rs::trace_value`. Present on a
-/// [`PerRecordRow`] only when trace capture is enabled; every field is nullable in
-/// the emitted columns.
+/// Flat HTTP-timing fields shared with `records.rs::trace_value`. Present on a
+/// [`PerRecordRow`] only when
+/// trace capture is enabled; every field is nullable in the emitted columns.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PerRecordTrace {
     pub stream_setup_ns: Option<i64>,
@@ -100,7 +101,7 @@ pub struct PerRecordRow {
     pub cancellation_time_ns: Option<i64>,
     /// HTTP or pseudo-status code; `Some(499)` for post-send cancellation.
     pub error_code: Option<u16>,
-    /// Stable error type mirrored from the JSONL row.
+    /// Stable error type shared with the JSONL row.
     pub error_type: Option<&'static str>,
     pub error_message: Option<String>,
     /// Metric tag → finite value. Missing tag ⇒ null cell in that column.
@@ -116,10 +117,10 @@ const RECORD_PROCESSOR_ID: &str = "aiperf runner";
 
 /// Write the wide per-record Parquet file.
 ///
-/// `columns` is the ordered metric column set (typically [`record_metric_columns`]);
+/// `columns` is the ordered metric column set (typically
+/// [`record_metric_columns`]);
 /// `include_trace` toggles the trailing `trace_*` columns (schema-affecting, so it
-/// must match how the rows were built). An empty `rows` writes no file (mirroring
-/// the server-metrics Parquet sink's no-rows behavior). Snappy compression matches
+/// must match how the rows were built). An empty `rows` writes no file. Snappy compression matches
 /// the sibling server-metrics sink.
 pub fn write_per_record_parquet(
     path: &Path,
@@ -311,7 +312,7 @@ fn bool_column<I: Iterator<Item = Option<bool>>>(values: I) -> ArrayRef {
 }
 
 /// Write the record batch to Parquet with Snappy compression and file-level
-/// key-value metadata mirroring the schema metadata.
+/// key-value metadata copied from the schema.
 fn write_parquet(path: &Path, schema: Arc<Schema>, batch: &RecordBatch) -> Result<()> {
     super::parquet_util::write_parquet_table(path, schema, batch, "per-record parquet")
 }
@@ -321,25 +322,33 @@ fn write_parquet(path: &Path, schema: Arc<Schema>, batch: &RecordBatch) -> Resul
 /// peak writer memory is O(bound) rather than O(records).
 pub const DEFAULT_ROW_GROUP_ROWS: usize = 4096;
 
-/// Incremental, bounded-memory sibling of [`write_per_record_parquet`].
+/// Incremental, bounded-memory sibling of
+/// [`write_per_record_parquet`].
 ///
-/// The one-shot [`write_per_record_parquet`] columnarizes ALL rows into one
+/// The one-shot
+/// [`write_per_record_parquet`]
+/// columnarizes ALL rows into one
 /// in-memory `RecordBatch`, which requires the caller to retain every record
 /// until run end. This writer instead buffers a bounded window of
-/// [`PerRecordRow`]s, flushes each full window as one Parquet **row group** via a
+/// [`PerRecordRow`]s, flushes
+/// each full window as one Parquet **row group** via a
 /// held-open [`ArrowWriter`], and clears the buffer — so a fold-and-drop caller
 /// can push each record at completion and immediately drop it, bounding peak
 /// memory at the buffer size.
 ///
 /// The emitted schema, per-metric column set, Snappy codec, and file metadata are
-/// byte-for-byte the same builders [`write_per_record_parquet`] uses; only the
+/// byte-for-byte the same builders
+/// [`write_per_record_parquet`]
+/// uses; only the
 /// physical row-group chunking differs (an internal detail with no bearing on the
 /// logical row set — see the parity test). Rows are appended in the order they are
 /// pushed (completion order for the fold path), which is the accepted decision for
 /// streamed per-record artifacts.
 ///
 /// File creation is lazy: an instance that is finished without a single pushed row
-/// leaves no file, matching [`write_per_record_parquet`]'s empty-rows contract.
+/// leaves no file, matching
+/// [`write_per_record_parquet`]'s
+/// empty-rows contract.
 pub struct StreamingPerRecordParquetWriter {
     path: PathBuf,
     schema: Arc<Schema>,
@@ -352,7 +361,9 @@ pub struct StreamingPerRecordParquetWriter {
 
 impl StreamingPerRecordParquetWriter {
     /// Build a streaming writer for `path` over the ordered metric `columns`
-    /// (typically [`record_metric_columns`]); `include_trace` toggles the trailing
+    /// (typically
+    /// [`record_metric_columns`]);
+    /// `include_trace` toggles the trailing
     /// `trace_*` columns (schema-affecting, so it must match how rows are built).
     /// `row_group_rows` bounds each row group; it is clamped to at least 1. No file
     /// is created until the first row is flushed.
@@ -462,7 +473,7 @@ impl StreamingPerRecordParquetWriter {
 /// Each thread-per-core shard streams its own
 /// [`StreamingPerRecordParquetWriter`] to a per-shard temp file, so the coordinator
 /// must fuse those into the single final `profile_export.parquet`. Because every
-/// shard file was produced by the same [`build_schema`]/[`writer_properties`]
+/// shard file was produced by the same `build_schema`/`writer_properties`
 /// builders (identical `columns` and `include_trace`), they share one schema and
 /// one `aiperf.units`/`aiperf.schema_version`/`aiperf.version` metadata set; this
 /// reader-to-writer copy reads each shard's row groups back as [`RecordBatch`]es and

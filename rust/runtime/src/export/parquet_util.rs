@@ -33,7 +33,7 @@ pub(crate) fn float_column<I: Iterator<Item = Option<f64>>>(values: I) -> ArrayR
     Arc::new(Float64Array::from_iter(values)) as ArrayRef
 }
 
-/// Snappy compression + file-level key-value metadata mirroring the schema
+/// Snappy compression with schema key-value metadata copied to the file
 /// metadata, so every Parquet file this crate writes carries identical
 /// `aiperf.*` metadata and codec.
 pub(crate) fn writer_properties(schema: &Arc<Schema>) -> WriterProperties {

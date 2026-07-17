@@ -7,7 +7,7 @@ use super::templates::TemplateRenderer;
 use super::vocab::*;
 use crate::graph::recorded::RecordedTraceError;
 
-/// `_gen_rust_code`: dispatch across the Rust structural variants.
+/// Dispatch across the Rust structural variants.
 pub(super) fn render(r: &mut TemplateRenderer) -> Result<String, RecordedTraceError> {
     match r.index(4)? {
         0 => rust_struct(r),

@@ -240,7 +240,7 @@ impl PreparedHttpEndpointRequest {
 /// Object-safe translation seam between one endpoint dialect and HTTP.
 ///
 /// Alternate HTTP bindings may supply a different body codec or response
-/// envelope while preserving the same [`Endpoint`] implementation.
+/// envelope while preserving the same `Endpoint` implementation.
 pub trait HttpEndpointBinding: fmt::Debug {
     /// Return the stable endpoint identity used in diagnostics.
     fn endpoint_id(&self) -> &str;

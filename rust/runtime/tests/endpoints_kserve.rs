@@ -79,8 +79,8 @@ fn all_kserve_dialects_are_open_registry_only() {
 
     for id in expected {
         assert!(matches!(
-            registry.compatibility_endpoint(&EndpointId::new(id).unwrap()),
-            Err(EndpointRegistryError::NoCompatibilityAdapter(_))
+            registry.legacy_endpoint(&EndpointId::new(id).unwrap()),
+            Err(EndpointRegistryError::NoLegacyAdapter(_))
         ));
     }
 }

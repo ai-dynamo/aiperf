@@ -3,7 +3,7 @@
 
 //! Trait-injected graph admission, ancillary timing, and failure policy.
 //!
-//! Python's default and fail-fast behavior: resilient mode treats an
+//! Resilient mode treats an
 //! errored child as completed for join accounting; fail-fast aborts the trace
 //! and tells the phase to stop admitting unrelated roots. Here those choices
 //! are independent traits around the one [`crate::graph::executor::TraceExecutor`]
@@ -264,7 +264,7 @@ pub trait NodeFailurePolicy {
     fn on_failure(&self, failure: &NodeFailure) -> NodeFailureDisposition;
 }
 
-/// Python-compatible default: failed children count as done and the DAG drains.
+/// Failed children count as done and the DAG drains.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ResilientNodeFailurePolicy;
 

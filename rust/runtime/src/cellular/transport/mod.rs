@@ -53,7 +53,7 @@ pub enum CellMessage {
     /// carries its own `cell_id`.
     Partition(RecordsShardPartition),
     /// The cell's pre-accumulated column-store partition, sent once at run end in
-    /// place of [`Partition`] when the cell ran metrics-only exact folding: it
+    /// place of [`Self::Partition`] when the cell ran metrics-only exact folding: it
     /// folded its records into its own EXACT accumulator and dropped them, so it has
     /// no record `Vec` to ship — it ships the folded store instead. The controller
     /// appends every cell's store ([`merge_store_partitions`](crate::cellular::merge_store_partitions))

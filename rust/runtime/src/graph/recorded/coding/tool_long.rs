@@ -12,7 +12,7 @@ use super::templates::TemplateRenderer;
 use super::vocab::*;
 use crate::graph::recorded::RecordedTraceError;
 
-/// `_gen_tool_read_long`: like `tool_read` but with 40-80 lines for realistic large file reads.
+/// A 40-80-line file read.
 pub(super) fn tool_read_long(
     r: &mut TemplateRenderer,
     lang: Option<usize>,
@@ -218,7 +218,7 @@ pub(super) fn tool_read_long(
     ))
 }
 
-/// `_gen_tool_bash_verbose`: like `tool_bash` but with longer, more realistic test output.
+/// A verbose shell transcript.
 pub(super) fn tool_bash_verbose(
     r: &mut TemplateRenderer,
     lang: Option<usize>,
@@ -243,7 +243,7 @@ pub(super) fn tool_bash_verbose(
     let mut test_lines: Vec<String> = Vec::new();
     for m in &methods {
         let passed = r.random() > 0.15;
-        // `t` is drawn for every language (it precedes the branch in Python).
+        // `t` is drawn before the language branch.
         let t = r.uniform(0.001, 3.0);
         match lang {
             Some(1) => {
@@ -313,7 +313,7 @@ pub(super) fn tool_bash_verbose(
     ))
 }
 
-/// `_gen_tool_search_verbose`: like `tool_search` but returns many matches across multiple files.
+/// Search output with many matches across multiple files.
 pub(super) fn tool_search_verbose(
     r: &mut TemplateRenderer,
     lang: Option<usize>,

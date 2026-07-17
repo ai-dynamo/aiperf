@@ -98,6 +98,24 @@ pub fn analyzed_from_graph(
     records: &[CapturedRecord],
 ) -> Vec<AnalyzedTurn> {
     let _ = input;
+    analyzed_turns_from_records(records)
+}
+
+/// Derive neutral [`AnalyzedTurn`] observations from the captured record set.
+///
+/// One planned turn produces one record on the dry-run paths, and the captured
+/// records carry the authoritative per-turn ISL (`tokens.input`) and requested
+/// output cap. The maximum output budget prefers the request-declared cap
+/// (`tokens.requested_output`) and falls back to the realized output sequence
+/// length. `block_ids` and `system_handle` are left absent (see the module docs);
+/// the analysis then falls back to length-structure identity synthesis.
+///
+/// This is the shared source for both the graph path
+/// ([`write_dataset_analysis`]) and the scheduled path
+/// ([`write_dataset_analysis_from_records`]) — neither the compiled
+/// [`GraphInputBundle`] nor the scheduled conversation source exposes per-turn
+/// block hashes, so the records are the ground truth in both cases.
+pub fn analyzed_turns_from_records(records: &[CapturedRecord]) -> Vec<AnalyzedTurn> {
     records
         .iter()
         .map(|record| {
@@ -135,27 +153,58 @@ pub fn write_dataset_analysis(
     let turns = analyzed_from_graph(input, records);
     let analyzed_records = analyzed_from_records(records);
     let analysis = analyze(&turns, &analyzed_records, &req.options);
+    write_analysis_artifacts(req, &analysis)
+}
 
+/// Analyze the run from the captured records alone and write
+/// `dataset_analysis.{txt,json,csv,html}` beside [`DatasetAnalysisRequest::path`].
+///
+/// This is the scheduled-path entry point: the scheduled executor has no
+/// [`GraphInputBundle`], so both the per-turn observations and the per-record
+/// observations are derived from the retained [`CapturedRecord`] set (the ground
+/// truth for a `--dry-run`; the requesting artifact forces the retain path so the
+/// records are the full clean + errored set). The output is identical in shape to
+/// [`write_dataset_analysis`].
+pub fn write_dataset_analysis_from_records(
+    req: &DatasetAnalysisRequest,
+    records: &[CapturedRecord],
+) -> Result<()> {
+    let turns = analyzed_turns_from_records(records);
+    let analyzed_records = analyzed_from_records(records);
+    let analysis = analyze(&turns, &analyzed_records, &req.options);
+    write_analysis_artifacts(req, &analysis)
+}
+
+/// Render the four dataset-analysis artifacts beside [`DatasetAnalysisRequest::path`].
+///
+/// The parent directory of `req.path` is created if needed. Each artifact is a
+/// distinct rendering of the same [`crate::dataset::analysis::DatasetAnalysis`]:
+/// a console-table text report, pretty JSON, a stat-key CSV, and a self-contained
+/// HTML single-page report.
+fn write_analysis_artifacts(
+    req: &DatasetAnalysisRequest,
+    analysis: &crate::dataset::analysis::DatasetAnalysis,
+) -> Result<()> {
     if let Some(parent) = req.path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating dataset-analysis directory {}", parent.display()))?;
     }
 
     let txt_path = req.path.with_file_name("dataset_analysis.txt");
-    let text = crate::export::analysis_txt::render_analysis_txt(&analysis);
+    let text = crate::export::analysis_txt::render_analysis_txt(analysis);
     std::fs::write(&txt_path, text)
         .with_context(|| format!("writing dataset-analysis text {}", txt_path.display()))?;
 
     let json_path = req.path.with_file_name("dataset_analysis.json");
-    crate::export::dataset_analysis::write_dataset_analysis_json(&analysis, &json_path)
+    crate::export::dataset_analysis::write_dataset_analysis_json(analysis, &json_path)
         .with_context(|| format!("writing dataset-analysis JSON {}", json_path.display()))?;
 
     let csv_path = req.path.with_file_name("dataset_analysis.csv");
-    crate::export::dataset_analysis::write_dataset_analysis_csv(&analysis, &csv_path)
+    crate::export::dataset_analysis::write_dataset_analysis_csv(analysis, &csv_path)
         .with_context(|| format!("writing dataset-analysis CSV {}", csv_path.display()))?;
 
     let html_path = req.path.with_file_name("dataset_analysis.html");
-    crate::export::analysis_html::write_dataset_analysis_html(&analysis, &html_path)
+    crate::export::analysis_html::write_dataset_analysis_html(analysis, &html_path)
         .with_context(|| format!("writing dataset-analysis HTML {}", html_path.display()))?;
 
     Ok(())
@@ -252,6 +301,45 @@ mod tests {
 
         // Length-structure identity synthesis (from positive ISL) yields a cache
         // section, so the JSON carries the reuse hit-rate curve.
+        let json =
+            std::fs::read_to_string(dir.path().join("dataset_analysis.json")).expect("read json");
+        assert!(
+            json.contains("hit_rate"),
+            "cache reuse hit_rate must be present"
+        );
+        assert!(!json.contains("NaN"), "no non-finite tokens in JSON");
+    }
+
+    #[test]
+    fn writes_four_artifacts_from_records_only() {
+        // Scheduled path: no GraphInputBundle — both turns and records come from the
+        // captured record set alone.
+        let records = vec![
+            captured("conv-a", 0, 0, 1_000_000_000, 64, 16),
+            captured("conv-a", 1, 1_000_000_000, 2_000_000_000, 96, 16),
+            captured("conv-b", 0, 0, 1_000_000_000, 64, 16),
+        ];
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let req = DatasetAnalysisRequest {
+            path: dir.path().join("dataset_analysis"),
+            options: AnalysisOptions::default(),
+            per_conversation: false,
+        };
+
+        write_dataset_analysis_from_records(&req, &records)
+            .expect("write dataset analysis from records");
+
+        for name in [
+            "dataset_analysis.txt",
+            "dataset_analysis.json",
+            "dataset_analysis.csv",
+            "dataset_analysis.html",
+        ] {
+            let path = dir.path().join(name);
+            assert!(path.exists(), "expected {name} to be written");
+        }
+
         let json =
             std::fs::read_to_string(dir.path().join("dataset_analysis.json")).expect("read json");
         assert!(
