@@ -204,6 +204,15 @@ impl Composer for HfAsrComposer {
 }
 
 async fn resolve_audio_bytes(value: &Value, config: &LoadConfig) -> Result<Option<Bytes>> {
+    // The HuggingFace datasets-server serves an Audio column as a single-element
+    // array (`[{"src": <signed url>}]`); unwrap it to the inner audio object.
+    let value = match value {
+        Value::Array(items) => match items.first() {
+            Some(item) => item,
+            None => return Ok(None),
+        },
+        other => other,
+    };
     let reference = match value {
         Value::String(value) => Some(value.as_str()),
         Value::Object(object) => {
