@@ -1,24 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! HuggingFace Hub tokenizer download over the `hf-hub` crate.
+//! HuggingFace Hub tokenizer download.
 //!
-//! [`crate::dataset::tokenizer::HuggingFaceTokenizer`] loads a tokenizer from a
-//! local directory but does not fetch one; this module fills that gap. It uses
-//! the same `hf-hub` client that `dynamo-tokenizers` already links transitively
-//! (through `fastokens`), pinned to the blocking `ureq` backend so no second
-//! async HTTP/TLS stack (`reqwest`/`native-tls`) enters the product graph. `hf-hub`
-//! contributes the robustness this download needs for free: bounded retry/backoff,
-//! the xet-CDN `302` follow, reuse of the shared `~/.cache/huggingface` cache
-//! across runs and processes, and `HF_HUB_OFFLINE` / `HF_TOKEN` handling.
+//! [`crate::dataset::tokenizer::HuggingFaceTokenizer`] loads from a local directory
+//! but does not fetch; this fills that gap with the same `hf-hub` client
+//! `dynamo-tokenizers` already links via `fastokens`, pinned to the blocking `ureq`
+//! backend so no `reqwest`/`native-tls` stack enters the product graph. That buys
+//! retry/backoff, xet-CDN `302`, shared `~/.cache/huggingface` reuse, and
+//! `HF_HUB_OFFLINE`/`HF_TOKEN` handling.
 //!
-//! The file-selection and cache-directory-resolution logic is ported verbatim
-//! from the retired `llm_tokenizer::hub::download_tokenizer_from_hf`
-//! (`llm-tokenizer` 1.4.1 `src/hub.rs`) so product download behavior is unchanged
-//! by the move off that crate; only the client (async `reqwest` → blocking `ureq`)
-//! differs. The blocking `hf-hub` call runs on a `spawn_blocking` worker so the
-//! public entry point keeps its `async` contract for both the online resolver and
-//! the `aiperf chat` loader.
+//! File selection and cache-dir resolution are ported from
+//! `llm_tokenizer::hub::download_tokenizer_from_hf` (llm-tokenizer 1.4.1) so the
+//! download behavior is unchanged by the crate swap.
 
 use std::path::{Path, PathBuf};
 
@@ -32,8 +26,7 @@ use crate::dataset::error::{DatasetError, Result};
 /// it is applied explicitly to support CI where the token is only an env var.
 const HF_TOKEN_ENV: &str = "HF_TOKEN";
 
-/// Bounded automatic retry for transient hub failures (429/5xx/timeouts). This is
-/// the robustness the previous single-shot download over AIPerf's fetcher lacked.
+/// Bounded automatic retry for transient hub failures (429/5xx/timeouts).
 const DOWNLOAD_RETRIES: usize = 3;
 
 /// Repository files that are never tokenizer artifacts.
@@ -58,7 +51,6 @@ fn build_api() -> Result<Api> {
         .map_err(|error| DatasetError::Tokenizer(format!("configuring Hugging Face hub: {error}")))
 }
 
-/// True for model-weight files, which a tokenizer download must never pull.
 fn is_weight_file(filename: &str) -> bool {
     filename.ends_with(".bin")
         || filename.ends_with(".safetensors")
@@ -67,18 +59,15 @@ fn is_weight_file(filename: &str) -> bool {
         || filename.ends_with(".ckpt.index")
 }
 
-/// True for image files, which are ignored during tokenizer acquisition.
 fn is_image(filename: &str) -> bool {
     let lower = filename.to_lowercase();
     lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg")
 }
 
-/// True for a separate Jinja chat-template file shipped alongside the tokenizer.
 fn is_chat_template_file(filename: &str) -> bool {
     filename.ends_with(".jinja") || filename == "chat_template.json"
 }
 
-/// True for the tokenizer artifact files worth downloading.
 fn is_tokenizer_file(filename: &str) -> bool {
     filename.ends_with("tokenizer.json")
         || filename.ends_with("tokenizer_config.json")

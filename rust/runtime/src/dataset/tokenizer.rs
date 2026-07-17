@@ -15,6 +15,7 @@ use dynamo_renderer::{ChatTemplate, ContextMixins, OAIChatLikeRequest, PromptFor
 use dynamo_tokenizers::HuggingFaceTokenizer as DynamoHuggingFaceTokenizer;
 use dynamo_tokenizers::traits::{Decoder as _, Encoder as _};
 use minijinja::Value as JinjaValue;
+use serde::Deserialize;
 use serde_json::Value;
 use tiktoken_rs::{
     CoreBPE, cl100k_base_singleton, o200k_base_singleton, o200k_harmony_singleton,
@@ -325,7 +326,7 @@ fn vocab_size_of(tokenizer: &HfTokenizer) -> Option<u32> {
 /// as one), keeping chat-template accounting best-effort: callers then fall back
 /// to the bare-text path, matching Python AIPerf's `apply_chat_template` policy.
 fn build_prompt_formatter(config: &Value) -> Option<PromptFormatter> {
-    let chat_template: ChatTemplate = serde_json::from_value(config.clone()).ok()?;
+    let chat_template = ChatTemplate::deserialize(config).ok()?;
     PromptFormatter::from_parts(chat_template, ContextMixins::default(), false).ok()
 }
 
