@@ -224,6 +224,7 @@ fn synthetic_report() -> NativeReport {
             ("request_latency_seconds".to_string(), histogram),
         ]),
         warmup_server_metrics: BTreeMap::new(),
+        media_metrics: BTreeMap::new(),
         accuracy: None,
         accuracy_records: Vec::new(),
         evaluator: None,
