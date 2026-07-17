@@ -124,8 +124,11 @@ fn velo_observables(r: &RunResult) -> Vec<String> {
 
 /// Run the config against `h`'s mock at `cells` cells. When `velo`, additionally set
 /// the force seam + the velo transport toggle + the `info`-level artifact observable
-/// filter, so a multi-cell run ships its artifacts over the velo plane.
-fn run(h: &AIPerfHarness, cells: u32, velo: bool) -> RunResult {
+/// filter, so a multi-cell run ships its artifacts over the velo plane. When `hub`,
+/// also set `AIPERF_CELLULAR_HUB=1` so the controller stands up ONE velo hub (the
+/// cell↔controller + `/artifact` + discovery plugins on one anchor) instead of the
+/// standalone planes — cells reach it by the identical `tcp://` coordinate.
+fn run_modes(h: &AIPerfHarness, cells: u32, velo: bool, hub: bool) -> RunResult {
     let tmp = tempfile::TempDir::new().unwrap();
     let cfg = tmp.path().join("velo_coverage.yaml");
     std::fs::write(&cfg, config(&h.mock.url, cells)).unwrap();
@@ -134,7 +137,15 @@ fn run(h: &AIPerfHarness, cells: u32, velo: bool) -> RunResult {
         env.push(("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"));
         env.push(("AIPERF_ARTIFACT_TRANSPORT", "velo"));
     }
+    if hub {
+        env.push(("AIPERF_CELLULAR_HUB", "1"));
+    }
     h.run_env(&format!("--config {} --ui simple", cfg.display()), &env)
+}
+
+/// Run the config against `h`'s mock at `cells` cells (standalone-plane path).
+fn run(h: &AIPerfHarness, cells: u32, velo: bool) -> RunResult {
+    run_modes(h, cells, velo, false)
 }
 
 /// A same-host multi-process `--cells N` run with `AIPERF_ARTIFACT_TRANSPORT=velo`
@@ -287,5 +298,124 @@ async fn test_cellular_velo_shipping_matches_single_cell() {
         sorted(&ob, |r| output_projection(r)),
         sorted(&oc, |r| output_projection(r)),
         "outputs.json deterministic (text) SET diverged after velo shipping"
+    );
+}
+
+/// The SAME velo-shipping run but with `AIPERF_CELLULAR_HUB=1`: the controller stands
+/// up one velo hub (cell↔controller + `/artifact` + discovery plugins on a single
+/// anchor) instead of the standalone transport + velo artifact receiver. The cells
+/// reach the hub by the identical `tcp://` coordinate, the artifact bytes ride the
+/// hub-mounted `/artifact` plugin (same `received artifact stream over velo`
+/// observable), and the merged per-record output matches the single-cell baseline —
+/// proving the hub path is wire- and data-equivalent to the default path.
+#[tokio::test]
+async fn test_cellular_hub_mode_velo_shipping_matches_single_cell() {
+    // Flaky on macOS CI like the other artifact e2es; skip there.
+    if cfg!(target_os = "macos") {
+        return;
+    }
+
+    let h_base = AIPerfHarness::new().await;
+    let baseline = run(&h_base, 1, false);
+    assert!(
+        baseline.success(),
+        "1-cell baseline run failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
+        baseline.exit_code,
+        baseline.stdout,
+        baseline.stderr
+    );
+
+    let h_cell = AIPerfHarness::new().await;
+    let cellular = run_modes(&h_cell, CELLS, true, true);
+    assert!(
+        cellular.success(),
+        "hub-mode velo {CELLS}-cell run failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
+        cellular.exit_code,
+        cellular.stdout,
+        cellular.stderr
+    );
+
+    // The multi-cell run went through the controller.
+    assert!(
+        cellular
+            .artifacts
+            .find_file("**/cellular-heartbeat.json")
+            .is_some(),
+        "{CELLS}-cell hub-mode run must go through the controller (cellular-heartbeat.json)"
+    );
+
+    // The bytes crossed the velo plane via the hub-mounted `/artifact` plugin: one
+    // observable per cell × file, each tagged transport="velo".
+    let observables = velo_observables(&cellular);
+    assert!(
+        !observables.is_empty(),
+        "no velo artifact-stream observable in hub-mode logs — the bytes did not go over \
+         the hub's /artifact plugin (or the toggle did not engage). Log tail:\n{}",
+        aiperf_log(&cellular)
+            .lines()
+            .rev()
+            .take(40)
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    for cell_id in 0..CELLS {
+        assert!(
+            observables
+                .iter()
+                .any(|l| l.contains(&format!("cell_id={cell_id}"))
+                    && l.contains("transport=\"velo\"")),
+            "cell {cell_id} streamed no artifacts over the hub in hub mode; observables:\n{}",
+            observables.join("\n")
+        );
+    }
+
+    // inputs.json byte-identical (seeded, timing-free).
+    let inputs_base = std::fs::read(
+        baseline
+            .artifacts
+            .find_file("**/inputs.json")
+            .expect("baseline inputs.json"),
+    )
+    .unwrap();
+    let inputs_cell = std::fs::read(
+        cellular
+            .artifacts
+            .find_file("**/inputs.json")
+            .expect("hub-mode inputs.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        inputs_base, inputs_cell,
+        "inputs.json must be byte-identical between the baseline and the hub-mode run"
+    );
+
+    // records.jsonl deterministic row set (excludes session_num, per the module doc).
+    let recs_base = baseline.artifacts.jsonl();
+    let recs_cell = cellular.artifacts.jsonl();
+    assert_eq!(
+        recs_base.len(),
+        recs_cell.len(),
+        "baseline and hub-mode cellular must emit the same records.jsonl count"
+    );
+    assert_eq!(
+        sorted(&recs_base, record_projection),
+        sorted(&recs_cell, record_projection),
+        "records.jsonl deterministic row SET diverged in hub mode"
+    );
+
+    // outputs.json deterministic text set.
+    let ob = outputs(&baseline);
+    let oc = outputs(&cellular);
+    assert_eq!(ob.len(), oc.len(), "outputs.json row count diverged in hub mode");
+    assert_eq!(
+        sorted(&ob, |r| output_projection(r)),
+        sorted(&oc, |r| output_projection(r)),
+        "outputs.json deterministic (text) SET diverged in hub mode"
+    );
+
+    eprintln!(
+        "hub-mode velo shipping observed: {} artifact streams across {} cells",
+        observables.len(),
+        CELLS
     );
 }
