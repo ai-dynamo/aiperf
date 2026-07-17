@@ -50,10 +50,10 @@ use crate::graph::policy::{
 };
 use crate::metrics::NativeMetricsObserver;
 use crate::metrics_core::{
-    CATALOG, MetricFlags, MetricTag, MetricType, MetricsConfig, NativeReport, ReportClockKind,
-    ReportDynamoCapacityInfo, ReportDynamoParityInfo, ReportDynamoRouter, ReportDynamoRunInfo,
-    ReportDynamoTopology, ReportGraphOutcomeInfo, ReportGraphRunInfo, ReportPairRunFacts,
-    ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
+    MetricTag, MetricsConfig, NativeReport, ReportClockKind, ReportDynamoCapacityInfo,
+    ReportDynamoParityInfo, ReportDynamoRouter, ReportDynamoRunInfo, ReportDynamoTopology,
+    ReportGraphOutcomeInfo, ReportGraphRunInfo, ReportPairRunFacts, ReportRunInfo, ReportSummary,
+    RunOutcome, SloThreshold,
 };
 use crate::multiturn::{
     ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
@@ -73,6 +73,7 @@ use crate::engine::dataset_input::{DatasetInputContext, PreparedDatasetInput};
 use crate::engine::execute::{
     NativeConversationSourceFactory, build_native_scheduled_phase_plan_with_source_factory,
     load_tokenizer, metrics_config, native_scheduled_resources, phase_seamless_to_next,
+    resolve_slice_duration_ns, resolve_slos,
 };
 use crate::engine::graph_execution::{GraphExecutionEvent, GraphExecutionEventSink};
 use crate::engine::graph_input::GraphInputContext;
@@ -1424,14 +1425,6 @@ fn phase_allows_single_pass_engine(phase: &PhaseSpec) -> bool {
         && common.adaptive_scale.is_none()
 }
 
-fn seconds_to_ns(value: f64, name: &str) -> Result<i64> {
-    ensure!(
-        value.is_finite() && value >= 0.0 && value * 1_000_000_000.0 < i64::MAX as f64,
-        "{name} must be finite, non-negative, and representable in nanoseconds"
-    );
-    Ok((value * 1_000_000_000.0).round_ties_even() as i64)
-}
-
 /// Run-level validation for a dynosim direct-graph run.
 ///
 /// Called by the graph workload factory when the resolved transport is a dynosim
@@ -1761,27 +1754,9 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
 }
 
 fn offline_metrics_config(spec: &MetricsSpec) -> Result<MetricsConfig> {
-    let slice_duration_ns = spec
-        .slice_duration_seconds
-        .map(|seconds| {
-            ensure!(seconds > 0.0, "metrics slice duration must be positive");
-            seconds_to_ns(seconds, "metrics slice duration")
-        })
-        .transpose()?;
-    let mut slos = Vec::with_capacity(spec.slos.len());
-    for (name, value) in &spec.slos {
-        ensure!(value.is_finite(), "SLO {name:?} threshold must be finite");
-        let metric = CATALOG
-            .iter()
-            .find(|metric| metric.tag.as_str() == name)
-            .ok_or_else(|| anyhow!("SLO metric {name:?} is not in the native metric catalog"))?;
-        ensure!(
-            metric.kind == MetricType::Record
-                && !metric.flags.contains(MetricFlags::NO_INDIVIDUAL_RECORDS),
-            "SLO metric {name:?} does not produce one value per request"
-        );
-        slos.push(SloThreshold::from_display(metric.tag, *value)?);
-    }
+    let slice_duration_ns =
+        resolve_slice_duration_ns(spec.slice_duration_seconds, "metrics slice duration")?;
+    let slos = resolve_slos(spec)?;
     Ok(MetricsConfig {
         slice_duration_ns,
         slos,
