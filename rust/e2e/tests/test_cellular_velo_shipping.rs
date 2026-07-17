@@ -132,7 +132,11 @@ fn run_modes(h: &AIPerfHarness, cells: u32, velo: bool, hub: bool) -> RunResult 
     let tmp = tempfile::TempDir::new().unwrap();
     let cfg = tmp.path().join("velo_coverage.yaml");
     std::fs::write(&cfg, config(&h.mock.url, cells)).unwrap();
-    let mut env: Vec<(&str, &str)> = vec![("AIPERF_LOG", "warn,aiperf_cellular_artifact=info")];
+    // The controller forwards each velo receiver line under the `aiperf` binary target,
+    // so `aiperf=info` (not a per-target `aiperf_cellular_artifact=info` directive, which
+    // only matches the un-forwarded target) reliably surfaces the `received artifact
+    // stream over velo` observable into `logs/aiperf.log`. Matches `run_velo_cells`.
+    let mut env: Vec<(&str, &str)> = vec![("AIPERF_LOG", "warn,aiperf=info")];
     if velo {
         env.push(("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"));
         env.push(("AIPERF_ARTIFACT_TRANSPORT", "velo"));
