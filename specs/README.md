@@ -27,7 +27,7 @@ read the record for the subsystem you are touching.
 | [architecture.md](architecture.md) | Process model, crate topology, and the three orthogonal seams (time, transport, workload) every subsystem composes over. |
 | [repository-layout.md](repository-layout.md) | Cargo workspace topology, package identity, and the naming rules for any new package, enforced by `tools/check_crate_layout.py`. |
 | [extension-registry.md](extension-registry.md) | Static link-time extensibility: the `AIPerfRegistry`/`AIPerfExtension` composition seam, its capability categories, and the frozen bootstrap object graph. |
-| [runner-protocol.md](runner-protocol.md) | The Config-v2 front end ↔ execution boundary: the protocol-v2 stdio envelope, the `BenchmarkRun` vocabulary, path selection, and `--capabilities` discovery. |
+| [runner-protocol.md](runner-protocol.md) | The Config-v2 front end ↔ execution boundary: the protocol-v2 stdio envelope, the `BenchmarkRun` vocabulary, dataset/transport path selection, and the in-process linked-capability catalog. |
 
 ### Execution and scheduling
 

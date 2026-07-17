@@ -138,7 +138,7 @@ AIPERF_CONTENT_SERVER_ENABLED=true \
 aiperf profile --config benchmark.yaml --cells 4
 
 # Developer-only runner protocol inventory; normal runs are launched by Python.
-# capabilities is in-process now (aiperf_cli::execute_mode::capabilities_catalog); no --capabilities argv mode
+# capabilities: aiperf_cli::execute_mode::capabilities_catalog (in-process; no --capabilities argv mode)
 ```
 
 `cargo run -p aiperf-runtime` is intentionally invalid: the `aiperf-runtime` Rust
@@ -385,7 +385,8 @@ Whole system:
   categories, and the frozen bootstrap object graph.
 - [`specs/runner-protocol.md`](specs/runner-protocol.md) — the Config-v2 ↔
   execution boundary: the protocol-v2 stdio envelope, the `BenchmarkRun`
-  vocabulary, path selection, and `--capabilities` discovery.
+  vocabulary, dataset/transport path selection, and the in-process
+  linked-capability catalog.
 
 Execution and scheduling:
 

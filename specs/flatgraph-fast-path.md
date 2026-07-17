@@ -136,6 +136,17 @@ terminal node's output channel; only test-scoped helpers snapshot channel state.
 - Cache eligibility when a graph plan or placement is prepared instead of
   rescanning the graph for each trace, while retaining a defensive eligibility
   check at the actor boundary.
+- **Do not pursue caching the per-trace `TraceExecutor` construction for a
+  multi-node speedup** — it was prototyped (extract a graph-derived
+  `GraphCompilation`, cache by fingerprint, reuse across traces) and measured on
+  the real binary as a confirmed no-op: the cache hit perfectly (599:1) yet cache-on
+  was marginally *slower* (5-node graph +4%, ~100-node +1%). The construction is
+  negligible next to per-request dispatch/serde/metrics, and the fingerprint costs
+  as much as it saves. The flat-actor win comes from bypassing the executor
+  *runtime* (firing gates, channel await/versioning, snapshot), which multi-node
+  traces inherently need. If a multi-node lever is ever wanted, target the two
+  per-trace graph deep-clones (source template clone + `EngineGraphSink` node clone)
+  by sharing `Rc<GraphRecord>` end to end — but even those are small versus dispatch.
 - Keep scheduled-workload routing, scheduled/graph executor unification,
   multi-node executor reuse, and multi-node context pooling outside the
   single-node fast path until they have independent contracts and parity
