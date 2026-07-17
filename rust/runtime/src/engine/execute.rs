@@ -1904,7 +1904,7 @@ async fn execute_graph_native(
     // Cross-host cells ship local per-record artifacts to the controller with
     // streaming zstd. Same-host and single-process runs need no upload.
     #[cfg(feature = "cellular")]
-    crate::engine::cellular_cell::ship_http_artifacts_if_enabled(
+    crate::engine::cellular_cell::ship_artifacts_if_enabled(
         &request.artifact_dir,
         &request.artifacts,
     )?;
@@ -3425,7 +3425,7 @@ async fn execute_native_inner(
     // with streaming zstd. A no-op on the same-host launcher (concatenates the
     // local writes) or the single-process path.
     #[cfg(feature = "cellular")]
-    crate::engine::cellular_cell::ship_http_artifacts_if_enabled(
+    crate::engine::cellular_cell::ship_artifacts_if_enabled(
         &request.artifact_dir,
         &request.artifacts,
     )?;
