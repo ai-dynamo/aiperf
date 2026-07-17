@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use aiperf_runtime::clock::RealClockAnchor;
+use bytes::Bytes;
+use http_body_util::Empty;
 use parking_lot::Mutex;
 
 use crate::config::MockServerConfig;
@@ -38,7 +40,17 @@ pub struct AppState {
     pub accuracy: Option<Arc<crate::accuracy::AccuracyDataset>>,
     /// Live accuracy exposed by `GET /accuracy` and Prometheus metrics.
     pub accuracy_live: crate::accuracy::AccuracyLive,
+    /// HTTP client for fetching `image_url`/`video_url` content when
+    /// `--fetch-content-urls` is enabled. `None` disables fetching. `HttpConnector`
+    /// speaks plain HTTP only (the content server serves plain HTTP) and ignores
+    /// any ambient `HTTP_PROXY`, so localhost content URLs are reached directly.
+    pub content_fetch_client: Option<ContentFetchClient>,
 }
+
+/// Pooled plain-HTTP client used to fetch content URLs. `Empty<Bytes>` is the
+/// request body (GET carries none); responses are drained via `BodyExt::collect`.
+pub type ContentFetchClient =
+    hyper_util::client::legacy::Client<hyper_util::client::legacy::connect::HttpConnector, Empty<Bytes>>;
 
 pub struct ErrorRng {
     rng: aiperf_runtime::rng::RandomGenerator,
@@ -91,6 +103,10 @@ impl AppState {
             None
         };
         let prefix_cache = PrefixCache::from_config(&config).map(Arc::new);
+        let content_fetch_client = config.fetch_content_urls.then(|| {
+            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+                .build_http()
+        });
         let accuracy = config.accuracy_dataset.as_ref().map(|path| {
             match crate::accuracy::AccuracyDataset::load(std::path::Path::new(path), &config) {
                 Ok(ds) => {
@@ -114,6 +130,7 @@ impl AppState {
             prefix_cache,
             accuracy,
             accuracy_live: crate::accuracy::AccuracyLive::default(),
+            content_fetch_client,
         });
 
         if config.dcgm_auto_load {

@@ -78,6 +78,11 @@ aiperf profile --model nvidia/page-elements-v2 --url http://127.0.0.1:8000 \
 Driving `image_retrieval` with no `--endpoint` override resolves to the default `/v1/infer`;
 asserts `status == 200` and a `data` array of bounding boxes.
 
+By default `image_url`/`video_url` values (here and in `/v1/chat/completions`) are treated as
+opaque strings — the mock never dials out. Pass `--fetch-content-urls` to actually GET them and
+exercise an AIPerf content server end to end; see `latency-and-load.md` § "Fetching content-server
+URLs".
+
 ## KServe Open Inference Protocol over HTTP
 
 | Route | `--endpoint-type` | Notes |

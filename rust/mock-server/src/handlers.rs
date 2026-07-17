@@ -17,6 +17,8 @@ use base64::Engine;
 use blake2::{Blake2s256, Digest};
 use bytes::Bytes;
 use futures::stream::Stream;
+use http_body_util::{BodyExt, Empty};
+use hyper::{Request, Uri};
 use serde_json::{Value, json};
 
 use crate::latency::{LatencySimulator, wait_for_processing};
@@ -27,7 +29,7 @@ use crate::models::{
     Message, MessagesRequest, RankingRequest, ResponsesRequest, SolidoRAGRequest,
     TGIGenerateRequest, Usage, VllmGenerateRequest,
 };
-use crate::state::AppState;
+use crate::state::{AppState, ContentFetchClient};
 use crate::tokens::{GenRequest, TokenizedText, tokenize_request};
 
 pub type AppResult<T> = Result<T, AppError>;
@@ -329,6 +331,8 @@ pub async fn chat_completions(
         ctx.usage.tool_use_prompt_token_count = Some(tool_use_tokens);
         ctx.tool_call = Some(spec);
     }
+
+    fetch_content_urls(&state, endpoint, &collect_content_urls(&req.messages)).await;
 
     if req.stream {
         state.recorder.record_streaming_start(endpoint, &ctx.model);
@@ -1158,6 +1162,96 @@ fn round_4(x: f64) -> f64 {
     (x * 10_000.0).round() / 10_000.0
 }
 
+/// Only `http(s)` URLs are fetched; `data:` URIs and other schemes are inline
+/// or unroutable and are left untouched.
+fn is_fetchable_url(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
+/// Pull fetchable `image_url`/`video_url` targets out of OpenAI-style
+/// multimodal chat content. Each part may carry either a bare string URL or an
+/// object with a `url` field (`{"type": "image_url", "image_url": {"url": ...}}`).
+fn collect_content_urls(messages: &[Message]) -> Vec<String> {
+    let mut urls = Vec::new();
+    for msg in messages {
+        let Some(parts) = msg.content.as_array() else {
+            continue;
+        };
+        for part in parts {
+            for key in ["image_url", "video_url"] {
+                let Some(field) = part.get(key) else {
+                    continue;
+                };
+                let url = match field {
+                    Value::String(s) => Some(s.as_str()),
+                    Value::Object(_) => field.get("url").and_then(Value::as_str),
+                    _ => None,
+                };
+                if let Some(u) = url
+                    && is_fetchable_url(u)
+                {
+                    urls.push(u.to_string());
+                }
+            }
+        }
+    }
+    urls
+}
+
+/// GET a single URL and drain its body, returning the byte count. Every failure
+/// mode (bad URL, connect/transfer error, timeout) is logged and reported as `0`
+/// bytes so a fetch never fails the mock response.
+async fn fetch_one(client: &ContentFetchClient, url: &str, timeout: Duration) -> u64 {
+    let uri = match url.parse::<Uri>() {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::warn!(url = %url, error = %e, "content url parse failed");
+            return 0;
+        }
+    };
+    let request = async {
+        let req = Request::builder()
+            .uri(uri)
+            .body(Empty::<Bytes>::new())
+            .map_err(Box::<dyn std::error::Error + Send + Sync>::from)?;
+        let resp = client.request(req).await?;
+        let status = resp.status();
+        let bytes = resp.into_body().collect().await?.to_bytes().len() as u64;
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>((status, bytes))
+    };
+    match tokio::time::timeout(timeout, request).await {
+        Ok(Ok((status, bytes))) => {
+            tracing::debug!(url = %url, %status, bytes, "content fetch ok");
+            bytes
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(url = %url, error = %e, "content fetch failed");
+            0
+        }
+        Err(_) => {
+            tracing::warn!(url = %url, ?timeout, "content fetch timed out");
+            0
+        }
+    }
+}
+
+/// Fetch every URL concurrently to exercise the remote content server. No-op
+/// (and no allocation cost beyond the empty slice) when fetching is disabled.
+async fn fetch_content_urls(state: &Arc<AppState>, endpoint: &str, urls: &[String]) {
+    let Some(client) = state.content_fetch_client.as_ref() else {
+        return;
+    };
+    if urls.is_empty() {
+        return;
+    }
+    let timeout = Duration::from_secs_f64(state.config.content_fetch_timeout);
+    let fetches = urls.iter().map(|url| fetch_one(client, url, timeout));
+    let total: u64 = futures::future::join_all(fetches).await.into_iter().sum();
+    if total > 0 {
+        state.recorder.record_content_bytes_fetched(endpoint, total);
+    }
+}
+
 pub async fn image_retrieval(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ImageRetrievalRequest>,
@@ -1179,6 +1273,7 @@ pub async fn image_retrieval(
     .await;
 
     let mut total_size_mb = 0.0;
+    let mut fetched_total: u64 = 0;
     let mut data = Vec::new();
     for (i, img) in req.input.iter().enumerate() {
         let bounding = generate_bounding_boxes(&img.url);
@@ -1186,7 +1281,24 @@ pub async fn image_retrieval(
             "index": i,
             "bounding_boxes": bounding,
         }));
-        total_size_mb += img.url.len() as f64 / (1024.0 * 1024.0 * 1.37);
+        // With fetching enabled, size the transfer by the bytes actually
+        // downloaded from the URL; otherwise fall back to the inline base64
+        // string-length proxy.
+        let size_bytes = match state.content_fetch_client.as_ref() {
+            Some(client) if is_fetchable_url(&img.url) => {
+                let timeout = Duration::from_secs_f64(state.config.content_fetch_timeout);
+                let b = fetch_one(client, &img.url, timeout).await;
+                fetched_total += b;
+                b as f64
+            }
+            _ => img.url.len() as f64 / 1.37,
+        };
+        total_size_mb += size_bytes / (1024.0 * 1024.0);
+    }
+    if fetched_total > 0 {
+        state
+            .recorder
+            .record_content_bytes_fetched(endpoint, fetched_total);
     }
 
     state.recorder.record_image_retrieval_success(
@@ -2951,6 +3063,58 @@ pub async fn image_edit(
     state.recorder.record_request_end(endpoint);
 
     Ok(Json(body).into_response())
+}
+
+#[cfg(test)]
+mod content_url_tests {
+    use super::*;
+
+    fn user(content: Value) -> Message {
+        Message {
+            role: "user".into(),
+            content,
+        }
+    }
+
+    #[test]
+    fn is_fetchable_url_only_accepts_http_schemes() {
+        assert!(is_fetchable_url("http://host:8090/content/images/img_1.png"));
+        assert!(is_fetchable_url("https://host/img.jpg"));
+        assert!(!is_fetchable_url("data:image/png;base64,AAAA"));
+        assert!(!is_fetchable_url("file:///tmp/img.png"));
+        assert!(!is_fetchable_url(""));
+    }
+
+    #[test]
+    fn collect_extracts_object_and_string_image_and_video_urls() {
+        let messages = vec![user(json!([
+            {"type": "text", "text": "describe"},
+            {"type": "image_url", "image_url": {"url": "http://cs:8090/content/images/img_1.png"}},
+            {"type": "video_url", "video_url": {"url": "https://cs/vid_1.mp4"}},
+            {"type": "image_url", "image_url": "http://cs:8090/content/images/img_2.png"},
+        ]))];
+        let urls = collect_content_urls(&messages);
+        assert_eq!(
+            urls,
+            vec![
+                "http://cs:8090/content/images/img_1.png",
+                "https://cs/vid_1.mp4",
+                "http://cs:8090/content/images/img_2.png",
+            ]
+        );
+    }
+
+    #[test]
+    fn collect_skips_data_uris_and_plain_string_content() {
+        let messages = vec![
+            user(Value::String("just text, no parts".into())),
+            user(json!([
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+                {"type": "text", "text": "hi"},
+            ])),
+        ];
+        assert!(collect_content_urls(&messages).is_empty());
+    }
 }
 
 #[cfg(test)]
