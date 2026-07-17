@@ -57,7 +57,7 @@ read the record for the subsystem you are touching.
 | [dataset.md](dataset.md) | The input-resolution plane: the content-addressed segment store and the loader→compose→store→sampler→materializer pipeline. |
 | [endpoint-body-construction.md](endpoint-body-construction.md) | How an endpoint declares its request shape (`format_payload → BodyPlan`) and how the two shared materializers turn segment handles into wire bytes. |
 | [endpoints.md](endpoints.md) | The `Endpoint` dialect adapter: the trait, every native dialect, endpoint identity, and the registry consumed by validation and execution. |
-| [content-server.md](content-server.md) | The run-owned HTTP delivery sidecar that serves generated media by URL, and its publication seam. |
+| [content-server.md](content-server.md) | The run-owned HTTP delivery sidecar that serves generated media by URL, its publication seam, and the planned request-correlated media-fetch metrics (`rid`/`mi` URL tagging, clock bridge, streaming drain). |
 | [rng.md](rng.md) | The hash-derived randomness substrate: order-independent BLAKE3 stream derivation, generators, and sampling distributions. |
 | [graph-runtime.md](graph-runtime.md) | The Graph-IR runtime: deterministic async dataflow, the `dag_jsonl`/`weka_trace`/`dynamo_trace` compilers, and the trajectory-snapshot/warmup-priming subsystem. |
 | [conditional-graph-lowering.md](conditional-graph-lowering.md) | The model-independent-branching contract: how pinned/recorded/weighted conditional branching and recorded non-LLM content resolve and fold into the flat `LlmNode`/`StaticEdge` substrate at lowering, the eager-vs-forbidden (branch-on-live-output) line, and the future eager-conditional compiler. |

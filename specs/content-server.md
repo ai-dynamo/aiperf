@@ -38,6 +38,82 @@ reject the sidecar rather than accepting an inert configuration, and continue
 synthetic media generation through the same publisher seam with the inline
 implementation.
 
+## Future requirements
+
+### Request-correlated media-fetch metrics
+
+Today the tracker measures each transfer in full (TTFB, time-to-first-body-byte,
+transfer duration, total latency, bytes, chunks) and then discards it: the only
+caller of `request_snapshot()` is a unit test. The records also carry no benchmark
+identity — `path` is just `images/img_NNNNNN.ext`, which dataset recycling reuses
+across many requests — so a transfer cannot be tied back to the request that
+carried it. This section specifies closing both gaps: correlate every content
+fetch to the originating request (and the specific media slot within it) and
+surface the timings as first-class metrics.
+
+**Correlation key — `(rid, mi)` embedded in the media URL.** The URL is the only
+datum that provenance-flows across all three hops (AIPerf → inference server →
+content-server GET); a real inference server does not forward AIPerf's
+`X-Request-ID` header onto its own fetch. At dispatch, each `http(s)`
+`image_url`/`video_url` value in the outgoing payload is tagged
+`?rid=<x_request_id>&mi=<media_ordinal>`, where `mi` is the zero-based ordinal of
+the media part within that turn's payload (assigned by walk order). `mi` is
+required, not optional: a single turn may carry many media, and `rid` alone
+collapses them into one ambiguous bucket. The content server already records the
+raw `query_string`, so capture needs no server change; `rid`/`mi` parse out at
+drain time. The join key is `(rid, mi)`.
+
+**Clock bridge (the linchpin for `time_to_media_fetch`).** Benchmark dispatch
+timestamps are monotonic ns off `RealClockAnchor` (no wall component); the tracker
+records arrival as wall-clock Unix-epoch `timestamp_ns` on an independent
+`Instant` origin. The two are not directly comparable. Bridge them by capturing
+one paired `(SystemTime::now(), RealClockAnchor::now())` reading at run start;
+any benchmark `start_ns` then converts to wall-epoch via
+`wall_epoch_at_anchor + start_ns`, comparable to the record's `timestamp_ns`.
+
+**Streaming drain (correct at 1M-scale).** A snapshot-at-teardown join is bounded
+by `max_tracked_records` (FIFO eviction) and by retain-all memory, so it silently
+drops requests under load. Instead the server drains records during the run into
+an online aggregator that (a) joins each record against a compact
+`{x_request_id -> dispatch_wall_ns}` map and (b) folds the derived values into
+`DistributionStats` streaming — no retain-all, no bounded-buffer loss. Any drop
+that does occur (e.g. a fetch whose `rid` has no matching request) is counted and
+logged, never silently discarded.
+
+**Metrics.** Per `(rid, mi)`, then rolled up per request:
+
+| Metric | Meaning | Record source |
+|---|---|---|
+| `time_to_media_fetch` | dispatch → content-server arrival of the GET (server fetch lag; parallels TTFT) | `timestamp_ns` (bridged) − dispatch |
+| `media_serving_latency` | arrival → last byte sent | `latency_ns` |
+| `media_time_to_first_byte` | arrival → response start | `time_to_first_byte_ns` |
+| `media_transfer_duration` | first → last body chunk | `transfer_duration_ns` |
+| `media_bytes_served` | body bytes (summed per request) | `body_bytes` |
+| `media_fetch_count` | fetches observed for the request | count of records per `rid` |
+
+Only `time_to_media_fetch` is new math; the other five are already measured and
+merely unsurfaced. Comparing arrival timestamps across one `rid` reveals serial
+vs concurrent fetching; a request whose carried-media count exceeds its
+`media_fetch_count` reveals a partial/skipped fetch by the inference server.
+
+**Surfaces.** (1) A dedicated **Media** metrics section rendered with the standard
+avg/p50/p90/p99 shape, produced by the streaming aggregator's own
+`DistributionStats` (the domain-neutral `SidecarMetric` channel, as
+`server_metrics` uses) rather than late per-record injection into the main
+accumulator — the scalable fit for the streaming path. (2) A per-record
+`media_records` artifact (JSONL/parquet) keyed by `(rid, mi)` with every timing,
+status, and byte field for offline joining against the request records.
+Considered alternative: registering `Record`-kind catalog metrics so the values
+land inline in the main percentile table and existing per-record artifacts; this
+needs late per-record injection (retain records or a late-fold entry point) that
+does not compose with the streaming, exact-fold hot path at scale.
+
+**Mock-server prerequisite (built).** Exercising this end to end requires the
+inference server to actually fetch the tagged URLs. The Rust mock server does so
+under `--fetch-content-urls` (`MOCK_SERVER_FETCH_CONTENT_URLS`), forwarding the
+tagged URL verbatim so `rid`/`mi` reach the content server; see
+[`mock-server.md`](mock-server.md).
+
 ## Source anchors
 
 - `rust/runtime/src/content_server/` (`server.rs`, `tracker.rs`, `publisher.rs`,
@@ -45,3 +121,11 @@ implementation.
 - `rust/runtime/src/dataset/generator/` (media generation and publication seam).
 - `rust/cli/tests/online_v2_stdio.rs`.
 - `docs/tutorials/content-server.md`.
+- Planned touch points for media-fetch metrics: URL tagging at
+  `rust/runtime/src/transport/http/sink/endpoint_dispatch.rs` (dispatch site with
+  `uuid` in scope; graph path unifies at
+  `rust/runtime/src/transport/http/transport/endpoint_binding.rs`); clock pairing
+  at `rust/runtime/src/engine/execute.rs` run start; drain/aggregate/surface in
+  `rust/runtime/src/engine/execute.rs` (mirroring the gpu_telemetry /
+  network_latency `records_path` and `SidecarMetric` seams) and
+  `rust/runtime/src/metrics_core/` (`sidecar.rs`, `catalog.rs`).
