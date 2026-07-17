@@ -33,6 +33,19 @@ pub trait TextTokenizer: Send + Sync {
     /// Decode token IDs while retaining explicit special tokens.
     fn decode(&self, token_ids: &[u32]) -> Result<String>;
 
+    /// Decode token IDs, replacing any invalid UTF-8 with U+FFFD instead of
+    /// failing.
+    ///
+    /// Byte-level BPE tokenizers can emit a token window that begins or ends
+    /// mid-codepoint (e.g. a corpus window sampled at an arbitrary byte offset),
+    /// which is not valid UTF-8. Python's `tiktoken` decodes with
+    /// `errors="replace"` by default, so recorded-content reconstruction must do
+    /// the same to stay byte-identical. The default implementation defers to
+    /// [`decode`](Self::decode) for tokenizers whose decode is already lossy.
+    fn decode_lossy(&self, token_ids: &[u32]) -> Result<String> {
+        self.decode(token_ids)
+    }
+
     /// Configured beginning-of-sequence token, if known.
     fn bos_token_id(&self) -> Option<u32>;
 
@@ -62,9 +75,8 @@ pub trait TextTokenizer: Send + Sync {
 
     /// Render and tokenize chat messages when this tokenizer owns a template.
     ///
-    /// `None` means that chat-template accounting is unavailable. Callers must
-    /// then use the ordinary bare-text path, matching Python AIPerf's
-    /// best-effort `apply_chat_template` policy.
+    /// `None` means chat-template accounting is unavailable and callers must
+    /// use the ordinary bare-text path.
     fn apply_chat_template(
         &self,
         _messages: &[Value],
@@ -196,6 +208,20 @@ impl TextTokenizer for TiktokenTokenizer {
             .map_err(|error| DatasetError::Tokenizer(error.to_string()))
     }
 
+    fn decode_lossy(&self, token_ids: &[u32]) -> Result<String> {
+        // Matches Python `tiktoken`'s default `errors="replace"`: reassemble the
+        // raw per-token bytes into one buffer, then substitute maximal ill-formed
+        // subsequences with U+FFFD. Recorded corpus windows begin at arbitrary
+        // byte offsets and are usually *not* valid UTF-8, so a strict-decode-first
+        // probe would fail and redo the work on the common path; go straight to
+        // the byte path and size the buffer once.
+        let mut bytes = Vec::with_capacity(token_ids.len().saturating_mul(4));
+        for token in self.bpe._decode_native_and_split(token_ids.to_vec()) {
+            bytes.extend_from_slice(&token);
+        }
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
     fn bos_token_id(&self) -> Option<u32> {
         None
     }
@@ -323,9 +349,7 @@ fn vocab_size_of(tokenizer: &HfTokenizer) -> Option<u32> {
 /// The template lives either inline in `tokenizer_config.json` (`chat_template`)
 /// or, in the newer HF layout, in a sibling `chat_template.jinja`; the `.jinja`
 /// file is merged into the config when the key is absent. Returns `None` when no
-/// template is found or it cannot be parsed, keeping chat-template accounting
-/// best-effort: callers then fall back to the bare-text path, matching Python
-/// AIPerf's `apply_chat_template` policy.
+/// template is found or parsed; callers then use the bare-text path.
 fn build_prompt_formatter(directory: &Path, config: Option<&Value>) -> Option<PromptFormatter> {
     let mut config = config
         .cloned()
@@ -593,10 +617,10 @@ mod tests {
         assert_eq!(tokenizer.eos_token_id(), Some(2));
     }
 
-    /// The newer HF layout stores the chat template in a sibling
-    /// `chat_template.jinja` rather than inline in `tokenizer_config.json`
-    /// (what `save_pretrained` emits, and what many recent repos ship). The
-    /// formatter must still build from that file.
+    // The newer HF layout stores the chat template in a sibling
+    // `chat_template.jinja` rather than inline in `tokenizer_config.json`
+    // (what `save_pretrained` emits, and what many recent repos ship). The
+    // formatter must still build from that file.
     #[test]
     fn chat_template_jinja_sidecar_is_used() {
         let directory = tempfile::tempdir().unwrap();
@@ -632,8 +656,8 @@ mod tests {
         assert_eq!(templated, vec![3, 4, 5]);
     }
 
-    /// Validates the downloaded tokenizer against known GPT-2 BPE token IDs.
-    /// Network-gated because it fetches `gpt2` from the Hugging Face hub.
+    // Validates the downloaded tokenizer against known GPT-2 BPE token IDs.
+    // Network-gated because it fetches `gpt2` from the Hugging Face hub.
     #[test]
     #[ignore = "downloads the gpt2 tokenizer from the Hugging Face hub"]
     fn gpt2_download_encodes_to_known_ids() {

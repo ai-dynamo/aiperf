@@ -106,23 +106,46 @@ pub(crate) fn lower_recorded_graph(
             rank: 0,
         })
         .collect::<Vec<_>>();
+    // Sub-phase timing for the recorded lowering, gated so it only fires for the
+    // large outlier traces that dominate the parallel fan-out's tail.
+    let subtiming = std::env::var_os("AIPERF_WEKA_TIMING").is_some() && nodes.len() > 1500;
+    macro_rules! subphase {
+        ($label:expr, $mark:expr) => {
+            if subtiming {
+                let now = std::time::Instant::now();
+                eprintln!(
+                    "[weka-timing]     [{} nodes] {}: {:.3?}",
+                    nodes.len(),
+                    $label,
+                    now.duration_since($mark)
+                );
+                $mark = now;
+            }
+        };
+    }
+    let mut mark = std::time::Instant::now();
     parents::resolve_content_parents(&mut nodes);
+    subphase!("resolve_content_parents", mark);
     timing::apply_idle_warp(&mut nodes, idle_gap_cap_seconds);
     timing::compute_ranks(&mut nodes);
     let mut edges = timing::build_interval_edges(&nodes);
     timing::apply_start_anchors(&nodes, &mut edges);
+    subphase!("timing+edges", mark);
 
     let (tags, _) = messages::assign_block_tags(&nodes, block_size)?;
+    subphase!("assign_block_tags", mark);
     let mut state = BTreeMap::new();
     let mut graph_nodes = BTreeMap::new();
     let mut all_edges = Vec::new();
     let prefix_cache = theoretical_prefix_cache(&nodes);
+    subphase!("theoretical_prefix_cache", mark);
     // Reusing interned shared-prefix messages avoids quadratic tokenization and
     // BLAKE3 hashing on deep traces.
-    let mut message_cache = messages::PromptMessageCache::new();
+    let mut message_cache = messages::PromptMessageCache::default();
 
     for (index, node) in nodes.iter().enumerate() {
-        let prompt = messages::emit_prompt(
+        let incoming = edges.remove(&node.request.node_id).unwrap_or_default();
+        let emitted = emit_one_node(
             node,
             &tags[index],
             block_size,
@@ -131,6 +154,64 @@ pub(crate) fn lower_recorded_graph(
             content,
             pool,
             &mut message_cache,
+            &prefix_cache,
+            incoming,
+        )?;
+        state.insert(emitted.state_key, emitted.state_spec);
+        all_edges.extend(emitted.incoming_edges);
+        graph_nodes.insert(emitted.node_id, emitted.node);
+    }
+
+    subphase!("node_loop (emit+decode+intern)", mark);
+    let graph = GraphRecord {
+        version: Some("2.0".into()),
+        system: None,
+        state,
+        nodes: graph_nodes,
+        edges: all_edges,
+    };
+    validate_recorded_graph(&graph)?;
+    Ok(graph)
+}
+
+/// One lowered node ready to be spliced into the graph, with its segment handles
+/// already interned into the caller's pool.
+struct EmittedNode {
+    node_id: String,
+    node: LlmNode,
+    state_key: String,
+    state_spec: ChannelSpec,
+    incoming_edges: Vec<crate::graph::model::StaticEdge>,
+}
+
+/// Emit one node: reconstruct and intern its prompt (and response), then build
+/// its `LlmNode`, channel state, and incoming edges. Shared by the sequential and
+/// the chain-parallel drivers; the only per-node mutable state is `pool` and
+/// `message_cache`, so a chain that owns both can run this concurrently with
+/// other chains.
+#[allow(clippy::too_many_arguments)]
+fn emit_one_node(
+    node: &TrieNode,
+    tags: &[messages::BlockTag],
+    block_size: usize,
+    hash_scope: Option<&str>,
+    tail_scope: &str,
+    content: &mut dyn RecordedContentSynthesizer,
+    pool: &mut SegmentPool,
+    message_cache: &mut messages::PromptMessageCache,
+    prefix_cache: &HashMap<String, (usize, usize)>,
+    incoming: Vec<crate::graph::model::StaticEdge>,
+) -> Result<EmittedNode, RecordedTraceError> {
+    {
+        let prompt = messages::emit_prompt(
+            node,
+            tags,
+            block_size,
+            hash_scope,
+            tail_scope,
+            content,
+            pool,
+            message_cache,
         )?;
         let response_tokens = content.tail_tokens(
             node.request.output_tokens,
@@ -146,7 +227,6 @@ pub(crate) fn lower_recorded_graph(
             &response_tokens,
         )?;
 
-        let incoming = edges.remove(&node.request.node_id).unwrap_or_default();
         let inputs = incoming
             .iter()
             .filter(|edge| {
@@ -161,7 +241,6 @@ pub(crate) fn lower_recorded_graph(
         let is_start_root = incoming
             .iter()
             .any(|edge| edge.source == crate::graph::model::START_NODE_ID);
-        all_edges.extend(incoming);
 
         let mut metadata = node.request.adapter_metadata.clone();
         metadata.insert(
@@ -225,38 +304,35 @@ pub(crate) fn lower_recorded_graph(
         }
 
         let output = format!("{}_out", node.request.node_id);
-        state.insert(
-            output.clone(),
-            ChannelSpec {
-                channel_type: ChannelType::Text,
-                reducer: ReducerName::Overwrite,
-            },
-        );
-        graph_nodes.insert(
-            node.request.node_id.clone(),
-            LlmNode {
-                output,
-                streaming: node.request.streaming,
-                inputs,
-                min_start_delay_us: is_start_root.then_some(node.warped_start * 1_000_000.0),
-                max_tokens: Some(node.request.max_tokens.max(1)),
-                items: prompt
-                    .into_iter()
-                    .map(|seg| PromptItem::Seg { seg })
-                    .collect(),
-                metadata,
-            },
-        );
+        let state_spec = ChannelSpec {
+            channel_type: ChannelType::Text,
+            reducer: ReducerName::Overwrite,
+        };
+        let llm_node = LlmNode {
+            output: output.clone(),
+            streaming: node.request.streaming,
+            inputs,
+            min_start_delay_us: is_start_root.then_some(node.warped_start * 1_000_000.0),
+            max_tokens: Some(node.request.max_tokens.max(1)),
+            items: prompt
+                .into_iter()
+                .map(|seg| PromptItem::Seg { seg })
+                .collect(),
+            metadata,
+        };
+        Ok(EmittedNode {
+            node_id: node.request.node_id.clone(),
+            node: llm_node,
+            state_key: output,
+            state_spec,
+            incoming_edges: incoming,
+        })
     }
+}
 
-    let graph = GraphRecord {
-        version: Some("2.0".into()),
-        system: None,
-        state,
-        nodes: graph_nodes,
-        edges: all_edges,
-    };
-    let errors = crate::graph::validate::validate(&graph);
+/// Assemble and structurally validate the final graph from the per-node output.
+fn validate_recorded_graph(graph: &GraphRecord) -> Result<(), RecordedTraceError> {
+    let errors = crate::graph::validate::validate(graph);
     if !errors.is_empty() {
         return Err(RecordedTraceError(format!(
             "recorded graph failed structural validation: {}",
@@ -267,7 +343,7 @@ pub(crate) fn lower_recorded_graph(
                 .join("; ")
         )));
     }
-    Ok(graph)
+    Ok(())
 }
 
 fn theoretical_prefix_cache(nodes: &[TrieNode]) -> HashMap<String, (usize, usize)> {
@@ -279,7 +355,10 @@ fn theoretical_prefix_cache(nodes: &[TrieNode]) -> HashMap<String, (usize, usize
             .total_cmp(&nodes[*right].request.start_seconds)
             .then_with(|| nodes[*left].request.order.cmp(&nodes[*right].request.order))
     });
-    let mut seen = HashSet::<BlockHash>::new();
+    // `seen` accumulates every block hash across the whole trace (millions on the
+    // largest traces); an integer-keyed FxHashSet avoids SipHash on the hot path.
+    let mut seen =
+        rustc_hash::FxHashSet::<BlockHash>::with_capacity_and_hasher(1024, Default::default());
     let mut stats = HashMap::with_capacity(nodes.len());
     for index in order {
         let request = &nodes[index].request;

@@ -99,7 +99,6 @@ pub(crate) fn concatenate_shard_artifacts(
     concatenate_artifacts(artifacts, artifact_dir, |relative| {
         shard_paths_for(artifact_dir, relative, workers)
     })?;
-    // Drop the per-shard temp directories now that every file has been fused.
     for id in 0..workers {
         let dir = shard_dir(artifact_dir, id);
         if dir.exists() {
@@ -375,6 +374,7 @@ mod tests {
             outputs_path: Some(PathBuf::from("outputs.json")),
             inputs_path: None,
             trace: false,
+            dataset_analysis_path: None,
         }
     }
 

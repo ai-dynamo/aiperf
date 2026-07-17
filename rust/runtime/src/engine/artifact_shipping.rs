@@ -7,7 +7,7 @@
 //!   through a `zstd::stream::read::Encoder` and yield each compressed chunk. The
 //!   client streams those chunks into the request body over a bounded channel
 //!   so backpressure caps in-flight bytes.
-//! - **Receive** ([`decode_channel_to_file`]): stream the request body frames
+//! - **Receive** (`decode_channel_to_file`): stream the request body frames
 //!   into a `zstd::stream::write::Decoder` writing to a `.part` file, then atomic
 //!   `rename` to the final path (crash-safe: a partial upload never leaves a
 //!   truncated final file). Bounded [`CHUNK_SIZE`] chunks throughout.
@@ -1130,6 +1130,7 @@ mod tests {
             outputs_path: None,
             inputs_path: Some(PathBuf::from(inputs_rel)),
             trace: false,
+            dataset_analysis_path: None,
         };
         let relatives = shippable_relatives(&artifacts);
         let allowed: HashSet<String> = relatives.iter().cloned().collect();

@@ -71,7 +71,7 @@ pub(super) fn parse_trace(raw: &RawValue) -> Result<WekaTrace, RecordedTraceErro
     let raw_hashes: RawHashTrace = serde_json::from_str(raw.get()).map_err(|error| {
         RecordedTraceError(format!("WEKA trace: invalid hash structure: {error}"))
     })?;
-    let object = into_object(value, "WEKA trace")?;
+    let mut object = into_object(value, "WEKA trace")?;
     reject_unknown(
         &object,
         &[
@@ -110,11 +110,10 @@ pub(super) fn parse_trace(raw: &RawValue) -> Result<WekaTrace, RecordedTraceErro
             "WEKA totals must be an object or null".into(),
         ));
     }
-    let requests = entry_list(
-        required(&object, "requests", "WEKA trace")?,
-        "requests",
-        &raw_hashes.requests,
-    )?;
+    let requests_value = object
+        .remove("requests")
+        .ok_or_else(|| RecordedTraceError("WEKA trace is missing \"requests\"".into()))?;
+    let requests = entry_list(requests_value, "requests", &raw_hashes.requests)?;
     if requests.is_empty() {
         return Err(RecordedTraceError(
             "WEKA trace requests cannot be empty".into(),
@@ -132,13 +131,16 @@ pub(super) fn parse_trace(raw: &RawValue) -> Result<WekaTrace, RecordedTraceErro
 }
 
 fn entry_list(
-    value: &Value,
+    value: Value,
     label: &str,
     raw_entries: &[RawHashEntry],
 ) -> Result<Vec<WekaEntry>, RecordedTraceError> {
-    let entries = value
-        .as_array()
-        .ok_or_else(|| RecordedTraceError(format!("WEKA {label} must be a list")))?;
+    let entries = match value {
+        // Take ownership of the array so each entry moves into `parse_entry`
+        // instead of being cloned out of a borrowed list.
+        Value::Array(entries) => entries,
+        _ => return Err(RecordedTraceError(format!("WEKA {label} must be a list"))),
+    };
     // Both parses read the same JSON list, so positional alignment holds; guard
     // it explicitly rather than risk an out-of-bounds index on a malformed input.
     if entries.len() != raw_entries.len() {
@@ -149,11 +151,11 @@ fn entry_list(
         )));
     }
     entries
-        .iter()
+        .into_iter()
         .zip(raw_entries)
         .enumerate()
         .map(|(index, (value, raw_entry))| {
-            parse_entry(value.clone(), &format!("{label}[{index}]"), raw_entry)
+            parse_entry(value, &format!("{label}[{index}]"), raw_entry)
         })
         .collect()
 }
@@ -227,7 +229,7 @@ fn parse_leaf(
 }
 
 fn parse_subagent(
-    object: Map<String, Value>,
+    mut object: Map<String, Value>,
     label: &str,
     raw_entry: &RawHashEntry,
 ) -> Result<WekaSubagent, RecordedTraceError> {
@@ -262,14 +264,18 @@ fn parse_subagent(
     for field in ["tool_tokens", "system_tokens"] {
         optional_nonnegative(&object, field)?;
     }
+    let requests_value = object
+        .remove("requests")
+        .ok_or_else(|| RecordedTraceError(format!("WEKA {label} is missing \"requests\"")))?;
+    let requests = entry_list(
+        requests_value,
+        &format!("{label}.requests"),
+        &raw_entry.requests,
+    )?;
     Ok(WekaSubagent {
         agent_id: required_string(&object, "agent_id", label)?,
         status: required_string(&object, "status", label)?,
-        requests: entry_list(
-            required(&object, "requests", label)?,
-            &format!("{label}.requests"),
-            &raw_entry.requests,
-        )?,
+        requests,
     })
 }
 
@@ -316,10 +322,14 @@ fn reject_unknown(
 }
 
 fn into_object(value: Value, label: &str) -> Result<Map<String, Value>, RecordedTraceError> {
-    value
-        .as_object()
-        .cloned()
-        .ok_or_else(|| RecordedTraceError(format!("WEKA {label} must be an object")))
+    match value {
+        // Consume the object rather than clone it: recorded traces are large and
+        // deeply nested, so cloning every node doubled the parse cost.
+        Value::Object(map) => Ok(map),
+        _ => Err(RecordedTraceError(format!(
+            "WEKA {label} must be an object"
+        ))),
+    }
 }
 
 fn required<'a>(

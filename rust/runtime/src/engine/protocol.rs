@@ -139,14 +139,14 @@ pub struct ArtifactSpec {
     /// Wide per-request metrics Parquet sidecar path, or absent when the columnar
     /// export is disabled. Decodes on every build; a runner built without the
     /// `parquet` feature warns and skips it (the field stays present so the wire
-    /// still decodes, mirroring `ParquetExportConfig`).
+    /// still decodes, as does `ParquetExportConfig`).
     #[serde(default)]
     pub records_parquet_path: Option<PathBuf>,
     /// Per-request metrics CSV sidecar path (`profile_export_records.csv`), or
     /// absent when the CSV export is disabled.
     #[serde(default)]
     pub records_csv_path: Option<PathBuf>,
-    /// Python-compatible raw request/response JSONL path, or absent when raw
+    /// Raw request/response JSONL path, or absent when raw
     /// capture is disabled.
     #[serde(default)]
     pub raw_path: Option<PathBuf>,
@@ -160,6 +160,12 @@ pub struct ArtifactSpec {
     /// Include transport timing details on JSONL records.
     #[serde(default)]
     pub trace: bool,
+    /// Base path (relative to the run directory) for the `--dry-run` dataset
+    /// analysis artifact family. When set, the graph path retains records and
+    /// emits `dataset_analysis.{txt,json,csv,html}` beside this path. Absent when
+    /// the analysis is not requested. Populated by the CLI dry-run gating.
+    #[serde(default)]
+    pub dataset_analysis_path: Option<PathBuf>,
 }
 
 pub use crate::engine::sidecar_input::{
@@ -365,7 +371,7 @@ pub struct AdaptiveScaleSpec {
     pub sustain_duration_seconds: f64,
     /// Minimum successful completions for a conclusive window.
     pub min_completed_requests: usize,
-    /// Controller strategy; protocol v1 intentionally has one exact algorithm.
+    /// Controller strategy; exactly one algorithm is currently supported.
     pub strategy_type: AdaptiveStrategyTypeSpec,
     /// Control increment policy.
     pub step_policy: AdaptiveStepPolicySpec,
@@ -393,7 +399,7 @@ pub enum AdaptiveControlVariableSpec {
     Users,
 }
 
-/// Adaptive controller strategy accepted by protocol v1.
+/// Supported adaptive controller strategy.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AdaptiveStrategyTypeSpec {

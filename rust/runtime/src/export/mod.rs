@@ -1,29 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native-Rust post-report exporter plane.
+//! Post-report exporter plane.
 //!
 //! The runner commits the authoritative native-v2 report (`aiperf_runtime::report`) and
 //! then hands the finalized [`NativeReport`] to this plane, which fans it out to
 //! a static set of [`Exporter`] impls behind one trait.
 //!
 //! # The seam (extend here)
-//! Every output format / destination is an [`Exporter`]: a byte-exact
-//! compatibility sink (genai-perf v1 JSON/CSV), a telemetry emitter (OTLP/HTTP
-//! metrics), or a run tracker (MLflow, W&B). Each declares [`Exporter::enabled`]
-//! against the typed [`ExportConfig`] and writes/uploads in [`Exporter::export`].
-//! Adding a destination is a new module + one registration in
-//! [`ExporterRegistry::with_builtin_exporters`]; nothing in the runner call site
-//! changes.
+//! Every output destination implements [`Exporter`] and is registered by
+//! [`ExporterRegistry::with_builtin_exporters`].
 //!
 //! # Failure discipline
-//! The native-v2 report is the authority and is already committed before any
-//! exporter runs. Exporter failures are therefore **best-effort**: each is logged
-//! and does not abort the run (mirroring the Python `try/except` per exporter and
-//! the §6 requirement that an unreachable tracking server never hangs shutdown).
-//! A sink that must be authoritative should surface its own hard error inside
-//! `export` and the operator reads the warning; the run's success is pinned to
-//! the committed report, not to compat/telemetry side outputs.
+//! Exporter failures are logged after the authoritative report is committed and
+//! do not change run status. Network exporters must bound their shutdown latency.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -33,8 +23,7 @@ use crate::extensions::DuplicateName;
 use crate::metrics_core::NativeReport;
 use crate::metrics_core::report::{MetricSeries, ReportValue};
 
-/// Classification of a metric's series for summary selection, mirroring Python
-/// `native_report._summary_series`.
+/// Classification of a metric's series for summary selection.
 ///
 /// The exporters disagree only on how they *react* to the degenerate cases: the
 /// genai-perf and console tables skip the metric (best-effort), while the
@@ -53,18 +42,14 @@ pub(crate) enum SummarySeries<'a> {
     Ambiguous,
 }
 
-/// Build a CSV writer with CRLF line terminators, matching the Python exporters'
-/// `\r\n`-terminated output. Every native CSV emitter (genai-perf, timeslice,
-/// server-metrics, accuracy) shares this one builder over its own sink.
+/// Build the CRLF-terminated writer shared by all CSV artifacts.
 pub(crate) fn crlf_csv_writer<W: std::io::Write>(writer: W) -> csv::Writer<W> {
     csv::WriterBuilder::new()
         .terminator(csv::Terminator::CRLF)
         .from_writer(writer)
 }
 
-/// Drop the URL scheme, keep the `netloc` plus a `/metrics`-trimmed path, and
-/// discard any query or fragment, matching
-/// `aiperf/exporters/utils.py::normalize_endpoint_display`.
+/// Drop the URL scheme, query, fragment, and terminal `/metrics` path component.
 ///
 /// Shared by the genai-perf telemetry summary and the server-metrics exporter so
 /// both render the same endpoint keys. Netloc (host, port, any userinfo) is
@@ -91,8 +76,7 @@ pub(crate) fn normalize_endpoint_display(url: &str) -> String {
     display
 }
 
-/// Select a metric's summary series (`native_report._summary_series`): the sole
-/// series, or the single unlabeled aggregate when several labeled series exist.
+/// Select the sole series or unique unlabeled aggregate.
 pub(crate) fn summary_series(series: &[MetricSeries]) -> SummarySeries<'_> {
     match series {
         [] => SummarySeries::Empty,
@@ -134,14 +118,17 @@ pub(crate) fn finite_guarded(value: ReportValue) -> Option<f64> {
 }
 
 pub mod accuracy_csv;
+pub mod analysis_html;
+pub mod analysis_txt;
 pub mod console_txt;
+pub mod dataset_analysis;
 pub mod genai_perf;
 pub mod mlflow;
 pub mod otel;
 /// Server-metrics Parquet sink. Gated behind the `parquet` feature: it links
 /// `arrow` + `parquet` (~2.6 MiB of `.text`), which a lite/online-only build
 /// (e.g. a lightweight nightly wheel) can drop. When the feature is off the
-/// [`ParquetExporter`] is not registered and the public-dataset loader rejects
+/// `ParquetExporter` is not registered and the public-dataset loader rejects
 /// `.parquet` inputs; [`ParquetExportConfig`] stays present so the wire
 /// `cfg.export.parquet` block still decodes (it is simply inert).
 #[cfg(feature = "parquet")]
@@ -152,7 +139,7 @@ pub mod parquet;
 pub(crate) mod parquet_util;
 /// Wide, per-request Parquet sidecar to `profile_export.jsonl`. Gated behind the
 /// `parquet` feature (links `arrow` + `parquet`): a lite build drops it and the
-/// runner skips the artifact with a warning. Unlike the sinks in [`registry`],
+/// runner skips the artifact with a warning. Unlike the sinks in the registry,
 /// this is not an [`Exporter`] over the aggregated [`NativeReport`] — the
 /// per-record data lives only at the runner's `CapturedRecord` callsites, so the
 /// runner drives this writer directly.
@@ -183,8 +170,8 @@ pub struct ParquetExportConfig {
     pub enabled: bool,
 }
 
-/// Typed export policy projected by the Python frontend onto the wire `cfg.export`
-/// block and decoded once by the runner. Each sub-config is independently gated;
+/// Typed export policy decoded from the wire `cfg.export` block. Each sub-config
+/// is independently gated;
 /// an absent block decodes to all-disabled defaults so the base path emits only
 /// the native-v2 report.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -236,10 +223,8 @@ pub trait Exporter {
     ) -> anyhow::Result<()>;
 }
 
-/// Emit-order band for the local-file writers. Every sink in this band runs
-/// before any sink in [`ORDER_UPLOADER`] so the network uploaders below observe
-/// the on-disk files (§6 of the exporters design). The per-sink offsets keep the
-/// intra-band order stable.
+/// Emit-order band for local-file writers, which run before uploaders so uploaded
+/// bundles include generated artifacts.
 const ORDER_FILE_WRITER: u32 = 0;
 /// Emit-order band for the network / deferred uploaders, run after every
 /// local-file writer has produced its on-disk artifact.
@@ -381,9 +366,7 @@ impl ExporterRegistry {
             match exporter.export(report, artifact_dir, cfg) {
                 Ok(()) => {
                     succeeded += 1;
-                    // INFO so the export step is visible on a normal run, mirroring
-                    // Python's per-exporter "Exported … to: …" lines (the native
-                    // exporters own their own paths, so we name the exporter).
+                    // Export completion is visible at the normal log level.
                     tracing::info!(
                         exporter = exporter.name(),
                         "Exported {} data",

@@ -66,8 +66,9 @@ pub async fn compile_aiperf_trace_input(
         }
     }
 
-    let mut content =
+    let owned =
         CorpusContentSynthesizer::new(tokenizer, config.prompt_corpus, config.content_root_seed)?;
+    let mut content = owned.as_synthesizer();
     let mut pool = SegmentPool::new();
     let mut plans = Vec::with_capacity(parsed.len());
     for trace in parsed {
@@ -433,7 +434,7 @@ mod tests {
         let bundle = compile_aiperf_trace_input(config(records), &TiktokenTokenizer::builtin())
             .await
             .unwrap();
-        // max_tokens mirrors output_tokens = 12 + 7 = 19 (both response segments).
+        // `max_tokens` equals both response segments: 12 + 7 = 19.
         assert_eq!(bundle.plans[0].graph.nodes["9:0"].max_tokens, Some(19));
     }
 

@@ -1,18 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Engine: the v2 protocol / registry / execution layer.
-//!
-//! This module hosts the ~30k-line v2 execution substrate — protocol envelopes,
-//! the frozen transport/workload/pair registries, the execution factories and
-//! drivers, dataset/graph input resolution, the coordinator/application
-//! composition root, the cellular controller/cell, the control-plane HTTP
-//! surface, and the ancillary side-channel accumulators. It is everything the
-//! `aiperf --execute` child needs to run one benchmark cell to terminal.
-//!
-//! It is gated behind the `engine` Cargo feature: only `aiperf-cli` opts in, so
-//! `aiperf-mock-server`, `e2e`, and other library consumers pull `aiperf-runtime`
-//! with default features and never compile this layer or its dependency surface.
+//! Protocol-v2 registry, preparation, execution, reporting, and cellular
+//! coordination. Available under the `engine` feature.
 
 pub mod application;
 // Cross-host cellular artifact shipping reuses Velo bootstrap addressing and zstd.
@@ -31,6 +21,7 @@ pub mod cellular_controller;
 pub mod cellular_kind;
 pub mod control_plane_http;
 pub mod coordinator;
+pub mod dataset_analysis_writer;
 pub mod dataset_input;
 pub mod distribution_identity;
 pub mod dry_run;
