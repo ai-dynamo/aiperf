@@ -34,7 +34,7 @@ read the record for the subsystem you are touching.
 | Spec | Purpose |
 |---|---|
 | [execution-model.md](execution-model.md) | The single thread-per-core hot path, the two-trait transport seam, worker-local accumulation, and the shared reduce/measure layers. |
-| [flatgraph-fast-path.md](flatgraph-fast-path.md) | Forward design (unbuilt): the flat-graph fast path (`FlatGraphActor`) — a straight-line single-LLM-node trace executor that skips the scheduler/channel-store/context so the degenerate trace costs what the flat scheduled path costs, the prerequisite for folding scheduled into the trace substrate. |
+| [flatgraph-fast-path.md](flatgraph-fast-path.md) | Built `FlatGraphActor` fast path: eligible local and worker-backed production graph placement routes one-node/no-fan-in traces through the shared sink without the general graph context, proven byte-identical to the general executor through the real `aiperf` binary; later scheduled-workload and multi-node work remain future. |
 | [scheduling.md](scheduling.md) | The scheduled workload shapes (request-rate, concurrency, user-centric, fixed-schedule) over one `Clock`-backed runtime, and how each partitions across sub-cells. |
 | [phase-orchestration.md](phase-orchestration.md) | One `Clock`-native lifecycle for warmup→profiling phases: the escalation ladder, cancellation latch, and the shared seam scheduled and graph runs both use. |
 | [ancillary-timing.md](ancillary-timing.md) | The three knobs that ride on a running phase: ramping, seeded request cancellation, and sticky round-robin URL selection. |
@@ -47,7 +47,7 @@ read the record for the subsystem you are touching.
 |---|---|
 | [http-transport.md](http-transport.md) | The Clock-injected hyper HTTP stack: wire/protocol support, SSE streaming, endpoint binding, and post-send cancellation. |
 | [grpc-transport.md](grpc-transport.md) | The Clock-injected Tonic gRPC stack: the binding registry, the KServe OIP v2 and Riva families, the protoc-free codec, and the worker-local sink. |
-| [websocket-transport.md](websocket-transport.md) | Forward contract for a Clock-injected WebSocket transport (Codex and Realtime dialects, SSE fallback) composing over the existing seams. |
+| [websocket-transport.md](websocket-transport.md) | Built reusable content, SSE, bidirectional framing, measurement, placement, and registration prerequisites plus the future Clock-injected WebSocket transport contract. |
 | [offline-cosimulation.md](offline-cosimulation.md) | Socket-free Dynamo co-simulation behind the `dynosim` feature: the steppable clocked engine boundary and the observer contract feeding AIPerf's own measurement. |
 
 ### Inputs, endpoints, and graph

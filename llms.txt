@@ -187,9 +187,9 @@ requires both `AIPERF_CONTENT_SERVER_ENABLED=true` and a non-empty existing
 `AIPERF_CONTENT_SERVER_CONTENT_DIR`; enabled with an empty directory starts a
 temporary server but keeps media inline. See `docs/tutorials/content-server.md`.
 
-`AIPERF_RNG_BACKEND=rust_parity` (default `legacy`) swaps the seeded random
+`AIPERF_RNG_BACKEND=rust_parity` (default `python`) swaps the seeded random
 substrate from Python's Mersenne Twister + NumPy (SHA-256 derivation) to a
-pure-Python byte-exact port of the Rust `aiperf_runtime::rng` `Pcg64` + BLAKE3 substrate
+pure-Python byte-exact implementation of the Rust `aiperf_runtime::rng` `Pcg64` + BLAKE3 substrate
 (`src/aiperf/common/rng_parity/`), so seeded Python and Rust produce identical
 streams in tests. `Environment.RNG.BACKEND` in `src/aiperf/common/environment.py`;
 parity is proved against committed Rust golden vectors
@@ -392,10 +392,11 @@ Execution and scheduling:
 - [`specs/execution-model.md`](specs/execution-model.md) — the single
   thread-per-core hot path, the two-trait transport seam, worker-local
   accumulation, and the shared reduce/measure layers.
-- [`specs/flatgraph-fast-path.md`](specs/flatgraph-fast-path.md) — forward design
-  (unbuilt): the `FlatGraphActor` flat-graph fast path — a straight-line
-  single-LLM-node trace executor that skips the scheduler/channel-store/context so
-  the degenerate trace costs what the flat scheduled path costs.
+- [`specs/flatgraph-fast-path.md`](specs/flatgraph-fast-path.md) — built
+  `FlatGraphActor` fast path: eligible local and worker-backed production graph
+  placement routes one-node/no-fan-in traces through the shared sink without the
+  general graph context, proven byte-identical to the general executor through the
+  real `aiperf` binary; later scheduled-workload and multi-node work remain future.
 - [`specs/scheduling.md`](specs/scheduling.md) — request-rate, concurrency,
   user-centric, and fixed-schedule workloads over one `Clock`-backed runtime, and
   how each partitions across sub-cells.
@@ -420,9 +421,9 @@ Transports:
 - [`specs/grpc-transport.md`](specs/grpc-transport.md) — the Clock-injected Tonic
   gRPC stack: the binding registry, KServe OIP v2 and Riva families, the
   protoc-free codec, and the worker-local sink.
-- [`specs/websocket-transport.md`](specs/websocket-transport.md) — the forward
-  contract for a Clock-injected WebSocket transport (Codex and Realtime dialects,
-  SSE fallback) over the existing seams.
+- [`specs/websocket-transport.md`](specs/websocket-transport.md) — built reusable
+  content, SSE, bidirectional framing, measurement, placement, and registration
+  prerequisites plus the future Clock-injected WebSocket transport contract.
 - [`specs/offline-cosimulation.md`](specs/offline-cosimulation.md) — socket-free
   Dynamo co-simulation behind the `dynosim` feature: the steppable clocked engine
   boundary and the observer contract.
