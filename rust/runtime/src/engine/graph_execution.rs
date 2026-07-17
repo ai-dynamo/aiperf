@@ -66,6 +66,7 @@ pub trait GraphPlacementFactory: Send + Sync {
         &self,
         worker_count: usize,
         worker_factory: Arc<dyn TracePlacementFactory>,
+        clock: Rc<dyn Clock>,
     ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError>;
 
     /// Whether successful traces must emit one native record per static node.
@@ -204,7 +205,11 @@ impl GraphPlacementFactory for NativeRunnerGraphPlacementFactory {
         &self,
         worker_count: usize,
         worker_factory: Arc<dyn TracePlacementFactory>,
+        _clock: Rc<dyn Clock>,
     ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
+        // Thread-per-core workers each reconstruct a `RealClock` bound to their own
+        // reactor (a `!Send` clock cannot cross the thread boundary); the injected
+        // clock is only meaningful to the single-reactor inline placement.
         Ok(Rc::new(ThreadPerCoreTracePlacement::new(
             worker_count,
             worker_factory,
@@ -233,8 +238,9 @@ impl GraphPlacementFactory for InlineGraphPlacementFactory {
         &self,
         _worker_count: usize,
         worker_factory: Arc<dyn TracePlacementFactory>,
+        clock: Rc<dyn Clock>,
     ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
-        Ok(Rc::new(LocalTracePlacement::new(worker_factory)?))
+        Ok(Rc::new(LocalTracePlacement::new(worker_factory, clock)?))
     }
 
     fn requires_node_records(&self) -> bool {
@@ -661,8 +667,14 @@ impl TracePlacementFactory for GraphBackendFactory {
     fn create_backend(
         &self,
         worker_id: usize,
+        clock: Option<Rc<dyn Clock>>,
     ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
-        let clock: Rc<dyn Clock> = RealClock::from_anchor(self.config.real_clock_anchor);
+        // A thread-per-core worker gets `None` and reconstructs a `RealClock`
+        // bound to its own reactor; the single-reactor inline placement injects
+        // the run's clock (the `SimClock` under a virtual run) so node sleeps are
+        // virtual-time events, not real timerfd sleeps.
+        let clock: Rc<dyn Clock> =
+            clock.unwrap_or_else(|| RealClock::from_anchor(self.config.real_clock_anchor));
         let endpoint_runtime = self
             .config
             .endpoint_runtime_factory

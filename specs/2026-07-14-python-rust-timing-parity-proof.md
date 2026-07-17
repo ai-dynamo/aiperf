@@ -52,5 +52,4 @@ Rust sends on the authored grid **tighter than Python**.
 
 ## Related
 
-- `2026-07-13-scheduled-graph-convergence-implementation.md` — the OnFailure/rename work on this branch.
 - `AIPERF_RUNTIME_ENGINE` switch — `src/aiperf/cli_runner/_single_run.py`; `Environment.RUNTIME.ENGINE`.

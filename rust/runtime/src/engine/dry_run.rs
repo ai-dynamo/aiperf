@@ -35,16 +35,19 @@
 //!
 //! # Clock modes (both built)
 //!
-//! - **`clock: sim`** (default) — the SAME native execution
-//!   ([`crate::engine::execute::prepare_dry_run_sim_scheduled`]) driven under a
-//!   `SimClock` via `drive_sim` on a single reactor. Arrival pacing, duration
-//!   bounds, and fixed-schedule timestamps run in virtual time — a 10-minute run
-//!   finishes at ~startup wall-speed and the aggregate report is byte
-//!   deterministic. Because it is the ordinary `prepare_and_execute_native` path
-//!   (only the clock + driver differ), `RunCapture`, per-record artifacts, and
-//!   `inputs.json` all flow through normally.
-//! - **`clock: real`** — [`FakeRequestExecutor`] fabricates instant analytic
-//!   timestamps and reuses the native worker-thread executor; the loadgen
+//! The clock is the ONLY difference between the two modes: the single native
+//! driver layer reads
+//! [`uses_virtual_clock`](crate::engine::registry::NativeTransportExecution::uses_virtual_clock)
+//! (true only for `clock: sim`), constructs the matching clock, and lets it drive
+//! itself via [`Clock::drive`](crate::clock::Clock::drive). There is no separate
+//! sim execution path — same `prepare_and_execute_native`, same `RunCapture`,
+//! per-record artifacts, and `inputs.json`.
+//!
+//! - **`clock: sim`** (default) — a `SimClock` whose idle-pump driver
+//!   fast-forwards virtual time to each next event on a single reactor. Arrival
+//!   pacing, duration bounds, and fixed-schedule timestamps run in virtual time —
+//!   a 10-minute run finishes at ~startup wall-speed, byte-deterministic.
+//! - **`clock: real`** — a `RealClock` on the tokio reactor; the loadgen
 //!   self-benchmark path (raw dispatch throughput). Arrival pacing /
 //!   fixed-schedule / duration bounds wait in real wall-time.
 //!

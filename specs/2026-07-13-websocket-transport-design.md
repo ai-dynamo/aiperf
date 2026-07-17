@@ -172,4 +172,3 @@ These are transport-owned; nothing leaks up to the endpoint/observer seams.
 - `2026-07-13-segment-unification-design.md` — the transport-agnostic content IR WS reuses (audio = `media` segment, base64 at lowering).
 - `2026-07-10-aiperf-transport-rust-port-design.md` — the Clock-injected hyper transport WS mirrors, and whose SSE decoder the HTTPS **fallback** reuses (and whose `Full<Bytes>`/`SendCompletion` rule stays HTTP-local).
 - `2026-07-12-aiperf-native-grpc-kserve-v2-design.md` — `transport_grpc` bidi, the persistent-stream precedent.
-- `2026-07-12-http-connector-seam-uds-duplex.md` — the `Connector` seam WS upgrades over.

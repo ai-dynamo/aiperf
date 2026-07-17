@@ -19,7 +19,6 @@ use crate::adaptive_core::{
     AdaptiveError, ControlActuator, ControlSnapshot, RequestRateActuator,
     SessionConcurrencyActuator, SharedWindowSampler, TumblingWindowSampler,
 };
-use crate::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
 use crate::cellular::{CellPartition, ModuloCellPartition};
 use crate::clock::Clock;
 use crate::failure::OnFailure;
@@ -55,8 +54,8 @@ use uuid::Uuid;
 
 use crate::engine::execute::{
     AdaptiveScheduledPhaseController, RampActuatorRngRoots, adaptive_run_config,
-    integer_adaptive_bound, metrics_phase, phase_config, phase_seamless_to_next, ramp_strategy,
-    seconds_to_u64_ns,
+    integer_adaptive_bound, metrics_phase, phase_config, phase_seamless_to_next,
+    push_concurrency_ramp_driver, push_rate_ramp_driver, ramp_strategy, seconds_to_u64_ns,
 };
 use crate::engine::graph_execution::{
     ChannelRunnerGraphExecutionEventSink, GraphCancellationConfig, GraphExecutionEvent,
@@ -3089,16 +3088,15 @@ fn graph_ramp_controller(
         .and_then(|(_, target_rate, _)| target_rate);
     let mut drivers = Vec::new();
     if let Some(ramp) = &common.concurrency_ramp {
-        let target = spec
-            .concurrency()
-            .ok_or_else(|| anyhow!("concurrency_ramp requires a concurrency target"))?;
-        let slots = session_slots
-            .clone()
-            .ok_or_else(|| anyhow!("concurrency_ramp requires graph session admission"))?;
-        let strategy = ramp_strategy(ramp, 1.0, target as f64, false, rng_roots.concurrency())?;
-        drivers.push(RampDriver::new(clock.clone(), strategy, move |value| {
-            slots.set_limit(value.round() as usize)
-        }));
+        push_concurrency_ramp_driver(
+            &mut drivers,
+            spec,
+            ramp,
+            &clock,
+            &session_slots,
+            rng_roots.concurrency(),
+            "concurrency_ramp requires graph session admission",
+        )?;
     }
     if let Some(ramp) = &common.prefill_ramp {
         let target = common
@@ -3120,13 +3118,14 @@ fn graph_ramp_controller(
         }));
     }
     if let Some(ramp) = &common.rate_ramp {
-        let target = target_rate.ok_or_else(|| anyhow!("rate_ramp requires a rate phase"))?;
-        let duration_ns = seconds_to_u64_ns(ramp.duration)?;
-        let start = target * RATE_RAMP_UPDATE_INTERVAL_NS as f64 / duration_ns as f64;
-        let strategy = ramp_strategy(ramp, start, target, true, rng_roots.request_rate())?;
-        drivers.push(RampDriver::new(clock, strategy, move |value| {
-            intervals.borrow_mut().set_rate(value)
-        }));
+        push_rate_ramp_driver(
+            &mut drivers,
+            ramp,
+            clock,
+            intervals,
+            target_rate,
+            rng_roots.request_rate(),
+        )?;
     }
     if drivers.is_empty() {
         Ok(Rc::new(crate::phase_runtime::NoopScheduledPhaseController))

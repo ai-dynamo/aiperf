@@ -205,10 +205,10 @@ impl ExecutionSinkBuilder for HttpSinkBuilder {
 /// the whole scheduled pipeline — scheduler, admission, dispatch, transport, and
 /// capture — independently on each sub-cell OS thread, so every worker's transport
 /// sink is co-located on its own reactor. This factory therefore only ever builds a
-/// single co-located sink; `workers > 1` never reaches here (the sharded runtime
-/// hands each of its threads `workers == 1`, and a static-accuracy run — the one
-/// unsharded `workers > 1` shape — is clamped to a single co-located transport
-/// worker in [`execute_native_inner`](crate::engine::execute)). A `workers > 1`
+/// single co-located sink; `workers > 1` never reaches here because every workload
+/// shape shards (`shardable == workers > 1` in
+/// [`execute_native_inner`](crate::engine::execute), including static-accuracy),
+/// and the sharded runtime hands each of its threads `workers == 1`. A `workers > 1`
 /// request is a wiring bug rather than a second execution model, so it fails closed.
 pub(crate) fn build_native<B: ExecutionSinkBuilder>(
     builder: B,

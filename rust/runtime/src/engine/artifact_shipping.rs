@@ -760,24 +760,42 @@ where
 {
     use http_body_util::BodyExt;
 
-    let stream = tokio::net::TcpStream::connect(authority)
-        .await
-        .with_context(|| format!("connecting to artifact server {authority}"))?;
-    let io = hyper_util::rt::TokioIo::new(stream);
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
-        .await
-        .context("artifact HTTP handshake")?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-    let response = sender
-        .send_request(request)
-        .await
-        .context("sending artifact request")?;
+    let response = connect_and_send(authority, request, "artifact").await?;
     let status = response.status();
     // Drain the (small) response body so the connection closes cleanly.
     let _ = response.into_body().collect().await;
     Ok(status)
+}
+
+/// Open an HTTP/1.1 connection to `authority` (DNS-resolved), send `request`, and
+/// return the raw response (the connection driver is spawned; the caller consumes
+/// the body). `label` names the server role in connection/handshake errors
+/// (`"artifact"` vs `"dataset"`). Shared by the status-only [`send_request`] upload
+/// leg and the body-streaming [`fetch_dataset_to_file`] download leg.
+async fn connect_and_send<B>(
+    authority: &str,
+    request: hyper::Request<B>,
+    label: &str,
+) -> Result<hyper::Response<hyper::body::Incoming>>
+where
+    B: hyper::body::Body + Send + 'static,
+    B::Data: Send,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let stream = tokio::net::TcpStream::connect(authority)
+        .await
+        .with_context(|| format!("connecting to {label} server {authority}"))?;
+    let io = hyper_util::rt::TokioIo::new(stream);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
+        .await
+        .with_context(|| format!("{label} HTTP handshake"))?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    sender
+        .send_request(request)
+        .await
+        .with_context(|| format!("sending {label} request"))
 }
 
 /// Fetch a controller dataset source over `GET /dataset/{name}` (Stage G) and
@@ -798,20 +816,7 @@ pub async fn fetch_dataset_to_file(authority: &str, name: &str, dest: &Path) -> 
         .body(Empty::<Bytes>::new())
         .context("building dataset fetch request")?;
 
-    let stream = tokio::net::TcpStream::connect(authority)
-        .await
-        .with_context(|| format!("connecting to dataset server {authority}"))?;
-    let io = hyper_util::rt::TokioIo::new(stream);
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
-        .await
-        .context("dataset HTTP handshake")?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-    let response = sender
-        .send_request(request)
-        .await
-        .context("sending dataset request")?;
+    let response = connect_and_send(authority, request, "dataset").await?;
     ensure!(
         response.status().is_success(),
         "dataset fetch for {name:?} returned HTTP {}",

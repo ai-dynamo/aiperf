@@ -4247,17 +4247,31 @@ pub(crate) fn distribution(spec: &DistributionSpec) -> Result<SamplingDistributi
     distribution.with_bounds(min, max).map_err(Into::into)
 }
 
-pub(crate) fn metrics_config(
-    spec: &MetricsSpec,
-    use_server_token_count: bool,
-) -> Result<MetricsConfig> {
-    let slice_duration_ns = spec
-        .slice_duration_seconds
+/// Resolve the optional metric-slice duration (seconds → i64 ns). `field` names the
+/// duration in the representability error so scheduled (`"duration"`) and offline
+/// (`"metrics slice duration"`) callers preserve their exact messages. Shared by the
+/// scheduled and offline metrics-config builders.
+pub(crate) fn resolve_slice_duration_ns(
+    slice_duration_seconds: Option<f64>,
+    field: &str,
+) -> Result<Option<i64>> {
+    slice_duration_seconds
         .map(|seconds| {
             ensure!(seconds > 0.0, "metrics slice duration must be positive");
-            seconds_to_ns(seconds)
+            ensure!(
+                seconds.is_finite()
+                    && seconds >= 0.0
+                    && seconds * 1_000_000_000.0 < i64::MAX as f64,
+                "{field} must be finite, non-negative, and representable in nanoseconds"
+            );
+            Ok((seconds * 1_000_000_000.0).round_ties_even() as i64)
         })
-        .transpose()?;
+        .transpose()
+}
+
+/// Resolve and validate the configured SLO thresholds against the native metric
+/// catalog. Shared by the scheduled and offline metrics-config builders.
+pub(crate) fn resolve_slos(spec: &MetricsSpec) -> Result<Vec<SloThreshold>> {
     let mut slos = Vec::with_capacity(spec.slos.len());
     for (name, value) in &spec.slos {
         ensure!(value.is_finite(), "SLO {name:?} threshold must be finite");
@@ -4274,6 +4288,15 @@ pub(crate) fn metrics_config(
         );
         slos.push(SloThreshold::from_display(metric.tag, *value)?);
     }
+    Ok(slos)
+}
+
+pub(crate) fn metrics_config(
+    spec: &MetricsSpec,
+    use_server_token_count: bool,
+) -> Result<MetricsConfig> {
+    let slice_duration_ns = resolve_slice_duration_ns(spec.slice_duration_seconds, "duration")?;
+    let slos = resolve_slos(spec)?;
     let storage_mode = if spec.sketch {
         crate::metrics_core::MetricsStorageMode::Sketch {
             compression: crate::metrics_core::SKETCH_DEFAULT_COMPRESSION,
@@ -4414,6 +4437,53 @@ impl RampActuatorRngRoots {
     }
 }
 
+/// Push a session-concurrency ramp driver that paces `session_slots`' admission
+/// limit from 1 up to the phase concurrency target. `admission_msg` names the
+/// missing admission pool in the error (scheduled vs graph wording). Shared by the
+/// scheduled and graph ramp controllers.
+pub(crate) fn push_concurrency_ramp_driver(
+    drivers: &mut Vec<RampDriver>,
+    spec: &PhaseSpec,
+    ramp: &RampSpec,
+    clock: &Rc<dyn Clock>,
+    session_slots: &Option<Rc<SlotPool>>,
+    rng_root: RngRoot,
+    admission_msg: &'static str,
+) -> Result<()> {
+    let target = spec
+        .concurrency()
+        .ok_or_else(|| anyhow!("concurrency_ramp requires a concurrency target"))?;
+    let slots = session_slots
+        .clone()
+        .ok_or_else(|| anyhow!(admission_msg))?;
+    let strategy = ramp_strategy(ramp, 1.0, target as f64, false, rng_root)?;
+    drivers.push(RampDriver::new(clock.clone(), strategy, move |value| {
+        slots.set_limit(value.round() as usize)
+    }));
+    Ok(())
+}
+
+/// Push a request-rate ramp driver that paces `intervals`' rate from a
+/// duration-derived start value up to `target_rate`. Shared by the scheduled and
+/// graph ramp controllers.
+pub(crate) fn push_rate_ramp_driver(
+    drivers: &mut Vec<RampDriver>,
+    ramp: &RampSpec,
+    clock: Rc<dyn Clock>,
+    intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
+    target_rate: Option<f64>,
+    rng_root: RngRoot,
+) -> Result<()> {
+    let target = target_rate.ok_or_else(|| anyhow!("rate_ramp requires a rate phase"))?;
+    let duration_ns = seconds_to_u64_ns(ramp.duration)?;
+    let start = target * RATE_RAMP_UPDATE_INTERVAL_NS as f64 / duration_ns as f64;
+    let strategy = ramp_strategy(ramp, start, target, true, rng_root)?;
+    drivers.push(RampDriver::new(clock, strategy, move |value| {
+        intervals.borrow_mut().set_rate(value)
+    }));
+    Ok(())
+}
+
 fn ramp_controller(
     spec: &PhaseSpec,
     clock: Rc<dyn Clock>,
@@ -4429,16 +4499,15 @@ fn ramp_controller(
         .and_then(|(_, target_rate, _)| target_rate);
     let mut drivers = Vec::new();
     if let Some(ramp) = &common.concurrency_ramp {
-        let target = spec
-            .concurrency()
-            .ok_or_else(|| anyhow!("concurrency_ramp requires a concurrency target"))?;
-        let slots = session_slots
-            .clone()
-            .ok_or_else(|| anyhow!("concurrency_ramp requires session admission"))?;
-        let strategy = ramp_strategy(ramp, 1.0, target as f64, false, rng_roots.concurrency())?;
-        drivers.push(RampDriver::new(clock.clone(), strategy, move |value| {
-            slots.set_limit(value.round() as usize)
-        }));
+        push_concurrency_ramp_driver(
+            &mut drivers,
+            spec,
+            ramp,
+            &clock,
+            &session_slots,
+            rng_roots.concurrency(),
+            "concurrency_ramp requires session admission",
+        )?;
     }
     if let Some(ramp) = &common.prefill_ramp {
         let target = common
@@ -4459,13 +4528,14 @@ fn ramp_controller(
         }));
     }
     if let Some(ramp) = &common.rate_ramp {
-        let target = target_rate.ok_or_else(|| anyhow!("rate_ramp requires a rate phase"))?;
-        let duration_ns = seconds_to_u64_ns(ramp.duration)?;
-        let start = target * RATE_RAMP_UPDATE_INTERVAL_NS as f64 / duration_ns as f64;
-        let strategy = ramp_strategy(ramp, start, target, true, rng_roots.request_rate())?;
-        drivers.push(RampDriver::new(clock, strategy, move |value| {
-            intervals.borrow_mut().set_rate(value)
-        }));
+        push_rate_ramp_driver(
+            &mut drivers,
+            ramp,
+            clock,
+            intervals,
+            target_rate,
+            rng_roots.request_rate(),
+        )?;
     }
     if drivers.is_empty() {
         Ok(Rc::new(crate::phase_runtime::NoopScheduledPhaseController))
