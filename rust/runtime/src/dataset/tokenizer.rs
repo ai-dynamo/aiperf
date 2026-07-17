@@ -271,9 +271,7 @@ impl HuggingFaceTokenizer {
         } else {
             None
         };
-        if let Some(config) = &tokenizer_config {
-            tokenizer.formatter = build_prompt_formatter(config);
-        }
+        tokenizer.formatter = build_prompt_formatter(directory, tokenizer_config.as_ref());
         tokenizer.bos_token_id =
             resolve_special_token(directory, &introspect, tokenizer_config.as_ref(), "bos");
         tokenizer.eos_token_id =
@@ -320,13 +318,25 @@ fn vocab_size_of(tokenizer: &HfTokenizer) -> Option<u32> {
     u32::try_from(tokenizer.get_vocab_size(true)).ok()
 }
 
-/// Build a chat-template formatter from a parsed `tokenizer_config.json`.
+/// Build a chat-template formatter for a model directory.
 ///
-/// Returns `None` when the config carries no `chat_template` (or cannot be parsed
-/// as one), keeping chat-template accounting best-effort: callers then fall back
-/// to the bare-text path, matching Python AIPerf's `apply_chat_template` policy.
-fn build_prompt_formatter(config: &Value) -> Option<PromptFormatter> {
-    let chat_template = ChatTemplate::deserialize(config).ok()?;
+/// The template lives either inline in `tokenizer_config.json` (`chat_template`)
+/// or, in the newer HF layout, in a sibling `chat_template.jinja`; the `.jinja`
+/// file is merged into the config when the key is absent. Returns `None` when no
+/// template is found or it cannot be parsed, keeping chat-template accounting
+/// best-effort: callers then fall back to the bare-text path, matching Python
+/// AIPerf's `apply_chat_template` policy.
+fn build_prompt_formatter(directory: &Path, config: Option<&Value>) -> Option<PromptFormatter> {
+    let mut config = config
+        .cloned()
+        .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+    if config.get("chat_template").is_none() {
+        let jinja = std::fs::read_to_string(directory.join("chat_template.jinja")).ok()?;
+        config
+            .as_object_mut()?
+            .insert("chat_template".to_string(), Value::String(jinja));
+    }
+    let chat_template = ChatTemplate::deserialize(&config).ok()?;
     PromptFormatter::from_parts(chat_template, ContextMixins::default(), false).ok()
 }
 
@@ -581,6 +591,45 @@ mod tests {
         assert_eq!(templated.len(), 4);
         assert_eq!(tokenizer.bos_token_id(), Some(1));
         assert_eq!(tokenizer.eos_token_id(), Some(2));
+    }
+
+    /// The newer HF layout stores the chat template in a sibling
+    /// `chat_template.jinja` rather than inline in `tokenizer_config.json`
+    /// (what `save_pretrained` emits, and what many recent repos ship). The
+    /// formatter must still build from that file.
+    #[test]
+    fn chat_template_jinja_sidecar_is_used() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("tokenizer.json"),
+            r#"{"version":"1.0","truncation":null,"padding":null,
+  "added_tokens":[{"id":1,"content":"<s>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true}],
+  "normalizer":null,"pre_tokenizer":{"type":"Whitespace"},"post_processor":null,"decoder":null,
+  "model":{"type":"WordLevel","vocab":{"<s>":1,"user":3,"hello":4,"assistant":5},"unk_token":"<s>"}}"#,
+        )
+        .unwrap();
+        // tokenizer_config.json carries NO chat_template.
+        std::fs::write(
+            directory.path().join("tokenizer_config.json"),
+            r#"{"bos_token":"<s>"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            directory.path().join("chat_template.jinja"),
+            "{% for message in messages %}{{ message['role'] }} {{ message['content'] }} {% endfor %}{% if add_generation_prompt %}assistant{% endif %}",
+        )
+        .unwrap();
+
+        let tokenizer = HuggingFaceTokenizer::from_directory(directory.path()).unwrap();
+        let templated = tokenizer
+            .apply_chat_template(
+                &[serde_json::json!({"role":"user","content":"hello"})],
+                true,
+            )
+            .unwrap()
+            .expect("sidecar chat_template.jinja must build a formatter");
+        // "user hello assistant" -> [3, 4, 5].
+        assert_eq!(templated, vec![3, 4, 5]);
     }
 
     /// End-to-end proof that the `hf-hub` download plus the `dynamo-tokenizers`
