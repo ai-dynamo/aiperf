@@ -196,6 +196,9 @@ class EnergyEfficiencyAnalyzer:
         for platform in sorted(platforms):
             vendor_metrics = _VENDOR_METRICS.get(platform)
             if vendor_metrics is None:
+                _logger.debug(
+                    lambda p=platform: f"EnergyEfficiencyAnalyzer: skipping unmapped platform '{p}' — no entry in _VENDOR_METRICS"
+                )
                 continue
             vendor_out = self._analyze_vendor(
                 gpu=gpu,
