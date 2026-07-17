@@ -247,6 +247,11 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     # ``aiperf.config.flags._converter_profiling``); YAML users must be
     # explicit.
     _stop_condition_required: ClassVar[bool] = True
+    _windows_reserved_phase_names: ClassVar[frozenset[str]] = frozenset(
+        {"CON", "PRN", "AUX", "NUL"}
+        | {f"COM{idx}" for idx in range(1, 10)}
+        | {f"LPT{idx}" for idx in range(1, 10)}
+    )
 
     # =========================================================================
     # VALIDATORS
@@ -255,6 +260,13 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     @model_validator(mode="after")
     def _validate_phase_constraints(self) -> Self:
         """Validate stop condition and cross-field constraints."""
+        windows_basename = self.name.split(".", 1)[0].upper()
+        if windows_basename in self._windows_reserved_phase_names:
+            raise ValueError(
+                f"Phase name '{self.name}' is reserved by Windows and cannot "
+                "be used as an artifact directory name."
+            )
+
         self.kind = infer_legacy_phase_kind(self.name, self.kind)
         if self.kind is None:
             raise ValueError(

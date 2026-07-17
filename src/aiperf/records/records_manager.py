@@ -609,13 +609,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         phase = message.metadata.benchmark_phase
         self._records_tracker.update_from_request(message.metadata, message.error)
         if message.error:
-            self._error_tracker.increment_error_count_for_phase(phase, message.error)
+            self._error_tracker.increment_error_count_for_phase(
+                phase, message.error, phase_index=message.metadata.phase_index
+            )
         # A metric accumulator/exporter that failed to ingest this record yields
         # incomplete metrics; surface it in the phase error summary rather than
         # marking the record cleanly processed and silently dropping the failure.
         for error in dispatch_errors:
             self._error_tracker.increment_error_count_for_phase(
-                phase, ErrorDetails.from_exception(error)
+                phase,
+                ErrorDetails.from_exception(error),
+                phase_index=message.metadata.phase_index,
             )
 
         if (
@@ -1301,9 +1305,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     async def _build_phase_profile_results(
         self, phase: CreditPhase, cancelled: bool
     ) -> list[PhaseProfileResults] | None:
-        concrete_phase_stats = self._iter_concrete_phase_stats()
-        if phase != CreditPhase.PROFILING or len(concrete_phase_stats) <= 1:
+        if phase != CreditPhase.PROFILING or not self._has_multiple_profiling_phases():
             return None
+
+        concrete_phase_stats = self._iter_concrete_phase_stats(
+            phase=CreditPhase.PROFILING
+        )
 
         phase_results: list[PhaseProfileResults] = []
         acc_items = [

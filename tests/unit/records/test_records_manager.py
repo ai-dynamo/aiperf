@@ -188,6 +188,27 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         assert any(e.error_details == tracked for e in summary)
 
     @pytest.mark.asyncio
+    async def test_on_records_tracks_errors_by_phase_index(self) -> None:
+        manager = self._make_manager()
+        dispatch_error = RuntimeError("metric accumulator failed")
+        request_error = ErrorDetails(
+            code=499, type="RequestCancellationError", message="cancelled"
+        )
+        manager._dispatch_record = AsyncMock(return_value=[dispatch_error])
+        message = self._records_message()
+        message.metadata.phase_index = 2
+        message.error = request_error
+
+        await manager._on_records(message)
+
+        indexed_summary = manager._error_tracker.get_error_summary_for_phase(
+            CreditPhase.PROFILING, phase_index=2
+        )
+        indexed_errors = {item.error_details: item.count for item in indexed_summary}
+        assert indexed_errors[request_error] == 1
+        assert indexed_errors[ErrorDetails.from_exception(dispatch_error)] == 1
+
+    @pytest.mark.asyncio
     async def test_successful_metric_dispatch_records_no_phase_error(self) -> None:
         manager = self._make_manager()
         manager._dispatch_record = AsyncMock(return_value=[])
@@ -198,6 +219,26 @@ class TestRecordsManagerMetricRecordDispatchErrors:
             manager._error_tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
             == []
         )
+
+    @pytest.mark.asyncio
+    async def test_warmup_plus_single_profiling_does_not_build_phase_results(
+        self,
+    ) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.run = SimpleNamespace(
+            cfg=SimpleNamespace(
+                phases=[
+                    SimpleNamespace(kind="warmup"),
+                    SimpleNamespace(kind="profiling"),
+                ]
+            )
+        )
+
+        results = await RecordsManager._build_phase_profile_results(
+            manager, CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert results is None
 
 
 class TestRecordsManagerTimeslice:

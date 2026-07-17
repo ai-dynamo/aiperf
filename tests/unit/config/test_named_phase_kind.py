@@ -253,6 +253,18 @@ def test_strict_phase_name_regex_rejects_path_unsafe_names() -> None:
         _cfg([{"name": "storm.1", "kind": "profiling", **_PHASE}])
 
 
+@pytest.mark.parametrize("name", ["NUL", "nul", "Com1", "lpt9", "AUX"])
+def test_phase_name_rejects_windows_reserved_device_names(name: str) -> None:
+    with pytest.raises(ValidationError, match="reserved by Windows"):
+        _cfg([{"name": name, "kind": "profiling", **_PHASE}])
+
+
+def test_phase_name_allows_reserved_name_neighbors() -> None:
+    cfg = _cfg([{"name": "com10", "kind": "profiling", **_PHASE}])
+
+    assert cfg.phases[0].name == "com10"
+
+
 def test_sweep_path_resolves_phase_name_and_numeric_index() -> None:
     base = _envelope(
         [
