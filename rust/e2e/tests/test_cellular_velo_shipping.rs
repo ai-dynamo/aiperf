@@ -140,7 +140,19 @@ fn run_modes(h: &AIPerfHarness, cells: u32, velo: bool, hub: bool) -> RunResult 
     if hub {
         env.push(("AIPERF_CELLULAR_HUB", "1"));
     }
-    h.run_env(&format!("--config {} --ui simple", cfg.display()), &env)
+    // Pin `--random-seed`, which sets `run.random_seed`. Cross-topology byte parity
+    // (1-cell baseline vs N-cell cellular) is contractually keyed to `run.random_seed`:
+    // every cell inherits it verbatim, whereas a seedless cellular run auto-derives a
+    // shared seed from the per-run `benchmark_id` (see `resolve_cellular_seed` in
+    // `cellular_controller.rs`), which differs between two independent harness runs and
+    // yields divergent run-seed-governed sampling. The config's `dataset.random_seed`
+    // deterministically pins only the dataset sampler and is deliberately kept separate
+    // from the run seed, so it alone cannot make the baseline and cellular runs
+    // byte-identical. Matches the seed pin the hub-parity test relies on.
+    h.run_env(
+        &format!("--config {} --ui simple --random-seed {SEED}", cfg.display()),
+        &env,
+    )
 }
 
 /// Run the config against `h`'s mock at `cells` cells (standalone-plane path).

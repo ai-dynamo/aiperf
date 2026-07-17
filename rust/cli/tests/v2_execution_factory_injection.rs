@@ -52,6 +52,7 @@ impl GraphPlacementFactory for RecordingGraphPlacement {
         &self,
         worker_count: usize,
         _worker_factory: Arc<dyn TracePlacementFactory>,
+        _clock: Rc<dyn aiperf_runtime::clock::Clock>,
     ) -> Result<Rc<dyn TracePlacement>, GraphPlacementError> {
         assert_eq!(worker_count, 3);
         assert!(
