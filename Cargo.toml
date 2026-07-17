@@ -45,7 +45,24 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 itoa = "1"
 libc = "0.2"
 libmimalloc-sys = { version = "=0.1.49", features = ["extended"] }
-llm-tokenizer = "1.4.1"
+# Tokenization + chat-template rendering come from NVIDIA's ai-dynamo/frontend-crates
+# (https://github.com/ai-dynamo/frontend-crates). `dynamo-tokenizers` wraps HF
+# `tokenizers` (byte-exact token ids); `dynamo-renderer` renders chat templates
+# (minijinja over `tokenizer_config.json`). The HF-hub download is an in-tree shim
+# (`dataset::hf_hub`) over AIPerf's own hyper fetcher — no `hf-hub`/`reqwest` stack.
+dynamo-tokenizers = "1.5.3"
+dynamo-renderer = "1.3.12"
+# Direct dep, introspection only: `dynamo-tokenizers` hides vocab size / token->id,
+# which raw-prompt generation and special-token accounting need. Version tracks
+# `dynamo-tokenizers`' pin so the compiled `tokenizers` crate unifies to one build.
+tokenizers = { version = "0.21", default-features = false, features = ["onig", "esaxx_fast"] }
+# HuggingFace hub tokenizer download. `dynamo-tokenizers` already pulls `hf-hub`
+# transitively (via `fastokens`) on its blocking `ureq` backend; depending on it
+# directly with the SAME features unifies to one compiled `hf-hub`/`ureq` build and
+# links NO second async HTTP/TLS stack (`reqwest`/`native-tls` stay out of the
+# product graph). Gives retry/backoff, xet-CDN 302, `~/.cache/huggingface` reuse,
+# and `HF_HUB_OFFLINE`/`HF_TOKEN` handling for free.
+hf-hub = { version = "0.4.3", default-features = false, features = ["rustls-tls", "ureq"] }
 percent-encoding = "2"
 petgraph = "0.6"
 arrow = { version = "58.3", default-features = false }

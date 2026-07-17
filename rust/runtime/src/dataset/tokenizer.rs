@@ -11,15 +11,16 @@ use std::fmt::{self, Display};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use llm_tokenizer::chat_template::ChatTemplateParams;
-use llm_tokenizer::traits::{
-    Decoder as LlmDecoder, Encoder as LlmEncoder, Tokenizer as LlmTokenizer,
-};
+use dynamo_renderer::{ChatTemplate, ContextMixins, OAIChatLikeRequest, PromptFormatter};
+use dynamo_tokenizers::HuggingFaceTokenizer as DynamoHuggingFaceTokenizer;
+use dynamo_tokenizers::traits::{Decoder as _, Encoder as _};
+use minijinja::Value as JinjaValue;
 use serde_json::Value;
 use tiktoken_rs::{
     CoreBPE, cl100k_base_singleton, o200k_base_singleton, o200k_harmony_singleton,
     p50k_base_singleton, p50k_edit_singleton, r50k_base_singleton,
 };
+use tokenizers::Tokenizer as HfTokenizer;
 
 use crate::dataset::error::{DatasetError, Result};
 
@@ -212,55 +213,61 @@ impl TextTokenizer for TiktokenTokenizer {
 }
 
 /// Local Hugging Face `tokenizer.json` implementation.
+///
+/// Encoding and decoding run through `dynamo-tokenizers` (`ai-dynamo/frontend-crates`),
+/// which wraps the HF `tokenizers` library — token ids are byte-identical to a
+/// direct `tokenizers` load. Chat templates render through `dynamo-renderer`'s
+/// [`PromptFormatter`] (minijinja over `tokenizer_config.json`). Special-token ids
+/// and vocabulary size, which `dynamo-tokenizers` does not expose, are read from a
+/// parallel [`HfTokenizer`] loaded once from the same `tokenizer.json`.
 pub struct HuggingFaceTokenizer {
-    tokenizer: llm_tokenizer::HuggingFaceTokenizer,
+    inner: DynamoHuggingFaceTokenizer,
+    formatter: Option<PromptFormatter>,
     name: String,
     bos_token_id: Option<u32>,
     eos_token_id: Option<u32>,
+    vocab_size: Option<u32>,
 }
 
 impl HuggingFaceTokenizer {
     /// Load a standalone `tokenizer.json` file.
+    ///
+    /// A bare `tokenizer.json` carries no special-token map or chat template, so
+    /// BOS/EOS resolve to `None` and no chat-template formatter is built; use
+    /// [`Self::from_directory`] to also read `tokenizer_config.json`.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let path_text = path.to_str().ok_or_else(|| {
-            DatasetError::Tokenizer(format!(
-                "tokenizer path is not valid UTF-8: {}",
-                path.display()
-            ))
-        })?;
-        let tokenizer = llm_tokenizer::HuggingFaceTokenizer::from_file(path_text)
-            .map_err(|error| DatasetError::Tokenizer(error.to_string()))?;
-        let special_tokens = LlmTokenizer::get_special_tokens(&tokenizer);
-        let bos_token_id = special_tokens
-            .bos_token
-            .as_deref()
-            .and_then(|token| LlmTokenizer::token_to_id(&tokenizer, token));
-        let eos_token_id = special_tokens
-            .eos_token
-            .as_deref()
-            .and_then(|token| LlmTokenizer::token_to_id(&tokenizer, token));
+        let (inner, introspect) = load_tokenizer(path)?;
         Ok(Self {
-            tokenizer,
+            inner,
+            formatter: None,
             name: path.display().to_string(),
-            bos_token_id,
-            eos_token_id,
+            bos_token_id: None,
+            eos_token_id: None,
+            vocab_size: vocab_size_of(&introspect),
         })
     }
 
-    /// Load `tokenizer.json` plus BOS/EOS declarations from a model directory.
+    /// Load `tokenizer.json` plus BOS/EOS declarations and the chat template from a
+    /// model directory.
     pub fn from_directory(path: impl AsRef<Path>) -> Result<Self> {
         let directory = path.as_ref();
         let tokenizer_path = directory.join("tokenizer.json");
-        let mut tokenizer = Self::from_file(&tokenizer_path)?;
-        tokenizer.name = directory.display().to_string();
+        let (inner, introspect) = load_tokenizer(&tokenizer_path)?;
+        let mut tokenizer = Self {
+            inner,
+            formatter: None,
+            name: directory.display().to_string(),
+            bos_token_id: None,
+            eos_token_id: None,
+            vocab_size: vocab_size_of(&introspect),
+        };
         let config_path = directory.join("tokenizer_config.json");
         if config_path.is_file() {
             let config: Value = serde_json::from_slice(&std::fs::read(&config_path)?)?;
-            tokenizer.bos_token_id = special_token_id(&tokenizer.tokenizer, &config, "bos_token")
-                .or(tokenizer.bos_token_id);
-            tokenizer.eos_token_id = special_token_id(&tokenizer.tokenizer, &config, "eos_token")
-                .or(tokenizer.eos_token_id);
+            tokenizer.bos_token_id = special_token_id(&introspect, &config, "bos_token");
+            tokenizer.eos_token_id = special_token_id(&introspect, &config, "eos_token");
+            tokenizer.formatter = build_prompt_formatter(&config);
         }
         Ok(tokenizer)
     }
@@ -278,36 +285,54 @@ impl HuggingFaceTokenizer {
     }
 }
 
-/// Download `repository`'s tokenizer files into the standard Hugging Face cache
-/// and return the snapshot directory for [`HuggingFaceTokenizer::from_directory`].
+/// Load one `tokenizer.json` into both the dynamo encode/decode wrapper and a
+/// parallel [`HfTokenizer`] used only for special-token / vocab introspection.
 ///
-/// Delegates to the `hf-hub` crate (through `llm_tokenizer::hub`) rather than
-/// AIPerf's minimal [`crate::dataset::HttpDatasetFetcher`] so that the xet CDN
-/// `302` redirect is followed, the shared on-disk `~/.cache/huggingface` cache is
-/// reused across runs and processes, and `HF_HUB_OFFLINE=1` serves an already
-/// cached tokenizer with no network access. `hf-hub` resolves the `main`
-/// revision; pinned-commit acquisition stays on the HTTP fetcher seam. This is
-/// intentionally a free function so a distribution can wrap or replace it while
-/// the tokenizer type stays download-mechanism agnostic.
-pub async fn download_hugging_face_tokenizer(repository: &str) -> Result<PathBuf> {
-    llm_tokenizer::hub::download_tokenizer_from_hf(repository)
-        .await
-        .map_err(|error| {
-            DatasetError::Tokenizer(format!(
-                "downloading Hugging Face tokenizer {repository:?}: {error}"
-            ))
-        })
+/// `dynamo-tokenizers` owns no accessor for its inner tokenizer, so the second
+/// load is how AIPerf reads `vocab_size` / `token_to_id`. It is a one-time cost at
+/// composition, off every dispatch path.
+fn load_tokenizer(path: &Path) -> Result<(DynamoHuggingFaceTokenizer, HfTokenizer)> {
+    let path_text = path.to_str().ok_or_else(|| {
+        DatasetError::Tokenizer(format!(
+            "tokenizer path is not valid UTF-8: {}",
+            path.display()
+        ))
+    })?;
+    let inner = DynamoHuggingFaceTokenizer::from_file(path_text)
+        .map_err(|error| DatasetError::Tokenizer(error.to_string()))?;
+    let introspect = HfTokenizer::from_file(path).map_err(|error| {
+        DatasetError::Tokenizer(format!("loading tokenizer {path_text:?}: {error}"))
+    })?;
+    Ok((inner, introspect))
+}
+
+/// Vocabulary cardinality including added tokens, clamped into `u32`.
+fn vocab_size_of(tokenizer: &HfTokenizer) -> Option<u32> {
+    u32::try_from(tokenizer.get_vocab_size(true)).ok()
+}
+
+/// Build a chat-template formatter from a parsed `tokenizer_config.json`.
+///
+/// Returns `None` when the config carries no `chat_template` (or cannot be parsed
+/// as one), keeping chat-template accounting best-effort: callers then fall back
+/// to the bare-text path, matching Python AIPerf's `apply_chat_template` policy.
+fn build_prompt_formatter(config: &Value) -> Option<PromptFormatter> {
+    let chat_template: ChatTemplate = serde_json::from_value(config.clone()).ok()?;
+    PromptFormatter::from_parts(chat_template, ContextMixins::default(), false).ok()
 }
 
 impl TextTokenizer for HuggingFaceTokenizer {
     fn encode(&self, text: &str) -> Result<Vec<u32>> {
-        LlmEncoder::encode(&self.tokenizer, text, false)
+        self.inner
+            .encode(text)
             .map(|encoding| encoding.token_ids().to_vec())
             .map_err(|error| DatasetError::Tokenizer(error.to_string()))
     }
 
     fn decode(&self, token_ids: &[u32]) -> Result<String> {
-        LlmDecoder::decode(&self.tokenizer, token_ids, false)
+        self.inner
+            .decode(token_ids, false)
+            .map(Into::into)
             .map_err(|error| DatasetError::Tokenizer(error.to_string()))
     }
 
@@ -320,7 +345,7 @@ impl TextTokenizer for HuggingFaceTokenizer {
     }
 
     fn vocab_size(&self) -> Option<u32> {
-        u32::try_from(LlmTokenizer::vocab_size(&self.tokenizer)).ok()
+        self.vocab_size
     }
 
     fn name(&self) -> &str {
@@ -332,14 +357,14 @@ impl TextTokenizer for HuggingFaceTokenizer {
         messages: &[Value],
         add_generation_prompt: bool,
     ) -> Result<Option<Vec<u32>>> {
-        let rendered = match LlmTokenizer::apply_chat_template(
-            &self.tokenizer,
-            messages,
-            ChatTemplateParams {
-                add_generation_prompt,
-                ..ChatTemplateParams::default()
-            },
-        ) {
+        let Some(PromptFormatter::OAI(formatter)) = self.formatter.as_ref() else {
+            return Ok(None);
+        };
+        let request = ChatLikeRequest {
+            messages: JinjaValue::from_serialize(messages),
+            add_generation_prompt,
+        };
+        let rendered = match formatter.render(&request) {
             Ok(rendered) => rendered,
             Err(_) => return Ok(None),
         };
@@ -350,18 +375,41 @@ impl TextTokenizer for HuggingFaceTokenizer {
     }
 }
 
-fn special_token_id(
-    tokenizer: &llm_tokenizer::HuggingFaceTokenizer,
-    config: &Value,
-    field: &str,
-) -> Option<u32> {
+/// Minimal [`OAIChatLikeRequest`] over AIPerf's `serde_json` message array.
+///
+/// `dynamo-renderer`'s formatter reads only the message value and the
+/// generation-prompt flag; every other request facet defaults to absent.
+struct ChatLikeRequest {
+    messages: JinjaValue,
+    add_generation_prompt: bool,
+}
+
+impl OAIChatLikeRequest for ChatLikeRequest {
+    fn model(&self) -> String {
+        String::new()
+    }
+
+    fn messages(&self) -> JinjaValue {
+        self.messages.clone()
+    }
+
+    fn should_add_generation_prompt(&self) -> bool {
+        self.add_generation_prompt
+    }
+}
+
+/// Resolve a `tokenizer_config.json` special-token declaration to its id.
+///
+/// Accepts either a bare string token or an `AddedToken`-style object with a
+/// `content` field, then maps it through the introspection tokenizer.
+fn special_token_id(tokenizer: &HfTokenizer, config: &Value, field: &str) -> Option<u32> {
     let value = config.get(field)?;
     let token = match value {
         Value::String(token) => token.as_str(),
         Value::Object(object) => object.get("content")?.as_str()?,
         _ => return None,
     };
-    LlmTokenizer::token_to_id(tokenizer, token)
+    tokenizer.token_to_id(token)
 }
 
 /// Test tokenizer that encodes to a fixed token run and refuses to decode.

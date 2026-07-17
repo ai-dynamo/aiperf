@@ -15,6 +15,7 @@ pub mod dataset;
 pub mod error;
 pub mod fetch;
 pub mod generator;
+pub mod hf_hub;
 pub mod materialize;
 pub mod model;
 pub mod prompt;
@@ -45,6 +46,7 @@ pub use generator::{
     SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern, audio_duration_seconds,
     transcode_audio_to_wav,
 };
+pub use hf_hub::download_hugging_face_tokenizer;
 pub use loader::{
     AccuracyComposer, AccuracyDatasetLoader, DatasetFormatRegistration, DatasetLoader,
     DatasetProbe, DatasetSource, LoadConfig, LoaderRegistry, RawRow, RowOrigin, load_raw_rows,
@@ -77,10 +79,7 @@ pub use segment::{
 pub use synthesis::{
     PrefixTraceSynthesizer, TraceSynthesisConfig, TraceSynthesisRecord, TraceSynthesizer,
 };
-pub use tokenizer::{
-    HuggingFaceTokenizer, TextTokenizer, TiktokenEncoding, TiktokenTokenizer,
-    download_hugging_face_tokenizer,
-};
+pub use tokenizer::{HuggingFaceTokenizer, TextTokenizer, TiktokenEncoding, TiktokenTokenizer};
 pub mod loader;
 pub mod media;
 pub use compose::{
