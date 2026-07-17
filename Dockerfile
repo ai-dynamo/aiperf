@@ -101,11 +101,8 @@ ARG AIPERF_RUNNER_PROFILE=offline
 
 # The `dynosim` feature git-depends on the external ai-dynamo/dynamo repo at a
 # pinned rev (see rust/runtime/Cargo.toml's dynamo-mocker/dynamo-kv-router deps).
-# cargo fetches it directly during the build — no adjacent checkout is staged.
-# To move the pin, bump the rev in rust/runtime/Cargo.toml (REPO/REF below are
-# retained for reference and must be kept in sync with that manifest).
-ARG DYNAMO_AIPERF_NATIVE_REPO=https://github.com/ai-dynamo/dynamo.git
-ARG DYNAMO_AIPERF_NATIVE_REF=14e2cf76b04736e9b99412dfbe76cf1af45ae67a
+# cargo fetches it directly during the build — no adjacent checkout is staged and
+# no build arg drives it; bump the rev in rust/runtime/Cargo.toml to move the pin.
 
 # Copy the frontend sources plus the Rust workspace the interned wheel compiles.
 # The single wheel's pyproject.toml is the repo-root one (maturin backend,
