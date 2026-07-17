@@ -383,6 +383,11 @@ pub async fn ship_cell_artifacts_velo(
     cell_dir: &Path,
     relatives: &[String],
 ) -> Result<()> {
+    // Register the controller peer so the streaming (anchor-attach) transport can
+    // resolve its endpoint — `velo.connect`'s `_hello` handshake registers the peer
+    // for messaging, but the anchor attach dials the streaming transport, which needs
+    // the peer fanned out to it explicitly (idempotent; a re-register is harmless).
+    let _ = velo.register_peer(controller.clone());
     for rel in relatives {
         let src = cell_dir.join(rel);
         if !src.exists() {
