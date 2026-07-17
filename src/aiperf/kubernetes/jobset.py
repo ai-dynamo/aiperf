@@ -165,17 +165,13 @@ def aggregator_tier_counts(cells: int, fanout: int | None) -> list[int]:
     stopping once a tier is ``<= fanout``. The first element equals
     :func:`aggregator_count`, so a length-1 plan is the original single-tier tree.
 
-    TODO(multi-tier k8s): the operator currently builds only a SINGLE aggregator tier
-    (``aggregator_count`` pods; see :meth:`AIPerfJobSetSpec.build_jobset` /
-    ``build_aggregator_replicated_job``). To realize a depth ``>= 2`` tree on Kubernetes
-    the operator must create one indexed ``aggregators-{tier}`` replicatedJob per element
-    of this list and inject, per tier, that tier's parent ship-DNS (an upper-tier
-    aggregator's headless service for a lower tier, the controller for the top tier) via
-    ``AIPERF_AGG_SHIP_ADDR`` — mirroring the same-host ``aggregator_nodes`` wiring. Until
-    then a fanout that resolves to ``len(...) > 1`` should be clamped to a single tier
-    (``[aggregator_count(...)]``) or rejected at admission so cells never ship into a
-    tier the operator did not create. This helper is provided so that wiring is a pure,
-    tested sizing change when it lands.
+    :meth:`AIPerfJobSetSpec.to_k8s_manifest` (via
+    ``_JobSetManifestBuilder.build_aggregator_tier_jobs``) realizes this plan on
+    Kubernetes: one indexed ``aggregators-{tier}`` replicatedJob per element, each tier's
+    pods deriving their per-pod round-robin barrier runner-side and, for a lower tier,
+    shipping up to their parent tier via an ``AIPERF_AGG_SHIP_ADDR`` DNS template —
+    mirroring the same-host ``aggregator_nodes`` wiring. The single-tier plan keeps the
+    bare ``aggregators`` job so its manifest is byte-identical to the flat-tree layout.
     """
     if fanout is None or fanout < 2 or fanout >= cells:
         return []

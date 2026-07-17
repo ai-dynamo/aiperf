@@ -26,8 +26,10 @@ from aiperf.kubernetes.jobset import (
     AIPerfContainerSpec,
     AIPerfJobSetSpec,
     AIPerfReplicatedJobSpec,
+    aggregator_children,
     aggregator_count,
     aggregator_tier_counts,
+    aggregator_tier_job_name,
     get_jobset_install_hint,
     get_jobset_manifest_url,
     get_latest_jobset_version,
@@ -2375,3 +2377,213 @@ class TestAggregatorTierCounts:
             # Each tier strictly reduces and the top fits within the fanout.
             assert all(b < a for a, b in zip(tiers, tiers[1:]))
             assert tiers[-1] <= 3
+
+    def test_job_name_single_tier_is_byte_identical(self) -> None:
+        """A single-tier tree keeps the bare `aggregators` name (unchanged manifest)."""
+        assert aggregator_tier_job_name(0, 1) == "aggregators"
+
+    @pytest.mark.parametrize(
+        "tier_index, expected",
+        [(0, "aggregators-1"), (1, "aggregators-2"), (3, "aggregators-4")],
+    )
+    def test_job_name_multi_tier_is_one_indexed(
+        self, tier_index: int, expected: str
+    ) -> None:
+        """A multi-tier tree names each tier `aggregators-{k}`, 1-indexed from tier 1."""
+        assert aggregator_tier_job_name(tier_index, 3) == expected
+
+
+def _agg_env(job: dict[str, Any]) -> dict[str, Any]:
+    """The aggregator container's env, keyed by name (value or valueFrom)."""
+    container = job["template"]["spec"]["template"]["spec"]["containers"][0]
+    return {e["name"]: e.get("value", e.get("valueFrom")) for e in container["env"]}
+
+
+def _jobs_by_name(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {j["name"]: j for j in manifest["spec"]["replicatedJobs"]}
+
+
+class TestMultiTierAggregatorPods:
+    """The operator emits one `aggregators-{tier}` replicatedJob per tier for depth >= 2."""
+
+    def _manifest(self, cells: int, fanout: int | None) -> dict[str, Any]:
+        return AIPerfJobSetSpec(
+            name="aiperf-js",
+            namespace="ns",
+            job_id="j",
+            image="img:1",
+            cells=cells,
+            cell_agg_fanout=fanout,
+        ).to_k8s_manifest()
+
+    def test_flat_run_emits_no_aggregator_jobs(self) -> None:
+        """No fanout keeps the flat star: just controller + cells."""
+        names = [j["name"] for j in self._manifest(4, None)["spec"]["replicatedJobs"]]
+        assert names == ["controller", "cells"]
+
+    def test_single_tier_is_one_bare_aggregators_job(self) -> None:
+        """6 cells / fanout 3 -> [2]: one `aggregators` job, byte-identical layout."""
+        jobs = _jobs_by_name(self._manifest(6, 3))
+        assert "aggregators" in jobs
+        assert "aggregators-1" not in jobs
+        agg = jobs["aggregators"]
+        assert agg["replicas"] == aggregator_count(6, 3) == 2
+        # Single tier carries neither the tier index nor a ship template (unchanged).
+        env = _agg_env(agg)
+        assert "AIPERF_AGG_TIER_INDEX" not in env
+        assert "AIPERF_AGG_SHIP_ADDR" not in env
+        # It still ships to the controller via the shared cell-controller addr.
+        assert env["AIPERF_CELL_CONTROLLER_ADDR"] == (
+            "tcp://aiperf-js-controller-0-0.aiperf-js.ns.svc.cluster.local:9500"
+        )
+
+    def test_depth_two_emits_one_job_per_tier_with_correct_counts(self) -> None:
+        """8 cells / fanout 2 -> [4, 2]: aggregators-1 (4 pods), aggregators-2 (2 pods)."""
+        manifest = self._manifest(8, 2)
+        jobs = _jobs_by_name(manifest)
+        assert [j["name"] for j in manifest["spec"]["replicatedJobs"]] == [
+            "controller",
+            "cells",
+            "aggregators-1",
+            "aggregators-2",
+        ]
+        tiers = aggregator_tier_counts(8, 2)
+        assert jobs["aggregators-1"]["replicas"] == tiers[0] == 4
+        assert jobs["aggregators-2"]["replicas"] == tiers[1] == 2
+
+    def test_lower_tier_ships_to_its_parent_tier_dns(self) -> None:
+        """A lower tier gets its tier index + the parent-tier ship-DNS template."""
+        jobs = _jobs_by_name(self._manifest(8, 2))
+        env = _agg_env(jobs["aggregators-1"])
+        assert env["AIPERF_AGG_TIER_INDEX"] == "0"
+        # The parent tier is aggregators-2; the `{agg_id}` placeholder is filled pod-side
+        # from the round-robin parent (agg_id % parent_count).
+        assert env["AIPERF_AGG_SHIP_ADDR"] == (
+            "tcp://aiperf-js-aggregators-2-{agg_id}-0."
+            "aiperf-js.ns.svc.cluster.local:9700"
+        )
+
+    def test_top_tier_ships_to_the_controller(self) -> None:
+        """The top tier gets its tier index but no ship template (ships to controller)."""
+        jobs = _jobs_by_name(self._manifest(8, 2))
+        env = _agg_env(jobs["aggregators-2"])
+        assert env["AIPERF_AGG_TIER_INDEX"] == "1"
+        assert "AIPERF_AGG_SHIP_ADDR" not in env
+        assert env["AIPERF_CELL_CONTROLLER_ADDR"] == (
+            "tcp://aiperf-js-controller-0-0.aiperf-js.ns.svc.cluster.local:9500"
+        )
+
+    def test_cells_ship_to_tier_one(self) -> None:
+        """Cells ship to the tier-1 job (aggregators-1) via the round-robin DNS template."""
+        jobs = _jobs_by_name(self._manifest(8, 2))
+        cell = jobs["cells"]["template"]["spec"]["template"]["spec"]["containers"][0]
+        env = {e["name"]: e.get("value") for e in cell["env"]}
+        assert env["AIPERF_CELL_AGG_DNS_TEMPLATE"] == (
+            "tcp://aiperf-js-aggregators-1-{agg_id}-0."
+            "aiperf-js.ns.svc.cluster.local:9700"
+        )
+        assert env["AIPERF_CELL_AGG_FANOUT"] == "2"
+
+    def test_controller_carries_the_expect_dont_spawn_gate(self) -> None:
+        """The controller keeps the AGG_DNS_TEMPLATE presence gate under multi-tier."""
+        jobs = _jobs_by_name(self._manifest(8, 2))
+        ctrl = jobs["controller"]["template"]["spec"]["template"]["spec"]["containers"][
+            0
+        ]
+        env = {e["name"]: e.get("value") for e in ctrl["env"]}
+        assert env["AIPERF_CELL_LAUNCHER"] == "k8s"
+        assert "AIPERF_CELL_AGG_DNS_TEMPLATE" in env
+
+    def test_every_aggregator_pod_binds_all_interfaces(self) -> None:
+        """Each tier's pods bind 0.0.0.0:9700 and expose the aggregator port."""
+        jobs = _jobs_by_name(self._manifest(8, 2))
+        for name in ("aggregators-1", "aggregators-2"):
+            job = jobs[name]
+            container = job["template"]["spec"]["template"]["spec"]["containers"][0]
+            assert container["ports"] == [{"containerPort": 9700, "name": "cell-agg"}]
+            env = _agg_env(job)
+            assert env["AIPERF_AGG_BIND"] == "tcp://0.0.0.0:9700"
+            # AGG_ID comes from the pod's job-index label (the round-robin id).
+            agg_id = env["AIPERF_AGG_ID"]["fieldRef"]["fieldPath"]
+            assert agg_id == "metadata.labels['jobset.sigs.k8s.io/job-index']"
+
+    def test_tier_barriers_tile_the_children(self) -> None:
+        """Per-tier round-robin barriers (aggregator_children) tile every child exactly."""
+        # Tier 1 collects the 8 cells across its 4 pods; tier 2 collects the 4 tier-1
+        # pods across its 2 pods. The operator sizes the replicas; the runner derives the
+        # per-pod barrier from the same aggregator_children round-robin math.
+        cells, fanout = 8, 2
+        tiers = aggregator_tier_counts(cells, fanout)
+        # Tier 1: children are the cells.
+        assert sum(aggregator_children(i, tiers[0], cells) for i in range(tiers[0])) == cells
+        # Tier 2: children are the tier-1 pods.
+        assert (
+            sum(aggregator_children(i, tiers[1], tiers[0]) for i in range(tiers[1]))
+            == tiers[0]
+        )
+
+    def test_deep_tree_emits_all_tiers(self) -> None:
+        """100 cells / fanout 3 -> [34, 12, 4, 2]: four aggregator tier jobs."""
+        manifest = self._manifest(100, 3)
+        jobs = _jobs_by_name(manifest)
+        tiers = aggregator_tier_counts(100, 3)
+        assert tiers == [34, 12, 4, 2]
+        for k, count in enumerate(tiers):
+            name = f"aggregators-{k + 1}"
+            assert jobs[name]["replicas"] == count
+            env = _agg_env(jobs[name])
+            assert env["AIPERF_AGG_TIER_INDEX"] == str(k)
+            if k + 1 == len(tiers):
+                assert "AIPERF_AGG_SHIP_ADDR" not in env
+            else:
+                assert f"aggregators-{k + 2}" in env["AIPERF_AGG_SHIP_ADDR"]
+
+
+class TestArtifactPortExposure:
+    """The HTTP artifact plane exposes 9600; the velo transport rides the 9500 plane."""
+
+    def _manifest(self, transport: str | None) -> dict[str, Any]:
+        pod_template = (
+            PodTemplateConfig(
+                env=[{"name": "AIPERF_ARTIFACT_TRANSPORT", "value": transport}]
+            )
+            if transport is not None
+            else PodTemplateConfig()
+        )
+        return AIPerfJobSetSpec(
+            name="aiperf-js",
+            namespace="ns",
+            job_id="j",
+            image="img:1",
+            cells=2,
+            pod_template=pod_template,
+        ).to_k8s_manifest()
+
+    def _controller_ports(self, manifest: dict[str, Any]) -> list[str]:
+        ctrl = _jobs_by_name(manifest)["controller"]
+        container = ctrl["template"]["spec"]["template"]["spec"]["containers"][0]
+        return [p["name"] for p in container["ports"]]
+
+    def _cell_env(self, manifest: dict[str, Any]) -> dict[str, Any]:
+        cell = _jobs_by_name(manifest)["cells"]
+        container = cell["template"]["spec"]["template"]["spec"]["containers"][0]
+        return {e["name"]: e.get("value") for e in container["env"]}
+
+    def test_http_default_exposes_artifact_port(self) -> None:
+        """The default (HTTP) transport exposes 9600 on the controller."""
+        manifest = self._manifest(None)
+        assert self._controller_ports(manifest) == ["cell-ctl", "cell-artifact"]
+
+    def test_http_explicit_exposes_artifact_port(self) -> None:
+        """An explicit `http` transport still exposes 9600."""
+        assert "cell-artifact" in self._controller_ports(self._manifest("http"))
+
+    def test_http_wires_cell_artifact_port_env(self) -> None:
+        """A cell under HTTP gets the explicit controller artifact port (9600)."""
+        assert self._cell_env(self._manifest(None))["AIPERF_CELL_ARTIFACT_PORT"] == "9600"
+
+    def test_velo_transport_omits_artifact_port(self) -> None:
+        """The velo transport rides the 9500 plane; 9600 is not exposed cross-host."""
+        manifest = self._manifest("velo")
+        assert self._controller_ports(manifest) == ["cell-ctl"]
+        assert "AIPERF_CELL_ARTIFACT_PORT" not in self._cell_env(manifest)
