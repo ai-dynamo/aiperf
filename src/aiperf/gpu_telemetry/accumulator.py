@@ -486,9 +486,10 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
 
         Query surface for cross-accumulator analyzers (e.g. energy efficiency).
         ``platform`` selects the vendor (``"nvidia"`` or ``"amd"``); when
-        ``None`` all GPUs are summed using the NVIDIA power field (backward
-        compat for single-vendor callers). Returns ``(total_power_watts,
-        gpu_count)``; ``gpu_count == 0`` means no power signal was available.
+        ``None``, only NVIDIA GPUs are summed using ``nvidia_power_usage``
+        (backward compat for single-vendor callers — AMD and unknown-platform
+        GPUs are excluded). Returns ``(total_power_watts, gpu_count)``;
+        ``gpu_count == 0`` means no power signal was available.
         """
         tf = TimeRangeFilter(start_ns=start_ns, end_ns=end_ns)
         if platform is None:
@@ -505,10 +506,14 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
     ) -> tuple[float, int]:
         """Per-vendor total energy (J) over ``[start_ns, end_ns)``.
 
-        Query surface for cross-accumulator analyzers. ``end_ns`` is widened by
-        ``Environment.GPU.FINAL_SCRAPE_GRACE_NS`` so the trailing scrape that
-        closes the phase is captured (see ``_sum_gpu_energy_joules``). Returns
-        ``(total_energy_joules, gpu_count)``.
+        Query surface for cross-accumulator analyzers. ``platform`` selects the
+        vendor (``"nvidia"`` or ``"amd"``); when ``None``, only NVIDIA GPUs are
+        summed using ``nvidia_energy_consumption`` (backward compat for
+        single-vendor callers — AMD and unknown-platform GPUs are excluded).
+        ``end_ns`` is widened by ``Environment.GPU.FINAL_SCRAPE_GRACE_NS`` so
+        the trailing scrape that closes the phase is captured (see
+        ``_sum_gpu_energy_joules``). Returns ``(total_energy_joules,
+        gpu_count)``.
         """
         bounded_end_ns = (
             end_ns + Environment.GPU.FINAL_SCRAPE_GRACE_NS
