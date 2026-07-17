@@ -12,11 +12,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use aiperf_runtime::engine::coordinator::{ResponseV2, Coordinator};
+use aiperf_runtime::engine::coordinator::{Coordinator, ResponseV2};
 use aiperf_runtime::engine::dataset_input::BuiltinRunnerDatasetInputAdapterResolver;
 use aiperf_runtime::engine::execution_factories::ExecutionFactories;
 use aiperf_runtime::engine::graph_execution::{
-    NativeRunnerGraphPlacementFactory, GraphPlacementFactory,
+    GraphPlacementFactory, NativeRunnerGraphPlacementFactory,
 };
 use aiperf_runtime::engine::graph_input::BuiltinRunnerGraphInputAdapterResolver;
 use aiperf_runtime::engine::readiness::{

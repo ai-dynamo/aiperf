@@ -27,7 +27,6 @@ use aiperf_runtime::endpoints::{
 use aiperf_runtime::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
-use aiperf_runtime::transport::http::TransportSink;
 use aiperf_runtime::multiturn::{
     ConversationSource, NativeDatasetConversationSource, PreparedEndpointReference,
 };
@@ -38,6 +37,7 @@ use aiperf_runtime::scheduled::{
     run_scheduled_workload_with_processors,
 };
 use aiperf_runtime::timing::{Phase, StopConfig};
+use aiperf_runtime::transport::http::TransportSink;
 use aiperf_runtime::user_centric::{UserCentricConfig, UserCentricWorkload};
 
 /// Build a conversation source over the live native dataset + prepared chat

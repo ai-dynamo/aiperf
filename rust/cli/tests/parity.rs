@@ -249,8 +249,10 @@ fn goldens_are_valid_runner_input() {
     // `run` object — so validate the `run` subtree against the real consumer type.
     for fixture in FIXTURES {
         let golden = load_golden(fixture);
-        let _: BenchmarkRunWireV2 = serde_json::from_value(golden["run"].clone())
-            .unwrap_or_else(|e| panic!("[{fixture}] golden run is not valid BenchmarkRunWireV2: {e}"));
+        let _: BenchmarkRunWireV2 =
+            serde_json::from_value(golden["run"].clone()).unwrap_or_else(|e| {
+                panic!("[{fixture}] golden run is not valid BenchmarkRunWireV2: {e}")
+            });
     }
 }
 

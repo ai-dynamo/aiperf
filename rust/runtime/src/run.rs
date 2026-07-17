@@ -47,7 +47,6 @@ use crate::timing::{
 
 use crate::adaptive::{AdaptiveControlVariable, AdaptiveRunConfig, build_adaptive};
 use crate::ancillary::{AncillaryTimingConfig, parse_base_urls, url_selector};
-use crate::transport::http::{HttpRequestDispatcher, TransportSink};
 use crate::metrics::{
     NativeMetricsObserver, NativeResponseMetadata, ObserverTee, RequestMetricMetadata,
 };
@@ -58,6 +57,7 @@ use crate::scheduled::{
     Workload, run_scheduled_workload_with_ancillary,
 };
 use crate::scheduler::LocalTaskScheduler;
+use crate::transport::http::{HttpRequestDispatcher, TransportSink};
 use crate::user_centric::{UserCentricConfig, UserCentricWorkload};
 use crate::workload::SkeletonWorkload;
 

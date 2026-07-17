@@ -36,8 +36,8 @@ use aiperf_runtime::engine::application::Application;
 use aiperf_runtime::engine::cellular_kind::CellularRunKind;
 use aiperf_runtime::engine::distribution_identity::current_distribution_id;
 use aiperf_runtime::engine::protocol_v2::{
-    BenchmarkRunWireV2, PROTOCOL_V2, RunTerminalV2, RunValidationV2, DiagnosticV2,
-    EnvelopeV2, FailureStageV2, OperationV2, ValidationCompletenessV2,
+    BenchmarkRunWireV2, DiagnosticV2, EnvelopeV2, FailureStageV2, OperationV2, PROTOCOL_V2,
+    RunTerminalV2, RunValidationV2, ValidationCompletenessV2,
 };
 use aiperf_runtime::engine::redaction::redact_diagnostic;
 use serde_json::Value;

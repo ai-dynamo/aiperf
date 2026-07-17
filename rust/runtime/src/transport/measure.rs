@@ -50,7 +50,12 @@ impl WorkerMeasurement {
     /// Take the observer and finalize it into the drained records at `end_ns`.
     pub(crate) fn drain(&self, end_ns: i64) -> Vec<(Uuid, RecordIngest)> {
         match self.cell.borrow_mut().take() {
-            Some(observer) => observer.take_finalizer_at(end_ns).finish_with_records().records,
+            Some(observer) => {
+                observer
+                    .take_finalizer_at(end_ns)
+                    .finish_with_records()
+                    .records
+            }
             None => Vec::new(),
         }
     }

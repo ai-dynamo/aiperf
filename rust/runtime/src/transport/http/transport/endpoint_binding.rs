@@ -22,9 +22,9 @@ use crate::endpoints::{
 use bytes::Bytes;
 use serde_json::Value;
 
+use crate::transport::core::SseMessage;
 use crate::transport::core::{ConnectionReuseStrategy, ErrorDetails, RequestRecord, Response};
 use crate::transport::http::client::http_client::SseMessageFilter;
-use crate::transport::core::SseMessage;
 use crate::transport::http::models::RequestConfig;
 use crate::transport::http::transport::body::{
     JsonBodyEncoder, MultipartBodyEncoder, RequestBodyEncoder,

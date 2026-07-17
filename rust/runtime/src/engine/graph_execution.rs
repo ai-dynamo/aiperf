@@ -1014,11 +1014,10 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                 self.observer.as_ref(),
                 &|_| {
                     if !first_token_emitted.replace(true)
-                        && let Err(error) =
-                            self.events.emit(GraphExecutionEvent::FirstToken {
-                                trace_id: self.trace_id.clone(),
-                                uuid,
-                            })
+                        && let Err(error) = self.events.emit(GraphExecutionEvent::FirstToken {
+                            trace_id: self.trace_id.clone(),
+                            uuid,
+                        })
                     {
                         *first_token_error.borrow_mut() = Some(error);
                     }
@@ -1285,7 +1284,8 @@ mod tests {
             })
             .unwrap();
         assert_eq!(dispatch.input_tokens, 4);
-        let crate::transport::core::PreparedEndpointBinding::Prepared(reference) = dispatch.endpoint;
+        let crate::transport::core::PreparedEndpointBinding::Prepared(reference) =
+            dispatch.endpoint;
         assert_eq!(reference.endpoint_id.as_str(), "chat");
         assert_eq!(reference.key.index(), 1);
     }

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::extensions::{AIPerfRegistry, AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory};
 use anyhow::Result;
 
-use crate::engine::coordinator::{ProcessResultV2, Coordinator};
+use crate::engine::coordinator::{Coordinator, ProcessResultV2};
 use crate::engine::dataset_input::{
     BuiltinRunnerDatasetInputAdapterResolver, DatasetInputAdapterResolver,
 };
