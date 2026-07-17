@@ -124,6 +124,31 @@ pub struct LoadConfig {
     pub bearer_token: Option<String>,
 }
 
+/// Resolve a HuggingFace access token the way Python/`hf-hub` do: the
+/// `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` env vars first, then the on-disk token
+/// file (`$HF_TOKEN_PATH`, else `$HF_HOME/token`, else `~/.cache/huggingface/token`)
+/// so gated public datasets authenticate without an explicit env var.
+fn resolve_hf_token() -> Option<String> {
+    if let Ok(token) = std::env::var("HF_TOKEN").or_else(|_| std::env::var("HUGGING_FACE_HUB_TOKEN"))
+    {
+        let token = token.trim().to_string();
+        if !token.is_empty() {
+            return Some(token);
+        }
+    }
+    let path = std::env::var_os("HF_TOKEN_PATH")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HF_HOME").map(|home| std::path::PathBuf::from(home).join("token"))
+        })
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|home| std::path::PathBuf::from(home).join(".cache/huggingface/token"))
+        })?;
+    let token = std::fs::read_to_string(path).ok()?.trim().to_string();
+    (!token.is_empty()).then_some(token)
+}
+
 impl LoadConfig {
     /// Construct default settings for one source.
     pub fn new(source: DatasetSource) -> Self {
@@ -137,9 +162,7 @@ impl LoadConfig {
             sampling_strategy: None,
             options: Map::new(),
             fetcher: Arc::new(HttpDatasetFetcher::default()),
-            bearer_token: std::env::var("HF_TOKEN")
-                .ok()
-                .or_else(|| std::env::var("HUGGING_FACE_HUB_TOKEN").ok()),
+            bearer_token: resolve_hf_token(),
         }
     }
 

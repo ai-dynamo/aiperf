@@ -619,14 +619,23 @@ fn request_extra_body(attributes: &Map<String, Value>) -> Result<Option<Map<Stri
         extra.insert("temperature".into(), Value::from(temperature));
     }
     if let Some(stop) = attributes.get("gen_ai.request.stop_sequences") {
-        let stop = stop
-            .as_array()
-            .filter(|values| values.iter().all(Value::is_string))
-            .ok_or_else(|| {
-                DatasetError::Validation("gen_ai.request.stop_sequences must be strings".into())
-            })?;
-        if !stop.is_empty() {
-            extra.insert("stop".into(), Value::Array(stop.clone()));
+        let sequences = match stop {
+            Value::Null => Vec::new(),
+            Value::Array(items) if items.iter().all(Value::is_string) => items.clone(),
+            // v2 may encode the array as a JSON string, or carry a single stop word.
+            Value::String(text) => match serde_json::from_str::<Value>(text) {
+                Ok(Value::Array(items)) if items.iter().all(Value::is_string) => items,
+                _ if !text.is_empty() => vec![Value::String(text.clone())],
+                _ => Vec::new(),
+            },
+            _ => {
+                return Err(DatasetError::Validation(
+                    "gen_ai.request.stop_sequences must be strings".into(),
+                ));
+            }
+        };
+        if !sequences.is_empty() {
+            extra.insert("stop".into(), Value::Array(sequences));
         }
     }
     Ok((!extra.is_empty()).then_some(extra))
