@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::dataset::{DatasetSource, LoadConfig, TextTokenizer};
+use crate::graph::conditional::compile_conditional_graph_input;
 use crate::graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
 use crate::graph::recorded::{
     PromptCorpus, RecordedTraceInputConfig, compile_aiperf_trace_input, compile_dynamo_trace_input,
@@ -228,8 +229,9 @@ impl Default for BuiltinRunnerGraphInputAdapterResolver {
 impl BuiltinRunnerGraphInputAdapterResolver {
     /// Compose the built-in direct Graph-IR formats.
     pub fn new() -> Self {
-        let adapters: [Arc<dyn GraphInputAdapter>; 4] = [
+        let adapters: [Arc<dyn GraphInputAdapter>; 5] = [
             Arc::new(DagJsonlRunnerGraphInputAdapter),
+            Arc::new(ConditionalGraphRunnerGraphInputAdapter),
             Arc::new(WekaTraceRunnerGraphInputAdapter),
             Arc::new(DynamoTraceRunnerGraphInputAdapter),
             Arc::new(AIPerfTraceRunnerGraphInputAdapter),
@@ -345,6 +347,60 @@ impl DagJsonlRunnerGraphInputAdapter {
             // `t* = 0` (profiling full, warmup empty). Authored programs supply
             // their own message content verbatim, so no cache-bust marker is
             // applied.
+            t_star_window: TStarWindow::default(),
+            cache_bust_target: CacheBustTarget::None,
+        })
+    }
+}
+
+/// Built-in authored conditional-graph adapter: model-independent branching plus
+/// recorded replay content folded into the flat Graph-IR at lowering.
+#[derive(Debug)]
+pub struct ConditionalGraphRunnerGraphInputAdapter;
+
+#[async_trait(?Send)]
+impl GraphInputAdapter for ConditionalGraphRunnerGraphInputAdapter {
+    fn format(&self) -> &'static str {
+        "conditional_graph"
+    }
+
+    async fn load(
+        &self,
+        raw: &RawValue,
+        context: &GraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        // Authored conditional graphs share the generic authored-graph file
+        // envelope (`path`/`records`, sequential selection) with `dag_jsonl`.
+        let input: DagJsonlDatasetInput =
+            decode_graph_input(raw).context("decoding direct conditional_graph input")?;
+        let prepared = match input {
+            DagJsonlDatasetInput::File(spec) => spec.prepare(self.format())?,
+            DagJsonlDatasetInput::Public(spec) => prepare_public(spec, self.format())?,
+        };
+        let workload_seed = context.run_random_seed.unwrap_or(0);
+        let bundle =
+            compile_conditional_graph_input(prepared.input, context.tokenizer, workload_seed)
+                .await
+                .map_err(|error| anyhow!(error.to_string()))
+                .context("loading and lowering direct authored conditional_graph input")?;
+        ensure!(
+            !bundle.plans.is_empty(),
+            "authored conditional_graph input contains no traces after root limiting"
+        );
+        ensure!(
+            bundle.metadata.format == self.format(),
+            "Graph-IR adapter {:?} returned bundle format {:?}",
+            self.format(),
+            bundle.metadata.format
+        );
+        Ok(PreparedRunnerGraphInput {
+            bundle,
+            random_seed: prepared.random_seed,
+            default_output_tokens: prepared.default_output_tokens,
+            allow_dataset_wrap: true,
+            // Authored programs supply verbatim content and carry no recorded
+            // timing, so the trajectory window defaults to full profiling and no
+            // cache-bust marker is applied.
             t_star_window: TStarWindow::default(),
             cache_bust_target: CacheBustTarget::None,
         })

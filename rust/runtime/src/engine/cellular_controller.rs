@@ -1183,7 +1183,7 @@ fn dataset_is_single_turn(dataset: &serde_json::Value) -> bool {
 fn is_graph_dataset_value(dataset: &serde_json::Value) -> bool {
     matches!(
         dataset.get("format").and_then(serde_json::Value::as_str),
-        Some("dag_jsonl" | "weka_trace" | "dynamo_trace")
+        Some("dag_jsonl" | "conditional_graph" | "weka_trace" | "dynamo_trace")
     )
 }
 
@@ -1367,7 +1367,7 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
         // synthetic/single-turn requirement.
         if matches!(
             dataset.get("format").and_then(serde_json::Value::as_str),
-            Some("dag_jsonl" | "weka_trace" | "dynamo_trace")
+            Some("dag_jsonl" | "conditional_graph" | "weka_trace" | "dynamo_trace")
         ) {
             continue;
         }
@@ -1491,7 +1491,7 @@ fn build_dataset_serve_plan(
 
     let is_graph_format = matches!(
         format,
-        Some("dag_jsonl" | "weka_trace" | "dynamo_trace" | "aiperf_trace")
+        Some("dag_jsonl" | "conditional_graph" | "weka_trace" | "dynamo_trace" | "aiperf_trace")
     );
     if is_graph_format {
         let (kind, base_name, files) =

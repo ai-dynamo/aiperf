@@ -17,7 +17,7 @@ pub(crate) fn is_graph_dataset(envelope: &Value) -> bool {
             datasets.iter().any(|dataset| {
                 matches!(
                     dataset.get("format").and_then(Value::as_str),
-                    Some("dag_jsonl" | "weka_trace" | "dynamo_trace")
+                    Some("dag_jsonl" | "conditional_graph" | "weka_trace" | "dynamo_trace")
                 )
             })
         })
