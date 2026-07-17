@@ -460,6 +460,10 @@ Measurement and output:
 - [`specs/accuracy.md`](specs/accuracy.md) — the Rust dispatch/capture vs
   pinned-Python grading split, the injected evaluator seam, and sharded capture
   with a single grade.
+- [`specs/dataset-analysis.md`](specs/dataset-analysis.md) — future dry-run
+  analytical report: dataset shape, turn-by-turn ISL/OSL, prefix/KV-cache reuse
+  (ideal and finite-capacity), and the real execution timeline distilled from a
+  dry run's records.
 
 Targets:
 

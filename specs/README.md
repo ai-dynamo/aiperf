@@ -68,6 +68,7 @@ read the record for the subsystem you are touching.
 | [metrics.md](metrics.md) | The IO-free metrics engine: the column-store accumulator, the metric catalog, sweep curves, and the typed report; exact vs sketch modes. |
 | [telemetry.md](telemetry.md) | Side-channel measurement: GPU telemetry, server metrics, and network latency, feeding values into the metrics seam. |
 | [exporters.md](exporters.md) | The native output plane: the typed report core and the static set of `Exporter` sinks behind one trait. |
+| [dataset-analysis.md](dataset-analysis.md) | Future dry-run analytical report: dataset shape, turn-by-turn ISL/OSL, prefix/KV-cache reuse (ideal and finite-capacity), and the real execution timeline (concurrency, throughput, backlog) distilled from a dry run's records. |
 | [accuracy.md](accuracy.md) | The Rust dispatch/capture vs pinned-Python grading split, the injected evaluator seam, and sharded capture with a single grade. |
 
 ### Targets
