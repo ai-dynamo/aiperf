@@ -7,6 +7,10 @@
 //! report: neutral per-record and per-turn observation structs, plus
 //! [`stat_summary`], a distribution summarizer used across the report sections.
 
+pub mod prefix_cache;
+
+pub use prefix_cache::{IdealReuse, IdentitySource, RequestBlocks, ideal_reuse};
+
 /// A single observed request record, expressed in transport-neutral terms.
 #[derive(Debug, Clone)]
 pub struct AnalyzedRecord {
