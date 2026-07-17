@@ -101,7 +101,7 @@ pub fn process(sweep_json: &Value, spec: &SurfaceSpec) -> anyhow::Result<Value> 
     }))
 }
 
-/// Ascending unique values (`sorted({...})`), NaN-tolerant.
+/// Ascending unique values, NaN-tolerant.
 fn sorted_unique(it: impl Iterator<Item = f64>) -> Vec<f64> {
     let mut v: Vec<f64> = it.collect();
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));

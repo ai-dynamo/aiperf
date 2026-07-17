@@ -3,16 +3,10 @@
 
 //! Golden tests for the console-txt sink.
 //!
-//! Two tiers:
-//!   * **Byte-exact contract goldens** (`golden/*.txt`) — generated directly
-//!     from the Python oracles by rendering each `_create_warning_text` /
-//!     `_format_text` string through `rich.text.Text.from_markup(...).plain`
-//!     (i.e. exactly what `Console.export_text(styles=False)` strips markup to).
-//!     These pin the warning/insight message strings and must never drift; they
-//!     are NOT blessable.
-//!   * **Regression goldens** (`golden/*.regression.txt`) — this module's own
-//!     approximate Rich box output for the error table and a full render. They
-//!     guard against accidental layout changes; regenerate with `BLESS=1`.
+//! Byte-exact `golden/*.txt` files are authoritative Python-oracle output after
+//! `rich.text.Text.from_markup(...).plain`; they are not blessable.
+//! `golden/*.regression.txt` files cover approximate Rich box layout and may be
+//! regenerated with `BLESS=1`.
 
 use super::*;
 use crate::metrics_core::{
@@ -21,9 +15,6 @@ use crate::metrics_core::{
 };
 use std::collections::BTreeMap;
 
-// ---------------------------------------------------------------------------
-// Report builders
-// ---------------------------------------------------------------------------
 
 fn empty_report() -> NativeReport {
     NativeReport::new(&AccumulatorSummary::new(), None)
@@ -114,9 +105,6 @@ fn assert_regression(name: &str, actual: &str) {
     assert_eq!(actual, expected, "regression golden {name}");
 }
 
-// ---------------------------------------------------------------------------
-// OSL-mismatch detector
-// ---------------------------------------------------------------------------
 
 #[test]
 fn osl_mismatch_body_is_byte_exact() {
@@ -171,9 +159,6 @@ fn osl_mismatch_reports_na_when_diff_absent() {
     assert!(warning.body.contains("Average mismatch: N/A"));
 }
 
-// ---------------------------------------------------------------------------
-// Usage-discrepancy detector
-// ---------------------------------------------------------------------------
 
 #[test]
 fn usage_discrepancy_body_is_byte_exact() {
@@ -201,9 +186,6 @@ fn usage_discrepancy_absent_when_zero() {
     assert!(detect_usage_discrepancy(&zero).is_none());
 }
 
-// ---------------------------------------------------------------------------
-// API-error detectors
-// ---------------------------------------------------------------------------
 
 #[test]
 fn max_completion_tokens_body_is_byte_exact() {
@@ -306,9 +288,6 @@ fn no_api_error_warnings_on_empty_report() {
     assert!(detect_api_errors(&empty_report()).is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// Error-summary table
-// ---------------------------------------------------------------------------
 
 #[test]
 fn error_summary_table_absent_without_errors() {
@@ -342,10 +321,6 @@ fn error_code_zero_renders_na() {
     // Python treats a falsy code (0) as N/A.
     assert!(table.contains("N/A"));
 }
-
-// ---------------------------------------------------------------------------
-// Metrics tables + full render (regression)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn full_render_regression() {
@@ -401,6 +376,78 @@ fn full_render_regression() {
     assert!(text.contains("NVIDIA AIPerf")); // metrics table title
     assert!(text.contains("Output Sequence Length Mismatch Warning"));
     assert_regression("full_render", &text);
+}
+
+// ---------------------------------------------------------------------------
+// Unicode cell-width parity (Rich `cells.cell_len` / `_cell_widths`)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cell_width_matches_rich_cell_len() {
+    // ASCII is one cell each.
+    assert_eq!(cell_width("hello"), 5);
+    // CJK ideographs and kana are two cells (East Asian Wide/Fullwidth).
+    assert_eq!(char_cell_size('世'), 2);
+    assert_eq!(char_cell_size('本'), 2);
+    assert_eq!(cell_width("日本語"), 6);
+    // Emoji (astral, Emoji_Presentation) are two cells.
+    assert_eq!(char_cell_size('🚀'), 2);
+    assert_eq!(char_cell_size('🌟'), 2);
+    // Combining marks and zero-width space render in zero cells.
+    assert_eq!(char_cell_size('\u{0301}'), 0); // combining acute accent
+    assert_eq!(char_cell_size('\u{200B}'), 0); // zero-width space
+    assert_eq!(cell_width("e\u{0301}"), 1); // e + combining accent = one cell
+}
+
+#[test]
+fn set_cell_size_crops_wide_glyph_on_boundary() {
+    // A wide glyph straddling the crop boundary is dropped and space-padded so
+    // the result is exactly `total` cells (Rich `set_cell_size`).
+    assert_eq!(set_cell_size("a世b", 2), "a "); // '世' would overflow 2 → drop + space
+    assert_eq!(set_cell_size("a世b", 3), "a世"); // fits exactly at 3 cells
+    assert_eq!(set_cell_size("abc", 5), "abc  "); // short → right-padded
+}
+
+/// Wide/zero-width Unicode drives column-width solving, word wrap, and ellipsis
+/// truncation exactly as Rich does. Pins the fix for the `cell_width`-as-char-count
+/// bug: an emoji message that overflows on a trailing space must ellipsize (left
+/// column keeps trailing whitespace), while a CJK label in a right-justified
+/// column is fully right-stripped. Regenerate with `BLESS=1`.
+#[test]
+fn unicode_table_render_regression() {
+    let left = [Justify::Right, Justify::Right, Justify::Left, Justify::Right];
+    let emoji = render_table(
+        "NVIDIA AIPerf | Error Summary",
+        &["Code", "Type", "Message", "Count"],
+        &[vec![
+            "503".to_string(),
+            "EmojiError".to_string(),
+            "service unavailable 🚀 please retry later 🔥 the upstream server returned an error 😀 and could not complete the streaming response for this request 🎉 sorry".to_string(),
+            "5".to_string(),
+        ]],
+        &left,
+        140,
+    );
+    assert_regression("unicode_emoji_wrap", &emoji);
+
+    let right: Vec<Justify> = std::iter::repeat_n(Justify::Right, 8).collect();
+    let cjk = render_table(
+        "NVIDIA AIPerf | LLM Metrics",
+        &["Metric", "avg", "min", "max", "p99", "p90", "p50", "std"],
+        &[vec![
+            "服误 unavailable 😀 dog the brown fox (tokens/sec)".to_string(),
+            "211,823.34".to_string(),
+            "532,522.69".to_string(),
+            "101,587.36".to_string(),
+            "692,065.40".to_string(),
+            "636,606.25".to_string(),
+            "329,729.82".to_string(),
+            "83,073.93".to_string(),
+        ]],
+        &right,
+        140,
+    );
+    assert_regression("unicode_cjk_metric", &cjk);
 }
 
 #[test]

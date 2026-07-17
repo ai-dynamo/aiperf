@@ -439,7 +439,11 @@ struct EndpointSection {
     timeout: Option<f64>,
     #[serde(default, alias = "connectionReuse")]
     connection_reuse: Option<String>,
-    #[serde(default, alias = "useLegacyMaxTokens")]
+    #[serde(
+        default,
+        rename = "use_legacy_max_tokens",
+        alias = "useLegacyMaxTokens"
+    )]
     use_legacy_max_tokens: Option<bool>,
     #[serde(default, alias = "useServerTokenCount")]
     use_server_token_count: Option<bool>,
@@ -1337,7 +1341,7 @@ impl Benchmark {
             transport,
             streaming: self.endpoint.streaming,
             timeout_seconds: self.endpoint.timeout,
-            use_max_tokens_compat: self.endpoint.use_legacy_max_tokens.unwrap_or(false),
+            use_legacy_max_tokens: self.endpoint.use_legacy_max_tokens.unwrap_or(false),
             use_server_token_count: self.endpoint.use_server_token_count.unwrap_or(false),
             download_video_content: self.endpoint.download_video_content.unwrap_or(false),
             extra: self.endpoint.extra.unwrap_or_default(),

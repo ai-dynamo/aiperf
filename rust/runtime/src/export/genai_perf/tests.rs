@@ -3,10 +3,9 @@
 
 //! Golden parity tests for the AIPerf v1 summary sink.
 //!
-//! Every golden string was produced by running the Python oracle serializers
-//! (`orjson.dumps(..., OPT_INDENT_2)` and stdlib `csv.writer`) over the same
-//! synthetic metric values these tests feed the Rust sink, so the fixtures pin
-//! the exact bytes AIPerf's Python exporters emit. Grounding of each shape is
+//! Golden strings pin the exact bytes defined by the Python oracle serializers
+//! (`orjson.dumps(..., OPT_INDENT_2)` and stdlib `csv.writer`) for the same
+//! synthetic metric values. Grounding of each shape is
 //! cited against `src/aiperf/` in the module-level docs of `genai_perf.rs`.
 
 use super::*;
@@ -185,7 +184,6 @@ fn json_matches_python_oracle_streaming_goodput() {
     let report = streaming_report();
     let json = render_json(&report, &cfg("profile_export").genai_perf);
     assert_eq!(json, include_str!("../golden/v1_streaming.json"));
-    // INTERNAL metric was filtered from the JSON entirely.
     assert!(!json.contains("min_request_timestamp"));
 }
 

@@ -3,9 +3,8 @@
 
 //! Typed adaptive events and summary artifacts.
 //!
-//! The schema carries the event/candidate/summary fields. File I/O
-//! sits behind [`AdaptiveArtifactSink`] so a future unified report exporter can
-//! consume the same typed records without changing the controller.
+//! The schema carries event, candidate, and summary fields. File I/O is isolated
+//! behind [`AdaptiveArtifactSink`].
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};

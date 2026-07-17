@@ -153,7 +153,7 @@ struct HangingHttpServer {
 
 /// Minimal real TCP/OpenAI-SSE server used when the external mock binary is not
 /// installed. Each response closes its connection, exercising transport
-/// re-establishment while keeping the proof self-contained.
+/// re-establishment in a self-contained test.
 struct SseHttpServer {
     base_url: String,
     thread: Option<std::thread::JoinHandle<()>>,

@@ -172,12 +172,10 @@ mod tests {
     async fn unknown_request_is_a_counted_miss_not_a_silent_skip() {
         let index = index_of(&[0, 1, 2]).await;
         let mut tracker = DispatchTracker::new();
-        // 99 is not indexed on this cell → Miss, counted.
         assert_eq!(tracker.on_issue(99, &index), DispatchDecision::Miss);
         assert_eq!(tracker.on_issue(42, &index), DispatchDecision::Miss);
         assert_eq!(tracker.distribution_misses(), 2);
         assert_eq!(tracker.issued(), 0);
-        // A miss does not mark state, so a later successful index would still issue.
         assert_eq!(tracker.state(99), None);
     }
 

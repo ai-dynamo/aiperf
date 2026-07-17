@@ -3,9 +3,9 @@
 
 //! Inference-server `/metrics` telemetry for native AIPerf.
 //!
-//! This leaf crate keeps Prometheus parsing, endpoint compatibility policy,
-//! histogram estimation, and server-specific aggregation outside the IO-free
-//! `aiperf-metrics` engine. Runtime code owns phase barriers and the sequential
+//! This module keeps Prometheus parsing, endpoint compatibility policy,
+//! histogram estimation, and server-specific aggregation separate from
+//! [`crate::metrics_core`]. Phase orchestration owns barriers and the sequential
 //! scrape task. Parser, unit-inference, source, and realtime-atlas policies are
 //! traits so additional exposition dialects and engines remain injectable.
 

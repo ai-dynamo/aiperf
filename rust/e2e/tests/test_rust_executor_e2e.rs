@@ -5,7 +5,7 @@ use common::*;
 
 #[tokio::test]
 #[ignore = "requires Python OTLP collector and adaptive chat-handler fixtures"]
-async fn test_config_v2_streams_rust_metrics_live_through_canonical_python_otel() {
+async fn test_otel_fixture_profile_completes() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model mock-model --url {}/v1/chat/completions --streaming \
@@ -19,7 +19,7 @@ async fn test_config_v2_streams_rust_metrics_live_through_canonical_python_otel(
 
 #[tokio::test]
 #[ignore = "requires Python server-metrics handler and Parquet-reader fixtures"]
-async fn test_config_v2_collects_server_metrics_in_rust_across_exact_phase_boundaries() {
+async fn test_server_metrics_fixture_profile_completes() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model mock-model --url {}/v1/chat/completions --streaming \
@@ -33,7 +33,7 @@ async fn test_config_v2_collects_server_metrics_in_rust_across_exact_phase_bound
 
 #[tokio::test]
 #[ignore = "requires a Python DCGM scrape fixture with monotonic energy counters"]
-async fn test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts() {
+async fn test_gpu_telemetry_fixture_profile_completes() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model mock-model --url {}/v1/chat/completions --streaming \
@@ -47,7 +47,7 @@ async fn test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts() {
 
 #[tokio::test]
 #[ignore = "requires the Python network-latency probe-target harness"]
-async fn test_config_v2_runs_native_tcp_rtt_calibration_and_adjusts_metrics() {
+async fn test_network_latency_fixture_profile_completes() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model mock-model --url {}/v1/chat/completions --streaming \
@@ -61,7 +61,7 @@ async fn test_config_v2_runs_native_tcp_rtt_calibration_and_adjusts_metrics() {
 
 #[tokio::test]
 #[ignore = "requires Python fixed-RTT configuration and adaptive chat fixtures"]
-async fn test_config_v2_fixed_network_rtt_bypasses_probes_and_shifts_metrics() {
+async fn test_fixed_network_rtt_fixture_profile_completes() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model mock-model --url {}/v1/chat/completions --streaming \
@@ -75,7 +75,7 @@ async fn test_config_v2_fixed_network_rtt_bypasses_probes_and_shifts_metrics() {
 
 #[tokio::test]
 #[ignore = "requires Python request-capture, tokenizer, and dataset fixtures"]
-async fn test_config_v2_executes_a_real_native_child() {
+async fn test_request_capture_fixture_profile_completes() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model mock-model --url {}/v1/chat/completions --streaming \
@@ -89,7 +89,7 @@ async fn test_config_v2_executes_a_real_native_child() {
 
 #[tokio::test]
 #[ignore = "requires a Python handler that captures client peer ports"]
-async fn test_config_v2_controls_native_connection_reuse() {
+async fn test_connection_reuse_fixture_profile_completes() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model mock-model --url {}/v1/chat/completions \
@@ -103,7 +103,7 @@ async fn test_config_v2_controls_native_connection_reuse() {
 
 #[tokio::test]
 #[ignore = "requires a Python handler with controllable response delay"]
-async fn test_config_v2_enforces_one_native_end_to_end_request_timeout() {
+async fn test_request_timeout_fixture_fails_after_deadline() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model mock-model --url {}/v1/chat/completions --streaming \
@@ -116,7 +116,7 @@ async fn test_config_v2_enforces_one_native_end_to_end_request_timeout() {
 
 #[tokio::test]
 #[ignore = "requires a Python handler that records peak in-flight concurrency"]
-async fn test_config_v2_adaptive_phase_controls_the_native_live_issuer() {
+async fn test_adaptive_fixture_profile_sustains_load() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model mock-model --url {}/v1/chat/completions --streaming \

@@ -233,14 +233,10 @@ mod tests {
 
     #[test]
     fn alternate_spacing_step_is_smallest_coprime() {
-        // n <= 2 has no coprime step > 1.
         assert_eq!(find_alternate_spacing_step(1), 1);
         assert_eq!(find_alternate_spacing_step(2), 1);
-        // n = 15: 2 is coprime with 15 -> smallest step is 2.
         assert_eq!(find_alternate_spacing_step(15), 2);
-        // n = 6: 2,3,4 all share a factor; 5 is coprime -> step 5.
         assert_eq!(find_alternate_spacing_step(6), 5);
-        // n = 9: 2 is coprime -> step 2.
         assert_eq!(find_alternate_spacing_step(9), 2);
     }
 

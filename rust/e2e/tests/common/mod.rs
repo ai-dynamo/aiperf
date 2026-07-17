@@ -30,14 +30,11 @@ use std::time::{Duration, Instant};
 pub use aiperf_mock_server::config::MockServerConfig;
 use aiperf_mock_server::{AppState, build_router};
 
-/// Default model / tokenizer used by every harness run.
+/// Offline tokenizer fixture used unless a test selects another tokenizer.
 pub const DEFAULT_MODEL: &str = "openai/gpt-oss-120b";
-/// Default concurrency used by simple smoke tests.
 pub const DEFAULT_CONCURRENCY: u32 = 2;
-/// Default request count used by simple smoke tests.
 pub const DEFAULT_REQUEST_COUNT: u32 = 10;
 
-/// Default subprocess timeout, in seconds.
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 
 /// An in-process `aiperf-mock-server` server bound to a random loopback port.
@@ -435,7 +432,7 @@ fn python_binary() -> String {
     "python3".to_string()
 }
 
-/// Resolve the unified `aiperf` execution binary (entry point + execution engine).
+/// Resolve the `aiperf` execution binary.
 ///
 /// The harness spawns this binary directly as the entry point; it re-execs itself
 /// (`current_exe()`) in the internal `--execute` mode. Priority:
@@ -462,20 +459,15 @@ pub fn exec_binary() -> String {
     format!("aiperf{suffix}")
 }
 
-/// Result of one `aiperf` subprocess run.
 pub struct RunResult {
     /// Process exit code (`-1` if terminated by signal / unknown).
     pub exit_code: i32,
-    /// Captured stdout.
     pub stdout: String,
-    /// Captured stderr.
     pub stderr: String,
-    /// Reader over the emitted artifact tree.
     pub artifacts: ArtifactReader,
 }
 
 impl RunResult {
-    /// True when the process exited 0.
     pub fn success(&self) -> bool {
         self.exit_code == 0
     }

@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::extensions::{AIPerfRegistry, AIPerfRegistryFactory};
-use crate::metrics_core::ReportRunProvenance;
+use crate::metrics_core::ReportRunMetadata;
 use crate::report::finalize_and_write_native_report_json;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
@@ -245,19 +245,19 @@ impl Coordinator {
         }
         let transport_id = selection.transport_id().to_owned();
         let workload_id = selection.workload_id().to_owned();
-        let report_provenance = match context.report_provenance(
+        let report_run_metadata = match context.report_run_metadata(
             self.distribution_id.clone(),
             transport_id.clone(),
             workload_id.clone(),
         ) {
-            Ok(provenance) => provenance,
+            Ok(run_metadata) => run_metadata,
             Err(error) => {
                 return failure(
                     operation,
                     self.distribution_id.clone(),
                     benchmark_id,
                     FailureStageV2::Validation,
-                    "invalid_report_provenance",
+                    "invalid_report_metadata",
                     format!("{error:#}"),
                     1,
                 );
@@ -303,15 +303,15 @@ impl Coordinator {
         };
         match operation.execute() {
             Ok(outcome) => {
-                let mut provenance = match persist_prepared_report(
+                let mut run_metadata = match persist_prepared_report(
                     outcome,
-                    report_provenance,
+                    report_run_metadata,
                     &report_path,
                     &run.artifact_target,
                     &run.export,
                     self.product_registry.exporters(),
                 ) {
-                    Ok(provenance) => provenance,
+                    Ok(run_metadata) => run_metadata,
                     Err(error) => {
                         return terminal_failure(
                             self.distribution_id.clone(),
@@ -323,8 +323,8 @@ impl Coordinator {
                         );
                     }
                 };
-                provenance.insert("transport".into(), transport_id);
-                provenance.insert("workload".into(), workload_id);
+                run_metadata.insert("transport".into(), transport_id);
+                run_metadata.insert("workload".into(), workload_id);
                 ProcessResultV2 {
                     response: ResponseV2::Terminal(RunTerminalV2 {
                         protocol_version: PROTOCOL_V2,
@@ -335,7 +335,7 @@ impl Coordinator {
                         stage: None,
                         errors: Vec::new(),
                         diagnostic_artifacts: Vec::new(),
-                        provenance,
+                        run_metadata,
                     }),
                     exit_code: 0,
                 }
@@ -379,7 +379,7 @@ struct ReportPersistenceFailure {
 
 fn persist_prepared_report(
     outcome: PreparedRunOutcome,
-    report_provenance: ReportRunProvenance,
+    report_run_metadata: ReportRunMetadata,
     report_path: &Path,
     artifact_dir: &Path,
     export: &crate::export::ExportConfig,
@@ -397,13 +397,13 @@ fn persist_prepared_report(
     let PreparedRunOutcome {
         native_report,
         report_facts,
-        provenance,
+        run_metadata,
         report_commit,
     } = outcome;
     tracing::info!("Processing records results...");
     let finalized = finalize_and_write_native_report_json(
         native_report,
-        report_provenance,
+        report_run_metadata,
         report_facts,
         report_path,
     )
@@ -433,7 +433,7 @@ fn persist_prepared_report(
                 message: format!("post-persistence report lifecycle commit failed: {error:#}"),
             })?;
     }
-    Ok(provenance)
+    Ok(run_metadata)
 }
 
 fn validate_distribution_id(value: &str) -> Result<()> {
@@ -561,7 +561,7 @@ fn terminal_failure_with_artifacts(
             stage: Some(stage),
             errors: vec![diagnostic(code, message)],
             diagnostic_artifacts,
-            provenance: BTreeMap::new(),
+            run_metadata: BTreeMap::new(),
         }),
         exit_code,
     }
@@ -601,8 +601,8 @@ mod tests {
         }
     }
 
-    fn provenance() -> ReportRunProvenance {
-        ReportRunProvenance::new(
+    fn run_metadata() -> ReportRunMetadata {
+        ReportRunMetadata::new(
             format!("blake3:{}", "a".repeat(64)),
             "http",
             "evaluation",
@@ -621,7 +621,7 @@ mod tests {
                 None,
             ),
             report_facts: crate::metrics_core::ReportPairRunFacts::new(),
-            provenance: BTreeMap::from([("fixture".to_owned(), "durable".to_owned())]),
+            run_metadata: BTreeMap::from([("fixture".to_owned(), "durable".to_owned())]),
             report_commit: Some(Box::new(TrackingCommit { calls, fail })),
         }
     }
@@ -635,7 +635,7 @@ mod tests {
 
         let error = persist_prepared_report(
             outcome(calls.clone(), false),
-            provenance(),
+            run_metadata(),
             &report_path,
             root.path(),
             &crate::export::ExportConfig::default(),
@@ -656,7 +656,7 @@ mod tests {
 
         let error = persist_prepared_report(
             outcome(calls.clone(), false),
-            provenance(),
+            run_metadata(),
             &report_path,
             root.path(),
             &crate::export::ExportConfig::default(),
@@ -677,7 +677,7 @@ mod tests {
 
         let persisted = persist_prepared_report(
             outcome(calls.clone(), false),
-            provenance(),
+            run_metadata(),
             &report_path,
             root.path(),
             &crate::export::ExportConfig::default(),
@@ -708,7 +708,7 @@ mod tests {
 
         let error = persist_prepared_report(
             outcome(calls.clone(), true),
-            provenance(),
+            run_metadata(),
             &report_path,
             root.path(),
             &crate::export::ExportConfig::default(),

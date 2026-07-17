@@ -3,11 +3,11 @@
 mod common;
 use common::*;
 
-// Online graph wire checks requiring protocol capture and a body-recording server.
+use std::io::Write;
+use std::process::{Command, Stdio};
 
-use serde_json::json;
+use serde_json::{Value, json};
 
-/// The three-session graph fixture (root -> fork/spawn -> continuation).
 fn graph_rows() -> Vec<serde_json::Value> {
     vec![
         json!({
@@ -46,65 +46,89 @@ fn graph_rows() -> Vec<serde_json::Value> {
     ]
 }
 
-/// Write the graph fixture to a `dag_jsonl` dataset file the runner can load.
-fn write_graph_dataset(dir: &std::path::Path) -> std::path::PathBuf {
-    write_jsonl(dir, "graph.jsonl", &graph_rows())
-}
-
-// requires: protocol-v2 request-wire capture + custom body-recording graph
-// chat server (Python orchestrator internals: Installation /
-// RustSubprocessExecutor). The Rust harness cannot observe the v2 request wire
-// or per-dispatch request bodies.
 #[tokio::test]
-#[ignore]
-async fn test_python_config_v2_reaches_online_graph_adapter_without_dual_conversion() {
+async fn test_online_graph_terminal_reports_run_metadata() {
     let h = AIPerfHarness::new().await;
-    let dataset = write_graph_dataset(h.artifact_dir.path());
-    let r = h.run(&format!(
-        "--model mock-model --url {} --input-file {} --custom-dataset-type dag_jsonl \
-         --concurrency 2 --request-count 4 --workers 2 --ui none --streaming --server-token-count",
-        h.mock.url,
-        dataset.display(),
-    ));
-    assert!(r.success(), "{}", r.stderr);
-    assert_eq!(r.artifacts.request_count() as u32, 4);
-
-    // Required protocol-capture assertions:
-    //   request["protocol_version"] == 2 && request["operation"] == "execute"
-    //   request["run"]["cfg"]["transport"] == {"type": "http"}
-    //   dataset["format"] == "dag_jsonl" && dataset["records"] == graph_rows()
-    //   terminal["provenance"] == {"transport":"http","workload":"graph"}
-    //   native["run"]["graph"] == {input_format: dag_jsonl, root_count: 1,
-    //       node_count: 4, worker_count: 2, phase_count: 1}
-    //   captured chat histories == {
-    //       "root-0": ["root-0"],
-    //       "fork-0": ["root-0","answer-root-0","fork-0"],
-    //       "spawn-0": ["spawn-0"],
-    //       "root-1": ["root-0","answer-root-0","root-1"]}
-}
-
-// requires: protocol-v2 request-wire capture + custom body-recording graph
-// chat server (Python orchestrator internals). Shared phase/ramp/adaptive/
-// session-policy projection is only observable on the v2 request wire.
-#[tokio::test]
-#[ignore]
-async fn test_python_config_v2_graph_uses_shared_phase_ramp_adaptive_and_session_policy() {
-    let h = AIPerfHarness::new().await;
-    let dataset = write_graph_dataset(h.artifact_dir.path());
-    let r = h.run(&format!(
-        "--model mock-model --url {} --input-file {} --custom-dataset-type dag_jsonl \
-         --concurrency 2 --request-count 4 --workers 2 --ui none --streaming --server-token-count",
-        h.mock.url,
-        dataset.display(),
-    ));
-    assert!(r.success(), "{}", r.stderr);
-    assert_eq!(r.artifacts.request_count() as u32, 4);
-
-    // Required phase-projection assertions:
-    //   projected_phases[0]["seamless"] == false
-    //   projected_phases[1]["seamless"] == true
-    //   projected_phases[0]["concurrency_ramp"] == {duration: 0.01, strategy: linear}
-    //   projected_phases[1]["adaptive_scale"]["control_variable"] == "prefill_concurrency"
-    //   artifact_dir/adaptive_scale_events.jsonl && adaptive_scale_summary.json exist
-    //   captured bodies count == 8
+    let request = json!({
+        "protocol_version": 2,
+        "operation": "execute",
+        "run": {
+            "benchmark_id": "e2e-online-graph",
+            "artifact_dir": h.artifact_path(),
+            "random_seed": 7,
+            "cfg": {
+                "models": {"strategy": "round_robin", "items": [{"name": DEFAULT_MODEL}]},
+                "endpoint": {
+                    "type": "chat",
+                    "urls": [format!("{}/v1/chat/completions", h.mock.url)],
+                    "streaming": true,
+                    "use_server_token_count": true,
+                    "wait_for_model_timeout": 0.0,
+                    "wait_for_model_interval": 5.0,
+                    "wait_for_model_mode": "inference"
+                },
+                "datasets": [{
+                    "type": "file",
+                    "format": "dag_jsonl",
+                    "sampling": "sequential",
+                    "records": graph_rows()
+                }],
+                "tokenizer": {
+                    "name": "cl100k_base",
+                    "revision": "main",
+                    "trust_remote_code": false,
+                    "apply_chat_template": false
+                },
+                "phases": [{
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "sessions": 1,
+                    "concurrency": 2
+                }],
+                "transport": {"type": "http"},
+                "runtime": {"workers": 2}
+            }
+        }
+    });
+    let debug_binary =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/aiperf");
+    let binary = if debug_binary.exists() {
+        debug_binary.display().to_string()
+    } else {
+        exec_binary()
+    };
+    let mut child = Command::new(binary)
+        .arg("--execute")
+        .env("HF_HUB_OFFLINE", "1")
+        .env("TRANSFORMERS_OFFLINE", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn aiperf execute");
+    child
+        .stdin
+        .take()
+        .expect("aiperf stdin")
+        .write_all(&serde_json::to_vec(&request["run"]).unwrap())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let terminal: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(terminal["event"], "run_terminal");
+    assert_eq!(terminal["success"], true);
+    assert_eq!(
+        terminal["run_metadata"]["transport"], "http",
+        "terminal={terminal}"
+    );
+    assert_eq!(
+        terminal["run_metadata"]["workload"], "graph",
+        "terminal={terminal}"
+    );
 }

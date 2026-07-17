@@ -3,8 +3,9 @@
 
 //! Native-Rust accuracy sink: `accuracy_results.csv`.
 //!
-//! Ports the Python `accuracy/accuracy_data_exporter.py` (`AccuracyDataExporter.export`,
-//! `src/aiperf/accuracy/accuracy_data_exporter.py:53-108`). That exporter consumes the
+//! Matches the byte-exact CSV contract in `accuracy/accuracy_data_exporter.py`
+//! (`AccuracyDataExporter.export`,
+//! `src/aiperf/accuracy/accuracy_data_exporter.py:53-108`), which consumes the
 //! per-task accuracy `MetricResult` rows produced by
 //! `accuracy/accuracy_results_processor.py:101-168` (`summarize`) and writes one CSV
 //! row per task plus a leading OVERALL row.

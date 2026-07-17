@@ -4,7 +4,7 @@
 //! Native-Rust fixed-width console artifact + warning/insight sink:
 //! `profile_export_console.txt`.
 //!
-//! Ports the width-pinned console record from Python
+//! Matches the width-pinned console contract in
 //! `exporters/exporter_manager.py::_write_console_txt` plus the domain-logic
 //! renderers it captures: the grouped metrics tables
 //! (`console_metrics_exporter.py`), the error-summary table
@@ -40,7 +40,7 @@
 //! `AIPERF_METRICS_*` in Python sees the override in the live terminal render but
 //! the compiled default in this artifact.
 //!
-//! # Rich box-drawing LAYOUT is a faithful port (byte-exact vs Python)
+//! # Rich box-drawing layout compatibility
 //! The `Table` (`box.HEAVY_HEAD`) and `Panel` (`box.ROUNDED`) renderers here
 //! reproduce Rich's geometry byte-for-byte: the `expand=False` column-width
 //! solver — including the overflow path where the widest columns are collapsed
@@ -50,20 +50,24 @@
 //! titles, the `header\n(unit)` two-line cell for headers longer than 30 columns
 //! (`console_metrics_exporter._format_row`), the `expand=False` panel width
 //! solver (content-fit, title-widened, export-width-capped), and the panel-body
-//! word-wrap (`Text.wrap` — ports of `rich._wrap.divide_line` /
+//! word-wrap (`Text.wrap`, matching `rich._wrap.divide_line` and
 //! `cells.chop_cells`). Verified equal to `rich==14.1.0` at width 140.
 //!
 //! The grouped-metrics-table CONTENT (which metric lands in which group, its
 //! display header, its display order, the INTERNAL/EXPERIMENTAL filter, and the
-//! table titles) is projected from the Python `MetricRegistry`
+//! table titles) is projected from the Python console metadata
 //! (`ConsoleTxtExportConfig::metrics` / `title`), NOT the Rust `metrics_core`
 //! catalog, so the sink reproduces the Python `ConsoleMetricsExporter`
-//! byte-for-byte: native-only metrics (`effective_*`, `active_*`,
-//! `tokens_in_flight`, `credit_*`, …) are unregistered in Python and therefore
-//! render in the DEFAULT group under their raw snake tag rather than in the
-//! catalog's Effective/Active tables or being hidden by the catalog's
-//! INTERNAL/EXPERIMENTAL flags. A live `AIPERF_EXPORT_SUBDIR=native` same-report
-//! diff of `profile_export_console.txt` against the Python exporter is empty.
+//! byte-for-byte. The projection includes both the Python `MetricRegistry`
+//! classes AND the inline `MetricResult`s that `analysis/sweepline.py` builds for
+//! the native runtime metrics (`effective_*`, `active_*`, `tokens_in_flight`):
+//! Python renders those in its Effective/Active console groups under their
+//! explicit headers (e.g. `Effective Latency (CO-aware)`), so the projection
+//! carries the same header/group/display-order and this sink groups them
+//! identically. A tag genuinely absent from the projection (with no Python
+//! console counterpart) falls back to its raw snake tag in the DEFAULT group.
+//! A live `AIPERF_EXPORT_SUBDIR=native` same-report diff of
+//! `profile_export_console.txt` against the Python exporter is empty.
 //!
 //! The following residuals remain and are driven by inputs OUTSIDE this sink; the
 //! regression goldens below pin this module's own output:
@@ -78,6 +82,8 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+
+mod cell_widths;
 
 use crate::export::{ExportConfig, Exporter};
 use crate::metrics_core::{
@@ -100,14 +106,15 @@ const USAGE_PCT_DIFF_THRESHOLD: f64 = 10.0;
 /// The grouped-metrics-table CONTENT (which metric lands in which
 /// [`MetricConsoleGroup`], its display header, its display order, the
 /// INTERNAL/EXPERIMENTAL filter, and the group table titles) is projected from
-/// the Python `MetricRegistry` via [`ConsoleMetricMeta`] and the `title` field,
-/// NOT derived from the Rust `metrics_core` catalog. This is required for byte-exact
-/// parity with the Python `ConsoleMetricsExporter`: Python groups differently
-/// (native-only `active_*`/`effective_*`/`credit_*` metrics are unregistered and
-/// render in the DEFAULT table under their raw snake tag rather than in the
-/// catalog's Effective/Active tables), applies a different INTERNAL flag set, and
-/// titles the tables `NVIDIA AIPerf | <metrics_title>`. See the frontend
-/// projection `rust_wire._console_txt_frontend_projection`.
+/// the Python console metadata via [`ConsoleMetricMeta`] and the `title` field,
+/// NOT derived from the Rust `metrics_core` catalog. This is required for
+/// byte-exact parity with the Python `ConsoleMetricsExporter`, which titles the
+/// tables `NVIDIA AIPerf | <metrics_title>` and applies its own INTERNAL flag
+/// set. The projection covers the Python `MetricRegistry` classes AND the inline
+/// sweepline `MetricResult`s (`effective_*`/`active_*`/`tokens_in_flight`), which
+/// Python renders in its Effective/Active groups under explicit headers — so this
+/// sink carries their header/group/display-order and groups them identically. See
+/// the frontend projection `rust_wire._console_txt_frontend_projection`.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ConsoleTxtExportConfig {
@@ -124,11 +131,12 @@ pub struct ConsoleTxtExportConfig {
     /// endpoint dialect is runner-only and has no Python metadata. The DEFAULT
     /// group table uses this verbatim; other groups append `: <Group>`.
     pub title: String,
-    /// Registered-metric console metadata keyed by tag, projected from the Python
-    /// `MetricRegistry`. A tag ABSENT here is an unregistered (native-only)
-    /// metric: it renders in the DEFAULT group under its raw tag, with no display
-    /// order (sorts last) and no flag filtering — exactly as Python's
-    /// `MetricResult` with an unregistered tag does.
+    /// Console metadata keyed by tag, projected from the Python console metadata
+    /// (the `MetricRegistry` classes plus the inline sweepline `MetricResult`s).
+    /// A tag ABSENT here has no Python console counterpart: it renders in the
+    /// DEFAULT group under its raw tag, with no display order (sorts last) and no
+    /// flag filtering — exactly as Python's `MetricResult` with an unregistered
+    /// tag does.
     #[serde(default)]
     pub metrics: BTreeMap<String, ConsoleMetricMeta>,
 }
@@ -258,9 +266,6 @@ pub(crate) fn render_console_txt(report: &NativeReport, cfg: &ConsoleTxtExportCo
     out
 }
 
-// ---------------------------------------------------------------------------
-// Metric-value access
-// ---------------------------------------------------------------------------
 
 /// Numeric payload of a [`ReportValue`] (non-finite tails are treated as absent,
 /// matching the detectors' `metric.avg`-is-`None` short circuit).
@@ -292,9 +297,6 @@ fn metric_avg(report: &NativeReport, tag: &str) -> Option<f64> {
     counter_sum
 }
 
-// ---------------------------------------------------------------------------
-// Number formatting (Python `format()` mini-language subset)
-// ---------------------------------------------------------------------------
 
 /// Insert thousands separators into a non-negative integer digit string.
 fn group_thousands(digits: &str) -> String {
@@ -334,9 +336,6 @@ fn g_fmt(v: f64) -> String {
     format!("{v}")
 }
 
-// ---------------------------------------------------------------------------
-// Warning / insight detectors
-// ---------------------------------------------------------------------------
 
 /// OSL-mismatch warning. Oracle: `console_osl_mismatch_exporter.py`
 /// (`export` + `_create_warning_text`). Trigger: `osl_mismatch_count.avg > 0`
@@ -500,7 +499,7 @@ pub(crate) fn detect_max_completion_tokens(report: &NativeReport) -> Option<Warn
                 &[
                     "Remove --output-tokens-mean.",
                     "Or use --extra-inputs \"max_tokens:<value>\".",
-                    "Or run AIPerf with '--use-legacy-max-tokens' to force use of the legacy 'max_tokens' field instead of 'max_completion_tokens'.",
+                    "Or run AIPerf with '--use-legacy-max-tokens' to emit 'max_tokens' instead of 'max_completion_tokens'.",
                 ],
             );
             return Some(Warning {
@@ -543,9 +542,6 @@ pub(crate) fn detect_dynamo_session_control(report: &NativeReport) -> Option<War
     None
 }
 
-// ---------------------------------------------------------------------------
-// Error-summary table
-// ---------------------------------------------------------------------------
 
 /// The error-summary table. Oracle: `console_error_exporter.py`. Cell values are
 /// byte-exact (`N/A` for a missing code/type, `{count:,}` grouping); the box
@@ -591,9 +587,6 @@ pub(crate) fn error_summary_table(report: &NativeReport, width: usize) -> Option
     ))
 }
 
-// ---------------------------------------------------------------------------
-// Grouped metrics tables
-// ---------------------------------------------------------------------------
 
 /// Console-group render order (Python `ConsoleMetricsExporter.console_groups`).
 /// `MetricConsoleGroup::None` is intentionally absent — those rows are hidden.
@@ -771,13 +764,9 @@ fn summary_series(entry: &MetricEntry) -> Option<&MetricSeries> {
 /// Format one stat cell from a metric's first series (`_format_row`): present
 /// numbers as `{v:,.2f}`, absent stats as `N/A`.
 ///
-/// The per-type stat projection mirrors the canonical Python
-/// `native_report._legacy_stats` exactly (that is the projection the Python
-/// console exporter consumes for the same native-v2 report): a **scalar**
-/// mirrors its single `value` into `avg`/`min`/`max` (`std` and percentiles are
-/// absent → `N/A`); a **counter** mirrors its `total` into `avg`/`min`/`max`; a
-/// **histogram** exposes `avg` plus its percentiles (`min`/`max`/`std` absent);
-/// a **distribution** carries the full stat set.
+/// A scalar maps `value` to `avg`/`min`/`max`; a counter maps `total` to those
+/// fields; a histogram exposes `avg` and percentiles; and a distribution carries
+/// the full stat set. Missing fields render as `N/A`.
 fn stat_cell(series: &MetricSeries, key: &str) -> String {
     let value = match &series.stats {
         ReportStats::Distribution(dist) => match key {
@@ -803,9 +792,6 @@ fn stat_cell(series: &MetricSeries, key: &str) -> String {
     value.map_or_else(|| "N/A".to_string(), comma_2dp)
 }
 
-// ---------------------------------------------------------------------------
-// Approximate Rich box renderers
-// ---------------------------------------------------------------------------
 
 /// Column text justification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -814,11 +800,70 @@ enum Justify {
     Right,
 }
 
-/// Display width of a string in terminal columns. This uses the char count as a
-/// proxy; the glyphs emitted here (ASCII plus the `•` bullet and box glyphs) are
-/// single-width, so this matches Rich for the content rendered.
+/// Cell size (0, 1, or 2) of a single character, matching Rich
+/// `cells.get_character_cell_size`: a binary search over [`CELL_WIDTHS`] where a
+/// `-1` (non-printable) range maps to 0 and a codepoint outside every range is 1.
+fn char_cell_size(character: char) -> usize {
+    let codepoint = character as u32;
+    let table = &cell_widths::CELL_WIDTHS;
+    let mut lo: isize = 0;
+    let mut hi: isize = table.len() as isize - 1;
+    while lo <= hi {
+        let mid = (lo + hi) / 2;
+        let (start, end, width) = table[mid as usize];
+        if codepoint < start {
+            hi = mid - 1;
+        } else if codepoint as i32 > end {
+            lo = mid + 1;
+        } else {
+            return if width == -1 { 0 } else { width as usize };
+        }
+    }
+    1
+}
+
+/// Display width of a string in terminal columns, matching Rich `cells.cell_len`:
+/// the sum of each character's cell size. Wide CJK/emoji glyphs count as 2 and
+/// zero-width/combining marks as 0, so column-width solving, word wrapping, and
+/// ellipsis truncation stay byte-exact against Rich for non-ASCII content.
 fn cell_width(text: &str) -> usize {
-    text.chars().count()
+    text.chars().map(char_cell_size).sum()
+}
+
+/// Set `text` to occupy exactly `total` cells, matching Rich `cells.set_cell_size`:
+/// pad with spaces when short, and when cropping honor a wide glyph straddling the
+/// boundary by dropping it and substituting a single space (so the result is
+/// exactly `total` cells, never `total + 1`).
+fn set_cell_size(text: &str, total: usize) -> String {
+    if cell_width(text) <= total {
+        let mut out = text.to_string();
+        for _ in 0..total - cell_width(text) {
+            out.push(' ');
+        }
+        return out;
+    }
+    if total == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut acc = 0usize;
+    for character in text.chars() {
+        let size = char_cell_size(character);
+        if acc + size > total {
+            // A width-2 glyph straddling the boundary: crop it and pad one space
+            // to land exactly on `total` (Rich's `before[:-1] + " "`).
+            if size == 2 && acc + size == total + 1 {
+                out.push(' ');
+            }
+            break;
+        }
+        out.push(character);
+        acc += size;
+        if acc == total {
+            break;
+        }
+    }
+    out
 }
 
 /// Pad `text` to `width` columns per `justify`.
@@ -877,9 +922,10 @@ fn render_table(
         // cells / short cells emit blank (padded) lines.
         let split: Vec<Vec<String>> = (0..columns)
             .map(|index| {
+                let just = justify.get(index).copied().unwrap_or(Justify::Left);
                 cells.get(index).map_or_else(
                     || vec![String::new()],
-                    |cell| wrap_cell(cell, widths[index]),
+                    |cell| wrap_cell(cell, widths[index], just),
                 )
             })
             .collect();
@@ -921,7 +967,7 @@ fn render_table(
 }
 
 /// Resolve the content width (excluding the one-cell side padding) of each
-/// column. Port of Rich `Table._calculate_column_widths` for the `expand=False`,
+/// column. Matches Rich `Table._calculate_column_widths` for the `expand=False`,
 /// no-`ratio`, no-`min_width` case every table here uses:
 ///   1. each flexible column measures to its widest cell *line* (`max`) plus the
 ///      two padding cells;
@@ -969,7 +1015,7 @@ fn solve_column_widths(headers: &[&str], rows: &[Vec<String>], export_width: usi
 }
 
 /// Reduce column widths so their total is under `max_width`, always shaving the
-/// widest wrapable column(s) down toward the next-widest. Port of Rich
+/// widest wrapable column(s) down toward the next-widest. Matches Rich
 /// `Table._collapse_widths`.
 fn collapse_widths(widths: &[usize], wrapable: &[bool], max_width: usize) -> Vec<usize> {
     let mut widths: Vec<usize> = widths.to_vec();
@@ -1009,7 +1055,7 @@ fn collapse_widths(widths: &[usize], wrapable: &[bool], max_width: usize) -> Vec
 }
 
 /// Distribute a reduction of `total` across `values` in proportion to `ratios`,
-/// each slot capped by its `maximum`. Port of Rich `_ratio.ratio_reduce`.
+/// each slot capped by its `maximum`. Matches Rich `_ratio.ratio_reduce`.
 fn ratio_reduce(
     total: usize,
     ratios: &[usize],
@@ -1059,19 +1105,52 @@ fn round_half_up(value: f64) -> i64 {
     }
 }
 
+/// Remove trailing whitespace from a wrapped line only insofar as its *character*
+/// length exceeds `size`, matching Rich `Text.rstrip_end`: crop
+/// `min(trailing_ws, char_len - size)` trailing characters. A line whose char
+/// length already fits keeps its trailing whitespace, so a trailing space that
+/// pushes the *cell* width past the column still triggers ellipsis truncation
+/// (Rich compares char length here, cell width in `truncate`).
+fn rstrip_end(chars: &[char], size: usize) -> Vec<char> {
+    let text_length = chars.len();
+    if text_length <= size {
+        return chars.to_vec();
+    }
+    let excess = text_length - size;
+    let mut whitespace = 0;
+    while whitespace < text_length && chars[text_length - 1 - whitespace].is_whitespace() {
+        whitespace += 1;
+    }
+    let crop = whitespace.min(excess);
+    chars[..text_length - crop].to_vec()
+}
+
 /// Word-wrap one table cell to `width` content cells, reproducing Rich
-/// `Text.wrap(overflow="ellipsis")`: split on explicit newlines, word-wrap each
-/// logical line without folding over-long words, then crop any physical line
-/// wider than the column to `width - 1` cells plus an ellipsis. Right/left
-/// justification (padding) happens at render time.
-fn wrap_cell(cell: &str, width: usize) -> Vec<String> {
+/// `Text.wrap(overflow="ellipsis")` followed by `Lines.justify`: split on explicit
+/// newlines, word-wrap each logical line without folding over-long words, apply
+/// `rstrip_end`, then crop any physical line still wider than the column to
+/// `width - 1` cells plus an ellipsis.
+///
+/// The trailing-whitespace handling is justify-dependent, matching Rich's
+/// `Lines.justify`: a `left` column keeps the `rstrip_end` result (so a trailing
+/// space that overflows the column still triggers ellipsis), while a `right` (or
+/// center) column additionally applies a full `rstrip` before padding — so its
+/// wrapped lines never carry trailing whitespace. Padding to `width` happens at
+/// render time.
+fn wrap_cell(cell: &str, width: usize, justify: Justify) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for logical in cell.split('\n') {
         let chars: Vec<char> = logical.chars().collect();
         let breaks = divide_line(&chars, width, false);
         let mut prev = 0;
         let push_piece = |piece: &[char], out: &mut Vec<String>| {
-            let text: String = piece.iter().collect::<String>().trim_end().to_string();
+            let stripped = rstrip_end(piece, width);
+            // Rich `Lines.justify`: right/center lines get a full `rstrip()`;
+            // left lines keep the `rstrip_end` trailing whitespace.
+            let text: String = match justify {
+                Justify::Left => stripped.iter().collect(),
+                Justify::Right => stripped.iter().collect::<String>().trim_end().to_string(),
+            };
             out.push(truncate_ellipsis(&text, width));
         };
         for &offset in &breaks {
@@ -1083,40 +1162,44 @@ fn wrap_cell(cell: &str, width: usize) -> Vec<String> {
     out
 }
 
-/// Crop `text` to `width` cells with a trailing ellipsis when it overflows. Port
-/// of Rich `Segment`/`Text` truncation for `overflow="ellipsis"`.
+/// Crop `text` to `width` cells with a trailing ellipsis when it overflows,
+/// matching Rich `Text.truncate(overflow="ellipsis")`: `set_cell_size(text,
+/// width - 1)` then a `…`, so a wide glyph straddling the crop boundary is
+/// handled exactly (dropped + space-padded) rather than by a raw char count.
 fn truncate_ellipsis(text: &str, width: usize) -> String {
     if cell_width(text) <= width {
         return text.to_string();
     }
-    if width == 0 {
-        return String::new();
-    }
-    let mut cropped: String = text.chars().take(width - 1).collect();
-    cropped.push('\u{2026}'); // …
-    cropped
+    let head = set_cell_size(text, width.saturating_sub(1));
+    format!("{head}\u{2026}") // …
 }
 
-/// Split a long word into cell-width-bounded chunks. Port of Rich
-/// `cells.chop_cells` (each glyph rendered here is single-width, so cell width
-/// equals the character count).
+/// Cell width of a slice of characters (sum of each glyph's cell size).
+fn cells_len(chars: &[char]) -> usize {
+    chars.iter().copied().map(char_cell_size).sum()
+}
+
+/// Split a long word into cell-width-bounded chunks, matching Rich
+/// `cells.chop_cells`: a glyph is placed on the current line while it fits in the
+/// remaining cells, else it starts a new line (wide glyphs advance by 2 cells).
 fn chop_cells(word: &[char], width: usize) -> Vec<Vec<char>> {
     let mut lines: Vec<Vec<char>> = vec![Vec::new()];
     let mut total = 0usize;
     for &character in word {
-        if total + 1 > width {
+        let size = char_cell_size(character);
+        if total + size > width {
             lines.push(vec![character]);
-            total = 1;
+            total = size;
         } else {
             lines.last_mut().expect("at least one line").push(character);
-            total += 1;
+            total += size;
         }
     }
     lines
 }
 
 /// Tokenize `text` into `\s*\S+\s*` spans (leading whitespace is folded into the
-/// following word; trailing-only whitespace yields no span). Port of Rich
+/// following word; trailing-only whitespace yields no span). Matches Rich
 /// `_wrap.words`, returning `(start, end)` character offsets.
 fn word_spans(text: &[char]) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
@@ -1142,7 +1225,7 @@ fn word_spans(text: &[char]) -> Vec<(usize, usize)> {
 }
 
 /// Compute the break offsets (character indices) at which `text` must be split
-/// to fit `width` cells per line. Port of Rich `_wrap.divide_line`: with
+/// to fit `width` cells per line. Matches Rich `_wrap.divide_line`: with
 /// `fold=true` an over-long word is chopped across lines; with `fold=false` it
 /// is left intact on its own line (the caller then crops/ellipsizes it, as Rich
 /// does for `overflow="ellipsis"` table columns).
@@ -1156,10 +1239,12 @@ fn divide_line(text: &[char], width: usize, fold: bool) -> Vec<usize> {
         while stripped > 0 && word[stripped - 1].is_whitespace() {
             stripped -= 1;
         }
-        let word_length = stripped as isize;
+        // Widths are measured in terminal cells (Rich `cell_len`), while break
+        // offsets stay character indices into `text` (`.len()` on a `&[char]`).
+        let word_length = cells_len(&word[..stripped]) as isize;
         let remaining_space = width_i - cell_offset;
         if remaining_space >= word_length {
-            cell_offset += word.len() as isize;
+            cell_offset += cells_len(word) as isize;
         } else if fold && word_length > width_i {
             let folded = chop_cells(word, width.max(1));
             let last_index = folded.len().saturating_sub(1);
@@ -1169,7 +1254,7 @@ fn divide_line(text: &[char], width: usize, fold: bool) -> Vec<usize> {
                     breaks.push(folded_start);
                 }
                 if index == last_index {
-                    cell_offset = line.len() as isize;
+                    cell_offset = cells_len(line) as isize;
                 } else {
                     folded_start += line.len();
                 }
@@ -1181,10 +1266,10 @@ fn divide_line(text: &[char], width: usize, fold: bool) -> Vec<usize> {
             if start != 0 {
                 breaks.push(start);
             }
-            cell_offset = word.len() as isize;
+            cell_offset = cells_len(word) as isize;
         } else if cell_offset != 0 && start != 0 {
             breaks.push(start);
-            cell_offset = word.len() as isize;
+            cell_offset = cells_len(word) as isize;
         }
     }
     breaks

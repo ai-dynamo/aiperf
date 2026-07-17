@@ -659,8 +659,8 @@ pub fn record_json_value(
 ///
 /// The request payload is serialized through [`RawValue`], which validates the
 /// one-time captured JSON while preserving its original bytes verbatim in the
-/// enclosing JSONL object. The response side comes from the terminal
-/// `aiperf-transport-http` record, so no SSE frame, status, response header, or
+/// enclosing JSONL object. The response side uses the captured terminal
+/// transport record, so no SSE frame, status, response header, or
 /// structured transport error is reconstructed from aggregate metrics.
 /// Serialize one raw request/response row (compact JSON + trailing newline) into
 /// `writer`, exactly as [`write_raw_records_jsonl`] emits each line. Shared by the
@@ -1027,14 +1027,9 @@ fn native_error_value(record: &RecordIngest) -> Option<Value> {
     })
 }
 
-/// Feed one record's projected per-request metrics into the per-record OTLP
-/// histogram accumulator (the native analogue of Python's
-/// `MetricResultsStrategy.process`).
-///
-/// The projection is the exact same [`record_metrics`] shape the live-streaming
-/// sink forwards to the Python OTel processor, so the bucketed distribution
-/// matches what a collector aggregating Python's per-record stream would
-/// compute. The record's terminal error (if any) is classified into the spec
+/// Feed one record's [`record_metrics`] projection into the per-record OTLP
+/// histogram accumulator. The record's terminal error, if any, is classified into
+/// the spec
 /// `error.type` attribute; successful records contribute no `error.type` and
 /// only successful records carry the semconv-mapped metrics, so errored requests
 /// never reach a mapped histogram.

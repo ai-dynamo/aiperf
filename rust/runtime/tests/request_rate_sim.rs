@@ -73,7 +73,6 @@ impl TurnDispatcher for SimDispatcher {
         self.seen.borrow_mut().push(SeenTurn {
             conversation_id: turn.conversation_id.clone(),
             turn_index: turn.turn_index,
-            // Prepared turns carry message history in `request_body`.
             roles: turn
                 .request_body
                 .as_ref()

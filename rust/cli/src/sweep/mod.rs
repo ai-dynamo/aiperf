@@ -5,7 +5,7 @@
 //! Comma-list flags become grid or lockstep axes. Each variation clones the
 //! base flags, overrides swept scalars, and resolves a single run.
 //! Artifact contracts:
-//! - Axis keys sorted alphabetically by dotted path before producting/zipping
+//! - Axis keys sorted alphabetically by dotted path before product/zipping
 //!   (directory-name + combination order depend on it).
 //! - `label = "<dotted_path>=<value>, ..."`; `dir_name = "<seg>_<value>__..."`.
 //! - Integer axes render bare; integral float axes retain `.0`.

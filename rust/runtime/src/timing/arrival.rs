@@ -26,15 +26,9 @@
 //! when the generator is shared with ramp and adaptive actuators. The caller
 //! controls exactly when each draw occurs.
 //!
-//! Only the graph `IntervalGraphArrival` currently calls [`next_arrival_target`]
-//! directly. The other two loops keep their own inline arithmetic and use this
-//! vocabulary as documentation: the scheduled `RequestRateWorkload` *eagerly*
-//! advances its target and peeks it for closed-loop backpressure (block-vs-yield
-//! on a full slot pool), which the pure helper does not express; the dynosim
-//! paced online/offline driver (`crate::run`) draws the next interval at the tail
-//! of each iteration off a generator it shares with live ramp actuators, so
-//! moving that draw into the helper's start-of-iteration position could shift it
-//! across a concurrent rate change.
+//! Draw timing is observable when a generator is shared with live ramp actuators;
+//! callers must preserve whether the draw occurs at the start or tail of an
+//! iteration and whether closed-loop backpressure peeks the next target.
 
 /// Where the first arrival (the one with no prior target) is due.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +93,6 @@ mod tests {
         let start = 1_000;
         // A generator emitting a fixed 100ns interval.
         let draw = || 100i64;
-        // First arrival: start + interval, clock not yet behind.
         let t0 = next_arrival_target(
             None,
             start,

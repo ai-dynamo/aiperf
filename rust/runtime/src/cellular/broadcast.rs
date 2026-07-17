@@ -105,10 +105,8 @@ impl<T: Clone> Broadcast<T> {
         }
     }
 
-    /// Attach a consumer. Under one lock, snapshots the current history (as replay
-    /// events, with a trailing `Finalized` if already sealed) and registers a fresh
-    /// live sender — atomically, so no item can slip between the snapshot and the live
-    /// registration. Returns the consumer's [`Subscription`].
+    /// Snapshots replay history and registers the live sender under one lock, so
+    /// no item can slip between them.
     pub fn attach(&self) -> Subscription<T> {
         let mut inner = lock(&self.inner);
         let mut replay: Vec<BroadcastEvent<T>> = inner
@@ -131,10 +129,8 @@ impl<T: Clone> Broadcast<T> {
         Subscription { replay, live }
     }
 
-    /// Add an item: under the same lock as `attach`, append to history and fan out to
-    /// every live consumer. A no-op if the broadcast is already finalized (a sealed
-    /// producer must not add — callers should not, but this is safe rather than a
-    /// panic). Returns `true` if the item was accepted.
+    /// Appends and fans out under the same lock as [`Self::attach`]. Returns
+    /// `false` after finalization.
     pub fn add(&self, item: T) -> bool {
         let mut inner = lock(&self.inner);
         if inner.finalized {
@@ -147,9 +143,8 @@ impl<T: Clone> Broadcast<T> {
         true
     }
 
-    /// Seal the stream: mark finalized and fan out the terminal `Finalized` to every
-    /// live consumer. Idempotent. After this, `add` is a no-op and a late `attach`
-    /// replays the full history + `Finalized`.
+    /// Idempotently seals the stream. Late subscribers receive the full history
+    /// followed by `Finalized`.
     pub fn finalize(&self) {
         let mut inner = lock(&self.inner);
         if inner.finalized {
@@ -193,7 +188,6 @@ mod tests {
         let c = b.attach();
         b.add(4);
         b.finalize();
-        // Consumer D attaches AFTER finalize — gets the whole history + terminal.
         let d = b.attach();
 
         let full = vec![0, 1, 2, 3, 4];

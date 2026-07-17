@@ -72,7 +72,7 @@ pub trait DistributionSampler<R: SamplingRng + ?Sized = RandomGenerator> {
         positive_integer_from_f64(self.sample(rng)?.ceil(), "distribution integer sample")
     }
 
-    /// Return the unclamped analytic expected value.
+    /// Unclamped analytic expected value.
     fn expected_value(&self) -> f64;
 }
 
@@ -98,7 +98,6 @@ pub struct PeakEntry {
 }
 
 impl PeakEntry {
-    /// Construct a peak entry.
     pub fn new(distribution: SamplingDistribution, weight: f64) -> Result<Self> {
         validate_weight(weight, "peak weight")?;
         Ok(Self {
@@ -128,7 +127,6 @@ pub struct EmpiricalPoint {
 }
 
 impl EmpiricalPoint {
-    /// Construct an empirical point.
     pub fn new(value: f64, weight: f64) -> Result<Self> {
         validate_finite(value, "empirical value")?;
         validate_weight(weight, "empirical weight")?;
@@ -163,7 +161,6 @@ pub struct FixedDistribution {
 }
 
 impl FixedDistribution {
-    /// Construct a fixed distribution.
     pub fn new(value: f64) -> Result<Self> {
         validate_finite(value, "fixed value")?;
         Ok(Self {
@@ -188,7 +185,6 @@ pub struct NormalDistribution {
 }
 
 impl NormalDistribution {
-    /// Construct a normal distribution.
     pub fn new(mean: f64, stddev: f64) -> Result<Self> {
         if mean < 0.0 {
             return Err(RngError::InvalidParameter {
@@ -227,7 +223,6 @@ pub struct LogNormalDistribution {
 }
 
 impl LogNormalDistribution {
-    /// Construct a log-normal distribution.
     pub fn new(mean: f64, median: f64) -> Result<Self> {
         if mean <= 0.0 {
             return Err(RngError::InvalidParameter {
@@ -280,7 +275,7 @@ pub struct MultimodalDistribution {
 }
 
 impl MultimodalDistribution {
-    /// Construct a multimodal distribution from at least two peaks.
+    /// Requires at least two peaks.
     pub fn new(peaks: Vec<PeakEntry>) -> Result<Self> {
         if peaks.len() < 2 {
             return Err(RngError::EmptySequence { what: "peaks" });
@@ -316,7 +311,7 @@ pub struct EmpiricalDistribution {
 }
 
 impl EmpiricalDistribution {
-    /// Construct an empirical distribution from one or more weighted points.
+    /// Requires at least one weighted point.
     pub fn new(points: Vec<EmpiricalPoint>) -> Result<Self> {
         if points.is_empty() {
             return Err(RngError::EmptySequence { what: "points" });
@@ -354,32 +349,27 @@ pub enum SamplingDistribution {
 }
 
 impl SamplingDistribution {
-    /// Construct a fixed distribution.
     pub fn fixed(value: f64) -> Result<Self> {
         Ok(Self::Fixed(FixedDistribution::new(value)?))
     }
 
-    /// Construct a normal distribution.
     pub fn normal(mean: f64, stddev: f64) -> Result<Self> {
         Ok(Self::Normal(NormalDistribution::new(mean, stddev)?))
     }
 
-    /// Construct a log-normal distribution.
     pub fn lognormal(mean: f64, median: f64) -> Result<Self> {
         Ok(Self::LogNormal(LogNormalDistribution::new(mean, median)?))
     }
 
-    /// Construct a multimodal distribution.
     pub fn multimodal(peaks: Vec<PeakEntry>) -> Result<Self> {
         Ok(Self::Multimodal(MultimodalDistribution::new(peaks)?))
     }
 
-    /// Construct an empirical distribution.
     pub fn empirical(points: Vec<EmpiricalPoint>) -> Result<Self> {
         Ok(Self::Empirical(EmpiricalDistribution::new(points)?))
     }
 
-    /// Return a copy with optional inclusive bounds.
+    /// Applies validated optional inclusive bounds.
     pub fn with_bounds(mut self, min: Option<f64>, max: Option<f64>) -> Result<Self> {
         validate_bounds(min, max)?;
         match &mut self {
@@ -417,7 +407,7 @@ impl SamplingDistribution {
         DistributionSampler::sample_int(self, rng)
     }
 
-    /// Return the unclamped analytic expected value.
+    /// Unclamped analytic expected value.
     pub fn expected_value(&self) -> f64 {
         DistributionSampler::<RandomGenerator>::expected_value(self)
     }
@@ -547,12 +537,12 @@ pub struct SequenceLengthPair {
 }
 
 impl SequenceLengthPair {
-    /// Construct and validate one sequence-length pair.
+    /// Validates positive lengths and probability in `[0, 100]`.
     pub fn new(input_seq_len: i64, output_seq_len: i64, probability: f64) -> Result<Self> {
         Self::new_with_stddev(input_seq_len, 0.0, output_seq_len, 0.0, probability)
     }
 
-    /// Construct and validate one sequence-length pair with stddevs.
+    /// Also validates finite, non-negative standard deviations.
     pub fn new_with_stddev(
         input_seq_len: i64,
         input_seq_len_stddev: f64,
@@ -608,7 +598,7 @@ pub struct SequenceLengthDistribution {
 }
 
 impl SequenceLengthDistribution {
-    /// Construct a distribution. Probabilities must be close to 100.0 with
+    /// Probabilities must sum close to 100.0 with
     /// `rtol=1e-6, atol=1e-6`.
     pub fn new(pairs: Vec<SequenceLengthPair>) -> Result<Self> {
         if pairs.is_empty() {

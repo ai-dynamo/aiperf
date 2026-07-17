@@ -281,7 +281,7 @@ mod tests {
             "schema": "aiperf.trace.v1",
             "session_id": 42,
             "block_size": 16,
-            "provenance": {"provider": "anthropic", "generator": "x", "models": ["m"]},
+            "source_metadata": {"provider": "anthropic", "generator": "x", "models": ["m"]},
             "hash_id_salt": 42,
             "time_anchor_ms": 0,
             "segments": [

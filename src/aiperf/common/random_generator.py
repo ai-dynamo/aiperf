@@ -387,16 +387,16 @@ class _RNGManager:
     hierarchical child RNG creation with reproducible seeds.
     """
 
-    def __init__(self, root_seed: int | None, backend: str = "legacy"):
+    def __init__(self, root_seed: int | None, backend: str = "python"):
         """Initialize the RNG manager.
 
         Args:
             root_seed: Root seed for derivation. If None, all derived RNGs
                       will be non-deterministic (seeded with None).
-            backend: Random-number backend — ``"legacy"`` (Python MT + NumPy,
-                     SHA-256 derivation) or ``"rust_parity"`` (byte-exact port of
-                     the Rust ``aiperf::rng`` Pcg64 + BLAKE3 substrate). Selected
-                     from ``Environment.RNG.BACKEND`` at :func:`init` time.
+            backend: ``"python"`` uses Python MT and NumPy with SHA-256
+                derivation. ``"rust_parity"`` uses Pcg64 with BLAKE3
+                derivation. Selected from ``Environment.RNG.BACKEND`` by
+                :func:`init`.
         """
         self._root_seed = root_seed
         self._backend = backend
@@ -408,14 +408,14 @@ class _RNGManager:
             identifier: Unique dotted identifier (e.g., "dataset.loader").
 
         Returns:
-            New RNG with derived seed (or entropy-seeded if root is None). For the
-            ``legacy`` backend this is a :class:`RandomGenerator`; for ``rust_parity``
-            it is a byte-exact ``ParityRandomGenerator``.
+            New RNG with a derived seed, or an entropy-seeded RNG when the root
+            is ``None``. ``python`` returns :class:`RandomGenerator`;
+            ``rust_parity`` returns ``ParityRandomGenerator``.
 
         Note:
-            Same identifier always produces the same derived seed. The ``legacy``
-            backend derives with SHA-256; ``rust_parity`` derives with BLAKE3 to match
-            the Rust ``aiperf::rng`` reproducibility contract exactly.
+            The same identifier produces the same derived seed. ``python`` uses
+            SHA-256; ``rust_parity`` uses BLAKE3 to match the Rust
+            ``aiperf::rng`` reproducibility contract.
         """
         if self._backend == "rust_parity":
             # Byte-exact Rust parity: BLAKE3 seed algebra + Pcg64 generator. RngRoot
@@ -469,7 +469,7 @@ def init(seed: int | None) -> None:
         np_seed = (seed ^ (seed >> 32)) & 0xFFFFFFFF
         np.random.seed(np_seed)
 
-    # Select the random-number backend from the environment (legacy by default).
+    # Select the random-number backend from the environment.
     from aiperf.common.environment import Environment
 
     _manager = _RNGManager(seed, backend=Environment.RNG.BACKEND)
@@ -542,8 +542,8 @@ def derive_variation_seed(
     if root_seed is None:
         return None
 
-    # The rust_parity backend must derive variation seeds with the same BLAKE3 algebra
-    # as the Rust runtime (`RngRoot::derive_variation_seed`); legacy uses SHA-256.
+    # rust_parity uses the Rust runtime's BLAKE3 variation-seed algebra; python
+    # uses SHA-256.
     from aiperf.common.environment import Environment
 
     if Environment.RNG.BACKEND == "rust_parity":

@@ -7,8 +7,6 @@
 //! * `EchoSink<M>` — serverless test double for any dialect.
 //!
 //! The live over-the-wire sink is [`crate::graph::transport_sink::TransportChatSink`].
-//! A future Anthropic / Responses endpoint is a new `WireMessage` + a new
-//! `GraphSink` impl; nothing else in the graph changes.
 
 use anyhow::Result;
 use async_trait::async_trait;

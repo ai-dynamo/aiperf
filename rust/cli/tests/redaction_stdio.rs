@@ -55,7 +55,7 @@ fn protocol_diagnostics_redact_secret_assignments_and_url_userinfo() {
             "protocol_version": 2,
             "operation": "execute",
             "run": {
-                "benchmark_id": "redaction-proof",
+                "benchmark_id": "redaction",
                 "artifact_dir": "/tmp/aiperf-redaction-never-created",
                 authored_field: true,
                 "cfg": {

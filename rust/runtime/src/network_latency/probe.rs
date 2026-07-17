@@ -21,9 +21,6 @@ use crate::network_latency::model::{
 pub type LocalProbeFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 /// Source seam for a single target's network-latency samples.
-///
-/// A future QUIC, ICMP, or injected test probe can implement this trait without
-/// changing phase scheduling or accumulation.
 pub trait NetworkLatencyProbe {
     /// Target identity used for deduplication and summaries.
     fn target(&self) -> &NetworkLatencyTarget;

@@ -207,7 +207,7 @@ pub struct ReadinessAttemptResponse {
     pub error: Option<String>,
 }
 
-/// Completed readiness totals retained for terminal diagnostics/provenance.
+/// Completed readiness totals retained for terminal diagnostics and run metadata.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ReadinessReport {
     /// Targets that reached the endpoint-owned success condition.

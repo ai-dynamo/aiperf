@@ -9,9 +9,7 @@
 //! matches on component strings; it resolves the two factories by id, dispatches
 //! run-level validation and preparation to the workload factory, and the
 //! workload selects the transport-specific execution path from the validated
-//! transport by id/type — failing closed there if it cannot serve that
-//! transport. A future remote placement registers one transport and every
-//! workload can drive it with no pair registration.
+//! transport by id/type, failing closed there if it cannot serve that transport.
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,7 +21,7 @@ use crate::extensions::{AIPerfExtension, AIPerfRegistry, DuplicateName, Extensio
 use crate::failure::OnFailure;
 use crate::metrics_core::{
     NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
-    ReportRunProvenance,
+    ReportRunMetadata,
 };
 use crate::transport::core::ConnectionReuseStrategy;
 use crate::transport::http::config::ClientConfig;
@@ -92,7 +90,7 @@ pub struct WorkloadDescriptor {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WorkloadRequirements {
     /// Required transport feature IDs for config-level transport gating (e.g.
-    /// `control_plane_http`). Empty for every built-in workload today.
+    /// `control_plane_http`). Empty for built-in workloads.
     pub transport_features: BTreeSet<String>,
     /// Required/optional/forbidden authored resource blocks.
     pub resources: ResourceRequirementsV2,
@@ -283,8 +281,8 @@ pub trait NativeTransportExecution: Send + Sync {
     /// reachability policy, …), performed after component configs decode.
     fn validate_run(&self, run: &AuthoredRunSpecV2, context: &RunContext) -> Result<()>;
 
-    /// Additive transport provenance stamped onto the terminal response.
-    fn provenance(&self) -> BTreeMap<String, String>;
+    /// Additive transport run metadata stamped onto the terminal response.
+    fn run_metadata(&self) -> BTreeMap<String, String>;
 }
 
 /// Startup-only workload validation half of the registry.
@@ -457,8 +455,8 @@ pub struct PreparedRunOutcome {
     pub native_report: NativeReport,
     /// Typed transport/workload facts joined during coordinator finalization.
     pub report_facts: ReportPairRunFacts,
-    /// Additive transport/workload provenance for the terminal response.
-    pub provenance: BTreeMap<String, String>,
+    /// Additive transport/workload run metadata for the terminal response.
+    pub run_metadata: BTreeMap<String, String>,
     /// Optional acknowledgement invoked only after the authoritative native
     /// report write and atomic rename succeed.
     pub report_commit: Option<Box<dyn PreparedReportCommit>>,
@@ -927,8 +925,12 @@ struct EndpointProfileConfigV2 {
     wait_for_model_interval: f64,
     #[serde(default = "default_wait_for_model_mode")]
     wait_for_model_mode: String,
-    #[serde(default)]
-    use_legacy_max_tokens: bool,
+    #[serde(
+        default,
+        rename = "use_legacy_max_tokens",
+        alias = "useLegacyMaxTokens"
+    )]
+    use_max_tokens: bool,
     #[serde(default)]
     use_server_token_count: bool,
     #[serde(default)]
@@ -1112,14 +1114,14 @@ impl RunContext {
     /// Build the coordinator-owned native-report identity from frozen values.
     ///
     /// This is the sole bridge from process composition into report
-    /// provenance. It never reopens authored JSON or asks a pair adapter to
+    /// metadata. It never reopens authored JSON or asks a pair adapter to
     /// repeat endpoint or extension discovery.
-    pub fn report_provenance(
+    pub fn report_run_metadata(
         &self,
         distribution_id: impl Into<String>,
         transport_id: impl Into<String>,
         workload_id: impl Into<String>,
-    ) -> Result<ReportRunProvenance> {
+    ) -> Result<ReportRunMetadata> {
         let extensions = self
             .product_registry
             .extension_names()
@@ -1135,7 +1137,7 @@ impl RunContext {
                 )
             })
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(ReportRunProvenance::new(
+        Ok(ReportRunMetadata::new(
             distribution_id,
             transport_id,
             workload_id,
@@ -1169,7 +1171,7 @@ impl RunContext {
     /// Iterate normalized profiles in authored order.
     ///
     /// Keeping this sequence intact lets prepared endpoint tables and report
-    /// provenance consume the same coordinator-owned identity ordering.
+    /// run metadata consume the same coordinator-owned identity ordering.
     pub fn endpoint_profiles(
         &self,
     ) -> impl ExactSizeIterator<Item = (&str, &ValidatedEndpointProfileV2)> {
@@ -1248,7 +1250,7 @@ pub fn validate_endpoint_profiles_v2(
             wait_for_model_mode: config.wait_for_model_mode,
             wait_for_model_interval_set: true,
             wait_for_model_mode_set: true,
-            use_legacy_max_tokens: config.use_legacy_max_tokens,
+            use_max_tokens: config.use_max_tokens,
             use_server_token_count: config.use_server_token_count,
             headers: config.headers,
             api_key: config.api_key,
@@ -1467,14 +1469,13 @@ pub(crate) fn strict_decode<T>(authored: &RawValue, label: &str) -> Result<T>
 where
     T: DeserializeOwned,
 {
-    // serde_json's `arbitrary_precision` feature is enabled transitively across
-    // this build (via aiperf-graph, which needs it to parse >u64 recorded-trace
-    // hashes). With it on, streaming `from_str` represents every number as an
+    // The workspace enables serde_json's `arbitrary_precision` feature for >u64
+    // recorded-trace hashes. Streaming `from_str` then represents every number as an
     // internal map, so any `#[serde(flatten)]` (e.g. `PhaseSpec`'s
     // `PhaseCommonSpec`) or `#[serde(untagged)]` field whose type is `f64` fails
     // with "invalid type: map, expected f64". Buffering through `serde_json::Value`
     // first reconstructs numbers in a form the derived impls accept, at the cost
-    // of one extra parse. Mirrors `dataset_input::decode_dataset_source`.
+    // of one extra parse.
     let value: serde_json::Value =
         serde_json::from_str(authored.get()).map_err(|error| anyhow!("{label}: {error}"))?;
     serde_json::from_value(value).map_err(|error| anyhow!("{label}: {error}"))
@@ -1523,9 +1524,8 @@ fn raw_object(raw: &RawValue, label: &str) -> Result<Map<String, Value>> {
 
 /// Config-level requirements for a built-in inference workload.
 ///
-/// No workload declares a transport feature today (the `control_plane_http`
-/// gate stays available for a future control-plane workload), so this is the
-/// inference resource matrix with empty transport features.
+/// Built-in inference workloads use the inference resource matrix without
+/// transport feature requirements.
 pub(crate) fn inference_workload_requirements() -> WorkloadRequirements {
     WorkloadRequirements {
         transport_features: BTreeSet::new(),
@@ -1669,7 +1669,7 @@ mod tests {
                     None,
                 ),
                 report_facts: ReportPairRunFacts::new(),
-                provenance: BTreeMap::from([(
+                run_metadata: BTreeMap::from([(
                     "fixture".into(),
                     format!("{}-{}", self.node, self.message),
                 )]),
@@ -1833,11 +1833,11 @@ mod tests {
             context.default_endpoint_profile().unwrap(),
             &retained[0]
         ));
-        let provenance = context
-            .report_provenance(format!("blake3:{}", "a".repeat(64)), "http", "graph")
+        let run_metadata = context
+            .report_run_metadata(format!("blake3:{}", "a".repeat(64)), "http", "graph")
             .unwrap();
         assert_eq!(
-            provenance
+            run_metadata
                 .endpoint_profiles
                 .iter()
                 .map(|profile| profile.profile_id.as_str())
@@ -2061,7 +2061,7 @@ mod tests {
         );
 
         // The stock build layers only built-in extensions, so the native
-        // report's third-party extension provenance stays empty.
+        // The report's third-party extension metadata stays empty.
         assert_eq!(registry.extension_names().count(), 0);
     }
 

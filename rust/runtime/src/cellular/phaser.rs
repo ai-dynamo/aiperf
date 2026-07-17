@@ -223,7 +223,6 @@ mod tests {
         assert_eq!(p.current_generation(), 3);
 
         let mut sub = p.subscribe();
-        // Replay delivers the whole history in order.
         assert_eq!(
             sub.next().await.unwrap().transition,
             PhaseTransition::Started

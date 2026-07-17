@@ -3,9 +3,8 @@
 
 //! Golden byte-parity tests for the accuracy CSV sink.
 //!
-//! The expected bytes are generated from the real Python exporter's formatting
-//! (`csv.writer` excel dialect, CRLF terminator, `f"{ratio:.4f}"`), so a passing
-//! test pins byte-identity with `accuracy/accuracy_data_exporter.py`.
+//! Expected bytes follow `accuracy/accuracy_data_exporter.py`: `csv.writer` Excel
+//! dialect, CRLF terminators, and `f"{ratio:.4f}"`.
 
 use std::collections::BTreeMap;
 
@@ -59,8 +58,7 @@ fn export_to_temp(report: &NativeReport) -> (tempfile::TempDir, std::path::PathB
 
 #[test]
 fn overall_and_sorted_tasks_match_python_bytes() {
-    // overall n=10 correct=7 unparsed=2; tasks inserted out of order to prove the
-    // BTreeMap yields the alphabetical order Python's sorted() produces.
+    // Out-of-order insertion validates the alphabetical order from Python's sorted().
     let mut per_task = BTreeMap::new();
     per_task.insert(TaskId::new("math"), rollup(6, 5, 1));
     per_task.insert(TaskId::new("code"), rollup(4, 2, 1));
@@ -72,7 +70,7 @@ fn overall_and_sorted_tasks_match_python_bytes() {
     let (_dir, path) = export_to_temp(&report);
     let bytes = std::fs::read(&path).expect("read csv");
 
-    // Golden generated from the Python exporter formatting over identical values:
+    // Python exporter formatting over identical values:
     //   csv.writer(["task","correct","total","unparsed","accuracy"]) + rows,
     //   f"{7/10:.4f}"=0.7000, f"{2/4:.4f}"=0.5000, f"{5/6:.4f}"=0.8333, CRLF.
     let expected = "task,correct,total,unparsed,accuracy\r\n\

@@ -275,8 +275,8 @@ async fn scheduled_pair_executes_kserve_v1_endpoint_only_through_v2() {
     let terminal: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(terminal["protocol_version"], 2);
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["transport"], "http");
-    assert_eq!(terminal["provenance"]["workload"], "scheduled");
+    assert_eq!(terminal["run_metadata"]["transport"], "http");
+    assert_eq!(terminal["run_metadata"]["workload"], "scheduled");
     let report: Value =
         serde_json::from_slice(&std::fs::read(artifact_dir.join("native-v2.json")).unwrap())
             .unwrap();
@@ -645,8 +645,8 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
     let terminal: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["transport"], "http");
-    assert_eq!(terminal["provenance"]["workload"], "graph");
+    assert_eq!(terminal["run_metadata"]["transport"], "http");
+    assert_eq!(terminal["run_metadata"]["workload"], "graph");
     let report: Value =
         serde_json::from_slice(&std::fs::read(artifact_dir.join("native-v2.json")).unwrap())
             .unwrap();

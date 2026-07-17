@@ -4,7 +4,7 @@
 //! End-to-end parity between exact folding and retained-record execution
 //! (`AIPERF_RUNTIME_EXACT_FOLD=0`).
 //!
-//! Two full `python -m aiperf profile` runs drive the Rust runner against an
+//! Two full `aiperf profile` runs drive the execution engine against an
 //! in-process mock server with EVERY per-record artifact enabled
 //! (`records: [jsonl, csv, parquet]`, `raw`, `export_outputs_json`, plus the
 //! always-on `inputs.json` and the metric summary), the SAME `dataset.random_seed`,
@@ -32,9 +32,9 @@
 //!     identical deterministic-column SET.
 //!
 //! With `AIPERF_LOG=aiperf=info` the runner logs one
-//! `record retention path selected exact_fold=<bool>` line (see
-//! `execute.rs`). The test asserts the default run logged `exact_fold=true` and the
-//! forced run logged `exact_fold=false`, distinguishing the two execution modes.
+//! `record retention path selected exact_fold=<bool>` line. The test asserts the
+//! default run logged `exact_fold=true` and the forced run logged
+//! `exact_fold=false`, distinguishing the two execution modes.
 
 mod common;
 use std::collections::BTreeSet;
@@ -105,8 +105,6 @@ fn run_full_coverage(h: &AIPerfHarness, exact_fold: bool) -> RunResult {
     h.run_env(&format!("--config {} --ui simple", cfg.display()), &env)
 }
 
-/// The runner's `record retention path selected ...` marker from `logs/aiperf.log`.
-/// Identifies the record-retention mode selected by the runner.
 fn retention_marker(r: &RunResult) -> String {
     let path = r
         .artifacts
@@ -152,8 +150,7 @@ fn output_projection(row: &Value) -> String {
     .to_string()
 }
 
-/// Sorted multiset of a projection over a slice — the "record SET, order-independent"
-/// the brief calls for.
+/// Sorted multiset of a projection over a slice.
 fn sorted<T, F: Fn(&T) -> String>(items: &[T], f: F) -> Vec<String> {
     let mut v: Vec<String> = items.iter().map(f).collect();
     v.sort();
@@ -254,11 +251,8 @@ fn read_parquet_projection(path: &Path) -> (Vec<String>, usize, BTreeSet<String>
     (names, rows, set)
 }
 
-/// Split one RFC4180 CSV line into fields, honoring the runner's `csv_escape`
-/// quoting (`rust/runner/src/records.rs`): a field is double-quoted when it contains
-/// a comma/quote/newline, and an embedded quote is doubled (`""`). Parsing here (vs a
-/// naive `split(',')`) keeps the projection robust if a serialization regression
-/// pushed a comma into a cell.
+/// Split one RFC4180 CSV line into fields. A field is double-quoted when it
+/// contains a comma, quote, or newline, and embedded quotes are doubled.
 fn parse_csv_line(line: &str) -> Vec<String> {
     let mut fields = Vec::new();
     let mut cur = String::new();

@@ -6,8 +6,8 @@
 //! The catalog is data over the columnar engine: each row declares identity,
 //! units, flags, kind, aggregation, and true metric dependencies. Computation is
 //! implemented in [`crate::metrics_core::accumulator`]. Registry validation and dependency
-//! ordering are handled here; row-level source locations are recorded in
-//! `specs/2026-07-10-aiperf-rust-metric-catalog-appendix.md`.
+//! ordering are handled here; the metric catalog is documented in
+//! `specs/metrics.md`.
 
 use crate::metrics_core::{MetricValueType, Unit};
 use bitflags::bitflags;
@@ -436,8 +436,8 @@ macro_rules! spec {
     };
 }
 
-/// Static metric catalog. Rows marked as injected have specs here and receive values
-/// from future telemetry/accuracy accumulators or explicit record overrides.
+/// Static metric catalog. Injected rows receive values from telemetry, accuracy,
+/// or explicit record overrides.
 pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
     let mut catalog = vec![
         spec!(
@@ -2021,8 +2021,7 @@ impl RecordMetricColumn {
 /// The ordered per-request metric columns: every [`MetricType::Record`] metric
 /// that is not hidden from individual records, in catalog order.
 ///
-/// The filter is kept identical to the runner's per-record JSONL projection
-/// (`rust/runner/src/records.rs::record_metrics`) — `MetricType::Record` minus
+/// The filter matches the per-record JSONL projection: `MetricType::Record` minus
 /// `NO_INDIVIDUAL_RECORDS | INTERNAL | EXPERIMENTAL` — so the Parquet/CSV metric
 /// columns line up exactly with the JSONL metric keys. Deriving from the static
 /// catalog makes the column set deterministic across runs of the same binary.

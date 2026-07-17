@@ -69,7 +69,7 @@ impl NativeTransportExecution for GrpcNativeExecution {
         validate_grpc_run(run, context)
     }
 
-    fn provenance(&self) -> BTreeMap<String, String> {
+    fn run_metadata(&self) -> BTreeMap<String, String> {
         BTreeMap::from([("transport".to_owned(), "grpc".to_owned())])
     }
 }
@@ -120,26 +120,25 @@ pub(crate) fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunContext) -
         );
         ensure!(
             profile.config.wait_for_model_timeout <= 0.0,
-            "protocol-v2 grpc execution does not yet run readiness retries; endpoint profile {profile_id:?} enables one"
+            "protocol-v2 grpc execution rejects readiness retries; endpoint profile {profile_id:?} enables one"
         );
-        // The common prepared execution factory currently constructs one
-        // transport policy for the default profile. Fail closed rather than
-        // silently applying it to a differently routed secondary profile.
+        // The prepared execution factory has one transport policy, so secondary
+        // profiles must match the default rather than silently diverge.
         ensure!(
             profile.config.urls == default.config.urls,
-            "grpc currently requires every endpoint profile to share the default profile URL list"
+            "grpc requires every endpoint profile to share the default profile URL list"
         );
         ensure!(
             profile.connection_reuse == default.connection_reuse,
-            "grpc currently requires one connection_reuse policy across endpoint profiles"
+            "grpc requires one connection_reuse policy across endpoint profiles"
         );
         ensure!(
             profile.session_header == default.session_header,
-            "grpc currently requires one session_header across endpoint profiles"
+            "grpc requires one session_header across endpoint profiles"
         );
         ensure!(
             profile.config.timeout_seconds == default.config.timeout_seconds,
-            "grpc currently requires one request timeout across endpoint profiles"
+            "grpc requires one request timeout across endpoint profiles"
         );
     }
     ensure!(

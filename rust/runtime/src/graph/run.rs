@@ -105,8 +105,7 @@ mod tests {
     use serde_json::{Value, json};
     use std::sync::Arc;
 
-    /// Two-node chain: n1 splices n0's reply. Proves dependency ordering + real
-    /// content flow through channels via the segment store, no server.
+    /// Two-node chain in which n1 splices n0's reply through the segment store.
     #[test]
     fn chain_flows_reply_into_successor_prompt() {
         let tokenizer = crate::dataset::TiktokenTokenizer::builtin();

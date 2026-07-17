@@ -3,10 +3,8 @@
 
 //! Native Rust AIPerf metrics engine.
 //!
-//! This crate is the IO-free metrics plane described by
-//! `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` and the
-//! first-class accuracy accumulator/analyzer from
-//! `specs/2026-07-10-aiperf-rust-accuracy-accumulator-design.md`.
+//! This crate is the IO-free metrics plane described by `specs/metrics.md`, plus
+//! the first-class accuracy accumulator/analyzer from `specs/accuracy.md`.
 
 pub mod accumulator;
 pub mod accuracy;
@@ -48,7 +46,7 @@ pub use report::{
     ReportCounterStats, ReportDistributionStats, ReportDynamoCapacityInfo, ReportDynamoParityInfo,
     ReportDynamoRouter, ReportDynamoRunInfo, ReportDynamoTopology, ReportEndpointProfileIdentity,
     ReportError, ReportExtensionIdentity, ReportGraphOutcomeInfo, ReportGraphRunInfo,
-    ReportPairRunFacts, ReportProvenanceError, ReportRun, ReportRunInfo, ReportRunProvenance,
+    ReportMetadataError, ReportPairRunFacts, ReportRun, ReportRunInfo, ReportRunMetadata,
     ReportScalarStats, ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata,
     ReportServerMetricsPhaseRange, ReportStats, ReportSummary, ReportTimeslice, ReportValue,
     Reporter, RunOutcome,

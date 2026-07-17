@@ -53,7 +53,7 @@ pub const CELL_PHASER_START_ENV: &str = "AIPERF_CELL_PHASER_START";
 
 /// Env toggle for the dataset fan-out data plane: the controller
 /// generates the dataset request-ids once and broadcasts them; each cell builds its
-/// owned index over velo and runs the §4.5 dispatch state machine over it. Default off
+/// owned index over velo and dispatches its owned requests. Default off
 /// (per-cell seed regeneration or controller file serving).
 pub const CELL_DATASET_FANOUT_ENV: &str = "AIPERF_CELL_DATASET_FANOUT";
 
@@ -208,7 +208,7 @@ pub fn run_cellular(
     );
     // Dataset fan-out is opt-in. The controller generates the dataset's
     // request-ids once and broadcasts them; each cell builds its owned index over velo
-    // and runs the §4.5 dispatch state machine over it (default off = per-cell seed
+    // and dispatches its owned requests (default off = per-cell seed
     // regeneration or controller file serving).
     let dataset_fanout = matches!(
         std::env::var(CELL_DATASET_FANOUT_ENV)
@@ -395,8 +395,8 @@ pub fn run_cellular(
 
         // Bind the dataset service, generate the
         // dataset's request-ids once, broadcast them chunk-by-chunk (advancing the phaser
-        // `ShardsAvailable` per chunk when the phaser is active — the §4 availability
-        // interlock), and finalize. A bounded run distributes fully up front (§4.6); each
+        // `ShardsAvailable` per chunk when the phaser is active), and finalize. A
+        // bounded run distributes fully before dispatch; each
         // cell then subscribes and builds its owned index over velo. Held for the run so
         // the service's handlers/pumps stay alive.
         let _dataset_server = if dataset_fanout {
@@ -408,8 +408,8 @@ pub fn run_cellular(
             )
             .context("binding dataset fan-out plane")?;
             let total = profiling_request_budget(envelope).unwrap_or(0);
-            // Build each request's endpoint-ready body ONCE on the controller (§3: the
-            // dataset is generated once), so a cell POSTs exactly what the controller
+            // Build each request's endpoint-ready body once on the controller so a cell
+            // POSTs exactly what the controller
             // published — the fan-out is the real dispatch source. Chat-completions body
             // against the run's endpoint URL + model.
             let url = envelope
@@ -509,9 +509,9 @@ pub fn run_cellular(
         //   addresses (`K8sLauncher` ignores `aggregator_count` — cell env is the pod
         //   spec's). It still sizes `expected_partitions = M` and collects the M merged
         //   stores. This k8s "expect, don't spawn" path is gated on the operator having
-        //   signalled it wired the tier ([`AGG_DNS_TEMPLATE_ENV`]); a fanout-set k8s run
-        //   without that signal fails closed to the flat star (cells would otherwise ship
-        //   into a void).
+        //   signalled it wired the aggregators ([`AGG_DNS_TEMPLATE_ENV`]); a fanout-set
+        //   k8s run without that signal fails closed to the flat star (cells would
+        //   otherwise ship into a void).
         let requested_aggregator_count =
             crate::engine::cellular_aggregator::aggregator_count(cell_count);
         let k8s_aggregators_wired = std::env::var_os(
@@ -526,7 +526,7 @@ pub fn run_cellular(
         if is_k8s && requested_aggregator_count.is_some() && aggregator_count.is_none() {
             tracing::warn!(
                 "AIPERF_CELL_AGG_FANOUT requests aggregators but the operator did not wire the \
-                 k8s aggregator tier (AIPERF_CELL_AGG_DNS_TEMPLATE unset); falling back to the \
+                 k8s aggregators (AIPERF_CELL_AGG_DNS_TEMPLATE unset); falling back to the \
                  flat star topology"
             );
         }
@@ -663,8 +663,7 @@ pub fn run_cellular(
         let mut store_partitions: Vec<ColumnStorePartition> =
             Vec::with_capacity(cell_count as usize);
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
-        // Live cross-cell progress sink: the frontend sets this to a file it tails
-        // and mirrors into the AIPerfJob CR status while the run is in flight.
+        // The frontend tails this file into AIPerfJob CR status.
         let live_progress_log = std::env::var_os("AIPERF_CELLULAR_HEARTBEAT_LOG")
             .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from);
@@ -779,8 +778,7 @@ pub fn run_cellular(
         };
         let report = NativeReport::from_outcome(&summary, &outcome);
         let json = serde_json::to_string_pretty(&report).context("serializing merged report")?;
-        // Mirror the single-process path (execute.rs create_dir_all(&run.artifact_dir)):
-        // create the report's parent so a fresh artifact_dir the orchestrator has not
+        // Create the report's parent so a fresh artifact_dir the orchestrator has not
         // pre-made does not fail the write. Cells write only to the throwaway scratch
         // tree, so nothing else creates this directory on the cellular path.
         if let Some(parent) = report_path.parent() {
@@ -804,7 +802,7 @@ pub fn run_cellular(
 
         // Aggregate the cells' final heartbeats (counters summed, sketches t-digest
         // merged) into one run-wide view written beside the report. The exact report
-        // stays authoritative from S2; this is the cross-cell live-lane aggregate.
+        // stays authoritative; this is the cross-cell live-lane aggregate.
         let mut aggregate = heartbeats.into_values();
         if let Some(mut merged_heartbeat) = aggregate.next() {
             for heartbeat in aggregate {
@@ -983,9 +981,9 @@ fn register_timeout() -> std::time::Duration {
 }
 
 /// Builds the protocol-v2 envelope for one cell: the same run with its phase
-/// budgets sliced to the cell's owned share and its own scratch artifact dir. The
+/// budgets sliced to the cell's owned share and its own scratch artifact dir.
 /// All cells receive the same dataset and seed; `PartitionedSampler` selects each
-/// owned instances from the shared space.
+/// cell's owned instances from the shared space.
 ///
 /// The runner rebuilds each cell's sampler fresh at every phase boundary (the
 /// dataset RNG re-seeds per phase), so a cell draws its owned instances of *each
@@ -1061,9 +1059,9 @@ fn build_cell_envelope(
         // Slice the SESSION (conversation) budget per cell for a scheduled multi-turn run,
         // aligned with [`PartitionedSampler`]'s per-conversation stride: cell k owns
         // `owned_positions(total, k, C)` conversations — its share of the first `total`
-        // conversation draws `{k, k+C, ...}`. `owned_positions` tiles EXACTLY (the shares
-        // sum to `total`, proven in `cell_launcher::owned_positions_sum_to_total_and_tile`),
-        // so no cell is handed a short budget: the sampler recycles silently (wraparound),
+        // conversation draws `{k, k+C, ...}`. `owned_positions` tiles exactly, so the
+        // shares sum to `total` and no cell is handed a short budget. The sampler
+        // recycles silently (wraparound),
         // so an off-by-one budget would resample a conversation instead of stopping — a
         // silent correctness trap the exact tiling avoids. Graph cells skip this (they get
         // the whole budget and partition the trace themselves).
@@ -1108,7 +1106,7 @@ fn build_cell_envelope(
     Ok(cell)
 }
 
-/// Dataset `format`s proven — in `crate::dataset::loader` — to compile exactly ONE turn
+/// Dataset `format`s whose loaders compile exactly one turn
 /// per conversation, so a cellular run over a `file`/`public` source keeps the sampler's
 /// per-conversation draw index aligned with the issuer's per-turn ordinal. Verified
 /// per-format:
@@ -1124,7 +1122,7 @@ fn build_cell_envelope(
 /// - `hf_instruction_response` (`loader/public.rs`: `HfInstructionComposer` ~:382-386,
 ///   one turn per row, fresh conversation).
 ///
-/// Every OTHER linear format is rejected (fail closed). Proven multi-turn / session-
+/// Every other linear format is rejected. Known multi-turn or session-
 /// grouping: `multi_turn` (`simple.rs` ~:377-417), `mooncake_trace`/`bailian_trace`/
 /// `burst_gpt`/`sagemaker_data_capture` (`trace.rs`, session-keyed grouping, e.g. mooncake
 /// ~:232-247), `inputs_json` (`raw_payload.rs` ~:457-472, many payloads per session),
@@ -1245,8 +1243,8 @@ fn cellular_has_adaptive_phase(envelope: &serde_json::Value) -> bool {
 /// restriction). The concat merge is order-independent, so multi-turn merges correctly
 /// there and only there.
 ///
-/// It mirrors the cell's own `execute::exact_fold` decision from the shared envelope +
-/// process env — every cell runs the identical envelope/env, so the controller can
+/// This applies the cell's `execute::exact_fold` decision inputs from the shared
+/// envelope and process environment. Every cell uses identical inputs, so the controller can
 /// predict the fold path they all take. It reads only the retain-forcing signals that
 /// are RELIABLE at the controller without loading the dataset: the env force-switch
 /// (`AIPERF_RUNTIME_EXACT_FOLD=0`), the heartbeat lane, sketch storage, an adaptive-scale
@@ -1294,7 +1292,7 @@ fn cellular_will_use_exact_fold(envelope: &serde_json::Value) -> bool {
     true
 }
 
-/// Whitelists a cellular run to the shape the cell topology is currently *wired* for:
+/// Whitelists a cellular run to the supported cell topology:
 /// the shared online-scheduled executor over the `http` or `grpc` transport, on
 /// **synthetic, file, or public single-turn** datasets. There is no bespoke HTTP layer — a cell
 /// runs the same `execute.rs` path as any single-process run, differing only by an
@@ -1312,8 +1310,8 @@ fn cellular_will_use_exact_fold(envelope: &serde_json::Value) -> bool {
 ///   ships a partition exactly as HTTP does and is admitted here. The `dynosim`
 ///   offline/online executors are a genuinely separate SimClock driver
 ///   (`offline_execution.rs`) that does not inject the cell issuer or ship records, so a
-///   `dynosim_*` transport runs an unwired executor and hangs the controller; it is
-///   rejected, not silently divergent. Synthetic, `file`, and `public` linear datasets
+///   `dynosim_*` transport lacks cell issuance and record shipping and is rejected.
+///   Synthetic, `file`, and `public` linear datasets
 ///   ARE wired: synthetic regenerates from the shared seed, a cross-host `file`/`path`
 ///   source ships controller->cell over HTTP+zstd and recompiles
 ///   deterministically per cell, and `public` URL/HF each cell fetches itself. Graph
@@ -1335,7 +1333,7 @@ fn cellular_will_use_exact_fold(envelope: &serde_json::Value) -> bool {
 /// group rows into MULTI-turn conversations regardless of `turns`. So the top-level
 /// `turns == 1` check alone does not establish single-turn for a file/public dataset; it is
 /// backstopped by [`CELLULAR_SINGLE_TURN_FILE_FORMATS`], an explicit allowlist of the
-/// formats proven (in the loader code) to compile exactly one turn per conversation. The
+/// formats whose loaders compile exactly one turn per conversation. The
 /// whitelist fails closed: an absent or unlisted format is rejected, so a
 /// session-grouping or ambiguous format cannot pass validation.
 ///
@@ -1351,8 +1349,8 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
             "cellular is wired for transport.type=\"http\" or \"grpc\"; got {transport:?}. \
              Both run the shared online-scheduled executor (the cell issuer + records \
              shipper live above the transport, so gRPC ships partitions exactly as HTTP); \
-             the `dynosim_*` offline/online SimClock executors are a separate driver that \
-             does not yet inject the cell issuer or ship records, so they fail closed here"
+             the `dynosim_*` offline/online SimClock executors are a separate driver without \
+             cell issuance or record shipping, so they fail closed here"
         );
     }
     // Multi-turn conversations merge correctly only on the exact-fold concat path;
@@ -1393,7 +1391,7 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
         // per-conversation draw index — which the RETAIN merge orders by. It is sound in
         // cellular ONLY on the exact-fold concat merge (order-independent store
         // concatenation), where per-turn order is irrelevant to the merged report. The
-        // The per-cell partition unit (conversation, via [`PartitionedSampler`]) matches
+        // per-cell partition unit (conversation, via [`PartitionedSampler`]) matches
         // the draw unit, and the session budget is sliced by conversation
         // (`build_cell_envelope`), so each cell single-passes its owned conversation slice.
         ensure!(
@@ -1531,8 +1529,7 @@ fn build_dataset_serve_plan(
         ))
     } else {
         // A scheduled `file`/`path` dataset (single_turn, mooncake_trace, ...) always
-        // ships as one file. Its multi-file directory shapes are out of scope and,
-        // fail closed here.
+        // ships as one file. Its multi-file directory shapes fail closed here.
         ensure!(
             source.is_file(),
             "cross-host cellular runs support a single-file dataset for this format; the path \
@@ -1721,15 +1718,8 @@ fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32)
     Ok(())
 }
 
-/// The native metrics policy for the merge, derived from the v2 envelope exactly as
-/// the single-process path does — `cfg.metrics` (SLOs + slice duration) plus
-/// `cfg.endpoint.use_server_token_count`. Passing `MetricsConfig::default()` would
-/// silently drop authored goodput SLOs and timeslice sweep-lines from the merged
-/// report. Mirrors [`crate::engine::protocol::BenchmarkRunConfigWireV2`]'s
-/// `from_value(cfg.metrics).unwrap_or_default()` so an absent/loose `metrics` block
-/// falls back the same way (`metrics_config` still validates any SLO names present).
-/// Spawns one `aiperf --aggregator` subprocess per aggregator,
-/// aggregator, each fed the run envelope on stdin (for the merge `MetricsConfig`) and
+/// Spawns one `aiperf --aggregator` subprocess per aggregator. Each receives the run
+/// envelope on stdin for `MetricsConfig` and
 /// its subtree parameters via env: its id, the fixed loopback `tcp://` coordinate it
 /// binds (its cells dial it there), how many cells ship to it, and the controller
 /// coordinate it ships its one merged store up to. Returns the children so the
@@ -1782,6 +1772,11 @@ async fn spawn_aggregators(
     Ok(children)
 }
 
+/// Builds the native metrics policy for a cellular merge from `cfg.metrics` and
+/// `cfg.endpoint.use_server_token_count`.
+///
+/// An absent or loose `metrics` block uses its defaults. The resulting policy still
+/// validates configured SLO names and preserves authored SLOs and timeslice intervals.
 pub(crate) fn cellular_metrics_config(envelope: &serde_json::Value) -> Result<MetricsConfig> {
     let spec: crate::engine::protocol::MetricsSpec = envelope
         .pointer("/run/cfg/metrics")
@@ -2083,7 +2078,7 @@ fn cellular_endpoint_urls(envelope: &serde_json::Value) -> Vec<String> {
 
 /// Writes the merged cross-cell live heartbeat beside the report as a JSON-safe
 /// percentile projection (a raw t-digest anchors `min = +inf`, which JSON cannot
-/// encode). The exact report percentiles stay authoritative from S2.
+/// encode). The exact report percentiles remain authoritative.
 fn write_heartbeat_sidecar(report_path: &Path, heartbeat: &MetricsHeartbeat) -> Result<()> {
     let quantiles: Vec<f64> = PERCENTILES.iter().map(|&p| p as f64 / 100.0).collect();
     let project = |sketch: &TDigest| -> serde_json::Value {

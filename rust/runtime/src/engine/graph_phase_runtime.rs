@@ -1702,10 +1702,8 @@ pub(crate) async fn run_graph_phases(
         .collect::<HashMap<_, _>>();
     let warmup_failed_trace_ids = Rc::new(RefCell::new(Vec::new()));
     let warmup_lane_ledger: Rc<RefCell<Option<Rc<GraphLaneLedger>>>> = Rc::new(RefCell::new(None));
-    // Consume-once WARMUP -> PROFILING handoff slot (the native
-    // `GraphPhaseChannel.warmup_handoff`): the warmup phase stashes at teardown,
-    // the first profiling phase pops-and-clears at create. `None` on every
-    // no-pressure run.
+    // Warmup stashes this consume-once handoff at teardown; the first profiling
+    // phase pops and clears it. No-pressure runs leave it empty.
     let warmup_handoff: Rc<RefCell<Option<GraphWarmupHandoff>>> = Rc::new(RefCell::new(None));
     let execution_factory: Rc<dyn PhaseExecutionFactory> = Rc::new(GraphPhaseExecutionFactory {
         phases: RefCell::new(prepared),

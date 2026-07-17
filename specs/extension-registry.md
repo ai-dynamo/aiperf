@@ -77,17 +77,20 @@ category — see [accuracy.md](accuracy.md).
 
 `Application` (`aiperf_runtime::engine::application`) is the composition root. One
 runner process builds one `AIPerfRegistry`, applies built-ins and any linked
-extensions once, and freezes the aggregate, so `--capabilities`, validation, and
-execution all consume the same object graph. Constructing a fresh built-in
-registry inside an execution path would make linked extensions invisible and is
-forbidden. No runtime file or environment variable can add code to an
-already-built binary.
+extensions once, and freezes the aggregate, so the in-process
+`aiperf_cli::execute_mode::capabilities_catalog()` API, validation, and execution
+derive from the same registered implementation set. Constructing a fresh
+built-in registry inside an execution path would make linked extensions
+invisible and is forbidden. No runtime file or environment variable can add code
+to an already-built binary.
 
 ## Source anchors
 
 - `rust/runtime/src/extensions/mod.rs` (`AIPerfRegistry`, `AIPerfExtension`,
   built-in extensions), `rust/runtime/src/extensions/transactional.rs`.
 - `rust/runtime/src/engine/application.rs` (`Application` freeze).
-- Category registries: `rust/runtime/src/{dataset,endpoints,export}/registry.rs`
-  and the adaptive/actuator registries.
+- Category registries: `rust/runtime/src/dataset/loader/mod.rs`,
+  `rust/runtime/src/dataset/sampler.rs`,
+  `rust/runtime/src/endpoints/registry.rs`, `rust/runtime/src/export/mod.rs`,
+  `rust/runtime/src/adaptive.rs`, and `rust/runtime/src/engine/registry.rs`.
 - Separate-crate extension resolution test in the extensions module tests.

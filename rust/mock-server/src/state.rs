@@ -31,9 +31,8 @@ pub struct AppState {
     pub tool_call_rng: Mutex<ToolCallRng>,
     /// Scheduler admission drives latency when enabled.
     pub scheduler: Option<Arc<BatchScheduler>>,
-    /// KV-cache prefix-reuse model, present when `--prefix-cache-enabled` or a
-    /// `--prefix-cache-hit-rate` override is set. Cached prefix tokens skip
-    /// prefill (lower TTFT) and are reported in usage.
+    /// KV-cache prefix-reuse model. Disabled only when `--disable-prefix-cache`
+    /// is set without a positive `--prefix-cache-hit-rate` override.
     pub prefix_cache: Option<Arc<PrefixCache>>,
     /// Seeded benchmark answers loaded by `--accuracy-dataset`.
     pub accuracy: Option<Arc<crate::accuracy::AccuracyDataset>>,
@@ -70,7 +69,6 @@ pub struct ToolCallRng {
 
 impl ToolCallRng {
     pub fn new(seed: Option<u64>) -> Self {
-        // Keep tool-call draws independent from other mock RNG namespaces.
         let rng = aiperf_runtime::rng::RngRoot::new(seed).derive("mock.tool_calls");
         Self { rng }
     }

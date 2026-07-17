@@ -681,7 +681,7 @@ mod tests {
 
     #[test]
     fn dag_jsonl_is_not_a_generic_dataset_registration() {
-        // `dag_jsonl` is a graph source owned by `aiperf-graph`, never a linear
+        // `dag_jsonl` is a graph source, never a linear
         // loader. It must stay absent from this registry so a scheduled run can
         // never accidentally parse it as a linear dataset.
         let registry = LoaderRegistry::with_builtin_formats().unwrap();

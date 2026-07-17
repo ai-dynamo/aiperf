@@ -242,11 +242,9 @@ impl GraphTraceSource for CyclingGraphTraceSource {
 /// - **unbounded sampler-loop** (duration-driven GraphAgentic): `session_limit = None`
 ///   and a phase duration policy owns termination.
 ///
-/// This is the deterministic-cycling partition. When weighted/mix trace sampling lands
-/// (the RNG GraphAgentic case), the per-cell independent stream derives *here* as
-/// `rng.derive(("graph-sampler", cell_id))` — the skip-N RNG composability — in place of
-/// the modulo interleave; the seam (one `next_trace` per cell, global identity) is
-/// unchanged. `request_limit` (static-node budget) is not yet partitioned here.
+/// Ownership uses deterministic modulo interleaving of global trace ordinals.
+/// The partition applies to session limits; static-node `request_limit` values
+/// are not partitioned.
 pub struct PartitionedGraphTraceSource {
     templates: Vec<GraphTracePlan>,
     session_limit: Option<u64>,

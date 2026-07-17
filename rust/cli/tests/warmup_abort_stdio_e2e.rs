@@ -14,9 +14,7 @@ use axum::{
 };
 use serde_json::{Value, json};
 
-/// Shared mock state: whether the endpoint returns a terminal error, and how
-/// many node dispatches it observed (used to prove profiling never fires when
-/// warmup aborts).
+/// Controls terminal errors and counts observed node dispatches.
 #[derive(Default)]
 struct MockState {
     fail: bool,

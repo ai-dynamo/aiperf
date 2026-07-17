@@ -32,8 +32,8 @@
 //! the exact **metric names, attributes, and explicit bucket boundaries** Python
 //! emits.
 //!
-//! When the accumulator is absent (e.g. an execution path that does not yet feed
-//! it, or a synthetic report in a test), the sink falls back to the aggregate
+//! When the accumulator is absent, including for synthetic reports, the sink
+//! falls back to the aggregate
 //! [`NativeReport`]: it carries the aggregate `count`/`sum`/`min`/`max` but
 //! leaves `bucket_counts` at zero (the aggregate cannot reconstruct the
 //! distribution across buckets).

@@ -355,8 +355,8 @@ async fn runner_capabilities_validate_and_execute_native_riva_asr_bidi() {
     );
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["transport"], "grpc");
-    assert_eq!(terminal["provenance"]["workload"], "scheduled");
+    assert_eq!(terminal["run_metadata"]["transport"], "grpc");
+    assert_eq!(terminal["run_metadata"]["workload"], "scheduled");
 
     {
         let requests = captured.lock().unwrap();

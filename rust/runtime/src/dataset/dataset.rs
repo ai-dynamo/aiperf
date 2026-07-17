@@ -237,19 +237,14 @@ impl Dataset {
         Ok(())
     }
 
-    /// Build and cache the profiling-phase [`BodyPlan`] for every eligible static
-    /// message-array turn against the run's default prepared endpoint, so
-    /// dispatch clones the cached plan instead of calling the
-    /// endpoint formatter (and building a fresh `serde_json::Value`) per request.
+    /// Cache profiling-phase [`BodyPlan`] values for eligible static
+    /// message-array turns against the run's default prepared endpoint.
     ///
-    /// Run once at load, immediately after
-    /// [`lower_messages_for_endpoint`](Dataset::lower_messages_for_endpoint) and
-    /// before the dataset is shared, so the cached plan splices the same lowered
-    /// wires dispatch would. The cached plan is byte-identical to the per-dispatch
-    /// formatter output *by construction*: dispatch clones it, folds the same
-    /// dispatch [`Overrides`](crate::dataset::materialize::Overrides), applies the
-    /// same effective-field pass, and materializes with an empty override set —
-    /// exactly what it does today from a freshly formatted plan.
+    /// Call after [`lower_messages_for_endpoint`](Dataset::lower_messages_for_endpoint)
+    /// and before sharing the dataset. Dispatch clones the cached plan, folds the
+    /// same [`Overrides`](crate::dataset::materialize::Overrides), applies the same
+    /// effective-field pass, and materializes with an empty override set, preserving
+    /// byte identity with per-dispatch formatting.
     ///
     /// A turn is cached only when every reuse invariant holds:
     /// - the endpoint's body is [`precomputable`](PreparedEndpoint::precomputable_body)
@@ -363,9 +358,7 @@ impl Dataset {
     /// Validate endpoint-owned representation requirements after composition.
     ///
     /// This pass runs before scheduling, so a prepared endpoint never discovers
-    /// missing or mixed raw-token data on the dispatch path. Future endpoint
-    /// representations extend [`EndpointDescriptor`] and validate here rather
-    /// than branching on a concrete endpoint ID.
+    /// missing or mixed raw-token data on the dispatch path.
     pub fn validate_for_endpoint(&self, descriptor: &EndpointDescriptor) -> Result<()> {
         if !descriptor.requires_raw_token_ids {
             return Ok(());

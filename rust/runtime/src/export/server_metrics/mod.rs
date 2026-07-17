@@ -132,9 +132,6 @@ impl Exporter for ServerMetricsExporter {
     }
 }
 
-// ============================================================================
-// Shared helpers
-// ============================================================================
 
 /// Returns the finite payload of a present report value, dropping non-finite
 /// tails so `exclude_none`-style omission matches the Python compat path (a JSON
@@ -259,9 +256,6 @@ fn isoformat_naive(naive: chrono::NaiveDateTime, micros: u32) -> String {
     }
 }
 
-// ============================================================================
-// JSON export
-// ============================================================================
 
 /// Builds the hybrid `server_metrics_export.json` content.
 fn build_json(
@@ -657,9 +651,6 @@ fn insert_f64(map: &mut Map<String, Value>, key: &str, value: f64) {
     map.insert(key.to_string(), number);
 }
 
-// ============================================================================
-// CSV export
-// ============================================================================
 
 /// One CSV row's worth of metric facts (one native series).
 struct CsvMetricInfo<'a> {
@@ -980,7 +971,7 @@ fn write_info_section<W: std::io::Write>(
 
 /// Union-find label-column ordering: exclusive labels before shared "bridge"
 /// labels within each co-occurrence family, families ordered by their minimum
-/// member. Ports `_get_optimal_label_order`.
+/// member, matching `_get_optimal_label_order`.
 fn optimal_label_order(metrics: &[CsvMetricInfo<'_>]) -> Vec<String> {
     let label_sets: Vec<BTreeSet<String>> = metrics
         .iter()
@@ -1052,7 +1043,7 @@ fn optimal_label_order(metrics: &[CsvMetricInfo<'_>]) -> Vec<String> {
 }
 
 /// Vertical clustering key: fill-pattern bitmap over the label columns, then
-/// name / endpoint / label-repr. Ports `_get_vertical_sort_key`.
+/// name / endpoint / label-repr, matching `_get_vertical_sort_key`.
 fn vertical_sort_key(
     metric: &CsvMetricInfo<'_>,
     label_order: &[String],

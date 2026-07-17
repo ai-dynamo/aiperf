@@ -191,7 +191,6 @@ impl FakeGpuState {
 
     fn update(&mut self, base_load: f64) {
         let load = (base_load + self.load_offset).clamp(0.0, 1.0);
-        // Copying these fields avoids overlapping mutable and immutable borrows of `self`.
         let idle_power_w = self.cfg.idle_power_w as f64;
         let max_power_w = self.cfg.max_power_w as f64;
         let temp_idle_c = self.cfg.temp_idle_c as f64;

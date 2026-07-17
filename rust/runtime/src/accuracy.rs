@@ -533,7 +533,7 @@ pub struct AccuracyEvaluation {
     pub records: Vec<AccuracyRecord>,
     /// Transport/provider failures retained in the grading denominator.
     pub failures: Vec<AccuracyFailure>,
-    /// Native-v2 evaluator provenance block.
+    /// Native-v2 evaluator metadata block.
     pub evaluator_report: EvaluatorReportInfo,
 }
 

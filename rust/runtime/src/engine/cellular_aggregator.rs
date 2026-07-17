@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Tier-T2 hierarchical merge — the aggregator role.
+//! Hierarchical folded-store aggregation.
 //!
 //! An *aggregator* is an `aiperf --aggregator` process placed between the
 //! cells and the controller to lift the single-controller fan-in ceiling. Instead of
@@ -51,7 +51,7 @@ pub const AGG_CHILD_COUNT_ENV: &str = "AIPERF_AGG_CHILD_COUNT";
 
 /// Env var (on the run) selecting the aggregator fan-out: the max number of cells one
 /// aggregator collects. Unset or `>= cells` keeps the flat star topology. Set to a
-/// smaller value to insert `ceil(cells / fanout)` aggregators (tier T2).
+/// smaller value to insert `ceil(cells / fanout)` aggregators.
 pub const CELL_AGG_FANOUT_ENV: &str = "AIPERF_CELL_AGG_FANOUT";
 
 /// Env var overriding the base loopback port aggregators bind (`base + agg_id`);
@@ -63,8 +63,8 @@ pub const CELL_AGG_BASE_PORT_ENV: &str = "AIPERF_CELL_AGG_BASE_PORT";
 pub const DEFAULT_AGG_BASE_PORT: u16 = 9700;
 
 /// Env var the **operator** sets on the k8s controller pod to signal that it created
-/// the aggregator tier as pods (and injected each cell's ship-DNS). Its presence is
-/// the gate that lets the controller take the k8s "expect, don't spawn" path (§3.2):
+/// the aggregators as pods and injected each cell's ship DNS. Its presence selects
+/// the Kubernetes "expect, don't spawn" path:
 /// the controller then does NOT spawn aggregator subprocesses and does NOT inject a
 /// loopback ship address — it only sizes `expected_partitions = M` and collects the M
 /// merged stores the operator-created aggregator pods ship up. Absent on a k8s run,
@@ -87,10 +87,10 @@ pub fn aggregator_count(cell_count: u32) -> Option<u32> {
 }
 
 /// Resolve the effective aggregator count for the deployment. `requested` is what the
-/// fanout asks for ([`aggregator_count`]); the result is the tier the controller will
+/// fanout asks for ([`aggregator_count`]); the result is the topology the controller will
 /// actually build. Off k8s the request stands (the controller spawns local aggregator
 /// subprocesses). On k8s a request only stands when the operator signalled it wired the
-/// aggregator tier (`k8s_wired`, from [`AGG_DNS_TEMPLATE_ENV`]); otherwise it falls
+/// aggregators (`k8s_wired`, from [`AGG_DNS_TEMPLATE_ENV`]); otherwise it falls
 /// closed to the flat star (`None`) so cells never ship into a void. Pure so the k8s
 /// "expect, don't spawn" gate is unit-testable without a velo runtime.
 pub fn effective_aggregator_count(
@@ -128,7 +128,7 @@ pub fn children_of(agg_id: u32, agg_count: u32, cell_count: u32) -> u32 {
     (cell_count - agg_id).div_ceil(agg_count)
 }
 
-/// Runs this process as a tier-T2 aggregator: bind at the controller-assigned fixed
+/// Runs this process as an aggregator: bind at the controller-assigned fixed
 /// loopback port, collect its children's folded stores, merge them associatively, and
 /// ship the one merged store up to the controller. `envelope` is the run envelope the
 /// controller piped on stdin (used only for the merge `MetricsConfig`).
@@ -215,7 +215,7 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
                     heartbeats.insert(cell_id, *heartbeat);
                 }
                 Some(CellMessage::Partition(_)) => bail!(
-                    "aggregator {agg_id} received a raw record Partition; tier-T2 tree merge is \
+                    "aggregator {agg_id} received a raw record Partition; hierarchical merge is \
                      fold-only (sketch or exact-fold). The byte-exact retain path keeps the flat \
                      star topology — do not set {CELL_AGG_FANOUT_ENV} with AIPERF_RUNTIME_EXACT_FOLD=0"
                 ),
@@ -258,17 +258,12 @@ mod tests {
 
     #[test]
     fn children_tile_exactly_across_aggregators() {
-        // Every cell is assigned to exactly one aggregator (round-robin), so the
-        // per-aggregator child counts must sum to the cell count — otherwise the
-        // controller's collect barrier (one partition per aggregator) and each
-        // aggregator's own barrier (child_count stores) would never both complete.
         for cell_count in [1_u32, 2, 5, 6, 7, 60, 1000] {
             for agg_count in 1..=cell_count.min(16) {
                 let sum: u32 = (0..agg_count)
                     .map(|agg_id| children_of(agg_id, agg_count, cell_count))
                     .sum();
                 assert_eq!(sum, cell_count, "cells={cell_count} aggs={agg_count}");
-                // And every cell maps to exactly one aggregator in range.
                 for cell_id in 0..cell_count {
                     assert!(cell_id % agg_count < agg_count);
                 }
@@ -278,7 +273,6 @@ mod tests {
 
     #[test]
     fn ship_coordinate_round_robins_over_the_base_port() {
-        // Cell k ships to aggregator `k % M` at `base + (k % M)`.
         assert_eq!(ship_coordinate(0, 2, 9700), "tcp://127.0.0.1:9700");
         assert_eq!(ship_coordinate(1, 2, 9700), "tcp://127.0.0.1:9701");
         assert_eq!(ship_coordinate(2, 2, 9700), "tcp://127.0.0.1:9700");
@@ -287,8 +281,6 @@ mod tests {
 
     #[test]
     fn aggregator_count_selects_flat_or_tree() {
-        // fanout >= cells or < 1 stays flat (None); a real subdivision yields
-        // ceil(cells / fanout) aggregators.
         unsafe {
             std::env::set_var(CELL_AGG_FANOUT_ENV, "3");
         }
@@ -304,11 +296,8 @@ mod tests {
 
     #[test]
     fn effective_aggregator_count_gates_k8s_on_operator_signal() {
-        // Off k8s the request always stands (the controller spawns local aggregators).
         assert_eq!(effective_aggregator_count(false, false, Some(2)), Some(2));
         assert_eq!(effective_aggregator_count(false, false, None), None);
-        // On k8s a request only stands when the operator wired the tier; otherwise it
-        // falls closed to the flat star so cells never ship into a void.
         assert_eq!(
             effective_aggregator_count(true, false, Some(2)),
             None,
@@ -319,7 +308,6 @@ mod tests {
             Some(2),
             "k8s fanout with operator wiring builds the tree"
         );
-        // A flat request stays flat regardless of the k8s signal.
         assert_eq!(effective_aggregator_count(true, true, None), None);
     }
 }

@@ -108,7 +108,7 @@ pub(crate) struct Inputs {
     pub transport: crate::model::transport::Transport,
     pub streaming: bool,
     pub timeout_seconds: Option<f64>,
-    pub use_max_tokens_compat: bool,
+    pub use_legacy_max_tokens: bool,
     pub use_server_token_count: bool,
     pub download_video_content: bool,
     /// Extra request-body inputs (endpoint.extra).
@@ -417,7 +417,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         },
         streaming: flags.streaming,
         timeout_seconds: flags.request_timeout_seconds,
-        use_max_tokens_compat: flags.use_legacy_max_tokens,
+        use_legacy_max_tokens: flags.use_legacy_max_tokens,
         use_server_token_count: flags.use_server_token_count,
         download_video_content: flags.download_video_content,
         extra: parse_extra_inputs(&flags.extra_inputs)?,
@@ -619,7 +619,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         urls: inputs.urls.iter().map(|u| normalize_url(u)).collect(),
         endpoint_type: EndpointType(inputs.endpoint_type),
         streaming: inputs.streaming,
-        use_legacy_max_tokens: inputs.use_max_tokens_compat,
+        use_legacy_max_tokens: inputs.use_legacy_max_tokens,
         use_server_token_count: inputs.use_server_token_count,
         timeout_seconds: inputs.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECONDS),
         connection_reuse: inputs.connection_reuse.unwrap_or(ConnectionReuse::Pooled),
@@ -1767,9 +1767,7 @@ fn reject_sweep(flag: &str, value: Option<&str>) -> anyhow::Result<()> {
     if let Some(v) = value
         && v.contains(',')
     {
-        anyhow::bail!(
-            "`{flag} {v}` describes a sweep but reached the single-run resolver"
-        );
+        anyhow::bail!("`{flag} {v}` describes a sweep but reached the single-run resolver");
     }
     Ok(())
 }

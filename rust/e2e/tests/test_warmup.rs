@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Tests for warmup phase functionality.
+//! Warmup requests are excluded from profiling metrics.
 
 mod common;
 use common::*;
 
-/// Warmup requests excluded from profiling metrics.
 #[tokio::test]
 async fn test_warmup_phase() {
     let h = AIPerfHarness::new().await;

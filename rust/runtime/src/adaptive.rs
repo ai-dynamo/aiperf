@@ -243,7 +243,6 @@ impl Default for ActuatorRegistry {
 }
 
 impl ActuatorRegistry {
-    /// Create an empty actuator registry.
     pub fn new() -> Self {
         Self {
             factories: TransactionalRegistry::new(),
@@ -265,7 +264,6 @@ impl ActuatorRegistry {
         Ok(())
     }
 
-    /// Register the four native control-variable actuator factories.
     pub fn with_builtin_actuators() -> Result<Self> {
         let mut registry = Self::new();
         registry.register_builtins()?;
@@ -364,10 +362,8 @@ pub fn build_adaptive(
 /// windows have distinct origins.
 ///
 /// A phased run keeps all transport timestamps on one benchmark timeline, but
-/// each adaptive sampler must begin at its own phase boundary. Python starts
-/// window state with phase strategy setup; this
-/// split preserves that behavior after a warmup phase without changing the
-/// observer wire contract.
+/// each adaptive sampler begins at its own phase boundary. The distinct origins
+/// do not change the observer wire contract.
 #[allow(clippy::too_many_arguments)]
 pub fn build_adaptive_with_origins(
     config: AdaptiveRunConfig,

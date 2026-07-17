@@ -4,7 +4,7 @@
 //! Accuracy accumulator and analyzer.
 //!
 //! This is the first-class accumulator/analyzer pair described in
-//! `specs/2026-07-10-aiperf-rust-accuracy-accumulator-design.md`: graded
+//! `specs/accuracy.md`: graded
 //! responses carry a real correlation id, are summarized over the same phase/time
 //! windows as performance metrics, and can be joined with optional metric or energy
 //! summaries by an analyzer.

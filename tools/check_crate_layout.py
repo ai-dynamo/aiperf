@@ -17,7 +17,7 @@
 
 """
 Enforce the crate identity/layout policy from
-``specs/2026-07-12-aiperf-rust-crate-naming-layout-design.md`` (§8).
+``specs/repository-layout.md``.
 
 The policy separates *package identity* (globally meaningful, keeps the
 ``aiperf`` namespace) from *workspace path* (local, drops the redundant
@@ -122,7 +122,7 @@ def main() -> None:
     if violations:
         print(
             f"ERROR: {len(violations)} crate layout violation(s) "
-            f"(see specs/2026-07-12-aiperf-rust-crate-naming-layout-design.md §8):\n"
+            f"(see specs/repository-layout.md):\n"
         )
         for v in violations:
             print(f"  - {v}")

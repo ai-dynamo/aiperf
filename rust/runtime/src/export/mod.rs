@@ -62,9 +62,9 @@ pub(crate) fn crlf_csv_writer<W: std::io::Write>(writer: W) -> csv::Writer<W> {
         .from_writer(writer)
 }
 
-/// Ports `aiperf/exporters/utils.py::normalize_endpoint_display`: drop the URL
-/// scheme, keep the `netloc` plus a `/metrics`-trimmed path, discarding any query
-/// or fragment (as `urlparse`'s netloc/path split does).
+/// Drop the URL scheme, keep the `netloc` plus a `/metrics`-trimmed path, and
+/// discard any query or fragment, matching
+/// `aiperf/exporters/utils.py::normalize_endpoint_display`.
 ///
 /// Shared by the genai-perf telemetry summary and the server-metrics exporter so
 /// both render the same endpoint keys. Netloc (host, port, any userinfo) is
@@ -239,7 +239,7 @@ pub trait Exporter {
 /// Emit-order band for the local-file writers. Every sink in this band runs
 /// before any sink in [`ORDER_UPLOADER`] so the network uploaders below observe
 /// the on-disk files (§6 of the exporters design). The per-sink offsets keep the
-/// intra-band order stable and leave gaps for a future extension to slot into.
+/// intra-band order stable.
 const ORDER_FILE_WRITER: u32 = 0;
 /// Emit-order band for the network / deferred uploaders, run after every
 /// local-file writer has produced its on-disk artifact.
@@ -465,8 +465,6 @@ mod tests {
             .collect();
         assert_eq!(names, expected, "canonical exporter emit order drifted");
 
-        // Regression guard for the band split independent of the exact sequence:
-        // the last file writer must precede the first uploader.
         let last_writer = file_writers
             .iter()
             .map(|name| names.iter().position(|n| n == name).unwrap())

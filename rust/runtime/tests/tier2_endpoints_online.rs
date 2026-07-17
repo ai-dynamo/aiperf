@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Real-HTTP tests for Tier-2 endpoint families and non-JSON lifecycles.
+//! Real-HTTP tests for extended endpoint families and non-JSON lifecycles.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;

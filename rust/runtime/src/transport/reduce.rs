@@ -139,7 +139,7 @@ fn append_text(target: &mut Option<String>, text: &str) {
     target.get_or_insert_with(String::new).push_str(text);
 }
 
-/// Absorb per-endpoint auxiliary metrics (currently video timing/memory).
+/// Absorb video timing and memory metrics.
 pub(crate) fn absorb_endpoint_metrics(data: &ResponseData, metrics: &mut ObservedEndpointMetrics) {
     let ResponseData::Video(video) = data else {
         return;

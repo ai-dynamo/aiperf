@@ -7,7 +7,7 @@ use common::*;
 use aiperf_mock_server::config::MockServerConfig;
 
 #[tokio::test]
-#[ignore = "dashboard UI not supported in Rust runner"]
+#[ignore = "requires executable dashboard UI capability"]
 async fn test_duration_based_termination() {
     let mut cfg = MockServerConfig::default();
     cfg.ttft = 10.0;

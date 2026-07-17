@@ -12,7 +12,7 @@
 //!
 //! The cross-host HTTP artifact path is normally gated to k8s (a `tcp://` velo
 //! coordinate). The test/dev force seam
-//! [`AIPERF_CELL_ARTIFACT_HTTP_FORCE`](aiperf runner) makes a SAME-HOST `--cells N`
+//! `AIPERF_CELL_ARTIFACT_HTTP_FORCE` makes a SAME-HOST `--cells N`
 //! run drive it over loopback: the controller binds its upload server on
 //! `127.0.0.1:0`, injects that authority into each locally-launched cell, the cells
 //! POST their per-record artifact files (+ `inputs.json`) back with
@@ -134,8 +134,7 @@ fn output_projection(row: &Value) -> String {
     .to_string()
 }
 
-/// Sorted multiset of a projection over a slice — the "record SET, order-independent"
-/// the brief calls for.
+/// Sorted multiset of a projection over a slice.
 fn sorted<T, F: Fn(&T) -> String>(items: &[T], f: F) -> Vec<String> {
     let mut v: Vec<String> = items.iter().map(f).collect();
     v.sort();
@@ -343,7 +342,6 @@ async fn test_cellular_http_shipping_matches_single_cell() {
         return;
     }
 
-    // Baseline: single-process, default path (no controller, no HTTP shipping).
     let h_base = AIPerfHarness::new().await;
     let baseline = run_full_coverage(&h_base, 1, false);
     assert!(
@@ -367,7 +365,6 @@ async fn test_cellular_http_shipping_matches_single_cell() {
         cellular.stderr
     );
 
-    // Only the controller writes cellular-heartbeat.json.
     assert!(
         cellular
             .artifacts

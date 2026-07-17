@@ -2,8 +2,8 @@
 
 **Date:** 2026-07-10
 **Owner:** Anthony Casagrande
-**Design:** `specs/2026-07-10-unified-graph-runtime-design.md` (rev 2, Level B) +
-`specs/2026-07-10-steppable-clock-injected-engine-design.md` (the engine boundary).
+**Design:** `specs/execution-model.md` (the unified execution model) +
+`specs/offline-cosimulation.md` (the engine boundary).
 **Grounded in:** `src/aiperf/timing/**` and dynamo `lib/mocker/**` read line-by-line.
 
 ## Goal (the acceptance bar)

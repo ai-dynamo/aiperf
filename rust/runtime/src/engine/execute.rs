@@ -393,9 +393,7 @@ impl NativeDatasetPlan {
 /// Process coordinates selected for one static-accuracy evaluator.
 ///
 /// This protocol-neutral value keeps protocol-v2 adapters from projecting
-/// through the protocol-v1 [`AccuracySpec`] wire DTO. A future remote or
-/// embedded evaluator may ignore these local-process coordinates behind
-/// [`StaticAccuracyEvaluatorFactory`].
+/// through the protocol-v1 [`AccuracySpec`] wire DTO.
 #[derive(Clone, Debug)]
 pub struct StaticAccuracyEvaluatorProcessSpec {
     /// Absolute Python executable selected by the Python orchestrator.
@@ -1001,9 +999,8 @@ struct ExactFoldInputs {
     /// run selects exact-fold. A sharded run with per-record artifacts also
     /// stays eligible: each shard streams its rows into a per-shard temp file and
     /// the coordinator concatenates them at finalize; only artifacts with no streaming
-    /// lane (via `wants_per_record_artifacts`) keep a run on retain. Kept (with the gate
-    /// test asserting `shardable: true` stays eligible) as a regression guard against
-    /// re-adding `&& !inputs.shardable`.
+    /// lane (via `wants_per_record_artifacts`) keep a run on retain. `shardable`
+    /// itself does not gate exact-fold.
     #[allow(dead_code)]
     shardable: bool,
     /// A cellular child (`AIPERF_CELL_*`). This explicit input is deliberately
@@ -1015,11 +1012,10 @@ struct ExactFoldInputs {
     /// under exact-fold, or the retain batch tail) into its controller-local
     /// `temp_root/cell-{id}` dir, and the controller CONCATENATES them into the real
     /// artifact dir at finalize (`shard_artifacts::concatenate_cell_artifacts`), plus
-    /// COPIES one cell's `inputs.json` (`copy_cell_inputs_json`). Only cross-host (k8s)
-    /// pods still drop them (their cell dir lives on their own filesystem, unreachable by
-    /// the controller — warned by `warn_dropped_per_record_artifacts`; cross-host shipping
-    /// is the follow-up). So — like `shardable` — this axis does not force retain: a
-    /// requested per-record artifact keeps the cell on retain via
+    /// copies one cell's `inputs.json` (`copy_cell_inputs_json`). Cross-host cells
+    /// cannot expose their local artifact directories to the controller and warn
+    /// through `warn_dropped_per_record_artifacts`. Like `shardable`, this axis does
+    /// not force retain: a requested per-record artifact keeps the cell on retain via
     /// `wants_per_record_artifacts` only when the artifact has no streaming lane, exactly
     /// as the single-process path.
     #[allow(dead_code)]
@@ -1376,11 +1372,11 @@ fn validate_graph_request(request: &NativeRunSpec) -> Result<()> {
     );
     ensure!(
         request.models.items.len() == 1,
-        "authored Graph-IR runs currently require exactly one configured default model; per-node model overrides remain supported"
+        "authored Graph-IR runs require exactly one configured default model; per-node model overrides remain supported"
     );
     ensure!(
         matches!(request.models.strategy, ModelSelectionStrategy::RoundRobin),
-        "authored Graph-IR runs currently require round_robin model selection; other policies need a graph model-selection trait implementation"
+        "authored Graph-IR runs require round_robin model selection"
     );
     ensure!(
         request.dataset.is_graph(),
@@ -1493,8 +1489,8 @@ async fn execute_graph_native(
     let start_ns = crate::engine::cell_origin::run_origin_now_ns(&clock);
     let rng_root = RngRoot::new(graph_random_seed.or(request.random_seed));
     let on_failure = OnFailure::graph_or_default(request.failure_policy);
-    // Scenario-locked first-turn cache-bust: mint per-conversation markers when
-    // the run resolved a non-`None` target. `None` keeps replay byte-unchanged.
+    // Scenario-locked first-turn cache bust mints per-conversation markers only
+    // when the run resolves a target.
     let cache_bust = graph.cache_bust_target.is_enabled().then(|| {
         crate::engine::graph_execution::GraphCacheBust {
             benchmark_id: request.benchmark_id.clone(),
@@ -1664,14 +1660,10 @@ async fn execute_graph_native(
     let server_metrics = sidecars.server_metrics.as_ref();
     let mut accumulator = MetricsAccumulator::with_config(metrics_config.clone());
 
-    // The single fold-and-drop pass. It folds EVERY record into the accumulator (so the
-    // error/cancel counters land in the store's metrics either way) while computing the
-    // record-derived summary aggregates the retain path used to scan `captured` for
-    // (profiling span, successful endpoint set, warmup presence, full run span). Under
-    // exact-fold it retains ONLY the errored/canceled records — matching the scheduled
-    // path's error retention (available for future graph error grouping) — and drops the
-    // clean records; under retain it keeps them all (the ship-records / artifact paths
-    // still read the full Vec).
+    // The fold-and-drop pass folds every record while computing profiling span,
+    // successful endpoints, warmup presence, and full-run span. Exact-fold retains
+    // errored and canceled records for report error details and drops clean records;
+    // retained-record execution keeps the full vector for shipping and artifacts.
     let mut has_warmup = false;
     let mut profiling_start: Option<i64> = None;
     let mut profiling_end: Option<i64> = None;
@@ -1708,8 +1700,8 @@ async fn execute_graph_native(
             if graph_fold {
                 // Stream every record's artifact row before the fold drops it. The lane
                 // sees the full record set (clean + errored), so its files match the
-                // batch writer's full-Vec output; only errored records are then retained
-                // (for future error grouping), the clean ones dropped. The accumulator has
+                // batch writer's full-Vec output; only errored records are retained for
+                // report error details. The accumulator has
                 // already folded this record (exact columns or the sketch t-digest), so
                 // dropping the clean ones bounds memory on both fold paths.
                 if let Some(lane) = &record_lane {
@@ -2643,8 +2635,7 @@ async fn execute_native_inner(
             Box::new(PreparedNativeConversationSourceFactory {
                 endpoint_resolver,
                 samplers: registry.samplers(),
-                // The coordinator (single-process / cell-entry) path reads the
-                // process-global partition from the environment; byte-unchanged.
+                // Coordinator and cell-entry paths read the process-global partition.
                 cell_partition: None,
             }),
         )
@@ -2703,7 +2694,7 @@ async fn execute_native_inner(
         metrics_config.storage_mode,
         crate::metrics_core::MetricsStorageMode::Sketch { .. }
     );
-    // Every scheduled phase shape is now shardable: rate-based phases partition the
+    // Every scheduled phase shape is shardable: rate-based phases partition the
     // request budget (`slice_phase_for_thread`), and the trace-driven
     // `user_centric`/`fixed_schedule` phases partition per conversation (each sub-cell
     // owns a disjoint conversation subset via the injected two-level partition — the
@@ -2752,12 +2743,8 @@ async fn execute_native_inner(
                 inputs_need_retain,
             ),
         });
-    // One line marking which memory path the run took. Exact-fold and the compatibility
-    // retain path are byte-identical in their artifacts by design, so the ONLY
-    // externally observable difference is coordinator memory (VmHWM) — this log lets
-    // an A/B harness prove non-vacuously that the default run engaged the fold-and-drop
-    // path and the `AIPERF_RUNTIME_EXACT_FOLD=0` run engaged the retained-record path,
-    // without which such a test cannot distinguish "same path twice" from real parity.
+    // Expose the selected memory path for operational diagnostics. Artifact bytes do
+    // not depend on this choice.
     tracing::info!(
         exact_fold,
         shardable,
@@ -2788,8 +2775,8 @@ async fn execute_native_inner(
             prepared_endpoints,
         })?;
         let start_ns = crate::engine::cell_origin::run_origin_now_ns(&clock);
-        // Env-gated single-process cellular heartbeat lane; the same accumulator/t-digest
-        // the controller aggregates across cells in Phase 2. It consumes the per-record
+        // Env-gated single-process cellular heartbeat lane; the controller merges
+        // the same accumulator/t-digest across cells. It consumes the per-record
         // live clone, so it forces record capture on even without the Python sink.
         let heartbeat_lane = HeartbeatLane::from_env(clock.clone(), start_ns)?;
         // Streaming per-record artifact lane: only the exact-fold path, which
@@ -2873,9 +2860,8 @@ async fn execute_native_inner(
 
             let shared_resources = native_scheduled_resources(&request.phases);
             let on_failure = OnFailure::scheduled_or_default(request.failure_policy);
-            // Fail-fast is wired into the request-rate/concurrency workload only.
-            // Surface the gap instead of silently ignoring `abort` for the two
-            // specialized scheduled workloads that do not yet honor it.
+            // User-centric and fixed-schedule workloads reject `abort` rather than
+            // silently ignoring it.
             if on_failure.is_abort()
                 && request.phases.iter().any(|phase| {
                     matches!(
@@ -3106,11 +3092,8 @@ async fn execute_native_inner(
         } else {
             env_bases
         };
-        // The concrete prepared-endpoint table factory the sub-cell threads share
-        // (each derives its own Rc resolver from it). Rebuilt from the request here
-        // rather than plumbed out of the coordinator setup so the workers == 1 path
-        // stays untouched; the coordinator `source_factory`/`prepared_endpoints`
-        // built above go unused on this arm.
+        // Sub-cell threads share a concrete prepared-endpoint table factory and each
+        // derives its own `Rc` resolver.
         let table_factory = {
             let NativeEndpointPlan::Prepared(profiles) = &request.endpoint;
             Arc::new(NativePreparedEndpointTableFactory::new(
@@ -3476,11 +3459,9 @@ type NativeEndpointExecutionParts<'a> = (
 struct PreparedNativeConversationSourceFactory<'a> {
     endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     samplers: &'a crate::dataset::SamplerRegistry,
-    /// The dataset instance partition this source draws, or `None` to read the
-    /// process-global partition from the environment. `None` is the byte-unchanged
-    /// default for the coordinator (single-process) and multi-process cell paths;
-    /// the thread-per-core sharded runtime injects `Some` per sub-cell thread with
-    /// a partition the process-global `AIPERF_CELL_ID`/`_COUNT` cannot express.
+    /// The dataset instance partition this source draws. `None` reads the
+    /// process-global partition; thread-per-core execution injects a per-thread
+    /// partition that `AIPERF_CELL_ID`/`_COUNT` cannot express.
     cell_partition: Option<ModuloCellPartition>,
 }
 
@@ -5008,9 +4989,7 @@ struct RunCapture {
     phase_ordinal_bases: HashMap<MetricsPhase, usize>,
     /// Whether this capture runs in metrics-only (sketch) mode: each completed
     /// turn's record is folded into `accumulator` and dropped as the run streams,
-    /// so peak coordinator memory stays O(sketch) instead of O(records). Derived
-    /// once from `config.storage_mode`, so exact mode leaves every field below
-    /// untouched and byte-unchanged.
+    /// so peak coordinator memory is O(sketch) instead of O(records).
     metrics_only: bool,
     /// Bounded streaming accumulator that folds each metrics-only record on
     /// completion (see [`RunCapture::fold_streaming`]). Empty and unused in exact
@@ -5073,9 +5052,8 @@ impl RunCapture {
         wants_adaptive_record: bool,
         exact_fold: bool,
     ) -> Self {
-        // Cell processes select the autonomous issuer from the environment
-        // (`AIPERF_CELL_ID`/`_COUNT`); the single-process default is Direct
-        // (identity), so non-cell output is byte-unchanged.
+        // Cell processes select the autonomous issuer from `AIPERF_CELL_ID` and
+        // `AIPERF_CELL_COUNT`; single-process execution uses direct issuance.
         Self::new_with_issuance(
             clock,
             origin_ns,
@@ -5089,16 +5067,13 @@ impl RunCapture {
         )
     }
 
-    /// Same as [`Self::new`] but with an explicitly injected dispatch-ordinal
-    /// issuer instead of the process-environment default. A future single-process
-    /// thread-per-core scheduled run builds one `RunCapture` per sub-cell thread,
-    /// each with a per-thread issuer (see
+    /// Construct with an explicitly injected dispatch-ordinal issuer. Thread-per-core
+    /// execution builds one `RunCapture` per sub-cell thread with a per-thread issuer
+    /// (see
     /// [`issuance_authority_for`](crate::engine::cellular_cell::issuance_authority_for))
     /// whose `(cell_id, cell_count)` partition the process-global env vars cannot
-    /// express. [`Self::new`] delegates here with the env default
-    /// ([`issuance_authority_from_env`](crate::engine::cellular_cell::issuance_authority_from_env))
-    /// so every current call site is byte-unchanged. The per-phase ordinal bases
-    /// still come from the environment — they carry no partition — matching `new`.
+    /// express. Per-phase ordinal bases come from the environment and carry no
+    /// partition.
     #[allow(clippy::too_many_arguments)]
     fn new_with_issuance(
         clock: Rc<dyn Clock>,
@@ -5111,9 +5086,8 @@ impl RunCapture {
         exact_fold: bool,
         issuance: Rc<dyn IssuanceAuthority>,
     ) -> Self {
-        // The multi-process cell path carries its per-phase global ordinal bases in
-        // the environment (`AIPERF_CELL_PHASE_ORDINAL_BASES`); the single-process
-        // default reads an empty (all-zero) map, so non-cell output is unchanged.
+        // Cell processes read global phase ordinal bases from
+        // `AIPERF_CELL_PHASE_ORDINAL_BASES`; single-process execution uses zero bases.
         Self::new_with_issuance_and_bases(
             clock,
             origin_ns,
@@ -5128,8 +5102,7 @@ impl RunCapture {
         )
     }
 
-    /// Same as [`Self::new_with_issuance`] but with the per-phase global ordinal
-    /// bases injected instead of read from the process environment.
+    /// Construct with explicitly injected per-phase global ordinal bases.
     ///
     /// A single-process thread-per-core scheduled run (cells == 1, no controller)
     /// has no `AIPERF_CELL_PHASE_ORDINAL_BASES` env var, yet its `W` sub-cell
@@ -5137,11 +5110,8 @@ impl RunCapture {
     /// collide with warmup's `[0, W)` block. The sharded runtime computes the
     /// bases from the phase `requests` budgets (mirroring
     /// [`crate::engine::cellular_controller::phase_ordinal_bases`]) and injects the same
-    /// map into every thread's capture. A controller child instead reuses the
-    /// controller-provided env bases (they are already global and
-    /// partition-independent, identical across a cell's threads);
-    /// [`Self::new_with_issuance`] delegates here with the env default so every
-    /// non-sharded call site stays byte-unchanged.
+    /// map into every thread's capture. Controller children use the global,
+    /// partition-independent environment bases for every thread.
     #[allow(clippy::too_many_arguments)]
     fn new_with_issuance_and_bases(
         clock: Rc<dyn Clock>,
@@ -5155,9 +5125,8 @@ impl RunCapture {
         issuance: Rc<dyn IssuanceAuthority>,
         phase_ordinal_bases: HashMap<MetricsPhase, usize>,
     ) -> Self {
-        // Sketch storage mode is the metrics-only fold-and-drop path; computed here
-        // (not passed) so every constructor and call site is byte-unchanged and
-        // exact mode never touches the streaming fields.
+        // Sketch storage mode selects metrics-only fold-and-drop; exact mode does not
+        // use the streaming fields.
         let metrics_only = matches!(
             config.storage_mode,
             crate::metrics_core::MetricsStorageMode::Sketch { .. }
@@ -5352,8 +5321,8 @@ impl RunCapture {
         // Fold-and-drop modes never join records by dispatch identity at finish (they
         // fold each on completion), so skip the O(records) identity retention — the
         // fold source is the per-turn record staged by `record_live`, and a failed
-        // turn's record is synthesized in `process` instead. Every other mode retains
-        // the identity for the finish-time uuid join, byte-unchanged.
+        // turn's record is synthesized in `process` instead. Other modes retain the
+        // identity for the finish-time UUID join.
         if !self.folds_records() {
             self.identities.borrow_mut().push(CaptureIdentity {
                 uuid: turn.uuid,
@@ -5543,8 +5512,8 @@ impl RunCapture {
         // Emit rows in dispatch (identity) order. `ordinal` (begin order) is the
         // cumulative flat dispatch index; `phase_counters` tracks the per-phase
         // dispatch index because a cell's sampler restarts each phase, so the
-        // cellular issuer's ordinal must be phase-local (the identity issuer ignores
-        // it and keeps the flat slot, leaving the cell-of-one path unchanged).
+        // cellular issuer's ordinal must be phase-local. The identity issuer uses the
+        // flat ordinal.
         let mut phase_counters: HashMap<_, usize> = HashMap::new();
         identities
             .iter()
@@ -5584,8 +5553,8 @@ impl RunCapture {
     /// `session_num`, and the credit-issued `admit_ns` (bit-equal to the finish
     /// path's `issued_offset_ns` because the run origin equals every phase's start).
     /// In exact-fold `request_index` is `Some` (the turn's dense absolute dispatch
-    /// ordinal), so the record's row lands at the same absolute slot the compatibility retain
-    /// path assigns and exact percentiles/timeslices/series are byte-identical; in
+    /// ordinal), so the record's row lands at the same absolute slot as retained-record
+    /// execution and exact percentiles/timeslices/series are byte-identical; in
     /// sketch it is `None` (the sketch store ignores it).
     ///
     /// Sketch approximate-memory contract: the sketch (t-digest percentiles, Welford
@@ -6051,7 +6020,7 @@ impl TurnDispatcher for ConfiguredDispatcher {
             }
             // The worker (or, for a pre-dispatch failure, the coordinator
             // fallback at finish) owns finalizing the failed record; the
-            // dispatcher only propagates the error, exactly as before.
+            // dispatcher only propagates the error.
             Err(error) => Err(error),
         }
     }
@@ -6930,9 +6899,8 @@ mod tests {
                 .collect()
         };
 
-        // Reference: compatibility retain semantics — patch the coordinator-owned fields and
-        // process in dispatch order into a report accumulator (what finish -> re-ingest
-        // does at the accumulator level).
+        // Retained-record reference: patch coordinator-owned fields and process them
+        // in dispatch order.
         let reference_summary = |phase: MetricsPhase| -> Vec<u8> {
             let mut accumulator = MetricsAccumulator::with_config(config.clone());
             for (i, mut ingest) in build_records().into_iter().enumerate() {
@@ -6945,8 +6913,8 @@ mod tests {
             serde_json::to_vec(&accumulator.export_results(&ExportContext::phase(phase))).unwrap()
         };
 
-        // Subject: exact-fold — fold each record (in REVERSE completion order, to prove
-        // the absolute-slot placement is order-independent) into the capture's exact
+        // Fold each record in reverse completion order to validate order-independent
+        // absolute-slot placement in the capture's exact
         // accumulator, then merge it into a fresh report accumulator.
         let subject_summary = |phase: MetricsPhase| -> Vec<u8> {
             let capture = RunCapture::new(

@@ -51,12 +51,13 @@ concatenation-merges by `cell_id`, re-numbering local `request_index` densely.
 
 ### Cross-host transport (velo)
 
-Behind the `velo` Cargo feature, a velo-backed `CellClient`/`ControllerTransport`
-provides cross-host transport with zero-discovery connect-by-endpoint (cells
-reach the controller from one operator-hardcoded DNS:port). A `CellLauncher` seam
-splits local-subprocess-over-velo from k8s-pod launch. Without the feature,
-`cells = 1` is byte-unchanged and `cells > 1` fails closed; the loopback
-transport serves single-host runs.
+Behind the `cellular` Cargo feature, which links velo, a velo-backed
+`CellClient`/`ControllerTransport` provides cross-host transport with
+zero-discovery connect-by-endpoint (cells reach the controller from one
+operator-hardcoded DNS:port). A `CellLauncher` seam splits
+local-subprocess-over-velo from k8s-pod launch. Without the feature, `cells = 1`
+is byte-unchanged and `cells > 1` fails closed; the loopback transport serves
+single-host runs.
 
 ### Fidelity guards
 
@@ -82,7 +83,7 @@ coordinator `finalize_run` provenance or the grouped error-message list.
 ## Future requirements
 
 - A dataset data plane: producer-owned SPMC/MPMC add-only broadcast with
-  per-consumer replay-on-attach. velo today has only SPSC and MPSC consumer-owned
+  per-consumer replay-on-attach. Velo provides only SPSC and MPSC consumer-owned
   anchors with no replay, so producer-owned fan-out must be built.
 - A monotonic phaser control plane: START generalized to `{generation, transition}`
   broadcast (one-way vs barrier, cyclic-by-monotonic-counter) over the built

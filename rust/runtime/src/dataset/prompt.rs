@@ -61,8 +61,7 @@ pub trait PromptGeneratorFactory: Send + Sync {
 ///
 /// A trait-free enum is deliberate: the corpus is data, not behavior, and both
 /// variants flow through the identical chunk-tokenization policy in
-/// [`tokenize_corpus_chunked`]. A future non-text corpus source would become a
-/// `PromptGeneratorFactory` impl in its own right, not a third variant here.
+/// [`tokenize_corpus_chunked`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CorpusSource {
     /// The embedded Shakespeare ("sonnet") corpus, matching Python's default

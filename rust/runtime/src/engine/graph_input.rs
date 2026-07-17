@@ -41,9 +41,8 @@ pub struct TStarWindow {
     pub start_min_ratio: f64,
     /// Upper window bound as a fraction of each trace's replayable span.
     pub start_max_ratio: f64,
-    /// Base RNG seed salted per `(trace_id, lane)` by the `t*` sampler
-    /// (`_seed_for_trace_lane`). This is `t_star_random_seed`, and is DISTINCT
-    /// from the dataset-sampler run root below.
+    /// Base `t*` RNG seed salted per trace and lane, distinct from the
+    /// dataset-sampler run root.
     pub random_seed: u64,
     /// Run-root seed used to derive strategy-specific recycle generators.
     pub run_random_seed: u64,
@@ -874,7 +873,7 @@ impl DagJsonlFileInput {
         );
         ensure!(
             self.sampling.eq_ignore_ascii_case("sequential"),
-            "direct Graph-IR input currently requires sequential root selection"
+            "direct Graph-IR input requires sequential root selection"
         );
         ensure!(
             self.synthesis.is_none(),
@@ -950,7 +949,7 @@ fn prepare_public(spec: PublicDatasetSpec, expected_format: &str) -> Result<Prep
     );
     ensure!(
         spec.sampling.eq_ignore_ascii_case("sequential"),
-        "direct Graph-IR input currently requires sequential root selection"
+        "direct Graph-IR input requires sequential root selection"
     );
     ensure!(
         spec.entries != Some(0),

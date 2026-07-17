@@ -5,9 +5,7 @@
 //!
 //! The native pool assigns complete traces round-robin to OS threads. Each
 //! worker owns a current-thread Tokio runtime, a `LocalSet`, and its backend,
-//! preserving the crate's lock-free thread-per-core execution model. A future
-//! cross-node implementation can implement the same execution trait using ZMQ
-//! or another wire without teaching the coordinator about that transport.
+//! preserving the crate's lock-free thread-per-core execution model.
 
 use std::cell::{Cell, RefCell};
 use std::error::Error;

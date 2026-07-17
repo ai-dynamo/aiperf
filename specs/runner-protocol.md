@@ -70,18 +70,23 @@ The execution path is chosen from `run.cfg`, not a workload id:
 | `transport.type: dynosim_offline` | virtual-clock in-process co-simulation |
 | `transport.type: dynosim_online` | wall-clock in-process co-simulation |
 
-The runner rejects authored `cfg.workload`/`cfg.accuracy` on the product wire;
-static-accuracy, evaluation, and telemetry-watch modules remain linked in the
-binary but sit off the product projection path.
+`BenchmarkConfigWireV2` deliberately deserializes only the runner-relevant
+Config subset without `deny_unknown_fields`. An authored `cfg.workload` key is
+therefore ignored, and the runner derives `scheduled` versus `graph` from the
+dataset type. The CLI's typed `cfg.accuracy` value is serialized in
+`BenchmarkRun`, but the runner subset likewise ignores it. These keys are not
+actively rejected; static accuracy remains off the product execution path
+because no consumed runner field selects it.
 
 ### Discovery
 
-`--capabilities` prints one JSON catalog object frozen at link time from the same
-registries used for validation and execution, in `category → id → { description?,
-metadata? }` shape (endpoint, transport, dataset loaders/samplers, and other
-Config-facing registries). Feature gates appear as presence/absence of ids (for
-example `dynosim_offline` only in dynosim builds). The front end preflights Config
-identifiers against this catalog by id lookup, not by pair tuples.
+`aiperf_cli::execute_mode::capabilities_catalog()` is the in-process discovery
+API; there is no `--capabilities` argv mode. The function composes the stock
+`Application` for the linked distribution and returns its typed `Catalog` in
+`category → id → { description?, metadata? }` shape from the same registries
+used for validation and execution. Feature gates appear as presence/absence of
+ids (for example `dynosim_offline` only in dynosim builds). Callers serialize or
+query the returned catalog by component id, not by transport/workload pair.
 
 ### Responses and exit codes
 
@@ -102,5 +107,5 @@ path), never registry ids.
 - `rust/runtime/src/engine/protocol_v2.rs` (`EnvelopeV2`, `OperationV2`,
   `BenchmarkRunWireV2`, `RunValidationV2`, `RunTerminalV2`).
 - `rust/cli/src/{execute.rs,execute_mode.rs,exec_bin.rs}` (re-exec, mode
-  selection, stdin decode).
+  selection, stdin decode, and `capabilities_catalog`).
 - Runner stdio tests under `rust/cli/tests/*_stdio.rs`.

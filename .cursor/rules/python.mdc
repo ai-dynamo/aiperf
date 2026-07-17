@@ -26,7 +26,7 @@ Source-of-truth locations:
 - Standalone mock target: `rust/mock-server/`.
 - Python package and delegated command implementation: `src/aiperf/`.
 - Repository architecture index: `llms.txt`.
-- Design records and their status index: `specs/README.md`.
+- Design records index: `specs/README.md`.
 
 Ground architecture claims in executable code and manifests. Design records provide context but do not establish runtime behavior.
 
@@ -235,7 +235,6 @@ Preserve each file's preamble. Edit all four bodies together and run `/usr/bin/p
 Keep architecture documentation synchronized with code in the same change:
 
 - Update all four agent files and `llms.txt` when crate topology, the clock or dispatch seams, CLI/config behavior, build commands, or supported execution behavior changes.
-- Update `specs/README.md` and `llms.txt` when a design record is added, renamed, or modified.
-- Design records are append-only when a decision changes: add a dated addendum and update the status in `specs/README.md`.
+- `specs/` holds canonical current-truth design records: edit a spec in place when its subsystem changes, rename or delete a spec when it becomes obsolete, and update `specs/README.md` and `llms.txt` in the same change. Verify each spec claim against the code, and run `/usr/bin/python3 tools/check_agent_files_sync.py` and `/usr/bin/python3 tools/check_docs_current.py`.
 - Run `/usr/bin/python3 tools/check_docs_current.py` for documentation and topology changes.
 - Commit architecture documentation with the code or design change it describes.

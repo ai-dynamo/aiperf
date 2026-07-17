@@ -65,8 +65,8 @@ pub enum CellMessage {
 }
 
 /// velo handler name: cell → controller registration. The reply carries the
-/// cell's serialized `CellLaunchSpec` (rmp), replacing the stdin pipe, and the
-/// call ticks the controller's readiness barrier.
+/// cell's serialized `CellLaunchSpec` (rmp), and the call ticks the controller's
+/// readiness barrier.
 pub const HANDLER_REGISTER: &str = "aiperf.cell.register";
 /// velo handler name: cell → controller heartbeat (fire-and-forget `am_send`).
 pub const HANDLER_HEARTBEAT: &str = "aiperf.cell.heartbeat";

@@ -8,14 +8,14 @@
 //! sink regroups them into the compatibility per-slice metric map and serializes
 //! the two files byte-for-byte. It emits nothing when the run has no timeslices.
 //!
-//! # Parity oracle (byte-exact source of truth)
+//! # Byte-exact compatibility source
 //! - Regrouping: `orchestrator/native_report.py::_project_native_timeslices`
 //!   (~L195) — per-metric native slices are aligned into one compatibility slice
 //!   record keyed by `(start_ns, end_ns, complete)`, sorted by that tuple. Each metric's
 //!   summary series is selected exactly as `_summary_series` (~L791): the single
 //!   series when there is one, otherwise the unique unlabeled aggregate series,
-//!   else the metric contributes no slices. Per-slice stats are lowered by
-//!   `_legacy_stats` (~L809).
+//!   else the metric contributes no slices. Per-slice stats retain the current
+//!   type-specific output shape.
 //! - JSON: `timeslice_metrics_json_exporter.py::_generate_content` (~L57) →
 //!   `TimesliceData` (`export_models.py` L125) with dynamic per-metric fields,
 //!   `orjson.dumps(..., OPT_INDENT_2)`. `is_complete` is emitted only for partial
@@ -31,7 +31,7 @@
 //!   note `count` is intentionally absent from CSV), CRLF line terminators,
 //!   values `f"{float:.2f}"` (`_format_number` L96).
 //!
-//! # Frontend-owned metric identity (headers / filter / scalar-tier)
+//! # Frontend-owned metric identity (headers, filters, and scalar metrics)
 //! Metric VALUES come from the native report, but three registry-derived facts
 //! are frontend-owned and projected into `cfg.export.timeslice`, matching the
 //! flagship genai-perf v1 sink exactly (the Rust metric catalog is NOT consulted):
@@ -109,7 +109,7 @@ pub struct TimesliceExportConfig {
     /// set is always kept, including native-runtime tags Python never registered.
     #[serde(default)]
     pub filtered_tags: std::collections::HashSet<String>,
-    /// Registered scalar-tier tags (`MetricType.AGGREGATE` / `DERIVED`) whose
+    /// Registered scalar-metric tags (`MetricType.AGGREGATE` / `DERIVED`) whose
     /// `count` field the Python JSON drops.
     #[serde(default)]
     pub scalar_tags: std::collections::HashSet<String>,
@@ -130,7 +130,6 @@ struct SliceStats {
     percentiles: Vec<(&'static str, f64)>,
 }
 
-/// One metric within one regrouped slice.
 #[derive(Debug, Clone)]
 struct SliceMetric {
     /// Stable metric tag (report key); drives CSV metric-sort and JSON field key.
@@ -152,7 +151,6 @@ struct SliceGroup {
     metrics: Vec<SliceMetric>,
 }
 
-/// The timeslice [`Exporter`] (JSON + CSV).
 pub struct TimesliceExporter;
 
 impl Exporter for TimesliceExporter {
@@ -195,15 +193,13 @@ impl Exporter for TimesliceExporter {
     }
 }
 
-/// Regroup the report's per-series timeslices into compatibility per-slice records.
-///
 /// Mirrors `_project_native_timeslices`: iterate metrics in report (`BTreeMap`)
 /// order, drop the frontend-projected INTERNAL/EXPERIMENTAL metrics
 /// (`_prepare_metrics`, `cfg.filtered_tags`), select the summary series
 /// (`_summary_series`), and fold each series timeslice into the
 /// `(start_ns, end_ns, complete)` group. The result is sorted by that key.
 ///
-/// Filtering, the CSV display header, and the scalar-tier `count`-drop are
+/// Filtering, the CSV display header, and the scalar-metric `count`-drop are
 /// frontend-owned (`cfg.filtered_tags` / `cfg.header_map` / `cfg.scalar_tags`),
 /// reproducing `_prepare_metrics`, `native_report._metric_result`, and
 /// `record_models.to_json_result` exactly — the Rust metric catalog is NOT
@@ -305,8 +301,8 @@ fn ordered_percentiles(percentiles: &BTreeMap<String, ReportValue>) -> Vec<(&'st
         .collect()
 }
 
-/// Lower one type-specific report stats block to the compatibility stat set, matching
-/// `_legacy_stats`. `is_scalar` controls `count` suppression.
+/// Lower one type-specific report stats block to the compatibility stat set.
+/// `is_scalar` controls `count` suppression.
 fn lower_stats(stats: &ReportStats, is_scalar: bool) -> SliceStats {
     match stats {
         ReportStats::Distribution(dist) => SliceStats {
@@ -386,7 +382,7 @@ fn render_json(slices: &[SliceGroup], input_config: &Value) -> anyhow::Result<St
     serde_json::to_string_pretty(&Value::Object(root)).context("serializing timeslice JSON export")
 }
 
-/// Build one metric object in `JsonMetricResult` field order.
+/// Preserves `JsonMetricResult` field order.
 fn metric_json(metric: &SliceMetric) -> Value {
     let stats = &metric.stats;
     let mut object = Map::new();

@@ -21,9 +21,9 @@ Guard: keep the native-Rust architecture map in lockstep with specs and crates.
 Enforces the "Keeping these docs current" mandate in the four agent instruction
 files. A change FAILS if it:
 
-  * touches any ``specs/*.md`` (other than ``specs/README.md``) without also
-    updating ``specs/README.md`` (index row / status / addendum note); and, for a
-    spec ADD / REMOVE / RENAME, without also updating ``llms.txt``.
+  * changes any ``specs/*.md`` (other than ``specs/README.md``) without also
+    updating its canonical entry in ``specs/README.md``; and, for a spec ADD /
+    REMOVE / RENAME, without also updating the canonical index in ``llms.txt``.
   * ADDS / REMOVES / RENAMES a crate (a ``rust/<name>/Cargo.toml``) without
     updating all four agent instruction files (the crate-topology table) AND
     ``llms.txt`` (the crate table).
@@ -121,8 +121,8 @@ def main() -> int:
         touched = ", ".join(sorted(p for _, p in spec_rows))
         problems.append(
             f"specs changed ({touched}) but {SPECS_INDEX} was not updated.\n"
-            f"    -> add/fix the index row and, if a decision was superseded, bump "
-            f"its status (see the append-only addendum rule)."
+            f"    -> add, update, rename, or remove the corresponding canonical "
+            f"index entries."
         )
     if spec_addremove and LLMS not in paths:
         problems.append(

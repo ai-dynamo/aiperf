@@ -4,10 +4,9 @@
 //! Byte-parity of [`HuggingFaceTokenizer`] against a Python `transformers`
 //! reference over an adversarial input battery (encode + chat-template).
 //!
-//! The reference is produced by `tools/parity/dump_tokenizer_parity.py`, which
-//! emits per-model tokenizer directories plus reference ids. Because it depends on
-//! locally cached model files (multi-MB, uncommittable), this test is `#[ignore]`
-//! by default — the same gating as the other live tokenizer tests. Run it with:
+//! `tools/parity/dump_tokenizer_parity.py` defines the per-model tokenizer
+//! directories and reference IDs. The test requires locally cached model files
+//! and is `#[ignore]` by default. Run it with:
 //!
 //! ```text
 //! HF_HUB_OFFLINE=1 python3 tools/parity/dump_tokenizer_parity.py /tmp/tok_parity.json

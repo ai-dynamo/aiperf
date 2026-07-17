@@ -108,9 +108,8 @@ pub struct RunOutcome {
 /// pump. Implementations own their event queue and route any events produced by
 /// [`step`](SimEventSource::step) to the futures they wake.
 ///
-/// This is deliberately engine-neutral: a mock inference engine is one
-/// implementation, while a future telemetry or network simulator can implement
-/// the same boundary without adding a backend dependency to `aiperf-graph`.
+/// The boundary is engine-neutral and does not add backend dependencies to the
+/// graph runtime.
 pub trait SimEventSource {
     /// Earliest virtual nanosecond at which this source can make progress.
     fn next_event_ns(&self) -> Result<Option<i64>, SimDriveError>;

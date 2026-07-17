@@ -510,7 +510,7 @@ const NODES: AtlasNode[] = [
     detail: "no central merge",
     status: "planned",
     symbol: "T3 stream-only",
-    path: "specs/2026-07-15-cellular-horizontal-scale-k6-parity-design.md",
+    path: "specs/cellular.md",
     proof: "per-cell OTLP exists; mode is planned",
     x: 822,
     y: 658,

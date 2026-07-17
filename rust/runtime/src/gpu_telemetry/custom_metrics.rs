@@ -343,7 +343,6 @@ mod tests {
         assert_eq!(infer_unit_from_help("Clock (in MHz)"), Unit::Megahertz);
         assert_eq!(infer_unit_from_help("Temp (in °C)"), Unit::Celsius);
         assert_eq!(infer_unit_from_help("Unlabeled help"), Unit::Count);
-        // A leading `(input ...)` must not abort a later valid `(in MHz)`.
         assert_eq!(
             infer_unit_from_help("Clock (input pin) freq (in MHz)"),
             Unit::Megahertz

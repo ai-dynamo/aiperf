@@ -261,11 +261,7 @@ pub struct AIPerfRegistry {
 }
 
 impl AIPerfRegistry {
-    /// Construct the empty base with every category registry unpopulated.
-    ///
-    /// This is the composition-root starting point: built-in and third-party
-    /// [`AIPerfExtension`] values populate the category registries from here.
-    /// It contributes no entries or extension names.
+    /// Contains no entries or extension names.
     pub fn empty_or_base() -> Self {
         Self {
             dataset_formats: LoaderRegistry::new(),
@@ -281,9 +277,7 @@ impl AIPerfRegistry {
         }
     }
 
-    /// Construct the complete native in-tree category registry set.
-    ///
-    /// This is the stock loaders/samplers/endpoints universe with empty
+    /// Contains the stock loaders/samplers/endpoints universe with empty
     /// transport/workload sub-registries; it is the base a custom distribution
     /// layers additional [`AIPerfExtension`] values on top of. The built-in
     /// components are applied through [`Self::with_builtin_extensions`] without
@@ -298,8 +292,6 @@ impl AIPerfRegistry {
         ])
     }
 
-    /// Apply one linked extension transactionally.
-    ///
     /// The startup-only maps are staged on a clone so a later duplicate cannot
     /// leave earlier entries from the same extension visible.
     pub fn register_extension(
@@ -309,8 +301,6 @@ impl AIPerfRegistry {
         self.register_extension_inner(extension, true)
     }
 
-    /// Apply one built-in extension transactionally without recording its name.
-    ///
     /// Built-in components are baked into the stock distribution rather than
     /// layered on top of it, so the native report's `run.extensions` array (fed
     /// by [`Self::extension_names`]) stays empty for the built-in build. The
@@ -347,7 +337,7 @@ impl AIPerfRegistry {
         })
     }
 
-    /// Apply an ordered collection of linked extensions transactionally one at a time.
+    /// Each extension commits transactionally before the next is applied.
     pub fn with_extensions<'a>(
         mut self,
         extensions: impl IntoIterator<Item = &'a dyn AIPerfExtension>,
@@ -358,9 +348,7 @@ impl AIPerfRegistry {
         Ok(self)
     }
 
-    /// Apply an ordered collection of built-in extensions transactionally.
-    ///
-    /// Like [`Self::with_extensions`] but the applied names are not recorded in
+    /// Applied names are not recorded in
     /// [`Self::extension_names`]; use this for the stock in-tree component set
     /// so the native report's `run.extensions` array stays reserved for
     /// third-party add-ons.
@@ -409,8 +397,6 @@ impl AIPerfRegistry {
         &self.actuators
     }
 
-    /// Register one statically linked endpoint factory during startup.
-    ///
     /// The catalog changes only after the descriptor and aliases pass collision
     /// validation.
     pub fn register_endpoint_factory<F>(&mut self, factory: F) -> Result<(), ExtensionError>
@@ -420,9 +406,7 @@ impl AIPerfRegistry {
         self.extend_endpoints(|builder| builder.register_factory(factory))
     }
 
-    /// Register several endpoint factories over one clone/freeze cycle.
-    ///
-    /// An extension mutates a fresh builder cloned from the current frozen
+    /// Mutates a fresh builder cloned from the current frozen
     /// catalog and installs the atomically re-frozen result only after every
     /// descriptor and alias passes collision validation. This is the batched
     /// form of [`Self::register_endpoint_factory`], avoiding one freeze per

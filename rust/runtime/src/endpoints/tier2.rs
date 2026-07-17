@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Tier-2 endpoint dialects.
+//! Extended endpoint dialects.
 //!
 //! Raw/template behavior lives in the
 //! sibling `flexible` module so its Jinja/JMESPath dependency boundary remains

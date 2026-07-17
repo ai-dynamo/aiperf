@@ -1353,7 +1353,7 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
             outcome.report.parity,
             &outcome.report.performance,
         )?);
-        let mut report_metadata = outcome.provenance;
+        let mut report_metadata = outcome.run_metadata;
         report_metadata.insert("workload".into(), "scheduled".into());
         report_metadata.insert("phase_count".into(), phase_count.to_string());
         report_metadata.insert("benchmark_id".into(), benchmark_id);
@@ -1369,7 +1369,7 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
         Ok(PreparedRunOutcome {
             native_report,
             report_facts,
-            provenance: report_metadata,
+            run_metadata: report_metadata,
             report_commit: None,
         })
     }
@@ -1477,7 +1477,7 @@ pub(crate) fn prepare_dynosim_graph(
             && run.artifacts.outputs_path.is_none()
             && !run.artifacts.trace
             && run.artifacts.user_files.is_empty(),
-        "dynosim direct graph does not yet project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
+        "dynosim direct graph rejects common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
     );
     // The artifact target directory may already exist: the Python CLI
     // creates it for its own logs before launching the runner, exactly as on
@@ -1726,7 +1726,7 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
                 outcome.report.parity,
                 &outcome.report.performance,
             )?);
-        let mut report_metadata = outcome.provenance;
+        let mut report_metadata = outcome.run_metadata;
         report_metadata.insert("workload".into(), "graph".into());
         report_metadata.insert("graph_input".into(), metadata.format);
         report_metadata.insert("graph_roots".into(), metadata.root_count.to_string());
@@ -1735,7 +1735,7 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
         Ok(PreparedRunOutcome {
             native_report,
             report_facts,
-            provenance: report_metadata,
+            run_metadata: report_metadata,
             report_commit: None,
         })
     }
@@ -1767,7 +1767,7 @@ pub struct DynosimArtifactOutputs {
 ///
 /// Construction and static validation perform no IO. Each execution method
 /// initializes exactly one library-owned engine/clock composition, waits for
-/// its exact parity proof, and only then writes optional backend artifacts.
+/// exact parity validation, and only then writes optional backend artifacts.
 #[derive(Clone, Debug)]
 pub struct DynosimExecutor {
     engine: OfflineEngineConfig,
@@ -1803,7 +1803,7 @@ impl DynosimExecutor {
         Ok(DynosimScheduledOutcome {
             report,
             artifacts,
-            provenance: report_metadata,
+            run_metadata: report_metadata,
         })
     }
 
@@ -1851,7 +1851,7 @@ impl DynosimExecutor {
         Ok(DynosimScheduledOutcome {
             report,
             artifacts,
-            provenance: report_metadata,
+            run_metadata: report_metadata,
         })
     }
 
@@ -1873,7 +1873,7 @@ impl DynosimExecutor {
         Ok(DynosimGraphOutcome {
             report,
             artifacts,
-            provenance: report_metadata,
+            run_metadata: report_metadata,
         })
     }
 
@@ -1925,7 +1925,7 @@ impl DynosimExecutor {
         Ok(DynosimDirectGraphOutcome {
             report,
             artifacts,
-            provenance: report_metadata,
+            run_metadata: report_metadata,
         })
     }
 
@@ -1969,12 +1969,12 @@ impl DynosimExecutor {
         Ok(DynosimDirectGraphOutcome {
             report,
             artifacts,
-            provenance: report_metadata,
+            run_metadata: report_metadata,
         })
     }
 
     /// Run one canonical Dynamo trace workload through AIPerf's observer and
-    /// native metrics stack, retaining the complete byte-exact parity proof.
+    /// native metrics stack, retaining complete byte-exact parity evidence.
     pub fn execute_trace(self, trace: OfflineTraceConfig) -> Result<DynosimTraceOutcome> {
         ensure!(
             !self.online,
@@ -2004,7 +2004,7 @@ impl DynosimExecutor {
         Ok(DynosimTraceOutcome {
             report,
             artifacts,
-            provenance: report_metadata,
+            run_metadata: report_metadata,
         })
     }
 
@@ -2211,7 +2211,7 @@ pub struct DynosimScheduledOutcome {
     /// Optional backend-specific artifact paths.
     pub artifacts: DynosimArtifactOutputs,
     /// Additive terminal and native-report metadata.
-    pub provenance: BTreeMap<String, String>,
+    pub run_metadata: BTreeMap<String, String>,
 }
 
 /// Successful generated Graph-IR offline execution and outputs.
@@ -2221,7 +2221,7 @@ pub struct DynosimGraphOutcome {
     /// Optional backend-specific artifact paths.
     pub artifacts: DynosimArtifactOutputs,
     /// Additive terminal and native-report metadata.
-    pub provenance: BTreeMap<String, String>,
+    pub run_metadata: BTreeMap<String, String>,
 }
 
 /// Successful direct authored Graph-IR offline execution and outputs.
@@ -2231,7 +2231,7 @@ pub struct DynosimDirectGraphOutcome {
     /// Optional backend-specific artifact paths.
     pub artifacts: DynosimArtifactOutputs,
     /// Additive terminal and native-report metadata.
-    pub provenance: BTreeMap<String, String>,
+    pub run_metadata: BTreeMap<String, String>,
 }
 
 /// Successful canonical trace execution and outputs.
@@ -2241,7 +2241,7 @@ pub struct DynosimTraceOutcome {
     /// Optional backend-specific artifact paths.
     pub artifacts: DynosimArtifactOutputs,
     /// Additive terminal and native-report metadata.
-    pub provenance: BTreeMap<String, String>,
+    pub run_metadata: BTreeMap<String, String>,
 }
 
 #[cfg(test)]
@@ -2379,7 +2379,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(outcome.report.aiperf.completed, 4);
-        assert_eq!(outcome.provenance["transport"], DYNOSIM_OFFLINE_ID);
+        assert_eq!(outcome.run_metadata["transport"], DYNOSIM_OFFLINE_ID);
         let report_path = outcome.artifacts.report_json.unwrap();
         let records_path = outcome.artifacts.per_request_jsonl.unwrap();
         assert!(report_path.is_file());
@@ -2433,6 +2433,6 @@ mod tests {
             outcome.report.performance.request_counts.completed_requests,
             2
         );
-        assert_eq!(outcome.provenance["parity_shared_fields"], "74");
+        assert_eq!(outcome.run_metadata["parity_shared_fields"], "74");
     }
 }

@@ -155,8 +155,6 @@ async fn test_cellular_multi_turn_exact_fold_matches_single_cell() {
         cellular.stderr
     );
 
-    // Topology guard: the multi-cell run went through the controller (which alone writes
-    // cellular-heartbeat.json); the baseline did not.
     assert!(
         cellular
             .artifacts

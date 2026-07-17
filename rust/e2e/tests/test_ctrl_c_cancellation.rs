@@ -1,20 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
+//! Ctrl+C stops admission, drains in-flight requests, and writes cancelled results.
+
 mod common;
 use common::*;
-
-// Ctrl+C stops admission, drains in-flight requests, and writes cancelled results.
 
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Spawn `aiperf profile <args> --artifact-dir <dir> --tokenizer <model>` — the
-/// unified native binary (the product entry point) — wait for the
+/// Spawn `aiperf profile <args> --artifact-dir <dir> --tokenizer <model>`, wait for the
 /// "AIPerf System is PROFILING" log line, delay `sigint_delay`, send SIGINT, and
 /// wait for the process to flush partial artifacts and exit. SIGINT is handled by
-/// the native entry point's signal handler, which forwards graceful cancellation
+/// the `aiperf` entry point's signal handler, which forwards graceful cancellation
 /// to its `--execute` child.
 ///
 /// Returns a `RunResult` reading the emitted artifact tree.

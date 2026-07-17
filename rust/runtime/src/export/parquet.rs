@@ -124,8 +124,8 @@ impl Exporter for ParquetExporter {
 
 /// Resolve the runner-emitted parquet wire file for a given export directory.
 ///
-/// The wire JSONL is an **input** the runner writes into the run's artifact root
-/// (`rust/runner/src/execute.rs`), whereas the export directory handed to a sink
+/// The wire JSONL is an **input** the runner writes into the run's artifact root,
+/// whereas the export directory handed to a sink
 /// may be an OUTPUT redirect (the `AIPERF_EXPORT_SUBDIR` parity harness points
 /// sinks at `<artifact_root>/<subdir>/` so Rust outputs coexist with the Python
 /// files). The wire file is never redirected, so resolve it in `artifact_dir`
@@ -166,14 +166,10 @@ fn profiling_boundary(report: &NativeReport) -> Result<(i64, i64)> {
     Ok((range.start_ns, range.end_ns))
 }
 
-// =============================================================================
-// Wire record decoding
-// =============================================================================
 
 /// One raw scrape record from the wire JSONL. Only the fields the Parquet render
 /// consumes are decoded; unknown fields (`is_duplicate`, `benchmark_phase`, trace
-/// timings, `endpoint_latency_ns`) are ignored. Mirrors the `full_record` shape in
-/// `rust/runner/src/server_metrics.rs`.
+/// timings, `endpoint_latency_ns`) are ignored.
 #[derive(Debug, serde::Deserialize)]
 struct WireRecord {
     endpoint_url: String,
@@ -265,9 +261,6 @@ where
     }
 }
 
-// =============================================================================
-// Hierarchy and time-series accumulation
-// =============================================================================
 
 /// Prometheus metric semantic type. Mirrors `enums.PrometheusMetricType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -726,9 +719,6 @@ fn searchsorted_right(values: &[i64], target: i64) -> usize {
     values.partition_point(|&v| v <= target)
 }
 
-// =============================================================================
-// Row model + Arrow assembly
-// =============================================================================
 
 /// One materialized Parquet row prior to columnarization.
 #[derive(Debug)]

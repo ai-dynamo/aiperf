@@ -217,7 +217,7 @@ Layers: [1 Clock](#1-clock) · [2 Measurement foundation](#2-measurement--dispat
 
 ## Addendum — recommended renames
 
-Grouped by priority. Renames are mechanical, no behavior change; sequence them so the suite stays green. The **High** set is worth doing standalone (correctness/clarity); the **Medium** set is the shared-substrate work already captured in the P1 substrate-names appendix of `specs/2026-07-16-unified-thread-per-core-execution.md`; **Low** is polish. *(Revised 2026-07-13 after a two-reviewer naming pass: `Duration`→`DurationLimit` (was `DurationStop`), three-way `Phase` collapse, and the Medium picks avoid the already-taken `PreparedRequest`/`TraceExecutor` — now `PreparedTurn`/`TracePlacement`.)*
+Grouped by priority. Renames are mechanical, no behavior change; sequence them so the suite stays green. The **High** set is worth doing standalone (correctness/clarity); the **Medium** set is the shared-substrate work already captured in the substrate naming of `specs/execution-model.md`; **Low** is polish. *(Revised 2026-07-13 after a two-reviewer naming pass: `Duration`→`DurationLimit` (was `DurationStop`), three-way `Phase` collapse, and the Medium picks avoid the already-taken `PreparedRequest`/`TraceExecutor` — now `PreparedTurn`/`TracePlacement`.)*
 
 ### High — hazards & misnomers (independent, do anytime)
 
@@ -230,7 +230,7 @@ Grouped by priority. Renames are mechanical, no behavior change; sequence them s
 
 ### Medium — shared-substrate generic names (the P1 spec)
 
-Covered in full by the P1 substrate-names appendix of `specs/2026-07-16-unified-thread-per-core-execution.md`; summarized here for cross-reference:
+Covered by the substrate naming in `specs/execution-model.md`; summarized here for cross-reference:
 
 | Now | → |
 |---|---|

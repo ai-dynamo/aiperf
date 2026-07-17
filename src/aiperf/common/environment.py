@@ -303,23 +303,20 @@ class _RuntimeSettings(BaseSettings):
 class _RngSettings(BaseSettings):
     """Selects which random-number backend seeds AIPerf's reproducible streams.
 
-    ``legacy`` (default) uses Python's ``random.Random`` (Mersenne Twister) plus NumPy
-    for draws and SHA-256 for seed derivation. ``rust_parity`` selects the pure-Python
-    byte-exact port of the Rust ``aiperf::rng`` substrate (``Pcg64`` generator +
-    ``rand``/``rand_distr`` sampling + BLAKE3 seed algebra), so seeded Python and Rust
-    produce identical streams. Used for cross-language parity testing; it changes the
-    exact random values (mirroring Rust, not legacy Python), so it is opt-in.
+    ``python`` uses ``random.Random`` and NumPy draws with SHA-256 seed
+    derivation. ``rust_parity`` uses Pcg64 draws and BLAKE3 seed derivation so
+    seeded Python and Rust produce identical streams.
     """
 
     model_config = SettingsConfigDict(
         env_prefix="AIPERF_RNG_",
     )
 
-    BACKEND: Literal["legacy", "rust_parity"] = Field(
-        default="legacy",
-        description="Random-number backend: `legacy` (Python MT + NumPy, SHA-256 "
-        "derivation, default) or `rust_parity` (pure-Python byte-exact port of the "
-        "Rust aiperf::rng Pcg64 + BLAKE3 substrate, for cross-language parity). "
+    BACKEND: Literal["python", "rust_parity"] = Field(
+        default="python",
+        description="Random-number backend: `python` (Python MT + NumPy with SHA-256 "
+        "derivation, default) or `rust_parity` (Pcg64 with BLAKE3 derivation for "
+        "cross-language parity). "
         "Set via AIPERF_RNG_BACKEND.",
     )
 
@@ -1604,7 +1601,7 @@ class _Environment(BaseSettings):
     )
     RNG: _RngSettings = Field(
         default_factory=_RngSettings,
-        description="Random-number backend selector (legacy vs rust_parity)",
+        description="Random-number backend selector (python vs rust_parity)",
     )
     DATASET: _DatasetSettings = Field(
         default_factory=_DatasetSettings,

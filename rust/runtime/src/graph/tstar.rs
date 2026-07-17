@@ -96,9 +96,8 @@ pub fn sampler_shuffle_seed(root_seed: u64) -> u64 {
 ///
 /// Per `_RNGManager.derive` and `dataset_samplers.py:RandomSampler`,
 /// SHA-256 the ASCII string `"{root_seed}:dataset.sampler.random"` and take the
-/// low 8 bytes big-endian. This is the SAME run-root derivation as
-/// [`sampler_shuffle_seed`], with a different salt, so a future sampler adds a salt
-/// rather than a new seed field. The result seeds a [`PythonMt19937`]
+/// low 8 bytes big-endian. This uses the same run-root derivation as
+/// [`sampler_shuffle_seed`] with a different salt. The result seeds a [`PythonMt19937`]
 /// (`random.Random(seed)`), NOT a numpy PCG64.
 pub fn sampler_random_seed(root_seed: u64) -> u64 {
     let mut hasher = Sha256::new();

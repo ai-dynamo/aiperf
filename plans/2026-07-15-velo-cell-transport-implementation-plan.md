@@ -13,7 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Tech Stack:** Rust 2024, `velo = { git = "https://github.com/ai-dynamo/velo.git", tag = "v0.5.0", default-features = false }`, tokio `current_thread`, `serde`/`serde_json` (velo typed payloads are JSON), `rmp-serde` (partition body), hyper (already a dep; only if the bootstrap-fetch spike branch is chosen).
 
-**Reference spec:** `specs/2026-07-15-velo-cell-transport-design.md`.
+**Reference spec:** `specs/cellular.md`.
 **Velo source for reading during implementation:** a clean v0.5.0 checkout is at `/tmp/velo-main` (crate layout `velo` + `velo-ext`; key files cited inline below).
 
 ## Global Constraints
@@ -49,7 +49,8 @@ SPDX-License-Identifier: Apache-2.0
 - `rust/runner/src/main.rs` — cell bootstrap from env + velo register (not stdin); controller path; fail-closed without `velo`.
 - `rust/runner/src/lib.rs` — `mod cell_launcher;` and re-exports.
 - `rust/e2e/tests/test_cellular.rs`, `rust/e2e/tests/test_graph_cellular.rs` — run over the velo `LocalLauncher`.
-- The four agent files + `specs/README.md` + `llms.txt` + a dated addendum to `specs/2026-07-12-cellular-ready-seams-and-roadmap.md` (Task 12).
+- The four agent files + canonical in-place updates to `specs/cellular.md`,
+  `specs/README.md`, and `llms.txt` (Task 12).
 
 **Delete:** `TcpCellClient`, `TcpControllerTransport`, `encode_frame`, `read_frame`, `MAX_FRAME_LEN`, and their tests from the old `transport.rs` (folded into the mod split).
 
@@ -612,26 +613,25 @@ Expected: PASS — `--cells 3` over a `dag_jsonl` dataset reproduces the 1-cell 
 
 ---
 
-## Task 12: Docs — agent files, specs index, roadmap addendum, llms.txt
+## Task 12: Docs — agent files, canonical cellular spec, indexes
 
 **Files:**
 - Modify: `rust/AGENTS.md`, `rust/CLAUDE.md`, `rust/.github/copilot-instructions.md`, `rust/.cursor/rules/python.mdc` (identical body)
-- Modify: `specs/2026-07-12-cellular-ready-seams-and-roadmap.md` (append a dated `## Addendum`)
+- Modify: `specs/cellular.md` in place so its built cross-host transport section
+  states the resulting behavior
+- Modify: `specs/README.md` (keep the canonical cellular entry current)
 - Modify: `llms.txt` (reference the new transport + feature)
-- (`specs/README.md` row already added in the spec commit.)
 
-- [ ] **Step 1: Append the addendum** to `specs/2026-07-12-cellular-ready-seams-and-roadmap.md` (never edit its body):
+- [ ] **Step 1: Edit `specs/cellular.md` in place** so the built cross-host
+  transport section includes these current contracts:
 
 ```markdown
-## Addendum — 2026-07-15 — velo cell transport + zero-discovery k8s topology
-
-The Phase-2 "cross-host transport is a `CellClient`/`ControllerTransport` swap" is realized.
-The loopback-only `TcpCellClient`/`TcpControllerTransport` is **replaced** by a velo-backed impl
-(official `ai-dynamo/velo` v0.5.0, no fork) behind the unchanged seam: `aiperf.cell.register`
-(typed-unary; returns the `CellLaunchSpec`, replacing the stdin pipe, and ticks the count
+A velo-backed implementation (official `ai-dynamo/velo` v0.5.0, no fork) sits
+behind the `CellClient`/`ControllerTransport` seam: `aiperf.cell.register`
+(typed-unary; returns the `CellLaunchSpec` and ticks the count
 barrier), `aiperf.cell.heartbeat` (am_send), `aiperf.cell.partition` (rendezvous handle → the
 records-shard partition). Cells reach the controller with **zero discovery** from one
-operator-hardcoded DNS:port (mirroring the Python `AIPERF_K8S_ZMQ_CONTROLLER_HOST` model) via
+operator-configured DNS:port via
 `resolve_controller_peer` (<mechanism chosen by the spike>). A `CellLauncher` seam splits
 local-subprocess-over-velo (UDS on unix / TCP-loopback on Windows; the `test_cellular`/
 `test_graph_cellular` e2e path) from k8s-pod (no spawn; barrier + registration timeout). All
@@ -644,14 +644,16 @@ routing, cross-cell sidecar telemetry aggregation.
 
 - [ ] **Step 2: Update the four agent files' identical body** — the `aiperf`/`aiperf` crate-table cellular note (velo transport + `velo` feature) and the "Build, test, run" cellular paragraph (add `cargo build -p aiperf-cli --features velo`; note `cells>1` needs the feature). Make the SAME edit in all four.
 
-- [ ] **Step 3: Update `llms.txt`** where it summarizes the cellular transport / crate features.
+- [ ] **Step 3: Update `specs/README.md` and `llms.txt`** where they summarize
+  cellular transport and crate features.
 
 - [ ] **Step 4: Run the guards**
 
-Run: `python tools/check_agent_files_sync.py && python tools/check_docs_current.py`
+Run: `source .venv/bin/activate && /usr/bin/python3 tools/check_agent_files_sync.py && /usr/bin/python3 tools/check_docs_current.py`
 Expected: both exit 0.
 
-- [ ] **Step 5: Commit** (`docs: velo cell transport across agent files, roadmap addendum, llms.txt`).
+- [ ] **Step 5: Review the documentation diff** and confirm it describes only
+  the resulting architecture and requirements.
 
 ---
 
@@ -677,7 +679,7 @@ Expected: both exit 0.
 - §5 data flow (controller build→launch→barrier→merge) → Task 7. ✅
 - §6 failure/lifecycle (child-exit watcher + k8s timeout) → Tasks 5, 7, 8. ✅
 - §7 testing (unit + e2e over velo) → Tasks 4, 5, 6, 10, 11. ✅
-- §8 docs → Task 12 (+ the spec-commit README row). ✅
+- §8 docs → Task 12 (canonical spec and index updates). ✅
 - Large-partition rendezvous → Task 4 (partition handler). ✅
 
 **Placeholder scan:** The only deferred code is `resolve_controller_peer`/`build_velo` bodies, gated on the Task 1 spike by design (an explicit spike, not a hidden TODO) — Task 3 notes exactly what the implementer writes for each mechanism. No "add error handling"/"write tests"-style placeholders.

@@ -1,6 +1,6 @@
 # Telemetry archive/watch spec — cycle 1 default-refute adjudication
 
-Target reviewed: `specs/2026-07-11-aiperf-rust-telemetry-archive-watch-design.md`
+Target reviewed: `specs/telemetry.md`
 
 Claims commit: `e31d5da98`
 

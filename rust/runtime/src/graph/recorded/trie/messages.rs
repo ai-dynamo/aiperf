@@ -243,8 +243,8 @@ fn plan_chain_tags(
             // Turn 0: a merged tool+system prefix (`weka_synth_buf.init_turn_0`)
             // becomes one `system` segment of `ceil((tool+system)/bs)` blocks
             // (clamped to covered); the remainder is the user segment. The WEKA
-            // adapter does not yet plumb per-trace tool/system token counts, so
-            // they are zero here and this collapses to a single user segment.
+            // adapter supplies zero per-trace tool/system token counts, collapsing
+            // this to a single user segment.
             let tool_system_tokens = 0_usize;
             let prefix_blocks = if tool_system_tokens > 0 {
                 tool_system_tokens.div_ceil(bs).min(covered)

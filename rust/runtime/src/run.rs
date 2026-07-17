@@ -709,7 +709,7 @@ pub(crate) async fn run_user_centric_adaptive_with_backend(
     validate_adaptive_ramp_ownership(&ancillary, Some(&adaptive))?;
     anyhow::ensure!(
         adaptive.control_variable == AdaptiveControlVariable::Users,
-        "user-centric adaptive scale currently requires control_variable=users"
+        "user-centric adaptive scale requires control_variable=users"
     );
     let workload = Rc::new(UserCentricWorkload::new(config, conversations)?);
     let user_target: Rc<dyn crate::adaptive_core::UserTarget> = Rc::new(workload.control());

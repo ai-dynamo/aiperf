@@ -43,4 +43,5 @@ implementation.
 - `rust/runtime/src/content_server/` (`server.rs`, `tracker.rs`, `publisher.rs`,
   `model.rs`, `error.rs`).
 - `rust/runtime/src/dataset/generator/` (media generation and publication seam).
-- `rust/e2e/tests/test_content_server*` and content-server tutorial coverage.
+- `rust/cli/tests/online_v2_stdio.rs`.
+- `docs/tutorials/content-server.md`.

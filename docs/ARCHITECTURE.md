@@ -452,7 +452,7 @@ depends only on `(root_seed, identifier)` via BLAKE3 seed algebra → `rand_pcg:
   order-independent parallel trace synthesis. `dist.rs` distribution samplers (`SamplingRng`,
   `DistributionSampler`, `SequenceSampler`, `SequenceLengthDistribution`). `namespace.rs` — ~44
   canonical dotted stream names, asserted sorted/unique/collision-free.
-- Cross-language parity: `AIPERF_RNG_BACKEND=rust_parity` swaps Python onto a byte-exact port of
+- Cross-language parity: `AIPERF_RNG_BACKEND=rust_parity` selects Python's byte-exact implementation of
   this Pcg64+BLAKE3 substrate.
 
 ### I. Timing & scheduling (`rust/runtime/src/timing/`, `run.rs`, `scheduled.rs`, `request_rate.rs`, …)
@@ -695,7 +695,7 @@ disables the scheduler + prefix cache.
 |---|---|
 | `AIPERF_RUNTIME_ENGINE` | `rust` (default) native execution engine vs `python` legacy A/B fallback service mesh |
 | `AIPERF_RUNTIME_NATIVE_EXPORT` | `1` (default) native exporter plane vs `0` legacy Python emitters |
-| `AIPERF_RNG_BACKEND` | `legacy` vs `rust_parity` (byte-exact Pcg64+BLAKE3 port in Python) |
+| `AIPERF_RNG_BACKEND` | `python` (default) vs `rust_parity` (byte-exact Pcg64+BLAKE3 implementation in Python) |
 | `AIPERF_RUNNER_LOG` | execution-engine stderr tracing filter |
 | `AIPERF_CONTENT_SERVER_ENABLED` / `_CONTENT_DIR` | enable the run-owned content server |
 | `AIPERF_CELL_ID` / `AIPERF_CELL_COUNT` / `AIPERF_CELL_CONTROLLER_ADDR` / `AIPERF_CELL_PHASE_ORDINAL_BASES` | cellular child wiring |

@@ -60,8 +60,7 @@ impl DataStore {
         self.buf
     }
 
-    /// Port of `DataStore._write_record`: emit one framed record that fits the
-    /// remaining block space.
+    /// Emit one framed record that fits the remaining block space.
     fn write_record(&mut self, data: &[u8], dtype: u8) {
         let checksum = self.crc.checksum_with_type(dtype, data);
         self.buf.extend_from_slice(&checksum.to_le_bytes());
@@ -71,7 +70,7 @@ impl DataStore {
         self.buf.extend_from_slice(data);
     }
 
-    /// Port of `DataStore._write_data`: pad, then write FULL or split records.
+    /// Pad the current block, then write a full or split record.
     fn write_data(&mut self, data: &[u8]) {
         let mut space_left = BLOCK_LEN - (self.buf.len() % BLOCK_LEN);
 

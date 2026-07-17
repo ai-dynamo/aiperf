@@ -1013,10 +1013,9 @@ fn percentile_in_place(values: &mut [f64], percentile: f64) -> f64 {
     *selected
 }
 
-/// Nearest-rank index for `percentile` (0–100) over a sorted (or
-/// `select_nth`-able) slice of `len` elements; `len` must be ≥ 1. Shared by the
-/// collector's distribution stats and the graph transport bench so both use one
-/// percentile definition.
+/// Rounded zero-based index for `percentile` (0–100) over `len` elements.
+///
+/// `len` must be at least one.
 pub fn percentile_rank(len: usize, percentile: f64) -> usize {
     let rank = ((len - 1) as f64 * percentile / 100.0).round() as usize;
     rank.min(len - 1)

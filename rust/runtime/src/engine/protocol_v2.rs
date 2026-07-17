@@ -1016,9 +1016,9 @@ pub struct RunTerminalV2 {
     /// Non-authoritative diagnostic evidence emitted for failed executions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostic_artifacts: Vec<RunDiagnosticArtifactV2>,
-    /// Additive transport/workload provenance returned before Python opens the report.
+    /// Additive transport/workload run metadata returned before Python opens the report.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub provenance: BTreeMap<String, String>,
+    pub run_metadata: BTreeMap<String, String>,
 }
 
 /// One non-authoritative diagnostic artifact returned by a failed execution.

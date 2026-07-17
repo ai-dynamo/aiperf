@@ -3,9 +3,8 @@
 
 //! Wide, per-request Parquet sidecar to `profile_export.jsonl`.
 //!
-//! The runner already writes a row-oriented per-request JSONL
-//! (`rust/runner/src/records.rs::write_records_jsonl` → `profile_export.jsonl`),
-//! one object per request with the shape `{metadata, metrics{tag:{value,unit}},
+//! The runner writes row-oriented per-request `profile_export.jsonl`, one object
+//! per request with the shape `{metadata, metrics{tag:{value,unit}},
 //! trace_data?, error}`. That shape is fine for streaming/replay but awkward for
 //! analytical queries over millions of records. This module writes a **columnar
 //! mirror** of that same data: one Parquet row per request, one nullable
@@ -770,9 +769,8 @@ mod tests {
         let (stream_groups, stream_batch, stream_meta) = read_coalesced(&stream_path);
         let (batch_groups, batch_batch, batch_meta) = read_coalesced(&batch_path);
 
-        // The one-shot writer emits a single row group; the streaming writer emits
-        // ceil(rows / bound) groups. For the multi-group cases this proves the
-        // buffered flush actually chunked.
+        // Streaming flushes produce ceil(rows / bound) row groups, while the
+        // one-shot writer produces one.
         assert_eq!(batch_groups, 1, "one-shot writer emits one row group");
         assert_eq!(
             stream_groups,

@@ -5,10 +5,9 @@
 //! Python `PromptGenerator._initialize_corpus`
 //! (`src/aiperf/dataset/generator/prompt.py`) byte-for-byte.
 //!
-//! The reference fixture `tests/data/sonnet_corpus_parity.json` is produced by
-//! `tools/gen_sonnet_corpus_parity.py`, which runs the *real* Python
-//! `PromptGenerator` with the built-in tiktoken `o200k_base` tokenizer and
-//! records the tokenized-corpus digest. This test rebuilds the corpus through
+//! The reference fixture `tests/data/sonnet_corpus_parity.json` defines the
+//! Python `PromptGenerator` tokenized-corpus digest for the built-in tiktoken
+//! `o200k_base` tokenizer. This test rebuilds the corpus through
 //! `aiperf_runtime::dataset::corpus::tokenize_sonnet_corpus` with the equivalent Rust
 //! `TiktokenTokenizer::builtin()` and asserts an identical token count,
 //! head/tail window, and SHA-256 of the little-endian `u32` token stream. Any
@@ -39,7 +38,7 @@ fn rust_sonnet_corpus_matches_python_reference() {
     assert_eq!(
         reference["tokenizer"].as_str(),
         Some("o200k_base"),
-        "fixture must be generated with the built-in o200k_base tokenizer"
+        "fixture tokenizer must be the built-in o200k_base"
     );
 
     let tokenizer = TiktokenTokenizer::builtin();

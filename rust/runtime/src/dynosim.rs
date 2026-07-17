@@ -4,7 +4,7 @@
 //! Feature-gated in-process co-simulation against Dynamo's passive mock engine.
 //!
 //! This module is the application-side realization of
-//! `specs/2026-07-10-steppable-clock-injected-engine-design.md`: AIPerf owns the
+//! `specs/offline-cosimulation.md`: AIPerf owns the
 //! [`SimClock`], workload loop, observers, and report; `dynamo-mocker` owns only
 //! scheduler/performance-model state behind [`SteppableReplay`]. There are no
 //! sockets, subprocesses, shared-memory rings, or secondary clocks.
@@ -735,9 +735,6 @@ pub struct OfflineMetricParity {
 
 /// Canonical byte representation for the metric schema shared by AIPerf's
 /// compatibility collector and Dynamo's replay collector.
-///
-/// Future in-process backends can implement this trait for their native report
-/// instead of weakening parity to a hand-picked field list.
 pub trait CanonicalSharedMetrics {
     /// Serialize every field in the common summary schema without rounding,
     /// tolerance, field removal, or numeric normalization.
@@ -990,13 +987,13 @@ fn finish_shared_metrics(
     finish_shared_metrics_enforcing(aiperf, dynamo, true)
 }
 
-/// Import backend-owned resource facts and, when `enforce_byte_parity`, prove the
+/// Import backend-owned resource facts and, when `enforce_byte_parity`, verify the
 /// AIPerf and Dynamo shared-metric serializations are byte-identical.
 ///
 /// The wall-clock (`drive_real_with_source`) online mode passes `false`: request
 /// and token counts still match, but latency/throughput are measured against real
 /// timers and cannot be byte-identical to the engine's internal completion times,
-/// so the proof is skipped while the same resource import and parity accounting
+/// so the byte check is skipped while the same resource import and parity accounting
 /// are retained.
 fn finish_shared_metrics_enforcing(
     mut aiperf: loadgen_core::collector::TraceSimulationReport,
@@ -1028,7 +1025,7 @@ fn finish_shared_metrics_enforcing(
     aiperf.throughput.gpu_hours = dynamo.throughput.gpu_hours;
     // The backend collector owns the configured SLA thresholds and evaluates
     // them from the same request event stream. Copy its optional classification
-    // before the byte-parity proof so the AIPerf compatibility report exposes
+    // before the byte-parity check so the AIPerf compatibility report exposes
     // the canonical goodput values without recomputing from aggregate percentiles.
     aiperf.goodput =
         dynamo
@@ -2467,7 +2464,7 @@ pub fn run_paced_offline(
 /// Identical to [`run_paced_offline`] (same sink, `run_paced_with_backend`
 /// issuer, materializer, observer, and report) except the engine is stepped in
 /// real time by [`drive_real_with_source`] instead of fast-forwarded by the DES
-/// pump, and the AIPerf/Dynamo byte-exact parity proof is relaxed (real-timer
+/// pump, and the AIPerf/Dynamo byte-exact parity check is relaxed (real-timer
 /// latencies cannot match the engine's internal completion times). Request and
 /// token counts remain exact. Trace timing must already be speed-scaled or the
 /// run takes the trace's real duration.
@@ -3646,7 +3643,7 @@ where
 /// The caller injects the ordinary graph root/arrival/admission/failure traits
 /// through [`OfflineGraphRunFactory`]. This function supplies the one shared
 /// [`SimClock`], steppable engine event source, immutable segment store, node
-/// sink, observers, and exact common-summary parity proof. It therefore avoids
+/// sink, observers, and exact common-summary parity validation. It therefore avoids
 /// both the generated benchmark graph and any Dataset/Conversation conversion.
 #[allow(clippy::too_many_arguments)]
 pub fn run_graph_workload_offline(
@@ -3785,7 +3782,7 @@ pub fn run_graph_workload_offline_deferred(
 /// Execute a direct Graph-IR workload against the in-process Dynamo engine under
 /// the **wall clock** — the real-time in-process online mode (Dynamo's
 /// `--replay-mode online`) driven entirely by aiperf's *own* recorded-trace
-/// graph flow. The trace is compiled by `aiperf-graph` into a [`GraphWorkload`]
+/// graph flow. The trace is compiled into a [`GraphWorkload`]
 /// and dispatched through the same [`DynosimSink`], materializer, observer,
 /// and native accumulator as [`run_graph_workload_offline`]; the mocker's own
 /// trace driver is never involved. Only the clock/driver axis differs
@@ -4158,8 +4155,8 @@ where
 ///
 /// This is the runner composition seam for scheduled workload factories. It
 /// deliberately accepts a trait object rather than a workload-kind enum so a
-/// newly linked scheduler can reuse the same engine, clock, parity proof, and
-/// report finalization without modifying this module.
+/// linked schedulers share the same engine, clock, parity validation, and report
+/// finalization.
 pub fn run_scheduled_backend_offline(
     engine_config: OfflineEngineConfig,
     model: String,
@@ -4339,7 +4336,7 @@ fn finish_scheduled_backend(
 }
 
 /// Finalize a wall-clock (online) scheduled run: identical to
-/// [`finish_scheduled_backend`] but without the byte-exact parity proof, which
+/// [`finish_scheduled_backend`] but without the byte-exact parity check, which
 /// real-timer latencies cannot satisfy against the engine's internal report.
 fn finish_scheduled_backend_online(
     host: Rc<EngineHost>,
@@ -4644,7 +4641,7 @@ mod tests {
                 Box::pin(async move {
                     let finalizer: Box<dyn OfflineScheduledExecutionFinalizer> = Box::new(|| {
                         assert!(tokio::runtime::Handle::try_current().is_err());
-                        Err(anyhow::anyhow!("deferred-finalizer-proof"))
+                        Err(anyhow::anyhow!("deferred-finalizer-check"))
                     });
                     Ok(finalizer)
                 }) as DeferredOfflineScheduledFuture
@@ -4659,7 +4656,7 @@ mod tests {
             Ok(_) => panic!("deferred finalizer unexpectedly succeeded"),
             Err(error) => error,
         };
-        assert!(format!("{error:#}").contains("deferred-finalizer-proof"));
+        assert!(format!("{error:#}").contains("deferred-finalizer-check"));
     }
 
     fn assert_metric_parity(
@@ -5126,10 +5123,8 @@ mod tests {
             aiperf.request_counts.total_output_tokens,
             native.request_counts.total_output_tokens
         );
-        // Byte-exact latency under saturation — the property that failed with the
-        // AggRuntime dynamic-admission path. Equal to within a few ULP: the only
-        // residual is floating-point accumulation order between the two
-        // collectors, not a scheduling divergence (which was tens of percent).
+        // Saturated latency may differ only by a few ULP from floating-point
+        // accumulation order between the two collectors.
         let within_1_ulp = |name: &str, a: f64, n: f64| {
             let tol = n.abs() * 8.0 * f64::EPSILON;
             assert!(

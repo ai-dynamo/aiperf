@@ -89,9 +89,8 @@ fn maybe_inject_error(state: &AppState) -> Option<AppError> {
 
 /// Shared context for a tokenized LLM request.
 ///
-/// `pub(crate)` so alternative entry points (e.g. the KServe gRPC service in
-/// [`crate::grpc`]) reuse the exact tokenize → usage → latency/prefix-cache head
-/// the HTTP handlers use, rather than re-deriving it.
+/// HTTP and gRPC entry points share tokenization, usage, latency, and
+/// prefix-cache preparation through this context.
 pub(crate) struct RequestCtx {
     pub(crate) request_id: String,
     pub(crate) model: String,
@@ -99,7 +98,7 @@ pub(crate) struct RequestCtx {
     pub(crate) usage: Usage,
     pub(crate) latency_sim: LatencySimulator,
     pub(crate) start: Instant,
-    /// Emits one `{"object": null}` SSE frame before `[DONE]` (github #1010).
+    /// Emits one `{"object": null}` SSE frame before `[DONE]`.
     pub(crate) null_object_chunk: bool,
     /// Function call selected by the seeded `--tool-call-rate` draw.
     pub(crate) tool_call: Option<ToolCallSpec>,
@@ -388,7 +387,6 @@ fn build_chat_response(ctx: &RequestCtx) -> Value {
     if let Some(reasoning) = ctx.tokenized.reasoning_content() {
         message["reasoning_content"] = Value::String(reasoning);
     }
-    // Tool-call turns terminate with the OpenAI `tool_calls` finish reason.
     let finish_reason: Value = if let Some(tc) = &ctx.tool_call {
         message["tool_calls"] = json!([{
             "id": tc.id,
@@ -2424,8 +2422,7 @@ fn chat_stream(
         }
 
         if ctx.null_object_chunk {
-            // github #1010 requires `object: null` in a standalone frame before
-            // `[DONE]`.
+            // The standalone `object: null` frame must precede `[DONE]`.
             yield Ok::<Bytes, Infallible>(Bytes::from_static(
                 b"data: {\"id\":\"adversarial-null\",\"object\":null,\"created\":0,\"choices\":[]}\n\n",
             ));

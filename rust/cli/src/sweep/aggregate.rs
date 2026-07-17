@@ -6,9 +6,9 @@
 //! cell's `native-v2.json` summary keyed by metric tag, so
 //! `best_configurations`/`pareto_optimal` are
 //! always empty (their guards look for flattened `{tag}_{stat}` keys the
-//! single-trial projection never produces) and no confidence math runs. The
-//! multi-trial (`--num-profile-runs >= 2`) confidence aggregate is now native
-//! (see [`crate::sweep::confidence`]): the non-sweep multi-run path writes
+//! single-trial projection never produces) and no confidence math runs.
+//! Multi-trial runs (`--num-profile-runs >= 2`) compute confidence aggregates
+//! via [`crate::sweep::confidence`]. The non-sweep path writes
 //! `<base>/aggregate/profile_export_aiperf_aggregate.{json,csv}` (+ a collated
 //! detailed JSON when `--convergence-metric` is set), and the sweep path writes
 //! per-variation confidence aggregates plus the cross-variation

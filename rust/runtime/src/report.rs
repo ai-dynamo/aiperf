@@ -7,7 +7,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::metrics_core::{NativeReport, ReportPairRunFacts, ReportRunProvenance};
+use crate::metrics_core::{NativeReport, ReportPairRunFacts, ReportRunMetadata};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
@@ -16,11 +16,11 @@ pub fn write_native_report_json(report: &NativeReport, path: impl AsRef<Path>) -
     write_json(report, path)
 }
 
-/// Finalize coordinator-owned and pair-owned run provenance, then perform the
+/// Finalize coordinator-owned and pair-owned run metadata, then perform the
 /// sole native-v2 JSON write.
 ///
 /// Backend/workload adapters return [`ReportPairRunFacts`]; the process
-/// coordinator constructs [`ReportRunProvenance`] from its exact executable and
+/// coordinator constructs [`ReportRunMetadata`] from its exact executable and
 /// frozen registries. This function joins those typed values before
 /// serialization and never parses or mutates raw report JSON.
 /// Returns the finalized [`NativeReport`] so the caller can drive the native
@@ -28,13 +28,13 @@ pub fn write_native_report_json(report: &NativeReport, path: impl AsRef<Path>) -
 /// (the report is otherwise consumed by the write).
 pub fn finalize_and_write_native_report_json(
     report: NativeReport,
-    provenance: ReportRunProvenance,
+    run_metadata: ReportRunMetadata,
     facts: ReportPairRunFacts,
     path: impl AsRef<Path>,
 ) -> Result<NativeReport> {
     let report = report
-        .finalize_run(provenance, facts)
-        .context("finalizing native report run provenance")?;
+        .finalize_run(run_metadata, facts)
+        .context("finalizing native report run metadata")?;
     write_json(&report, path)?;
     Ok(report)
 }
@@ -108,8 +108,8 @@ fn create_temporary_report(path: &Path) -> Result<(PathBuf, std::fs::File)> {
 mod tests {
     use super::*;
 
-    fn provenance() -> ReportRunProvenance {
-        ReportRunProvenance::new(
+    fn run_metadata() -> ReportRunMetadata {
+        ReportRunMetadata::new(
             format!("blake3:{}", "a".repeat(64)),
             "online_http",
             "scheduled",
@@ -145,7 +145,7 @@ mod tests {
         ));
         finalize_and_write_native_report_json(
             report,
-            provenance(),
+            run_metadata(),
             ReportPairRunFacts::new(),
             &path,
         )

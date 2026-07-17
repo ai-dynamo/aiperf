@@ -1,22 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
+//! A single-node `dag_jsonl` program must produce the same deterministic records
+//! through the flat-graph and general executors. Timing metrics and
+//! `x_request_id` are excluded because they vary between online runs.
+
 mod common;
 use common::*;
 
-// Byte-parity of the flat-graph fast path against the general executor, proven
-// through the real `aiperf` binary (an external `aiperf profile` process).
-//
-// A single-LLM-node `dag_jsonl` program routes through `FlatGraphActor`; the same
-// program with `AIPERF_DISABLE_FLATGRAPH=1` routes through the general
-// `TraceExecutor`. Both runs use the identical seed/config against the same mock,
-// so every deterministic per-record field must be identical. Timing metrics
-// (`*_ns`, `http_req_*`, latencies) and the minted `x_request_id` are wall-clock /
-// random and are intentionally excluded from the comparison.
-
 use serde_json::Value;
 
-const FIXTURE: &str =
-    "/home/anthony/nvidia/projects/aiperf/ajc/rust/tests/fixtures/dag/single_node.dag.jsonl";
+const FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/dag/single_node.dag.jsonl"
+);
 
 /// Deterministic per-record projection: everything a correct flat/full run must
 /// reproduce byte-for-byte, excluding wall-clock timing and the random request id.
@@ -58,7 +55,7 @@ fn args(url: &str) -> String {
     format!(
         "--model openai/gpt-oss-120b --url {url} --endpoint-type chat \
          --input-file {FIXTURE} --custom-dataset-type dag_jsonl \
-         --num-conversations 3 --random-seed 7 --ui simple"
+         --num-conversations 3 --random-seed 7 --tokenizer cl100k_base --ui simple"
     )
 }
 
@@ -66,13 +63,14 @@ fn args(url: &str) -> String {
 async fn flatgraph_fast_path_is_byte_identical_to_the_general_executor() {
     let h = AIPerfHarness::new().await;
 
-    // Flat arm: single-node traces route through FlatGraphActor.
     let flat = h.run(&args(&h.mock.url));
     assert!(flat.success(), "flat-arm profile failed:\n{}", flat.stderr);
     let flat_rows = deterministic_projection(&flat);
-    assert!(!flat_rows.is_empty(), "flat run produced no profiling records");
+    assert!(
+        !flat_rows.is_empty(),
+        "flat run produced no profiling records"
+    );
 
-    // Full arm: the kill-switch forces every trace onto the general TraceExecutor.
     let full = h.run_env(&args(&h.mock.url), &[("AIPERF_DISABLE_FLATGRAPH", "1")]);
     assert!(full.success(), "full-arm profile failed:\n{}", full.stderr);
     let full_rows = deterministic_projection(&full);

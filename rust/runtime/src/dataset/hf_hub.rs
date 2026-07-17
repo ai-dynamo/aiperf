@@ -10,9 +10,8 @@
 //! retry/backoff, xet-CDN `302`, shared `~/.cache/huggingface` reuse, and
 //! `HF_HUB_OFFLINE`/`HF_TOKEN` handling.
 //!
-//! File selection and cache-dir resolution are ported from
-//! `llm_tokenizer::hub::download_tokenizer_from_hf` (llm-tokenizer 1.4.1) so the
-//! download behavior is unchanged by the crate swap.
+//! File selection excludes weights, images, and non-tokenizer repository files;
+//! cache resolution returns the directory containing the tokenizer artifacts.
 
 use std::path::{Path, PathBuf};
 
@@ -79,8 +78,7 @@ fn is_tokenizer_file(filename: &str) -> bool {
         || is_chat_template_file(filename)
 }
 
-/// The single predicate `download_blocking` applies to `repo.info()` siblings: a
-/// tokenizer artifact that is not an ignored file, an image, or a weight file.
+/// Select tokenizer artifacts from `repo.info()` siblings.
 fn is_downloadable_tokenizer_file(filename: &str) -> bool {
     !IGNORED.contains(&filename)
         && !is_image(filename)
@@ -310,7 +308,6 @@ mod tests {
         assert!(is_tokenizer_file("evil_tokenizer.json"));
     }
 
-    /// Adversarial repository ids fail closed before any hub call.
     #[test]
     fn rejects_adversarial_repository_ids() {
         for bad in [
@@ -348,8 +345,6 @@ mod tests {
         }
     }
 
-    /// A traversal id errors through the public async entry with no network,
-    /// because validation is the first thing `download_blocking` does.
     #[test]
     fn adversarial_id_short_circuits_before_network() {
         let error = block_on(download_hugging_face_tokenizer("../etc/passwd")).unwrap_err();
@@ -383,13 +378,10 @@ mod tests {
     #[test]
     fn cache_dir_unchanged_for_nonmatching_or_bare_name() {
         let path = Path::new("/some/unrelated/path");
-        // No matching pattern and no tokenizer.json on disk -> returned as-is.
         assert_eq!(resolve_model_cache_dir(path, "org/name"), path);
-        // A bare (single-segment) name skips the models--org--name block entirely.
         assert_eq!(resolve_model_cache_dir(path, "gpt2"), path);
     }
 
-    /// A nonexistent repo surfaces a clean error naming the repo, never a panic.
     #[test]
     #[ignore = "hits the Hugging Face hub"]
     fn nonexistent_repository_errors_cleanly() {
@@ -398,7 +390,6 @@ mod tests {
         assert!(error.to_string().contains(repo), "msg: {error}");
     }
 
-    /// `HF_HUB_OFFLINE=1` with a cold cache errors rather than hanging.
     #[test]
     #[ignore = "run with HF_HUB_OFFLINE=1 and a cold cache"]
     fn offline_cold_cache_errors() {

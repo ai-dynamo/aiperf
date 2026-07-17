@@ -131,21 +131,18 @@ pub trait SyntheticMediaGenerator {
 
 /// Injectable factory for all native synthetic media categories.
 pub trait SyntheticMediaGeneratorFactory: Send + Sync {
-    /// Construct an image generator.
     fn image(
         &self,
         config: &SyntheticImageConfig,
         root: RngRoot,
     ) -> Result<Box<dyn SyntheticMediaGenerator>>;
 
-    /// Construct an audio generator.
     fn audio(
         &self,
         config: &SyntheticAudioConfig,
         root: RngRoot,
     ) -> Result<Box<dyn SyntheticMediaGenerator>>;
 
-    /// Construct a video generator.
     fn video(
         &self,
         config: &SyntheticVideoConfig,

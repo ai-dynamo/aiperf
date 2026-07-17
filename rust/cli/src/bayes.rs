@@ -269,8 +269,8 @@ impl OptunaPlanner {
         Ok(())
     }
 
-    /// Three-signal convergence (`evaluate_three_signal_convergence`): max
-    /// iterations, improvement patience, plateau CV. Latches the reason.
+    /// Latch convergence on maximum iterations, improvement patience, or
+    /// plateau CV.
     pub fn is_converged(&mut self) -> bool {
         if self.convergence_reason.is_some() {
             return true;

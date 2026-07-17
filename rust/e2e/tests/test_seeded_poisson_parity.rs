@@ -121,7 +121,7 @@ async fn test_seeded_poisson_schedule_parity() {
     let reference_gaps: Vec<f64> = reference[1..].to_vec();
 
     let parity_gaps = run_python_poisson(&harness, "rust_parity");
-    let comparison_gaps = run_python_poisson(&harness, "legacy");
+    let comparison_gaps = run_python_poisson(&harness, "python");
 
     let n = reference_gaps
         .len()

@@ -3,12 +3,12 @@
 
 //! Native-Rust Weights & Biases sink (offline `.wandb` transaction log).
 //!
-//! Ports `src/aiperf/exporters/wandb_data_exporter.py`. W&B has no official Rust
-//! SDK; the network-free route (spec §6 — an unreachable tracking server must
-//! never hang shutdown) is to write the same offline run directory
+//! Matches `src/aiperf/exporters/wandb_data_exporter.py`. W&B has no official
+//! Rust SDK; the network-free route (spec §6 — an unreachable tracking server
+//! must never hang shutdown) writes the same offline run directory
 //! (`wandb/offline-run-<ts>-<id>/`) the Python SDK writes, containing the
 //! length-prefixed protobuf `.wandb` transaction log later shipped by
-//! `wandb sync`. Framing and message layout are byte-fidelity ports of
+//! `wandb sync`. Framing and message layout match
 //! `wandb/sdk/internal/datastore.py` and `wandb.proto.wandb_internal_pb2`
 //! (wandb 0.28.0) — see [`datastore`] and [`proto`].
 //!
@@ -221,7 +221,6 @@ impl Exporter for WandbExporter {
             .to_bytes(),
         );
 
-        // 4. history (step 0)
         let history_items = build_history_items(&rows);
         num += 1;
         store.write(
@@ -236,7 +235,6 @@ impl Exporter for WandbExporter {
             .to_bytes(),
         );
 
-        // 5. summary (final values mirror the history items)
         num += 1;
         store.write(
             &proto::Record {

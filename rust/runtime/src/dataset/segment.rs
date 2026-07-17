@@ -314,10 +314,8 @@ impl SegmentPool {
 
     /// Intern one payload under an optional prefix parent.
     ///
-    /// Text is interned through [`intern_text`](Self::intern_text) rather than
-    /// this generic entry point, because a stored [`Payload::Text`] no longer
-    /// retains its token IDs: its identity is folded from the authoritative
-    /// tokens at composition time, which this path cannot see.
+    /// Text is interned through [`intern_text`](Self::intern_text), which folds
+    /// authoritative token IDs into its identity; this path lacks those IDs.
     pub fn intern(&mut self, parent: Option<Handle>, payload: Payload) -> Result<Handle> {
         let parent_id = self.parent_segment_id(parent)?;
         let id = payload_id(parent_id, &payload);
@@ -540,11 +538,8 @@ fn payload_id(parent: Option<SegmentId>, payload: &Payload) -> SegmentId {
             hasher.update(wire);
         }
         Payload::Text { role, .. } => {
-            // A stored text payload no longer carries its token IDs — those are
-            // folded into the identity by `text_payload_id` at intern time, which
-            // is the sole path that produces text segments. This generic branch is
-            // unreachable for real text (kept total for exhaustiveness) and keys on
-            // role + parent only.
+            // `intern_text` folds authoritative token IDs into text identity.
+            // This exhaustive generic branch lacks those IDs and keys on role and parent.
             hasher.update(b"text-only\0");
             hash_parent(&mut hasher, parent);
             hasher.update(role.as_str().as_bytes());

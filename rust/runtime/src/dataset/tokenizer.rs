@@ -419,8 +419,8 @@ impl OAIChatLikeRequest for ChatLikeRequest {
 
 /// Resolve a model's BOS or EOS token id from the HuggingFace metadata files.
 ///
-/// Mirrors the precedence used by the retired `llm_tokenizer` and by HF itself: a
-/// `{kind}_token` string in `tokenizer_config.json`, then in
+/// Uses Hugging Face precedence: a `{kind}_token` string in
+/// `tokenizer_config.json`, then in
 /// `special_tokens_map.json`, then a numeric `{kind}_token_id` in `config.json` or
 /// `generation_config.json` — where GPT-2-style repos (whose `tokenizer_config.json`
 /// is only `{"model_max_length": …}`) declare theirs. `None` when no source names one.
@@ -632,10 +632,8 @@ mod tests {
         assert_eq!(templated, vec![3, 4, 5]);
     }
 
-    /// End-to-end proof that the `hf-hub` download plus the `dynamo-tokenizers`
-    /// encode/decode path produce the exact, well-known GPT-2 BPE token ids —
-    /// i.e. the crate swap is byte-identical on a real tokenizer. Network-gated
-    /// (`--ignored`) since it fetches `gpt2` from the Hugging Face hub.
+    /// Validates the downloaded tokenizer against known GPT-2 BPE token IDs.
+    /// Network-gated because it fetches `gpt2` from the Hugging Face hub.
     #[test]
     #[ignore = "downloads the gpt2 tokenizer from the Hugging Face hub"]
     fn gpt2_download_encodes_to_known_ids() {

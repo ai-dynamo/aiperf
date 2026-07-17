@@ -8,8 +8,29 @@ SPDX-License-Identifier: Apache-2.0
 ## Purpose
 
 Benchmark WebSocket inference: a persistent WSS turn stream with an HTTPS/SSE
-fallback. This transport is not built; this record defines the forward contract
-so it composes over the existing seams when implemented.
+fallback. The WebSocket transport is a future capability; this record separates
+its requirements from the reusable transport, content, streaming, and
+measurement prerequisites already present in the runtime.
+
+## Built
+
+The runtime provides the prerequisites the future transport must compose over:
+
+- `Clock`, worker-local `WorkerSink`, `ExecutionSinkBuilder`, and `LocalSet`
+  execution define transport timing and placement.
+- The segment store and `BodyPlan` preserve content as handles and
+  pre-serialized bytes until the selected wire materializer consumes it.
+- The HTTP transport provides a byte-preserving SSE decoder and streaming
+  response path that the future fallback can reuse.
+- The gRPC transport provides worker-local bidirectional framed-message
+  execution through endpoint bindings.
+- `RequestObserver` supplies first-token, classified-token, usage,
+  endpoint-metric, and terminal observations shared by transports.
+- The extension registry provides open transport and endpoint registration with
+  duplicate rejection and a frozen application inventory.
+
+No WebSocket transport, WebSocket endpoint binding, or WS-frame `BodyPlan`
+materializer is registered.
 
 ## Future requirements
 
@@ -56,6 +77,11 @@ schema. The generic Responses API, if added, is its own dialect.
 
 ## Source anchors
 
-- No built module today. Precedents: `rust/runtime/src/transport/grpc/binding.rs`
-  (bidi framed messages), `rust/runtime/src/transport/http/sse/` (SSE decoder),
-  `rust/runtime/src/body_plan.rs` (materializer contract).
+- Reusable prerequisites: `rust/runtime/src/transport/grpc/binding.rs`
+  (bidirectional framed messages), `rust/runtime/src/transport/http/sse/` (SSE
+  decoder), `rust/runtime/src/body_plan.rs` (materializer contract),
+  `rust/runtime/src/dataset/segment.rs` (content handles), and
+  `rust/loadgen-core/src/sink.rs` (`RequestObserver`).
+- Placement and registration seams:
+  `rust/runtime/src/engine/turn_execution.rs` (`WorkerSink`,
+  `ExecutionSinkBuilder`) and `rust/runtime/src/extensions/`.

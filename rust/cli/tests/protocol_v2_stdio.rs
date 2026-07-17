@@ -20,7 +20,7 @@ fn request(operation: &str) -> Value {
         "protocol_version": 2,
         "operation": operation,
         "run": {
-            "benchmark_id": "v2-process-proof",
+            "benchmark_id": "v2-process",
             "artifact_dir": "/tmp/aiperf-v2-never-created",
             "cfg": {
                 "models": {"items": [{"name": "mock-model"}]},
@@ -107,7 +107,7 @@ fn graph_dataset_selects_graph_path_before_execution() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(response["event"], "run_validation");
     assert_eq!(response["protocol_version"], 2);
-    assert_eq!(response["benchmark_id"], "v2-process-proof");
+    assert_eq!(response["benchmark_id"], "v2-process");
     assert_eq!(response["success"], false);
     assert_eq!(response["completeness"], "static");
     assert_eq!(
@@ -132,7 +132,7 @@ fn authored_workload_field_is_ignored_not_rejected() {
 
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(response["event"], "run_validation");
-    assert_eq!(response["benchmark_id"], "v2-process-proof");
+    assert_eq!(response["benchmark_id"], "v2-process");
     assert_eq!(response["success"], true);
 }
 

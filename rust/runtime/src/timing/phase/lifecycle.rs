@@ -83,7 +83,6 @@ pub struct PhaseLifecycle {
 }
 
 impl PhaseLifecycle {
-    /// Create a lifecycle for `config` over the injected clock.
     pub fn new(clock: Rc<dyn Clock>, config: &PhaseConfig) -> Self {
         Self {
             clock,
@@ -156,12 +155,11 @@ impl PhaseLifecycle {
         Ok(())
     }
 
-    /// Set the orthogonal cancellation flag without changing lifecycle state.
+    /// Does not change lifecycle state.
     pub fn cancel(&mut self) {
         self.snapshot.was_cancelled = true;
     }
 
-    /// Record that the cancellation-drain deadline elapsed.
     pub fn mark_cancel_drain_timeout(&mut self) {
         self.snapshot.cancel_drain_timeout_triggered = true;
     }

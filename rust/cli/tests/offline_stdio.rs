@@ -164,10 +164,9 @@ fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() 
     );
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["transport"], "dynosim_offline");
-    assert_eq!(terminal["provenance"]["workload"], "graph");
-    assert_eq!(terminal["provenance"]["phase_count"], "2");
-    assert_eq!(terminal["provenance"]["parity_shared_fields"], "74");
+    assert_eq!(terminal["run_metadata"]["transport"], "dynosim_offline");
+    assert_eq!(terminal["run_metadata"]["workload"], "graph");
+    assert_eq!(terminal["run_metadata"]["phase_count"], "2");
 
     let report_path = PathBuf::from(terminal["report_path"].as_str().unwrap());
     assert_eq!(report_path, target.join("native-v2.json"));

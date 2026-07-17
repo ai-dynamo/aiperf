@@ -7,11 +7,11 @@
 //! (`strategies/metric_results.py::MetricResultsStrategy.process`,
 //! `strategies/genai_semconv.py`, `otel_metrics_results_processor.py`). The
 //! aggregate report cannot reconstruct a per-bucket distribution from
-//! avg/min/max/percentiles, so the sink used to emit zero `bucket_counts`. This
-//! accumulator is fed the exact per-request metric projection the runner already
+//! avg/min/max/percentiles. This accumulator receives the exact per-request metric
+//! projection the runner
 //! computes for each captured record (the same projection the live-streaming
 //! sink forwards to Python), buckets each observation into the semconv explicit
-//! histograms, and is merged at run end. The sink then emits populated
+//! histograms, and is merged at run end. The sink emits populated
 //! `bucket_counts` (+ `count`/`sum`/`min`/`max`) that a collector aggregating
 //! Python's per-record stream would compute.
 //!
@@ -287,10 +287,9 @@ impl OtelRecordAccumulator {
 
 /// Classify a record's terminal error into the spec `error.type` value.
 ///
-/// Ports `genai_semconv._classify_error_type` (`genai_semconv.py:254-295`) over
-/// the fields the native record carries (HTTP/pseudo status code, the transport
-/// error type name, and the message). The native record has no Python
-/// `cause_chain`, so its timeout/cancel heuristics fold into the message scan.
+/// Matches `genai_semconv._classify_error_type` (`genai_semconv.py:254-295`) over
+/// the HTTP or pseudo status code, transport error type, and message. Cause-chain
+/// details are unavailable, so timeout and cancellation heuristics scan the message.
 /// Called only when the record actually errored.
 pub fn classify_spec_error_type(code: Option<u16>, type_name: &str, message: &str) -> String {
     if let Some(code) = code {

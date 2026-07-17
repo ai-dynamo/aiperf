@@ -14,9 +14,9 @@
 //!   `artifact_uri` uses the `mlflow-artifacts:` scheme.
 //! * `file://` — the on-disk `FileStore` layout MLflow itself reads
 //!   (`<root>/<experiment_id>/<run_id>/{meta.yaml,metrics,params,tags,artifacts}`),
-//!   so an e2e proof pointed at a local `file://` store works with no server.
+//!   enabling end-to-end validation with no server.
 //!
-//! Parity oracle (read the actual Python, cited at `path:line` throughout): the
+//! Byte-compatibility source (Python paths are cited throughout): the
 //! logged metric-key scheme, param set, and tag set must match the Python
 //! exporter for an identical run. Because this sink reads the native-v2
 //! [`NativeReport`] rather than Python's `ProfileResults`, the metric *values*
@@ -528,9 +528,6 @@ fn file_store_root(tracking_uri: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
-// ---------------------------------------------------------------------------
-// REST backend
-// ---------------------------------------------------------------------------
 
 mod rest {
     use super::{
@@ -956,9 +953,6 @@ mod rest {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Local FileStore backend
-// ---------------------------------------------------------------------------
 
 mod file_store {
     use super::{ExportPlan, MlflowExportConfig, ResolvedArtifact, unix_millis};

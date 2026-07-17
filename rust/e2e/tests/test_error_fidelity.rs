@@ -130,7 +130,7 @@ async fn injected_429_status_code_shows_in_raw_records() {
         records
             .iter()
             .all(|r| error_code(r) != Some(500) && record_status(r) != Some(500)),
-        "no record should carry a 500 — the menu replaced the hardcoded status"
+        "configured status selection must not emit an unconfigured 500"
     );
 }
 

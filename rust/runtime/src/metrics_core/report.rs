@@ -176,9 +176,9 @@ pub struct ReportRunInfo {
     pub model: Option<String>,
 }
 
-/// A finite numeric fact carried by report provenance.
+/// A finite numeric fact carried by report run metadata.
 ///
-/// Unlike request-metric tails, provenance cannot use JSON null as a numeric
+/// Unlike request-metric tails, run metadata cannot use JSON null as a numeric
 /// sentinel: a backend either supplies an exact finite fact or omits it. The
 /// private representation makes that invariant hold for every serialized
 /// value, including values assembled by external runner distributions.
@@ -187,12 +187,12 @@ pub struct FiniteReportValue(f64);
 
 impl FiniteReportValue {
     /// Validate and retain one finite value.
-    pub fn new(value: f64) -> Result<Self, ReportProvenanceError> {
+    pub fn new(value: f64) -> Result<Self, ReportMetadataError> {
         if value.is_finite() {
             Ok(Self(value))
         } else {
-            Err(ReportProvenanceError::new(
-                "report provenance numeric values must be finite",
+            Err(ReportMetadataError::new(
+                "report run metadata numeric values must be finite",
             ))
         }
     }
@@ -212,13 +212,13 @@ impl Serialize for FiniteReportValue {
     }
 }
 
-/// Invalid typed common or pair-specific report provenance.
+/// Invalid typed common or pair-specific report metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReportProvenanceError {
+pub struct ReportMetadataError {
     message: String,
 }
 
-impl ReportProvenanceError {
+impl ReportMetadataError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -226,13 +226,13 @@ impl ReportProvenanceError {
     }
 }
 
-impl Display for ReportProvenanceError {
+impl Display for ReportMetadataError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.message)
     }
 }
 
-impl Error for ReportProvenanceError {}
+impl Error for ReportMetadataError {}
 
 /// One statically linked extension identity in the executing distribution.
 #[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
@@ -249,7 +249,7 @@ impl ReportExtensionIdentity {
     pub fn new(
         name: impl Into<String>,
         version: Option<String>,
-    ) -> Result<Self, ReportProvenanceError> {
+    ) -> Result<Self, ReportMetadataError> {
         let name = name.into();
         validate_nonempty_trimmed(&name, "extension name")?;
         if let Some(version) = &version {
@@ -273,7 +273,7 @@ impl ReportEndpointProfileIdentity {
     pub fn new(
         profile_id: impl Into<String>,
         endpoint_id: impl Into<String>,
-    ) -> Result<Self, ReportProvenanceError> {
+    ) -> Result<Self, ReportMetadataError> {
         let profile_id = profile_id.into();
         let endpoint_id = endpoint_id.into();
         validate_nonempty_trimmed(&profile_id, "endpoint profile ID")?;
@@ -291,7 +291,7 @@ impl ReportEndpointProfileIdentity {
 /// [`ReportPairRunFacts`], while the one process coordinator supplies the
 /// executable digest and the identities from its frozen registries.
 #[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
-pub struct ReportRunProvenance {
+pub struct ReportRunMetadata {
     /// BLAKE3 identity of the exact runner executable that performed the run.
     pub distribution_id: String,
     /// Canonical selected transport factory ID.
@@ -304,15 +304,15 @@ pub struct ReportRunProvenance {
     pub endpoint_profiles: Vec<ReportEndpointProfileIdentity>,
 }
 
-impl ReportRunProvenance {
-    /// Build the complete coordinator-owned common provenance block.
+impl ReportRunMetadata {
+    /// Build the complete coordinator-owned common run metadata block.
     pub fn new(
         distribution_id: impl Into<String>,
         transport: impl Into<String>,
         workload: impl Into<String>,
         mut extensions: Vec<ReportExtensionIdentity>,
         endpoint_profiles: Vec<ReportEndpointProfileIdentity>,
-    ) -> Result<Self, ReportProvenanceError> {
+    ) -> Result<Self, ReportMetadataError> {
         let distribution_id = distribution_id.into();
         validate_distribution_id(&distribution_id)?;
         let transport = transport.into();
@@ -324,7 +324,7 @@ impl ReportRunProvenance {
             .sort_by(|left, right| (&left.name, &left.version).cmp(&(&right.name, &right.version)));
         for adjacent in extensions.windows(2) {
             if adjacent[0].name == adjacent[1].name {
-                return Err(ReportProvenanceError::new(format!(
+                return Err(ReportMetadataError::new(format!(
                     "duplicate linked extension {:?}",
                     adjacent[0].name
                 )));
@@ -333,7 +333,7 @@ impl ReportRunProvenance {
         let mut profile_ids = std::collections::BTreeSet::new();
         for profile in &endpoint_profiles {
             if !profile_ids.insert(profile.profile_id.as_str()) {
-                return Err(ReportProvenanceError::new(format!(
+                return Err(ReportMetadataError::new(format!(
                     "duplicate endpoint profile ID {:?}",
                     profile.profile_id
                 )));
@@ -376,26 +376,26 @@ impl ReportGraphRunInfo {
         node_count: usize,
         worker_count: usize,
         phase_count: usize,
-    ) -> Result<Self, ReportProvenanceError> {
+    ) -> Result<Self, ReportMetadataError> {
         let input_format = input_format.into();
         validate_component_id(&input_format, "graph input format")?;
         if root_count == 0 {
-            return Err(ReportProvenanceError::new(
+            return Err(ReportMetadataError::new(
                 "graph root_count must be positive",
             ));
         }
         if node_count < root_count {
-            return Err(ReportProvenanceError::new(
+            return Err(ReportMetadataError::new(
                 "graph node_count cannot be smaller than root_count",
             ));
         }
         if worker_count == 0 {
-            return Err(ReportProvenanceError::new(
+            return Err(ReportMetadataError::new(
                 "graph worker_count must be positive",
             ));
         }
         if phase_count == 0 {
-            return Err(ReportProvenanceError::new(
+            return Err(ReportMetadataError::new(
                 "graph phase_count must be positive",
             ));
         }
@@ -413,7 +413,7 @@ impl ReportGraphRunInfo {
     pub fn with_outcome(
         mut self,
         outcome: ReportGraphOutcomeInfo,
-    ) -> Result<Self, ReportProvenanceError> {
+    ) -> Result<Self, ReportMetadataError> {
         outcome.validate()?;
         self.outcome = Some(outcome);
         Ok(self)
@@ -441,12 +441,13 @@ impl ReportGraphOutcomeInfo {
         }
     }
 
-    fn validate(&self) -> Result<(), ReportProvenanceError> {
-        let terminal = self.completed.checked_add(self.failed).ok_or_else(|| {
-            ReportProvenanceError::new("graph terminal trace count overflowed u64")
-        })?;
+    fn validate(&self) -> Result<(), ReportMetadataError> {
+        let terminal = self
+            .completed
+            .checked_add(self.failed)
+            .ok_or_else(|| ReportMetadataError::new("graph terminal trace count overflowed u64"))?;
         if terminal > self.admitted {
-            return Err(ReportProvenanceError::new(
+            return Err(ReportMetadataError::new(
                 "graph completed + failed traces cannot exceed admitted traces",
             ));
         }
@@ -486,7 +487,7 @@ pub enum ReportDynamoRouter {
     Kv,
 }
 
-/// Whole-summary byte-parity proof produced by the Dynamo offline backend.
+/// Whole-summary byte-parity evidence produced by the Dynamo offline backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSerialize)]
 pub struct ReportDynamoParityInfo {
     /// Fields in the complete common flat summary schema.
@@ -506,15 +507,15 @@ impl ReportDynamoParityInfo {
         independently_accumulated_fields: usize,
         backend_owned_fields: usize,
         serialized_bytes: usize,
-    ) -> Result<Self, ReportProvenanceError> {
+    ) -> Result<Self, ReportMetadataError> {
         if independently_accumulated_fields.checked_add(backend_owned_fields) != Some(shared_fields)
         {
-            return Err(ReportProvenanceError::new(
+            return Err(ReportMetadataError::new(
                 "Dynamo parity fields must partition shared_fields exactly",
             ));
         }
         if serialized_bytes == 0 {
-            return Err(ReportProvenanceError::new(
+            return Err(ReportMetadataError::new(
                 "Dynamo parity serialized_bytes must be positive",
             ));
         }
@@ -550,14 +551,14 @@ impl ReportDynamoCapacityInfo {
         prefill_gpus_per_worker: usize,
         decode_gpus_per_worker: usize,
         gpu_hours: f64,
-    ) -> Result<Self, ReportProvenanceError> {
+    ) -> Result<Self, ReportMetadataError> {
         for (name, value) in [
             ("prefill_worker_seconds", prefill_worker_seconds),
             ("decode_worker_seconds", decode_worker_seconds),
             ("gpu_hours", gpu_hours),
         ] {
             if value < 0.0 {
-                return Err(ReportProvenanceError::new(format!(
+                return Err(ReportMetadataError::new(format!(
                     "Dynamo {name} must be non-negative"
                 )));
             }
@@ -608,13 +609,13 @@ impl ReportDynamoRunInfo {
         prefill_workers: usize,
         decode_workers: usize,
         parity: ReportDynamoParityInfo,
-    ) -> Result<Self, ReportProvenanceError> {
+    ) -> Result<Self, ReportMetadataError> {
         // Both clocks are valid Dynamo engine report axes: `Sim` for
         // deterministic virtual-clock replay and `Real` for the wall-clock
         // in-process online mode (`--replay-mode online`). No further constraint
         // is imposed here; the enum is exhaustive.
         if workers == 0 || prefill_workers == 0 || decode_workers == 0 {
-            return Err(ReportProvenanceError::new(
+            return Err(ReportMetadataError::new(
                 "Dynamo worker counts must be positive",
             ));
         }
@@ -623,7 +624,7 @@ impl ReportDynamoRunInfo {
             validate_nonempty_trimmed(feature, "Dynamo required feature")?;
         }
         if required_features.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(ReportProvenanceError::new(
+            return Err(ReportMetadataError::new(
                 "Dynamo required features must be unique",
             ));
         }
@@ -650,7 +651,7 @@ impl ReportDynamoRunInfo {
 /// Optional typed facts returned by one backend/workload pair.
 ///
 /// The pair owns only these mode-specific facts. Common executable, registry,
-/// and endpoint identity remains coordinator-owned in [`ReportRunProvenance`].
+/// and endpoint identity remains coordinator-owned in [`ReportRunMetadata`].
 #[derive(Debug, Clone, Default, PartialEq, DeriveSerialize)]
 pub struct ReportPairRunFacts {
     /// Graph-IR lowering, placement, and terminal counts.
@@ -683,7 +684,7 @@ impl ReportPairRunFacts {
 /// Serialized native-v2 run block.
 ///
 /// The wrapper preserves the original `mode`/`model` Rust value through
-/// [`Deref`] while flattening additive protocol-v2 provenance into the same
+/// [`Deref`] while flattening additive protocol-v2 run metadata into the same
 /// JSON object required by the native report contract.
 #[derive(Debug, Clone, Default, PartialEq, DeriveSerialize)]
 pub struct ReportRun {
@@ -692,7 +693,7 @@ pub struct ReportRun {
     pub info: ReportRunInfo,
     /// Coordinator-owned exact executable and registry identity.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
-    provenance: Option<ReportRunProvenance>,
+    run_metadata: Option<ReportRunMetadata>,
     /// Pair-owned typed mode facts.
     #[serde(flatten)]
     facts: ReportPairRunFacts,
@@ -702,19 +703,19 @@ impl ReportRun {
     fn unfinalized(info: ReportRunInfo) -> Self {
         Self {
             info,
-            provenance: None,
+            run_metadata: None,
             facts: ReportPairRunFacts::default(),
         }
     }
 
-    /// Whether the coordinator has stamped exact protocol-v2 provenance.
+    /// Whether the coordinator has stamped exact protocol-v2 run metadata.
     pub fn is_finalized(&self) -> bool {
-        self.provenance.is_some()
+        self.run_metadata.is_some()
     }
 
-    /// Borrow coordinator-owned common provenance after finalization.
-    pub fn provenance(&self) -> Option<&ReportRunProvenance> {
-        self.provenance.as_ref()
+    /// Borrow coordinator-owned common run metadata after finalization.
+    pub fn run_metadata(&self) -> Option<&ReportRunMetadata> {
+        self.run_metadata.as_ref()
     }
 
     /// Borrow pair-owned typed run facts.
@@ -724,15 +725,15 @@ impl ReportRun {
 
     fn finalize(
         &mut self,
-        provenance: ReportRunProvenance,
+        run_metadata: ReportRunMetadata,
         facts: ReportPairRunFacts,
-    ) -> Result<(), ReportProvenanceError> {
-        if self.provenance.is_some() {
-            return Err(ReportProvenanceError::new(
-                "native report run provenance is already finalized",
+    ) -> Result<(), ReportMetadataError> {
+        if self.run_metadata.is_some() {
+            return Err(ReportMetadataError::new(
+                "native report run metadata is already finalized",
             ));
         }
-        self.provenance = Some(provenance);
+        self.run_metadata = Some(run_metadata);
         self.facts = facts;
         Ok(())
     }
@@ -746,37 +747,37 @@ impl Deref for ReportRun {
     }
 }
 
-fn validate_distribution_id(value: &str) -> Result<(), ReportProvenanceError> {
+fn validate_distribution_id(value: &str) -> Result<(), ReportMetadataError> {
     let digest = value
         .strip_prefix("blake3:")
-        .ok_or_else(|| ReportProvenanceError::new("distribution_id must use the blake3: prefix"))?;
+        .ok_or_else(|| ReportMetadataError::new("distribution_id must use the blake3: prefix"))?;
     if digest.len() != 64
         || !digest
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
     {
-        return Err(ReportProvenanceError::new(
+        return Err(ReportMetadataError::new(
             "distribution_id must contain exactly 64 lowercase hexadecimal digits",
         ));
     }
     Ok(())
 }
 
-fn validate_component_id(value: &str, field: &str) -> Result<(), ReportProvenanceError> {
+fn validate_component_id(value: &str, field: &str) -> Result<(), ReportMetadataError> {
     let mut bytes = value.bytes();
     if !bytes.next().is_some_and(|byte| byte.is_ascii_lowercase())
         || !bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
     {
-        return Err(ReportProvenanceError::new(format!(
+        return Err(ReportMetadataError::new(format!(
             "{field} must match [a-z][a-z0-9_]*"
         )));
     }
     Ok(())
 }
 
-fn validate_nonempty_trimmed(value: &str, field: &str) -> Result<(), ReportProvenanceError> {
+fn validate_nonempty_trimmed(value: &str, field: &str) -> Result<(), ReportMetadataError> {
     if value.is_empty() || value.trim() != value {
-        return Err(ReportProvenanceError::new(format!(
+        return Err(ReportMetadataError::new(format!(
             "{field} must be non-empty and contain no surrounding whitespace"
         )));
     }
@@ -1084,7 +1085,7 @@ impl NativeReport {
         NativeReporter.report(input)
     }
 
-    /// Stamp coordinator-owned provenance and pair-owned typed facts exactly
+    /// Stamp coordinator-owned run metadata and pair-owned typed facts exactly
     /// once before the sole native-v2 serialization.
     ///
     /// This operates on the report model, never on serialized JSON. A second
@@ -1092,10 +1093,10 @@ impl NativeReport {
     /// identity or reinterpret pair facts after coordinator finalization.
     pub fn finalize_run(
         mut self,
-        provenance: ReportRunProvenance,
+        run_metadata: ReportRunMetadata,
         facts: ReportPairRunFacts,
-    ) -> Result<Self, ReportProvenanceError> {
-        self.run.finalize(provenance, facts)?;
+    ) -> Result<Self, ReportMetadataError> {
+        self.run.finalize(run_metadata, facts)?;
         Ok(self)
     }
 }
@@ -1417,7 +1418,7 @@ mod tests {
 
     #[test]
     fn coordinator_finalization_flattens_common_and_pair_facts_into_run() {
-        let provenance = ReportRunProvenance::new(
+        let run_metadata = ReportRunMetadata::new(
             format!("blake3:{}", "a".repeat(64)),
             "dynosim",
             "graph",
@@ -1453,7 +1454,7 @@ mod tests {
             .with_graph(graph)
             .with_dynamo(dynamo);
         let report = NativeReport::new(&AccumulatorSummary::new(), None)
-            .finalize_run(provenance, facts)
+            .finalize_run(run_metadata, facts)
             .unwrap();
 
         let value = serde_json::to_value(&report).unwrap();
@@ -1478,16 +1479,16 @@ mod tests {
         assert_eq!(run["dynamo"]["capacity"]["prefill_worker_seconds"], 2.5);
         assert!(run.get("evaluation_compatibility").is_none());
         assert_eq!(
-            report.run.provenance().unwrap().distribution_id,
+            report.run.run_metadata().unwrap().distribution_id,
             format!("blake3:{}", "a".repeat(64))
         );
         assert!(report.run.is_finalized());
     }
 
     #[test]
-    fn coordinator_provenance_rejects_ambiguous_or_inexact_identity() {
+    fn coordinator_run_metadata_rejects_ambiguous_or_inexact_identity() {
         let endpoint = ReportEndpointProfileIdentity::new("default", "chat").unwrap();
-        let invalid_digest = ReportRunProvenance::new(
+        let invalid_digest = ReportRunMetadata::new(
             "blake3:abc",
             "online_http",
             "scheduled",
@@ -1497,7 +1498,7 @@ mod tests {
         .unwrap_err();
         assert!(invalid_digest.to_string().contains("64 lowercase"));
 
-        let duplicate_profile = ReportRunProvenance::new(
+        let duplicate_profile = ReportRunMetadata::new(
             format!("blake3:{}", "b".repeat(64)),
             "online_http",
             "scheduled",
@@ -1511,7 +1512,7 @@ mod tests {
                 .contains("duplicate endpoint profile")
         );
 
-        let duplicate_extension = ReportRunProvenance::new(
+        let duplicate_extension = ReportRunMetadata::new(
             format!("blake3:{}", "b".repeat(64)),
             "online_http",
             "scheduled",
@@ -1543,9 +1544,9 @@ mod tests {
     }
 
     #[test]
-    fn report_run_provenance_can_only_be_finalized_once() {
-        let provenance = || {
-            ReportRunProvenance::new(
+    fn report_run_metadata_can_only_be_finalized_once() {
+        let run_metadata = || {
+            ReportRunMetadata::new(
                 format!("blake3:{}", "c".repeat(64)),
                 "online_http",
                 "scheduled",
@@ -1555,10 +1556,10 @@ mod tests {
             .unwrap()
         };
         let report = NativeReport::new(&AccumulatorSummary::new(), None)
-            .finalize_run(provenance(), ReportPairRunFacts::new())
+            .finalize_run(run_metadata(), ReportPairRunFacts::new())
             .unwrap();
         let error = report
-            .finalize_run(provenance(), ReportPairRunFacts::new())
+            .finalize_run(run_metadata(), ReportPairRunFacts::new())
             .unwrap_err();
         assert!(error.to_string().contains("already finalized"));
     }

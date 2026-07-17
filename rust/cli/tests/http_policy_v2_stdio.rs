@@ -369,12 +369,9 @@ fn tls_request(artifact_dir: &std::path::Path, endpoint_url: &str, ssl_verify: b
                     "urls": [endpoint_url],
                     "streaming": false,
                     "ssl_verify": ssl_verify,
-                    // Generous readiness budget so this process-spawning test does
-                    // not flake under parallel CPU load: the TLS handshake +
-                    // readiness probe can exceed a 100ms budget when many test
-                    // children contend for cores. The asserted behavior is
-                    // unchanged — verified TLS still fails with UnknownIssuer and
-                    // the insecure request still reaches the server.
+                    // TLS handshakes and readiness probes can exceed 100ms under
+                    // CPU contention. Verified TLS must reject UnknownIssuer;
+                    // insecure TLS must reach the server.
                     "wait_for_model_timeout": 5.0,
                     "wait_for_model_interval": 0.05,
                     "wait_for_model_mode": "models"

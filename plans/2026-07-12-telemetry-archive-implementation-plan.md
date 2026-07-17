@@ -5,8 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Telemetry archive/watch implementation ledger
 
-Authority: `specs/2026-07-11-aiperf-rust-telemetry-archive-watch-design.md` at
-`88c5d99f7`. The spec is implementation intent; code and executable receipts are
+Authority: `specs/telemetry.md`. The spec is implementation intent; code and executable receipts are
 the completion evidence.
 
 ## Completion rule

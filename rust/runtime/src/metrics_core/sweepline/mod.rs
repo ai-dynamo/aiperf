@@ -5,8 +5,7 @@
 //!
 //! Every curve is represented as a right-continuous step function. Event ordering,
 //! floating-point cancellation, decode-token accounting, and active-only statistics
-//! follow the contract documented in
-//! `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md`.
+//! follow the contract documented in `specs/metrics.md`.
 
 mod kv_cache;
 mod stats;
@@ -29,7 +28,7 @@ pub use stats::{
 pub const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
 const PARALLEL_SWEEP_MIN_ROWS: usize = 4_096;
-#[allow(dead_code)] // Threshold for `radix_argsort_mt`, kept for its future callers and tests.
+#[allow(dead_code)] // Exercised by `radix_argsort_mt` tests.
 const PARALLEL_EVENT_SORT_MIN_EVENTS: usize = 262_144;
 
 /// One timestamped change applied by the sweep-line cumulative sum.
@@ -413,9 +412,8 @@ fn radix_argsort_st(keys: &[u64]) -> Vec<u32> {
 /// Stable parallel LSD radix argsort: per-chunk histograms, exclusive per-chunk
 /// bucket offsets, then a contention-free scatter into disjoint output ranges.
 ///
-/// Retained for a future caller that sorts one large curve without outer
-/// parallelism; the sweep-curve bundle fans out across curves instead, so it
-/// uses the single-threaded path to avoid nested rayon regions.
+/// The sweep-curve bundle does not call this path because it already fans out
+/// across curves and must avoid nested Rayon regions.
 #[allow(dead_code)]
 fn radix_argsort_mt(keys: &[u64]) -> Vec<u32> {
     let n = keys.len();

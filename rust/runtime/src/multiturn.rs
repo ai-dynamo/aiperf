@@ -886,9 +886,8 @@ impl RuntimeSessionBackend for NativeSessionBackend {
             // request. The shape is bound to the run's DEFAULT prepared endpoint —
             // the same commit `lower_static_messages` makes at load — never the
             // per-turn override. Non-message-array dialects (completions, embeddings,
-            // …) have no lowerer; there the reply stays on the live render path
-            // (today's behavior). Resolving the shape does not touch the session, so
-            // it happens before the mutable borrow below.
+            // …) have no lowerer, so the reply stays on the live render path.
+            // Resolving the shape does not touch the session and precedes the mutable borrow.
             let lowerer = match &self.endpoint {
                 NativeSessionEndpoint::Prepared {
                     endpoint_resolver, ..

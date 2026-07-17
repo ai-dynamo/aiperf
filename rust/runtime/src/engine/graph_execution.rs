@@ -301,7 +301,7 @@ impl PreparedRunnerGraphEndpointRuntimeFactory {
             let descriptor = registry.resolve_factory(&profile.endpoint_id)?.descriptor();
             ensure!(
                 !descriptor.requires_raw_token_ids,
-                "graph endpoint profile {:?} selects {:?}, which requires raw token IDs; direct Graph-IR nodes do not yet carry the dataset raw-token handle",
+                "graph endpoint profile {:?} selects {:?}, which requires raw token IDs unavailable to direct Graph-IR nodes",
                 profile.profile_id,
                 descriptor.id
             );
@@ -1401,7 +1401,6 @@ mod tests {
         ];
         prepend_first_turn_marker(&mut messages, marker);
         assert_eq!(messages[0]["content"], format!("{marker}hello"));
-        // Later user turns and assistant turns are untouched.
         assert_eq!(messages[1]["content"], "hi");
         assert_eq!(messages[2]["content"], "again");
         // Re-applying the same marker is a no-op (shared prefix, every credit).

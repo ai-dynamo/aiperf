@@ -52,7 +52,7 @@ fn roles_contents(messages: &Value) -> Vec<(Option<String>, Option<String>)> {
 }
 
 #[tokio::test]
-#[ignore = "DAG spawn label/context fields not yet emitted by Rust runner"]
+#[ignore = "requires emitted DAG spawn label and context fields"]
 async fn test_spawn_child_has_fresh_context_and_is_not_sticky_pinned() {
     assert!(
         std::path::Path::new(FIXTURE).exists(),

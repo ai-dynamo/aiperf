@@ -36,7 +36,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/completions", post(handlers::text_completions))
         .route("/v1/embeddings", post(handlers::embeddings))
         .route("/v1/responses", post(handlers::responses))
-        // vLLM / Dynamo token-native Generate (token-in / token-out)
         .route("/inference/v1/generate", post(handlers::vllm_generate))
         // KServe OpenAI-compatible `/openai/v1/*` aliases: the runner's KServe
         // chat/completions/embeddings factories default to these paths. They

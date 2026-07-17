@@ -2,11 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The native `aiperf profile` command (single run + sweeps).
 //!
-//! Flow: parse flags → expand any comma-list sweep (or a YAML `sweep:` block) →
-//! for each cell load the native [`BenchmarkRun`], serialize the protocol-v2
-//! execute envelope, spawn the unchanged `aiperf`, and map its terminal
-//! outcome. A single run is a degenerate one-cell sweep. A YAML `--config` with a
-//! `sweep:` block expands to a native sweep; otherwise it is one run.
+//! Resolves profile inputs into protocol-v2 runs and executes single runs or
+//! sweeps through the `aiperf` binary.
 
 use std::path::Path;
 
@@ -1078,9 +1075,8 @@ fn run_cells(
         .filter(|s| *s > 0.0)
         .map(std::time::Duration::from_secs_f64);
 
-    // Bind the run log to the sweep's base artifact dir (the parent common to all
-    // per-cell dirs), so a multi-run/sweep produces one top-level `logs/aiperf.log`
-    // carrying every cell's forwarded narrative.
+    // Use the common artifact directory so all child log output shares one
+    // top-level `logs/aiperf.log`.
     if let Some(base) = flags.artifact_dir.clone().or_else(|| {
         cells
             .first()

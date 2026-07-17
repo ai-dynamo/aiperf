@@ -3,8 +3,7 @@
 //! Barrier-synchronized cross-cell timing origin.
 //!
 //! Each host uses its own clock reading at barrier release, avoiding dependence on
-//! synchronized wall clocks while aligning elapsed time within network latency. See
-//! `specs/2026-07-15-ultimate-cellular-velo-runtime-design.md` §4.
+//! synchronized wall clocks while aligning elapsed time within network latency.
 
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -83,19 +82,13 @@ mod tests {
 
     #[test]
     fn shifted_origin_moves_t0_back_to_the_barrier() {
-        // Barrier 30ns ago on a timeline now reading 100ns => origin at 70ns.
         assert_eq!(shifted_origin(100, 30), 70);
-        // Barrier BEFORE this timeline's anchor (elapsed since barrier exceeds the
-        // local now) => a negative origin, which shifts record timestamps forward.
         assert_eq!(shifted_origin(2_000, 9_000), -7_000);
-        // A barrier captured exactly at the anchor is a no-op.
         assert_eq!(shifted_origin(42, 0), 42);
     }
 
     #[test]
     fn run_origin_is_the_local_now_when_no_barrier_was_captured() {
-        // Without a captured shared origin (the single-process / default path),
-        // the run origin is exactly the clock's current reading — byte-unchanged.
         let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
         let now = clock.now_ns();
         assert_eq!(run_origin_now_ns(&clock), now);

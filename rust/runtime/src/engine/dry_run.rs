@@ -410,7 +410,7 @@ impl NativeTransportExecution for DryRunNativeExecution {
         Ok(())
     }
 
-    fn provenance(&self) -> BTreeMap<String, String> {
+    fn run_metadata(&self) -> BTreeMap<String, String> {
         BTreeMap::from([("transport".to_owned(), "dry_run".to_owned())])
     }
 }

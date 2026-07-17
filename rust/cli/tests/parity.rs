@@ -144,8 +144,7 @@ fn assert_matches_golden(fixture: &str, built: &serde_json::Value, golden: &serd
         &golden["run"]["cfg"]["export"],
     );
 
-    // The stdin wire is now the bare run object (no `{protocol_version, operation}`
-    // wrapper): the built run must deserialize directly as the real consumer type.
+    // The stdin wire must deserialize directly as `BenchmarkRunWireV2`.
     let _: BenchmarkRunWireV2 = serde_json::from_value(built.clone())
         .unwrap_or_else(|e| panic!("[{fixture}] invalid runner input: {e}"));
 }

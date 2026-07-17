@@ -200,14 +200,13 @@ fn cell_json_null_for_absent() {
 
 #[test]
 fn large_record_spans_blocks_and_round_trips() {
-    // A record larger than a 32768-byte block must split FIRST/MIDDLE*/LAST.
-    // Decode it back with the wandb SDK to prove the framing is correct.
+    // A record larger than a 32768-byte block must split FIRST/MIDDLE*/LAST and
+    // round-trip through the W&B SDK.
     let Some(python) = wandb_python() else {
         eprintln!("skipping: no wandb-bearing python (set AIPERF_WANDB_PYTHON)");
         return;
     };
 
-    // A run record whose config value forces a body well past two blocks.
     let big = "x".repeat(80_000);
     let record = proto::Record {
         num: 1,

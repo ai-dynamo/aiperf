@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! End-to-end coverage for cellular (multi-process) mode over the **gRPC**
-//! transport, reached through the ordinary Python frontend via `--cells N`.
+//! transport via `--cells N`.
 //!
 //! gRPC and HTTP cellular runs share ONE executor: the coordinator selects a
 //! different `RequestExecutorFactory` (`GrpcExecutionFactory` vs the
@@ -65,7 +65,7 @@ fn grpc_config(grpc_url: &str) -> String {
 /// `aiperf profile --config <grpc> --cells 3` runs end-to-end over gRPC and reports
 /// the full request budget, via the multi-cell controller.
 #[tokio::test]
-async fn test_grpc_cellular_run_from_python_frontend() {
+async fn test_grpc_cellular_run() {
     let h = AIPerfHarness::new_with_grpc().await;
     let grpc_url = h
         .mock

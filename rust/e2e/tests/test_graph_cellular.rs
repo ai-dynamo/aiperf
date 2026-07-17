@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end coverage for graph-mode cellular: a `dag_jsonl` graph run through the
-//! ordinary Python frontend with `--cells N`.
+//! End-to-end coverage for graph-mode cellular with `dag_jsonl` and `--cells N`.
 //!
 //! `--cells 3` on a graph dataset makes the launched `aiperf` a controller that
 //! spawns three `aiperf --cell` children; each partitions the trace instances by
@@ -26,7 +25,7 @@ const FIXTURE: &str = concat!(
 /// `aiperf profile --cells 3` over a graph dataset runs end-to-end and merges every
 /// cell's graph records into one report.
 #[tokio::test]
-async fn test_graph_cellular_from_python_frontend() {
+async fn test_graph_cellular() {
     let h = AIPerfHarness::new().await;
     let r = h.run_timeout(
         &format!(
@@ -118,7 +117,6 @@ async fn test_graph_cellular_single_file_dataset_shipping() {
         return;
     }
 
-    // Baseline: single-cell, default path (no controller, no dataset shipping).
     let h_base = AIPerfHarness::new().await;
     let baseline = h_base.run_timeout(
         &format!(
@@ -163,7 +161,6 @@ async fn test_graph_cellular_single_file_dataset_shipping() {
         cellular.stderr
     );
 
-    // Topology guard: the multi-cell run went through the controller.
     assert!(
         cellular
             .artifacts
@@ -320,7 +317,7 @@ async fn test_graph_cellular_metrics_only_exact_fold_ships_store() {
 /// dataset folds each record into the per-`(phase, tag)` t-digest and DROPS it, then a
 /// cell ships its folded SKETCH STORE (a `CellMessage::StorePartition`), which the
 /// controller merges (`merge_store_partitions` → t-digest merge) into one report — the
-/// SAME store path exact-fold uses, so it works through the unified graph fold gate
+/// SAME store path exact-fold uses, so it works through the shared graph fold gate
 /// (`graph_fold = graph_exact_fold || sketch`). Counts/sums/min/max stay EXACT; only
 /// percentiles are approximate.
 ///
@@ -1046,7 +1043,6 @@ async fn test_graph_cellular_directory_multi_file_dataset_shipping() {
     const SHARDS: usize = 6;
     let (_fixture_guard, trace_dir) = write_weka_dir_fixture(SHARDS);
 
-    // Baseline: single-cell over the SAME directory (no controller, no shipping).
     let h_base = AIPerfHarness::new().await;
     let baseline = h_base.run_timeout(
         &format!(
@@ -1098,7 +1094,6 @@ async fn test_graph_cellular_directory_multi_file_dataset_shipping() {
         cellular.stderr
     );
 
-    // Topology guard: the multi-cell run went through the controller.
     assert!(
         cellular
             .artifacts

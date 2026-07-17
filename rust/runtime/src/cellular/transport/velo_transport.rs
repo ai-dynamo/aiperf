@@ -466,11 +466,9 @@ mod tests {
         }
     }
 
-    /// A metrics-only cell ships a folded `StorePartition` over the
-    /// store handler; the controller decodes it, acks, and surfaces it on the merged
-    /// stream. Proves the wire path (`CellMessage::StorePartition` → rmp raw payload →
-    /// `HANDLER_STORE_PARTITION` → ack) works over real velo, preserving the store's
-    /// record count for the append-merge.
+    /// A metrics-only cell ships a folded `StorePartition` through
+    /// `CellMessage::StorePartition` → rmp raw payload →
+    /// `HANDLER_STORE_PARTITION` → ack, preserving its record count for append-merge.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cell_ships_folded_store_partition() {
         use crate::cellular::shard::ColumnStorePartition;

@@ -554,9 +554,8 @@ async fn scheduled_pair_validates_and_executes_over_native_grpc_stdio() {
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["protocol_version"], 2);
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["transport"], "grpc");
-    assert_eq!(terminal["provenance"]["workload"], "scheduled");
-    assert_eq!(terminal["provenance"]["transport"], "grpc");
+    assert_eq!(terminal["run_metadata"]["transport"], "grpc");
+    assert_eq!(terminal["run_metadata"]["workload"], "scheduled");
 
     let requests = captured.lock().unwrap().clone();
     assert_eq!(requests.len(), 2);
@@ -596,12 +595,9 @@ async fn scheduled_pair_validates_and_executes_over_native_grpc_stdio() {
     server.await.unwrap();
 }
 
-/// Full-stack process proof for the NON-LLM embedding path: the real runner
-/// binary, driven by a protocol-v2 `kserve_v2_embeddings` request over native
-/// gRPC, dispatches unary `ModelInfer` with a renamed STRING input tensor
-/// ("query") and parses the `FP32` "text_embeddings" reply into a successful
-/// run — no token-generation semantics. This is the Triton `python`-backend
-/// embedder case (Yingge's `clip-l14`).
+/// Verifies that a protocol-v2 `kserve_v2_embeddings` run sends the configured
+/// STRING input tensor and accepts an `FP32` embedding response without
+/// token-generation semantics.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn embeddings_pair_validates_and_executes_over_native_grpc_stdio() {
     const DIM: usize = 8;
@@ -640,8 +636,8 @@ async fn embeddings_pair_validates_and_executes_over_native_grpc_stdio() {
     );
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["transport"], "grpc");
-    assert_eq!(terminal["provenance"]["workload"], "scheduled");
+    assert_eq!(terminal["run_metadata"]["transport"], "grpc");
+    assert_eq!(terminal["run_metadata"]["workload"], "scheduled");
 
     let requests = captured.lock().unwrap().clone();
     assert_eq!(requests.len(), 2, "one ModelInfer per synthetic entry");

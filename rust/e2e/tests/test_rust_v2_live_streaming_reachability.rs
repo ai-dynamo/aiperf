@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
+//! Live-streaming checks require a sidecar worker and execute-capture harness.
+
 mod common;
 use common::*;
 
-// Live-worker activation requires the Python sidecar worker and request-capture harness.
-
 #[tokio::test]
-#[ignore] // requires: Python live-streaming sidecar worker + Installation execute-capture harness
-async fn test_python_config_v2_reaches_live_worker_without_v1_or_early_artifacts() {
+#[ignore = "requires live-streaming sidecar worker and execute-capture harness"]
+async fn test_config_v2_reaches_live_streaming_worker() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --streaming \

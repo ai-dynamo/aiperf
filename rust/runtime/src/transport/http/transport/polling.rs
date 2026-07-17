@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Clock-driven submit/poll/optional-download request lifecycle.
-//!
-//! Protocol parsing is a trait so future asynchronous inference APIs can reuse
-//! the lifecycle without inheriting the OpenAI/SGLang video JSON shape.
+//! Clock-driven submit/poll/optional-download request lifecycle with
+//! provider-neutral protocol parsing.
 
 use std::rc::Rc;
 

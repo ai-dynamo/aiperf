@@ -214,9 +214,8 @@ pub fn issuance_authority_for(
 ///
 /// Called at cell finalize AFTER the cell has written its artifacts to its own
 /// `artifact_dir`, before process exit. Blocking by design (off the hot path); the
-/// async HTTP work runs on a dedicated thread + runtime so it never touches the
-/// caller's (possibly `current_thread`) execute runtime — mirroring
-/// [`CellRecordsShipper::ship`]. The controller waits for every cell's `/done` marker
+/// async HTTP work runs on a dedicated thread and runtime so it never touches the
+/// caller's execute runtime. The controller waits for every cell's `/done` marker
 /// (posted last by [`crate::engine::artifact_shipping::ship_cell_artifacts`])
 /// before running its concat, so this must complete before the process exits.
 #[cfg(feature = "cellular")]
@@ -296,8 +295,8 @@ fn cell_dataset_dir() -> std::path::PathBuf {
 ///   cell (the controller-local path is directly readable) or an operator on a
 ///   shared filesystem with HTTP shipping disabled (the path is shared too).
 ///
-/// The download runs on a dedicated thread + runtime (mirroring
-/// [`CellRecordsShipper::ship`]) so it never touches the caller's runtime.
+/// The download runs on a dedicated thread and runtime, isolated from the caller's
+/// runtime.
 #[cfg(feature = "cellular")]
 pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8>> {
     use anyhow::Context;
@@ -415,9 +414,8 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     let controller = connect_controller(&velo, &coordinate)
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} connect controller: {error}"))?;
-    // Capture the velo and controller peer before the client consumes them so
-    // before the client consumes them, so the cell can subscribe to the phaser control
-    // plane over the same fetch instance and await generation 1 instead of the event.
+    // Keep handles before constructing the client so the phaser can subscribe over
+    // the same fetch instance.
     let phaser_start = matches!(
         std::env::var("AIPERF_CELL_PHASER_START")
             .unwrap_or_default()
@@ -705,7 +703,7 @@ impl CellRecordsShipper {
     /// samples the sketches need. The heartbeat is a live-lane diagnostic; the
     /// authoritative percentiles come from the merged store, so empty sketches are honest
     /// rather than a fidelity loss. The counters keep the controller's
-    /// `cellular-heartbeat.json` sidecar populated (proving the controller path ran).
+    /// `cellular-heartbeat.json` sidecar populated.
     pub fn ship_store(
         &self,
         store: crate::metrics_core::store::ColumnStore,
@@ -785,7 +783,6 @@ mod tests {
     #[test]
     fn k8s_ship_coordinate_round_robins_cells_to_aggregators() {
         let template = "tcp://js-aggregators-{agg_id}-0.js.ns.svc.cluster.local:9700";
-        // cells 0..6 over M=2 aggregators: even→agg0, odd→agg1 (cell_id % M).
         assert_eq!(
             k8s_agg_ship_coordinate(template, 0, 2),
             "tcp://js-aggregators-0-0.js.ns.svc.cluster.local:9700"
@@ -798,7 +795,6 @@ mod tests {
             k8s_agg_ship_coordinate(template, 4, 2),
             "tcp://js-aggregators-0-0.js.ns.svc.cluster.local:9700"
         );
-        // M=3: cell 5 → agg 2.
         assert_eq!(
             k8s_agg_ship_coordinate(template, 5, 3),
             "tcp://js-aggregators-2-0.js.ns.svc.cluster.local:9700"
@@ -807,8 +803,6 @@ mod tests {
 
     #[test]
     fn detects_only_file_path_datasets_for_ship() {
-        // A `file` dataset with a `path` is the one non-synthetic source a cross-host
-        // cell cannot reach and must be shipped by the controller.
         let file_path = serde_json::json!({"run": {"cfg": {"datasets": [
             {"type": "file", "format": "single_turn", "path": "/data/prompts.jsonl"}
         ]}}});
@@ -817,11 +811,6 @@ mod tests {
             Some(std::path::PathBuf::from("/data/prompts.jsonl"))
         );
 
-        // A single-file GRAPH trace (`dag_jsonl`/`weka_trace`/`dynamo_trace`) is likewise
-        // shipped: the predicate is format-blind (it keys only on `type == "file"` + a
-        // non-empty `path`), so a graph `{type:file, format:dag_jsonl, path}` also returns
-        // the path and uses the same serve/download/rewrite plane. The controller
-        // separately fails closed if that graph path is a directory/segmented-prefix.
         for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace"] {
             let graph = serde_json::json!({"run": {"cfg": {"datasets": [
                 {"type": "file", "format": graph_format, "path": "/traces/graph.jsonl"}
@@ -833,9 +822,6 @@ mod tests {
             );
         }
 
-        // Everything else yields None (no ship): synthetic regenerates from the seed;
-        // an inline-`records` file already rides in the envelope; `public` URL/HF each
-        // cell fetches itself; and an empty path is not a shippable source.
         for none in [
             serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}}),
             serde_json::json!({"run": {"cfg": {"datasets": [{"type": "file", "format": "single_turn", "records": []}]}}}),

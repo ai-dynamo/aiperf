@@ -103,8 +103,8 @@ pub trait EndpointResolver: Send + Sync {
     ) -> Result<Arc<dyn Endpoint>>;
 }
 
-/// Extensible name-to-endpoint registry containing the endpoint implementations
-/// currently built by `aiperf-endpoints` plus statically linked extensions.
+/// Extensible name-to-endpoint registry containing built-in
+/// [`crate::endpoints`] implementations and statically linked extensions.
 #[derive(Clone)]
 pub struct BuiltinEndpointResolver {
     default_name: String,
@@ -280,7 +280,7 @@ fn normalize_endpoint_name(name: &str) -> String {
     name.trim().to_ascii_lowercase().replace(['-', '/'], "_")
 }
 
-/// Native materializer backed by `aiperf-endpoints` formatters.
+/// Native materializer backed by [`crate::endpoints`] formatters.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EndpointRequestMaterializer;
 
@@ -2147,10 +2147,8 @@ mod tests {
 
     #[test]
     fn cached_plan_is_byte_identical_to_per_dispatch_format_across_matrix() {
-        // The load-bearing oracle: for every (endpoint × context mode × overrides ×
-        // max_tokens × extra_body) combination, materializing with the cache
-        // populated must produce byte-for-byte the same body as the per-dispatch
-        // `format_payload` fallback on the identically-lowered store.
+        // Cache and per-dispatch formatting must remain byte-identical across the
+        // endpoint, context, override, max-token, and extra-body matrix.
         for endpoint_id in ["chat", "responses", "messages"] {
             for mode in [
                 ConversationContextMode::MessageArrayWithResponses,

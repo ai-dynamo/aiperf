@@ -307,7 +307,7 @@ fn run_controller(envelope: &Value) -> ! {
                     stage: None,
                     errors: Vec::new(),
                     diagnostic_artifacts: Vec::new(),
-                    provenance: terminal_metadata,
+                    run_metadata: terminal_metadata,
                 },
                 0,
             );
@@ -337,7 +337,7 @@ fn emit_cellular_failure(benchmark_id: Option<String>, code: &'static str, messa
             stage: Some(FailureStageV2::Execution),
             errors: vec![diagnostic(code, message)],
             diagnostic_artifacts: Vec::new(),
-            provenance: BTreeMap::new(),
+            run_metadata: BTreeMap::new(),
         },
         1,
     );
@@ -553,7 +553,7 @@ fn write_v2_terminal_failure(
             stage: Some(stage),
             errors: vec![diagnostic(code, message)],
             diagnostic_artifacts: Vec::new(),
-            provenance: BTreeMap::new(),
+            run_metadata: BTreeMap::new(),
         },
         exit_code,
     )

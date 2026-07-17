@@ -363,8 +363,8 @@ async fn graph_dag_dispatches_over_native_grpc() {
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["protocol_version"], 2);
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["transport"], "grpc");
-    assert_eq!(terminal["provenance"]["workload"], "graph");
+    assert_eq!(terminal["run_metadata"]["transport"], "grpc");
+    assert_eq!(terminal["run_metadata"]["workload"], "graph");
 
     let requests = captured.lock().unwrap().clone();
     assert_eq!(

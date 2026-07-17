@@ -389,7 +389,7 @@ fn extract_prepared_responses(
 /// This directly maps each JSON number to a native integer or float
 /// `minijinja::Value`, so template output stays valid JSON regardless of how
 /// serde_json is configured. It also guards against the `arbitrary_precision`
-/// feature, which the workspace no longer enables: under that feature a
+/// feature: under that feature a
 /// `serde_json::Number` serializes through a private `$serde_json::private::Number`
 /// marker that only serde_json's own deserializer understands, and handing such a
 /// value straight to minijinja's serializer (as `template.render` does) would

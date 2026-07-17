@@ -6,9 +6,8 @@
 //! Emits the two canonical AIPerf summary artifacts — `<stem>_aiperf.json`
 //! (`schema_version = "1.4"`) and `<stem>_aiperf.csv` — byte-for-byte identical
 //! to the Python exporters so downstream plotters, uploaders, and the multi-run
-//! search layer consume either output. The
-//! parity oracle is the AIPerf Python exporter suite, NOT the external NVIDIA
-//! genai-perf tool.
+//! search layer consume either output. Byte compatibility is validated against
+//! the AIPerf Python exporter suite, not the external NVIDIA genai-perf tool.
 //!
 //! # Byte-exact grounding (Python `path:line`, main checkout `src/aiperf/`)
 //! - JSON serialization: `exporters/metrics_json_exporter.py:109-114` —
@@ -25,8 +24,8 @@
 //!   (`JsonMetricResult`): `unit, avg, p1, p5, p10, p25, p50, p75, p90, p95,
 //!   p99, min, max, std, count, sum`. `count` is dropped for AGGREGATE/DERIVED
 //!   scalars (`record_models.py:99-123` `to_json_result`).
-//! - Value shapes per native metric type: `orchestrator/native_report.py:809-840`
-//!   (`_legacy_stats`): distribution → count/avg/min/max/std/percentiles;
+//! - Value shapes per native metric type: distribution →
+//!   count/avg/min/max/std/percentiles;
 //!   scalar → avg=min=max=value; counter → avg=min=max=sum=total; histogram →
 //!   count/sum/avg/percentiles.
 //! - Non-finite discipline: `common/finite.py` + the null round-trip. A native
@@ -87,7 +86,7 @@ pub struct GenaiPerfExportConfig {
     pub header_map: HashMap<String, String>,
     /// Registered tags the Python file exporters drop from both artifacts.
     pub filtered_tags: HashSet<String>,
-    /// Registered scalar-tier tags whose `count` field is dropped.
+    /// Registered scalar-metric tags whose `count` field is dropped.
     pub scalar_tags: HashSet<String>,
     /// Frontend-owned top-level JSON envelope values.
     pub envelope: GenaiPerfEnvelope,
@@ -210,10 +209,9 @@ impl Exporter for GenaiPerfV1Exporter {
     }
 }
 
-/// One report metric projected into the flat v1 stat set. Field presence
-/// mirrors `_legacy_stats` + `to_json_result`; `None` means "absent" (never a
-/// present JSON `null`, since the Python pipeline collapses non-finite tails to
-/// `None` before `exclude_none`).
+/// One report metric projected into the flat v1 stat set. `None` means absent,
+/// never a present JSON `null`, because non-finite tails are omitted before
+/// serialization.
 struct Projected {
     header: String,
     unit: String,
@@ -253,8 +251,8 @@ fn summary_series(entry: &MetricEntry) -> Option<&MetricSeries> {
 }
 
 /// Project one report metric into the flat stat set, applying the native
-/// metric-type value shape and the `count`-drop rule for scalar-tier metrics.
-/// The display header and the scalar-tier `count`-drop are frontend-owned
+/// metric-type value shape and the `count`-drop rule for scalar metrics.
+/// The display header and scalar-metric `count`-drop are frontend-owned
 /// (`cfg.header_map` / `cfg.scalar_tags`), reproducing `native_report._metric_result`
 /// and `record_models.to_json_result` exactly. Returns `None` when the metric
 /// has no usable series or a required scalar / counter value is non-finite
@@ -269,7 +267,7 @@ fn project(name: &str, entry: &MetricEntry, cfg: &GenaiPerfExportConfig) -> Opti
     let mut projected = project_stats(&series.stats, entry.unit.clone(), header)?;
 
     // `to_json_result` (record_models.py:99-123) drops `count` for AGGREGATE /
-    // DERIVED (scalar-tier) metrics, where it would trivially be 1. The scalar
+    // DERIVED scalar metrics, where it would trivially be 1. The scalar
     // classification is the Python `MetricType`, projected as `cfg.scalar_tags`.
     if cfg.scalar_tags.contains(name) {
         projected.count = None;
@@ -279,8 +277,7 @@ fn project(name: &str, entry: &MetricEntry, cfg: &GenaiPerfExportConfig) -> Opti
 }
 
 /// Map one series' [`ReportStats`] into the flat v1 stat set, applying the
-/// native metric-type value shape (`native_report.py:_legacy_stats`,
-/// `823-854`). Returns `None` when a required scalar / counter value is
+/// native metric-type value shape. Returns `None` when a required scalar or counter value is
 /// non-finite (Python would raise; the best-effort export skips instead). The
 /// `cfg.scalar_tags` `count`-drop is a request-metric concern applied by the
 /// caller, not here, so this helper is reusable for GPU-telemetry series where

@@ -100,7 +100,7 @@ impl NativeTransportExecution for HttpNativeExecution {
         validate_online_run(context)
     }
 
-    fn provenance(&self) -> BTreeMap<String, String> {
+    fn run_metadata(&self) -> BTreeMap<String, String> {
         BTreeMap::new()
     }
 }
@@ -420,7 +420,7 @@ impl WorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
         validate_static_accuracy_endpoint(context)?;
         ensure!(
             run.models.items.len() == 1,
-            "static accuracy execution currently requires exactly one model"
+            "static accuracy execution requires exactly one model"
         );
         let workload =
             workload_config::<StaticAccuracyWorkloadConfigV2>(workload, "static_accuracy")?;
@@ -475,7 +475,7 @@ fn prepare_native_operation(
     } else {
         None
     };
-    let provenance = binding.provenance();
+    let run_metadata = binding.run_metadata();
     Ok(Box::new(PreparedNativeOperation {
         plan,
         request_executor,
@@ -483,7 +483,7 @@ fn prepare_native_operation(
         product_registry: context.product_registry_handle(),
         readiness,
         report_facts,
-        provenance,
+        run_metadata,
     }))
 }
 
@@ -1250,7 +1250,7 @@ struct PreparedNativeOperation {
     product_registry: Arc<crate::extensions::AIPerfRegistry>,
     readiness: Option<Box<dyn PreparedOnlineReadiness>>,
     report_facts: ReportPairRunFacts,
-    provenance: BTreeMap<String, String>,
+    run_metadata: BTreeMap<String, String>,
 }
 
 impl fmt::Debug for PreparedNativeOperation {
@@ -1274,7 +1274,7 @@ impl PreparedRunnerOperation for PreparedNativeOperation {
         Ok(PreparedRunOutcome {
             native_report,
             report_facts: self.report_facts,
-            provenance: self.provenance,
+            run_metadata: self.run_metadata,
             report_commit: None,
         })
     }

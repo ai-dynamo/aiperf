@@ -95,7 +95,7 @@ async fn v2_sharded_workers_own_persistent_connections_with_balanced_slices() {
         "operation": "execute",
         "run": {
             "identity": {
-                "benchmark_id": "thread-per-core-product-proof",
+                "benchmark_id": "thread-per-core-product",
                 "random_seed": 11
             },
             "artifact_target": artifact_target,
@@ -156,8 +156,8 @@ async fn v2_sharded_workers_own_persistent_connections_with_balanced_slices() {
     );
     let terminal: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(terminal["success"], true, "{terminal}");
-    assert_eq!(terminal["provenance"]["transport"], "http");
-    assert_eq!(terminal["provenance"]["workload"], "scheduled");
+    assert_eq!(terminal["run_metadata"]["transport"], "http");
+    assert_eq!(terminal["run_metadata"]["workload"], "scheduled");
 
     let peers = connection_log.peers.lock().unwrap().clone();
     assert_eq!(peers.len(), 9, "one server request per authored turn");

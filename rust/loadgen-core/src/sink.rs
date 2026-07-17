@@ -91,18 +91,15 @@ pub trait RequestObserver {
     fn on_token(&self, uuid: Uuid, at_ms: f64);
     /// Record one classified token delta.
     ///
-    /// The default preserves compatibility for transports that cannot distinguish
-    /// reasoning from user-visible output. Reasoning-aware transports override the
-    /// call site, while observer tees forward the classification unchanged.
+    /// The default forwards the timestamp through [`on_token`](Self::on_token)
+    /// and ignores the classification.
     fn on_classified_token(&self, uuid: Uuid, at_ms: f64, _kind: ObservedTokenKind) {
         self.on_token(uuid, at_ms);
     }
     /// Record an ordered batch of user-visible output-token timestamps.
     ///
-    /// Coalescing transports can override this hook downstream to amortize
-    /// correlation and mutable-state access without changing the semantic
-    /// callback sequence. The default deliberately replays the ordinary
-    /// classified-token callback so every existing observer remains correct.
+    /// The default invokes [`on_classified_token`](Self::on_classified_token)
+    /// with [`ObservedTokenKind::Output`] in slice order.
     fn on_output_tokens(&self, uuid: Uuid, at_ms: &[f64]) {
         for &timestamp in at_ms {
             self.on_classified_token(uuid, timestamp, ObservedTokenKind::Output);
@@ -116,7 +113,7 @@ pub trait RequestObserver {
     /// Record endpoint-specific image/video facts.
     ///
     /// The default is a no-op so token-only transports and observers do not pay
-    /// for modality handling. Endpoint-aware observer tees forward it unchanged.
+    /// for modality handling.
     fn on_endpoint_metrics(&self, _uuid: Uuid, _metrics: ObservedEndpointMetrics) {}
     /// Record terminal status for the request.
     fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus);

@@ -4,10 +4,8 @@
 //! Frozen execution-placement composition for one runner process.
 //!
 //! The aggregate is intentionally a value, not a mode enum: every replaceable
-//! member is an object-safe trait. A future RPC or ZMQ distribution can supply
-//! remote HTTP-turn and whole-graph placement, plus its own readiness control
-//! transport, without changing pair selection, scheduling, metrics, or report
-//! code.
+//! member is an object-safe trait, keeping placement and readiness independent
+//! from pair selection, scheduling, metrics, and reporting.
 
 use std::fmt;
 use std::sync::Arc;

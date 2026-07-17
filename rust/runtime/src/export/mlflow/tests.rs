@@ -462,11 +462,7 @@ fn rest_upload_sends_expected_experiment_run_and_log_batch_bodies() {
     }
 }
 
-/// Regression: when the target experiment already exists, the exporter must
-/// reuse the id from `get-by-name` and never POST `experiments/create`. Before
-/// the fix, `get-by-name` was sent as POST (405 from real MLflow) and the code
-/// fell through to `create`, which fails RESOURCE_ALREADY_EXISTS on the second
-/// run to the same experiment — silently dropping every run after the first.
+/// Reuses an existing experiment via GET without creating it again.
 #[test]
 fn rest_upload_reuses_existing_experiment_without_create() {
     let server = MockServer::start_with(ExperimentState::Existing);
@@ -488,7 +484,6 @@ fn rest_upload_reuses_existing_experiment_without_create() {
     let requests = server.requests();
     let _ = std::fs::remove_dir_all(&artifact_dir);
 
-    // The experiment was looked up via GET and reused; create was never called.
     assert!(
         requests
             .iter()
@@ -501,7 +496,6 @@ fn rest_upload_reuses_existing_experiment_without_create() {
             .any(|r| r.path.contains("experiments/create")),
         "must not create an experiment that already exists"
     );
-    // The run was still created under the resolved experiment.
     assert!(
         requests
             .iter()
@@ -582,7 +576,6 @@ fn file_store_writes_mlruns_layout() {
     let meta = std::fs::read_to_string(run_dir.join("meta.yaml")).unwrap();
     assert!(meta.contains("status: 3"), "run should be FINISHED");
 
-    // Artifact was copied under exports/ (non-plot suffix).
     assert!(
         run_dir
             .join("artifacts/exports/profile_export.json")

@@ -28,7 +28,7 @@ const DETERMINISTIC_METRICS: &[&str] = &["input_sequence_length", "output_sequen
 /// `aiperf profile --cells 3` runs end-to-end and reports the full request budget.
 ///
 #[tokio::test]
-async fn test_cellular_run_from_python_frontend() {
+async fn test_cellular_run() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
@@ -505,7 +505,6 @@ async fn test_cellular_barrier_free_matches_synchronized() {
     };
     let sketch = ("AIPERF_METRICS_SKETCH", "1");
 
-    // Synchronized (default): the controller waits for all 4 cells to register.
     let h_sync = AIPerfHarness::new().await;
     let sync = h_sync.run_env(&args(&h_sync.mock.url), &[sketch]);
     assert!(
@@ -514,7 +513,6 @@ async fn test_cellular_barrier_free_matches_synchronized() {
         sync.stderr
     );
 
-    // Barrier-free: START triggers immediately; cells start on their own registration.
     let h_bf = AIPerfHarness::new().await;
     let bf = h_bf.run_env(
         &args(&h_bf.mock.url),
@@ -567,7 +565,6 @@ async fn test_cellular_phaser_start_matches_event_start() {
     };
     let sketch = ("AIPERF_METRICS_SKETCH", "1");
 
-    // Default: the single-shot velo event drives START.
     let h_event = AIPerfHarness::new().await;
     let event = h_event.run_env(&args(&h_event.mock.url), &[sketch]);
     assert!(event.success(), "event-START run failed: {}", event.stderr);
@@ -696,12 +693,10 @@ async fn test_cellular_shared_origin_zeroes_at_the_barrier() {
         )
     };
 
-    // Single-cell baseline for the deterministic-metric parity check.
     let h_base = AIPerfHarness::new().await;
     let base = h_base.run(&format!("{} --cells 1", args(&h_base.mock.url)));
     assert!(base.success(), "baseline run failed: {}", base.stderr);
 
-    // Flag OFF: each cell's origin is its own post-setup local run start.
     let h_off = AIPerfHarness::new().await;
     let off = h_off.run(&format!("{} --cells 3", args(&h_off.mock.url)));
     assert!(
@@ -710,7 +705,6 @@ async fn test_cellular_shared_origin_zeroes_at_the_barrier() {
         off.stderr
     );
 
-    // Flag ON: every cell zeroes at the shared velo START barrier.
     let h_on = AIPerfHarness::new().await;
     let on = h_on.run_env(
         &format!("{} --cells 3", args(&h_on.mock.url)),

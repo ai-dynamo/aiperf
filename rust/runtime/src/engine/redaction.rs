@@ -5,8 +5,7 @@
 //!
 //! Factory errors may include authored URLs or serialized header fragments.
 //! Every typed terminal/validation diagnostic passes through this module before
-//! crossing stdout. A future remote coordinator can reuse the same function;
-//! redaction is not coupled to the local subprocess writer.
+//! crossing stdout; redaction is independent of the local subprocess writer.
 
 use std::sync::LazyLock;
 

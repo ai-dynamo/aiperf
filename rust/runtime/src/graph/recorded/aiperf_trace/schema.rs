@@ -72,7 +72,7 @@ struct TraceWire {
     inference_calls: Vec<CallWire>,
     // Present but not consumed by the adapter — accepted, ignored.
     #[serde(default)]
-    provenance: Value,
+    source_metadata: Value,
     #[serde(default)]
     hash_id_salt: Value,
     #[serde(default)]
@@ -146,7 +146,7 @@ pub(super) fn parse_trace(value: Value) -> Result<AIPerfTrace, RecordedTraceErro
     let wire: TraceWire = serde_json::from_value(value)
         .map_err(|error| RecordedTraceError(format!("invalid aiperf.trace.v1 object: {error}")))?;
     let _ = (
-        &wire.provenance,
+        &wire.source_metadata,
         &wire.hash_id_salt,
         &wire.time_anchor_ms,
         &wire.role_counts,

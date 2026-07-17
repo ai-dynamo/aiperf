@@ -130,7 +130,6 @@ async fn test_cellular_dataset_shipping_matches_single_cell() {
     let tmp = tempfile::TempDir::new().unwrap();
     let file = write_single_turn_file(tmp.path());
 
-    // Baseline: single-process, default path (no controller, no dataset shipping).
     let h_base = AIPerfHarness::new().await;
     let baseline = run_file_dataset(&h_base, &file, 1, false);
     assert!(
@@ -153,8 +152,6 @@ async fn test_cellular_dataset_shipping_matches_single_cell() {
         cellular.stderr
     );
 
-    // Topology guard: the multi-cell run went through the controller (which alone
-    // writes cellular-heartbeat.json); the baseline did not.
     assert!(
         cellular
             .artifacts

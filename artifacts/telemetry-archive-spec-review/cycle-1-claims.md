@@ -1,6 +1,6 @@
 # Telemetry archive/watch spec — adversarial review cycle 1 claims
 
-Target: `specs/2026-07-11-aiperf-rust-telemetry-archive-watch-design.md`
+Target: `specs/telemetry.md`
 
 Reviewed commit: `89c505900`
 

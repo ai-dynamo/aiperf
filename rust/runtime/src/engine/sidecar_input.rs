@@ -40,8 +40,8 @@ pub struct ContentServerSpec {
     pub host: String,
     /// TCP port.
     pub port: u16,
-    /// Existing directory to serve. Absence creates a temporary serving root
-    /// but deliberately leaves synthetic media inline, matching Python.
+    /// Existing directory to serve. Absence creates a temporary serving root and
+    /// leaves synthetic media inline.
     #[serde(default)]
     pub content_dir: Option<PathBuf>,
     /// Bounded recent-request record capacity.
