@@ -1,0 +1,3 @@
+{"session_id":"s1","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"flat parity probe one"}],"max_tokens":8}]}
+{"session_id":"s2","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"flat parity probe two two"}],"max_tokens":8}]}
+{"session_id":"s3","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"flat parity probe three three three"}],"max_tokens":8}]}

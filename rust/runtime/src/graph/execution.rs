@@ -74,8 +74,8 @@ pub struct LocalGraphTraceExecutionBackend<M: WireMessage> {
     flags: ExecutorFlags,
     cancelled: Cell<bool>,
     active: RefCell<Vec<Weak<TraceContext>>>,
-    /// Force the general [`TraceExecutor`] even for an eligible flat plan
-    /// (parity-oracle only; production leaves this `false`).
+    /// Force the general [`TraceExecutor`] even for an eligible flat plan during
+    /// byte-parity validation; production leaves this `false`.
     force_full: bool,
     /// Live flat-path abort latches, tripped alongside `TraceContext`s on cancel.
     flat_aborts: RefCell<Vec<Weak<crate::graph::flat::FlatAbort>>>,
@@ -107,8 +107,8 @@ impl<M: WireMessage> LocalGraphTraceExecutionBackend<M> {
         }
     }
 
-    /// Force the general `TraceExecutor` for every plan, bypassing the flat
-    /// fast path. Used by the byte-parity oracle to drive the full arm.
+    /// Force the general `TraceExecutor` for every plan during byte-parity
+    /// validation, bypassing the flat fast path.
     pub(crate) fn with_force_full(mut self, force_full: bool) -> Self {
         self.force_full = force_full;
         self
@@ -148,6 +148,7 @@ impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBacken
             && crate::graph::flat::is_flat_graph(&plan.graph)
         {
             let trace_id = plan.trace.id.clone();
+            tracing::debug!(trace_id = %trace_id, "graph flat fast path");
             let abort = crate::graph::flat::FlatAbort::new();
             self.flat_aborts.borrow_mut().push(Rc::downgrade(&abort));
             let actor = crate::graph::flat::FlatGraphActor::new(
