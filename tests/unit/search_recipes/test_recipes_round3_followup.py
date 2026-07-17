@@ -1,12 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Round-3 follow-up regressions for the search-recipe post-processors.
+"""Baseline-validation regressions for the search-recipe post-processors.
 
-This file tracks the fixes applied after the initial round-3 cleanup landed.
-The original round-3 commit ``ab5f07a16`` taught :class:`DegradationKneeDetect`
-to reject negative and non-finite baselines, but the strictly-zero baseline was
-still accepted. A zero baseline produces ``cutoff = 0 * (1 + threshold) = 0`` so
+:class:`DegradationKneeDetect`
+rejects negative and non-finite baselines; a strictly-zero baseline must be
+rejected too. A zero baseline produces ``cutoff = 0 * (1 + threshold) = 0`` so
 any positive value is flagged as an "infinite" degradation, which is a
 meaningless threshold; reject it up front instead.
 """

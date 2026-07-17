@@ -47,7 +47,13 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         for capability, flag in capability_flags:
             if not getattr(endpoint_metadata, capability):
                 disallowed_flags |= flag
-        if not self.run.cfg.endpoint.streaming:
+        if not self.run.cfg.endpoint.streaming and not self._is_graph_workload():
+            # Graph-IR replays (weka / dynamo / native graph) stream per-request
+            # from recorded node modes even when the global --streaming flag is
+            # off, so the run-level STREAMING_ONLY gate must not fire for them;
+            # per-record applicability is enforced by the streamed_request
+            # predicate metric instead. Only disable STREAMING_ONLY when nothing
+            # in the run can stream (global flag off AND not a graph workload).
             disallowed_flags |= MetricFlags.STREAMING_ONLY
         if self.run.cfg.endpoint.use_server_token_count:
             # Disable usage diff metrics if server token counts are used, because
@@ -68,6 +74,20 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         # NOTE: We don't filter out INTERNAL metrics here, because they are often required for other metrics
 
         return required_flags, disallowed_flags
+
+    def _is_graph_workload(self) -> bool:
+        """True when the run's input is a graph-IR workload.
+
+        Graph-IR workloads carry per-node recorded stream modes, so individual
+        requests can stream on the wire even when ``endpoint.streaming`` is off
+        run-wide. Reads the memoized single-source resolution
+        (``workload_detect.resolve_graph_workload``), which itself degrades
+        detection failures to None -- keeping the run-level STREAMING_ONLY
+        gate for anything that is not a graph workload.
+        """
+        from aiperf.dataset.graph.workload_detect import resolve_graph_workload
+
+        return resolve_graph_workload(self.run) is not None
 
     def _configure_goodput(self, applicable_tags: set[str]) -> None:
         """

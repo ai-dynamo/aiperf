@@ -388,6 +388,86 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
+    scenario: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Lock all benchmark invariants for a named scenario "
+            "(e.g. 'inferencex-agentx-mvp'). Plain data here; the lock is "
+            "applied by the ScenarioResolver step in the pre-bootstrap resolver "
+            "chain (auto-fills defaults, validates, raises ScenarioLockError on "
+            "conflict). Distinct from the sweep ``scenarios`` strategy "
+            "(SweepConfig), which expands hand-picked named runs -- this field "
+            "is a single invariant LOCK, not a sweep.",
+        ),
+    ]
+
+    unsafe_override: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Convert scenario lock errors to warnings; stamps "
+            "submission_valid=false in the resolved scenario outcome. No-op "
+            "without ``scenario``. Plain data; consumed by the ScenarioResolver.",
+        ),
+    ]
+
+    trajectory_start_min_ratio: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            le=1.0,
+            description="Lower bound (fraction of each trace's recorded "
+            "wall-clock duration) of the per-trace t* snapshot-instant sampling "
+            "window for recorded graph replay. Unset (None) resolves to 0.0. "
+            "With both bounds at 0.0 the window is OFF (full native replay). "
+            "The inferencex-agentx-mvp scenario auto-applies 0.0 when unset "
+            "and locks an explicit conflicting value. Must be <= "
+            "trajectory_start_max_ratio.",
+        ),
+    ]
+
+    trajectory_start_max_ratio: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            le=1.0,
+            description="Upper bound (fraction of each trace's recorded "
+            "wall-clock duration) of the per-trace t* snapshot-instant sampling "
+            "window for recorded graph replay. Unset (None) resolves to 0.0 "
+            "(window OFF, full native replay); any value > 0 engages the t* "
+            "snapshot machinery (per-trace t* sampling + auto boundary-priming "
+            "warmup). The inferencex-agentx-mvp scenario auto-applies 1.0 when "
+            "unset and locks an explicit conflicting value.",
+        ),
+    ]
+
+    burst_phase_starts: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Burst-vs-spread control for phase starts on the "
+            "recorded-trace graph-IR replay path (--burst-phase-starts). "
+            "False = SPREAD (recorded leading offsets honored); True = BURST "
+            "(both phase starts collapse into a synchronized burst).",
+        ),
+    ]
+
+    agentic_cache_warmup_duration: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0,
+            description="Extended (cache-pressure) warmup duration in seconds "
+            "for recorded graph replay (--agentic-cache-warmup-duration). "
+            "After the boundary-priming warmup drains, the live post-t* "
+            "replay continues with zero idle delay and one-token outputs for "
+            "this long before profiling. None = no pressure stage.",
+        ),
+    ]
+
     # ==========================================================================
     # VALIDATORS
     # ==========================================================================
@@ -398,7 +478,7 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         """Normalize input data before Pydantic validation.
 
         Handles singular/plural aliases and warmup/profiling-to-phases
-        shorthand. See `_benchmark_normalizers.normalize_benchmark_input`.
+        shorthand. See `aiperf.config.loader.normalizers.normalize_benchmark_input`.
         """
         return normalize_benchmark_input(data)
 
@@ -410,7 +490,7 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         The dict shape is rejected with a migration-pointing message; valid
         shorthand inputs (`warmup:` / `profiling:` top-level, or a single
         flat config under `phases:`) are converted to lists by the
-        pre-model normalizers in `_benchmark_normalizers`.
+        pre-model normalizers in `aiperf.config.loader.normalizers`.
         """
         if isinstance(v, dict):
             raise ValueError(
@@ -431,9 +511,21 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
     def parse_datasets(cls, v: Any) -> list[Any]:
         """Parse dataset configurations into a list shape, validating each item has a name.
 
-        See `_benchmark_normalizers.parse_datasets_input`.
+        See `aiperf.config.loader.normalizers.parse_datasets_input`.
         """
         return parse_datasets_input(v)
+
+    @model_validator(mode="after")
+    def validate_trajectory_window_ordered(self) -> Self:
+        """Reject an inverted t* window (min ratio above max ratio)."""
+        lo = self.trajectory_start_min_ratio or 0.0
+        hi = self.trajectory_start_max_ratio or 0.0
+        if lo > hi:
+            raise ValueError(
+                "trajectory_start_min_ratio must be <= trajectory_start_max_ratio; "
+                f"got [{lo}, {hi}]"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_phase_names_unique(self) -> Self:

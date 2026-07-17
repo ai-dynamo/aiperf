@@ -4,9 +4,12 @@
 import pytest
 
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.ttst_metric import TTSTMetric
-from tests.unit.metrics.conftest import create_record, run_simple_metrics_pipeline
+from tests.unit.metrics.conftest import (
+    create_record,
+    run_simple_metrics_pipeline,
+    streamed_record_metrics,
+)
 
 
 class TestTTSTMetric:
@@ -57,7 +60,7 @@ class TestTTSTMetric:
             ValueError,
             match="Second response timestamp must be greater than or equal to the first response timestamp",
         ):
-            metric.parse_record(record, MetricRecordDict())
+            metric.parse_record(record, streamed_record_metrics())
 
     def test_ttst_insufficient_responses(self):
         """Test error when less than two content responses"""
@@ -68,4 +71,4 @@ class TestTTSTMetric:
             NoMetricValue,
             match="Record must have at least two content responses to calculate TTST",
         ):
-            metric.parse_record(record, MetricRecordDict())
+            metric.parse_record(record, streamed_record_metrics())

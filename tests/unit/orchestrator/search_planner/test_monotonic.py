@@ -467,7 +467,7 @@ def test_mutate_base_preserves_credentials() -> None:
 
 
 def test_mutate_base_preserves_url_userinfo() -> None:
-    """REGRESSION-LOCK (PR #982 dynamo-ops): URL userinfo survives
+    """REGRESSION-LOCK: URL userinfo survives
     ``_mutate_base`` via ``context={"include_secrets": True}``. See
     ``smooth_isotonic`` for the full rationale.
     """

@@ -54,8 +54,8 @@ class ServerMetricsTimeSeries:
         >>> # Add first record
         >>> record1 = ServerMetricsRecord(timestamp_ns=1000, metrics={...})
         >>> ts.append_snapshot(record1)
-        >>> # Add duplicate (same metrics)
-        >>> record2 = ServerMetricsRecord(timestamp_ns=2000, is_duplicate=True)
+        >>> # Add duplicate (same metrics; empty-metrics records are skipped entirely)
+        >>> record2 = ServerMetricsRecord(timestamp_ns=2000, metrics={...}, is_duplicate=True)
         >>> ts.append_snapshot(record2)
         >>> ts._total_fetch_count  # 2 fetches
         2

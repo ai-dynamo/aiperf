@@ -7,27 +7,33 @@ Provides a hierarchical, type-safe configuration system using Pydantic BaseSetti
 All settings can be configured via environment variables with the AIPERF_ prefix.
 
 Structure:
-    Environment.ACCURACY.*       - Accuracy benchmark settings
-    Environment.API_SERVER.*     - API server settings
-    Environment.COMPRESSION.*    - Compression settings for streaming file transfers
-    Environment.DATASET.*        - Dataset management
-    Environment.DEV.*            - Development and debugging settings
-    Environment.GPU.*            - GPU telemetry collection
-    Environment.HTTP.*           - HTTP client socket and connection settings
-    Environment.LOGGING.*        - Logging configuration
-    Environment.METRICS.*        - Metrics collection and storage
-    Environment.MLFLOW.*         - MLflow export settings
-    Environment.OTEL.*           - OTel metrics streaming
-    Environment.RECORD.*         - Record processing
-    Environment.SEARCH_PLANNER.* - Adaptive-search planner tunables
-    Environment.SERVER_METRICS.* - Server metrics collection
-    Environment.SERVICE.*        - Service lifecycle and communication
-    Environment.TIMING.*         - Timing manager settings
-    Environment.TOKENIZER.*      - Tokenizer pre-warm and loading
-    Environment.UI.*             - User interface settings
-    Environment.WANDB.*          - Weights & Biases export settings
-    Environment.WORKER.*         - Worker management and scaling
-    Environment.ZMQ.*            - ZMQ communication settings
+    Environment.ACCURACY.*        - Accuracy benchmark settings
+    Environment.AGENTX.*          - InferenceX AgentX scenario runtime settings
+    Environment.API_SERVER.*      - API server settings
+    Environment.CLI_RUNNER.*      - CLI runner post-run callback behavior
+    Environment.COMPRESSION.*     - Compression settings for streaming file transfers
+    Environment.DAG.*             - DAG benchmark mode (dag_jsonl) settings
+    Environment.DATASET.*         - Dataset management
+    Environment.DEV.*             - Development and debugging settings
+    Environment.DYNAMO.*          - Dynamo agent-trace adapter tunables
+    Environment.GPU.*             - GPU telemetry collection
+    Environment.GRAPH.*           - Graph-mode runtime tunables
+    Environment.HTTP.*            - HTTP client socket and connection settings
+    Environment.LOGGING.*         - Logging configuration
+    Environment.METRICS.*         - Metrics collection and storage
+    Environment.MLFLOW.*          - MLflow export settings
+    Environment.NETWORK_LATENCY.* - Network latency calibration
+    Environment.OTEL.*            - OTel metrics streaming
+    Environment.RECORD.*          - Record processing
+    Environment.SEARCH_PLANNER.*  - Adaptive-search planner tunables
+    Environment.SERVER_METRICS.*  - Server metrics collection
+    Environment.SERVICE.*         - Service lifecycle and communication
+    Environment.TIMING.*          - Timing manager settings
+    Environment.TOKENIZER.*       - Tokenizer pre-warm and loading
+    Environment.UI.*              - User interface settings
+    Environment.WANDB.*           - Weights & Biases export settings
+    Environment.WORKER.*          - Worker management and scaling
+    Environment.ZMQ.*             - ZMQ communication settings
 
 Examples:
     # Via environment variables:
@@ -96,6 +102,45 @@ class _AccuracySettings(BaseSettings):
         "dataset-loading script can execute on ``datasets`` v4+ "
         "(mirrors lighteval's reference opt-in). Consumed by "
         "``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
+    )
+
+
+class _AgentXSettings(BaseSettings):
+    """InferenceX AgentX scenario runtime settings.
+
+    Runtime knobs for the locked AgentX scenario submission contract. The
+    context-overflow substring allowlist and rate threshold flip a scenario
+    run to ``submission_valid=false`` when the runtime overflow rate exceeds
+    the limit (RFC §7). Mirrors ``Environment.AGENTX`` on ``ajc/agentx``.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_AGENTX_")
+
+    CONTEXT_OVERFLOW_SUBSTRINGS: list[str] = Field(
+        default=[
+            "context length",
+            "maximum context",
+            "context_length_exceeded",
+            "prompt is too long",
+        ],
+        description="Case-insensitive substring allowlist used to classify a "
+        "server error response as a context-overflow event. Matched against "
+        "the raw response body and the OpenAI-style nested 'error.message' "
+        "field. Extend via AIPERF_AGENTX_CONTEXT_OVERFLOW_SUBSTRINGS to "
+        "support additional inference-server vocabularies (vLLM, TGI, "
+        "TensorRT-LLM, ...). Empty list disables runtime detection.",
+    )
+    CONTEXT_OVERFLOW_RATE_LIMIT: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=0.01,
+        description="Strict upper bound on the per-run context-overflow rate "
+        "(context_overflow_count / total_responses) before a scenario "
+        "submission is flipped to submission_valid=false with reason "
+        "'context_overflow_rate_exceeded'. Default 0.01 (1%) matches the "
+        "scenario spec RFC §7. Comparison is strictly greater-than: rate "
+        "exactly equal to the limit is accepted. Has no effect on "
+        "non-scenario runs (no --scenario flag) or runs with zero responses.",
     )
 
 
@@ -266,6 +311,129 @@ class _DatasetSettings(BaseSettings):
         "value, the config loader logs a warning suggesting the user move the "
         "dataset to a JSONL file. No hard cap.",
     )
+    WEKA_GRAPH_PARALLEL_THRESHOLD: int = Field(
+        ge=0,
+        default=8,
+        description="Minimum number of Weka graph rows/files required before the "
+        "graph adapter switches from serial parsing to the multi-process "
+        "forkserver parse path. Set to 0 to force the pool path for any non-empty "
+        "corpus.",
+    )
+    WEKA_GRAPH_PARALLEL_WORKERS: int = Field(
+        ge=0,
+        le=256,
+        default=0,
+        description="Number of worker processes for Weka graph parsing. 0 = auto "
+        "(min(cpu_count - 1, WEKA_GRAPH_PARALLEL_AUTO_MAX_WORKERS, item_count "
+        "when known)), matching AgentX's full-corpus reconstruction default. Set "
+        "to 1 to force a single worker.",
+    )
+    WEKA_GRAPH_PARALLEL_AUTO_MAX_WORKERS: int = Field(
+        ge=1,
+        le=256,
+        default=16,
+        description="Upper bound used when WEKA_GRAPH_PARALLEL_WORKERS=0 selects "
+        "auto worker sizing for Weka graph parsing.",
+    )
+    WEKA_GRAPH_PARALLEL_PREFETCH_MULTIPLIER: int = Field(
+        ge=1,
+        le=64,
+        default=16,
+        description="Ordered pool submit-window multiplier for Weka graph parsing. "
+        "The adapter keeps at most workers * multiplier rows in flight so heavy "
+        "traces do not idle fast workers while still bounding parent-side memory. "
+        "Window-sizing rule: the window (workers * multiplier) must cover the rows "
+        "remaining behind the single heaviest trace, or fast workers stall "
+        "head-of-line while that one trace drains; a multiplier of 16 gives a "
+        "window of 256 at the auto 16 workers, which covers this 393-row corpus "
+        "whose heaviest row sits at index 140. Memory tradeoff: the parent buffers "
+        "up to workers * multiplier completed payloads plus the raw rows queued "
+        "behind them; measured on the 062126 full corpus at 16 workers this costs "
+        "~7.3 GiB parent VmHWM (~17.5 GiB process tree), vs ~2.8 GiB parent at "
+        "multiplier 4.",
+    )
+    WEKA_GRAPH_PARALLEL_ITEM_TIMEOUT_SECONDS: float = Field(
+        gt=0.0,
+        default=600.0,
+        description="Per-item timeout in seconds for one Weka graph parse pool "
+        "result (a single trace file/row). A raw multiprocessing Pool never "
+        "completes the in-flight task of a worker killed mid-parse (OOM kill / "
+        "external SIGKILL), so an unbounded wait presents as a silent indefinite "
+        "hang; this bound turns it into a clear RuntimeError instead. Raise it "
+        "for corpora whose single heaviest trace legitimately parses slower than "
+        "the default.",
+    )
+    DYNAMO_GRAPH_PARALLEL_THRESHOLD: int = Field(
+        ge=0,
+        default=8,
+        description="Minimum number of Dynamo session-trees in ONE "
+        "`from_dynamo_trace` call required before the graph adapter switches "
+        "from the serial tree-scoped build to the multi-process forkserver "
+        "build path. The parallel unit is TREES (a root session plus its "
+        "subagent descendants), so even one large file with many trees "
+        "parallelizes. At or below this count the build stays serial (no pool "
+        "spawn). Set to 0 to force the pool path for any multi-tree capture.",
+    )
+    DYNAMO_GRAPH_PARALLEL_WORKERS: int = Field(
+        ge=0,
+        le=256,
+        default=0,
+        description="Number of worker processes for Dynamo session-tree graph "
+        "building. 0 = auto (min(cpu_count - 1, "
+        "DYNAMO_GRAPH_PARALLEL_AUTO_MAX_WORKERS, tree_count)). Set to 1 to force "
+        "the serial path (single-tree captures always build serially).",
+    )
+    DYNAMO_GRAPH_PARALLEL_AUTO_MAX_WORKERS: int = Field(
+        ge=1,
+        le=256,
+        default=16,
+        description="Upper bound used when DYNAMO_GRAPH_PARALLEL_WORKERS=0 "
+        "selects auto worker sizing for Dynamo session-tree graph building.",
+    )
+    DYNAMO_GRAPH_PARALLEL_PREFETCH_MULTIPLIER: int = Field(
+        ge=1,
+        le=64,
+        default=16,
+        description="Ordered pool submit-window multiplier for Dynamo "
+        "session-tree graph building, doubling as the batches-per-worker "
+        "factor: the trees are shuffled into at most workers * multiplier "
+        "CONTIGUOUS weight-balanced per-batch temp files (balanced by a "
+        "cumulative record-line byte-length proxy resolved WITHOUT parsing the "
+        "recorded `input_sequence_hashes`) and at most that many batches are "
+        "kept in flight. Contiguous batching preserves the global sorted-by-root "
+        "tree order so the parent's in-order union is byte-identical to the "
+        "serial build; a larger multiplier gives finer batches so a few heavy "
+        "trees do not idle fast workers, at the cost of more parent-buffered "
+        "batch results.",
+    )
+    DYNAMO_GRAPH_PARALLEL_ITEM_TIMEOUT_SECONDS: float = Field(
+        gt=0.0,
+        default=600.0,
+        description="Per-item timeout in seconds for one Dynamo session-tree "
+        "batch build pool result. A raw multiprocessing Pool never completes "
+        "the in-flight task of a worker killed mid-build (OOM kill / external "
+        "SIGKILL), so an unbounded wait presents as a silent indefinite hang; "
+        "this bound turns it into a clear RuntimeError instead. Raise it for "
+        "captures whose single heaviest batch legitimately builds slower than "
+        "the default.",
+    )
+    WEKA_HF_SPLIT: str = Field(
+        default="train",
+        description="HuggingFace `datasets` split loaded when a weka graph "
+        "workload is given as a HuggingFace `org/name` repo id (e.g. "
+        "`semianalysisai/cc-traces-weka-062126`) instead of a local path. The "
+        "published weka corpora ship a single `traces.jsonl` exposed as the "
+        "`train` split, so the default is `train`. Datasets slice syntax is "
+        "accepted (e.g. `train[:100]`) to bound a streamed slice without "
+        "forcing a full-split download.",
+    )
+    WEKA_HF_REVISION: str | None = Field(
+        default=None,
+        description="Optional HuggingFace dataset revision (commit SHA, branch, "
+        "or tag) pinned when loading a weka corpus by repo id. Pinning a commit "
+        "SHA makes a streamed ingest reproducible across re-runs even if the "
+        "dataset's `main` branch is updated. None loads the default revision.",
+    )
 
 
 class _DagSettings(BaseSettings):
@@ -327,6 +495,27 @@ class _DeveloperSettings(BaseSettings):
     ] = Field(
         default=None,
         description="List of services to enable TRACE logging for (comma-separated or multiple flags)",
+    )
+
+
+class _DynamoSettings(BaseSettings):
+    """Dynamo agent-trace adapter tunables.
+
+    Bounds the `parent_link` chain depth (cycle guard) walked while flattening
+    the Dynamo trace into the shared segment-trie IR
+    (`_guard_chain_forest` in
+    `src/aiperf/dataset/graph/adapters/dynamo/trace.py`).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_DYNAMO_", extra="ignore")
+
+    MAX_SUBAGENT_DEPTH: int = Field(
+        default=16,
+        ge=1,
+        description=(
+            "Maximum `parent_link` chain depth walked by the Dynamo trie-IR "
+            "cycle guard. Chains deeper than this raise DynamoTraceAdapterError."
+        ),
     )
 
 
@@ -393,6 +582,156 @@ class _GPUSettings(BaseSettings):
         le=300.0,
         default=5.0,
         description="Timeout in seconds for joining GPU telemetry collection threads during shutdown",
+    )
+
+
+class _GraphSettings(BaseSettings):
+    """Graph-mode runtime tunables.
+
+    Controls async-dataflow graph runtime guardrails and adapter behavior.
+    Every live producer lowers to flat LlmNode graphs.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_GRAPH_", extra="ignore")
+
+    DYNAMIC_POOL_MAX_BYTES: int = Field(
+        default=64 * 1024 * 1024,
+        ge=1,
+        description=(
+            "Per-worker byte cap for the graph dynamic-content pool (captured "
+            "assistant responses keyed by trace/variant/ordinal, spliced into "
+            "successor prompts under per-trace sticky routing). LRU-evicts "
+            "whole trace entries when exceeded; an evicted live trace surfaces "
+            "as a loud pool-missing error at its consumer, never a silent "
+            "truncation. Load-bearing backstop for lost GraphTraceEnd "
+            "notifications."
+        ),
+    )
+    MERGE_CONSECUTIVE_USER: bool = Field(
+        default=False,
+        description=(
+            "When a dynamic-content producer fails or returns no replayable "
+            "content, its assistant turn is OMITTED from the successor's "
+            "spliced prompt "
+            "(dynamic-content-pool spec 6.1), which can leave consecutive "
+            "user-role messages (e.g. an init user turn followed by a static "
+            "user turn). Some chat APIs reject consecutive same-role messages. "
+            "When True, the worker merges consecutive user messages in a "
+            "spliced prompt into one (contents joined by a newline). Default "
+            "False sends the messages as-is."
+        ),
+    )
+    IGNORE_EDGE_DELAYS: bool = Field(
+        default=False,
+        description=(
+            "When true, the executor skips honoring "
+            "StaticEdge.delay_after_predecessor_us, "
+            "StaticEdge.delay_after_predecessor_start_us and "
+            "StaticEdge.min_start_delay_us — captured inter-node idle gaps "
+            "are collapsed and successor nodes fire as soon as their "
+            "channel-readiness inputs are satisfied. Use for "
+            "compressed-time replays where the user wants to stress the "
+            "server independent of the original trace's wall-clock pacing. "
+            "Default (false): honor edge delays exactly as captured."
+        ),
+    )
+    WARMUP_MAX_OUTPUT_TOKENS: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Per-request output-token cap applied UNCONDITIONALLY to WARMUP "
+            "boundary turns (via a `max_tokens` dispatch override in "
+            "`rewrite_for_warmup` / the warmup delta envelope), so the warmup "
+            "wire payload always "
+            "carries `max_tokens == 1`. Warmup is cache-priming history: it "
+            "primes each live chain's input prefix, and the (1-token) generated "
+            "output is discarded (warmup records are excluded from metrics). "
+            "Does NOT affect the PROFILING phase, which replays each turn's full "
+            "recorded output length."
+        ),
+    )
+    HANDOFF_RESIDUAL_CAP: float | None = Field(
+        default=60.0,
+        gt=0,
+        description=(
+            "Upper bound in seconds on any single extended-warmup handoff "
+            "residual delay (the recorded inter-turn gap minus drain time a "
+            "resumed profiling frontier waits before firing; see "
+            "`chop_trie_at_frontier`). Graph edge delays are NOT bounded by "
+            "the build-plane "
+            "idle-gap warp when another stream's active interval covers the "
+            "gap, so this explicit clamp keeps a handoff lane from parking "
+            "for minutes at the profiling start; the 60s default matches the "
+            "recorded idle-gap cap. None disables the clamp "
+            "(faithful-but-unbounded residuals)."
+        ),
+    )
+    PRESSURE_DRAIN_GRACE_CAP: float = Field(
+        default=300.0,
+        gt=0,
+        description=(
+            "Upper bound in seconds on the extended (cache-pressure) warmup "
+            "phase's drain grace period. When a pressure duration is set and "
+            "no explicit --warmup-grace-period overrides it, the warmup phase "
+            "waits min(duration, this cap) for in-flight returns after "
+            "sending completes -- instead of the boundary-priming warmup's unbounded "
+            "wait, so a wedged or lost return cannot hang the run. On grace "
+            "expiry the in-flight requests are cancelled; cancelled turns are "
+            "excluded from the handoff ledger (not-executed, profiling "
+            "refires them), so a drain whose cancellations land yields a "
+            "VALID handoff, and a drain that force-completes with unreturned "
+            "credits trips the completeness gate and skips the re-cut "
+            "(profiling then starts from the plain t* plans)."
+        ),
+    )
+    DISPATCH_TIMEOUT: float = Field(
+        default=300.0,
+        gt=0,
+        description=(
+            "Deadlock guard for the CreditDispatchAdapter Future bridge. The "
+            "executor's `dispatch(...)` issues a graph credit and awaits the "
+            "correlated CreditReturn via an asyncio.Future; this caps that wait. "
+            "If a return is dropped (worker crash, lost message, unrouted "
+            "return) the Future is rejected with TimeoutError instead of "
+            "hanging the trace's TaskGroup forever. Sized to comfortably exceed "
+            "a slow single dispatch round-trip (large prefill + long output); "
+            "raise it for very long generations, lower it to fail faster in CI."
+        ),
+    )
+    EXECUTOR_WATCHDOG_TIMEOUT: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Optional wall-clock deadlock guard on TraceExecutor.run's firing "
+            "loop. DISPATCH_TIMEOUT only bounds a node that ISSUED a credit; a "
+            "node wedged on an unsatisfiable channel input (a producer-accounting "
+            "bug in mark_producer_done / fan-in gating) never dispatched and so "
+            "has no per-dispatch guard. When set, each executor run is wrapped in "
+            "asyncio.wait_for(timeout=this) so such a wedge raises TimeoutError "
+            "instead of hanging. Default None (disabled): bare/count/session runs "
+            "replay recorded idle gaps faithfully with no wall-clock bound; "
+            "a --benchmark-duration already bounds the "
+            "phase. Set a generous value in CI/dev to convert an executor deadlock "
+            "into a diagnosable failure without truncating a legitimate long gap."
+        ),
+    )
+    IDLE_GAP_NO_DURATION_WARN_SECONDS: float = Field(
+        default=30.0,
+        ge=0.0,
+        le=86400.0,
+        description=(
+            "Threshold (seconds) for the once-per-run PROFILING-phase advisory "
+            "GraphIRReplayStrategy logs when an idle-gap recorded corpus is run "
+            "WITHOUT `--benchmark-duration`. A faithful recorded-trace replay honors every "
+            "recorded inter-turn idle gap verbatim (each per-gap-warped to the "
+            "`--synthesis-idle-gap-cap`), so a count/session/bare run spans "
+            "the slowest admitted trace's full recorded wall time -- sending "
+            "completes only after every scheduled idle gap elapses. When any inter-turn "
+            "edge delay exceeds this threshold and no duration budget is set, the "
+            "strategy emits a NOTICE advising `--benchmark-duration` (the bound) or "
+            "Ctrl+C (graceful partial export). Set 0.0 to always advise; raise to "
+            "silence the advisory for corpora with shorter gaps."
+        ),
     )
 
 
@@ -1458,6 +1797,10 @@ class _Environment(BaseSettings):
         default_factory=_AccuracySettings,
         description="Accuracy benchmark settings (dataset version pins, etc.)",
     )
+    AGENTX: _AgentXSettings = Field(
+        default_factory=_AgentXSettings,
+        description="InferenceX AgentX scenario runtime settings (context-overflow allowlist and rate threshold)",
+    )
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",
@@ -1486,9 +1829,17 @@ class _Environment(BaseSettings):
         default_factory=_DeveloperSettings,
         description="Development and debugging settings",
     )
+    DYNAMO: _DynamoSettings = Field(
+        default_factory=_DynamoSettings,
+        description="Dynamo agent-trace adapter tunables",
+    )
     GPU: _GPUSettings = Field(
         default_factory=_GPUSettings,
         description="GPU telemetry collection settings",
+    )
+    GRAPH: _GraphSettings = Field(
+        default_factory=_GraphSettings,
+        description="Graph-mode runtime tunables (async-dataflow guardrails and adapter behavior)",
     )
     HTTP: _HTTPSettings = Field(
         default_factory=_HTTPSettings,

@@ -54,6 +54,7 @@ The Dataset Manager handles all aspects of input data management during benchmar
 - Parsing and validating input data to ensure it matches the expected format
 - Writing dataset to memory-mapped files, enabling workers to access data directly without message passing
 - Supporting custom dataset types, such as MoonCake traces, for advanced benchmarking scenarios
+- For graph IR workloads, broadcasting a graph-typed `DatasetConfiguredNotification` — `DatasetMetadata.graph` (the trace universe plus per-node prefix-cache map) and `GraphSegmentClientMetadata` (the unified segment store and structural sidecar locations) — instead of conversation entries and a conversation memory-mapped store; the store build itself is owned by `GraphStoreBuilder` (`src/aiperf/dataset/graph/store_build.py`), and the schedule plane and workers read those exact broadcast paths (nothing re-parses the workload)
 - Managing the lifecycle of datasets, including initialization, iteration, and cleanup
 
 ### Timing Manager
@@ -61,7 +62,7 @@ The Dataset Manager handles all aspects of input data management during benchmar
 The Timing Manager controls and coordinates the timing of requests during benchmarking runs through a credit-based system.
 
 **Key Responsibilities:**
-- Scheduling when each request should be sent based on the selected timing mode (fixed schedule, request-rate, or user-centric rate)
+- Scheduling when each request should be sent based on the selected timing mode (fixed schedule, request-rate, user-centric rate, or graph IR for agentic workloads)
 - Managing precise timing to accurately reproduce real-world or synthetic load patterns
 - Supporting advanced timing scenarios, such as replaying traces with specific inter-arrival times or simulating bursty traffic
 - Ensuring that requests are dispatched to workers at the correct intervals for reliable measurement
@@ -183,6 +184,7 @@ The Timing Manager uses a **credit-based flow control system** to control when r
   - **Fixed schedule mode**: Replays conversation traces at precise timestamps from dataset metadata
   - **Request-rate mode**: Issues credits at a specific rate with configurable arrival patterns (constant, Poisson, gamma, concurrency burst)
   - **User-centric rate mode**: Each session acts as a separate user with calculated gaps between turns
+  - **Graph IR mode**: Runs a dataflow executor per agentic-workload trace, issuing a node's credit once its dependencies complete (selected automatically for graph workloads)
 
 **Flow Control Benefits:**
 - Prevents overwhelming the inference server

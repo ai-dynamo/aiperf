@@ -3,9 +3,9 @@
 """Adversarial component-integration tests for DAG prereq gating under validate_for_orchestrator_v1.
 
 Covers the full DagJsonlLoader -> DatasetMetadata -> validate_for_orchestrator_v1
-pipeline, plus the two post-fix invariants:
-- Task 7 fix: forward / same-turn prereq branch references are rejected.
-- Task 8 fix: branches consumed by more than one gated turn are rejected.
+pipeline, plus two guard invariants:
+- forward / same-turn prereq branch references are rejected.
+- branches consumed by more than one gated turn are rejected.
 """
 
 from __future__ import annotations
@@ -190,7 +190,7 @@ def test_two_independent_conversations_validate_separately(tmp_path: Path) -> No
 
 
 def test_forward_prereq_reference_rejected_end_to_end_bug_fix_1() -> None:
-    """Task 7 fix: a prereq that references a branch declared on a later turn is rejected."""
+    """A prereq that references a branch declared on a later turn is rejected."""
     md = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -223,7 +223,7 @@ def test_forward_prereq_reference_rejected_end_to_end_bug_fix_1() -> None:
 
 
 def test_same_turn_prereq_reference_rejected_end_to_end_bug_fix_1() -> None:
-    """Task 7 fix: a prereq that references a branch declared on the same turn is rejected."""
+    """A prereq that references a branch declared on the same turn is rejected."""
     md = DatasetMetadata(
         conversations=[
             ConversationMetadata(

@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from aiperf.common.constants import STREAMED_REQUEST_TAG
 from aiperf.common.enums import MetricFlags, MetricTimeUnit
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
@@ -26,7 +27,7 @@ class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
           reasoning tokens. For models without reasoning, TTFO and TTFT are equivalent.
         - Non-reasoning tokens: Includes TextResponseData with non-empty text,
           ReasoningResponseData with non-empty content field (regardless of reasoning field),
-          or ToolCallResponseData with non-empty text.
+          or ToolCallResponseData with non-empty tool_call_text.
 
     Formula:
         Time to First Output = First Non-Reasoning Token Timestamp - Request Start Timestamp
@@ -39,7 +40,7 @@ class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
     display_unit = MetricTimeUnit.MILLISECONDS
     display_order = 210
     flags = MetricFlags.STREAMING_TOKENS_ONLY | MetricFlags.SUPPORTS_REASONING
-    required_metrics = None
+    required_metrics = {STREAMED_REQUEST_TAG}
 
     def _parse_record(
         self,
@@ -55,11 +56,15 @@ class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
 
         Args:
             record: The parsed response record containing request and response timing data
-            record_metrics: Dictionary of previously computed metrics for this record (unused)
+            record_metrics: Dictionary of previously computed metrics for this record; must
+                contain the streamed-request predicate or the record is skipped
 
         Returns:
             The time to first output token in nanoseconds
         """
+        if STREAMED_REQUEST_TAG not in record_metrics:
+            raise NoMetricValue("record did not stream; streaming metrics skipped")
+
         try:
             # Try and find the first non-reasoning token output and extract the timestamp.
             # This is done by checking for the first response that is either a TextResponseData or a ReasoningResponseData

@@ -209,6 +209,74 @@ class TestMetricsJsonExporter:
         assert raw["request_count"]["avg"] == 20.0
 
     @pytest.mark.asyncio
+    async def test_run_info_carries_scenario_outcome(self, mock_results, mock_cfg):
+        """run_info surfaces scenario_name + submission_valid from the resolved
+        ScenarioOutcome (real BenchmarkRun, real ScenarioOutcome -- not MagicMock)."""
+        from aiperf.common.scenario import ScenarioOutcome
+        from aiperf.config.resolution.plan import BenchmarkRun
+        from tests.unit.conftest import make_cfg_from_v1
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_cfg.artifact_directory = output_dir
+
+            cfg = make_cfg_from_v1(mock_cfg, artifact_directory=output_dir)
+            run = BenchmarkRun(
+                benchmark_id="scn123",
+                cfg=cfg,
+                artifact_dir=output_dir,
+            )
+            run.resolved.scenario_outcome = ScenarioOutcome(
+                scenario_name="inferencex-agentx-mvp",
+                submission_valid=False,
+                submission_invalid_reasons=["unsafe_override"],
+            )
+            exporter_config = make_exporter_config(
+                results=mock_results,
+                cli_config=mock_cfg,
+                telemetry_results=None,
+                run=run,
+            )
+            exporter = MetricsJsonExporter(exporter_config)
+            await exporter.export()
+
+            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+            data = JsonExportData.model_validate_json(expected_file.read_text())
+            assert data.run_info is not None
+            assert data.run_info.scenario_name == "inferencex-agentx-mvp"
+            assert data.run_info.submission_valid is False
+            assert data.run_info.submission_invalid_reasons == ["unsafe_override"]
+
+    @pytest.mark.asyncio
+    async def test_run_info_omits_scenario_fields_when_no_scenario(
+        self, mock_results, mock_cfg
+    ):
+        """When no scenario is set, the scenario fields are absent from the JSON
+        (None + exclude_none drops them)."""
+        from aiperf.config.resolution.plan import BenchmarkRun
+        from tests.unit.conftest import make_cfg_from_v1
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_cfg.artifact_directory = output_dir
+
+            cfg = make_cfg_from_v1(mock_cfg, artifact_directory=output_dir)
+            run = BenchmarkRun(benchmark_id="noscn", cfg=cfg, artifact_dir=output_dir)
+            exporter_config = make_exporter_config(
+                results=mock_results,
+                cli_config=mock_cfg,
+                telemetry_results=None,
+                run=run,
+            )
+            exporter = MetricsJsonExporter(exporter_config)
+            await exporter.export()
+
+            expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+            raw = json.loads(expected_file.read_text())
+            assert "scenario_name" not in raw.get("run_info", {})
+            assert "submission_valid" not in raw.get("run_info", {})
+
+    @pytest.mark.asyncio
     async def test_run_info_populated_when_run_provided(self, mock_results, mock_cfg):
         """run_info surfaces seed + variation coordinates when ExporterConfig.run is set."""
         from aiperf.config.resolution.plan import BenchmarkRun
@@ -932,6 +1000,170 @@ class TestMetricsJsonExporterTelemetry:
             endpoints = data["telemetry_data"]["endpoints"]
             gpu_summary = endpoints["localhost:9400"]["gpus"]["gpu_0"]
             assert gpu_summary["hostname"] == "test-hostname"
+
+
+# ---------------------------------------------------------------------------
+# Context-overflow submission-validity fold (InferenceX AgentX RFC §7)
+# ---------------------------------------------------------------------------
+
+
+def _make_scenario_run(scenario_outcome):
+    """Build a real BenchmarkRun carrying a real ScenarioOutcome (no MagicMock)."""
+    from aiperf.config import BenchmarkConfig
+    from aiperf.config.resolution.plan import BenchmarkRun
+
+    cfg = BenchmarkConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets=[{"name": "profiling", "type": "synthetic"}],
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "concurrency": 1,
+                "sessions": 5,
+            }
+        ],
+    )
+    run = BenchmarkRun(
+        benchmark_id="ctx-overflow-run",
+        cfg=cfg,
+        artifact_dir=Path("/tmp/ctx-overflow"),
+        cli_command=None,
+    )
+    run.resolved.scenario_outcome = scenario_outcome
+    return run
+
+
+def _count_record(tag: str, value: float):
+    return MetricResult(
+        tag=tag,
+        header=tag,
+        unit="requests",
+        avg=value,
+    )
+
+
+class _OverflowResults:
+    def __init__(self, records, was_cancelled=False):
+        self.metrics = records
+        self.start_ns = None
+        self.end_ns = None
+        self._was_cancelled = was_cancelled
+
+    @property
+    def records(self):
+        return self.metrics
+
+    @property
+    def has_results(self):
+        return bool(self.metrics)
+
+    @property
+    def was_cancelled(self):
+        return self._was_cancelled
+
+    @property
+    def error_summary(self):
+        return []
+
+
+async def _export_run_info(run, results, mock_cfg):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        output_dir = Path(temp_dir)
+        mock_cfg.artifact_directory = output_dir
+        exporter_config = make_exporter_config(
+            results=results, cli_config=mock_cfg, run=run
+        )
+        exporter = MetricsJsonExporter(exporter_config)
+        await exporter.export()
+        expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+        with open(expected_file) as f:
+            data = JsonExportData.model_validate_json(f.read())
+        return data.run_info
+
+
+class TestContextOverflowSubmissionFold:
+    @pytest.mark.asyncio
+    async def test_overflow_rate_over_threshold_flips_submission_invalid(
+        self, mock_cfg
+    ):
+        """> threshold overflow rate flips run_info.submission_valid to False."""
+        from aiperf.common.scenario import ScenarioOutcome
+
+        outcome = ScenarioOutcome(scenario_name="inferencex", submission_valid=True)
+        run = _make_scenario_run(outcome)
+        # 5 overflow of 100 total -> 5% > 1% default.
+        records = [
+            _count_record("request_count", 95),
+            _count_record("error_request_count", 5),
+            _count_record("context_overflow_count", 5),
+        ]
+        results = _OverflowResults(records)
+        run_info = await _export_run_info(run, results, mock_cfg)
+        assert run_info is not None
+        assert run_info.submission_valid is False
+        assert "context_overflow_rate_exceeded" in run_info.submission_invalid_reasons
+
+    @pytest.mark.asyncio
+    async def test_overflow_rate_under_threshold_unaffected(self, mock_cfg):
+        """< threshold overflow rate leaves submission_valid True (lock-only)."""
+        from aiperf.common.scenario import ScenarioOutcome
+
+        outcome = ScenarioOutcome(scenario_name="inferencex", submission_valid=True)
+        run = _make_scenario_run(outcome)
+        # 0 overflow of ~1000 total.
+        records = [
+            _count_record("request_count", 1000),
+            _count_record("error_request_count", 0),
+            _count_record("context_overflow_count", 0),
+        ]
+        results = _OverflowResults(records)
+        run_info = await _export_run_info(run, results, mock_cfg)
+        assert run_info is not None
+        assert run_info.submission_valid is True
+        assert run_info.submission_invalid_reasons is None
+
+    @pytest.mark.asyncio
+    async def test_lock_violation_and_overflow_both_surface(self, mock_cfg):
+        """unsafe_override lock reason AND overflow reason both appear."""
+        from aiperf.common.scenario import ScenarioOutcome
+
+        outcome = ScenarioOutcome(
+            scenario_name="inferencex",
+            submission_valid=False,
+            submission_invalid_reasons=["unsafe_override"],
+        )
+        run = _make_scenario_run(outcome)
+        records = [
+            _count_record("request_count", 90),
+            _count_record("error_request_count", 10),
+            _count_record("context_overflow_count", 10),
+        ]
+        results = _OverflowResults(records)
+        run_info = await _export_run_info(run, results, mock_cfg)
+        assert run_info is not None
+        assert run_info.submission_valid is False
+        assert "unsafe_override" in run_info.submission_invalid_reasons
+        assert "context_overflow_rate_exceeded" in run_info.submission_invalid_reasons
+
+    @pytest.mark.asyncio
+    async def test_no_scenario_run_info_submission_valid_none(self, mock_cfg):
+        """A run with no scenario keeps submission_valid None even with overflow."""
+        from aiperf.common.scenario import ScenarioOutcome
+
+        outcome = ScenarioOutcome()  # scenario_name None
+        run = _make_scenario_run(outcome)
+        records = [
+            _count_record("request_count", 50),
+            _count_record("error_request_count", 50),
+            _count_record("context_overflow_count", 50),
+        ]
+        results = _OverflowResults(records)
+        run_info = await _export_run_info(run, results, mock_cfg)
+        assert run_info is not None
+        assert run_info.scenario_name is None
+        assert run_info.submission_valid is None
 
 
 class TestMetricsJsonExporterWarmupMetrics:

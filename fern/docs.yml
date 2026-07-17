@@ -24,6 +24,10 @@ redirects:
     destination: "/aiperf/"
   - source: "/aiperf/dev/index.html"
     destination: "/aiperf/dev/"
+  - source: "/aiperf/benchmark-modes/graph-workload-benchmarks"
+    destination: "/aiperf/benchmark-modes/agentic-workload-benchmarks"
+  - source: "/aiperf/dev/benchmark-modes/graph-workload-benchmarks"
+    destination: "/aiperf/dev/benchmark-modes/agentic-workload-benchmarks"
 
 navbar-links:
   - type: github

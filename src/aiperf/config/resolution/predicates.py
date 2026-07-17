@@ -205,6 +205,33 @@ def requires_multi_turn(phase_type: PhaseType) -> bool:
 # =============================================================================
 
 
+def is_graph_dataset(dataset: DatasetConfig) -> bool:
+    """True when a dataset resolves to a graph workload.
+
+    Mirrors the dataset resolver's graph check
+    (``config.dataset.resolver.DatasetResolver._resolve_one``): an explicit
+    ``graph_format`` forces graph mode (including ``native``, which
+    auto-detection excludes), otherwise the file ``path`` is sniffed against
+    the graph-adapter registry via
+    :func:`~aiperf.dataset.graph.workload_detect.is_graph_workload_path`
+    (which excludes ``native``/``dag_jsonl``). Non-file datasets (synthetic /
+    public / inline) and any detection failure degrade to False.
+    """
+    if getattr(dataset, "graph_format", None) is not None:
+        return True
+    raw_path = getattr(dataset, "path", None)
+    if raw_path is None:
+        return False
+    from pathlib import Path
+
+    from aiperf.dataset.graph.workload_detect import is_graph_workload_path
+
+    try:
+        return is_graph_workload_path(Path(raw_path))
+    except Exception:
+        return False
+
+
 def check_phase_dataset_compatibility(
     phase: BasePhaseConfig,
     dataset: DatasetConfig,
@@ -225,6 +252,23 @@ def check_phase_dataset_compatibility(
         List of error message strings (empty if compatible).
     """
     errors: list[str] = []
+
+    # Required-stop rule. A phase that requires a numeric stop
+    # (``_stop_condition_required``, True everywhere except FixedSchedulePhase)
+    # with none of requests/duration/sessions set is only valid against a graph
+    # workload: the graph plane infers a single-corpus-pass stop from the loaded
+    # corpus (each loaded trace runs exactly once, then the lanes stop), just as
+    # FixedSchedulePhase infers its stop from the trace. Non-graph datasets must
+    # carry an explicit stop condition.
+    if (
+        phase._stop_condition_required
+        and get_stop_condition(phase) == "none"
+        and not is_graph_dataset(dataset)
+    ):
+        errors.append(
+            f"Phase '{phase_name}': at least one of "
+            "'requests', 'duration', or 'sessions' must be specified"
+        )
 
     if requires_sequential_sampling(phase.type) and is_file_dataset(dataset):
         sampling = get_sampling_strategy(dataset)

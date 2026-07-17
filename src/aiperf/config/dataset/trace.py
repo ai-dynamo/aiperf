@@ -9,7 +9,7 @@ Trace synthesis config used by file datasets.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     ConfigDict,
@@ -96,5 +96,64 @@ class SynthesisConfig(BaseConfig):
             default=None,
             description="Maximum output sequence length cap. "
             "Traces with output_length > max_osl are capped to this value (not filtered).",
+        ),
+    ]
+
+    max_context_length: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            default=None,
+            description="Maximum per-trace context length (tokens) for graph-plane "
+            "dataset selection (`--max-context-length`). Traces whose input+output "
+            "context would exceed this cap are excluded from selection. None (the "
+            "default) applies no context-length filter. Raw explicit value carried "
+            "verbatim from the CLI; the derived selection default is computed "
+            "elsewhere. Ignored by non-graph datasets.",
+        ),
+    ]
+
+    allow_dataset_wrap: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description="Whether graph-plane dataset selection may wrap (reuse the "
+            "finite trace pool) to satisfy `--request-count` (`--allow-dataset-wrap` / "
+            "`--no-allow-dataset-wrap`). None (the default) means unset -- the effective "
+            "value is derived downstream and surfaced on `run.resolved.allow_dataset_wrap`; "
+            "an explicit True/False here is the raw user intent carried verbatim so the "
+            "resolver can distinguish unset from explicit. Ignored by non-graph datasets.",
+        ),
+    ]
+
+    idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            default=60.0,
+            description="Per-trace idle-gap cap (seconds) for recorded graph "
+            "(`weka_trace`, `dynamo_trace`) replay (`--synthesis-idle-gap-cap`). "
+            "Every recorded "
+            "inter-request idle gap longer than this is compressed to the cap, "
+            "shifting later requests left by the excess, so a recorded multi-hour "
+            "idle gap does not park the replay. Default 60.0. Set to null to "
+            "disable warping and replay the raw recorded timestamps. Ignored by "
+            "non-graph datasets.",
+        ),
+    ]
+
+    corpus: Annotated[
+        Literal["coding", "sonnet"] | None,
+        Field(
+            default=None,
+            description="Corpus backing recorded graph (`weka_trace`, `dynamo_trace`) "
+            "real-content "
+            "synthesis (`--prompt-corpus`). `coding` (the default when unset) uses "
+            "the procedural CodingContentGenerator pool -- the same corpus the "
+            "recorded weka workloads were captured against. `sonnet` uses the "
+            "Shakespeare PromptGenerator pool, which yields matching token counts "
+            "but different bytes (useful only to reproduce golden fixtures built "
+            "from that pool). Ignored by non-graph "
+            "datasets.",
         ),
     ]

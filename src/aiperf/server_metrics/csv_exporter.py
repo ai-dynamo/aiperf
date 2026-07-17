@@ -58,7 +58,6 @@ class CsvMetricInfo(NamedTuple):
         description: Metric description from HELP text
         unit: Inferred unit string (e.g., "seconds", "bytes") or None
         stats: Type-specific statistics (Gauge, Counter, or Histogram series)
-        is_derived: Whether this is a derived metric
     """
 
     endpoint: str
@@ -111,8 +110,12 @@ class ServerMetricsCsvExporter(MetricsBaseExporter):
         super().__init__(exporter_config, **kwargs)
         self._file_path = exporter_config.cfg.artifacts.server_metrics_export_csv_file
         self.trace_or_debug(
-            lambda: f"Initializing ServerMetricsCsvExporter with config: {exporter_config}",
-            lambda: f"Initializing ServerMetricsCsvExporter with file path: {self._file_path}",
+            lambda: (
+                f"Initializing ServerMetricsCsvExporter with config: {exporter_config}"
+            ),
+            lambda: (
+                f"Initializing ServerMetricsCsvExporter with file path: {self._file_path}"
+            ),
         )
 
     def get_export_info(self) -> FileExportInfo:

@@ -360,7 +360,9 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
                 + _normalize_messages(attributes.get("gen_ai.input.messages")),
                 raw_tools=_normalize_tools(attributes.get("gen_ai.tool.definitions")),
                 extra_body=_request_extra_body(attributes),
-                extra_headers={"x-dynamo-session-id": session_id},
+                # Session identity headers are no longer auto-stamped here: run
+                # with --session-routing dynamo_headers to stamp
+                # x-dynamo-session-id (now available for ANY dataset/endpoint).
             )
         except (KeyError, TypeError, ValueError) as error:
             raise DatasetLoaderError(

@@ -50,9 +50,10 @@ class ZMQStreamingDealerClient(BaseZMQClient):
 
     Example:
     ```python
-        from aiperf.common.structs import (
-            Credit, CancelCredits, WorkerReady, WorkerShutdown, CreditReturn
+        from aiperf.credit.messages import (
+            CancelCredits, CreditReturn, WorkerReady, WorkerShutdown
         )
+        from aiperf.credit.structs import Credit
 
         # Create via comms (recommended - handles lifecycle management)
         dealer = comms.create_streaming_dealer_client(
@@ -60,11 +61,11 @@ class ZMQStreamingDealerClient(BaseZMQClient):
             identity="worker-1",
         )
 
-        async def handle_message(message: Credit | CancelCredits) -> None:
+        async def handle_message(message: RouterToWorkerMessage) -> None:
             match message:
                 case Credit() as credit:
                     do_some_work(credit)
-                    await dealer.send(CreditReturn(credit_id=credit.id))
+                    await dealer.send(CreditReturn(credit=credit))
                 case CancelCredits(credit_ids=ids):
                     cancel_credits(ids)
 
@@ -117,10 +118,10 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         """
         Register handler for incoming messages from ROUTER.
 
-        The handler will be called for each message received (Credit or CancelCredits).
+        The handler will be called for each message received (any RouterToWorkerMessage).
 
         Args:
-            handler: Async function that takes a RouterToWorkerMessage (Credit | CancelCredits)
+            handler: Async function that takes a RouterToWorkerMessage
         """
         if self._receiver_handler is not None:
             raise ValueError("Receiver handler already registered")
@@ -175,7 +176,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         Background task for receiving messages from ROUTER.
 
         Runs continuously until stop is requested. Decodes messages as
-        RouterToWorkerMessage (Credit | CancelCredits) using msgpack.
+        RouterToWorkerMessage using msgpack.
         """
         self.debug(
             lambda: f"Streaming DEALER receiver task started for {self.identity}"

@@ -218,10 +218,6 @@ async def test_convert_preserves_snapshots_tools_osl_order_and_delays() -> None:
         }
     ]
     assert all(
-        turn.extra_headers == {"x-dynamo-session-id": "session-1"}
-        for turn in conversation.turns
-    )
-    assert all(
         "recorded output" not in orjson.dumps(turn.raw_messages).decode()
         for turn in conversation.turns
     )
@@ -265,10 +261,6 @@ async def test_fixed_schedule_preserves_overlapping_start_times() -> None:
     ]
     assert all(len(conversation.turns) == 1 for conversation in conversations)
     assert all(conversation.turns[0].delay is None for conversation in conversations)
-    assert all(
-        conversation.turns[0].extra_headers == {"x-dynamo-session-id": "session-1"}
-        for conversation in conversations
-    )
 
 
 @pytest.mark.asyncio

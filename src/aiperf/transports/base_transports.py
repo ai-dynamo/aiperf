@@ -35,6 +35,21 @@ It is used to release prefill concurrency.
 """
 
 
+def effective_streaming(request_info: RequestInfo) -> bool:
+    """Per-request wire mode: graph credits may carry a recorded override.
+
+    A graph credit stamps the recorded per-node mode onto
+    ``RequestInfo.stream_override``; every other request leaves it ``None`` and
+    follows the global ``endpoint.streaming``. The response READ side is already
+    per-request (SSE parse keys on the server's ``text/event-stream`` content
+    type), so this only governs the request-side sites: the Accept header and
+    the streaming URL path.
+    """
+    if request_info.stream_override is not None:
+        return request_info.stream_override
+    return bool(request_info.model_endpoint.endpoint.streaming)
+
+
 @runtime_checkable
 class TransportProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for a transport that sends requests to an inference server."""

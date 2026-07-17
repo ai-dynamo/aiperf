@@ -38,6 +38,21 @@ def _endpoint_template_from_extra(
     }
 
 
+def _parse_routing_opts(values: list[str]) -> dict[str, str]:
+    opts: dict[str, str] = {}
+    for item in values:
+        key, separator, value = item.partition("=")
+        key, value = key.strip(), value.strip()
+        if not separator or not key or not value:
+            raise ValueError(
+                f"Invalid --session-routing-opt {item!r}; expected non-empty key=value"
+            )
+        if key in opts:
+            raise ValueError(f"Duplicate --session-routing-opt key {key!r}")
+        opts[key] = value
+    return opts
+
+
 def _endpoint_template_fallback(endpoint: dict[str, Any]) -> None:
     from aiperf.plugin.enums import EndpointType
 
@@ -68,10 +83,12 @@ _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "transport": "transport",
     "use_legacy_max_tokens": "use_legacy_max_tokens",
     "use_server_token_count": "use_server_token_count",
+    "cache_bust": "cache_bust",
     "connection_reuse_strategy": "connection_reuse",
     "download_video_content": "download_video_content",
     "request_content_type": "request_content_type",
     "session_header": "session_header",
+    "session_routing": "session_routing",
 }
 
 
@@ -97,6 +114,8 @@ def build_endpoint(cli: CLIConfig) -> dict[str, Any]:
         extra = dict(cli.extra_inputs)
         _endpoint_template_from_extra(endpoint, extra)
         endpoint["extra"] = extra
+    if "session_routing_opt" in cli_set and cli.session_routing_opt:
+        endpoint["session_routing_opts"] = _parse_routing_opts(cli.session_routing_opt)
 
     _endpoint_template_fallback(endpoint)
     return endpoint

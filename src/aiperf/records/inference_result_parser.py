@@ -25,6 +25,7 @@ from aiperf.common.models.record_models import (
     ToolCallResponseData,
     find_last_non_empty_usage,
 )
+from aiperf.common.scenario import is_context_overflow_response
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -146,6 +147,19 @@ class InferenceResultParser(CommunicationMixin):
         # Make sure any invalid request records are converted to error records for combined processing.
         request_record.create_error_from_invalid()
 
+        # Classify context-overflow errors per InferenceX AgentX RFC §7. Runs
+        # unconditionally (cheap substring scan, allowlist-driven) so the
+        # ``context_overflow_count`` metric can aggregate even outside scenario
+        # mode. The boolean is consumed by ``ContextOverflowCountMetric`` via
+        # ``record.request.context_overflow``.
+        if request_record.has_error and request_record.error is not None:
+            try:
+                request_record.context_overflow = is_context_overflow_response(
+                    body=request_record.error.message,
+                )
+            except Exception:
+                # Detection is best-effort -- never surface as a parse error.
+                request_record.context_overflow = False
         # One payload decode + walk per record, shared by the ISL tokeniser and
         # the MediaCounts builder. Both valid and error records go through this.
         inputs = self._extract_payload_inputs_for_record(request_record)
@@ -315,29 +329,34 @@ class InferenceResultParser(CommunicationMixin):
     ) -> int | None:
         """Compute the number of input (prompt) tokens for a request record.
 
-        Source of truth is ``request_info.payload_bytes`` -- the exact JSON the
-        endpoint sent on the wire -- decoded once and walked by
+        Primary source of truth is ``request_info.payload_bytes`` -- the exact
+        JSON the endpoint sent on the wire -- decoded once and walked by
         ``extract_payload_inputs`` into tokenisable ``texts`` (plus a chat-shape
-        ``messages`` view and any ``pretokenised_token_count``). ``turns`` are
-        never read here: on the payload-bytes fast path they are a content-free
-        stub, and the canonical body is the bytes.
+        ``messages`` view and any ``pretokenised_token_count``).
 
-        ``system_message`` / ``user_context_message`` are NOT added here -- the
-        endpoint's ``format_payload`` already inlined them into ``payload_bytes``,
-        so re-adding would double-count.
+        ``system_message`` / ``user_context_message`` are NOT added on the
+        payload-bytes path -- the endpoint's ``format_payload`` already inlined
+        them into ``payload_bytes``, so re-adding would double-count. Direct
+        callers without payload bytes fall back to the legacy turn-text walk.
 
         When ``--apply-chat-template`` is set AND the payload carries a chat
         ``messages`` array AND the HF tokenizer has a chat template, the templated
         count (role/header wrapping + generation prompt) is returned; otherwise
         the bare ``texts`` are encoded with a space separator. Any
         ``pretokenised_token_count`` (e.g. token-id embeddings input) is added on
-        top. Returns ``None`` when no ``payload_bytes`` is available or the
+        top. Returns ``None`` when no payload/legacy text is available or the
         endpoint reports nothing tokenisable.
         """
         if inputs is None:
             inputs = self._extract_payload_inputs_for_record(request_record)
 
         if inputs is None:
+            prompt_texts = self._legacy_prompt_texts_from_record(request_record)
+            if prompt_texts:
+                tokenizer = await self.get_tokenizer(request_record.model_name)
+                return await self._compute_token_count(
+                    tokenizer, prompt_texts, separator=" "
+                )
             if not (
                 request_record.request_info
                 and request_record.request_info.payload_bytes
@@ -388,6 +407,26 @@ class InferenceResultParser(CommunicationMixin):
 
         # Pure pre-tokenised input (e.g. token-id embeddings) carries no text.
         return pretokenised if pretokenised > 0 else None
+
+    def _legacy_prompt_texts_from_record(
+        self, request_record: RequestRecord
+    ) -> list[str]:
+        """Best-effort prompt texts for callers that lack payload bytes."""
+        prompt_texts: list[str] = []
+        request_info = request_record.request_info
+        if request_info is not None:
+            if request_info.system_message:
+                prompt_texts.append(request_info.system_message)
+            if request_info.user_context_message:
+                prompt_texts.append(request_info.user_context_message)
+            turns = request_info.turns or request_record.turns
+        else:
+            turns = request_record.turns
+
+        for turn in turns:
+            for text in turn.texts:
+                prompt_texts.append("".join(text.contents))
+        return prompt_texts
 
     async def _compute_chat_template_token_count(
         self,

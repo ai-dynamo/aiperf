@@ -46,6 +46,20 @@ def _conv_with_n_forks(n: int, session_id: str = "root") -> Conversation:
     )
 
 
+def _conv_with_packed_forks(n: int, session_id: str = "root") -> Conversation:
+    """One FORK branch entry carrying ``n`` children -- the dag_jsonl loader shape."""
+    branch = ConversationBranchInfo(
+        branch_id=f"{session_id}:0",
+        mode=ConversationBranchMode.FORK,
+        child_conversation_ids=[f"child-{i}" for i in range(n)],
+    )
+    return Conversation(
+        session_id=session_id,
+        turns=[Turn(branch_ids=[branch.branch_id])],
+        branches=[branch],
+    )
+
+
 class TestForkRefcount:
     def test_default_refcount_zero(self, session_manager: UserSessionManager) -> None:
         session = session_manager.create_and_store(
@@ -124,3 +138,76 @@ class TestForkRefcount:
         self, session_manager: UserSessionManager
     ) -> None:
         session_manager.evict_if_unpinned("does-not-exist")
+
+
+class TestPendingForkEvictionLateSibling:
+    """A pending-eviction FORK parent must survive until every declared child pins.
+
+    Regression for the fork-minimal byte-parity race: with two children
+    forking off the parent's terminal turn, an early child can complete
+    its WHOLE conversation (pin -> seed -> run -> release) before the
+    sibling's credit reaches the worker. The release drops the refcount
+    back to 0 with ``pending_fork_eviction`` set; evicting there yanks
+    the parent out from under the late sibling, which then dispatches
+    with NO inherited history (bare user message on the wire).
+    """
+
+    @pytest.mark.parametrize(
+        "conversation_builder",
+        [
+            pytest.param(lambda: _conv_with_n_forks(2), id="one-entry-per-child"),
+            # The REAL dag_jsonl loader shape: _apply_forks packs every fork
+            # declared on one turn into a SINGLE ConversationBranchInfo whose
+            # child_conversation_ids lists all of them. Counting branch
+            # ENTRIES instead of CHILDREN here read expected=1 and evicted
+            # the parent after the first child's release.
+            pytest.param(
+                lambda: _conv_with_packed_forks(2), id="single-entry-two-children"
+            ),
+        ],
+    )  # fmt: skip
+    def test_parent_survives_release_until_all_expected_children_pin(
+        self, session_manager: UserSessionManager, conversation_builder
+    ) -> None:
+        session = session_manager.create_and_store(
+            x_correlation_id="corr-late-sibling",
+            conversation=conversation_builder(),
+            num_turns=1,
+        )
+        assert session.fork_children_expected == 2
+
+        # Parent's terminal turn fired before any child arrived: eviction
+        # deferred, session stays resident.
+        session.pending_fork_eviction = True
+        session_manager.evict_if_unpinned("corr-late-sibling")
+        assert session_manager.get("corr-late-sibling") is not None
+
+        # Child A pins, seeds, runs its whole conversation, and releases --
+        # all before child B's credit reaches the worker.
+        session_manager.pin_for_fork_child("corr-late-sibling")
+        session_manager.release_fork_child("corr-late-sibling")
+        assert session_manager.get("corr-late-sibling") is not None, (
+            "parent evicted after the FIRST child's release while the "
+            "second declared child had not pinned yet"
+        )
+
+        # Child B arrives late, pins + seeds, then releases: NOW every
+        # declared child has joined and the parent is collected.
+        session_manager.pin_for_fork_child("corr-late-sibling")
+        session_manager.release_fork_child("corr-late-sibling")
+        assert session_manager.get("corr-late-sibling") is None
+
+    def test_parent_without_pending_eviction_survives_all_releases(
+        self, session_manager: UserSessionManager
+    ) -> None:
+        """Mid-conversation forks: children join while the parent is still
+        running (no pending eviction) -- releases never collect the session."""
+        session_manager.create_and_store(
+            x_correlation_id="corr-mid-conv",
+            conversation=_conv_with_n_forks(2),
+            num_turns=1,
+        )
+        for _ in range(2):
+            session_manager.pin_for_fork_child("corr-mid-conv")
+            session_manager.release_fork_child("corr-mid-conv")
+        assert session_manager.get("corr-mid-conv") is not None

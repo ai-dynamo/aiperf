@@ -51,9 +51,13 @@ async def _async_true(*args, **kwargs) -> bool:
 class MockCreditRouter:
     sent_credits: list[Credit] = field(default_factory=list)
     auto_return: bool = False
+    ended_graph_traces: list[tuple[str, str, str]] = field(default_factory=list)
     _return_cb: Callable[[str, CreditReturn], Awaitable[None]] | None = None
     _first_token_cb: Callable[[FirstToken], Awaitable[None]] | None = None
     _pending: list[asyncio.Task] = field(default_factory=list)
+
+    async def end_graph_trace(self, trace_id: str, phase_variant: str) -> None:
+        self.ended_graph_traces.append((trace_id, phase_variant))
 
     async def send_credit(self, credit: Credit) -> None:
         self.sent_credits.append(credit)
@@ -500,10 +504,14 @@ class MockCreditSender:
     def __init__(self) -> None:
         self.sent_credits: list[Credit] = []
         self.cancelled = False
+        self.ended_graph_traces: list[tuple[str, str, str]] = []
         self._cb: Callable[[str, CreditReturn], Awaitable[None]] | None = None
 
     async def send_credit(self, credit: Credit) -> None:
         self.sent_credits.append(credit)
+
+    async def end_graph_trace(self, trace_id: str, phase_variant: str) -> None:
+        self.ended_graph_traces.append((trace_id, phase_variant))
 
     async def cancel_all_credits(self) -> None:
         self.cancelled = True

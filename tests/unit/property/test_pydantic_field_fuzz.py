@@ -10,7 +10,7 @@ out of validators in this codebase). Any other exception type --
 ``RecursionError``, ``IndexError`` -- means a validator crashed on the
 adversarial input rather than rejecting it cleanly.
 
-This protects against the class of bugs found in round-2 (e.g. NaN
+This protects against a recurring class of bugs (e.g. NaN
 silently passing a finite-bounds check, an unhashable choices entry
 crashing inside ``set()`` build, the ``mean``-only ambiguous-distribution
 path raising the wrong error type).

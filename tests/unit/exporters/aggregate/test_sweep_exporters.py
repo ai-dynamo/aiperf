@@ -168,7 +168,7 @@ class TestAggregateSweepJsonExporter:
         assert data["num_profile_runs"] == 15
         assert data["num_successful_runs"] == 15
 
-        # Verify metadata section (Task 9.4)
+        # Verify metadata section
         assert "metadata" in data
         metadata = data["metadata"]
         assert "sweep_parameters" in metadata
@@ -177,7 +177,7 @@ class TestAggregateSweepJsonExporter:
         assert metadata["sweep_parameters"][0]["values"] == [10, 20, 30]
         assert metadata["num_combinations"] == 3
 
-        # Verify per-combination metrics section (Task 9.5)
+        # Verify per-combination metrics section
         assert "per_combination_metrics" in data
         per_combination = data["per_combination_metrics"]
         assert len(per_combination) == 3
@@ -197,7 +197,7 @@ class TestAggregateSweepJsonExporter:
         assert throughput["std"] == 5.2
         assert throughput["unit"] == "requests/sec"
 
-        # Verify best configurations section (Task 9.6)
+        # Verify best configurations section
         assert "best_configurations" in data
         best = data["best_configurations"]
         assert "best_throughput" in best
@@ -206,7 +206,7 @@ class TestAggregateSweepJsonExporter:
         assert "best_latency_p99" in best
         assert best["best_latency_p99"]["parameters"] == {"concurrency": 10}
 
-        # Verify Pareto optimal section (Task 9.7)
+        # Verify Pareto optimal section
         assert "pareto_optimal" in data
         pareto = data["pareto_optimal"]
         assert len(pareto) == 2

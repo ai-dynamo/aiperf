@@ -79,7 +79,7 @@ class MaxConcurrencyUnderSLA(SearchRecipe):
         x_metric="request_latency",
         x_stat="p95",
         y_metric="concurrency",  # parameter-as-axis: read from variation params
-        y_stat="value",  # sentinel: see _extract_axis_value in Task 6
+        y_stat="value",  # sentinel: see _extract_axis_value in cli_runner/_pareto.py
     )
 
     _CONCURRENCY_PATH: ClassVar[str] = "phases.profiling.concurrency"

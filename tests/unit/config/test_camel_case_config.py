@@ -731,8 +731,8 @@ class TestTemplateFilesLoad:
     """Verify all shipped config templates (now camelCase) load correctly."""
 
     pytestmark = pytest.mark.skip(
-        reason="Wave 2: shipped templates still use phases-as-dict; will be migrated "
-        "in Task 7 of 2026-04-26-phases-list-with-name.md."
+        reason="shipped templates still use phases-as-dict; skipped until they "
+        "are migrated to the phases-as-list shape."
     )
 
     @staticmethod

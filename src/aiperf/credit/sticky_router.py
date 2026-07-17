@@ -10,6 +10,12 @@ Terminology:
         x_correlation_id (UUID). All turns in a session route to the same worker.
     conversation_id: Template ID from the dataset (can be reused across sessions).
 
+Graph credits (trace_id set) key their session on the trace INSTANCE id
+instead of the per-trajectory corr: every trajectory of one graph trace
+instance shares one session -- and therefore one worker -- because
+dynamic-slot capture/splice pools and spawn state are worker-local and keyed
+by the instance.
+
 Includes:
 - WorkerLoad: Worker load tracking for fair load balancing
 - StickyCreditRouter: Main router class
@@ -33,6 +39,7 @@ from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
     FirstToken,
+    GraphTraceEnd,
     WorkerReady,
     WorkerShutdown,
     WorkerToRouterMessage,
@@ -59,8 +66,10 @@ class WorkerLoad:
 
     Note on active_sessions:
         - active_sessions and active_session_ids only represent the number of sticky sessions assigned
-          to the worker, which inherently means that it only tracks sessions with MORE turns left. This is
-          because sticky sessions are only created when more than 1 turn exists, and are removed when SENDING the final turn.
+          to the worker. For linear turns this inherently means only sessions with MORE turns left are
+          tracked: sticky sessions are created only when more than 1 turn exists, and are removed when
+          SENDING the final turn. Graph credits (trace_id set) create their session on first
+          sight and are removed only by end_graph_trace.
     """
 
     worker_id: str
@@ -116,6 +125,15 @@ class CreditRouterProtocol(Protocol):
         """Cancel all in-flight credits.
 
         Used during phase timeout or system shutdown.
+        """
+        ...
+
+    async def end_graph_trace(self, trace_id: str, phase_variant: str) -> None:
+        """Close a graph instance's sticky session and notify its worker.
+
+        Graph session lifecycle is owned by this explicit call, never by
+        ``is_final_turn`` (graph credits mint ``turn_index`` per node key, so
+        turn counting cannot express trace completion). Idempotent.
         """
         ...
 
@@ -264,9 +282,10 @@ class StickyCreditRouter(CommunicationMixin):
             Callable[[FirstToken], Awaitable[None]] | None
         ) = None
 
-        # Sticky sessions: x_correlation_id -> worker_id
-        # Routes all turns of a conversation to the same worker. Required because
-        # workers cache UserSession state by x_correlation_id.
+        # Sticky sessions: session key -> worker_id. Linear sessions key on
+        # x_correlation_id (workers cache UserSession state by it); graph
+        # sessions key on the trace INSTANCE id so every trajectory of one
+        # instance shares one worker (worker-local dynamic-slot/spawn state).
         self._sticky_sessions: dict[str, str] = {}
 
         self._cancellation_pending: bool = False
@@ -341,8 +360,16 @@ class StickyCreditRouter(CommunicationMixin):
         if not credit.x_correlation_id:
             raise RuntimeError("x_correlation_id must be set in Credit")
 
-        x_correlation_id = credit.x_correlation_id
-        sticky_worker_id = self._sticky_sessions.get(x_correlation_id)
+        # ONE routing key per plane: linear sessions key on the trajectory
+        # corr (legacy contract); graph credits key on the trace INSTANCE id,
+        # so EVERY trajectory of one instance shares one session/worker --
+        # dynamic-slot capture/splice pools and spawn state are worker-local
+        # and keyed by the instance, so a child trajectory placed elsewhere
+        # could never see its producer's content (pool_missing).
+        session_key = (
+            credit.trace_id if credit.trace_id is not None else credit.x_correlation_id
+        )
+        sticky_worker_id = self._sticky_sessions.get(session_key)
 
         # Use existing sticky session if worker still valid
         if sticky_worker_id and sticky_worker_id in self._workers:
@@ -381,24 +408,69 @@ class StickyCreditRouter(CommunicationMixin):
 
                 worker_id = best_worker_id
 
-            # Only create sticky session if there are more turns coming. Single-turn
-            # conversations don't need routing state since there's no next turn.
-            if not credit.is_final_turn:
-                self._sticky_sessions[x_correlation_id] = worker_id
+            # Graph credits (trace_id set) ALWAYS create the session on first
+            # sight regardless of is_final_turn: a t*-chopped / errored
+            # trajectory may never dispatch its recorded final turn, so
+            # turn-based lifecycle would leak; graph sessions are closed
+            # deterministically by ``end_graph_trace`` at adapter reap. Linear
+            # turns keep the existing rule: only create when more turns are
+            # coming.
+            if credit.trace_id is not None or not credit.is_final_turn:
+                self._sticky_sessions[session_key] = worker_id
                 load = self._workers[worker_id]
                 load.active_sessions += 1
-                load.active_session_ids.add(x_correlation_id)
+                load.active_session_ids.add(session_key)
 
         # Cleanup on final turn - only decrement if session was actually tracked
-        # (single-turn sessions never get added to _sticky_sessions)
-        if credit.is_final_turn and self._sticky_sessions.pop(x_correlation_id, None):
+        # (single-turn sessions never get added to _sticky_sessions). Gated OFF
+        # for graph credits (trace_id set): a trajectory's recorded final turn
+        # may never dispatch (t*-chop, errors), so this cleanup would be
+        # unreliable there. Graph session lifecycle is owned exclusively by
+        # `end_graph_trace`.
+        if (
+            credit.trace_id is None
+            and credit.is_final_turn
+            and self._sticky_sessions.pop(session_key, None)
+        ):
             load = self._workers[worker_id]
             load.active_sessions -= 1
-            load.active_session_ids.discard(x_correlation_id)
+            load.active_session_ids.discard(session_key)
 
         self._track_credit_sent(worker_id, credit.id)
 
         await self._router_client.send_to(worker_id, credit)
+
+    async def end_graph_trace(self, trace_id: str, phase_variant: str) -> None:
+        """Close a graph instance's sticky session and notify the sticky worker.
+
+        Graph sessions key on the trace INSTANCE id, so ONE call closes the
+        whole instance (every trajectory) and the worker receives exactly one
+        ``GraphTraceEnd`` to evict its instance-keyed pool entry.
+
+        State mutation is SYNCHRONOUS before any await (a cancelled caller must
+        not leave the session half-closed); the worker-forward is best-effort
+        (the worker-side pool has an LRU backstop for lost notifications).
+        Idempotent: a missing session (zero-credit trace, repeated call, or a
+        session already reaped by worker unregistration) is a no-op.
+        """
+        worker_id = self._sticky_sessions.pop(trace_id, None)
+        if worker_id is None:
+            return
+        load = self._workers.get(worker_id)
+        if load is None:
+            # Worker unregistered mid-trace; its load entry (and pool) are gone.
+            return
+        load.active_sessions -= 1
+        load.active_session_ids.discard(trace_id)
+        try:
+            await self._router_client.send_to(
+                worker_id,
+                GraphTraceEnd(trace_id=trace_id, phase_variant=phase_variant),
+            )
+        except Exception as e:
+            self.debug(
+                lambda e=e: f"GraphTraceEnd forward to {worker_id} failed: {e!r}"
+            )
 
     async def cancel_all_credits(self) -> None:
         """Send cancellation requests to all workers with in-flight credits."""
@@ -547,8 +619,8 @@ class StickyCreditRouter(CommunicationMixin):
                 self.warning(
                     f"Worker {worker_id} unregistered with {len(orphaned_session_ids)} active sessions, will reassign"
                 )
-            for x_correlation_id in orphaned_session_ids:
-                self._sticky_sessions.pop(x_correlation_id, None)
+            for session_key in orphaned_session_ids:
+                self._sticky_sessions.pop(session_key, None)
 
         if not worker_load:
             # Warn but continue - may happen if shutdown message arrives before ready message.

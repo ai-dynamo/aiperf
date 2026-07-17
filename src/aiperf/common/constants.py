@@ -15,6 +15,7 @@ IS_LINUX: bool = _platform.system() == "Linux"
 IS_WINDOWS_ARM: bool = IS_WINDOWS and _platform.machine() == "ARM64"
 
 NANOS_PER_SECOND = 1_000_000_000
+MICROS_PER_SECOND = 1_000_000
 NANOS_PER_MILLIS = 1_000_000
 MILLIS_PER_SECOND = 1000
 BYTES_PER_MIB = 1024 * 1024
@@ -39,3 +40,12 @@ STAT_KEYS = [
 
 GOOD_REQUEST_COUNT_TAG = "good_request_count"
 """GoodRequestCount metric tag"""
+
+STREAMED_REQUEST_TAG = "streamed_request"
+"""Hidden per-record streaming predicate tag: its presence in a record's
+``MetricRecordDict`` gates every per-record streaming metric. Kept out of
+metric modules so non-metric consumers (e.g. gate checks) need not import them."""
+
+STREAMED_REQUEST_COUNT_TAG = "streamed_request_count"
+"""Visible aggregate streamed-request-count tag (the streaming denominator
+displayed beside Request Count)."""

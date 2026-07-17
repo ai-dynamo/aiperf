@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from aiperf.common.constants import STREAMED_REQUEST_TAG
 from aiperf.common.enums import MetricConsoleGroup, MetricFlags, MetricTimeUnit
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
@@ -35,7 +36,7 @@ class InterChunkLatencyMetric(BaseRecordMetric[list[int]]):
     display_unit = MetricTimeUnit.MILLISECONDS
     flags = MetricFlags.STREAMING_TOKENS_ONLY
     console_group = MetricConsoleGroup.NONE
-    required_metrics = None
+    required_metrics = {STREAMED_REQUEST_TAG}
 
     def _parse_record(
         self,
@@ -50,9 +51,12 @@ class InterChunkLatencyMetric(BaseRecordMetric[list[int]]):
         Note: Only includes content responses (with actual data), excluding usage-only or [DONE] chunks.
 
         Raises:
-            NoMetricValue: If the record does not have at least two content responses
-            ValueError: If any of the inter chunk latencies are not positive.
+            NoMetricValue: If the record did not stream, or does not have at least two content responses
+            ValueError: If any of the inter chunk latencies are negative.
         """
+        if STREAMED_REQUEST_TAG not in record_metrics:
+            raise NoMetricValue("record did not stream; streaming metrics skipped")
+
         content_responses = record.content_responses
 
         if len(content_responses) < 2:

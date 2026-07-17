@@ -3,8 +3,11 @@
 from unittest.mock import MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.models import TurnMetadata
+from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.strategies.user_centric_rate import User, UserCentricStrategy
@@ -257,3 +260,71 @@ class TestUserClass:
         assert u.next_send_time == 1000
         assert u.max_turns == 3
         assert u.order == 5
+
+
+class TestContinuationBranchPlumb:
+    """Regression: the continuation turn built in ``handle_credit_return`` must
+    carry the next turn's branch/fork facts. The strategy has to pass the next
+    turn's metadata into ``TurnToSend.from_previous_credit`` -- dropping it
+    silently zeroes ``has_branches`` (and ``has_forks``), so a branching turn
+    would be wrongly treated as a leaf by downstream finality stamping.
+    """
+
+    def _make_strategy(
+        self, next_meta: TurnMetadata
+    ) -> tuple[UserCentricStrategy, MagicMock]:
+        cfg = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.USER_CENTRIC_RATE,
+            request_rate=10.0,
+            num_users=5,
+            total_expected_requests=10,
+        )
+        conversation_source = MagicMock()
+        conversation_source.get_next_turn_metadata.return_value = next_meta
+        credit_issuer = MagicMock()
+        strategy = UserCentricStrategy(
+            config=cfg,
+            conversation_source=conversation_source,
+            scheduler=MagicMock(),
+            stop_checker=MagicMock(),
+            credit_issuer=credit_issuer,
+            lifecycle=MagicMock(),
+        )
+        sampled = MagicMock()
+        sampled.x_correlation_id = "sess-1"
+        strategy._session_to_user["sess-1"] = User(user_id=1, sampled=sampled)
+        return strategy, credit_issuer
+
+    @pytest.mark.parametrize(
+        "branch_ids, expected",
+        [
+            param(["b1"], True, id="declares-branch"),
+            param([], False, id="no-branch"),
+        ],
+    )  # fmt: skip
+    async def test_continuation_turn_carries_has_branches(
+        self, branch_ids, expected
+    ) -> None:
+        next_meta = TurnMetadata(branch_ids=branch_ids)
+        strategy, credit_issuer = self._make_strategy(next_meta)
+        credit = Credit(
+            id=1,
+            phase=CreditPhase.PROFILING,
+            conversation_id="conv-1",
+            x_correlation_id="sess-1",
+            turn_index=0,
+            num_turns=3,
+            issued_at_ns=0,
+        )
+
+        await strategy.handle_credit_return(credit)
+
+        strategy._conversation_source.get_next_turn_metadata.assert_called_once_with(
+            credit
+        )
+        credit_issuer.issue_credit.assert_called_once()
+        turn = credit_issuer.issue_credit.call_args.args[0]
+        assert isinstance(turn, TurnToSend)
+        assert turn.turn_index == 1
+        assert turn.has_branches is expected

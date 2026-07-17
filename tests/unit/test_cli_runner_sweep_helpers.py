@@ -386,11 +386,11 @@ async def test_aggregate_per_variation_writes_single_run_in_degraded_mode(
 ):
     """Single-trial cells get a degraded-mode aggregate, mirroring sweep aggregate.
 
-    Per round-2 R2-L10: per-variation and sweep aggregation paths must
+    Per-variation and sweep aggregation paths must
     use the same gating. ``ConfidenceAggregation`` has a documented
     single-run mode (std=0, CI collapsed to mean, ``single_run: True``);
-    skipping it here used to produce dangling references when the sweep
-    summary still listed the cell.
+    skipping it here would produce dangling references when the sweep
+    summary still lists the cell.
     """
     plan = _make_plan_mode(SweepMode.INDEPENDENT)
     r = _result("c10", concurrency=10, throughput=100.0, ttft_p99=50.0)

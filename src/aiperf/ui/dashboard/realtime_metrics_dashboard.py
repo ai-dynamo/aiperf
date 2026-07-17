@@ -68,7 +68,11 @@ class RealtimeMetricsTable(Widget):
         INTERNAL and EXPERIMENTAL metrics are already filtered upstream by
         summarize(), so only ERROR_ONLY and console_group=NONE need filtering here.
         """
-        metric_class = MetricRegistry.get_class(metric.tag)
+        metric_class = MetricRegistry.get_class_or_none(metric.tag)
+        if metric_class is None:
+            # Unregistered tags (e.g. externally injected results) render with
+            # their own header/unit rather than killing the whole table.
+            return False
         if metric_class.has_flags(MetricFlags.ERROR_ONLY):
             return True
         return (
@@ -96,11 +100,7 @@ class RealtimeMetricsTable(Widget):
 
         metrics = [
             metric
-            for metric in sorted(
-                metrics,
-                key=lambda m: MetricRegistry.get_class(m.tag).display_order
-                or sys.maxsize,
-            )
+            for metric in sorted(metrics, key=lambda m: self._display_order(m.tag))
             if not self._should_skip(metric)
         ]
         _logger.debug(lambda: f"Updating metrics table with {len(metrics)} metrics")
@@ -120,6 +120,14 @@ class RealtimeMetricsTable(Widget):
             row_key = self.data_table.add_row(*row_cells)
             self._metric_row_keys[metric.tag] = row_key
 
+    @staticmethod
+    def _display_order(tag: str) -> int:
+        """Sort key for a metric tag; unregistered or unordered tags sort last."""
+        metric_class = MetricRegistry.get_class_or_none(tag)
+        if metric_class is None:
+            return sys.maxsize
+        return metric_class.display_order or sys.maxsize
+
     def _update_single_row(self, row_cells: list[Text], row_key: RowKey) -> None:
         """Update a single row's cells."""
         for col_name, cell_value in zip(self.COLUMNS, row_cells, strict=True):
@@ -138,10 +146,17 @@ class RealtimeMetricsTable(Widget):
         Note: Metrics are pre-converted to display units by summarize(),
         so values can be used directly without conversion.
         """
-        metric_class = MetricRegistry.get_class(metric.tag)
-        short_header = metric_class.short_header or metric_class.header
+        metric_class = MetricRegistry.get_class_or_none(metric.tag)
+        if metric_class is not None:
+            short_header = metric_class.short_header or metric_class.header
+            hide_unit = metric_class.short_header_hide_unit
+        else:
+            # Unregistered tag: fall back to the display metadata carried on the
+            # MetricResult itself so one unknown tag cannot kill the table.
+            short_header = metric.header or metric.tag
+            hide_unit = False
         # Use the metric's unit directly (already converted to display unit)
-        if not metric_class.short_header_hide_unit and metric.unit:
+        if not hide_unit and metric.unit:
             short_header = f"{short_header} ({metric.unit})"
         return [
             Text(

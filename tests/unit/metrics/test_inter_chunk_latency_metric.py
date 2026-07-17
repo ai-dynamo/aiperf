@@ -4,9 +4,12 @@
 import pytest
 
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.inter_chunk_latency_metric import InterChunkLatencyMetric
-from tests.unit.metrics.conftest import create_record, run_simple_metrics_pipeline
+from tests.unit.metrics.conftest import (
+    create_record,
+    run_simple_metrics_pipeline,
+    streamed_record_metrics,
+)
 
 
 class TestInterChunkLatencyMetric:
@@ -96,7 +99,7 @@ class TestInterChunkLatencyMetric:
             NoMetricValue,
             match="Record must have at least two content responses to calculate Inter Chunk Latency",
         ):
-            metric.parse_record(record, MetricRecordDict())
+            metric.parse_record(record, streamed_record_metrics())
 
     def test_inter_chunk_latency_empty_responses(self):
         """Test error when no responses"""
@@ -107,7 +110,7 @@ class TestInterChunkLatencyMetric:
             NoMetricValue,
             match="Record must have at least two content responses to calculate Inter Chunk Latency",
         ):
-            metric.parse_record(record, MetricRecordDict())
+            metric.parse_record(record, streamed_record_metrics())
 
     def test_inter_chunk_latency_invalid_order(self):
         """Test error when response timestamps are not in chronological order"""
@@ -120,7 +123,7 @@ class TestInterChunkLatencyMetric:
             ValueError,
             match="Each inter chunk latency must be non-negative. got: .*",
         ):
-            metric.parse_record(record, MetricRecordDict())
+            metric.parse_record(record, streamed_record_metrics())
 
     @pytest.mark.parametrize(
         "responses",
@@ -139,7 +142,7 @@ class TestInterChunkLatencyMetric:
             ValueError,
             match="Each inter chunk latency must be non-negative. got: .*",
         ):
-            metric.parse_record(record, MetricRecordDict())
+            metric.parse_record(record, streamed_record_metrics())
 
     def test_inter_chunk_latency_streaming_scenario(self):
         """Test ICL in a realistic streaming scenario"""
@@ -163,7 +166,7 @@ class TestInterChunkLatencyMetric:
         """Test direct parse_record method call"""
         record = create_record(start_ns=100, responses=[110, 125, 140])
         metric = InterChunkLatencyMetric()
-        metric_dict = MetricRecordDict()
+        metric_dict = streamed_record_metrics()
 
         result = metric.parse_record(record, metric_dict)
 

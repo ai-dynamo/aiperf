@@ -1,0 +1,1 @@
+{"session_id":"seq","turns":[{"model":"m","messages":[{"role":"user","content":"First turn, no delay."}],"max_tokens":16},{"model":"m","messages":[{"role":"user","content":"Second turn, gated by delay."}],"max_tokens":16,"delay":250}]}

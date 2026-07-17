@@ -243,6 +243,31 @@ class RunInfo(AIPerfBaseModel):
             "the run was constructed without a CLI context."
         ),
     )
+    scenario_name: str | None = Field(
+        default=None,
+        description=(
+            "The locked `--scenario` name applied by the ScenarioResolver, or "
+            "None when no scenario was set. From "
+            "`BenchmarkRun.resolved.scenario_outcome.scenario_name`."
+        ),
+    )
+    submission_valid: bool | None = Field(
+        default=None,
+        description=(
+            "Whether this run satisfies the locked scenario's invariants: True "
+            "when all invariants held (after auto-fills), False under "
+            "`--unsafe-override` with downgraded violations, None when no "
+            "scenario was set."
+        ),
+    )
+    submission_invalid_reasons: list[str] | None = Field(
+        default=None,
+        description=(
+            "Short tags explaining why `submission_valid` is False (e.g. "
+            "`unsafe_override`). None / empty when the submission is valid or no "
+            "scenario was set."
+        ),
+    )
 
     @classmethod
     def from_run(cls, run: BenchmarkRun | None) -> RunInfo | None:
@@ -255,6 +280,10 @@ class RunInfo(AIPerfBaseModel):
         if run is None:
             return None
         variation = run.variation
+        outcome = run.resolved.scenario_outcome
+        scenario_name = getattr(outcome, "scenario_name", None)
+        submission_valid = getattr(outcome, "submission_valid", None)
+        invalid_reasons = getattr(outcome, "submission_invalid_reasons", None) or None
         return cls(
             benchmark_id=run.benchmark_id,
             sweep_id=run.sweep_id,
@@ -265,6 +294,9 @@ class RunInfo(AIPerfBaseModel):
             variation_index=variation.index if variation is not None else None,
             variation_values=dict(variation.values) if variation is not None else None,
             cli_command=run.cli_command,
+            scenario_name=scenario_name,
+            submission_valid=submission_valid,
+            submission_invalid_reasons=invalid_reasons,
         )
 
 

@@ -554,7 +554,7 @@ my_histogram_count{which="good"} 7.0
           - The resulting record can be constructed without raising
         Regression test for the silent-loss bug observed against sglang
         --enable-metrics where sglang:fwd_occupancy emitted NaN, extended to
-        cover the parallel histogram-path filter (Task 1b)."""
+        cover the parallel histogram-path filter."""
         metrics_text = """# HELP sglang:fwd_occupancy Forward pass GPU occupancy percentage.
 # TYPE sglang:fwd_occupancy gauge
 sglang:fwd_occupancy{engine_type="unified",model_name="Qwen/Qwen3-0.6B",moe_ep_rank="0",pp_rank="0",tp_rank="0"} NaN

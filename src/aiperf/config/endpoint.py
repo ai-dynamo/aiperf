@@ -22,6 +22,7 @@ from pydantic import (
 )
 
 from aiperf.common.enums import (
+    CacheBustTarget,
     ConnectionReuseStrategy,
     ModelSelectionStrategy,
     RequestContentType,
@@ -30,6 +31,7 @@ from aiperf.config.base import BaseConfig
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
     EndpointType,
+    SessionRoutingType,
     TransportType,
     URLSelectionStrategy,
 )
@@ -63,6 +65,7 @@ class EndpointDefaults:
     WAIT_FOR_MODEL_TIMEOUT = 0.0
     WAIT_FOR_MODEL_INTERVAL = 5.0
     WAIT_FOR_MODEL_MODE = "inference"
+    CACHE_BUST = CacheBustTarget.NONE
 
 
 class TemplateConfig(BaseConfig):
@@ -239,6 +242,20 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    cache_bust: Annotated[
+        CacheBustTarget,
+        Field(
+            default=EndpointDefaults.CACHE_BUST,
+            description="Where to inject a per-trace-instance cache-bust marker on "
+            "the graph-IR replay path. 'none' (default): recorded bytes sent "
+            "verbatim. 'first_turn_prefix': prepend a '[rid:<12hex>]' marker to the "
+            "first user turn, shared across the trace instance's turns but distinct "
+            "per instance and reset on recycle, so the inference server's KV cache "
+            "sees a distinct prefix per trace instance, defeating cross-instance "
+            "prefix-cache hits.",
+        ),
+    ]
+
     template: Annotated[
         TemplateConfig | None,
         Field(
@@ -312,6 +329,34 @@ class EndpointConfig(BaseConfig):
                 "When set, replaces the default `X-Correlation-ID` header. Useful "
                 "when the inference server expects a custom session-affinity header "
                 "(e.g. `--session-header X-Session-ID`)."
+            ),
+        ),
+    ]
+
+    session_routing: Annotated[
+        SessionRoutingType | None,
+        Field(
+            default=None,
+            description=(
+                "Session-routing transform stamping per-session identity on "
+                "every request so an external router (SGLang Model Gateway, Dynamo, "
+                "generic session-affinity LBs) can pin a session's turns to "
+                "one replica. One mode per run; parameterize with "
+                "--session-routing-opt key=value."
+            ),
+        ),
+    ]
+
+    session_routing_opts: Annotated[
+        dict[str, Any],
+        Field(
+            default_factory=dict,
+            description=(
+                "Mode-specific options for --session-routing, validated "
+                "against the selected plugin's Options model (unknown keys and "
+                "invalid values are rejected at startup). Values are "
+                "canonicalized/coerced to the plugin's Options model types at "
+                "validation, so downstream consumers see typed values."
             ),
         ),
     ]
@@ -524,4 +569,30 @@ class EndpointConfig(BaseConfig):
                 f"endpoint types that accept form-data (e.g. image_edit, "
                 f"video_generation); endpoint type {self.type} does not."
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_session_routing(self) -> Self:
+        """Fail fast: opts require a mode; opts must satisfy the plugin's Options.
+
+        Canonicalizes the opts to the plugin's Options model types so downstream
+        consumers (including the pickled BenchmarkRun that reaches workers) carry
+        coerced values (e.g. ``{"timeout_seconds": 600}``, not ``"600"``).
+        """
+        if self.session_routing is None:
+            if self.session_routing_opts:
+                raise ValueError(
+                    "--session-routing-opt requires --session-routing to select a mode."
+                )
+            return self
+        from aiperf.plugin import plugins
+        from aiperf.plugin.enums import PluginType
+
+        routing_cls = plugins.get_class(
+            PluginType.SESSION_ROUTING, str(self.session_routing)
+        )
+        options = routing_cls.Options(**self.session_routing_opts)
+        canonical = options.model_dump(mode="json", exclude_unset=True)
+        if canonical != self.session_routing_opts:
+            self.session_routing_opts = canonical
         return self

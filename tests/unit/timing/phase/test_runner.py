@@ -14,6 +14,7 @@ from aiperf.common.models import (
     DatasetMetadata,
     TurnMetadata,
 )
+from aiperf.common.scenario import TrajectoryWarmupFailedError
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import ArrivalPattern, DatasetSamplingStrategy, TimingMode
@@ -581,6 +582,311 @@ class TestSeamlessMode:
             r._progress.all_credits_returned_event.set()
             await r.run(is_final_phase=True)
             pub.publish_phase_complete.assert_called_once()
+
+
+@dataclass
+class TeardownStrategy(MockStrategy):
+    """MockStrategy exposing the optional ``teardown_phase`` hook (TC2)."""
+
+    teardown_calls: int = 0
+
+    async def teardown_phase(self) -> None:
+        self.teardown_calls += 1
+
+
+class TestStrategyTeardown:
+    """TC2: PhaseRunner invokes the strategy's optional ``teardown_phase``."""
+
+    async def test_run_invokes_teardown_after_phase_completes(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        strategy = TeardownStrategy()
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: strategy,
+        ):
+            r._progress.all_credits_sent_event.set()
+            r._progress.all_credits_returned_event.set()
+            await r.run(is_final_phase=True)
+        assert strategy.teardown_calls == 1
+
+    async def test_run_invokes_teardown_on_failure_path(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """Teardown runs in the finally even when the phase setup blows up."""
+
+        @dataclass
+        class FailingSetupStrategy(TeardownStrategy):
+            async def setup_phase(self) -> None:
+                raise RuntimeError("setup failed")
+
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        strategy = FailingSetupStrategy()
+        with (
+            patch(
+                "aiperf.timing.phase.runner.plugins.get_class",
+                return_value=lambda **kw: strategy,
+            ),
+            pytest.raises(RuntimeError, match="setup failed"),
+        ):
+            await r.run(is_final_phase=True)
+        assert strategy.teardown_calls == 1
+
+    async def test_run_skips_strategies_without_teardown_hook(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """Linear strategies (no ``teardown_phase``) are unaffected (no-op)."""
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        strategy = MockStrategy()
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: strategy,
+        ):
+            r._progress.all_credits_sent_event.set()
+            r._progress.all_credits_returned_event.set()
+            await r.run(is_final_phase=True)  # must not raise on the missing hook
+
+    async def test_seamless_non_final_defers_teardown_until_returns_land(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """Seamless phases tear down only once the background return wait ends.
+
+        Distinguishes DEFERRED from EAGER teardown: ``run()`` exits with one
+        credit still in flight (sent=1, returned=0), so an eager teardown in
+        ``run()``'s finally would fire while the return wait is still parked.
+        Teardown may only run after the returned event lands and the
+        background return-wait task's done-callback schedules it.
+        """
+        r = make_runner(cfg(seamless=True), conv_src, pub, router, conc, cancel, cb)
+        strategy = TeardownStrategy()
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: strategy,
+        ):
+            # One credit in flight: run()'s sending-complete finally freezes
+            # final_requests_sent=1 with zero returned, so the background
+            # return wait parks on all_credits_returned_event.
+            r._progress._counter._requests_sent = 1
+            r._progress.all_credits_sent_event.set()
+            await r.run(is_final_phase=False)
+
+            assert r._return_wait_task is not None
+            assert not r._return_wait_task.done()
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert strategy.teardown_calls == 0, (
+                "teardown fired while the phase's returns were still in "
+                "flight (eager-teardown regression)"
+            )
+
+            # The in-flight return lands -> the return-wait task finishes ->
+            # its done-callback schedules the deferred teardown.
+            r._progress.all_credits_returned_event.set()
+            for _ in range(10):
+                await asyncio.sleep(0)
+        assert strategy.teardown_calls == 1
+
+
+class _WarmupReportStrategy(MockStrategy):
+    """MockStrategy exposing the optional ``report_warmup_failures`` hook.
+
+    ``raises`` toggles whether the hook aborts (agentx warmup-failure parity);
+    ``report_calls`` records whether the runner reached the hook at all.
+    """
+
+    report_calls: int = 0
+    raises: bool = False
+
+    def report_warmup_failures(self) -> None:
+        self.report_calls += 1
+        if self.raises:
+            raise TrajectoryWarmupFailedError(["t-0#0.0[node_ordinal=0]: boom"])
+
+
+class TestWarmupFailureAbort:
+    """The runner aborts a non-cancelled phase whose strategy reports failures."""
+
+    async def test_run_strategy_propagates_warmup_failure(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """A raising ``report_warmup_failures`` propagates out of the non-seamless path."""
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
+        )
+        strategy = _WarmupReportStrategy()
+        strategy.raises = True
+        r._progress.all_credits_sent_event.set()
+        r._progress.all_credits_returned_event.set()
+
+        with pytest.raises(TrajectoryWarmupFailedError):
+            await r._run_strategy(strategy, is_final_phase=True)
+        assert strategy.report_calls == 1
+
+    async def test_run_strategy_skips_warmup_report_on_cancel(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """A user-cancelled run returns early and never re-labels itself a warmup failure."""
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
+        )
+        strategy = _WarmupReportStrategy()
+        strategy.raises = True
+        r._was_cancelled = True
+        r._progress.all_credits_sent_event.set()
+
+        result = await r._run_strategy(strategy, is_final_phase=True)
+        if r._progress_task is not None:
+            r._progress_task.cancel()
+
+        assert strategy.report_calls == 0
+        assert isinstance(result, CreditPhaseStats)
+
+
+async def _idle_forever() -> None:
+    """Timer-free stand-in for the progress-report loop.
+
+    The real loop sleeps on a repeating ``asyncio.sleep`` timer, and a
+    concurrent task holding an active timer defeats looptime's virtual-time
+    fast-forward of the returning-wait / drain ``wait_for``s. A pure event wait
+    (no timer) keeps the loop idle-detectable so looptime fast-forwards.
+    """
+    await asyncio.Event().wait()
+
+
+class TestWarmupDrainGrace:
+    """A finite warmup grace bounds the returning wait for a duration-less
+    WARMUP phase (agentx accelerated-warmup drain parity); infinite grace (the
+    boundary-priming default) keeps today's unbounded wait.
+
+    These pin the BLOCKER fix: ``time_left_in_seconds(include_grace_period=True)``
+    returns None when ``expected_duration_sec is None``, so a finite
+    ``grace_period_sec`` was DEAD config -- the returning wait was unbounded and
+    a lost pressure return hung the run. The runner now bounds a duration-less
+    WARMUP drain by the finite grace directly.
+    """
+
+    async def test_finite_warmup_grace_bounds_returning_wait(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+        time_traveler: MagicMock,
+    ) -> None:
+        """RED before the fix: with ``expected_duration_sec=None`` the returning
+        wait never sees the finite grace, so a never-returning credit hangs
+        ``_run_strategy`` (the in-test ``wait_for`` bound then times out). The
+        fix bounds the WARMUP drain by the finite grace, so the credit is
+        cancelled via the timeout branch and the phase completes.
+        """
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP, dur=None, grace=0.2),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+        )
+        r._progress_report_loop = _idle_forever
+        strategy = MockStrategy()
+        # One credit in flight that never returns: sending-complete freezes
+        # final_requests_sent=1 with zero returned, so the returning wait parks.
+        r._progress._counter._requests_sent = 1
+        r._progress.all_credits_sent_event.set()
+
+        result = await asyncio.wait_for(
+            r._run_strategy(strategy, is_final_phase=True), timeout=30.0
+        )
+        router.cancel_all_credits.assert_called_once()
+        assert isinstance(result, CreditPhaseStats)
+
+    async def test_infinite_warmup_grace_leaves_returning_wait_unbounded(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+        time_traveler: MagicMock,
+    ) -> None:
+        """The boundary-priming warmup (grace=inf) keeps the unbounded returning
+        wait: the finite-grace bound is WARMUP-only AND finite-only, so the
+        returning-wait timeout stays None and ``cancel_all_credits`` is never
+        reached.
+        """
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP, dur=None, grace=float("inf")),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+        )
+        captured: dict[str, float | None] = {}
+        original = r._wait_for_event_with_timeout
+
+        async def spy(*, name, event, timeout, **kwargs) -> bool:
+            if "returned" in name:
+                # Capture the timeout the runner computed for the returning wait,
+                # then short-circuit so the unbounded (None) wait does not hang.
+                captured["timeout"] = timeout
+                event.set()
+                return False
+            return await original(name=name, event=event, timeout=timeout, **kwargs)
+
+        r._wait_for_event_with_timeout = spy
+        r._progress_report_loop = _idle_forever
+        strategy = MockStrategy()
+        r._progress._counter._requests_sent = 1
+        r._progress.all_credits_sent_event.set()
+
+        await asyncio.wait_for(
+            r._run_strategy(strategy, is_final_phase=True), timeout=30.0
+        )
+        assert captured["timeout"] is None
+        router.cancel_all_credits.assert_not_called()
 
 
 class TestComponentOwnership:

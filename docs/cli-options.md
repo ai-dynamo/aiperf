@@ -32,11 +32,15 @@ Expand a sweep config and print the resulting variations.
 
 Validate an AIPerf config file.
 
+### [`dynamo`](#aiperf-dynamo)
+
+Dynamo agent-trace tooling. Use `aiperf dynamo trace-report` to aggregate metrics from a captured trace.
+
 ### [`profile`](#aiperf-profile)
 
 Run the Profile subcommand.
 
-[Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
+[Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication) • [Scenario](#scenario)
 
 ### [`plot`](#aiperf-plot)
 
@@ -50,7 +54,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 
 Run an AIPerf service in a single process.
 
-[Parameters](#parameters) • [Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
+[Parameters](#parameters) • [Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication) • [Scenario](#scenario)
 
 ### [`speed-bench-report`](#aiperf-speed-bench-report)
 
@@ -229,6 +233,12 @@ Path to an AIPerf YAML config to validate.
 
 <hr/>
 
+## `aiperf dynamo`
+
+Dynamo agent-trace tooling. Use `aiperf dynamo trace-report` to aggregate metrics from a captured trace.
+
+<hr/>
+
 ## `aiperf profile`
 
 Run the Profile subcommand.
@@ -347,6 +357,17 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For OpenAI-compatible streaming endpoints (chat/completions), stream_options.include_usage is automatically configured when this flag is enabled.
 <br/>_Flag (no value required)_
 
+#### `--cache-bust` `<str>`
+
+Where to inject a per-trace-instance cache-bust marker on the graph-IR replay path. 'none' (default): recorded bytes are sent verbatim. 'first_turn_prefix': prepend a '[rid:&lt;12hex>]' marker to the first user turn. The marker is shared across all turns of one trace instance (its own prefix stays cacheable) but differs between distinct instances and resets on recycle, so the inference server's KV cache sees a distinct prefix per trace instance, defeating cross-instance prefix-cache hits that would inflate cache-hit metrics.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `none` | _default_ | Cache-bust disabled: sessions send their recorded bytes verbatim. |
+| `first_turn_prefix` |  | Prepend the marker to the first turn's prompt prefix (token 0), so the whole prompt's KV-cache prefix diverges per session. Later turns inherit the changed prefix naturally; only the first turn is independently busted. |
+
 #### `--connection-reuse-strategy` `<str>`
 
 Transport connection reuse strategy. 'pooled' (default): connections are pooled and reused across all requests. 'never': new connection for each request, closed after response. 'sticky-user-sessions': connection persists across turns of a multi-turn conversation, closed on final turn (enables sticky load balancing).
@@ -378,6 +399,15 @@ Content type for request body serialization. By default, requests are sent as 'a
 #### `--session-header` `<str>`
 
 HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header with the provided name (e.g., `--session-header X-Session-ID`).
+
+#### `--session-routing` `<str>`
+
+Session-aware routing mode: stamps per-session identity on every request for router affinity. Built-ins: dynamo_headers (X-Dynamo-Session-ID + parent header), dynamo_nvext (nvext.session_control bind/close request-body metadata), smg_routing_key (X-SMG-Routing-Key for the SGLang Model Gateway manual policy), session_id_header (custom additive header). Parameterize with --session-routing-opt.
+<br/>_Choices: [`dynamo_headers`, `dynamo_nvext`, `smg_routing_key`, `session_id_header`]_
+
+#### `--session-routing-opt` `<list>`
+
+Repeatable key=value option for the selected --session-routing mode (e.g. --session-routing-opt timeout_seconds=600), validated against the plugin's Options model.
 
 ### Tokenizer
 
@@ -432,10 +462,24 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
 <br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
 
+#### `--graph-format` `<str>`
+
+Select the agentic-workload format for `--input-file`, overriding graph-adapter auto-detection. Registered names: `dynamo_trace`, `weka_trace`, `dag_jsonl`, `native`. Requires `--input-file`. Independent of `--custom-dataset-type` (that selects a custom dataset loader; this selects a graph adapter). Use `native` to load a hand-authored Graph IR workload file, or `dag_jsonl` to run a DAG conversation file on the graph runtime.
+<br/>_Choices: [`dynamo_trace`, `weka_trace`, `dag_jsonl`, `native`]_
+
 #### `--dataset-sampling-strategy` `<str>`
 
 Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).
 <br/>_Choices: [`random`, `sequential`, `shuffle`]_
+
+#### `--max-context-length` `<int>`
+
+Maximum per-trace context length (tokens) for graph-plane dataset selection. Graph traces whose input+output context would exceed this cap are excluded from the eligible set before selection. Applies to graph-adapter workloads (`--input-file` graph traces); ignored by synthetic/public datasets. Unset (the default) applies no context-length filter.
+<br/>_Constraints: ≥ 1_
+
+#### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
+
+Allow graph-plane dataset selection to wrap (reuse the finite trace pool) when `--request-count` exceeds the number of eligible traces. `--allow-dataset-wrap` forces wrapping on; `--no-allow-dataset-wrap` forces it off. Unset (the default, None) defers to a derived default computed at resolution time and surfaced on `run.resolved.allow_dataset_wrap`. Applies to graph-adapter workloads; ignored by synthetic/public datasets.
 
 #### `--random-seed` `<int>`
 
@@ -491,7 +535,7 @@ The total number of unique conversations to generate. Each conversation represen
 
 #### `--num-dataset-entries`, `--num-prompts` `<int>`
 
-Total number of unique entries to generate for the dataset. Each entry represents one user message that can be used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. Higher values provide more diversity.
+Total number of unique entries to generate for the dataset. Each entry represents one user message that can be used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. Higher values provide more diversity. On the graph plane (graph-adapter workloads), this bounds the distinct traces selected: unset means all eligible traces (after `--max-context-length` and other filters) are used; N means up to N distinct traces are selected after filters. It does not count requests -- see `--request-count`.
 <br/>_Constraints: ≥ 1_
 <br/>_Default: `100`_
 
@@ -900,6 +944,15 @@ Maximum input sequence length for filtering. Traces with input_length > max_isl 
 Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.
 <br/>_Constraints: ≥ 1_
 
+#### `--prompt-corpus` `<str>`
+
+Corpus backing recorded graph (`weka_trace`, `dynamo_trace`) real-content synthesis. `coding` (default when unset) uses the procedural CodingContentGenerator pool the recorded weka workloads were captured against; `sonnet` uses the Shakespeare pool, which yields matching token counts but different bytes (useful only to reproduce golden fixtures built from that pool). Ignored by non-graph datasets.
+
+#### `--synthesis-idle-gap-cap` `<float>`
+
+Per-trace idle-gap cap (seconds) for recorded graph (`weka_trace`, `dynamo_trace`) replay. Recorded inter-request idle gaps longer than this are compressed to the cap so a recorded multi-hour gap does not park the replay. Defaults to 60s when unset. Ignored by non-graph datasets.
+<br/>_Constraints: ≥ 0.0_
+
 ### Load Generator
 
 #### `--benchmark-duration` `<str>`
@@ -937,11 +990,11 @@ Smoothness parameter for gamma distribution arrivals (--arrival-pattern gamma). 
 
 #### `--request-count`, `--num-requests` `<str>`
 
-The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
+The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation. On the graph plane (graph-adapter workloads), this counts individual requests, not traces -- a single trace can emit many requests, so `--request-count` does not bound the number of distinct traces selected (use `--num-dataset-entries` for that). When it exceeds the eligible trace pool, `--allow-dataset-wrap` controls whether selection wraps to reuse traces.
 
 #### `--concurrency-ramp-duration` `<float>`
 
-Duration in seconds to ramp session concurrency from 1 to target. Useful for gradual warm-up of the target system.
+Duration in seconds to ramp session concurrency from 1 to target. On graph-IR replay (weka/dynamo/dag traces) this ramps LANE admission: concurrent trace-instance lanes are admitted 1 -> --concurrency over the duration. Useful for gradual warm-up of the target system.
 <br/>_Constraints: > 0_
 
 #### `--prefill-concurrency-ramp-duration` `<float>`
@@ -991,6 +1044,16 @@ Maximum adaptive scale control value. Inferred from the phase target when omitte
 
 SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
 
+#### `--trajectory-start-min-ratio` `<float>`
+
+Lower bound (fraction of each trace's recorded wall-clock duration) of the per-trace t* snapshot-instant sampling window for recorded graph replay. Unset resolves to 0.0. With both bounds at 0.0 the window is OFF (full native replay). Per trace, t* is drawn uniformly from [min, max] x trace_duration with a trace-salted RNG: nodes firing before t* become cache-priming WARMUP history, nodes at/after t* are PROFILING. Set min == max for a deterministic t*. Must be &lt;= --trajectory-start-max-ratio. The inferencex-agentx-mvp scenario auto-applies 0.0 when unset and locks an explicit conflicting value.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+
+#### `--trajectory-start-max-ratio` `<float>`
+
+Upper bound (fraction of each trace's recorded wall-clock duration) of the per-trace t* snapshot-instant sampling window for recorded graph replay. Unset resolves to 0.0 (window OFF, full native replay); any value > 0 engages the t* snapshot machinery (per-trace t* sampling plus the auto boundary-priming warmup phase). See --trajectory-start-min-ratio for the sampling contract. The inferencex-agentx-mvp scenario auto-applies 1.0 when unset and locks an explicit conflicting value.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+
 ### Warmup
 
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
@@ -1002,6 +1065,16 @@ The maximum number of warmup requests to send before benchmarking. If not set an
 
 The maximum duration in seconds for the warmup phase. If not set, it will use the `--warmup-request-count` value. If neither are set, no warmup phase will be used.
 <br/>_Constraints: > 0_
+
+#### `--agentic-cache-warmup-duration` `<float>`
+
+Extended (cache-pressure) warmup duration in seconds for the recorded-trace graph-IR replay path. After the boundary-priming warmup drains, AIPerf continues the live post-t* replay with zero idle delay and one-token outputs for this long, recycling fresh templates onto freed lanes, then drains and hands each lane's execution frontier to profiling (with residual delays), driving the server KV cache to steady-state pressure before benchmarking. If not set, no extended warmup runs.
+<br/>_Constraints: > 0_
+
+#### `--burst-phase-starts`
+
+Burst-vs-spread control for phase starts on the recorded-trace graph-IR replay path. Default False = SPREAD: each WARMUP / PROFILING trace's first firing is offset by its recorded (idle-gap-warped, &lt;=60s) lead from the t* snapshot instant. True = BURST: both phase starts collapse into a synchronized burst -- every warmup priming credit and every trace's earliest profiling firing fire at once at phase-time 0 (the leading per-firing dispatch offset is dropped); relative inter-turn delays after the first are still honored. Governs ONLY the two phase-start dispatch patterns.
+<br/>_Flag (no value required)_
 
 #### `--num-warmup-sessions` `<int>`
 
@@ -1588,6 +1661,17 @@ Directory path for ZMQ IPC (Inter-Process Communication) socket files. When usin
 Select the ZMQ dual-bind communication backend (IPC + TCP). All dual-bind knobs are cluster-managed; this flag only selects the discriminator and the converter routes downstream to the default.
 <br/>_Flag (no value required)_
 
+### Scenario
+
+#### `--scenario` `<str>`
+
+Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
+
+#### `--unsafe-override`
+
+Convert scenario lock errors to warnings; stamps submission_valid=false in the aggregate output. No-op without --scenario.
+<br/>_Flag (no value required)_
+
 <hr/>
 
 ## `aiperf plot`
@@ -1675,7 +1759,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `graph_adapter`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `session_routing`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -1805,6 +1889,17 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For OpenAI-compatible streaming endpoints (chat/completions), stream_options.include_usage is automatically configured when this flag is enabled.
 <br/>_Flag (no value required)_
 
+#### `--cache-bust` `<str>`
+
+Where to inject a per-trace-instance cache-bust marker on the graph-IR replay path. 'none' (default): recorded bytes are sent verbatim. 'first_turn_prefix': prepend a '[rid:&lt;12hex>]' marker to the first user turn. The marker is shared across all turns of one trace instance (its own prefix stays cacheable) but differs between distinct instances and resets on recycle, so the inference server's KV cache sees a distinct prefix per trace instance, defeating cross-instance prefix-cache hits that would inflate cache-hit metrics.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `none` | _default_ | Cache-bust disabled: sessions send their recorded bytes verbatim. |
+| `first_turn_prefix` |  | Prepend the marker to the first turn's prompt prefix (token 0), so the whole prompt's KV-cache prefix diverges per session. Later turns inherit the changed prefix naturally; only the first turn is independently busted. |
+
 #### `--connection-reuse-strategy` `<str>`
 
 Transport connection reuse strategy. 'pooled' (default): connections are pooled and reused across all requests. 'never': new connection for each request, closed after response. 'sticky-user-sessions': connection persists across turns of a multi-turn conversation, closed on final turn (enables sticky load balancing).
@@ -1836,6 +1931,15 @@ Content type for request body serialization. By default, requests are sent as 'a
 #### `--session-header` `<str>`
 
 HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header with the provided name (e.g., `--session-header X-Session-ID`).
+
+#### `--session-routing` `<str>`
+
+Session-aware routing mode: stamps per-session identity on every request for router affinity. Built-ins: dynamo_headers (X-Dynamo-Session-ID + parent header), dynamo_nvext (nvext.session_control bind/close request-body metadata), smg_routing_key (X-SMG-Routing-Key for the SGLang Model Gateway manual policy), session_id_header (custom additive header). Parameterize with --session-routing-opt.
+<br/>_Choices: [`dynamo_headers`, `dynamo_nvext`, `smg_routing_key`, `session_id_header`]_
+
+#### `--session-routing-opt` `<list>`
+
+Repeatable key=value option for the selected --session-routing mode (e.g. --session-routing-opt timeout_seconds=600), validated against the plugin's Options model.
 
 ### Tokenizer
 
@@ -1890,10 +1994,24 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
 <br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
 
+#### `--graph-format` `<str>`
+
+Select the agentic-workload format for `--input-file`, overriding graph-adapter auto-detection. Registered names: `dynamo_trace`, `weka_trace`, `dag_jsonl`, `native`. Requires `--input-file`. Independent of `--custom-dataset-type` (that selects a custom dataset loader; this selects a graph adapter). Use `native` to load a hand-authored Graph IR workload file, or `dag_jsonl` to run a DAG conversation file on the graph runtime.
+<br/>_Choices: [`dynamo_trace`, `weka_trace`, `dag_jsonl`, `native`]_
+
 #### `--dataset-sampling-strategy` `<str>`
 
 Strategy for selecting entries from dataset during benchmarking. `sequential`: Iterate through dataset in order, wrapping to start after end. `random`: Randomly sample with replacement (entries may repeat before all are used). `shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).
 <br/>_Choices: [`random`, `sequential`, `shuffle`]_
+
+#### `--max-context-length` `<int>`
+
+Maximum per-trace context length (tokens) for graph-plane dataset selection. Graph traces whose input+output context would exceed this cap are excluded from the eligible set before selection. Applies to graph-adapter workloads (`--input-file` graph traces); ignored by synthetic/public datasets. Unset (the default) applies no context-length filter.
+<br/>_Constraints: ≥ 1_
+
+#### `--allow-dataset-wrap`, `--no-allow-dataset-wrap`
+
+Allow graph-plane dataset selection to wrap (reuse the finite trace pool) when `--request-count` exceeds the number of eligible traces. `--allow-dataset-wrap` forces wrapping on; `--no-allow-dataset-wrap` forces it off. Unset (the default, None) defers to a derived default computed at resolution time and surfaced on `run.resolved.allow_dataset_wrap`. Applies to graph-adapter workloads; ignored by synthetic/public datasets.
 
 #### `--random-seed` `<int>`
 
@@ -1949,7 +2067,7 @@ The total number of unique conversations to generate. Each conversation represen
 
 #### `--num-dataset-entries`, `--num-prompts` `<int>`
 
-Total number of unique entries to generate for the dataset. Each entry represents one user message that can be used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. Higher values provide more diversity.
+Total number of unique entries to generate for the dataset. Each entry represents one user message that can be used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. Higher values provide more diversity. On the graph plane (graph-adapter workloads), this bounds the distinct traces selected: unset means all eligible traces (after `--max-context-length` and other filters) are used; N means up to N distinct traces are selected after filters. It does not count requests -- see `--request-count`.
 <br/>_Constraints: ≥ 1_
 <br/>_Default: `100`_
 
@@ -2358,6 +2476,15 @@ Maximum input sequence length for filtering. Traces with input_length > max_isl 
 Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.
 <br/>_Constraints: ≥ 1_
 
+#### `--prompt-corpus` `<str>`
+
+Corpus backing recorded graph (`weka_trace`, `dynamo_trace`) real-content synthesis. `coding` (default when unset) uses the procedural CodingContentGenerator pool the recorded weka workloads were captured against; `sonnet` uses the Shakespeare pool, which yields matching token counts but different bytes (useful only to reproduce golden fixtures built from that pool). Ignored by non-graph datasets.
+
+#### `--synthesis-idle-gap-cap` `<float>`
+
+Per-trace idle-gap cap (seconds) for recorded graph (`weka_trace`, `dynamo_trace`) replay. Recorded inter-request idle gaps longer than this are compressed to the cap so a recorded multi-hour gap does not park the replay. Defaults to 60s when unset. Ignored by non-graph datasets.
+<br/>_Constraints: ≥ 0.0_
+
 ### Load Generator
 
 #### `--benchmark-duration` `<str>`
@@ -2395,11 +2522,11 @@ Smoothness parameter for gamma distribution arrivals (--arrival-pattern gamma). 
 
 #### `--request-count`, `--num-requests` `<str>`
 
-The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
+The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation. On the graph plane (graph-adapter workloads), this counts individual requests, not traces -- a single trace can emit many requests, so `--request-count` does not bound the number of distinct traces selected (use `--num-dataset-entries` for that). When it exceeds the eligible trace pool, `--allow-dataset-wrap` controls whether selection wraps to reuse traces.
 
 #### `--concurrency-ramp-duration` `<float>`
 
-Duration in seconds to ramp session concurrency from 1 to target. Useful for gradual warm-up of the target system.
+Duration in seconds to ramp session concurrency from 1 to target. On graph-IR replay (weka/dynamo/dag traces) this ramps LANE admission: concurrent trace-instance lanes are admitted 1 -> --concurrency over the duration. Useful for gradual warm-up of the target system.
 <br/>_Constraints: > 0_
 
 #### `--prefill-concurrency-ramp-duration` `<float>`
@@ -2449,6 +2576,16 @@ Maximum adaptive scale control value. Inferred from the phase target when omitte
 
 SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
 
+#### `--trajectory-start-min-ratio` `<float>`
+
+Lower bound (fraction of each trace's recorded wall-clock duration) of the per-trace t* snapshot-instant sampling window for recorded graph replay. Unset resolves to 0.0. With both bounds at 0.0 the window is OFF (full native replay). Per trace, t* is drawn uniformly from [min, max] x trace_duration with a trace-salted RNG: nodes firing before t* become cache-priming WARMUP history, nodes at/after t* are PROFILING. Set min == max for a deterministic t*. Must be &lt;= --trajectory-start-max-ratio. The inferencex-agentx-mvp scenario auto-applies 0.0 when unset and locks an explicit conflicting value.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+
+#### `--trajectory-start-max-ratio` `<float>`
+
+Upper bound (fraction of each trace's recorded wall-clock duration) of the per-trace t* snapshot-instant sampling window for recorded graph replay. Unset resolves to 0.0 (window OFF, full native replay); any value > 0 engages the t* snapshot machinery (per-trace t* sampling plus the auto boundary-priming warmup phase). See --trajectory-start-min-ratio for the sampling contract. The inferencex-agentx-mvp scenario auto-applies 1.0 when unset and locks an explicit conflicting value.
+<br/>_Constraints: ≥ 0.0, ≤ 1.0_
+
 ### Warmup
 
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
@@ -2460,6 +2597,16 @@ The maximum number of warmup requests to send before benchmarking. If not set an
 
 The maximum duration in seconds for the warmup phase. If not set, it will use the `--warmup-request-count` value. If neither are set, no warmup phase will be used.
 <br/>_Constraints: > 0_
+
+#### `--agentic-cache-warmup-duration` `<float>`
+
+Extended (cache-pressure) warmup duration in seconds for the recorded-trace graph-IR replay path. After the boundary-priming warmup drains, AIPerf continues the live post-t* replay with zero idle delay and one-token outputs for this long, recycling fresh templates onto freed lanes, then drains and hands each lane's execution frontier to profiling (with residual delays), driving the server KV cache to steady-state pressure before benchmarking. If not set, no extended warmup runs.
+<br/>_Constraints: > 0_
+
+#### `--burst-phase-starts`
+
+Burst-vs-spread control for phase starts on the recorded-trace graph-IR replay path. Default False = SPREAD: each WARMUP / PROFILING trace's first firing is offset by its recorded (idle-gap-warped, &lt;=60s) lead from the t* snapshot instant. True = BURST: both phase starts collapse into a synchronized burst -- every warmup priming credit and every trace's earliest profiling firing fire at once at phase-time 0 (the leading per-firing dispatch offset is dropped); relative inter-turn delays after the first are still honored. Governs ONLY the two phase-start dispatch patterns.
+<br/>_Flag (no value required)_
 
 #### `--num-warmup-sessions` `<int>`
 
@@ -3044,6 +3191,17 @@ Directory path for ZMQ IPC (Inter-Process Communication) socket files. When usin
 #### `--zmq-dual-bind`
 
 Select the ZMQ dual-bind communication backend (IPC + TCP). All dual-bind knobs are cluster-managed; this flag only selects the discriminator and the converter routes downstream to the default.
+<br/>_Flag (no value required)_
+
+### Scenario
+
+#### `--scenario` `<str>`
+
+Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
+
+#### `--unsafe-override`
+
+Convert scenario lock errors to warnings; stamps submission_valid=false in the aggregate output. No-op without --scenario.
 <br/>_Flag (no value required)_
 
 <hr/>

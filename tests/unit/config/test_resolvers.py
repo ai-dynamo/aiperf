@@ -190,9 +190,9 @@ class TestArtifactDirResolver:
         """Probe runs must NOT materialize user_files (they re-run per variation).
 
         ``cli_runner._estimate_and_log_duration`` clones the user's first config
-        into a probe run only to estimate duration. After Task 6 the resolver
-        also wrote user_files; that produced a stray artifact tree before the
-        actual benchmark and could bake in template values (e.g. ``epoch``)
+        into a probe run only to estimate duration. If the resolver
+        also wrote user_files there, it would produce a stray artifact tree before
+        the actual benchmark and could bake in template values (e.g. ``epoch``)
         that don't match the per-variation runs.
         """
         from aiperf.config.loader import load_config_from_string
@@ -730,9 +730,14 @@ class TestBuildDefaultResolverChain:
     def test_returns_chain_with_all_resolvers(self):
         chain = build_default_resolver_chain()
         assert isinstance(chain, ConfigResolverChain)
-        assert len(chain._resolvers) == 6
+        assert len(chain._resolvers) == 8
 
     def test_resolver_order(self):
+        from aiperf.config.resolution.resolvers import (
+            GraphDispatchResolver,
+            ScenarioResolver,
+        )
+
         chain = build_default_resolver_chain()
         types = [type(r) for r in chain._resolvers]
         assert types == [
@@ -741,6 +746,8 @@ class TestBuildDefaultResolverChain:
             GpuMetricsResolver,
             CommConfigResolver,
             DatasetResolver,
+            ScenarioResolver,
+            GraphDispatchResolver,
             TimingResolver,
         ]
 

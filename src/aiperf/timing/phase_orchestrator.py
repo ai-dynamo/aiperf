@@ -24,6 +24,7 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.timing.concurrency import ConcurrencyManager
 from aiperf.timing.conversation_source import ConversationSource
+from aiperf.timing.graph_channel import GraphPhaseChannel
 from aiperf.timing.phase.runner import PhaseRunner
 from aiperf.timing.request_cancellation import RequestCancellationSimulator
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
@@ -31,6 +32,8 @@ from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 if TYPE_CHECKING:
     from aiperf.common.models import DatasetMetadata
     from aiperf.credit.sticky_router import CreditRouterProtocol
+    from aiperf.dataset.graph.models import ParsedGraph
+    from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
     from aiperf.timing.config import TimingConfig
     from aiperf.timing.phase.publisher import PhasePublisher
 
@@ -86,6 +89,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         phase_publisher: PhasePublisher,
         credit_router: CreditRouterProtocol,
         dataset_metadata: DatasetMetadata,
+        parsed_graph: ParsedGraph | None = None,
         **kwargs,
     ) -> None:
         """Initialize timing strategy and orchestration components.
@@ -95,6 +99,12 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             phase_publisher: Publishes phase events to message bus
             credit_router: Routes credits to workers
             dataset_metadata: Dataset for conversation sampling
+            parsed_graph: For graph IR workloads, the parsed conversation DAG.
+                When set, the orchestrator owns a ``GraphPhaseChannel`` carrying
+                it (and the WARMUP handoff) to every ``PhaseRunner``; the
+                conversation-shaped sampler and source are NOT built because
+                graph runs sample inside the graph strategy over
+                ``parsed_graph.traces``. ``None`` for non-graph workloads.
         """
         super().__init__(**kwargs)
         self._config = config
@@ -102,32 +112,23 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._credit_router = credit_router
         self._dataset_metadata = dataset_metadata
 
-        # Create dataset sampler
-        SamplerClass = plugins.get_class(
-            PluginType.DATASET_SAMPLER,
-            self._dataset_metadata.sampling_strategy,
-        )
-        # Only root conversations are sampled by the strategy. DAG
-        # children belong to their root's session and are dispatched by
-        # the BranchOrchestrator on credit return — sampling them as
-        # roots would create duplicate root sessions. Filter on
-        # ``is_root`` rather than ``agent_depth == 0`` so SPAWN-mode
-        # children (which keep ``agent_depth == 0`` for fresh-context
-        # semantics but carry ``is_root=False``) are also excluded.
-        root_conv_ids = [
-            c.conversation_id
-            for c in self._dataset_metadata.conversations
-            if getattr(c, "is_root", True)
-        ]
-        self._dataset_sampler = SamplerClass(
-            conversation_ids=root_conv_ids
-            or [c.conversation_id for c in self._dataset_metadata.conversations]
-        )
-
         # Long-lived components (shared across phases)
-        self._conversation_source = ConversationSource(
-            self._dataset_metadata, self._dataset_sampler
-        )
+        if parsed_graph is None:
+            self._dataset_sampler: DatasetSamplingStrategyProtocol | None = (
+                self._build_dataset_sampler()
+            )
+            self._conversation_source: ConversationSource | None = (
+                self._build_conversation_source()
+            )
+            self._graph_channel: GraphPhaseChannel | None = None
+        else:
+            # Graph runs sample inside the graph strategy
+            # (GraphIRConversationSource over parsed_graph.traces); the
+            # conversation-shaped sampler and source have nothing to sample
+            # (conversations is empty) and are not built.
+            self._dataset_sampler = None
+            self._conversation_source = None
+            self._graph_channel = GraphPhaseChannel(parsed_graph=parsed_graph)
         self._concurrency_manager = ConcurrencyManager()
         self._cancellation_policy = RequestCancellationSimulator(
             config.request_cancellation
@@ -154,17 +155,47 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         # Active phase runners (for cancellation) - multiple possible with seamless mode
         self._active_runners: list[PhaseRunner] = []
 
+    def _build_dataset_sampler(self) -> DatasetSamplingStrategyProtocol:
+        """Construct the root-conversation sampler for this run.
+
+        Only root conversations are sampled by the strategy. DAG children belong
+        to their root's session and are dispatched by the BranchOrchestrator on
+        credit return -- sampling them as roots would create duplicate root
+        sessions. Filter on ``is_root`` rather than ``agent_depth == 0`` so
+        SPAWN-mode children (which keep ``agent_depth == 0`` for fresh-context
+        semantics but carry ``is_root=False``) are also excluded.
+        """
+        SamplerClass = plugins.get_class(
+            PluginType.DATASET_SAMPLER,
+            self._dataset_metadata.sampling_strategy,
+        )
+        root_conv_ids = [
+            c.conversation_id
+            for c in self._dataset_metadata.conversations
+            if getattr(c, "is_root", True)
+        ]
+        return SamplerClass(
+            conversation_ids=root_conv_ids
+            or [c.conversation_id for c in self._dataset_metadata.conversations]
+        )
+
+    def _build_conversation_source(self) -> ConversationSource:
+        """Construct the long-lived conversation source (non-graph runs only)."""
+        return ConversationSource(self._dataset_metadata, self._dataset_sampler)
+
     @property
-    def conversation_source(self) -> ConversationSource:
-        """Conversation source for dataset access."""
+    def conversation_source(self) -> ConversationSource | None:
+        """Conversation source for dataset access (``None`` for graph runs)."""
         return self._conversation_source
 
     @on_init
     async def _init_orchestrator(self) -> None:
         """Log configured phases (actual initialization happens per-phase in _execute_phases)."""
         self.info(
-            lambda: f"Initialized {len(self._ordered_phase_configs)} phase(s): "
-            f"{[p.phase.replace('_', ' ').title() for p in self._ordered_phase_configs]}"
+            lambda: (
+                f"Initialized {len(self._ordered_phase_configs)} phase(s): "
+                f"{[p.phase.replace('_', ' ').title() for p in self._ordered_phase_configs]}"
+            )
         )
 
     @on_start
@@ -208,6 +239,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 cancellation_policy=self._cancellation_policy,
                 callback_handler=self._callback_handler,
                 url_selection_strategy=self._url_sampler,
+                graph_channel=self._graph_channel,
             )
 
             # For seamless non-final phases, set callback to remove from active runners
@@ -229,9 +261,17 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 await self.cancel()
                 raise e
 
-            # Remove from active runners when fully complete
-            # For seamless phases, this happens after returns complete (background task)
-            if not is_seamless_non_final:
+            # Remove from active runners when fully complete.
+            # For seamless phases, this happens after returns complete (background
+            # task). A concurrent graceful cancel (PROFILE_CANCEL / Ctrl+C ->
+            # ``cancel`` -> ``_cancel_active_runners``) clears the whole list while
+            # this coroutine is parked in ``runner.run`` (e.g. a graph phase parked
+            # mid idle-gap replay), so the runner may already be gone here.
+            # Discard rather than ``remove`` so the teardown does not raise
+            # ``ValueError: list.remove(x): x not in list`` -- which would fail the
+            # orchestrator and abort the records-manager's in-flight graceful export
+            # (no metrics JSON, ``was_cancelled`` never set).
+            if not is_seamless_non_final and runner in self._active_runners:
                 self._active_runners.remove(runner)
 
     def _phase_runner_cleanup_callback(self, runner: PhaseRunner) -> Callable[[], None]:
@@ -273,7 +313,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         """
         if self._active_runners:
             self.debug(
-                lambda: f"Stopping orchestrator with {len(self._active_runners)} active runner(s)"
+                lambda: (
+                    f"Stopping orchestrator with {len(self._active_runners)} active runner(s)"
+                )
             )
             self._cancel_active_runners()
 

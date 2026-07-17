@@ -31,6 +31,19 @@ if TYPE_CHECKING:
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
     from aiperf.timing.strategies.core import TimingStrategyProtocol
 
+# A graph-return observer receives ``(credit, error, cancelled)`` for every
+# graph-IR credit return, fired UNCONDITIONALLY (independent of phase-send
+# gating). ``GraphIRReplayStrategy._on_graph_return`` is the production
+# implementation (routing to the owning ``CreditDispatchAdapter.resolve``).
+GraphReturnObserver = Callable[["Credit", "str | None", bool], None]
+
+# A graph-first-token observer receives the ``FirstToken`` message for every
+# graph-IR credit's TTFT event (post-TTFT first-token anchoring), fired
+# independent of phase-handler gating.
+# ``GraphIRReplayStrategy._on_graph_first_token`` is the production
+# implementation (routing to the owning adapter's ``on_first_token``).
+GraphFirstTokenObserver = Callable[["FirstToken"], None]
+
 _logger = AIPerfLogger(__name__)
 
 
@@ -88,6 +101,69 @@ class CreditCallbackHandler:
         self._concurrency_manager = concurrency_manager
         self._phase_handlers: dict[CreditPhase, PhaseCallbackContext] = {}
         self._branch_orchestrator: BranchOrchestrator | None = None
+        self._graph_return_observer: GraphReturnObserver | None = None
+        self._graph_first_token_observer: GraphFirstTokenObserver | None = None
+
+    def set_graph_return_observer(self, observer: GraphReturnObserver | None) -> None:
+        """Register (or detach) the unconditional graph-IR return observer.
+
+        Called by ``GraphIRReplayStrategy.setup_phase`` (through the
+        runner-injected registrar) before phase start; teardown detaches via
+        :meth:`clear_graph_return_observer` (compare-and-clear), falling back
+        to ``None`` here only when no unregister channel is wired (unit
+        harness). The observer fires
+        for every credit return carrying a ``trace_id`` (a graph credit),
+        BEFORE the gated ``strategy.handle_credit_return`` path -- which is
+        skipped once ``can_send_any_turn()`` is False and would otherwise
+        strand in-flight dispatch Futures for already-issued graph credits.
+        """
+        self._graph_return_observer = observer
+
+    def set_graph_first_token_observer(
+        self, observer: GraphFirstTokenObserver | None
+    ) -> None:
+        """Register (or detach) the graph-IR first-token observer.
+
+        Called by ``GraphIRReplayStrategy.setup_phase`` (through the
+        runner-injected registrar) before phase start; teardown detaches via
+        :meth:`clear_graph_first_token_observer` (compare-and-clear), falling
+        back to ``None`` here only when no unregister channel is wired (unit
+        harness). The observer fires
+        in ``on_first_token`` for every ``FirstToken`` carrying a ``trace_id``
+        (a graph credit), AFTER the prefill-slot release block and independent
+        of phase-handler gating -- so a graph node's TTFT anchor is delivered
+        even when prefill limiting is off or the phase can no longer send.
+        """
+        self._graph_first_token_observer = observer
+
+    def clear_graph_return_observer(self, expected: GraphReturnObserver) -> None:
+        """Detach the graph-return observer ONLY if ``expected`` is installed.
+
+        Compare-and-clear guard for deferred teardown: a seamless non-final
+        graph phase defers ``teardown_phase`` to its background return-wait
+        completion, which can fire AFTER the next phase's ``setup_phase``
+        already installed ITS observer on this single shared slot. An
+        unconditional detach here would null the live phase's observer and
+        silently drop every subsequent graph return (parked dispatch Futures
+        would strand until the dispatch timeout). Equality, not identity:
+        bound methods are re-created per attribute access, so the teardown's
+        ``strategy._on_graph_return`` is a different object than the one
+        installed by ``setup_phase`` but compares equal.
+        """
+        if self._graph_return_observer == expected:
+            self._graph_return_observer = None
+
+    def clear_graph_first_token_observer(
+        self, expected: GraphFirstTokenObserver
+    ) -> None:
+        """Detach the first-token observer ONLY if ``expected`` is installed.
+
+        Same compare-and-clear guard as :meth:`clear_graph_return_observer`,
+        for the graph first-token slot (post-TTFT anchoring): a stale phase's
+        deferred teardown must never null the next phase's live observer.
+        """
+        if self._graph_first_token_observer == expected:
+            self._graph_first_token_observer = None
 
     def set_branch_orchestrator(self, orchestrator: BranchOrchestrator | None) -> None:
         """Inject (or detach) the DAG branch orchestrator.
@@ -214,6 +290,18 @@ class CreditCallbackHandler:
             credit_return: Return details including credit and status.
         """
         credit = credit_return.credit
+
+        # Graph-IR returns resolve a parked dispatch Future via a DEDICATED,
+        # UNCONDITIONAL observer -- BEFORE the phase-handler lookup and the
+        # gated strategy path. The gated path no-ops once the phase can no
+        # longer send (or when no handler is registered), which would strand
+        # the executor coroutine awaiting this node's dispatch. Firing here
+        # guarantees every graph credit's Future is resolved or rejected.
+        if credit.trace_id is not None and self._graph_return_observer is not None:
+            self._graph_return_observer(
+                credit, credit_return.error, credit_return.cancelled
+            )
+
         handler = self._lookup_active_phase_handler(credit, worker_id)
         if handler is None:
             return
@@ -433,7 +521,10 @@ class CreditCallbackHandler:
         # whether completed or cancelled). DAG children (agent_depth > 0)
         # inherit the root's session slot via the dispatch path that
         # bypasses ``acquire_session_slot``; releasing here would underflow.
-        if credit.is_final_turn and credit.agent_depth == 0:
+        # Graph-IR credits (``trace_id is not None``) likewise NEVER acquire a
+        # session slot (``CreditIssuer.issue_graph_credit`` bypasses it), so
+        # releasing one here would underflow the counter -- skip them.
+        if credit.is_final_turn and credit.agent_depth == 0 and credit.trace_id is None:
             concurrency.release_session_slot(phase)
 
         # On phase end, release slots for sessions still in flight.
@@ -457,29 +548,43 @@ class CreditCallbackHandler:
     async def on_first_token(self, first_token: FirstToken) -> None:
         """Handle first token event (TTFT) from worker.
 
-        Releases prefill concurrency slot, allowing another request
-        to start prefilling.
+        Releases the prefill concurrency slot (when limiting is active) and
+        fires the graph first-token observer (post-TTFT first-token anchoring).
+
+        A ``FirstToken`` now arrives whenever the emitting credit set
+        ``first_token_event`` -- which includes graph credits with prefill
+        limiting OFF. The prefill-released counter must therefore only advance
+        when limiting is actually in force, or the stat inflates; the slot
+        release itself is a no-op when disabled.
 
         Args:
-            first_token: TTFT event details including credit_id and phase.
+            first_token: TTFT event details including credit_id, phase, and the
+                graph-identity fields (trace_id / x_correlation_id / turn_index).
         """
         phase = first_token.phase
         handler = self._phase_handlers.get(phase)
 
-        if not handler:
+        if handler is None:
             _logger.debug(
                 lambda: (
                     f"TTFT for unregistered phase {phase}, "
                     f"credit_id={first_token.credit_id}"
                 )
             )
-            return
+        else:
+            # First-token-aware strategies (e.g. graph replay) observe TTFT here.
+            if handler.handle_first_token is not None:
+                await handler.handle_first_token(first_token)
+            # Only count the release when prefill limiting is active; a
+            # first-token-anchoring event arrives even without limiting.
+            if handler.concurrency_manager.prefill_limiting_enabled:
+                handler.progress.increment_prefill_released()
+            handler.concurrency_manager.release_prefill_slot(phase)
 
-        if handler.handle_first_token is not None:
-            await handler.handle_first_token(first_token)
-
-        # Track the release
-        handler.progress.increment_prefill_released()
-
-        # Release the prefill slot
-        handler.concurrency_manager.release_prefill_slot(phase)
+        # Graph first-token observer fires AFTER the prefill block, independent
+        # of phase-handler gating, for every FirstToken carrying a trace_id.
+        if (
+            first_token.trace_id is not None
+            and self._graph_first_token_observer is not None
+        ):
+            self._graph_first_token_observer(first_token)

@@ -9,6 +9,7 @@ Owns the LoopScheduler and all per-phase components (lifecycle, progress, stop_c
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -24,7 +25,12 @@ from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
 from aiperf.timing.ramping import Ramper, RamperConfig, RampType
-from aiperf.timing.strategies.core import RateSettableProtocol
+from aiperf.timing.session_tree import SessionTreeRegistry
+from aiperf.timing.strategies.core import (
+    LaneSettableProtocol,
+    PhaseTeardownStrategyProtocol,
+    RateSettableProtocol,
+)
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
@@ -34,6 +40,7 @@ if TYPE_CHECKING:
     from aiperf.timing.concurrency import ConcurrencyManager
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
+    from aiperf.timing.graph_channel import GraphPhaseChannel
     from aiperf.timing.phase.publisher import PhasePublisher
     from aiperf.timing.request_cancellation import RequestCancellationSimulator
     from aiperf.timing.strategies.core import TimingStrategyProtocol
@@ -73,7 +80,7 @@ class PhaseRunner(TaskManagerMixin):
         self,
         *,
         config: CreditPhaseConfig,
-        conversation_source: ConversationSource,
+        conversation_source: ConversationSource | None,
         phase_publisher: PhasePublisher,
         credit_router: CreditRouterProtocol,
         concurrency_manager: ConcurrencyManager,
@@ -81,13 +88,16 @@ class PhaseRunner(TaskManagerMixin):
         callback_handler: CreditCallbackHandler,
         url_selection_strategy: URLSelectionStrategyProtocol | None = None,
         branch_orchestrator: BranchOrchestrator | None = None,
+        graph_channel: GraphPhaseChannel | None = None,
         **kwargs,
     ) -> None:
         """Initialize phase runner.
 
         Args:
             config: Phase configuration (phase enum, stop conditions, concurrency limits).
-            conversation_source: Source for conversation data (shared across phases).
+            conversation_source: Source for conversation data (shared across
+                phases). ``None`` for graph runs, which sample inside the graph
+                strategy over ``graph_channel.parsed_graph.traces``.
             phase_publisher: Publishes phase lifecycle events to message bus.
             credit_router: Routes credits to workers (for cancel_all_credits on timeout).
             concurrency_manager: Manages session and prefill concurrency slots.
@@ -99,16 +109,20 @@ class PhaseRunner(TaskManagerMixin):
                 ``_is_phase_complete`` consults ``has_pending_branch_work`` so
                 completion blocks while DAG children are still in flight, even
                 after ``--request-count`` is reached.
+            graph_channel: Graph-run state (parsed graph + consume-once warmup
+                handoff) threaded from the orchestrator. ``None`` for non-graph
+                runs; required when ``timing_mode`` is ``GRAPH_IR``.
         """
         super().__init__(**kwargs)
         self._config = config
         self._conversation_source = conversation_source
         self._branch_orchestrator = branch_orchestrator
+        self._graph_channel = graph_channel
 
         # For FIXED_SCHEDULE mode, use actual dataset size instead of config values.
         # Config values may reflect pre-filtered file size, but dataset_metadata
         # reflects the actual filtered dataset after start/end offset filtering.
-        metadata = conversation_source.dataset_metadata
+        metadata = conversation_source.dataset_metadata if conversation_source else None
         if config.timing_mode == TimingMode.FIXED_SCHEDULE and metadata:
             self._config = config.model_copy(
                 update={
@@ -132,6 +146,14 @@ class PhaseRunner(TaskManagerMixin):
             lifecycle=self._lifecycle,
             counter=self._progress.counter,
         )
+        # Per-tree finality ledger, shared by the issuer (opens trees + stamps
+        # finality) and the branch orchestrator (registers descendants + drives
+        # terminal transitions). Only built for DAG-shaped datasets; None
+        # elsewhere so finality stays conservative. Must precede the issuer so
+        # it can be injected at construction.
+        self._session_tree_registry = self._build_session_tree_registry(
+            conversation_source
+        )
         self._credit_issuer = self._build_credit_issuer(url_selection_strategy)
         self._maybe_construct_branch_orchestrator(conversation_source)
 
@@ -140,6 +162,23 @@ class PhaseRunner(TaskManagerMixin):
         self._return_wait_task: asyncio.Task | None = None
         self._was_cancelled = False
         self._rampers: list[Ramper] = []
+
+    def _build_session_tree_registry(
+        self, conversation_source: ConversationSource | None
+    ) -> SessionTreeRegistry | None:
+        """Build the per-tree finality ledger for DAG-shaped datasets only.
+
+        Mirrors the ``_maybe_construct_branch_orchestrator`` gate: a registry is
+        pointless without DAG fan-out (no descendants to track), and leaving it
+        None on non-DAG runs keeps ``_finality_for_issue`` conservative. Graph
+        runs have NO conversation source (they sample inside the graph
+        strategy) -- the graph adapter stamps its own identity/finality facts.
+        """
+        if conversation_source is None:
+            return None
+        if not self._is_dag_dataset(conversation_source.dataset_metadata):
+            return None
+        return SessionTreeRegistry()
 
     def _build_credit_issuer(
         self, url_selection_strategy: URLSelectionStrategyProtocol | None
@@ -156,19 +195,24 @@ class PhaseRunner(TaskManagerMixin):
             cancellation_policy=self._cancellation_policy,
             lifecycle=self._lifecycle,
             url_selection_strategy=url_selection_strategy,
+            session_tree_registry=self._session_tree_registry,
         )
 
     def _maybe_construct_branch_orchestrator(
-        self, conversation_source: ConversationSource
+        self, conversation_source: ConversationSource | None
     ) -> None:
         """Construct ``BranchOrchestrator`` for DAG-shaped datasets.
 
         A "DAG-shaped" dataset is one whose metadata declares any branches
         OR contains any non-root conversations (``agent_depth > 0``).
         Non-DAG runs leave ``self._branch_orchestrator`` as None and the
-        callback / strategy paths skip orchestrator hooks.
+        callback / strategy paths skip orchestrator hooks. Graph runs have no
+        conversation source (they sample inside the graph strategy) and no
+        DAG-dataset branches, so the orchestrator is never constructed.
         """
         if self._branch_orchestrator is not None:
+            return
+        if conversation_source is None:
             return
         if not self._is_dag_dataset(conversation_source.dataset_metadata):
             return
@@ -177,6 +221,7 @@ class PhaseRunner(TaskManagerMixin):
             conversation_source=conversation_source,
             credit_issuer=self._credit_issuer,
             sticky_router=sticky_router,
+            session_tree_registry=self._session_tree_registry,
         )
 
     @property
@@ -303,12 +348,15 @@ class PhaseRunner(TaskManagerMixin):
             raise e
         finally:
             self._detach_orchestrator_and_cleanup()
+            await self._teardown_strategy(strategy)
 
     def _build_strategy(self) -> TimingStrategyProtocol:
         """Construct the timing strategy class for this phase."""
         StrategyClass = plugins.get_class(
             PluginType.TIMING_STRATEGY, self._config.timing_mode
         )
+        if self._config.timing_mode == TimingMode.GRAPH_IR:
+            return self._build_graph_ir_strategy(StrategyClass)
         return StrategyClass(
             config=self._config,
             conversation_source=self._conversation_source,
@@ -319,6 +367,95 @@ class PhaseRunner(TaskManagerMixin):
             branch_orchestrator=self._branch_orchestrator,
             concurrency_manager=self._concurrency_manager,
             progress=self._progress,
+        )
+
+    def _build_graph_ir_strategy(
+        self, StrategyClass: type[TimingStrategyProtocol]
+    ) -> TimingStrategyProtocol:
+        """Construct ``GraphIRReplayStrategy`` with its graph-only injection channel.
+
+        The fixed timing-strategy kwarg set has no slot for the ``ParsedGraph``
+        or the graph-return observer, so this branch extends construction
+        minimally WITHOUT touching the other strategies' path. The ``ParsedGraph`` is read from the typed ``GraphPhaseChannel``
+        threaded orchestrator -> runner -> strategy; the single unconditional
+        graph-return observer is installed via the shared
+        ``CreditCallbackHandler.set_graph_return_observer``.
+
+        The per-trace t* snapshot window (``start_min_ratio`` /
+        ``start_max_ratio``) and the phase-start burst mode are per-run config
+        carried on this phase's ``CreditPhaseConfig``
+        (``--trajectory-start-min/max-ratio`` / ``--burst-phase-starts``,
+        threaded by ``TimingConfig.from_run``); the sampling seed
+        (``t_star_random_seed``) is the run's resolved ``--random-seed`` --
+        the same seed that drives synthesized content, so one seed reproduces
+        the whole run. Without this the strategy would
+        fall back to its inert ``[0, 0]`` defaults (t*=0 identity replay) and
+        the t* machinery would never engage. The default window is ``0.0..0.0``
+        (t*=0, full native replay); the ``0.0..1.0`` AgentX
+        ``TrajectorySource`` window is applied only by
+        ``--scenario inferencex-agentx-mvp`` or explicit flags, so a bare
+        graph run replays natively out of the box.
+
+        The extended (cache-pressure) warmup duration
+        (``--agentic-cache-warmup-duration``, per-run config on this phase's
+        ``CreditPhaseConfig``) is threaded in as
+        ``cache_pressure_duration_s``, arming the WARMUP strategy's pressure
+        stage (None disables it). Any ``GraphWarmupHandoff`` the WARMUP phase
+        stashed on the shared ``GraphPhaseChannel`` is popped consume-once and
+        threaded in as ``warmup_handoff`` so the first PROFILING graph phase
+        resumes each lane at its recorded execution frontier.
+        """
+        channel = self._graph_channel
+        if channel is None:
+            raise RuntimeError(
+                "TimingMode.GRAPH_IR selected but no GraphPhaseChannel was "
+                "provided; graph runs must thread the parsed graph through "
+                "the orchestrator's graph channel."
+            )
+        parsed_graph = channel.parsed_graph
+        # Extended-warmup handoff: pop (consume-once) so a later phase built
+        # from the same shared channel never sees a stale re-cut. The WARMUP
+        # phase is built before any handoff exists, so the pop is a no-op
+        # there; the first PROFILING graph phase after an extended warmup
+        # consumes it.
+        warmup_handoff = channel.warmup_handoff
+        channel.warmup_handoff = None
+        # getattr: unit harnesses inject duck-typed handlers exposing only the
+        # set_* API; the production CreditCallbackHandler always has clear_*.
+        return StrategyClass(
+            config=self._config,
+            conversation_source=self._conversation_source,
+            scheduler=self._scheduler,
+            stop_checker=self._stop_checker,
+            credit_issuer=self._credit_issuer,
+            lifecycle=self._lifecycle,
+            parsed_graph=parsed_graph,
+            graph_channel=channel,
+            register_observer=self._callback_handler.set_graph_return_observer,
+            register_first_token_observer=(
+                self._callback_handler.set_graph_first_token_observer
+            ),
+            unregister_observer=getattr(
+                self._callback_handler, "clear_graph_return_observer", None
+            ),
+            unregister_first_token_observer=getattr(
+                self._callback_handler, "clear_graph_first_token_observer", None
+            ),
+            start_min_ratio=getattr(self._config, "trajectory_start_min_ratio", None)
+            or 0.0,
+            start_max_ratio=getattr(self._config, "trajectory_start_max_ratio", None)
+            or 0.0,
+            t_star_random_seed=getattr(self._config, "random_seed", None) or 0,
+            burst_phase_starts=bool(getattr(self._config, "burst_phase_starts", None)),
+            cache_pressure_duration_s=getattr(
+                self._config, "cache_pressure_duration", None
+            ),
+            warmup_handoff=warmup_handoff,
+            dataset_sampling_strategy=getattr(
+                self._config, "dataset_sampling_strategy", None
+            ),
+            allow_dataset_wrap=getattr(self._config, "allow_dataset_wrap", None),
+            cache_bust=getattr(self._config, "cache_bust", None),
         )
 
     def _register_strategy_with_callback_handler(
@@ -336,6 +473,30 @@ class PhaseRunner(TaskManagerMixin):
         )
         if self._branch_orchestrator is not None:
             self._callback_handler.set_branch_orchestrator(self._branch_orchestrator)
+
+    async def _teardown_strategy(self, strategy: TimingStrategyProtocol) -> None:
+        """Invoke the strategy's optional ``teardown_phase`` hook exactly once.
+
+        Runs in ``run()``'s ``finally`` so per-phase resources (e.g. the graph
+        strategy's return / first-token observers and retained sticky trace
+        lifecycles) are released on EVERY exit path -- drain, timeout, error,
+        cancel. Non-final seamless phases defer the teardown to the background
+        return-wait completion: their returns are still in flight when
+        ``run()`` exits and the strategy's return observer must stay installed
+        until they land. Strategies without the hook (all linear strategies)
+        are skipped -- the default no-op.
+        """
+        if not isinstance(strategy, PhaseTeardownStrategyProtocol):
+            return
+        if self._return_wait_task is not None and not self._return_wait_task.done():
+            self._return_wait_task.add_done_callback(
+                lambda _task: self.execute_async(strategy.teardown_phase())
+            )
+            return
+        try:
+            await strategy.teardown_phase()
+        except Exception as exc:
+            self.warning(f"Strategy teardown_phase failed: {exc!r}")
 
     def _detach_orchestrator_and_cleanup(self) -> None:
         """Final-pass orchestrator teardown for the phase.
@@ -414,6 +575,15 @@ class PhaseRunner(TaskManagerMixin):
             await self._wait_for_returning_complete()
             self._progress_task.cancel()
 
+            report = getattr(strategy, "report_warmup_failures", None)
+            if report is not None:
+                # A WARMUP phase that recorded terminal failures aborts the
+                # run here (agentx parity): the raise propagates through
+                # run()'s except -> _publish_phase_failure_lifecycle so other
+                # services see the phase end. Linear strategies lack the hook
+                # (getattr None) and are unaffected.
+                report()
+
         for ramper in self._rampers:
             ramper.stop()
         self._scheduler.cancel_all()
@@ -464,10 +634,15 @@ class PhaseRunner(TaskManagerMixin):
         self._rampers = []
         config = self._config
 
-        # Session concurrency ramper (stepped mode)
+        # Session concurrency ramper (stepped mode). Graph strategies expose
+        # LANE admission ramping (LaneSettableProtocol) because graph credits
+        # bypass session slots -- the same ramper drives both targets, so one
+        # flag shapes the ramp on either plane.
         if config.concurrency_ramp_duration_sec and config.concurrency:
+            lane_settable = isinstance(strategy, LaneSettableProtocol)
+            what = "lane" if lane_settable else "session"
             self.info(
-                f"Starting session concurrency ramp: 1 → {config.concurrency} "
+                f"Starting {what} concurrency ramp: 1 → {config.concurrency} "
                 f"over {config.concurrency_ramp_duration_sec}s"
             )
             ramp_config = RamperConfig(
@@ -478,9 +653,9 @@ class PhaseRunner(TaskManagerMixin):
             )
 
             def setter(limit: float) -> None:
-                return self._concurrency_manager.set_session_limit(
-                    config.phase, int(limit)
-                )
+                self._concurrency_manager.set_session_limit(config.phase, int(limit))
+                if lane_settable:
+                    strategy.set_lane_limit(int(limit))
 
             self._rampers.append(Ramper(setter=setter, config=ramp_config))
 
@@ -638,6 +813,19 @@ class PhaseRunner(TaskManagerMixin):
                 return
 
             timeout = self._lifecycle.time_left_in_seconds(include_grace_period=True)
+            if timeout is None and self._config.phase == CreditPhase.WARMUP:
+                # A duration-less phase never reaches the lifecycle's grace math
+                # (time_left_in_seconds returns None when expected_duration_sec is
+                # None), which made a finite warmup grace_period_sec DEAD config:
+                # the returning wait was unbounded and a lost pressure return hung
+                # the run. Bound the WARMUP drain by the finite grace directly --
+                # agentx's dedicated accelerated-warmup drain wait does exactly
+                # this (its runner.py:665-686). Infinite grace (the boundary-
+                # priming default) keeps today's unbounded wait; non-WARMUP phases
+                # are out of scope.
+                grace = self._config.grace_period_sec
+                if grace is not None and math.isfinite(grace):
+                    timeout = grace
             timed_out = await self._wait_for_event_with_timeout(
                 name=f"{self._config.phase} phase credits returned",
                 event=self._progress.all_credits_returned_event,

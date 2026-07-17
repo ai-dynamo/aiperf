@@ -6,6 +6,7 @@ import asyncio
 import gc
 import time
 from io import BytesIO
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -43,6 +44,10 @@ from aiperf.common.models import (
     RequestInfo,
     SessionPayloads,
 )
+from aiperf.common.models.dataset_models import (
+    GraphDatasetMetadata,
+    GraphSegmentClientMetadata,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset import FileDataset, PublicDataset
@@ -60,6 +65,7 @@ from aiperf.transports.http_defaults import AioHttpDefaults
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.dataset.graph.store_build import GraphStoreBuildResult
     from aiperf.dataset.protocols import (
         DatasetBackingStoreProtocol,
         DatasetClientStoreProtocol,
@@ -149,7 +155,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.info(lambda: f"Configuring dataset for {self.service_id}")
         begin = time.perf_counter()
         await self._configure_dataset()
-        await self._generate_inputs_json_file()
+        # Skip inputs.json for graph runs: the worker materializes real
+        # per-node payloads from the unified store, so there is no
+        # conversation payload to dump -- entries would be empty placeholders.
+        if self._graph_workload_path() is None:
+            await self._generate_inputs_json_file()
         await self._configure_dataset_client_and_free_memory()
 
         duration = time.perf_counter() - begin
@@ -159,7 +169,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         """Configure the dataset client for serving fallback requests, then free memory."""
         conversation_count = len(self.dataset)
 
-        if not self._compress_only:
+        # Graph runs never initialize the conversation backing store (they serve
+        # no conversation requests -- workers read the unified segment store), so
+        # building the fallback client from it would fail.
+        if not self._compress_only and self._graph_workload_path() is None:
             client_metadata = self._backing_store.get_client_metadata()
             ClientStoreClass = plugins.get_class(
                 PluginType.DATASET_CLIENT_STORE, client_metadata.client_type
@@ -293,8 +306,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         endpoint: EndpointProtocol = EndpointClass(model_endpoint=model_endpoint)
         self.debug(
-            lambda: f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
-            f"class: {endpoint.__class__.__name__}",
+            lambda: (
+                f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
+                f"class: {endpoint.__class__.__name__}"
+            ),
         )
         session_payloads_map: dict[str, list] = {}
         for conversation in self.dataset.values():
@@ -406,6 +421,44 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._default_context_mode = composer.get_default_context_mode()
         return conversations
 
+    def _graph_workload_path(self) -> Path | None:
+        """Return the input path iff this run is a graph IR workload, else None."""
+        from aiperf.dataset.graph.workload_detect import resolve_graph_workload
+
+        ref = resolve_graph_workload(self.run)
+        return ref.path if ref is not None else None
+
+    async def _build_graph_store(self, graph_path: Path) -> GraphStoreBuildResult:
+        """Gate the endpoint type, then run the ONE graph store build.
+
+        The shared seam for :meth:`_configure_graph_dataset` (production, which
+        broadcasts the result's store/sidecar locations) and
+        :meth:`_configure_graph_workload` (facet-only callers): validate the
+        run's endpoint up front
+        (:func:`~aiperf.dataset.graph.workload_detect.validate_graph_endpoint_type`
+        -- the graph dispatch path emits a chat-completions body verbatim, so a
+        non-chat endpoint would 422 on every request), then hand the build to
+        :class:`~aiperf.dataset.graph.store_build.GraphStoreBuilder`.
+        """
+        from aiperf.dataset.graph.store_build import GraphStoreBuilder
+        from aiperf.dataset.graph.workload_detect import validate_graph_endpoint_type
+
+        validate_graph_endpoint_type(self.run)
+        return await GraphStoreBuilder(self.run).build(graph_path)
+
+    async def _configure_graph_workload(self, graph_path: Path) -> GraphDatasetMetadata:
+        """Build the graph store for a graph workload and return the graph facet.
+
+        The build itself lives in
+        :class:`~aiperf.dataset.graph.store_build.GraphStoreBuilder` (the ONE
+        streaming store build for every graph workload -- weka / dynamo /
+        native / dag_jsonl); this wrapper keeps the facet-returning contract
+        (:class:`GraphDatasetMetadata`: the trace universe plus the per-node
+        theoretical prefix-cache map) for direct callers and runs the same
+        endpoint gate as production via :meth:`_build_graph_store`.
+        """
+        return (await self._build_graph_store(graph_path)).facet
+
     async def _load_accuracy_dataset(self) -> list[Conversation]:
         from aiperf.dataset.loader.accuracy_dataset_loader import AccuracyDatasetLoader
 
@@ -433,27 +486,42 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         loader = AccuracyDatasetLoader(run=self.run)
         return await loader.load()
 
-    async def _configure_dataset(self) -> None:
-        self.dataset_configured.clear()
-        self._default_context_mode = None
+    async def _select_conversations(self) -> list[Conversation]:
+        """Load the run's conversations via the appropriate dataset path.
 
+        Precedence: accuracy > public > file-backed custom composer > synthetic.
+
+        Graph IR workloads never reach this method: they are configured natively
+        by :meth:`_configure_graph_dataset` (no conversations), which
+        :meth:`_configure_dataset` routes to before any conversation work.
+        """
         accuracy_cfg = self.run.cfg.accuracy
-        accuracy_enabled = accuracy_cfg.enabled if accuracy_cfg else False
-        default_dataset = self.run.cfg.get_default_dataset()
+        if accuracy_cfg and accuracy_cfg.enabled:
+            return await self._load_accuracy_dataset()
 
-        if accuracy_enabled:
-            conversations = await self._load_accuracy_dataset()
-        elif isinstance(default_dataset, PublicDataset):
-            conversations = await self._load_public_dataset()
-        elif isinstance(default_dataset, FileDataset) or (
+        default_dataset = self.run.cfg.get_default_dataset()
+        if isinstance(default_dataset, PublicDataset):
+            return await self._load_public_dataset()
+        if isinstance(default_dataset, FileDataset) or (
             getattr(default_dataset, "path", None) is not None
         ):
             # Use CUSTOM composer if the dataset is file-backed (FileDataset
             # or any composed/file-source variant exposing a `path`). The
             # composer auto-infers the format.
-            conversations = self._load_custom_dataset()
-        else:
-            conversations = self._load_synthetic_dataset()
+            return self._load_custom_dataset()
+        return self._load_synthetic_dataset()
+
+    async def _configure_dataset(self) -> None:
+        self.dataset_configured.clear()
+        self._default_context_mode = None
+
+        graph_path = self._graph_workload_path()
+        if graph_path is not None:
+            await self._configure_graph_dataset(graph_path)
+            return
+
+        default_dataset = self.run.cfg.get_default_dataset()
+        conversations = await self._select_conversations()
 
         self.dataset = {conv.session_id: conv for conv in conversations}
         self._conversation_ids_cache = [
@@ -507,6 +575,44 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 service_id=self.service_id,
                 metadata=self.dataset_metadata,
                 client_metadata=client_metadata,
+            )
+        )
+
+    async def _configure_graph_dataset(self, graph_path: Path) -> None:
+        """Graph-native configure: unified store + sidecar + graph broadcast.
+
+        No stub conversations, no conversation mmap store, no inputs.json:
+        graph payloads live in the unified segment store keyed by
+        ``(trace_id, node_ordinal)`` and the schedule plane plans from the
+        graph_meta sidecar, so the conversation-shaped plumbing has nothing
+        to carry for a graph run. The broadcast's graph-typed client metadata
+        is the single source of truth for the store and sidecar locations --
+        both come off the build's :class:`GraphStoreBuildResult` (the builder
+        hard-fails a build that never landed the mandatory sidecar).
+        """
+        result = await self._build_graph_store(graph_path)
+        graph_meta = result.facet
+        self.dataset = {}
+        self._conversation_ids_cache = []
+        default_dataset = self.run.cfg.get_default_dataset()
+        self.dataset_metadata = DatasetMetadata(
+            conversations=[],
+            sampling_strategy=getattr(default_dataset, "sampling", None),
+            graph=graph_meta,
+        )
+        self.info(
+            f"graph dataset configured: {len(graph_meta.trace_ids)} traces, "
+            f"sidecar {result.sidecar_path}"
+        )
+        await self.publish(
+            DatasetConfiguredNotification(
+                service_id=self.service_id,
+                metadata=self.dataset_metadata,
+                client_metadata=GraphSegmentClientMetadata(
+                    store_base_path=result.base_path,
+                    benchmark_id=self.run.benchmark_id,
+                    sidecar_path=result.sidecar_path,
+                ),
             )
         )
 

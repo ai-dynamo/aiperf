@@ -44,6 +44,25 @@ class AudioFormat(CaseInsensitiveStrEnum):
     """MP3 format. Compressed audio, smaller file sizes, good quality."""
 
 
+class CacheBustTarget(CaseInsensitiveStrEnum):
+    """Where (and how) to inject a per-session cache-bust marker.
+
+    A unique marker injected into a session's first-turn prompt PREFIX makes the
+    inference server's KV cache see a distinct prefix per session, defeating
+    cross-session prefix-cache hits that would otherwise inflate cache-hit
+    metrics. The graph snapshot-replay path
+    needs only the ``FIRST_TURN_PREFIX`` and ``NONE`` variants.
+    """
+
+    NONE = "none"
+    """Cache-bust disabled: sessions send their recorded bytes verbatim."""
+
+    FIRST_TURN_PREFIX = "first_turn_prefix"
+    """Prepend the marker to the first turn's prompt prefix (token 0), so the
+    whole prompt's KV-cache prefix diverges per session. Later turns inherit the
+    changed prefix naturally; only the first turn is independently busted."""
+
+
 class CommAddress(CaseInsensitiveStrEnum):
     """Enum for specifying the address type for communication clients.
     This is used to lookup the address in the communication config."""
@@ -140,9 +159,9 @@ class PrerequisiteKind(CaseInsensitiveStrEnum):
     """Types of conditions that can gate a turn's dispatch.
 
     Extensible: v1 orchestrator only honors SPAWN_JOIN; the remaining values
-    are reserved and rejected at load time by
-    ``validate_for_orchestrator_v1``. Each deferred value is pinned to a
-    future orchestrator capability in the DAG prereq-gating design doc.
+    are reserved for future orchestrator capabilities and rejected at load
+    time by ``validate_for_orchestrator_v1``, so datasets authored against
+    them fail loud instead of silently ignoring the gate.
     """
 
     SPAWN_JOIN = "spawn_join"
@@ -479,6 +498,18 @@ class ServerMetricsFormat(CaseInsensitiveStrEnum):
     """Export raw time-series data with delta calculations in Parquet columnar format.
     Best for: Analytics with DuckDB/pandas/Polars, efficient storage, SQL queries.
     Includes cumulative deltas from reference point for counters and histograms."""
+
+
+class MemoryMapFormat(CaseInsensitiveStrEnum):
+    """Format options for memory-mapped backing stores.
+
+    Identifies the on-disk layout of the concatenated-blob data file plus its
+    offset-index sidecar so readers can select the matching index model.
+    """
+
+    DATASET = "dataset"
+    """Conversation dataset format: one blob per conversation keyed by session ID.
+    See MemoryMapDatasetBackingStore / MemoryMapDatasetClient."""
 
 
 class ServiceRegistrationStatus(CaseInsensitiveStrEnum):

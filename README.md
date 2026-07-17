@@ -119,7 +119,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 
 - Scalable multiprocess architecture with 10 services communicating via ZMQ
 - 3 UI modes: `dashboard` (real-time TUI), `simple` (progress bars), `none` (headless)
-- Multiple benchmarking modes: concurrency, request-rate, [request-rate with max concurrency](docs/tutorials/request-rate-concurrency.md), [trace replay](docs/benchmark-modes/trace-replay.md)
+- Multiple benchmarking modes: concurrency, request-rate, [request-rate with max concurrency](docs/tutorials/request-rate-concurrency.md), [trace replay](docs/benchmark-modes/trace-replay.md), [agentic workloads](docs/benchmark-modes/agentic.md)
 - Extensible plugin system for endpoints, datasets, transports, and metrics
 - [Public dataset support](docs/benchmark-datasets.md) including ShareGPT and custom formats
 
@@ -153,6 +153,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 
 ### Workloads and Data
 - [Trace Benchmarking](docs/benchmark-modes/trace-replay.md) - Deterministic workload replay
+- [Agentic Workloads](docs/benchmark-modes/agentic.md) - Benchmark multi-step agent workflows: replay recorded agent traces (Dynamo, Weka) or author them in AIPerf's Graph IR
 - [Bailian Traces](docs/tutorials/bailian-trace.md) - Bailian production trace replay
 - [Baseten Traces](docs/tutorials/baseten-trace.md) - Baseten Parquet production trace replay
 - [BurstGPT Traces](docs/tutorials/burst-gpt-trace.md) - BurstGPT real-world bursty traffic trace replay

@@ -293,19 +293,27 @@ def parse_str_or_list_of_positive_values(input: Any) -> list[Any]:
 
 
 def parse_file(value: str | None) -> Path | None:
-    """Parse an existing file/directory path from a CLI value.
+    """Parse an input source from a CLI value: a local file/dir or a weka HF id.
+
+    Accepts an existing local file/directory path, or a recognized weka
+    HuggingFace ``org/name`` repo id (e.g. ``semianalysisai/cc-traces-weka-062126``)
+    that is NOT a local path. The HF id is a graph workload reference resolved by
+    the weka adapter at load time, not a filesystem path, so it must bypass the
+    file/dir existence gate. It is returned as a ``Path`` whose ``str()`` round-trips
+    to the original id (single-slash ``org/name`` is path-stable), which
+    ``resolve_graph_workload`` / ``WekaTraceAdapter.can_load`` then re-detect.
 
     Args:
-        value: Path string from CLI/config input. ``None`` or an empty string
-            disables the path and returns ``None``.
+        value: Path string or weka HF id from CLI/config input. ``None`` or an
+            empty string disables the source and returns ``None``.
 
     Returns:
-        A ``Path`` pointing to an existing file or directory, or ``None`` when no
-        value was provided.
+        A ``Path`` pointing to an existing file/directory or carrying a weka HF
+        repo id, or ``None`` when no value was provided.
 
     Raises:
-        ValueError: If ``value`` is not a string, or if the path does not exist as
-            a file or directory.
+        ValueError: If ``value`` is not a string, or if it is neither an existing
+            file/directory nor a recognized weka HF dataset id.
     """
 
     if not value:
@@ -316,8 +324,15 @@ def parse_file(value: str | None) -> Path | None:
         path = Path(value)
         if path.is_file() or path.is_dir():
             return path
-        else:
-            raise ValueError(f"'{value}' is not a valid file or directory")
+        # A weka HF repo id is a valid graph workload source even though no such
+        # local path exists; the adapter resolves it from the HuggingFace hub/cache.
+        from aiperf.dataset.graph.adapters.weka.trace import (
+            _looks_like_hf_dataset_id,
+        )
+
+        if _looks_like_hf_dataset_id(value):
+            return path
+        raise ValueError(f"'{value}' is not a valid file or directory")
 
 
 def validate_sequence_distribution(v: str | None) -> str | None:

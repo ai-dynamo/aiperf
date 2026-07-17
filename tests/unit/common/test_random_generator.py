@@ -198,6 +198,30 @@ class TestGlobalRNGErrorStates:
         assert val1 != val2
 
 
+class TestRootSeedAccessor:
+    """Test the read-only root_seed() module accessor."""
+
+    def test_root_seed_initialized_returns_init_seed(self):
+        """Test that root_seed() returns the seed passed to init()."""
+        rng.reset()
+        rng.init(42)
+
+        assert rng.root_seed() == 42
+
+    def test_root_seed_after_reset_returns_none(self):
+        """Test that root_seed() returns None when the manager is uninitialized."""
+        rng.reset()
+
+        assert rng.root_seed() is None
+
+    def test_root_seed_unseeded_manager_returns_none(self):
+        """Test that root_seed() returns None for an unseeded (init(None)) manager."""
+        rng.reset()
+        rng.init(None)
+
+        assert rng.root_seed() is None
+
+
 class TestSampleMethodEdgeCases:
     """Test edge cases for sample_normal and sample_positive_normal_integer."""
 

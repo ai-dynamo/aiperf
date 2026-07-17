@@ -43,6 +43,23 @@ class RunResult(AIPerfBaseModel):
     trial_index: int = Field(
         default=0, description="Zero-based trial index within the variation."
     )
+    submission_valid: bool | None = Field(
+        default=None,
+        description="Lock-only scenario verdict carried from "
+        "run.resolved.scenario_outcome.submission_valid (stamped by "
+        "apply_scenario in the parent before the subprocess dump). True for a "
+        "clean lock, False under --unsafe-override with violations, None when no "
+        "--scenario was set. This is the VALIDATOR-side value ONLY; the aggregate "
+        "exporter folds cross-run runtime signals (context-overflow rate, "
+        "cancellation) on top of it. Distinct from the per-run JSON's already-"
+        "runtime-folded submission_valid, which must not be reused as the seed.",
+    )
+    submission_invalid_reasons: list[str] = Field(
+        default_factory=list,
+        description="Lock-only scenario invalid-reason tags carried from "
+        "run.resolved.scenario_outcome.submission_invalid_reasons (e.g. "
+        "['unsafe_override']). Empty for a clean lock or a non-scenario run.",
+    )
 
 
 VariationKey = tuple[str, tuple[tuple[str, Any], ...]]

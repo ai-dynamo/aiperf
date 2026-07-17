@@ -59,6 +59,7 @@ __all__ = [
     "derive",
     "init",
     "reset",
+    "root_seed",
 ]
 
 _logger = AIPerfLogger(__name__)
@@ -507,6 +508,16 @@ def reset() -> None:
     """
     global _manager
     _manager = None
+
+
+def root_seed() -> int | None:
+    """Return the global manager's root seed, or None when uninitialized or unseeded.
+
+    Read-only introspection for callers that need to resolve an effective seed
+    (e.g. the graph adapters' content-seed ladder) without reaching into the
+    manager's privates.
+    """
+    return _manager._root_seed if _manager is not None else None
 
 
 def derive_variation_seed(

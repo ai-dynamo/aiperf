@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -478,3 +478,184 @@ class TestRetrieveConversation:
 
         assert result == expected_conversation
         mock_fallback.assert_called_once_with("test-conv-123", sample_credit_context)
+
+
+# --- Session-Routing Terminal Hook Tests ---
+
+
+@pytest.mark.asyncio
+class TestReleaseAndEvictForTerminal:
+    """The terminal-eviction path fires the routing plugin's post-session hook
+    (``InferenceClient.notify_session_end``) so stateful plugins release the
+    session on ANY terminal outcome, even one abandoned before its final turn
+    (e.g. cancellation)."""
+
+    async def test_release_and_evict_for_terminal_notifies_session_end(
+        self, mock_worker, sample_credit_context
+    ):
+        credit = sample_credit_context.credit
+        mock_worker.inference_client.notify_session_end = Mock()
+
+        mock_worker._release_and_evict_for_terminal(credit, credit.x_correlation_id)
+
+        mock_worker.inference_client.notify_session_end.assert_called_once_with(
+            credit.x_correlation_id
+        )
+
+    async def test_raising_on_session_end_does_not_block_eviction(
+        self, mock_worker, sample_credit_context
+    ):
+        """A routing plugin whose on_session_end raises must not abort the
+        worker's eviction: the InferenceClient hook swallows + warns, so the
+        session still gets evicted."""
+        from aiperf.workers.inference_client import InferenceClient
+
+        credit = sample_credit_context.credit
+        fake_client = MagicMock()
+        fake_client._routing.on_session_end.side_effect = RuntimeError("plugin boom")
+        fake_client._routing_mode = "dynamo_headers"
+        # Drive the REAL hook logic (try/except-log) bound to the fake client.
+        fake_client.notify_session_end = InferenceClient.notify_session_end.__get__(
+            fake_client
+        )
+        mock_worker.inference_client = fake_client
+        mock_worker.session_manager.get = Mock(return_value=None)
+        mock_worker.session_manager.evict = Mock()
+
+        # Must not raise despite the plugin fault.
+        mock_worker._release_and_evict_for_terminal(credit, credit.x_correlation_id)
+
+        mock_worker.session_manager.evict.assert_called_once_with(
+            credit.x_correlation_id
+        )
+        fake_client._routing.on_session_end.assert_called_once_with(
+            credit.x_correlation_id
+        )
+        fake_client.warning.assert_called_once()
+
+
+class TestSessionRoutingTerminalHooks:
+    """Every terminal disposition this codebase has reaches
+    ``InferenceClient.notify_session_end`` so routing plugins get their
+    idempotent post-session hook: the final-turn / cancellation eviction path
+    and the done-callback cancel-before-start branch (which the finally block
+    never sees)."""
+
+    def _done_callback(self, *, returned: bool) -> MagicMock:
+        """Drive the real done-callback on a mock worker with a not-yet-returned
+        (or already-returned) credit context."""
+        worker = MagicMock()
+        worker.inference_client = MagicMock()
+        worker.service_id = "worker-1"
+        credit = MagicMock()
+        credit.id = 7
+        credit.x_correlation_id = "conv-done"
+        ctx = MagicMock()
+        ctx.returned = returned
+        ctx.credit = credit
+        ctx.error = None
+        task = MagicMock()
+        task.cancelled.return_value = True
+        Worker._on_credit_drop_message_task_done.__get__(worker)(task, ctx)
+        return worker
+
+    def test_done_callback_not_returned_branch_notifies_session_end(self) -> None:
+        """The cancel-before-start path (task done, credit never returned) is a
+        terminal disposition the finally block never sees, so the done-callback
+        must fire the hook too."""
+        worker = self._done_callback(returned=False)
+        worker.inference_client.notify_session_end.assert_called_once_with("conv-done")
+
+    def test_done_callback_already_returned_does_not_double_notify(self) -> None:
+        """When the credit already returned, the finally block already notified;
+        the done-callback short-circuits without a second hook call."""
+        worker = self._done_callback(returned=True)
+        worker.inference_client.notify_session_end.assert_not_called()
+
+
+@pytest.mark.asyncio
+class TestCreateRequestInfoFinality:
+    """Touch #3: worker -> RequestInfo lineage-finality plumb.
+
+    The Credit is a REAL struct (not a MagicMock, which would auto-create the
+    attributes and mask a missed plumb) carrying both finality facts plus a
+    tree root id.
+    """
+
+    async def test_create_request_info_plumbs_finality_from_credit(self, mock_worker):
+        from aiperf.common.models import Turn
+
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.PROFILING,
+                conversation_id="test-conv",
+                x_correlation_id="child-x",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+                agent_depth=1,
+                parent_correlation_id="root-x",
+                root_correlation_id="root-x",
+                is_parent_final=True,
+                is_tree_final=True,
+            ),
+            drop_perf_ns=0,
+        )
+
+        # Session fields the builder reads, set to real values (the guard is on
+        # the Credit, so a lightweight session stand-in is fine here).
+        session = MagicMock()
+        session.x_correlation_id = "child-x"
+        session.conversation.session_id = "test-conv"
+        session.turn_index = 0
+        session.turn_list = [Turn()]
+        session.url_index = None
+
+        request_info = mock_worker._create_request_info(
+            x_request_id="request-id",
+            session=session,
+            credit_context=credit_context,
+        )
+
+        assert request_info.is_parent_final is True
+        assert request_info.is_tree_final is True
+        # effective_root_correlation_id resolves to the stamped root id.
+        assert request_info.root_correlation_id == "root-x"
+
+    async def test_create_request_info_root_defaults_to_own_correlation(
+        self, mock_worker
+    ):
+        """A root credit (no root_correlation_id) surfaces its own
+        x_correlation_id as the record's tree root, with conservative finality.
+        """
+        from aiperf.common.models import Turn
+
+        credit_context = CreditContext(
+            credit=Credit(
+                id=2,
+                phase=CreditPhase.PROFILING,
+                conversation_id="test-conv",
+                x_correlation_id="root-x",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+            ),
+            drop_perf_ns=0,
+        )
+        session = MagicMock()
+        session.x_correlation_id = "root-x"
+        session.conversation.session_id = "test-conv"
+        session.turn_index = 0
+        session.turn_list = [Turn()]
+        session.url_index = None
+
+        request_info = mock_worker._create_request_info(
+            x_request_id="request-id",
+            session=session,
+            credit_context=credit_context,
+        )
+
+        assert request_info.root_correlation_id == "root-x"
+        assert request_info.is_parent_final is None
+        assert request_info.is_tree_final is False

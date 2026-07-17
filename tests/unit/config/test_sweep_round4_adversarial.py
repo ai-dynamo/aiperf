@@ -1,18 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Round-4 adversarial regressions for the sweep + config system.
+"""Adversarial regressions for the sweep + config system.
 
 Continues the H-series after ``test_sweep_round3_adversarial.py``:
 
 - H20: ``SLAFilter`` rejects NaN/inf threshold and empty/whitespace
-  ``metric_tag`` (was: silent feasibility false-fail when threshold is
+  ``metric_tag`` (otherwise: silent feasibility false-fail when threshold is
   NaN; meaningless filter when metric_tag is empty).
 - H21: ``PostProcessSpec`` rejects empty handler, NUL bytes in
   ``output_filename``, and dot-only stems like ``..json`` / ``.json``
-  (was: hidden-file confusion + OS-level open failures at write time).
+  (otherwise: hidden-file confusion + OS-level open failures at write time).
 - H22: ``detect_sweep_fields`` is scoped to phase-rooted paths only --
-  a list at ``datasets.X.prompts.isl.mean = [100, 200]`` no longer
-  silently auto-sweeps and produces validation-failing variants.
+  a list at ``datasets.X.prompts.isl.mean = [100, 200]`` must not
+  silently auto-sweep and produce validation-failing variants.
 """
 
 from __future__ import annotations

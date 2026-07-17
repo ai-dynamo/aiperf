@@ -1,0 +1,2 @@
+{"session_id":"root","pre_session_spawns":["bg-child"],"turns":[{"model":"m","messages":[{"role":"user","content":"Owner turn 0 kickoff."}],"max_tokens":16},{"model":"m","messages":[{"role":"user","content":"Owner turn 1 follow-up."}],"max_tokens":16}]}
+{"session_id":"bg-child","turns":[{"model":"m","messages":[{"role":"user","content":"Background child work item."}],"max_tokens":16}]}

@@ -2986,6 +2986,108 @@
           "default": null,
           "description": "Accuracy benchmarking configuration. When set, enables accuracy evaluation alongside performance profiling."
         },
+        "scenario": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Plain data here; the lock is applied by the ScenarioResolver step in the pre-bootstrap resolver chain (auto-fills defaults, validates, raises ScenarioLockError on conflict). Distinct from the sweep ``scenarios`` strategy (SweepConfig), which expands hand-picked named runs -- this field is a single invariant LOCK, not a sweep.",
+          "title": "Scenario"
+        },
+        "unsafeOverride": {
+          "default": false,
+          "description": "Convert scenario lock errors to warnings; stamps submission_valid=false in the resolved scenario outcome. No-op without ``scenario``. Plain data; consumed by the ScenarioResolver.",
+          "title": "Unsafeoverride",
+          "type": "boolean"
+        },
+        "trajectoryStartMinRatio": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Lower bound (fraction of each trace's recorded wall-clock duration) of the per-trace t* snapshot-instant sampling window for recorded graph replay. Unset (None) resolves to 0.0. With both bounds at 0.0 the window is OFF (full native replay). The inferencex-agentx-mvp scenario auto-applies 0.0 when unset and locks an explicit conflicting value. Must be <= trajectory_start_max_ratio.",
+          "title": "Trajectorystartminratio",
+          "x-jinja2-supported": true
+        },
+        "trajectoryStartMaxRatio": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Upper bound (fraction of each trace's recorded wall-clock duration) of the per-trace t* snapshot-instant sampling window for recorded graph replay. Unset (None) resolves to 0.0 (window OFF, full native replay); any value > 0 engages the t* snapshot machinery (per-trace t* sampling + auto boundary-priming warmup). The inferencex-agentx-mvp scenario auto-applies 1.0 when unset and locks an explicit conflicting value.",
+          "title": "Trajectorystartmaxratio",
+          "x-jinja2-supported": true
+        },
+        "burstPhaseStarts": {
+          "default": false,
+          "description": "Burst-vs-spread control for phase starts on the recorded-trace graph-IR replay path (--burst-phase-starts). False = SPREAD (recorded leading offsets honored); True = BURST (both phase starts collapse into a synchronized burst).",
+          "title": "Burstphasestarts",
+          "type": "boolean"
+        },
+        "agenticCacheWarmupDuration": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Extended (cache-pressure) warmup duration in seconds for recorded graph replay (--agentic-cache-warmup-duration). After the boundary-priming warmup drains, the live post-t* replay continues with zero idle delay and one-token outputs for this long before profiling. None = no pressure stage.",
+          "title": "Agenticcachewarmupduration",
+          "x-jinja2-supported": true
+        },
         "model": {
           "description": "Shorthand for 'models'. Accepts a single value which will be converted to a list/dict. Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.",
           "oneOf": [
@@ -3278,7 +3380,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, directories for random_pool.",
+                  "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, directories for random_pool. Graph trace inputs (`.jsonl` / `.jsonl.gz` / segmented `.gz` directories) are recognized as graph workloads independently of `format` — auto-detected, or forced with `graph_format`.",
                   "title": "Path"
                 },
                 "records": {
@@ -3311,7 +3413,19 @@
                 "format": {
                   "$ref": "#/$defs/DatasetFormat",
                   "default": "single_turn",
-                  "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
+                  "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts. This selects a *custom dataset loader* (conversation-style inputs) and is ignored for graph workloads, which are auto-detected from `path` or forced via `graph_format`."
+                },
+                "graphFormat": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/GraphAdapterType"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Force a graph-adapter format for this `--input-file`, overriding workload auto-detection. Accepts a registered graph adapter name (e.g. `dynamo_trace`, `weka_trace`, `dag_jsonl`, `native`). When set, the file is treated as a graph workload and parsed by the named adapter; this is the only way to load a hand-authored `native` graph file or run a `dag_jsonl` conversation file on the graph runtime, both otherwise excluded from auto-detection. None = auto-detect."
                 },
                 "sampling": {
                   "$ref": "#/$defs/DatasetSamplingStrategy",
@@ -3328,7 +3442,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there)."
+                  "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there). Also used by graph (weka) replay, whose `synthesis.max_osl` caps the recorded output length (`--synthesis-max-osl`)."
                 },
                 "entries": {
                   "anyOf": [
@@ -7550,6 +7664,15 @@
         }
       ]
     },
+    "CacheBustTarget": {
+      "description": "Where (and how) to inject a per-session cache-bust marker.\n\nA unique marker injected into a session's first-turn prompt PREFIX makes the\ninference server's KV cache see a distinct prefix per session, defeating\ncross-session prefix-cache hits that would otherwise inflate cache-hit\nmetrics. The graph snapshot-replay path\nneeds only the ``FIRST_TURN_PREFIX`` and ``NONE`` variants.",
+      "enum": [
+        "none",
+        "first_turn_prefix"
+      ],
+      "title": "CacheBustTarget",
+      "type": "string"
+    },
     "CancellationConfig": {
       "additionalProperties": false,
       "description": "Configuration for request cancellation testing.\n\nEnables testing server behavior when clients cancel requests mid-flight.",
@@ -9229,6 +9352,11 @@
           "title": "Useservertokencount",
           "type": "boolean"
         },
+        "cacheBust": {
+          "$ref": "#/$defs/CacheBustTarget",
+          "default": "none",
+          "description": "Where to inject a per-trace-instance cache-bust marker on the graph-IR replay path. 'none' (default): recorded bytes sent verbatim. 'first_turn_prefix': prepend a '[rid:<12hex>]' marker to the first user turn, shared across the trace instance's turns but distinct per instance and reset on recycle, so the inference server's KV cache sees a distinct prefix per trace instance, defeating cross-instance prefix-cache hits."
+        },
         "template": {
           "anyOf": [
             {
@@ -9285,6 +9413,24 @@
           "default": null,
           "description": "HTTP header name used to carry the per-session affinity identifier. When set, replaces the default `X-Correlation-ID` header. Useful when the inference server expects a custom session-affinity header (e.g. `--session-header X-Session-ID`).",
           "title": "Sessionheader"
+        },
+        "sessionRouting": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionRoutingType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Session-routing transform stamping per-session identity on every request so an external router (SGLang Model Gateway, Dynamo, generic session-affinity LBs) can pin a session's turns to one replica. One mode per run; parameterize with --session-routing-opt key=value."
+        },
+        "sessionRoutingOpts": {
+          "additionalProperties": true,
+          "description": "Mode-specific options for --session-routing, validated against the selected plugin's Options model (unknown keys and invalid values are rejected at startup). Values are canonicalized/coerced to the plugin's Options model types at validation, so downstream consumers see typed values.",
+          "title": "Sessionroutingopts",
+          "type": "object"
         },
         "waitForModelTimeout": {
           "default": 0.0,
@@ -9437,7 +9583,7 @@
             }
           ],
           "default": null,
-          "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, directories for random_pool.",
+          "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, directories for random_pool. Graph trace inputs (`.jsonl` / `.jsonl.gz` / segmented `.gz` directories) are recognized as graph workloads independently of `format` — auto-detected, or forced with `graph_format`.",
           "title": "Path"
         },
         "records": {
@@ -9470,7 +9616,19 @@
         "format": {
           "$ref": "#/$defs/DatasetFormat",
           "default": "single_turn",
-          "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
+          "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts. This selects a *custom dataset loader* (conversation-style inputs) and is ignored for graph workloads, which are auto-detected from `path` or forced via `graph_format`."
+        },
+        "graphFormat": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GraphAdapterType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Force a graph-adapter format for this `--input-file`, overriding workload auto-detection. Accepts a registered graph adapter name (e.g. `dynamo_trace`, `weka_trace`, `dag_jsonl`, `native`). When set, the file is treated as a graph workload and parsed by the named adapter; this is the only way to load a hand-authored `native` graph file or run a `dag_jsonl` conversation file on the graph runtime, both otherwise excluded from auto-detection. None = auto-detect."
         },
         "sampling": {
           "$ref": "#/$defs/DatasetSamplingStrategy",
@@ -9487,7 +9645,7 @@
             }
           ],
           "default": null,
-          "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there)."
+          "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there). Also used by graph (weka) replay, whose `synthesis.max_osl` caps the recorded output length (`--synthesis-max-osl`)."
         },
         "entries": {
           "anyOf": [
@@ -11021,6 +11179,16 @@
           "type": "string"
         }
       ]
+    },
+    "GraphAdapterType": {
+      "enum": [
+        "dynamo_trace",
+        "weka_trace",
+        "dag_jsonl",
+        "native"
+      ],
+      "title": "GraphAdapterType",
+      "type": "string"
     },
     "GridSweep": {
       "additionalProperties": false,
@@ -14784,6 +14952,16 @@
       "title": "ServiceRunType",
       "type": "string"
     },
+    "SessionRoutingType": {
+      "enum": [
+        "dynamo_headers",
+        "dynamo_nvext",
+        "smg_routing_key",
+        "session_id_header"
+      ],
+      "title": "SessionRoutingType",
+      "type": "string"
+    },
     "SobolSweep": {
       "additionalProperties": false,
       "description": "Sobol quasi-Monte-Carlo sweep — low-discrepancy joint coverage.\n\nNote on ``scramble=False``: scipy's raw Sobol sequence starts at the\norigin (the first row is exactly all-zeros), so the first variant\nwill land on ``(lo, lo, ...)`` for every dimension. With small\n``samples`` this produces degenerate corner-only coverage. Prefer\nthe default ``scramble=True`` (Owen-scrambled) unless you have a\nspecific reason to want raw Sobol points.",
@@ -15133,6 +15311,86 @@
           "description": "Maximum output sequence length cap. Traces with output_length > max_osl are capped to this value (not filtered).",
           "title": "Maxosl",
           "x-jinja2-supported": true
+        },
+        "maxContextLength": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Maximum per-trace context length (tokens) for graph-plane dataset selection (`--max-context-length`). Traces whose input+output context would exceed this cap are excluded from selection. None (the default) applies no context-length filter. Raw explicit value carried verbatim from the CLI; the derived selection default is computed elsewhere. Ignored by non-graph datasets.",
+          "title": "Maxcontextlength",
+          "x-jinja2-supported": true
+        },
+        "allowDatasetWrap": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Whether graph-plane dataset selection may wrap (reuse the finite trace pool) to satisfy `--request-count` (`--allow-dataset-wrap` / `--no-allow-dataset-wrap`). None (the default) means unset -- the effective value is derived downstream and surfaced on `run.resolved.allow_dataset_wrap`; an explicit True/False here is the raw user intent carried verbatim so the resolver can distinguish unset from explicit. Ignored by non-graph datasets.",
+          "title": "Allowdatasetwrap"
+        },
+        "idleGapCapSeconds": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": 60.0,
+          "description": "Per-trace idle-gap cap (seconds) for recorded graph (`weka_trace`, `dynamo_trace`) replay (`--synthesis-idle-gap-cap`). Every recorded inter-request idle gap longer than this is compressed to the cap, shifting later requests left by the excess, so a recorded multi-hour idle gap does not park the replay. Default 60.0. Set to null to disable warping and replay the raw recorded timestamps. Ignored by non-graph datasets.",
+          "title": "Idlegapcapseconds",
+          "x-jinja2-supported": true
+        },
+        "corpus": {
+          "anyOf": [
+            {
+              "enum": [
+                "coding",
+                "sonnet"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Corpus backing recorded graph (`weka_trace`, `dynamo_trace`) real-content synthesis (`--prompt-corpus`). `coding` (the default when unset) uses the procedural CodingContentGenerator pool -- the same corpus the recorded weka workloads were captured against. `sonnet` uses the Shakespeare PromptGenerator pool, which yields matching token counts but different bytes (useful only to reproduce golden fixtures built from that pool). Ignored by non-graph datasets.",
+          "title": "Corpus"
         }
       },
       "title": "SynthesisConfig",

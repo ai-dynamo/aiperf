@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Distribution parameter validators: reject non-positive / non-finite values.
 
-Round-2 R2-M14 reproduced ``isl: {mean: -512, stddev: 0}`` validating
+Without these validators ``isl: {mean: -512, stddev: 0}`` validates
 silently. NormalDistribution truncates samples below 0, so a non-positive
 mean produces a degenerate (or impossible) distribution that crashes
-later in synthesis. The fix adds ``gt=0`` to the mean field plus a
-finite-value validator covering NaN/inf.
+later in synthesis. ``gt=0`` on the mean field plus a
+finite-value validator covering NaN/inf reject it at config time.
 """
 
 from __future__ import annotations

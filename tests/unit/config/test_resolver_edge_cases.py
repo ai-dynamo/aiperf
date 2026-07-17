@@ -470,6 +470,86 @@ class TestDatasetResolverEdgeCases:
         assert detected is None
         assert first_record is None
 
+    def test_local_graph_gz_workload_resolves_without_crash(self, tmp_path) -> None:
+        """A local graph trace (.gz binary) must NOT crash type detection.
+
+        The graph-store build/schedule planes own record counting for graph
+        workloads; the resolver must short-circuit before ``_detect_type`` /
+        ``_count_records_and_sessions`` text-mode read the gzip binary (which
+        previously raised ``UnicodeDecodeError``). It records only the path,
+        mirroring the weka HF-id branch.
+        """
+        dynamo_fixture = (
+            Path(__file__).resolve().parents[1]
+            / "dataset/graph/adapters/fixtures/dynamo_nested/nested_2_level.jsonl.gz"
+        )
+
+        config = _make_config(
+            datasets=[
+                {"name": "graph", "type": "file", "path": str(dynamo_fixture)},
+            ],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "requests": 2,
+                    "concurrency": 1,
+                }
+            ],
+        )
+        run = _make_run(config, artifact_dir=tmp_path / "out")
+
+        # Previously raised UnicodeDecodeError from the text-mode open in
+        # _count_records_and_sessions; must now resolve cleanly.
+        DatasetResolver().resolve(run)
+
+        # Path recorded; record counting skipped (owned by the graph planes).
+        assert run.resolved.dataset_file_paths is not None
+        assert "graph" in run.resolved.dataset_file_paths
+        assert run.resolved.dataset_total_records is None
+
+    def test_graph_format_override_short_circuits_plain_jsonl(self, tmp_path) -> None:
+        """A plain `.jsonl` with `graph_format` set must short-circuit resolution.
+
+        `--graph-format native` (and any forced adapter) marks the file a graph
+        workload that the graph-store planes own. The path-level content sniff
+        (`is_graph_workload_path`) excludes `native`, so without honoring the
+        config override the resolver would route this plain single-turn JSONL to
+        the custom-dataset loader: type-detected and record-counted. With the
+        override honored, only the path is recorded; type/record-count stay unset.
+        """
+        plain = tmp_path / "hand_authored.jsonl"
+        plain.write_text('{"prompt": "hello"}\n{"prompt": "world"}\n')
+
+        config = _make_config(
+            datasets=[
+                {
+                    "name": "graph",
+                    "type": "file",
+                    "path": str(plain),
+                    "graph_format": "native",
+                },
+            ],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "requests": 2,
+                    "concurrency": 1,
+                }
+            ],
+        )
+        run = _make_run(config, artifact_dir=tmp_path / "out")
+
+        DatasetResolver().resolve(run)
+
+        # Path recorded; type detection and record counting skipped (owned by
+        # the graph planes), mirroring the local-graph-workload short-circuit.
+        assert run.resolved.dataset_file_paths is not None
+        assert "graph" in run.resolved.dataset_file_paths
+        assert run.resolved.dataset_types is None
+        assert run.resolved.dataset_total_records is None
+
     def test_burst_gpt_csv_auto_detected_with_timing(self, tmp_path) -> None:
         """End-to-end resolver pass: BurstGPT CSV with no explicit format
         is recognized and reports has_timing=True so fixed_schedule can run.

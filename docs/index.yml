@@ -187,10 +187,13 @@ navigation:
     path: benchmark-modes/timing-modes-reference.md
   - page: Trace Replay with Mooncake Traces
     path: benchmark-modes/trace-replay.md
+  - page: Agentic Workload Benchmarks
+    path: benchmark-modes/agentic.md
   - page: Baseten Trace Replay
     path: tutorials/baseten-trace.md
-  - page: Conversation DAG Benchmarks
+  - page: Conversation DAG Benchmarks (Legacy)
     path: benchmark-modes/dag.md
+    slug: conversation-dag-benchmarks
 
 - section: Accuracy
   collapsed: true
@@ -223,6 +226,27 @@ navigation:
     path: reference/api-endpoints.md
   - page: YAML Config Roadmap
     path: reference/yaml-config-roadmap.md
+  - section: Graph IR & Replay Internals
+    collapsed: true
+    contents:
+    - page: Graph IR Schema
+      path: reference/graph-ir-schema.md
+    - page: Graph IR Validation
+      path: reference/graph-ir-validation.md
+    - page: Graph Ingest & Build Pipeline
+      path: reference/graph-ingest-build-pipeline.md
+    - page: Graph Structural Sidecar Handoff
+      path: reference/graph-structural-handoff.md
+    - page: Graph Segment Unified Store
+      path: reference/graph-segment-unified-store.md
+    - page: AIPerf Graph Async Dataflow Runtime Architecture
+      path: reference/graph-async-dataflow-runtime.md
+    - page: Graph Worker Materialization
+      path: reference/graph-worker-materialization.md
+    - page: Graph Trie-Route Prompt Convention
+      path: reference/graph-trie-prompt-convention.md
+    - page: Graph Runtime Troubleshooting
+      path: reference/graph-runtime-troubleshooting.md
 
 - section: Server Metrics
   collapsed: true

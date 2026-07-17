@@ -168,6 +168,9 @@ def build_cli_overrides(
         out, "wandb", build_wandb(cli, base_enabled=wandb_base_enabled)
     )
 
+    if "random_seed" in cli.model_fields_set:
+        out["random_seed"] = cli.random_seed
+
     if "no_sweep_table" in cli.model_fields_set:
         out["no_sweep_table"] = cli.no_sweep_table
 

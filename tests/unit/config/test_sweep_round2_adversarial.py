@@ -1,13 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Round-2 adversarial regressions for the sweep + config system.
+"""Adversarial regressions for the sweep + config system.
 
 Each class is named by hypothesis ID (H9-H14, continuing from
 ``test_sweep_qmc_adversarial.py``). Each test pins a behavior that
-silently misbehaved or crashed unhelpfully before the round-2 fixes:
+would otherwise silently misbehave or crash unhelpfully:
 
-- H9: QMC sweeps now body-root paths (no more phantom top-level keys
-  that ``build_benchmark_plan`` silently discards).
+- H9: QMC sweeps body-root paths (phantom top-level keys would be
+  silently discarded by ``build_benchmark_plan``).
 - H10: Path validators reject non-sweepable top-level prefixes
   (multi_run, random_seed, benchmark) and the redundant ``benchmark.``
   prefix.
@@ -128,8 +128,8 @@ class TestH9QmcBodyRooting:
             assert variant["variables"]["foo"] == sampled
 
     def test_e2e_build_benchmark_plan_applies_sampled_concurrency(self) -> None:
-        # End-to-end: confirm the bug repro from the round-2 report passes.
-        # Before the fix, all 8 variants ended up with concurrency=8.
+        # End-to-end: without per-variant application of the sampled value,
+        # all 8 variants would end up with concurrency=8.
         from aiperf.config.config import AIPerfConfig
         from aiperf.config.loader.plan import build_benchmark_plan
 

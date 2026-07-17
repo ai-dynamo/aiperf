@@ -97,6 +97,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Request Latency](#request-latency)
     - [Request Throughput](#request-throughput)
     - [Request Count](#request-count)
+    - [Streamed Request Count](#streamed-request-count)
     - [Error Request Count](#error-request-count)
     - [Minimum Request Timestamp](#minimum-request-timestamp)
     - [Maximum Response Timestamp](#maximum-response-timestamp)
@@ -195,7 +196,7 @@ any knowledge of the individual request/response data.
 ## Streaming Metrics
 
 > [!NOTE]
-> All metrics in this section require the `--streaming` flag with a token-producing endpoint and at least one non-empty response chunk.
+> All metrics in this section are computed **over streamed requests only** — the per-record subset counted by [Streamed Request Count](#streamed-request-count) — and require a token-producing endpoint with at least one non-empty response chunk. Applicability is per-record: a request contributes iff it streamed on the wire (`RequestRecord.streamed`). Standard runs stream when launched with the global `--streaming` flag; graph-IR replays (weka / dynamo / native graph) stream individual recorded nodes from their own recorded mode even when the global flag is off, so a non-streamed request is simply excluded rather than dragging its full request latency in as, e.g., a first-token time.
 
 ### Time to First Token (TTFT)
 
@@ -216,6 +217,7 @@ ttft_seconds = ttft_ns / 1e9
 ```
 
 **Notes:**
+- Computed over streamed requests only ([Streamed Request Count](#streamed-request-count) is the denominator); non-streamed requests are excluded so their full request latency is never miscounted as a first-token time.
 - Includes network latency, queuing time, prompt processing, and generation of the first token (or chunk of tokens).
 - Raw timestamps are in nanoseconds; converted to milliseconds for display and seconds for rate calculations.
 - Response chunks refer to individual messages with non-empty content received during streaming.
@@ -238,6 +240,7 @@ ttst_ms = ttst_ns / 1e6
 ```
 
 **Notes:**
+- Computed over streamed requests only ([Streamed Request Count](#streamed-request-count) is the denominator); non-streamed requests are excluded.
 - Requires at least 2 non-empty response chunks to compute the time between first and second tokens.
 - Raw timestamps are in nanoseconds; converted to milliseconds for display.
 
@@ -261,6 +264,7 @@ ttfo_ms = ttfo_ns / 1e6
 ```
 
 **Notes:**
+- Computed over streamed requests only ([Streamed Request Count](#streamed-request-count) is the denominator); non-streamed requests are excluded.
 - TTFO vs TTFT: Time to First Output (TTFO) measures time to the first non-reasoning token, while Time to First Token (TTFT) measures time to any first token including reasoning tokens. For models without reasoning, TTFO and TTFT are equivalent.
 - Non-reasoning tokens include TextResponseData with non-empty text, or ReasoningResponseData with non-empty content field (regardless of reasoning field).
 - Requires at least one non-empty non-reasoning response chunk.
@@ -286,6 +290,7 @@ inter_token_latency_ms = inter_token_latency_ns / 1e6
 ```
 
 **Notes:**
+- Computed over streamed requests only ([Streamed Request Count](#streamed-request-count) is the denominator); non-streamed requests are excluded.
 - Requires at least 2 non-empty response chunks and valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics.
 - Result is in seconds when used for throughput calculations (Output Token Throughput Per User).
 
@@ -303,6 +308,7 @@ inter_chunk_latency = [request.content_responses[i].perf_ns - request.content_re
 ```
 
 **Notes:**
+- Computed over streamed requests only ([Streamed Request Count](#streamed-request-count) is the denominator); non-streamed requests are excluded.
 - Requires at least 2 response chunks.
 - Unlike ITL (which produces a single average), ICL provides the full distribution of inter-chunk times.
 - Useful for detecting variability, jitter, or issues in streaming delivery.
@@ -1502,6 +1508,23 @@ request_count = sum(1 for r in records if r.valid)
 
 ---
 
+### Streamed Request Count
+
+**Type:** [Aggregate Metric](#aggregate-metrics)
+
+The total number of requests that were sent in streaming mode (i.e. actually streamed on the wire). This is the streaming denominator displayed beside [Request Count](#request-count): the streaming record metrics ([TTFT](#time-to-first-token-ttft), [TTST](#time-to-second-token-ttst), [TTFO](#time-to-first-output-token-ttfo), [ITL](#inter-token-latency-itl), [ICL](#inter-chunk-latency-icl)) are computed over exactly this subset, not over all requests.
+
+**Formula:**
+```python
+streamed_request_count = sum(1 for r in records if r.valid and r.request.streamed)
+```
+
+**Notes:**
+- Membership is per-record: a request counts iff it streamed on the wire (`RequestRecord.streamed`), independent of the global `--streaming` flag. In a graph-IR replay (weka / dynamo / native graph) individual recorded nodes stream from their own recorded mode even when the run's global `--streaming` flag is off, so this count can be non-zero without `--streaming`.
+- Omitted from the export entirely when no request streamed (a run with zero streamed requests reports no `streamed_request_count`).
+
+---
+
 ### Error Request Count
 
 **Type:** [Aggregate Metric](#aggregate-metrics)
@@ -1874,6 +1897,25 @@ http_req_chunks_received = trace.response_chunks_count
 - Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
 
 ---
+
+## Trace Replay Metrics
+
+> [!NOTE]
+> Metrics in this section are produced by a standalone results accumulator (not the standard `MetricRegistry` derivation walk) and are emitted only when a trace loader supplies the underlying per-turn metadata. They are absent on workloads that do not. Each tag is still registered as a display-only metric class (following the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern)) so the realtime dashboard and console exporter can resolve its display metadata.
+
+### Theoretical Prefix Cache Hit
+
+**Type:** Standalone results accumulator (`theoretical_prefix_cache`); display-only class `TheoreticalPrefixCacheHitMetric`
+
+**Tag:** `theoretical_prefix_cache_hit` · **Unit:** `%` · **Console group:** [`CACHE`](#group-cache) (rendered as `LLM Metrics: Cache`)
+
+The cumulative infinite-cache prefix-hit rate over the trace's KV-block hash ids (WEKA: recorded hash ids; Dynamo: recorded `input_sequence_hashes` whenever a record carries replay metadata, per-session virtual block ids otherwise). The shared trie build (`segment_ir.prefix_cache.stamp_theoretical_prefix_cache`) walks every request's `hash_ids` at parse time in recorded global-time order under one shared per-trace seen-set and stamps each node with two integers — leading prefix-cache `hit_blocks` and `total_blocks` — under `LlmNode.metadata["dispatch"]["theoretical_prefix_cache"]`. The seen-set is per trace file even for `hash_id_scope: "global"` corpora (recorded `t` is conversation-relative, so no cross-file ordering exists); under global scope the stamped counts are therefore a lower bound — a block another trace already sent still counts as a miss. The accumulator sums them over valid profiling records:
+
+```text
+theoretical_prefix_cache_hit = 100 * sum(hit_blocks) / sum(total_blocks)
+```
+
+This is the THEORETICAL ceiling an infinite per-trace prefix cache would achieve for the replayed request mix; it carries no hash ids through the request path at runtime (only a per-node metadata lookup plus two integer adds). Emitted for trie graph workloads (WEKA and Dynamo traces) on every ingest route — local file, directory, and HuggingFace-streamed corpora alike: the streaming store build recovers the per-node counts from the merged content-free structural graph. Absent when that structural merge fails (fail-soft; the run then also skips the `graph_meta` sidecar), for graph workloads with no recorded KV-block hash ids to walk (native and dag_jsonl never stamp prefix-cache counts), and for all non-graph datasets. Matches the agentx v0.4-sync metric of the same name, formula, and unit.
 
 ## GPU Power Efficiency Metrics
 

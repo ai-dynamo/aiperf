@@ -22,6 +22,7 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
+    MetricValueTypeT,
     make_result_producer_capability,
 )
 from aiperf.common.environment import Environment
@@ -29,6 +30,7 @@ from aiperf.common.hooks import background_task, on_command, on_message, on_pull
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
     DatasetConfiguredNotification,
+    MetricRecordsData,
     NetworkLatencyRecordMessage,
     ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
@@ -95,6 +97,11 @@ from aiperf.server_metrics.protocols import ServerMetricsAccumulatorProtocol
 if TYPE_CHECKING:
     from aiperf.config.config import BenchmarkConfig
     from aiperf.config.resolution.plan import BenchmarkRun
+
+# Metric tag aggregated for a context-overflow-skip record so the submission-rate
+# gate keeps a correct numerator (see ``_send_overflow_count_only``). Kept as a
+# constant -- the tag is the metric class's stable identifier.
+CONTEXT_OVERFLOW_COUNT_TAG = "context_overflow_count"
 
 
 _LATENCY_LINE_LABELS: tuple[tuple[str, str], ...] = (
@@ -390,6 +397,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._records_tracker = RecordsTracker()
         self._error_tracker = ErrorTracker()
 
+        # Count of context-overflow records routed through the graph-IR
+        # metrics-skip path (``MetricRecordMetadata.context_overflow_skip``).
+        # These advance the records-side success counter (barrier lockstep) and
+        # still aggregate ``context_overflow_count`` for the submission-rate gate,
+        # but are excluded from the error tracker and the performance-metric
+        # accumulators.
+        self._skipped_context_overflow_count: int = 0
         # DatasetConfiguredNotification (SUB) and metric records (PULL) arrive on
         # independent channels with no ordering guarantee. Gate record processing on
         # this event so results processors are configured (e.g. accuracy task names)
@@ -581,11 +595,34 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if self.is_trace_enabled:
             self.trace(f"Received records: {message}")
 
+        phase = message.metadata.benchmark_phase
+
+        # Context-overflow records in a graph-IR run bypass the normal user-facing
+        # per-record processing. They are EXCLUDED from the error tracker and from
+        # the performance-metric accumulators (ISL/OSL/TTFT/ITL/latency), but still
+        # (a) advance the records-side SUCCESS counter so the completion barrier
+        # converges in lockstep with the credit side, and (b) aggregate ONLY the
+        # ``context_overflow_count`` metric so the submission-rate gate stays
+        # correct. The ``context_overflow_count`` aggregate (the submission-rate
+        # input) is kept alive by forwarding a trimmed record carrying that
+        # single metric.
+        if getattr(message.metadata, "context_overflow_skip", False):
+            self._skipped_context_overflow_count += 1
+            await self._send_overflow_count_only(message)
+            self._records_tracker.update_from_request(message.metadata, None)
+            if (
+                phase in self._complete_credit_phases
+                and self._records_tracker.check_and_set_all_records_received_for_phase(
+                    phase
+                )
+            ):
+                await self._handle_all_records_received(phase)
+            return
+
         dispatch_errors: list[BaseException] = []
         for record in message.records:
             dispatch_errors.extend(await self._dispatch_record(record))
 
-        phase = message.metadata.benchmark_phase
         self._records_tracker.update_from_request(message.metadata, message.error)
         if message.error:
             self._error_tracker.increment_error_count_for_phase(phase, message.error)
@@ -716,6 +753,39 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.debug("Server metrics flush period complete, processing now...")
         await self._process_results(phase=phase, cancelled=cancelled)
         self.info("_finalize_and_process_results completed")
+
+    async def _send_overflow_count_only(self, message: RecordsMessage) -> None:
+        """Forward ONLY the ``context_overflow_count`` metric for a skip record.
+
+        A context-overflow record is excluded from every performance-metric
+        accumulator (latency/ISL/OSL/TTFT/ITL) and from the error tracker, but
+        its overflow count must still reach the ``context_overflow_count``
+        aggregate that the InferenceX submission-rate gate reads. We locate the
+        ``MetricRecordsData`` in the request envelope, build a trimmed one
+        carrying that single metric (and no error), and route it through the
+        metadata-derived record dispatcher.
+
+        The trimmed record reuses the original ``metadata`` (whose
+        ``context_overflow_skip`` flag stays True): processors that must not
+        count overflow events at all (e.g. ``TheoreticalPrefixCacheAccumulator``,
+        which would otherwise fold the node's planned blocks into the hit rate)
+        key off that flag to skip it.
+        """
+        overflow_value: MetricValueTypeT | None = None
+        for record in message.records:
+            metrics = getattr(record, "metrics", None)
+            if metrics and CONTEXT_OVERFLOW_COUNT_TAG in metrics:
+                overflow_value = metrics[CONTEXT_OVERFLOW_COUNT_TAG]
+                break
+        if overflow_value is None:
+            return
+        trimmed = MetricRecordsData(
+            metadata=message.metadata,
+            metrics={CONTEXT_OVERFLOW_COUNT_TAG: overflow_value},
+            trace_data=None,
+            error=None,
+        )
+        await self._dispatch_record(trimmed)
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(

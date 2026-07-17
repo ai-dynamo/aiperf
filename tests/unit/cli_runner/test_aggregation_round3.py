@@ -1,19 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Round-3 multi-run aggregation regression tests.
+"""Multi-run aggregation regression tests.
 
-Covers fixes for the round-2 adversarial findings on multi-run/sweep
-aggregation correctness:
+Covers multi-run/sweep aggregation correctness:
 
-  * R2-H4: QMC-collision cells no longer pool into one aggregate dir.
-  * R2-M5: NaN samples don't poison sibling metric aggregations.
-  * R2-M7: ``BenchmarkPlan.trials`` and ``MultiRunConfig.num_runs`` caps
+  * QMC-collision cells never pool into one aggregate dir.
+  * NaN samples don't poison sibling metric aggregations.
+  * ``BenchmarkPlan.trials`` and ``MultiRunConfig.num_runs`` caps
     stay aligned, surfaced via cross-validator.
-  * R2-M8: ``AIPERF_RAISE_ON_CALLBACK_ERROR`` is read through the
+  * ``AIPERF_RAISE_ON_CALLBACK_ERROR`` is read through the
     Pydantic Settings registry (Field on ``_CLIRunnerSettings``) rather
     than via raw ``os.environ.get``, picking up Pydantic's bool coercion.
-  * R2-L7: ``zip(plan.configs, plan.variations)`` raises on length
+  * ``zip(plan.configs, plan.variations)`` raises on length
     mismatch instead of silently truncating.
 """
 
@@ -55,17 +54,18 @@ def _result(
 
 
 # =============================================================================
-# R2-H4: QMC-collision cells get distinct aggregate keys
+# QMC-collision cells get distinct aggregate keys
 # =============================================================================
 
 
 def test_qmc_collision_cells_get_distinct_aggregate_dirs() -> None:
     """Sobol over int dims that collides on ``values`` keeps distinct cells.
 
-    Repro from the round-2 adversarial report: Sobol over ``lo=1, hi=4,
-    kind=int, samples=8`` produced 4 unique values from 8 distinct cells.
-    Pre-fix: one aggregate dir for all 3 cells that mapped to concurrency=3,
-    inflated ``num_profile_runs=3``. Post-fix: each cell keys distinctly.
+    Sobol over ``lo=1, hi=4,
+    kind=int, samples=8`` produces 4 unique values from 8 distinct cells.
+    Keying aggregate dirs by value would pool all 3 cells that map to
+    concurrency=3 into one dir and inflate ``num_profile_runs=3``;
+    each cell must key distinctly.
     """
     # Reproduce the collision: 3 distinct sobol cells map to concurrency=3.
     results = [
@@ -117,7 +117,7 @@ def test_grid_sweep_distinct_values_still_group_per_label() -> None:
 
 
 # =============================================================================
-# R2-M5: NaN-safe stats
+# NaN-safe stats
 # =============================================================================
 
 
@@ -176,7 +176,7 @@ def test_aggregator_nan_in_one_trial_does_not_poison_metric() -> None:
 
 
 # =============================================================================
-# R2-M7: trials cap == num_runs cap (cross-validator)
+# trials cap == num_runs cap (cross-validator)
 # =============================================================================
 
 
@@ -221,7 +221,7 @@ def test_multi_run_cooldown_seconds_capped_at_24h() -> None:
 
 
 # =============================================================================
-# R2-M8: RAISE_ON_CALLBACK_ERROR via Pydantic Settings
+# RAISE_ON_CALLBACK_ERROR via Pydantic Settings
 # =============================================================================
 
 
@@ -301,7 +301,7 @@ def test_invoke_callbacks_reads_setting_at_call_time(
 
 
 # =============================================================================
-# R2-L7: strict=True zip surfaces orchestrator config/variation drift
+# strict=True zip surfaces orchestrator config/variation drift
 # =============================================================================
 
 
@@ -326,7 +326,7 @@ def test_strict_zip_in_aggregator_raises_on_length_mismatch() -> None:
     )
     assert "zip(plan.configs, plan.variations, strict=False)" not in source, (
         "strict=False zip(plan.configs, plan.variations) reintroduced; "
-        "see round-2 R2-L7."
+        "a length mismatch would silently truncate."
     )
 
 

@@ -15,6 +15,8 @@ Terminology:
         session route to the same worker.
 """
 
+from __future__ import annotations
+
 import uuid
 from dataclasses import dataclass
 
@@ -46,6 +48,10 @@ class SampledSession:
             parent's accumulated message history and pins to the same worker;
             SPAWN starts with a fresh context. Ignored when
             parent_correlation_id is None.
+        root_correlation_id: The x_correlation_id of the depth-0 root of this
+            session's tree. None on a depth-0 root (it is its own tree root);
+            inherited by children/subchildren so per-tree finality accounting
+            can key on ``effective_root_correlation_id``.
     """
 
     conversation_id: str
@@ -53,6 +59,7 @@ class SampledSession:
     x_correlation_id: str
     agent_depth: int = 0
     parent_correlation_id: str | None = None
+    root_correlation_id: str | None = None
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
 
     @property
@@ -64,6 +71,16 @@ class SampledSession:
         x_correlation_id.
         """
         return self.parent_correlation_id or self.x_correlation_id
+
+    @property
+    def effective_root_correlation_id(self) -> str:
+        """Tree root id, defaulting to this session's own x_correlation_id.
+
+        A root session is its own tree root; a child/subchild inherits the
+        depth-0 root's id, set by the spawning code so per-tree finality
+        accounting can key on it.
+        """
+        return self.root_correlation_id or self.x_correlation_id
 
     def build_first_turn(self, max_turns: int | None = None) -> TurnToSend:
         """Build first turn (turn_index=0) from sampled conversation.
@@ -80,7 +97,11 @@ class SampledSession:
             num_turns=max_turns or len(self.metadata.turns),
             agent_depth=self.agent_depth,
             parent_correlation_id=self.parent_correlation_id,
+            root_correlation_id=self.root_correlation_id,
             has_forks=first_meta.has_forks if first_meta is not None else False,
+            has_branches=bool(first_meta.branch_ids)
+            if first_meta is not None
+            else False,
             branch_mode=self.branch_mode,
         )
 
@@ -132,6 +153,7 @@ class ConversationSource:
         child_conversation_id: str,
         agent_depth: int,
         *,
+        root_correlation_id: str | None = None,
         branch_mode: ConversationBranchMode = ConversationBranchMode.FORK,
     ) -> SampledSession:
         """Build a SampledSession for a DAG child conversation.
@@ -143,6 +165,11 @@ class ConversationSource:
         SPAWN-mode children start with a fresh context, but the sticky pin to
         the parent's correlation_id is preserved at this layer — routing
         freedom is enforced upstream by the orchestrator/router.
+
+        ``root_correlation_id`` is the depth-0 root of the spawning parent's
+        tree; the child inherits it so all descendants of one root share a
+        single per-tree finality key. Defaults to ``parent_correlation_id``
+        when not supplied (a depth-1 child's parent IS the root).
         """
         metadata = self._metadata_lookup[child_conversation_id]
         return SampledSession(
@@ -151,6 +178,7 @@ class ConversationSource:
             x_correlation_id=str(uuid.uuid4()),
             agent_depth=agent_depth,
             parent_correlation_id=parent_correlation_id,
+            root_correlation_id=root_correlation_id or parent_correlation_id,
             branch_mode=branch_mode,
         )
 

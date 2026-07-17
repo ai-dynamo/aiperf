@@ -227,6 +227,16 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="The x_correlation_id of the parent session that spawned this record's session via a "
         "DAG subagent fork. None for root sessions. Use to group sibling branches of the same DAG.",
     )
+    context_overflow_skip: bool = Field(
+        default=False,
+        description="True iff the record was classified as a context-overflow event AND the active workload "
+        "is a graph-IR (weka/dynamo trace) run. Set by ``RecordProcessor`` and consumed by ``RecordsManager``: "
+        "the record still increments the records-side success counter (so the completion barrier stays in lockstep "
+        "with the credit-side ``final_requests_completed`` and converges), and its ``context_overflow_count`` is "
+        "still aggregated for the submission-rate gate, but it is excluded from the error tracker and from the "
+        "performance-metric accumulators (ISL/OSL/TTFT/ITL/latency). Net effect: an overflow event never pollutes "
+        "a user-facing performance metric, while the run still terminates cleanly.",
+    )
 
 
 class TimesliceResult(AIPerfBaseModel):
@@ -761,11 +771,35 @@ class RequestInfo(RecordContext):
         description="Whether this is the final turn in the conversation. "
         "Used by per-conversation connection strategy to release the connection lease.",
     )
+    root_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the depth-0 root of this request's session TREE. "
+        "Stable across the whole tree (root + every descendant subagent at any depth); equals "
+        "x_correlation_id for a root session. Sourced from the originating Credit. Per-request "
+        "transport context read by the session-routing transform to stamp tree-scoped identity "
+        "on the outbound request; it stays worker-side and is not carried onto the exported record.",
+    )
+    is_parent_final: bool | None = Field(
+        default=None,
+        description="Parent conversation had already returned its final turn at "
+        "credit-issue time; None for roots or when not determinable. Sourced from "
+        "the originating Credit.",
+    )
+    is_tree_final: bool = Field(
+        default=False,
+        description="Provably the last request this session tree will send "
+        "(conservative False when indeterminate). Sourced from the originating Credit.",
+    )
     url_index: int | None = Field(
         default=None,
         ge=0,
         description="Index of the URL to use when multiple --url values are configured. "
         "None means use the default (first) URL. Used for round-robin load balancing.",
+    )
+    stream_override: bool | None = Field(
+        default=None,
+        description="Per-request wire streaming mode for graph credits; None follows "
+        "model_endpoint.endpoint.streaming.",
     )
 
 
@@ -821,6 +855,21 @@ class RequestRecord(AIPerfBaseModel):
     error: ErrorDetails | None = Field(
         default=None,
         description="The error details if the request failed.",
+    )
+    context_overflow: bool = Field(
+        default=False,
+        description="True iff this request's error response was classified "
+        "as a server-side context-overflow event by "
+        "``aiperf.common.scenario.is_context_overflow_response`` "
+        "(InferenceX AgentX scenario, RFC §7). Set on the record-parser side "
+        "at response-parsing time; consumed by the "
+        "``ContextOverflowCountMetric`` aggregate counter.",
+    )
+    streamed: bool = Field(
+        default=False,
+        description="Whether this request was sent (and read) in streaming mode "
+        "on the wire; stamped by the inference client from the per-request "
+        "effective mode. False for records that never reached the transport.",
     )
     credit_drop_latency: int | None = Field(
         default=None,

@@ -453,6 +453,48 @@ transport:
       url_schemes: [http, https]
 
 # =============================================================================
+# Session Routing
+# =============================================================================
+# Session-routing transforms stamp per-session identity onto outbound
+# requests so an external router can pin every turn to one worker.
+# Selected via --session-routing; one instance per worker.
+# =============================================================================
+session_routing:
+  dynamo_headers:
+    class: aiperf.workers.session_routing:DynamoHeadersRouting
+    description: |
+      Dynamo session affinity via X-Dynamo-Session-ID plus
+      X-Dynamo-Parent-Session-ID on subagent children. Pair with a Dynamo
+      frontend running --router-session-affinity-ttl-secs. No options.
+
+  dynamo_nvext:
+    class: aiperf.workers.session_routing:DynamoNvextRouting
+    description: |
+      Dynamo session affinity via nvext.session_control request-body
+      metadata. Two wire contracts via --session-routing-opt contract=...:
+      'bind' (default, Dynamo >= v1.3.0-dev) re-binds every non-final turn
+      and closes on the final; 'open' (released v1.2.x, whose SessionAction
+      accepts only open/close) opens once per worker-session then rides bare
+      session_id. Only for Dynamo builds that implement session_control
+      (current upstream main does not; use dynamo_headers there). Sets
+      mutates_body (body-mutating: skipped with a one-time warning on the
+      graph-IR verbatim-bytes path; headers still apply).
+      Option: timeout_seconds (default 300).
+
+  smg_routing_key:
+    class: aiperf.workers.session_routing:SmgRoutingKeyRouting
+    description: |
+      SGLang Model Gateway stickiness: emits X-SMG-Routing-Key with the
+      session's correlation ID for the gateway's manual routing policy
+      (--policy manual). No options.
+
+  session_id_header:
+    class: aiperf.workers.session_routing:SessionIdHeaderRouting
+    description: |
+      Generic additive session-affinity header carrying the session's
+      correlation ID. Option: header_name (default X-Session-ID).
+
+# =============================================================================
 # Dataset Composers
 # =============================================================================
 # Dataset composers create conversation datasets from various sources.
@@ -877,6 +919,13 @@ dataset_client_store:
       files with O(1) lookup performance. In Kubernetes mode, WorkerGroupManager
       downloads the dataset once per pod and workers use local mmap access.
 
+  graph_segment:
+    class: aiperf.dataset.graph_client_store:GraphSegmentDatasetClientStore
+    description: |
+      Graph unified segment-store client metadata carrier for graph IR runs.
+      Workers materialize per-node payloads from the unified store addressed
+      by (trace_id, node_ordinal); conversation lookups are a hard error.
+
 # =============================================================================
 # Timing Strategies
 # =============================================================================
@@ -909,6 +958,16 @@ timing_strategy:
       A mode where each session acts as a separate user with gap = num_users / request_rate between turns.
       Users block on their previous turn (no interleaving within a user).
       Matches LMBenchmark behavior for KV cache benchmarking.
+
+  graph_ir:
+    class: aiperf.timing.strategies.graph_ir_replay:GraphIRReplayStrategy
+    description: |
+      A mode that replays a weka conversation-DAG (graph IR) by driving a
+      dataflow TraceExecutor per trace over the v1 credit pipeline. The strategy
+      OWNS trace completion (a trace is done when its executor TaskGroup drains)
+      and trace-admission concurrency; graph credits bypass the linear
+      session-slot lifecycle via CreditIssuer.issue_graph_credit. Selected
+      automatically for graph (weka IR) workloads.
 
 # =============================================================================
 # Arrival Pattern (Interval Generators)
@@ -1056,6 +1115,17 @@ accumulator:
       unparsed counts. Loaded when accuracy evaluation is enabled.
     metadata:
       record_types: [accuracy]
+
+  theoretical_prefix_cache:
+    class: aiperf.post_processors.theoretical_prefix_cache:TheoreticalPrefixCacheAccumulator
+    description: |
+      Lightweight accumulator for trace loaders (WEKA graph-IR) that stamp
+      per-turn theoretical prefix-cache block counts on each Turn. Emits the
+      cumulative infinite-cache prefix hit rate (theoretical_prefix_cache_hit,
+      percent) during profiling without carrying hash_ids through the request
+      path. Always loaded; emits nothing when no prefix-cache metadata is present.
+    metadata:
+      record_types: [metric_records]
 
 # =============================================================================
 # Stream Exporters
@@ -1778,7 +1848,9 @@ public_dataset_loader:
       Exgentic agent LLM traces from HuggingFace. Replays complete recorded
       message and tool snapshots with recorded output limits. Fixed-schedule
       mode preserves call timestamps and overlaps; other modes replay sessions
-      closed-loop with recorded inter-turn delays.
+      closed-loop with recorded inter-turn delays. Pair with `--session-routing
+      dynamo_headers` for Dynamo session affinity (the loader no longer stamps a
+      session header).
     metadata:
       hf_dataset_name: Exgentic/agent-llm-traces
       hf_split: train
@@ -2050,6 +2122,48 @@ public_dataset_loader:
       hf_subset: test
       audio_column: audio
       streaming: true
+
+# =============================================================================
+# Graph Adapters
+# =============================================================================
+# Graph adapters convert third-party trace/log files into the canonical
+# ParsedGraph used by the graph benchmark mode. Detection order is driven by
+# each entry's detection_priority metadata (higher wins).
+# =============================================================================
+graph_adapter:
+  dynamo_trace:
+    class: aiperf.dataset.graph.adapters.dynamo.trace:DynamoTraceAdapter
+    description: |
+      Dynamo agent-trace v1 segmented JSONL.gz directories (or single .gz/.jsonl).
+    metadata:
+      detection_priority: 100
+
+  weka_trace:
+    class: aiperf.dataset.graph.adapters.weka.trace:WekaTraceAdapter
+    description: |
+      Weka KV-cache-tester agentic-coding trace JSON (single file or directory).
+    metadata:
+      detection_priority: 85
+
+  dag_jsonl:
+    class: aiperf.dataset.graph.adapters.dag_jsonl.trace:DagJsonlGraphAdapter
+    description: |
+      DAG-shaped conversation JSONL (the dag_jsonl custom-dataset format) lowered
+      onto the graph IR: forks/spawns become static edges + AND fan-in gates and
+      accumulated history becomes interned segments plus live-reply dynamic slots.
+      Selected explicitly via --graph-format dag_jsonl (excluded from autodetect
+      so legacy --custom-dataset-type dag_jsonl runs are untouched).
+    metadata:
+      detection_priority: 90
+
+  native:
+    class: aiperf.dataset.graph.adapters.native:NativeGraphAdapter
+    description: |
+      Canonical AIPerf graph workload format (.yaml / .yml / .jsonl conforming
+      to the graph schema). Lowest priority fallback; reached via explicit
+      --graph / parse_graph, not workload auto-detection.
+    metadata:
+      detection_priority: 1
 
 # =============================================================================
 # ZMQ Proxies

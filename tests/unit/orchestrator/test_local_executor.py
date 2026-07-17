@@ -404,7 +404,7 @@ def test_subprocess_runner_pops_and_restores_sensitive_headers(
 
 
 # ---------------------------------------------------------------------------
-# Stale-env isolation (PR #982 review feedback)
+# Stale-env isolation
 # ---------------------------------------------------------------------------
 
 
@@ -415,14 +415,14 @@ async def test_stale_parent_env_headers_not_forwarded_when_run_has_none(
     """REGRESSION-LOCK: a stale ``AIPERF_INJECTED_HEADERS`` in the parent
     shell must not leak into a child run that has no sensitive headers.
 
-    Reproduced on PR #982 by ajcasagrande: parent env carried
+    Repro: parent env carries
     ``AIPERF_INJECTED_HEADERS={"Authorization":"Bearer stale-parent-secret"}``;
-    the child run configured only ``X-Trace-Id`` (non-sensitive). Pre-fix
-    the subprocess overlay still applied the stale Authorization onto
+    the child run configures only ``X-Trace-Id`` (non-sensitive). Without the
+    pop, the subprocess overlay applies the stale Authorization onto
     ``run.cfg.endpoint.headers``, causing the benchmark to send an
     unintended credential-bearing header.
 
-    Fix: ``_run_benchmark_subprocess`` pops both internal injection vars
+    ``_run_benchmark_subprocess`` therefore pops both internal injection vars
     from the copied env before conditionally re-setting them.
     """
     monkeypatch.setenv(
@@ -457,7 +457,7 @@ async def test_stale_parent_env_headers_not_forwarded_when_run_has_none(
 
 
 # ---------------------------------------------------------------------------
-# URL userinfo IPC (PR #982 review feedback — dynamo-ops)
+# URL userinfo IPC
 # ---------------------------------------------------------------------------
 
 
@@ -570,7 +570,7 @@ def test_subprocess_runner_pops_and_restores_userinfo_urls(
 
 
 # ---------------------------------------------------------------------------
-# Malformed-env-var hardening (PR #982 review feedback — coderabbitai)
+# Malformed-env-var hardening
 # ---------------------------------------------------------------------------
 
 
@@ -652,7 +652,7 @@ def test_parse_injected_dict_rejects_non_string_values() -> None:
 def test_parse_injected_dict_malformed_json_raises_value_error_not_decode_error() -> (
     None
 ):
-    """REGRESSION-LOCK (coderabbitai): malformed env-var JSON must surface as a
+    """REGRESSION-LOCK: malformed env-var JSON must surface as a
     ``ValueError`` naming the env var, NOT a raw ``orjson.JSONDecodeError`` that
     main()'s ``except orjson.JSONDecodeError`` block would misreport as a
     config-file error.
@@ -673,7 +673,7 @@ def test_parse_injected_dict_malformed_json_raises_value_error_not_decode_error(
 
 
 def test_parse_injected_str_list_malformed_json_raises_value_error() -> None:
-    """REGRESSION-LOCK (coderabbitai): malformed ``AIPERF_INJECTED_ENDPOINT_URLS``
+    """REGRESSION-LOCK: malformed ``AIPERF_INJECTED_ENDPOINT_URLS``
     JSON surfaces as a ``ValueError`` naming the env var, not a decode error.
     """
     from aiperf.orchestrator.subprocess_runner import _parse_injected_str_list
@@ -718,7 +718,7 @@ def test_subprocess_runner_rejects_non_string_header_values_env(
 def test_subprocess_runner_malformed_env_not_attributed_to_config_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """REGRESSION-LOCK (coderabbitai): a malformed ``AIPERF_INJECTED_HEADERS``
+    """REGRESSION-LOCK: a malformed ``AIPERF_INJECTED_HEADERS``
     must not be reported as ``Invalid JSON in config file`` — the config file
     here is well-formed. The error must name the offending env var instead.
     """
@@ -750,3 +750,130 @@ def test_subprocess_runner_malformed_env_not_attributed_to_config_file(
         "malformed env var was misattributed to the config file"
     )
     assert "AIPERF_INJECTED_HEADERS" in err
+
+
+# ---------------------------------------------------------------------------
+# C1: scenario lock resolved in the PARENT before the subprocess dump.
+# These exercise the REAL executor path (_execute_sync -> _resolve_scenario_in_parent
+# -> _prepare_run_artifacts) on a graph-workload run, then prove the on-disk
+# run_config.json carries the baked auto-fills so the in-subprocess re-resolution
+# (which re-marks every non-None field as "set") is a clean no-op.
+# ---------------------------------------------------------------------------
+
+_WEKA_FIXTURE = (Path(__file__).parents[1] / "graph/fixtures/weka_min.json").resolve()
+
+
+def _graph_scenario_run(tmp_path: Path) -> BenchmarkRun:
+    cfg = BenchmarkConfig(
+        models=["claude-opus-4-5-20251101"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets=[{"name": "profiling", "type": "file", "path": str(_WEKA_FIXTURE)}],
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "concurrency": 1,
+                "sessions": 5,
+            }
+        ],
+        scenario="inferencex-agentx-mvp",
+    )
+    return BenchmarkRun(
+        benchmark_id="scn-mp",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="scenario_mp",
+    )
+
+
+@pytest.mark.asyncio
+async def test_executor_bakes_scenario_autofills_into_run_config(
+    tmp_path: Path,
+) -> None:
+    """The executor resolves the scenario in the parent and the dumped
+    run_config.json carries streaming=True / cache_bust=first_turn_prefix /
+    duration=1800 -- with NO spurious ScenarioLockError raised."""
+    import orjson as _orjson
+
+    run = _graph_scenario_run(tmp_path)
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+    with patch("aiperf.orchestrator.local_executor.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stderr = ""
+        await executor.execute(run)  # must not raise
+
+    on_disk = _orjson.loads((tmp_path / "run_config.json").read_bytes())
+    endpoint = on_disk["cfg"]["endpoint"]
+    assert endpoint["streaming"] is True
+    assert endpoint["cache_bust"] == "first_turn_prefix"
+    phases = on_disk["cfg"]["phases"]
+    assert any(p.get("duration") == 1800.0 for p in phases)
+    # The parent's outcome is baked onto resolved state too.
+    assert on_disk["resolved"]["scenario_outcome"]["submission_valid"] is True
+
+
+@pytest.mark.asyncio
+async def test_subprocess_reresolve_of_baked_config_is_clean(tmp_path: Path) -> None:
+    """REAL subprocess-path proof: load the on-disk run_config.json the executor
+    wrote and run the scenario validator exactly as the subprocess does -- it
+    must NOT raise a spurious ScenarioLockError and must stay submission_valid."""
+    import orjson as _orjson
+
+    from aiperf.common.scenario import apply_scenario
+
+    run = _graph_scenario_run(tmp_path)
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+    with patch("aiperf.orchestrator.local_executor.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stderr = ""
+        await executor.execute(run)
+
+    data = _orjson.loads((tmp_path / "run_config.json").read_bytes())
+    child = BenchmarkRun.model_validate(data)
+    # The round-trip spuriously marks streaming/cache_bust as "set"...
+    assert "streaming" in child.cfg.endpoint.model_fields_set
+    # ...but the baked values satisfy the locks, so re-resolution is a no-op.
+    outcome = apply_scenario(child)
+    assert outcome.submission_valid is True
+    assert outcome.violations == []
+
+
+@pytest.mark.asyncio
+async def test_scenario_resolution_performs_no_process_global_writes(
+    tmp_path: Path,
+) -> None:
+    """C2 regression, config-native form: scenario resolution mutates ONLY the
+    run's own config (apply-or-lock on ``run.cfg``); it must perform no
+    ``os.environ`` writes, so nothing can leak into a later plain run. Run A's
+    own subprocess gets the window via its serialized run config, not env."""
+    import os as _os
+
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+
+    def _record(*args: Any, **kwargs: Any):
+        import subprocess as _sp
+
+        return _sp.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    env_before = dict(_os.environ)
+    with patch(
+        "aiperf.orchestrator.local_executor.subprocess.run", side_effect=_record
+    ):
+        # Run A: REAL scenario resolution auto-applies the t* window onto the
+        # run's config before it is serialized for the subprocess.
+        run_a = _graph_scenario_run(tmp_path / "run_a")
+        await executor.execute(run_a)
+        assert run_a.cfg.trajectory_start_max_ratio == 1.0
+
+        # Run B: plain non-scenario run -- must NOT inherit run A's t* window.
+        run_b = BenchmarkRun(
+            benchmark_id="plain",
+            cfg=_benchmark_config(),
+            artifact_dir=tmp_path / "run_b",
+            label="plain",
+        )
+        await executor.execute(run_b)
+        assert run_b.cfg.trajectory_start_max_ratio is None
+
+    # Scenario application wrote no process-global env state.
+    assert dict(_os.environ) == env_before

@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regression: ``--request-count`` overrides YAML ``phases[*].requests``.
 
-Round-2 R2-H3 reproduced this end-to-end: with ``--config minimal.yaml``
-and ``--request-count 10``, the CLI flag silently no-opped because the
+With ``--config minimal.yaml``
+and ``--request-count 10``, the CLI flag would silently no-op if the
 YAML+CLI resolver only built section-level overrides and never overlaid
 loadgen-derived values onto the YAML's profiling phase.
 
-The fix in ``aiperf.config.flags.resolver._apply_phase_loadgen_overrides``
+``aiperf.config.flags.resolver._apply_phase_loadgen_overrides``
 walks the merged envelope and writes loadgen fields onto the phase named
 ``profiling`` (or the sole non-warmup entry). This test locks that in.
 """

@@ -248,7 +248,7 @@ def _make_aggregate_with_combos(combos):
 
 @pytest.mark.asyncio
 async def test_aggregate_sweep_csv_header_is_union_across_combos(tmp_path) -> None:
-    """R2-H6 regression: CSV header must include metrics that appear in any combo, not just combo[0]."""
+    """CSV header must include metrics that appear in any combo, not just combo[0]."""
     from aiperf.exporters.aggregate import (
         AggregateExporterConfig,
         AggregateSweepCsvExporter,
@@ -281,7 +281,7 @@ async def test_aggregate_sweep_csv_header_is_union_across_combos(tmp_path) -> No
 
 @pytest.mark.asyncio
 async def test_aggregate_sweep_csv_header_when_first_combo_empty(tmp_path) -> None:
-    """R2-H6 regression: if combo[0] has empty metrics, columns must still appear from later combos."""
+    """If combo[0] has empty metrics, columns must still appear from later combos."""
     from aiperf.exporters.aggregate import (
         AggregateExporterConfig,
         AggregateSweepCsvExporter,
@@ -305,7 +305,7 @@ async def test_aggregate_sweep_csv_header_when_first_combo_empty(tmp_path) -> No
 
 
 def test_aggregate_sweep_csv_format_number_handles_nan_and_inf() -> None:
-    """R2-M10 regression: NaN, +inf, -inf must all render as empty string (matching None)."""
+    """NaN, +inf, -inf must all render as empty string (matching None)."""
     from aiperf.exporters.aggregate.aggregate_sweep_csv_exporter import (
         AggregateSweepCsvExporter,
     )

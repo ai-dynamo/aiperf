@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from aiperf.common.constants import STREAMED_REQUEST_TAG
 from aiperf.common.enums import MetricFlags, MetricTimeUnit
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
@@ -29,7 +30,7 @@ class StreamSetupLatencyMetric(BaseRecordMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     display_unit = MetricTimeUnit.MILLISECONDS
     flags = MetricFlags.STREAMING_ONLY | MetricFlags.EXPERIMENTAL
-    required_metrics = None
+    required_metrics = {STREAMED_REQUEST_TAG}
 
     def _parse_record(
         self,
@@ -37,6 +38,8 @@ class StreamSetupLatencyMetric(BaseRecordMetric[int]):
         record_metrics: MetricRecordDict,
     ) -> int:
         """This method extracts the request and receive start timestamps, and calculates the stream setup time."""
+        if STREAMED_REQUEST_TAG not in record_metrics:
+            raise NoMetricValue("record did not stream; streaming metrics skipped")
 
         if not record.request.recv_start_perf_ns or not record.start_perf_ns:
             raise NoMetricValue(

@@ -338,9 +338,9 @@ def test_mutate_base_preserves_sensitive_headers() -> None:
 
 
 def test_mutate_base_preserves_url_userinfo() -> None:
-    """REGRESSION-LOCK (PR #982 dynamo-ops): ``EndpointConfig.urls`` has an
+    """REGRESSION-LOCK: ``EndpointConfig.urls`` has an
     unconditional ``_redact_urls`` serializer (no ``when_used="json"`` guard),
-    so even ``mode="python"`` dumps strip ``user:pass@`` userinfo. The fix
+    so even ``mode="python"`` dumps strip ``user:pass@`` userinfo. The planner
     pairs ``mode="python"`` with ``context={"include_secrets": True}`` so
     the urls serializer's context-aware bypass fires for the planner's
     in-pipeline dump too. URL-credentialed endpoints (e.g. database URIs,

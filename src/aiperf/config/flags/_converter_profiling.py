@@ -281,11 +281,22 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
     if (
         not any(k in prof for k in ("requests", "duration", "sessions"))
         and prof["type"] != PhaseType.FIXED_SCHEDULE
+        and not _cli_is_graph_workload(cli)
     ):
-        # Why: when no bound is given for an unbounded run, default to
-        # 10 requests so the run terminates in a reasonable time.
-        # Deliberate override of the PhaseConfig default (which would
-        # leave it unbounded).
+        # Why: when no bound is given for a non-graph unbounded run, default to
+        # 10 requests so the run terminates in a reasonable time. Deliberate
+        # override of the PhaseConfig default (which would leave it unbounded).
+        #
+        # A BARE graph run is deliberately EXCLUDED here so it stays UNBOUNDED
+        # (no auto-10): it does a SINGLE CORPUS PASS -- each loaded trace runs
+        # exactly once, then the lanes stop (the graph strategy's
+        # ``_recycle_has_stop_condition`` is False with no numeric bound). The
+        # corpus size is not knowable here (weka HF is streamed; the
+        # max-context-length filter runs at parse time), so the no-stop
+        # concurrency phase validates against the graph dataset in
+        # ``check_phase_dataset_compatibility`` -- mirroring FixedSchedulePhase
+        # inferring its stop from the trace. Injecting ``requests=10`` would
+        # truncate the benchmark to 10 dispatches.
         prof.setdefault("requests", 10)
     delay_set = "request_cancellation_delay" in cli.model_fields_set
     if cli.request_cancellation_rate:
@@ -302,6 +313,35 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
             "Pass --request-cancellation-rate > 0 to enable cancellation, or "
             "drop --request-cancellation-delay."
         )
+
+
+def _cli_is_graph_workload(cli: CLIConfig) -> bool:
+    """True when the CLI invocation targets a graph workload.
+
+    Mirrors the dataset resolver's graph check
+    (``config.dataset.resolver.DatasetResolver._resolve_one``): an explicit
+    ``--graph-format`` forces graph mode (including ``native``, which
+    auto-detection excludes), otherwise the ``--input-file`` path is sniffed
+    against the graph-adapter registry via
+    :func:`~aiperf.dataset.graph.workload_detect.is_graph_workload_path`
+    (which excludes ``native``/``dag_jsonl``). A graph corpus size is NOT
+    knowable at CLI-conversion time, so this only decides whether a bare run
+    stays unbounded (single corpus pass) instead of taking the auto-10 bound.
+    Any detection failure degrades to False (keep the non-graph auto-10).
+    """
+    if getattr(cli, "graph_format", None) is not None:
+        return True
+    input_file = getattr(cli, "input_file", None)
+    if input_file is None:
+        return False
+    from pathlib import Path
+
+    from aiperf.dataset.graph.workload_detect import is_graph_workload_path
+
+    try:
+        return is_graph_workload_path(Path(input_file))
+    except Exception:
+        return False
 
 
 def _maybe_auto_promote_trace(
@@ -366,7 +406,26 @@ def _maybe_set_dag_root_sessions(
 
 
 def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> None:
-    """Apply dataset-sensitive CLI defaults for trace/fixed/dag datasets."""
+    """CLI-only counterpart of the v1 dataset-aware autodefaults.
+
+    Three behaviors, all conditional on the user's CLI invocation supplying
+    a dataset file (no behavior change for YAML-only configs, which are
+    expected to be complete):
+
+    1. Trace auto-promotion: a trace ``--custom-dataset-type`` whose first
+       record carries a ``timestamp`` field flips the phase to
+       fixed_schedule unless the user passed ``--no-fixed-schedule``.
+    2. fixed_schedule autodefault: when a fixed_schedule phase has no
+       stop condition, fill ``requests`` from the dataset record count
+       (single-pass).
+    3. Forking-dataset autodefault: when the dataset is ``dag_jsonl`` and
+       no stop condition is set, fill ``sessions`` from the DAG root
+       count so the run executes each root once instead of truncating
+       mid-tree.
+
+    Bare-string ``--custom-dataset-type`` (no ``--input-file``) is a no-op
+    for I/O-dependent steps.
+    """
 
     from aiperf.config.phases import PhaseType
 
@@ -454,7 +513,19 @@ def _count_dataset_records(file_path: object) -> int:
 
 
 def build_profiling(cli: CLIConfig) -> dict[str, Any]:
-    """Produce the canonical profiling-phase dict from ``cli``."""
+    """Produce the canonical profiling-phase dict from ``cli``.
+
+    Reads load-generator settings (concurrency, rate, ramps, cancellation),
+    schedule/replay flags, and session-turn count directly from ``cli``
+    (all fields are top-level on the flat CLIConfig). Returns a dict whose ``type``
+    is one of ``PhaseType.{CONCURRENCY, POISSON, GAMMA, CONSTANT,
+    USER_CENTRIC, FIXED_SCHEDULE}`` plus the keys mapped by
+    ``_PROF_FIELD_ROUTES`` and any ramp/cancellation sub-dicts.
+
+    Raises:
+        ValueError: when USER_CENTRIC mode is selected but
+            ``conversation_turn_mean`` is < 2.
+    """
     from aiperf.config.phases import PhaseType
 
     fields_set = cli.model_fields_set

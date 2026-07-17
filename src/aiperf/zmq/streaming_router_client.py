@@ -61,8 +61,8 @@ class ZMQStreamingRouterClient(BaseZMQClient):
 
     Example:
     ```python
-        from aiperf.common.structs import (
-            Credit, WorkerReady, WorkerShutdown, CreditReturn
+        from aiperf.credit.messages import (
+            CreditReturn, WorkerReady, WorkerShutdown
         )
 
         # Create via comms (recommended - handles lifecycle management)
@@ -77,8 +77,8 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                     await register_worker(identity)
                 case WorkerShutdown():
                     await unregister_worker(identity)
-                case CreditReturn(credit_id=id, cancelled=c, error=e):
-                    await handle_credit_return(identity, id, c, e)
+                case CreditReturn(credit=credit, cancelled=c, error=e):
+                    await handle_credit_return(identity, credit, c, e)
 
         router.register_receiver(handle_message)
 
@@ -130,7 +130,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         Register handler for incoming messages from DEALER clients.
 
         The handler will be called for each message received, with the DEALER's
-        identity and the decoded message (WorkerReady | WorkerShutdown | CreditReturn).
+        identity and the decoded message (any WorkerToRouterMessage).
 
         Args:
             handler: Async function that takes (identity: str, message: WorkerToRouterMessage)
@@ -197,7 +197,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
 
         Args:
             identity: The DEALER client's identity (routing key)
-            struct: The msgspec Struct to send (Credit or CancelCredits)
+            struct: The msgspec Struct to send (any RouterToWorkerMessage)
 
         Raises:
             NotInitializedError: If socket not initialized
@@ -222,7 +222,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         Background task for receiving messages from DEALER clients.
 
         Runs continuously until stop is requested. Decodes messages as
-        WorkerToRouterMessage (WorkerReady | WorkerShutdown | CreditReturn) using msgpack.
+        WorkerToRouterMessage using msgpack.
         """
         self.debug("Streaming ROUTER receiver task started")
 

@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Round-trip regression: every bundled template loads -> dumps -> reloads.
 
-Covers R2-H2 from round-2 adversarial review: ``GridSweep.type="grid"`` is
+``GridSweep.type="grid"`` is
 a default Field, so ``model_dump(exclude_defaults=True)`` strips the
-discriminator and reload fails with ``union_tag_not_found``. The fix in
+discriminator and reload fails with ``union_tag_not_found``.
 ``dump_config`` re-injects ``sweep.type`` so the round-trip is stable for
 every template, not just sweep templates.
 
@@ -82,7 +82,7 @@ def test_dump_reload_roundtrip_for_every_template(
 def test_sweep_discriminator_survives_dump() -> None:
     """The grid sweep ``type:`` discriminator is preserved on dump.
 
-    Targeted regression for R2-H2: ``exclude_defaults=True`` would strip
+    Targeted regression: ``exclude_defaults=True`` would strip
     ``type: grid`` because it's the default; the discriminated union
     rejects the dumped YAML on reload. ``dump_config`` re-injects the
     discriminator so this scenario round-trips.

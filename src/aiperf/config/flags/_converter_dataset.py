@@ -272,6 +272,8 @@ def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
             out[key] = value
     if _set(cli, "dataset_filters"):
         out["filters"] = _parse_dataset_filters(cli.dataset_filters)
+    if _set(cli, "graph_format") and cli.graph_format is not None:
+        out["graph_format"] = cli.graph_format
     return out
 
 
@@ -303,11 +305,17 @@ def _resolve_entries(cli: CLIConfig) -> int | None:
          conversations (the runner recycles them to fill request_count).
       3. ``cli.request_count`` (explicitly set) — fallback so a single
          ``--request-count N`` invocation produces ``N`` unique entries when
-         the user did not pin the conversation count separately.
+         the user did not pin the conversation count separately. **Synthetic
+         and public datasets only.** On a file dataset ``--request-count`` is
+         a recycle count, not a corpus size (a single trace can emit many
+         requests), so it must NOT cap ``FileDataset.entries`` — the file
+         corpus is sized by the file itself unless the user explicitly pins
+         it with ``--num-dataset-entries`` / ``--num-conversations`` (steps 1
+         and 2, which apply to every dataset kind). See graph #1106.
 
-    Returns None when none was explicitly set. The caller MUST omit the
-    ``entries`` key from the output dict in that case so the dataset class's
-    own Pydantic default applies (``SyntheticDataset.entries=100``;
+    Returns None when no applicable source was explicitly set. The caller MUST
+    omit the ``entries`` key from the output dict in that case so the dataset
+    class's own Pydantic default applies (``SyntheticDataset.entries=100``;
     ``File/Public.entries=None``). Emitting ``entries=None`` into the
     dict would crash AIPerfConfig validation on synthetic
     (``int_type, got NoneType``).
@@ -323,7 +331,12 @@ def _resolve_entries(cli: CLIConfig) -> int | None:
         if isinstance(v, list):
             return max(v) if v else None
         return v
-    if "request_count" in s:
+    # A file dataset draws its corpus from the input file; --request-count only
+    # recycles that corpus and must not cap it. Mirror _apply_dataset_type's
+    # kind precedence (public wins over file) so a public dataset still
+    # back-fills. Synthetic (neither field set) also back-fills.
+    is_file_dataset = bool(cli.input_file) and not cli.public_dataset
+    if "request_count" in s and not is_file_dataset:
         v = cli.request_count
         if isinstance(v, list):
             return max(v) if v else None
@@ -422,7 +435,7 @@ def _apply_synthesis(d: dict[str, Any], cli: CLIConfig) -> None:
 
     Synthesis is only meaningful for trace-format file datasets (the
     Synthesizer is invoked from BaseTraceDatasetLoader). The synthesis
-    fields live flat on CLIConfig (post-Task-13), so we only emit a
+    fields live flat on CLIConfig, so we only emit a
     ``synthesis`` sub-dict when the resulting dataset is a FileDataset and
     at least one field was explicitly set or carries a non-default value.
     """
@@ -440,6 +453,10 @@ def _apply_synthesis(d: dict[str, Any], cli: CLIConfig) -> None:
         ("synthesis_output_len_multiplier", "output_len_multiplier"),
         ("synthesis_max_isl", "max_isl"),
         ("synthesis_max_osl", "max_osl"),
+        ("max_context_length", "max_context_length"),
+        ("allow_dataset_wrap", "allow_dataset_wrap"),
+        ("prompt_corpus", "corpus"),
+        ("synthesis_idle_gap_cap", "idle_gap_cap_seconds"),
     ):
         if cli_attr in set_fields:
             value = getattr(cli, cli_attr)

@@ -538,6 +538,18 @@ class ConcurrencyManager:
             return can_proceed_fn()
         return self._prefill_limiter.try_acquire(phase, can_proceed_fn)
 
+    @property
+    def prefill_limiting_enabled(self) -> bool:
+        """True iff prefill-concurrency limiting is active (a prefill limit is
+        configured for at least one phase).
+
+        The callback handler consults this so a ``FirstToken`` arriving with no
+        prefill limiting in force (post-TTFT first-token anchoring) does not
+        inflate the prefill-released counter. Slot release itself is a no-op
+        when disabled, so only the accounting needs guarding.
+        """
+        return self._prefill_limiter.enabled
+
     def release_prefill_slot(self, phase: CreditPhase) -> None:
         """Release a prefill concurrency slot.
 

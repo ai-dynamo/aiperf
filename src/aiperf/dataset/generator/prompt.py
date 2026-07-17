@@ -19,6 +19,48 @@ from aiperf.dataset.generator.base import BaseGenerator
 DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"
 
 
+def sample_tokens_from_corpus(
+    corpus,
+    num_tokens: int,
+    rng_to_use,
+    sep_token: int | None = None,
+) -> list[int]:
+    """Sample ``num_tokens`` tokens from ``corpus`` using ``rng_to_use``.
+
+    Mirrors :meth:`PromptGenerator._sample_tokens` but takes the RNG explicitly,
+    so callers (worker processes, the hash-id reseed path) can drive sampling
+    without sharing PromptGenerator state. Wraps the slice if it overflows the
+    corpus end so the result is always exactly ``num_tokens`` long.
+
+    Args:
+        corpus: Token corpus as a sequence of token IDs.
+        num_tokens: Number of tokens to sample.
+        rng_to_use: Random generator with a ``randrange(n)`` method.
+        sep_token: Optional block-separation token prepended at index 0
+            (consumes one slot of ``num_tokens``).
+
+    Returns:
+        List of sampled token IDs of length ``num_tokens``.
+    """
+    corpus_len = len(corpus)
+    tokens: list[int] = []
+
+    if sep_token is not None:
+        tokens.append(sep_token)
+        num_tokens -= 1
+
+    start = rng_to_use.randrange(corpus_len)
+    end = start + num_tokens
+
+    if end <= corpus_len:
+        tokens.extend(corpus[start:end])
+    else:
+        tokens.extend(corpus[start:])
+        tokens.extend(corpus[: end - corpus_len])
+
+    return tokens
+
+
 class PromptGenerator(BaseGenerator):
     """A class for generating synthetic prompts from a text corpus.
 
@@ -148,8 +190,10 @@ class PromptGenerator(BaseGenerator):
         ]
         self._corpus_size = len(self._tokenized_corpus)
         self.debug(
-            lambda: f"Initialized corpus with {self._corpus_size} tokens "
-            f"from {len(chunks)} chunks using {num_threads} thread(s)"
+            lambda: (
+                f"Initialized corpus with {self._corpus_size} tokens "
+                f"from {len(chunks)} chunks using {num_threads} thread(s)"
+            )
         )
 
     def _create_prefix_prompt_pool(self) -> None:
@@ -164,7 +208,9 @@ class PromptGenerator(BaseGenerator):
         pool_size = self.prefix_prompts.pool_size or 0
         self._prefix_prompts = [self.generate_prompt(length) for _ in range(pool_size)]
         self.debug(
-            lambda: f"Initialized prefix prompts pool with {len(self._prefix_prompts)} prompts"
+            lambda: (
+                f"Initialized prefix prompts pool with {len(self._prefix_prompts)} prompts"
+            )
         )
 
     def generate(
@@ -433,8 +479,10 @@ class PromptGenerator(BaseGenerator):
             new_prompt = self.generate_prompt(length)
             self._user_context_prompts.append(new_prompt)
             self.debug(
-                lambda: f"Generated user context prompt #{len(self._user_context_prompts) - 1} "
-                f"for session {len(self._user_context_prompts) - 1}"
+                lambda: (
+                    f"Generated user context prompt #{len(self._user_context_prompts) - 1} "
+                    f"for session {len(self._user_context_prompts) - 1}"
+                )
             )
 
         return self._user_context_prompts[session_index]

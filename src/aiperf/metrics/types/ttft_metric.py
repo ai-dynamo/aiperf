@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from aiperf.common.constants import STREAMED_REQUEST_TAG
 from aiperf.common.enums import MetricFlags, MetricTimeUnit
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
@@ -25,7 +26,7 @@ class TTFTMetric(BaseRecordMetric[int]):
         MetricFlags.STREAMING_TOKENS_ONLY
         | MetricFlags.PERCENTILE_INCLUDES_FAILED_REQUESTS
     )
-    required_metrics = None
+    required_metrics = {STREAMED_REQUEST_TAG}
 
     def _parse_record(
         self,
@@ -37,9 +38,11 @@ class TTFTMetric(BaseRecordMetric[int]):
         RequestRecord object, computes the difference (TTFT), and returns the result.
 
         Raises:
-            NoMetricValue: If the record does not have at least one content response
+            NoMetricValue: If the record did not stream, or does not have at least one content response
             ValueError: If the first response is before the request start timestamp.
         """
+        if STREAMED_REQUEST_TAG not in record_metrics:
+            raise NoMetricValue("record did not stream; streaming metrics skipped")
 
         if len(record.content_responses) < 1:
             raise NoMetricValue(

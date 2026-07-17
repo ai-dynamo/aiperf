@@ -5,6 +5,7 @@ Shared fixtures for testing AIPerf metrics.
 
 """
 
+from aiperf.common.constants import STREAMED_REQUEST_TAG
 from aiperf.common.enums import (
     AggregationKind,
     CreditPhase,
@@ -30,6 +31,16 @@ from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.plugin.enums import EndpointType
+
+
+def streamed_record_metrics() -> MetricRecordDict:
+    """A record-metrics dict primed with the streamed-request predicate.
+
+    Streaming record metrics gate on the presence of ``STREAMED_REQUEST_TAG``;
+    tests that call a streaming metric's ``parse_record`` directly (rather than via
+    ``run_simple_metrics_pipeline``) must seed it to reach the metric-specific logic.
+    """
+    return MetricRecordDict({STREAMED_REQUEST_TAG: 1})
 
 
 def _create_test_request_info(model_name: str = "test-model") -> RequestInfo:
@@ -61,6 +72,7 @@ def create_record(
     input_tokens: int | None = None,
     output_tokens_per_response: int = 1,
     error: ErrorDetails | None = None,
+    streamed: bool = True,
 ) -> ParsedResponseRecord:
     """
     Simple helper to create test records with sensible defaults.
@@ -70,6 +82,10 @@ def create_record(
         meaning that the total output token count will be the number of responses times
         the output tokens per response.
     The end_perf_ns is the last response timestamp, or the start_ns if no responses are provided.
+
+    ``streamed`` stamps ``RequestRecord.streamed`` (defaults True since these fixtures
+    simulate streaming runs); set it False to exercise the per-record streaming-metric
+    skip predicate gated by ``StreamedRequestMetric``.
     """
     responses = responses or [start_ns + 50]  # Single response 50ns later
 
@@ -80,6 +96,7 @@ def create_record(
         timestamp_ns=start_ns,
         end_perf_ns=responses[-1] if responses else start_ns,
         error=error,
+        streamed=streamed,
     )
 
     response_data = []

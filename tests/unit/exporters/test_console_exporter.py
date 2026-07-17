@@ -25,6 +25,9 @@ from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
 from aiperf.metrics.types.output_token_count import OutputTokenCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
+from aiperf.metrics.types.theoretical_prefix_cache_metric import (
+    TheoreticalPrefixCacheHitMetric,
+)
 from aiperf.metrics.types.ttft_metric import TTFTMetric
 from aiperf.plugin.enums import EndpointType
 from tests.unit.exporters.conftest import make_exporter_config
@@ -185,6 +188,44 @@ class TestConsoleExporter:
         await ConsoleMetricsExporter(config).export(Console(width=115))
         assert "--enable-prompt-tokens-details" not in capsys.readouterr().out
 
+    @pytest.mark.asyncio
+    async def test_export_renders_theoretical_prefix_cache_hit_in_cache_table(
+        self, mock_endpoint_config, capsys
+    ):
+        """The accumulator-injected tag must not be silently omitted.
+
+        It is registered with console_group=CACHE, so it renders in its own
+        Cache table rather than the default metrics table.
+        """
+        config = make_exporter_config(
+            results=ProfileResults(
+                records=[
+                    MetricResult(
+                        tag="request_latency",
+                        header="Request Latency",
+                        unit="ms",
+                        avg=1.0,
+                    ),
+                    MetricResult(
+                        tag=TheoreticalPrefixCacheHitMetric.tag,
+                        header=TheoreticalPrefixCacheHitMetric.header,
+                        unit=str(TheoreticalPrefixCacheHitMetric.unit),
+                        avg=42.5,
+                    ),
+                ],
+                start_ns=0,
+                end_ns=0,
+                completed=0,
+            ),
+            cli_config=mock_endpoint_config,
+            telemetry_results=None,
+        )
+        await ConsoleMetricsExporter(config).export(Console(width=115))
+        output = capsys.readouterr().out
+        assert "NVIDIA AIPerf | LLM Metrics: Cache" in output
+        assert "Theoretical Prefix Cache Hit" in output
+        assert "42.50" in output
+
     @pytest.mark.parametrize(
         "metric_tag, should_show",
         [
@@ -200,6 +241,8 @@ class TestConsoleExporter:
             (InterTokenLatencyMetric.tag, True),  # Normal metric
             (RequestLatencyMetric.tag, True),  # Normal metric
             (TTFTMetric.tag, True),  # Normal metric
+            # Externally-injected accumulator metric - shown (CACHE group)
+            (TheoreticalPrefixCacheHitMetric.tag, True),
         ],
     )  # fmt: skip
     def test_should_show_metrics_based_on_flags(

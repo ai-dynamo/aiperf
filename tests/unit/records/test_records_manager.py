@@ -835,3 +835,110 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         published = manager.publish.await_args.args[0]
         assert isinstance(published, BaseServiceErrorMessage)
         manager._dispatch_record.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# context-overflow record metric-exclusion (graph-IR)
+# ---------------------------------------------------------------------------
+
+
+def _overflow_skip_message(
+    overflow_count: int = 1,
+    phase: CreditPhase = CreditPhase.PROFILING,
+) -> RecordsMessage:
+    metadata = MetricRecordMetadata(
+        session_num=3,
+        conversation_id="conv-overflow",
+        turn_index=2,
+        request_start_ns=1_000_000_000,
+        request_end_ns=1_010_000_000,
+        worker_id="worker-overflow",
+        record_processor_id="rp-1",
+        benchmark_phase=phase,
+        context_overflow_skip=True,
+    )
+    return RecordsMessage(
+        service_id="rp-1",
+        metadata=metadata,
+        records=[
+            MetricRecordsData(
+                metadata=metadata,
+                metrics={
+                    "context_overflow_count": overflow_count,
+                    "request_latency": 9_999_000_000,
+                },
+            )
+        ],
+        error=ErrorDetails(message="context_length_exceeded", code=400),
+    )
+
+
+def _create_real_tracker_manager() -> RecordsManager:
+    manager = RecordsManager.__new__(RecordsManager)
+    manager._records_tracker = RecordsTracker()
+    manager._error_tracker = ErrorTracker()
+    manager._skipped_context_overflow_count = 0
+    manager._complete_credit_phases = set()
+    manager._dataset_configured_event = asyncio.Event()
+    manager._dataset_configured_event.set()
+    manager.info = MagicMock()
+    manager.debug = MagicMock()
+    manager.trace = MagicMock()
+    manager.warning = MagicMock()
+    manager.is_enabled_for = MagicMock(return_value=False)
+    manager._handle_all_records_received = AsyncMock()
+    forwarded: list[MetricRecordsData] = []
+
+    async def _capture(record, **kwargs) -> list[BaseException]:
+        forwarded.append(record)
+        return []
+
+    manager._dispatch_record = AsyncMock(side_effect=_capture)
+    manager._forwarded = forwarded  # type: ignore[attr-defined]
+    return manager
+
+
+class TestRecordsManagerOverflowExclusion:
+    """Graph-IR context-overflow records skip perf accumulation + the error
+    tracker, but still advance the success counter and forward ONLY the
+    context_overflow_count metric (submission-rate gate)."""
+
+    @pytest.mark.asyncio
+    async def test_overflow_skip_counts_success_not_error(self) -> None:
+        manager = _create_real_tracker_manager()
+        await manager._on_records(_overflow_skip_message())
+
+        tracker = manager._records_tracker._get_phase_tracker(CreditPhase.PROFILING)
+        assert tracker._success_records == 1
+        assert tracker._error_records == 0
+        assert manager._skipped_context_overflow_count == 1
+        summary = manager._error_tracker.get_error_summary_for_phase(
+            CreditPhase.PROFILING
+        )
+        assert sum(e.count for e in summary) == 0
+
+    @pytest.mark.asyncio
+    async def test_overflow_skip_forwards_only_overflow_count_metric(self) -> None:
+        manager = _create_real_tracker_manager()
+        await manager._on_records(_overflow_skip_message(overflow_count=1))
+
+        forwarded = manager._forwarded  # type: ignore[attr-defined]
+        assert len(forwarded) == 1
+        trimmed = forwarded[0]
+        assert trimmed.metrics == {"context_overflow_count": 1}
+        assert "request_latency" not in trimmed.metrics
+        assert trimmed.error is None
+        assert trimmed.metadata.context_overflow_skip is True
+        assert trimmed.valid is True
+
+    @pytest.mark.asyncio
+    async def test_non_overflow_record_unchanged(self) -> None:
+        manager = _create_real_tracker_manager()
+        await manager._on_records(_metric_records_message())
+
+        forwarded = manager._forwarded  # type: ignore[attr-defined]
+        assert len(forwarded) == 1
+        assert forwarded[0].metrics == {"request_latency": 250_000_000}
+        assert manager._skipped_context_overflow_count == 0
+        tracker = manager._records_tracker._get_phase_tracker(CreditPhase.PROFILING)
+        assert tracker._success_records == 1

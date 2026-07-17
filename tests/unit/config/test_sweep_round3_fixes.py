@@ -1,16 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Round-3 regression tests for round-2 adversarial findings.
+"""Sweep-sampling edge-case regression tests.
 
 Covers:
-- R2-H8/S1: ``SamplingDimension.choices`` rejects NaN/inf numeric entries.
-- R2-L1/S4: ``_map_dim`` clamps int output to respect declared ``[lo, hi]``
+- ``SamplingDimension.choices`` rejects NaN/inf numeric entries.
+- ``_map_dim`` clamps int output to respect declared ``[lo, hi]``
   (banker's rounding could otherwise produce values below ``lo`` for
   ``kind=int, scale=log, lo<1``).
-- R2-L2/S6 cross-cut: ``is_finite_value`` correctly handles
-  ``numpy.float32`` NaN/inf (the stdlib-float-only check would have
-  missed it).
+- ``is_finite_value`` correctly handles
+  ``numpy.float32`` NaN/inf (a stdlib-float-only check would
+  miss it).
 """
 
 from __future__ import annotations
@@ -29,9 +29,9 @@ from aiperf.config.sweep.sampling import SamplingDimension
 class TestChoicesFiniteValidation:
     """SamplingDimension.choices must reject non-finite numeric entries.
 
-    Round-1's ``cd953cb37`` added ``_validate_finite_bounds`` for
-    lo/hi only; ``choices`` slipped through and crashed mid-flight at
-    the orchestrator's defensive guard. Now blocks at validation time.
+    ``_validate_finite_bounds`` covers lo/hi only; without the same check on
+    ``choices``, a non-finite entry slips through and crashes mid-flight at
+    the orchestrator's defensive guard instead of blocking at validation time.
     """
 
     @pytest.mark.parametrize(
@@ -75,7 +75,7 @@ class TestChoicesFiniteValidation:
 class TestIntLogScaleClamping:
     """``_map_dim`` clamps int output so it never violates declared bounds.
 
-    Pre-existing bug surfaced by round-1's narrow-int-range warning:
+    Without the clamp,
     ``int(round(exp(log(0.5))))=0`` for ``lo=0.5, u=0.0``, which is
     below the user-declared ``lo``.
     """
@@ -110,8 +110,8 @@ class TestIntLogScaleClamping:
             assert v <= hi_floor, f"u={u}: produced {v}, above floor(hi)={hi_floor}"
 
     def test_int_log_lo_half_u_zero_clamps_to_one(self) -> None:
-        """Direct repro of the round-2 finding: lo=0.5, log scale,
-        u=0.0 used to map to 0; must now clamp to 1."""
+        """Direct repro: lo=0.5, log scale,
+        u=0.0 would map to 0 without the clamp; must clamp to 1."""
         with pytest.warns(UserWarning, match="too narrow for sampling diversity"):
             dim = SamplingDimension(path="x", lo=0.5, hi=1.0, kind="int", scale="log")
         assert _map_dim(0.0, dim) == 1
@@ -120,7 +120,7 @@ class TestIntLogScaleClamping:
 class TestIsFiniteValueNumpyFloat32:
     """Cross-cutting smoke for ``is_finite_value``.
 
-    Round-2 S6 noted that ``isinstance(x, float)`` misses
+    ``isinstance(x, float)`` misses
     ``numpy.float32``. ``is_finite_value`` duck-types via
     ``math.isfinite(float(x))`` so it handles all numpy float widths
     uniformly.

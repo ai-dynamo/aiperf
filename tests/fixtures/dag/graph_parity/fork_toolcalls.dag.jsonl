@@ -1,0 +1,2 @@
+{"session_id":"root","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"system","content":"You are a careful planning assistant."},{"role":"user","content":"Plan the rollout and call the planner [tool]."}],"max_tokens":128,"forks":["branch-a"]}]}
+{"session_id":"branch-a","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"Just invoke the checker, no prose [tool-only]."}],"max_tokens":96},{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"Now summarize what the tools returned."}],"max_tokens":64}]}

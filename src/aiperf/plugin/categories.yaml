@@ -117,6 +117,22 @@ public_dataset_loader:
     Supports HTTP-downloaded and HuggingFace-hosted datasets.
     One-to-one mapping: selected based on --public-dataset configuration.
 
+graph_adapter:
+  protocol: aiperf.dataset.graph.adapters.protocols:GraphAdapterProtocol
+  metadata_class: aiperf.plugin.schema.schemas:GraphAdapterMetadata
+  enum: GraphAdapterType
+  description: |
+    Graph adapters convert third-party trace/log files into the canonical
+    ParsedGraph used by the graph benchmark mode. Each adapter exposes
+    can_load(path) for format detection and parse(path, ctx) for full
+    conversion, where ctx is an optional GraphParseContext of run-derived
+    knobs; adapters forward a ctx field only when it is set, so a ctx-less
+    parse keeps the protocol-default entry behavior. Selected by
+    `--graph-format` or auto-detected from file extension + content sniff.
+    Detection ordering (when multiple adapters' can_load() return True for
+    the same file) comes from each plugin's metadata `detection_priority`
+    field.
+
 
 # =============================================================================
 # Endpoint and Transport Categories
@@ -139,6 +155,23 @@ transport:
     Transports handle the network layer for sending requests to inference servers.
     Manages connection pooling, streaming, error handling, and TCP configuration.
     One-to-one mapping based on transport_type configuration.
+
+# =============================================================================
+# Session Routing Category
+# =============================================================================
+
+session_routing:
+  protocol: aiperf.workers.session_routing:SessionRoutingBase
+  enum: SessionRoutingType
+  description: |
+    Session-routing transforms stamp per-session identity onto outbound
+    requests (headers or body metadata) so an external router in front of
+    multiple replicas can pin every turn of a session to one worker.
+    Selected via --session-routing; parameterized via repeatable
+    --session-routing-opt key=value validated against the plugin's
+    Options model. mutates_body is protocol metadata marking a mode as
+    body-mutating / incompatible with any verbatim-bytes request path; it is
+    not currently enforced by any gate on this codebase.
 
 # =============================================================================
 # Processing Categories

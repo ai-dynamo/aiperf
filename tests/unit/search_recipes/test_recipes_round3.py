@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Round-3 adversarial regressions: NaN/inf discipline in BO + search recipes.
+"""Adversarial regressions: NaN/inf discipline in BO + search recipes.
 
-Covers the behaviours hardened in this round:
+Covers:
 
 - NaN metric values are treated as "missing" by the Optuna BO planner and
   logged once per planner instance.

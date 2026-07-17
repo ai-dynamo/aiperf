@@ -55,15 +55,28 @@ class AggregateConfidenceCsvExporter(AggregateBaseExporter):
     def _write_metadata_section(self, writer: csv.writer) -> None:
         """Write metadata section to CSV.
 
+        The scenario-submission carrier keys (``_scenario_name`` etc.) are
+        internal writer->reader plumbing consumed by the JSON exporter's
+        submission fold; they are stripped here exactly as the JSON exporter
+        pops them, so they never leak into user-facing output.
+
         Args:
             writer: CSV writer object
         """
+        # Deferred import: cli_runner is the writer of the carrier-key
+        # contract; importing it lazily avoids pulling the CLI runner stack
+        # in at exporter module-import time.
+        from aiperf.cli_runner._aggregate import (
+            strip_scenario_submission_carrier_keys,
+        )
+
         writer.writerow(["Aggregation Type", self._result.aggregation_type])
         writer.writerow(["Total Runs", self._result.num_runs])
         writer.writerow(["Successful Runs", self._result.num_successful_runs])
 
         # Add custom metadata
-        for key, value in self._result.metadata.items():
+        metadata = strip_scenario_submission_carrier_keys(self._result.metadata)
+        for key, value in metadata.items():
             writer.writerow([key.replace("_", " ").title(), value])
 
     def _write_metrics_section(self, writer: csv.writer) -> None:

@@ -138,7 +138,7 @@ class PluginEntry(BaseModel):
         if self.loaded_class is not None:
             return self.loaded_class
 
-        # Validate and parse class path using structural pattern matching
+        # Validate and parse the 'module.path:ClassName' class path
         module_path, _, class_name = self.class_path.rpartition(":")
         if not module_path or not class_name:
             raise ValueError(

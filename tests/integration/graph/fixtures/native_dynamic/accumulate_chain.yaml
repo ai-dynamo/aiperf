@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Native accumulate-chain graph for the conversation-channel E2E: each turn
+# reads @hist and writes hist, so a downstream turn's prompt reconstructs the
+# FULL user/assistant alternation of the prior turns (each user turn authored
+# once; the assistant replies spliced live from the dynamic pool). The root
+# `turn1` reads @hist (= the seeded system message) to satisfy Gate B. Nodes
+# are non-streaming so the mock returns a single assembled body per request.
+graph:
+  state:
+    hist: {type: messages, reducer: add_messages}
+  nodes:
+    turn1:
+      node_type: llm
+      prompt:
+        - "@hist"
+        - {role: user, content: "Name a primary color."}
+      output: hist
+      streaming: false
+      max_tokens: 12
+    turn2:
+      node_type: llm
+      prompt:
+        - "@hist"
+        - {role: user, content: "Name a farm animal."}
+      output: hist
+      streaming: false
+      max_tokens: 12
+    turn3:
+      node_type: llm
+      prompt:
+        - "@hist"
+        - {role: user, content: "Combine your two answers."}
+      output: t3_out
+      streaming: false
+      max_tokens: 12
+  edges:
+    - {source: START, target: turn1}
+    - {source: turn1, target: turn2}
+    - {source: turn2, target: turn3}
+    - {source: turn3, target: END}
+traces:
+  - id: conv-chain-1
+    initial_state:
+      hist:
+        - {role: system, content: "You are terse."}

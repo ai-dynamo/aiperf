@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.config.dataset.resolver import DatasetResolver
+from aiperf.config.resolution.graph_dispatch_resolver import GraphDispatchResolver
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -35,6 +36,8 @@ __all__ = [
     "ConfigResolverChain",
     "DatasetResolver",
     "GpuMetricsResolver",
+    "GraphDispatchResolver",
+    "ScenarioResolver",
     "TimingResolver",
     "TokenizerResolver",
     "build_default_resolver_chain",
@@ -374,6 +377,24 @@ class TimingResolver:
             )
 
 
+class ScenarioResolver:
+    """Apply the locked ``--scenario`` invariants to ``run.cfg`` / ``run.resolved``.
+
+    Runs between :class:`DatasetResolver` and :class:`TimingResolver` so the
+    scenario's auto-filled phase durations are in place before TimingResolver
+    sums them. No-op when ``run.cfg.scenario`` is None. Delegates to
+    ``aiperf.common.scenario.apply_scenario``, which stores the
+    :class:`~aiperf.common.scenario.ScenarioOutcome` on
+    ``run.resolved.scenario_outcome``.
+    """
+
+    def resolve(self, run: BenchmarkRun) -> None:
+        """Apply the scenario lock (auto-fill defaults, validate invariants)."""
+        from aiperf.common.scenario import apply_scenario
+
+        apply_scenario(run)
+
+
 def build_default_resolver_chain() -> ConfigResolverChain:
     """Build the default resolver chain for pre-bootstrap resolution."""
     return ConfigResolverChain(
@@ -383,6 +404,8 @@ def build_default_resolver_chain() -> ConfigResolverChain:
             GpuMetricsResolver(),
             CommConfigResolver(),
             DatasetResolver(),
+            ScenarioResolver(),
+            GraphDispatchResolver(),
             TimingResolver(),
         ]
     )

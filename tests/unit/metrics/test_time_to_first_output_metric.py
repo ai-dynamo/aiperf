@@ -15,7 +15,11 @@ from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.time_to_first_output_token_metric import (
     TimeToFirstOutputTokenMetric,
 )
-from tests.unit.metrics.conftest import create_record, run_simple_metrics_pipeline
+from tests.unit.metrics.conftest import (
+    create_record,
+    run_simple_metrics_pipeline,
+    streamed_record_metrics,
+)
 
 
 def create_response_record(
@@ -39,6 +43,7 @@ def create_response_record(
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,
         end_perf_ns=responses[-1][0],
+        streamed=True,
     )
 
     return ParsedResponseRecord(
@@ -169,7 +174,7 @@ class TestTimeToFirstOutputMetric:
             NoMetricValue,
             match="Record must have at least one non-reasoning token",
         ):
-            metric.parse_record(record, MetricRecordDict())
+            metric.parse_record(record, streamed_record_metrics())
 
     def test_ttfo_tool_call_response(self):
         """Test TTFO with a tool-call-only response"""
@@ -250,6 +255,7 @@ def _create_record_with_responses(
         start_perf_ns=start_ns,
         timestamp_ns=start_ns,
         end_perf_ns=responses[-1].perf_ns,
+        streamed=True,
     )
     return ParsedResponseRecord(
         request=request,

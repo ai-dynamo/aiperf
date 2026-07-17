@@ -1,0 +1,2 @@
+{"session_id":"root","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"plan"}],"max_tokens":32,"spawns":["kid"]},{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"revise"}],"max_tokens":32,"spawns":["kid"]}]}
+{"session_id":"kid","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"user","content":"work"}],"max_tokens":16}]}

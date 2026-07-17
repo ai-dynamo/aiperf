@@ -47,7 +47,11 @@ from aiperf.config.dataset.video import (
 )
 from aiperf.config.loader.normalizers import _hoist_synthetic_prompt_fields
 from aiperf.config.types import SamplingDistribution
-from aiperf.plugin.enums import DatasetSamplingStrategy, PublicDatasetType
+from aiperf.plugin.enums import (
+    DatasetSamplingStrategy,
+    GraphAdapterType,
+    PublicDatasetType,
+)
 
 _logger = AIPerfLogger(__name__)
 
@@ -302,7 +306,10 @@ class FileDataset(BaseConfig):
             "Can be absolute or relative. Mutually exclusive with `records:`. "
             "Supported formats depend on the format field: "
             "JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/"
-            "bailian_trace, Parquet for baseten_trace, directories for random_pool.",
+            "bailian_trace, Parquet for baseten_trace, directories for random_pool."
+            " Graph trace inputs (`.jsonl` / `.jsonl.gz` / segmented `.gz` directories) "
+            "are recognized as graph workloads independently of `format` — auto-detected, "
+            "or forced with `graph_format`.",
         ),
     ]
 
@@ -329,9 +336,27 @@ class FileDataset(BaseConfig):
             "mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: "
             "timestamped trace files for replay. "
             "sagemaker_data_capture: JSONL captured by SageMaker DataCapture. "
-            "random_pool: directory of reusable prompts.",
+            "random_pool: directory of reusable prompts."
+            " This selects a *custom dataset loader* (conversation-style inputs) and is "
+            "ignored for graph workloads, which are auto-detected from `path` or forced "
+            "via `graph_format`.",
         ),
     ]
+
+    graph_format: Annotated[
+        GraphAdapterType | None,
+        Field(
+            default=None,
+            description="Force a graph-adapter format for this `--input-file`, "
+            "overriding workload auto-detection. Accepts a registered graph "
+            "adapter name (e.g. `dynamo_trace`, `weka_trace`, `dag_jsonl`, "
+            "`native`). When set, the file is treated as a graph workload and "
+            "parsed by the named adapter; this is the only way to load a "
+            "hand-authored `native` graph file or run a `dag_jsonl` conversation "
+            "file on the graph runtime, both otherwise excluded from "
+            "auto-detection. None = auto-detect.",
+        ),
+    ] = None
 
     sampling: Annotated[
         DatasetSamplingStrategy,
@@ -352,7 +377,9 @@ class FileDataset(BaseConfig):
             "Allows scaling timestamps and token lengths before replay. "
             "Applies to trace formats such as mooncake_trace and baseten_trace, "
             "except speedup_ratio, which is rejected for baseten_trace "
-            "(use replay_speedup / --replay-speedup to scale replay pacing there).",
+            "(use replay_speedup / --replay-speedup to scale replay pacing there). "
+            "Also used by graph (weka) replay, whose `synthesis.max_osl` caps the "
+            "recorded output length (`--synthesis-max-osl`).",
         ),
     ]
 

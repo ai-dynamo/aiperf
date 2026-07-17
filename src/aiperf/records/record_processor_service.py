@@ -71,6 +71,19 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
             CommAddress.RECORDS,
         )
+        # Drop context-overflow records from the user-facing metric pipeline when
+        # the active workload is a graph-IR (weka / dynamo / native) run. The
+        # GraphIRReplayStrategy already terminates the overflowed trajectory early
+        # (the overflowed node stops dispatching downstream turns), so surfacing
+        # the overflow as an error record would pollute the error tracker and the
+        # performance-metric accumulators with an event we intentionally tolerate.
+        # The accessor degrades detection failures to None itself, so a
+        # non-graph (or undetectable) input keeps default error emission.
+        from aiperf.dataset.graph.workload_detect import resolve_graph_workload
+
+        self._drop_graph_overflow_records: bool = (
+            resolve_graph_workload(self.run) is not None
+        )
         self.tokenizers: dict[str, Tokenizer] = {}
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
         self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_run(self.run)
@@ -307,6 +320,26 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         metadata = self._create_metric_record_metadata(
             record, message.service_id, last_response_perf_ns
         )
+
+        # Flag context-overflow records for the records-side "skip" path on a
+        # graph-IR run. RecordsManager counts the record toward its success
+        # counter (so the completion barrier converges) and still aggregates
+        # ``context_overflow_count`` (for the submission-rate gate), but excludes
+        # it from the error tracker and the performance-metric accumulators so the
+        # overflow never shows up in a user-facing latency/ISL/OSL/TTFT/ITL
+        # metric.
+        if getattr(self, "_drop_graph_overflow_records", False) and getattr(
+            record, "context_overflow", False
+        ):
+            metadata.context_overflow_skip = True
+            self.debug(
+                lambda r=record: (
+                    "graph-IR: flagging context-overflow record as metrics-skip "
+                    f"(credit={r.request_info.credit_num} "
+                    f"conv={r.request_info.conversation_id} "
+                    f"turn={r.request_info.turn_index})"
+                )
+            )
 
         # Stage 1 - producers: run concurrently, group outputs by declared channel.
         by_type: dict[str, list[Any]] = {}

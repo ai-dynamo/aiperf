@@ -10,7 +10,56 @@ from pathlib import Path
 import aiofiles
 
 from aiperf.common.mixins import AIPerfLoggerMixin
+from aiperf.common.scenario.submission_outcome import (
+    CONTEXT_OVERFLOW_REASON,
+    RUN_CANCELLED_REASON,
+    compute_submission_outcome,
+)
 from aiperf.orchestrator.aggregation.base import AggregateResult
+
+__all__ = [
+    "CONTEXT_OVERFLOW_REASON",
+    "RUN_CANCELLED_REASON",
+    "AggregateBaseExporter",
+    "AggregateExporterConfig",
+    "_build_run_metadata_dict",
+    "compute_submission_outcome",
+]
+
+
+def _build_run_metadata_dict(
+    *,
+    scenario_name: str | None,
+    submission_valid: bool | None,
+    submission_invalid_reasons: list[str] | None = None,
+) -> dict:
+    """Build the scenario-submission sub-dict for the aggregate export.
+
+    Mirrors the single-run ``RunInfo`` submission surface for the multi-run
+    (``--num-profile-runs > 1`` / sweep) aggregate export. Returns an empty
+    dict when ``scenario_name`` is ``None`` so non-scenario runs are not
+    polluted with submission-tracking fields. When ``scenario_name`` is set,
+    returns the ``scenario`` name plus a coerced ``submission_valid`` bool, and
+    includes ``submission_invalid_reasons`` only when that list is non-empty.
+
+    Args:
+        scenario_name: Active scenario identifier, or ``None`` for a
+            non-scenario run.
+        submission_valid: Whether the run is a valid scenario submission.
+            Coerced to ``bool`` (``None`` becomes ``False``) when emitted.
+        submission_invalid_reasons: Machine-readable reason codes (e.g.
+            ``"unsafe_override"``, ``"context_overflow_rate_exceeded"``).
+
+    Returns:
+        A dict suitable for merging into the top-level aggregate JSON output.
+    """
+    md: dict = {}
+    if scenario_name is not None:
+        md["scenario"] = scenario_name
+        md["submission_valid"] = bool(submission_valid)
+        if submission_invalid_reasons:
+            md["submission_invalid_reasons"] = list(submission_invalid_reasons)
+    return md
 
 
 @dataclass(slots=True)

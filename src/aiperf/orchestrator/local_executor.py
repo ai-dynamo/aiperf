@@ -30,6 +30,58 @@ logger = logging.getLogger(__name__)
 __all__ = ["LocalSubprocessExecutor"]
 
 
+def _resolve_scenario_in_parent(run: BenchmarkRun) -> None:
+    """Apply the scenario lock ONCE in the parent, before the subprocess dump.
+
+    The multi-run path serializes the run (``model_dump(exclude_none=True)``)
+    and re-loads it (``BenchmarkRun.model_validate``) inside the subprocess,
+    THEN runs the resolver chain there. ``model_validate`` re-marks every
+    non-None field as "set", so in the subprocess ``endpoint.model_fields_set``
+    spuriously contains ``streaming`` / ``cache_bust`` even when the user never
+    set them -- which would make the in-subprocess scenario validator read the
+    auto-fillable defaults as explicit conflicts and raise a SPURIOUS
+    ``ScenarioLockError``.
+
+    Resolving here, on the LIVE config (faithful ``model_fields_set``), bakes the
+    auto-fills (streaming=True, cache_bust=first_turn_prefix, duration) into
+    ``run.cfg`` before the dump. The in-subprocess re-resolution then becomes a
+    no-op: the baked values already satisfy the locks, so the stale
+    ``model_fields_set`` is never consulted. No-op when ``run.cfg.scenario`` is
+    None. A genuine user conflict still raises here (fail fast, pre-subprocess).
+    """
+    if getattr(run.cfg, "scenario", None) is None:
+        return
+    from aiperf.common.scenario import apply_scenario
+
+    apply_scenario(run)
+
+
+def _carried_scenario_outcome(run: BenchmarkRun) -> tuple[bool | None, list[str]]:
+    """Extract the lock-only scenario verdict to carry onto ``RunResult``.
+
+    Reads ``run.resolved.scenario_outcome`` -- the ``ScenarioOutcome`` stamped by
+    ``apply_scenario`` in ``_resolve_scenario_in_parent`` (parent process, before
+    the subprocess dump). This is the VALIDATOR-side outcome only; the aggregate
+    exporter folds cross-run runtime signals (context-overflow rate, cancellation)
+    on top of it. Returns ``(None, [])`` when no scenario was set (the outcome's
+    ``submission_valid`` is None then), so the aggregate reader omits the verdict.
+
+    Args:
+        run: The resolved ``BenchmarkRun`` whose ``resolved.scenario_outcome``
+            carries the lock verdict.
+
+    Returns:
+        A ``(submission_valid, submission_invalid_reasons)`` tuple mirroring the
+        validator outcome; ``submission_valid`` is None for a non-scenario run.
+    """
+    outcome = run.resolved.scenario_outcome
+    if outcome is None:
+        return None, []
+    submission_valid = getattr(outcome, "submission_valid", None)
+    reasons = list(getattr(outcome, "submission_invalid_reasons", []) or [])
+    return submission_valid, reasons
+
+
 class LocalSubprocessExecutor(RunExecutor):
     """Run benchmarks via subprocess of aiperf.orchestrator.subprocess_runner."""
 
@@ -46,16 +98,31 @@ class LocalSubprocessExecutor(RunExecutor):
     def _execute_sync(self, run: BenchmarkRun) -> RunResult:
         artifacts_path = run.artifact_dir
         artifacts_path.mkdir(parents=True, exist_ok=True)
+        # Scenario locks mutate only THIS run's config (apply-or-lock on
+        # run.cfg); there are no process-global writes to scope, so nothing
+        # can leak into later runs' subprocess environments.
+        _resolve_scenario_in_parent(run)
+        submission_valid, submission_invalid_reasons = _carried_scenario_outcome(run)
         try:
             config_file = self._prepare_run_artifacts(run, artifacts_path)
             result = self._run_benchmark_subprocess(config_file, run)
 
             if result.returncode != 0:
-                return self._failure_from_subprocess(result, run.label, artifacts_path)
+                return self._failure_from_subprocess(
+                    result,
+                    run.label,
+                    artifacts_path,
+                    submission_valid=submission_valid,
+                    submission_invalid_reasons=submission_invalid_reasons,
+                )
 
             summary_metrics = self._extract_summary_metrics(run)
             return self._build_result_from_metrics(
-                summary_metrics, run.label, artifacts_path
+                summary_metrics,
+                run.label,
+                artifacts_path,
+                submission_valid=submission_valid,
+                submission_invalid_reasons=submission_invalid_reasons,
             )
         except Exception as e:
             logger.exception(f"Error executing run {run.label}")
@@ -64,6 +131,8 @@ class LocalSubprocessExecutor(RunExecutor):
                 success=False,
                 error=str(e),
                 artifacts_path=artifacts_path,
+                submission_valid=submission_valid,
+                submission_invalid_reasons=submission_invalid_reasons,
             )
 
     @staticmethod
@@ -161,6 +230,9 @@ class LocalSubprocessExecutor(RunExecutor):
         result: subprocess.CompletedProcess[str],
         label: str,
         artifacts_path: Path,
+        *,
+        submission_valid: bool | None,
+        submission_invalid_reasons: list[str],
     ) -> RunResult:
         """Build a failed RunResult from a non-zero subprocess exit."""
         error_msg = f"Benchmark failed with exit code {result.returncode}"
@@ -172,6 +244,8 @@ class LocalSubprocessExecutor(RunExecutor):
             success=False,
             error=error_msg,
             artifacts_path=artifacts_path,
+            submission_valid=submission_valid,
+            submission_invalid_reasons=submission_invalid_reasons,
         )
 
     @staticmethod
@@ -179,6 +253,9 @@ class LocalSubprocessExecutor(RunExecutor):
         summary_metrics: dict[str, JsonMetricResult],
         label: str,
         artifacts_path: Path,
+        *,
+        submission_valid: bool | None,
+        submission_invalid_reasons: list[str],
     ) -> RunResult:
         """Classify success/failure from extracted summary metrics."""
         if not summary_metrics:
@@ -191,6 +268,8 @@ class LocalSubprocessExecutor(RunExecutor):
                 success=False,
                 error=error_msg,
                 artifacts_path=artifacts_path,
+                submission_valid=submission_valid,
+                submission_invalid_reasons=submission_invalid_reasons,
             )
 
         request_count_metric = summary_metrics.get("request_count")
@@ -207,6 +286,8 @@ class LocalSubprocessExecutor(RunExecutor):
                 success=False,
                 error=error_msg,
                 artifacts_path=artifacts_path,
+                submission_valid=submission_valid,
+                submission_invalid_reasons=submission_invalid_reasons,
             )
 
         return RunResult(
@@ -214,6 +295,8 @@ class LocalSubprocessExecutor(RunExecutor):
             success=True,
             summary_metrics=summary_metrics,
             artifacts_path=artifacts_path,
+            submission_valid=submission_valid,
+            submission_invalid_reasons=submission_invalid_reasons,
         )
 
     def _extract_summary_metrics(

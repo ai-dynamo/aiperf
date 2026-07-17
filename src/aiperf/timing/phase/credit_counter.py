@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from aiperf.plugin.enums import TimingMode
+
 if TYPE_CHECKING:
     from aiperf.credit.structs import TurnToSend
     from aiperf.timing.config import CreditPhaseConfig
@@ -25,6 +27,13 @@ class CreditCounter:
 
     def __init__(self, config: CreditPhaseConfig) -> None:
         self._config = config
+        # Graph-IR phases bypass the linear session arithmetic on BOTH sides:
+        # ``increment_sent`` detects graph credits per-turn (``trace_id``), but
+        # ``increment_returned`` receives no turn/credit info, so the bypass is
+        # keyed off the phase's timing mode -- a GRAPH_IR phase issues ONLY
+        # trace_id-stamped graph credits (``CreditIssuer.issue_graph_credit``),
+        # making the two detections equivalent.
+        self._graph_phase = getattr(config, "timing_mode", None) == TimingMode.GRAPH_IR
 
         # Progress counters
         self._requests_sent: int = 0
@@ -187,13 +196,19 @@ class CreditCounter:
     def increment_sent(self, turn_to_send: TurnToSend) -> tuple[int, bool]:
         """Atomically increment sent count and return (credit_index, is_final_credit).
 
+        Graph-IR credits (``turn_to_send.trace_id is not None``) bump only
+        ``_requests_sent`` (the per-node wire/record count) and ALWAYS return
+        ``is_final_credit=False``: they bypass the linear session arithmetic
+        entirely because ``GraphIRReplayStrategy`` owns completion and the
+        session/request stop semantics for a fan-out DAG.
+
         DAG children (``turn_to_send.agent_depth > 0``) count as real HTTP
         requests and DO bump ``_requests_sent`` — the user-visible
         "requests sent" metric must reflect actual wire traffic including
         DAG offspring. They do NOT bump ``_sent_sessions`` or
         ``_total_session_turns`` because they inherit the parent's
-        session slot (``CreditIssuer.issue_credit`` skips session-slot
-        acquisition for them).
+        session slot (they dispatch via ``CreditIssuer._dispatch_dag_turn``,
+        which bypasses session-slot acquisition).
 
         ``is_final_credit`` flips when the request-count cap is crossed
         on either a root or a child. This is what drives
@@ -209,6 +224,39 @@ class CreditCounter:
         credit_index = self._requests_sent
         new_sent_count = self._requests_sent + 1
 
+        if turn_to_send.trace_id is not None:
+            # Graph-IR credits BYPASS all linear session arithmetic. A weka
+            # trace is a fan-out DAG, not a linear ``turn_index==0 ->
+            # num_turns-1`` session: every distinct node fires with
+            # ``turn_index==0`` on a fresh per-node session key, so the linear
+            # path would count each NODE as a fresh session and trip
+            # ``is_final_credit`` after the Nth node (freezing the sent-count
+            # mid-trace -> lost records). ``GraphIRReplayStrategy`` owns
+            # completion and the session/request stop semantics, so here we
+            # only bump the wire-request counter (one per node dispatch, which
+            # IS the record count) and NEVER flip ``is_final_credit`` from a
+            # graph credit -- the strategy freezes counts when its executors
+            # drain. ``--request-count`` is still enforced upstream by the
+            # ``RequestCountStopCondition`` gate against ``requests_sent``.
+            self._requests_sent = new_sent_count
+            return credit_index, False
+
+        return self._increment_linear_sent(turn_to_send, credit_index, new_sent_count)
+
+    def _increment_linear_sent(
+        self, turn_to_send: TurnToSend, credit_index: int, new_sent_count: int
+    ) -> tuple[int, bool]:
+        """Linear (non-graph) sent-count arithmetic for root + DAG-child credits.
+
+        Extracted from ``increment_sent`` (the graph-bypass early-return stays
+        the leading branch there). Behavior is identical to the prior inline
+        body: DAG children bump only ``_requests_sent`` and honor the
+        request-count cap; roots also advance session / root-wire / turn
+        counters and flip ``is_final_credit`` on the request-count OR
+        session-completion predicate.
+
+        Lock-free: no async calls.
+        """
         if turn_to_send.agent_depth > 0:
             # Children: bump the wire-request counter only (slot is
             # inherited, sampler-plan counters stay root-only). Flip
@@ -257,6 +305,18 @@ class CreditCounter:
     ) -> bool:
         """Atomically increment returned count and check phase completion.
 
+        Graph-IR phases (``self._graph_phase``) bypass the session counters
+        entirely, mirroring the sent-side graph bypass in
+        :meth:`increment_sent`: every graph credit is minted ``turn_index=0,
+        num_turns=1`` so ``is_final_turn`` is always True, and counting it here
+        would report one "completed session" per NODE (with ``sent_sessions``
+        pinned at 0 -> negative ``in_flight_sessions`` and a bogus progress %).
+        Trace-level completion is not visible at this callsite, so graph
+        session stats stay 0 on both sides (like ``sent_sessions``) and phase
+        progress is driven purely by the request counters; per-trace
+        completion is owned and reported by ``GraphIRReplayStrategy``
+        (``admitted_traces`` / ``completed_traces``).
+
         Lock-free: no async calls.
 
         Args:
@@ -271,13 +331,14 @@ class CreditCounter:
             True if ALL sent credits have now been returned or cancelled
             (phase sending must be complete for this to ever return True).
         """
+        count_sessions = is_final_turn and not self._graph_phase
         if cancelled:
             self._requests_cancelled += 1
-            if is_final_turn:
+            if count_sessions:
                 self._cancelled_sessions += 1
         else:
             self._requests_completed += 1
-            if is_final_turn:
+            if count_sessions:
                 self._completed_sessions += 1
             if errored:
                 self._request_errors += 1

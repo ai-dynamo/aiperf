@@ -48,6 +48,51 @@
     ],
     [
       "keyword-only-args",
+      "src/aiperf/dataset/graph/native_lowering.py",
+      "_assemble_prompt"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/dataset/graph/native_lowering.py",
+      "_content_parts"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/dataset/graph/native_lowering.py",
+      "_delta_messages"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/dataset/graph/native_lowering.py",
+      "_gate_array_splice_shape"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/dataset/graph/native_lowering.py",
+      "_gate_init_bearing_root_reads"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/dataset/graph/native_lowering.py",
+      "_ordered_writer_chain"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/dataset/graph/native_lowering.py",
+      "_stamp_node"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/dataset/graph/segment_ir/trie_content.py",
+      "_assemble_messages_from"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/dataset/graph/segment_ir/trie_content.py",
+      "assemble_messages"
+    ],
+    [
+      "keyword-only-args",
       "src/aiperf/exporters/metrics_csv_exporter.py",
       "MetricsCsvExporter._write_gpu_metric_row_from_summary"
     ],
@@ -233,6 +278,11 @@
     ],
     [
       "nesting-depth",
+      "src/aiperf/graph/worker_materialize.py",
+      "_assemble_items"
+    ],
+    [
+      "nesting-depth",
       "src/aiperf/plot/config.py",
       "PlotConfig._expand_metric_shortcut"
     ],
@@ -305,6 +355,11 @@
       "pydantic-fields",
       "src/aiperf/common/models/export_models.py",
       "JsonExportData"
+    ],
+    [
+      "pydantic-fields",
+      "src/aiperf/timing/config.py",
+      "CreditPhaseConfig"
     ]
   ]
 }

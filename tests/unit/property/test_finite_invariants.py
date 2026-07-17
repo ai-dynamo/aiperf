@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Mechanical "global invariant" tests for the NaN/inf discipline.
 
-Three CI-enforceable contracts that codify the round-1 finite-float
+Three CI-enforceable contracts that codify the finite-float
 remediation work into rules a future PR can't accidentally regress:
 
 1. Every JSON exporter that calls ``orjson.dumps`` on metric-bearing
@@ -353,6 +353,11 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # AdaptiveSearchSweep.outcome_constraints: list[OutcomeConstraint], not a
     # numeric field. Per-element OutcomeConstraint.bound is already FiniteFloat.
     "AdaptiveSearchSweep.outcome_constraints",
+    # GraphDatasetMetadata.prefix_cache_by_trace: dict[str, dict[str, list[int]]]
+    # of [theoretical_hit_blocks, total_blocks] block counts, not a numeric
+    # field. The bare-int substring check trips on the nested list[int]; a
+    # field-level ge/gt/le/lt bound cannot apply to a container.
+    "GraphDatasetMetadata.prefix_cache_by_trace",
     # ServerMetricsResults.warmup_endpoint_summaries: dict of summary models,
     # not a numeric leaf — same shape as the baselined endpoint_summaries
     # sibling; per-summary numeric fields carry their own bounds.

@@ -342,7 +342,7 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 |--------|------|---------|-------------|
 | `--session-turns-mean` | float | 1.0 | Mean turns per session (`--user-centric-rate` requires ≥ 2) |
 | `--session-turns-stddev` | float | 0.0 | Standard deviation of turns |
-| `--dataset-sampling-strategy` | enum | shuffle | Dataset sampling: `sequential`, `shuffle` (not with `--fixed-schedule`) |
+| `--dataset-sampling-strategy` | enum | dataset-type-dependent | Dataset sampling: `sequential`, `random`, `shuffle`. Default depends on dataset type (`sequential` for traces, `shuffle` for synthetic). Not compatible with `--fixed-schedule` |
 
 ### Multi-URL Load Balancing
 

@@ -100,6 +100,9 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
                         x_correlation_id=str(uuid.uuid4()),
                         turn_index=0,
                         num_turns=len(conv.turns),
+                        # Finality stamping must see a spawning turn as
+                        # non-final (any-mode branch flag).
+                        has_branches=bool(conv.turns[0].branch_ids),
                     ),
                 )
             )
@@ -151,9 +154,11 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         if credit.is_final_turn:
             return
 
-        # This contains the delay_ms or timestamp_ms for the next turn
+        # This contains the delay_ms or timestamp_ms for the next turn.
+        # Passed through so has_forks / has_branches derive from the real
+        # metadata (a spawning final turn must never stamp is_tree_final).
         next_meta = self._conversation_source.get_next_turn_metadata(credit)
-        turn = TurnToSend.from_previous_credit(credit)
+        turn = TurnToSend.from_previous_credit(credit, next_meta)
 
         if next_meta.timestamp_ms is not None:
             self._scheduler.schedule_at_perf_sec(

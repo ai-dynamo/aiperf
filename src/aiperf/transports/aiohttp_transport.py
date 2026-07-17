@@ -38,6 +38,7 @@ from aiperf.transports.base_transports import (
     BaseTransport,
     FirstTokenCallback,
     TransportMetadata,
+    effective_streaming,
 )
 
 
@@ -186,7 +187,7 @@ class AioHttpTransport(BaseTransport):
         """
         accept = (
             "text/event-stream"
-            if request_info.model_endpoint.endpoint.streaming
+            if effective_streaming(request_info)
             else "application/json"
         )
         headers: dict[str, str] = {"Accept": accept}
@@ -238,7 +239,7 @@ class AioHttpTransport(BaseTransport):
             endpoint_metadata = plugins.get_endpoint_metadata(endpoint_info.type)
             endpoint_path = endpoint_metadata.endpoint_path
             if (
-                self.model_endpoint.endpoint.streaming
+                effective_streaming(request_info)
                 and endpoint_metadata.streaming_path is not None
             ):
                 endpoint_path = endpoint_metadata.streaming_path
@@ -278,7 +279,7 @@ class AioHttpTransport(BaseTransport):
     async def send_request(
         self,
         request_info: RequestInfo,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | bytes,
         *,
         first_token_callback: FirstTokenCallback | None = None,
     ) -> RequestRecord:
@@ -324,7 +325,9 @@ class AioHttpTransport(BaseTransport):
                 == RequestContentType.MULTIPART_FORM_DATA
             )
             body: bytes | aiohttp.FormData = (
-                self._build_form_data(payload)
+                payload
+                if isinstance(payload, (bytes, bytearray))
+                else self._build_form_data(payload)
                 if use_form_data
                 else orjson.dumps(payload)
             )
@@ -495,7 +498,7 @@ class AioHttpTransport(BaseTransport):
     async def _submit_video_job(
         self,
         url: str,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | bytes,
         headers: dict[str, str],
         *,
         use_form_data: bool = False,
@@ -507,7 +510,11 @@ class AioHttpTransport(BaseTransport):
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
         body: bytes | aiohttp.FormData = (
-            self._build_form_data(payload) if use_form_data else orjson.dumps(payload)
+            payload
+            if isinstance(payload, (bytes, bytearray))
+            else self._build_form_data(payload)
+            if use_form_data
+            else orjson.dumps(payload)
         )
         record = await self.aiohttp_client.post_request(url, body, headers)
         result = self._parse_video_response(record, "submit")
@@ -619,7 +626,7 @@ class AioHttpTransport(BaseTransport):
     async def _send_video_request_with_polling(
         self,
         request_info: RequestInfo,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | bytes,
     ) -> RequestRecord:
         """Send video generation request and poll until complete."""
         if self.aiohttp_client is None:

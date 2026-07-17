@@ -6,11 +6,16 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pytest import param
 
-from aiperf.common.enums import ConnectionReuseStrategy, CreditPhase
+from aiperf.common.enums import (
+    ConnectionReuseStrategy,
+    CreditPhase,
+    ModelSelectionStrategy,
+)
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import TransportType
+from aiperf.plugin.enums import EndpointType, TransportType
 from aiperf.transports.aiohttp_transport import (
     AioHttpTransport,
     ConnectionLeaseManager,
@@ -31,6 +36,7 @@ def create_request_info(
     is_final_turn: bool = True,
     turn_index: int = 0,
     credit_num: int = 1,
+    stream_override: bool | None = None,
 ) -> RequestInfo:
     """Create RequestInfo with sensible defaults for transport tests."""
     return RequestInfo(
@@ -46,6 +52,7 @@ def create_request_info(
         conversation_id=conversation_id,
         cancel_after_ns=cancel_after_ns,
         is_final_turn=is_final_turn,
+        stream_override=stream_override,
     )
 
 
@@ -141,6 +148,74 @@ class TestAioHttpTransport:
 
         assert headers["Content-Type"] == "application/json"
         assert headers["Accept"] == expected_accept
+
+    @pytest.mark.parametrize(
+        "endpoint_streaming,stream_override,expected_accept",
+        [
+            param(False, True, "text/event-stream", id="override-on-beats-global-off"),
+            param(True, False, "application/json", id="override-off-beats-global-on"),
+            param(True, None, "text/event-stream", id="no-override-follows-global-on"),
+            param(False, None, "application/json", id="no-override-follows-global-off"),
+        ],
+    )  # fmt: skip
+    def test_transport_accept_header_honors_override(
+        self, transport, endpoint_streaming, stream_override, expected_accept
+    ):
+        """The Accept header follows the per-request stream override for graph credits.
+
+        A recorded per-node override wins over the global ``endpoint.streaming``;
+        ``None`` follows the global (the non-graph default).
+        """
+        model_endpoint = create_model_endpoint_info(streaming=endpoint_streaming)
+        request_info = create_request_info(
+            model_endpoint, stream_override=stream_override
+        )
+        headers = transport.get_transport_headers(request_info)
+        assert headers["Accept"] == expected_accept
+
+    @pytest.mark.parametrize(
+        "endpoint_streaming,stream_override,expected_path",
+        [
+            param(False, True, "/generate_stream", id="override-on-selects-stream-path"),
+            param(True, False, "/generate", id="override-off-selects-base-path"),
+            param(True, None, "/generate_stream", id="no-override-follows-global-on"),
+            param(False, None, "/generate", id="no-override-follows-global-off"),
+        ],
+    )  # fmt: skip
+    def test_streaming_path_selection_honors_override(
+        self, endpoint_streaming, stream_override, expected_path
+    ):
+        """The streaming URL path follows the per-request override for graph credits.
+
+        The huggingface_generate endpoint exposes a distinct ``streaming_path``
+        (``/generate_stream``) vs its base ``endpoint_path`` (``/generate``); the
+        per-node override selects it independent of the global flag.
+        """
+        from aiperf.common.models.model_endpoint_info import (
+            EndpointInfo,
+            ModelEndpointInfo,
+            ModelInfo,
+            ModelListInfo,
+        )
+
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.HUGGINGFACE_GENERATE,
+                base_urls=["http://localhost:8000"],
+                custom_endpoint=None,
+                streaming=endpoint_streaming,
+            ),
+        )
+        transport = AioHttpTransport(model_endpoint=model_endpoint)
+        request_info = create_request_info(
+            model_endpoint, stream_override=stream_override
+        )
+        url = transport.get_url(request_info)
+        assert url == f"http://localhost:8000{expected_path}"
 
     @pytest.mark.parametrize(
         "base_url,custom_endpoint,expected_url",

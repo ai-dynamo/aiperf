@@ -17,7 +17,7 @@ Domain validation (e.g. "concurrency cannot exceed request_count") lives on
 AIPerfConfig. The converter at aiperf.config.flags.converter translates a
 populated CLIConfig into the canonical AIPerfConfig.
 
-This file is intentionally large (~3200 LOC, ~200 fields) — every CLI flag
+This file is intentionally large (~3900 LOC, ~230 fields) — every CLI flag
 is a top-level field by design, so size scales linearly with field count.
 The flat shape is the post-flatten architecture. Section dividers group
 fields by their CLIParameter ``Groups.X``. The pydantic-fields
@@ -39,6 +39,7 @@ from pydantic import AfterValidator, BeforeValidator, Field
 from aiperf.common.enums import (
     AIPerfLogLevel,
     AudioFormat,
+    CacheBustTarget,
     ConnectionReuseStrategy,
     ConvergenceStat,
     ExportLevel,
@@ -79,8 +80,10 @@ from aiperf.plugin.enums import (
     DatasetSamplingStrategy,
     EndpointType,
     GPUTelemetryCollectorType,
+    GraphAdapterType,
     PublicDatasetType,
     SearchPlannerType,
+    SessionRoutingType,
     TransportType,
     UIType,
     URLSelectionStrategy,
@@ -327,6 +330,26 @@ class CLIConfig(BaseConfig):
         ),
     ] = EndpointDefaults.USE_SERVER_TOKEN_COUNT
 
+    cache_bust: Annotated[
+        CacheBustTarget,
+        Field(
+            description=(
+                "Where to inject a per-trace-instance cache-bust marker on the "
+                "graph-IR replay path. 'none' (default): recorded bytes are sent "
+                "verbatim. 'first_turn_prefix': prepend a '[rid:<12hex>]' marker to "
+                "the first user turn. The marker is shared across all turns of one "
+                "trace instance (its own prefix stays cacheable) but differs between "
+                "distinct instances and resets on recycle, so the inference server's "
+                "KV cache sees a distinct prefix per trace instance, defeating "
+                "cross-instance prefix-cache hits that would inflate cache-hit metrics."
+            ),
+        ),
+        CLIParameter(
+            name=("--cache-bust",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.CACHE_BUST
+
     connection_reuse_strategy: Annotated[
         ConnectionReuseStrategy,
         Field(
@@ -388,6 +411,42 @@ class CLIConfig(BaseConfig):
             group=Groups.ENDPOINT,
         ),
     ] = None
+
+    session_routing: Annotated[
+        SessionRoutingType | None,
+        Field(
+            description=(
+                "Session-aware routing mode: stamps per-session identity on "
+                "every request for router affinity. Built-ins: dynamo_headers "
+                "(X-Dynamo-Session-ID + parent header), dynamo_nvext "
+                "(nvext.session_control bind/close request-body metadata), "
+                "smg_routing_key (X-SMG-Routing-Key for the SGLang Model Gateway "
+                "manual policy), session_id_header (custom additive header). "
+                "Parameterize with --session-routing-opt."
+            ),
+        ),
+        CLIParameter(
+            name=("--session-routing",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    session_routing_opt: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description=(
+                "Repeatable key=value option for the selected --session-routing "
+                "mode (e.g. --session-routing-opt timeout_seconds=600), "
+                "validated against the plugin's Options model."
+            ),
+        ),
+        CLIParameter(
+            name=("--session-routing-opt",),
+            consume_multiple=True,
+            group=Groups.ENDPOINT,
+        ),
+    ]
 
     @property
     def url(self) -> str:
@@ -567,6 +626,23 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    graph_format: Annotated[
+        GraphAdapterType | None,
+        Field(
+            description="Select the agentic-workload format for `--input-file`, "
+            "overriding graph-adapter auto-detection. Registered names: "
+            "`dynamo_trace`, `weka_trace`, `dag_jsonl`, `native`. Requires "
+            "`--input-file`. Independent of `--custom-dataset-type` (that selects "
+            "a custom dataset loader; this selects a graph adapter). Use `native` "
+            "to load a hand-authored Graph IR workload file, or `dag_jsonl` to "
+            "run a DAG conversation file on the graph runtime.",
+        ),
+        CLIParameter(
+            name=("--graph-format",),
+            group=Groups.INPUT,
+        ),
+    ] = None
+
     dataset_sampling_strategy: Annotated[
         DatasetSamplingStrategy | None,
         Field(
@@ -579,6 +655,40 @@ class CLIConfig(BaseConfig):
         CLIParameter(
             name=("--dataset-sampling-strategy",),
             group=Groups.INPUT,
+        ),
+    ] = None
+
+    max_context_length: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description="Maximum per-trace context length (tokens) for graph-plane "
+            "dataset selection. Graph traces whose input+output context would exceed "
+            "this cap are excluded from the eligible set before selection. Applies to "
+            "graph-adapter workloads (`--input-file` graph traces); ignored by "
+            "synthetic/public datasets. Unset (the default) applies no context-length "
+            "filter.",
+        ),
+        CLIParameter(
+            name=("--max-context-length",),
+            group=Groups.INPUT,
+        ),
+    ] = None
+
+    allow_dataset_wrap: Annotated[
+        bool | None,
+        Field(
+            description="Allow graph-plane dataset selection to wrap (reuse the finite "
+            "trace pool) when `--request-count` exceeds the number of eligible traces. "
+            "`--allow-dataset-wrap` forces wrapping on; `--no-allow-dataset-wrap` forces "
+            "it off. Unset (the default, None) defers to a derived default computed at "
+            "resolution time and surfaced on `run.resolved.allow_dataset_wrap`. Applies "
+            "to graph-adapter workloads; ignored by synthetic/public datasets.",
+        ),
+        CLIParameter(
+            name=("--allow-dataset-wrap",),
+            group=Groups.INPUT,
+            negative="--no-allow-dataset-wrap",
         ),
     ] = None
 
@@ -757,7 +867,9 @@ class CLIConfig(BaseConfig):
             ge=1,
             description="Total number of unique entries to generate for the dataset. Each entry represents one user message that can be "
             "used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. "
-            "Higher values provide more diversity.",
+            "Higher values provide more diversity. On the graph plane (graph-adapter workloads), this bounds the distinct traces selected: "
+            "unset means all eligible traces (after `--max-context-length` and other filters) are used; N means up to N distinct traces are "
+            "selected after filters. It does not count requests -- see `--request-count`.",
         ),
         CLIParameter(
             name=(
@@ -1774,6 +1886,34 @@ class CLIConfig(BaseConfig):
         CLIParameter(name=("--synthesis-max-osl",), group=Groups.SYNTHESIS),
     ] = None
 
+    prompt_corpus: Annotated[
+        Literal["coding", "sonnet"] | None,
+        Field(
+            default=None,
+            description="Corpus backing recorded graph (`weka_trace`, `dynamo_trace`) "
+            "real-content synthesis. "
+            "`coding` (default when unset) uses the procedural CodingContentGenerator pool "
+            "the recorded weka workloads were captured against; `sonnet` uses the Shakespeare "
+            "pool, which yields matching token counts but different bytes (useful only to "
+            "reproduce golden fixtures built from that pool). Ignored by "
+            "non-graph datasets.",
+        ),
+        CLIParameter(name=("--prompt-corpus",), group=Groups.SYNTHESIS),
+    ] = None
+
+    synthesis_idle_gap_cap: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="Per-trace idle-gap cap (seconds) for recorded graph "
+            "(`weka_trace`, `dynamo_trace`) replay. Recorded inter-request idle gaps longer "
+            "than this are compressed to the cap so a recorded multi-hour gap does not park "
+            "the replay. Defaults to 60s when unset. Ignored by non-graph datasets.",
+        ),
+        CLIParameter(name=("--synthesis-idle-gap-cap",), group=Groups.SYNTHESIS),
+    ] = None
+
     ##############################################################################
     # Load Generator
     ##############################################################################
@@ -1895,7 +2035,10 @@ class CLIConfig(BaseConfig):
             "on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. "
             "Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple "
             "request counts; the converter promotes the list to a sweep on phases.profiling.requests "
-            "before AIPerfConfig validation.",
+            "before AIPerfConfig validation. On the graph plane (graph-adapter workloads), this counts individual "
+            "requests, not traces -- a single trace can emit many requests, so `--request-count` does not bound the "
+            "number of distinct traces selected (use `--num-dataset-entries` for that). When it exceeds the eligible "
+            "trace pool, `--allow-dataset-wrap` controls whether selection wraps to reuse traces.",
         ),
         BeforeValidator(parse_int_or_int_list),
         CLIParameter(
@@ -1912,7 +2055,9 @@ class CLIConfig(BaseConfig):
         Field(
             gt=0,
             description="Duration in seconds to ramp session concurrency from 1 to target. "
-            "Useful for gradual warm-up of the target system.",
+            "On graph-IR replay (weka/dynamo/dag traces) this ramps LANE admission: "
+            "concurrent trace-instance lanes are admitted 1 -> --concurrency over the "
+            "duration. Useful for gradual warm-up of the target system.",
         ),
         CLIParameter(
             name=("--concurrency-ramp-duration",),
@@ -2087,6 +2232,86 @@ class CLIConfig(BaseConfig):
         CLIParameter(
             name=("--warmup-duration",),
             group=Groups.WARMUP,
+        ),
+    ] = None
+
+    agentic_cache_warmup_duration: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Extended (cache-pressure) warmup duration in seconds for "
+            "the recorded-trace graph-IR replay path. After the boundary-priming warmup "
+            "drains, AIPerf continues the live post-t* replay with zero idle "
+            "delay and one-token outputs for this long, recycling fresh "
+            "templates onto freed lanes, then drains and hands each lane's "
+            "execution frontier to profiling (with residual delays), driving "
+            "the server KV cache to steady-state pressure before benchmarking. "
+            "If not set, no extended warmup runs.",
+        ),
+        CLIParameter(
+            name=("--agentic-cache-warmup-duration",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
+    burst_phase_starts: Annotated[
+        bool,
+        Field(
+            description="Burst-vs-spread control for phase starts on the recorded-trace graph-IR "
+            "replay path. Default False = SPREAD: each WARMUP / PROFILING trace's "
+            "first firing is offset by its recorded (idle-gap-warped, <=60s) lead "
+            "from the t* snapshot instant. True = BURST: both phase starts collapse "
+            "into a synchronized burst -- every warmup priming credit and every "
+            "trace's earliest profiling firing fire at once at phase-time 0 (the "
+            "leading per-firing dispatch offset is dropped); relative inter-turn "
+            "delays after the first are still honored. Governs ONLY the two "
+            "phase-start dispatch patterns.",
+        ),
+        CLIParameter(
+            name=("--burst-phase-starts",),
+            group=Groups.WARMUP,
+        ),
+    ] = False
+
+    trajectory_start_min_ratio: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description="Lower bound (fraction of each trace's recorded "
+            "wall-clock duration) of the per-trace t* snapshot-instant sampling "
+            "window for recorded graph replay. Unset resolves to 0.0. With both "
+            "bounds at 0.0 the window is OFF (full native replay). Per trace, "
+            "t* is drawn uniformly from [min, max] x trace_duration with a "
+            "trace-salted RNG: nodes firing before t* become cache-priming "
+            "WARMUP history, nodes at/after t* are PROFILING. Set min == max "
+            "for a deterministic t*. Must be <= --trajectory-start-max-ratio. "
+            "The inferencex-agentx-mvp scenario auto-applies 0.0 when unset "
+            "and locks an explicit conflicting value.",
+        ),
+        CLIParameter(
+            name=("--trajectory-start-min-ratio",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
+    trajectory_start_max_ratio: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description="Upper bound (fraction of each trace's recorded "
+            "wall-clock duration) of the per-trace t* snapshot-instant sampling "
+            "window for recorded graph replay. Unset resolves to 0.0 (window "
+            "OFF, full native replay); any value > 0 engages the t* snapshot "
+            "machinery (per-trace t* sampling plus the auto boundary-priming "
+            "warmup phase). See --trajectory-start-min-ratio for the sampling "
+            "contract. The inferencex-agentx-mvp scenario auto-applies 1.0 "
+            "when unset and locks an explicit conflicting value.",
+        ),
+        CLIParameter(
+            name=("--trajectory-start-max-ratio",),
+            group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
@@ -3916,6 +4141,28 @@ class CLIConfig(BaseConfig):
             name=("--zmq-dual-bind",),
             group=Groups.ZMQ_COMMUNICATION,
         ),
+    ] = False
+
+    scenario: Annotated[
+        str | None,
+        Field(
+            description="Lock all benchmark invariants for a named scenario "
+            "(e.g. 'inferencex-agentx-mvp'). Conflicts with the locked "
+            "invariants raise ScenarioLockError at startup unless "
+            "--unsafe-override is also passed. Distinct from the sweep "
+            "``scenarios`` strategy (hand-picked named runs).",
+        ),
+        CLIParameter(name=("--scenario",), group=Groups.SCENARIO),
+    ] = None
+
+    unsafe_override: Annotated[
+        bool,
+        Field(
+            description="Convert scenario lock errors to warnings; stamps "
+            "submission_valid=false in the aggregate output. No-op without "
+            "--scenario.",
+        ),
+        CLIParameter(name=("--unsafe-override",), group=Groups.SCENARIO),
     ] = False
 
     ##############################################################################

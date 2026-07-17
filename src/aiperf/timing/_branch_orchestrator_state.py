@@ -72,10 +72,20 @@ class PendingBranchJoin:
     parent_num_turns: int
     parent_agent_depth: int = 0
     parent_parent_correlation_id: str | None = None
+    parent_root_correlation_id: str | None = None
+    """Root of the parent's session tree (the parent credit's own
+    ``root_correlation_id``): None when the parent IS the tree root, set for a
+    nested parent. Re-stamped onto the gated join ``TurnToSend`` so the resumed
+    parent keeps its tree lineage for finality accounting."""
     gated_turn_index: int | None = None
     outstanding: dict[str, PrereqState] = field(default_factory=dict)
     parent_branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
     parent_has_forks_on_gated_turn: bool = False
+    parent_has_branches_on_gated_turn: bool = False
+    """True iff the gated turn itself declares ANY branch (FORK or SPAWN) in its
+    ``branch_ids``. Superset of the FORK-only flag above; re-stamped onto the
+    join ``TurnToSend`` so finality stamping stays conservative when the
+    resumed turn will spawn further descendants."""
     is_blocked: bool = False
     created_at_ns: int = field(default_factory=time.monotonic_ns)
 

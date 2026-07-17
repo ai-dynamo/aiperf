@@ -42,13 +42,13 @@ class ServerMetricsManager(BaseComponentService):
     """Coordinates multiple ServerMetricsDataCollector instances for server metrics collection.
 
     The ServerMetricsManager coordinates multiple ServerMetricsDataCollector instances
-    to collect server metrics from multiple Prometheus endpoints and send unified
-    ServerMetricsRecordsMessage to RecordsManager.
+    to collect server metrics from multiple Prometheus endpoints and send
+    ServerMetricsRecordMessage to RecordsManager.
 
     This service:
     - Manages lifecycle of ServerMetricsDataCollector instances
     - Collects metrics from multiple Prometheus endpoints
-    - Sends ServerMetricsRecordsMessage to RecordsManager via message system
+    - Sends ServerMetricsRecordMessage to RecordsManager via message system
     - Handles errors gracefully with ErrorDetails
     - Follows centralized architecture patterns
 
@@ -133,7 +133,9 @@ class ServerMetricsManager(BaseComponentService):
 
         for endpoint_url in self._server_metrics_endpoints:
             self.debug(
-                lambda url=endpoint_url: f"Server Metrics: Testing reachability of {url}"
+                lambda url=endpoint_url: (
+                    f"Server Metrics: Testing reachability of {url}"
+                )
             )
             collector = ServerMetricsDataCollector(
                 endpoint_url=endpoint_url,
@@ -148,11 +150,15 @@ class ServerMetricsManager(BaseComponentService):
                 if is_reachable:
                     self._collectors[endpoint_url] = collector
                     self.debug(
-                        lambda url=endpoint_url: f"Server Metrics: Prometheus endpoint {url} is reachable"
+                        lambda url=endpoint_url: (
+                            f"Server Metrics: Prometheus endpoint {url} is reachable"
+                        )
                     )
                 else:
                     self.debug(
-                        lambda url=endpoint_url: f"Server Metrics: Prometheus endpoint {url} is not reachable"
+                        lambda url=endpoint_url: (
+                            f"Server Metrics: Prometheus endpoint {url} is not reachable"
+                        )
                     )
             except Exception as e:
                 self.error(f"Server Metrics: Exception testing {endpoint_url}: {e}")
@@ -178,7 +184,9 @@ class ServerMetricsManager(BaseComponentService):
                 await collector.initialize()
                 await collector.collect_and_process_metrics()
                 self.debug(
-                    lambda url=endpoint_url: f"Server Metrics: Captured baseline from {url}"
+                    lambda url=endpoint_url: (
+                        f"Server Metrics: Captured baseline from {url}"
+                    )
                 )
             except Exception as e:
                 self.warning(
@@ -326,7 +334,9 @@ class ServerMetricsManager(BaseComponentService):
             try:
                 await collector.collect_and_process_metrics()
                 self.debug(
-                    lambda url=endpoint_url: f"Server Metrics: Captured final state from {url}"
+                    lambda url=endpoint_url: (
+                        f"Server Metrics: Captured final state from {url}"
+                    )
                 )
             except Exception as e:
                 self.warning(

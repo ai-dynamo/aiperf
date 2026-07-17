@@ -220,11 +220,14 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
-    # Subclasses set False to opt out (e.g. FixedSchedulePhase, where the
-    # stop condition is inferred from the dataset). Otherwise CLI users
-    # get autodefaults applied in the CLI->YAML converter (see
-    # ``aiperf.config.flags._converter_profiling``); YAML users must be
-    # explicit.
+    # Subclasses set False to opt out (e.g. FixedSchedulePhase, where the stop
+    # condition is inferred from the trace dataset). The required-stop check
+    # itself is NOT enforced here -- a phase alone cannot see its dataset's
+    # graph-ness. It lives in
+    # ``aiperf.config.resolution.predicates.check_phase_dataset_compatibility``
+    # (run from ``BenchmarkConfig``), which exempts graph workloads: a bare
+    # graph run infers a single-corpus-pass stop from the loaded corpus, just
+    # as FixedSchedulePhase infers its stop from the trace.
     _stop_condition_required: ClassVar[bool] = True
 
     # =========================================================================
@@ -247,16 +250,6 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
                 )
             if self.exclude_from_results != required:
                 self.exclude_from_results = required
-        if (
-            self._stop_condition_required
-            and self.requests is None
-            and self.duration is None
-            and self.sessions is None
-        ):
-            raise ValueError(
-                f"Phase '{self.name}': at least one of "
-                "'requests', 'duration', or 'sessions' must be specified"
-            )
         if (
             self.prefill_concurrency is not None
             and self.concurrency is not None

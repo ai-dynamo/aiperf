@@ -5,6 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # DAG Benchmarks: Branching Conversations
 
+> **Status: legacy mode.** DAG mode predates AIPerf's Graph IR. For new agentic workloads use [Agentic Workloads (Graph IR)](./agentic.md). Existing `dag_jsonl` files run on the graph runtime by replacing `--custom-dataset-type dag_jsonl` with `--graph-format dag_jsonl` — profiling wire bodies are payload-identical (canonical order-insensitive comparison; see [Running a `dag_jsonl` file on the graph runtime](#running-a-dag_jsonl-file-on-the-graph-runtime) and the [documented divergences](#known-documented-divergences)). DAG mode remains the only source of `BranchStats` export, the legacy child stop-condition rules, and reactive fork/spawn orchestration.
+
 Most benchmark conversations are a straight line: turn 1, then turn 2, then turn 3. DAG mode lets a single turn branch into **multiple follow-up conversations that run in parallel**. Picture a planner turn whose answer is then picked up by two different specialist turns at the same time, each continuing on its own from there.
 
 This guide walks through the feature from zero: what it is, when to reach for it, and how to author a file. No prior AIPerf knowledge is assumed beyond the basics in the README.
@@ -13,8 +15,8 @@ This guide walks through the feature from zero: what it is, when to reach for it
 
 Reach for DAG when your workload looks like one of these:
 
-- **Prefix-cache or KV-aware routing tests.** You want several follow-up requests to share the same long preamble so the server's cache is exercised. DAG's **FORK** mode makes the children look like continuations of the parent and routes them all to the same worker.
-- **Agentic sub-agent trees.** A parent turn completes, then independent sub-agents kick off. Each sub-agent should start fresh, not inherit the parent's history. DAG's **SPAWN** mode handles this.
+- **Prefix-cache or KV-aware routing tests.** You want several follow-up requests to share the same long preamble so the server's cache is exercised. DAG's **FORK** mode makes the children look like continuations of the parent and carries parent metadata for locality-aware routing experiments.
+- **Agentic sub-agent trees.** A parent turn completes, then independent sub-agents kick off. Each sub-agent should start fresh, not inherit the parent's history. DAG's **SPAWN** mode handles this — for new agentic workloads prefer [Agentic Workloads (Graph IR)](./agentic.md); reach for SPAWN when you need its reactive orchestration or `BranchStats`.
 
 If your workload is a plain sequence of turns with no branching, you do **not** need DAG — stick with `multi_turn` or `raw_payload`.
 
@@ -24,14 +26,14 @@ DAG mode exposes one primitive with two flavors, selected by a shorthand key on 
 
 | Mode | Shorthand on parent turn | What the child sees | Routing | Parent fate |
 |---|---|---|---|---|
-| **FORK** | `"forks": [...]` | Inherits the parent's full conversation history, including the captured model response. | Pinned to the same worker as the parent (locality). | Bare-string entries terminate; `{"child": ..., "background": true}` keeps the parent running. |
+| **FORK** | `"forks": [...]` | Inherits the parent's full conversation history, including the captured model response. | Carries parent metadata for locality-aware routing; exact worker pinning depends on router wiring. | Bare-string entries terminate; `{"child": ..., "background": true}` keeps the parent running. |
 | **SPAWN** | `"spawns": [...]` | Starts from an empty history. Only the child's own messages go on the wire. | Free to land on any worker. | Continues; suspends only at an explicit `join_at` (or the next-turn auto-join). |
 
 Both keys can appear on the same turn — the scheduler treats them independently, so one turn can both fork continuations and spawn fresh sub-agents.
 
 ## A minimal example, walked through
 
-Below is the shipped example at `examples/dag_jsonl/example.dag.jsonl`. Each line is one conversation; the three conversations together describe one tree.
+Below is a minimal DAG JSONL example. Each line is one conversation; the three conversations together describe one tree.
 
 ```jsonl
 {"session_id":"root","turns":[{"model":"Qwen3-0.6B","messages":[{"role":"system","content":"You are a careful assistant."},{"role":"user","content":"Please summarize the attached document."}],"max_tokens":128,"forks":["branch-a","branch-b"]}]}
@@ -53,7 +55,7 @@ flowchart TD
 
 **Line 2 — `branch-a`.** Two turns. Because it was reached via `forks`, it starts with `root`'s full accumulated history plus the real model response already in place. Its own messages get appended onto that, then dispatched.
 
-**Line 3 — `branch-b`.** Also two turns, also forked from `root`. Runs in parallel with `branch-a` — both are sticky-routed to the same worker as `root`, so the server sees matching prefixes across the two siblings.
+**Line 3 — `branch-b`.** Also two turns, also forked from `root`. Runs in parallel with `branch-a`; FORK children carry parent metadata so locality-aware routing can preserve sibling prefix locality when the router wiring supports it.
 
 Run it against any OpenAI-compatible chat endpoint:
 
@@ -63,12 +65,12 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --input-file examples/dag_jsonl/example.dag.jsonl \
+    --input-file branch-example.dag.jsonl \
     --custom-dataset-type dag_jsonl \
     --concurrency 1
 ```
 
-The example file has exactly one root (`root`); `branch-a` and `branch-b` are FORK targets, not roots. The autodefault sets `--num-conversations` to the root count, so `--concurrency` may not exceed `1` here. To exercise concurrency, supply your own multi-root DAG file or pass `--num-conversations N` explicitly. (FORK fanout still produces multiple in-flight requests per session — see the "concurrency" reference section below.)
+The example has exactly one root (`root`); `branch-a` and `branch-b` are FORK targets, not roots. The autodefault sets `--num-conversations` to the root count when no request, duration, or session count is supplied. Higher `--concurrency` values are accepted, but with one root there may be no additional root sessions to keep every slot busy. FORK fanout can still produce multiple in-flight requests from that one root — see the "concurrency" reference section below.
 
 That is enough to get started. The rest of this document is reference material you can skim on demand.
 
@@ -134,7 +136,7 @@ Each turn is a flat object validated against a strict schema (`DagTurn` in `src/
 
 **Native vs. extra.** The top-level whitelist matches AIPerf's native `Turn` concepts (`messages`, `model`, `max_tokens`, `tools`) — the same fields AIPerf already tracks per-turn for any dataset. Anything else — sampling knobs (`temperature`, `top_p`, `seed`, `stop`, `logprobs`), response shaping (`response_format`), vendor tunables (`ignore_eos`, `min_tokens`, `top_k`) — lives in `extra`. At dispatch time the `extra` keys are merged into the top level of the wire body, so name them exactly as the server expects.
 
-**What gets sent on the wire.** Structural keys (`forks`, `spawns`, `delay`) are consumed by the scheduler; every native field and everything under `extra` is forwarded to the chat-completions request body.
+**What gets sent on the wire.** Structural keys (`forks`, `spawns`, `delay`) are consumed by the scheduler; native fields and everything under `extra` are translated by the endpoint layer into the request body. For example, `max_tokens` may become either `max_tokens` or `max_completion_tokens` depending on endpoint configuration.
 
 **Message shape.** Each entry in `messages` is a free-form dict — the only structural requirement is a `role` key, matching `MooncakeTrace`. `content` may be a string, a list of OpenAI multimodal parts (e.g. `[{"type": "text", "text": "..."}, {"type": "image_url", "image_url": {"url": "..."}}]`), or omitted for assistant messages that are purely `tool_calls`. Paste whatever the server expects; AIPerf forwards it verbatim onto the wire.
 
@@ -143,7 +145,7 @@ Each turn is a flat object validated against a strict schema (`DagTurn` in `src/
 `forks: [session_id, ...]` desugars into FORK-mode branches. When the parent turn completes, each listed child session:
 
 - Inherits the parent's accumulated message history (including the captured real assistant response), merged under the system-prompt rule below.
-- Sticky-routes to the parent's worker so the server sees sibling requests with a common prefix and can exercise its prefix cache.
+- Carries parent correlation metadata for locality-aware routing. Whether this pins to the parent's worker depends on the active router implementation.
 
 Each listed `session_id` must be declared as its own top-level conversation in the same file. A conversation can be the FORK target of **at most one** parent (ambiguous seed messages otherwise). See [Join Semantics](#join-semantics) below for how a parent can gate a later turn on its FORK/SPAWN children completing.
 
@@ -170,7 +172,7 @@ A `DagFork` entry with `background: true` is the inherit-context-AND-parent-cont
 | Property | bare `forks: ["c"]` | `forks: [{"child": "c", "background": true}]` |
 |---|---|---|
 | Child inherits parent context | yes | yes |
-| Sticky-routing to parent worker | yes | yes |
+| Parent metadata for locality-aware routing | yes | yes |
 | Parent's remaining turns | not allowed (must be terminal) | run normally |
 | Join semantics | n/a (parent terminates) | none (fire-and-forget) |
 | Allowed on non-final turns | no | yes |
@@ -196,7 +198,7 @@ DAG-style conversations can declare that a turn dispatches only after children f
 
 For v1, the orchestrator honors these gate shapes:
 
-- **FORK**: no gate; child inherits parent context and sticky-routes.
+- **FORK**: no gate; child inherits parent context and carries parent correlation metadata.
 - **SPAWN, immediate join (legacy bare-string form)**: parent suspends on the turn immediately after the spawning turn (`join_at = spawn_turn + 1`).
 - **SPAWN, delayed join (`DagSpawn.join_at = K`)**: busy-parent semantics. The parent runs turns `[spawn_turn+1 .. K-1]` concurrently with the spawned children and only suspends when it is about to dispatch turn `K`.
 - **SPAWN, fan-in (multiple branches gating one turn)**: a single gated turn may carry SPAWN_JOIN prereqs referencing multiple branches (across one or more spawning turns); the orchestrator pre-seeds an `outstanding` set and only fires when every referenced branch drains. Multi-consumer is also supported — one branch_id may be gated by prereqs on more than one downstream turn.
@@ -249,12 +251,9 @@ If you need each phase to wrap the previous response with a new "system-like" fr
 
 ## Reference: routing and `agent_depth`
 
-Every AIPerf session has its own `x_correlation_id` that pins it to a specific worker via sticky routing. In a DAG, FORK children inherit their parent's routing key: the router keys on the root session's correlation id, not each child's. That means:
+Every AIPerf session has its own `x_correlation_id`, and DAG credits also carry parent correlation metadata. FORK children inherit the parent's accumulated context, so they send the same root prefix. Locality-aware routing can use the parent metadata to keep sibling requests near the parent, but the current sticky router still routes by the credit's own correlation id unless additional DAG-aware wiring is active.
 
-- All siblings in a fork hit the **same worker** as the parent.
-- Siblings send the same root prefix, so the worker (and its server) see a clean prefix-cache hit pattern across sibling pairs.
-
-This is what makes FORK mode useful for exercising prefix-cache and KV-aware routing — without sticky routing across the fork, siblings would scatter across workers and the prefix-share benefit would be invisible on the server.
+This is why FORK mode is useful for prefix-cache and KV-aware routing experiments: it creates sibling requests with shared prefixes and carries the metadata needed for locality-aware routing, while the exact worker pinning behavior must be verified for the router configuration under test.
 
 Every credit and request record is tagged with two DAG-aware fields:
 
@@ -278,13 +277,7 @@ Children are dispatched reactively by `BranchOrchestrator` at credit-return time
 
 ### `--num-conversations` autodefault for `dag_jsonl`
 
-When neither `--request-count` nor `--num-conversations` is supplied for a `dag_jsonl` run, AIPerf auto-defaults `--num-conversations` to the **root count** of the file (sessions not referenced by any other conversation's `forks` list) rather than auto-defaulting `--request-count`. Auto-defaulting `--request-count` for a forking dataset would silently truncate the DAG mid-tree because the cap counts fork-spawned children. The CLI logs:
-
-```
-No request count or conversation count provided for forking dataset;
-defaulting --num-conversations to N (run each root in the file once).
-Use --request-count for a literal wire-request cap instead.
-```
+When neither `--request-count`, `--benchmark-duration`, nor `--num-conversations` is supplied for a `dag_jsonl` run, AIPerf auto-defaults `--num-conversations` to the **root count** of the file. Roots are sessions not referenced by any other conversation's `forks`, `spawns`, or `pre_session_spawns`. Auto-defaulting `--request-count` for a forking dataset would silently truncate the DAG mid-tree because the cap counts fork-spawned children.
 
 If you do want a wire-request cap, pass `--request-count` explicitly — but be aware of the cap-applies-to-children behavior described above.
 
@@ -294,15 +287,15 @@ Using the example file above, here is what happens on the wire:
 
 1. `root`'s turn 0 dispatches as-is (accumulator is empty, so walking `turn_list` yields just the authored system + user).
 2. When its response arrives, the worker appends a captured `{role: assistant, content: <real_text>}` Turn onto `root.turn_list`.
-3. The orchestrator sees `forks=["branch-a","branch-b"]` and sticky-routes both children to `root`'s worker; at the worker, `UserSessionManager.create_and_store` seeds each child's `turn_list` from the parent session's accumulator. Both children's turn 0 then dispatch concurrently.
+3. The orchestrator sees `forks=["branch-a","branch-b"]`, creates children with parent metadata, and seeds each child's `turn_list` from the parent session's accumulator. Both children's turn 0 then dispatch concurrently.
 4. `branch-a`'s turn 0 has its authored `raw_messages` appended into the child's `turn_list`; the chat endpoint walks the list and concatenates every turn's messages, producing `[root sys, root user, root assistant_response, child user_a, child user_b]`. No system-prompt rewriting happens — accumulation is pure concatenation.
 5. `branch-a`'s turn 1 follows the same rule, now on top of the captured response from turn 0.
 6. `branch-b` runs concurrently with `branch-a`, independently.
-7. `root` has no further turns, so it terminates at the fork point. Its session is pinned in the worker cache (declared DAG branches) so late-arriving siblings can still seed their `turn_list` from it.
+7. `root` has no further turns, so it terminates at the fork point after its fork children have been launched.
 
 ## Reference: validation and error messages
 
-The loader performs strict structural checks at load time. Every error message includes the offending `file:line`.
+The loader performs strict structural checks at load time. JSON parse and Pydantic schema errors include the offending line; cross-record semantic errors identify the offending session, turn, branch, or cycle path.
 
 | Failure | Example message |
 |---|---|
@@ -390,7 +383,7 @@ aiperf profile \
     --concurrency 3
 ```
 
-With neither `--num-conversations` nor `--request-count` supplied, AIPerf logs `defaulting --num-conversations to 3` (one per root). The wire sees exactly nine requests: three roots and six children. `BranchStats.children_spawned` will be `6`, `children_completed` will be `6`, and all other counters will be `0`.
+With neither `--num-conversations`, `--request-count`, nor `--benchmark-duration` supplied, AIPerf sets `--num-conversations` to `3` from the root count. The DAG JSONL loader's default sampler is random, so this config samples three root sessions and dispatches each sampled root's children; it does not guarantee one pass over each distinct root unless the sampling strategy is changed accordingly. If each of the three roots is sampled once, the wire sees nine requests: three roots and six children. In that case, `BranchStats.children_spawned` is `6`, `children_completed` is `6`, and the other counters are `0`.
 
 ## When NOT to use DAG mode
 
@@ -398,6 +391,169 @@ With neither `--num-conversations` nor `--request-count` supplied, AIPerf logs `
 - **Pre-built traces with timestamps** — use `mooncake_trace` with `--fixed-schedule`. DAG mode does not currently support per-turn timestamps.
 - **Synthetic prompt generation** — DAG mode takes authored turn objects as given (messages are appended to the accumulator as-is). There is no synthetic input generator in v1.
 - **Diamond topologies** — a session with two FORK parents is explicitly rejected. DAG mode ships tree topology only.
+
+## Successor mode: agentic workloads (Graph IR)
+
+DAG JSONL is the earlier plane: branching chat conversations authored as
+sessions connected by `forks` and `spawns`, built on the multi-turn session
+system. Its context inheritance is tree-shaped — a session cannot have two
+FORK parents (no diamonds); SPAWN join gates provide control-flow fan-in.
+[Agentic Workload Benchmarks](./agentic.md) is the successor: explicit
+dataflow nodes, channels, per-node request overrides, imported Weka/Dynamo
+agent traces, and fan-out/fan-in including context fan-in.
+
+Prefer Graph IR for new workloads; reach for the legacy plane for the
+`BranchStats` export, the legacy child stop-condition rules, and the reactive
+fork/spawn orchestration the graph runtime does not replicate.
+
+### Running a `dag_jsonl` file on the graph runtime
+
+The **same** DAG JSONL file can run on either of two execution planes:
+
+- The **legacy DAG plane** (`--custom-dataset-type dag_jsonl`) — the sub-agent
+  orchestrator and credit plumbing this whole guide describes.
+- The **graph plane** (`--graph-format dag_jsonl`) — the file is lowered onto
+  AIPerf's graph IR and replayed by the [graph async dataflow
+  runtime](./agentic.md#runtime-behavior).
+
+Both accept the identical JSONL file format and run the identical load-time
+validation (the graph adapter reuses the legacy loader, so every error message
+in the [validation table](#reference-validation-and-error-messages) above still
+applies). You choose the plane with the selector flag; nothing in the file
+changes.
+
+Selection is **explicit-only**. `dag_jsonl` is deliberately excluded from graph
+workload auto-detection, so an existing `--custom-dataset-type dag_jsonl` run is
+never silently re-routed onto the graph plane — you get the graph plane only
+when you ask for it with `--graph-format dag_jsonl`.
+
+#### What the graph plane does with the file
+
+On the graph plane, the DAG lowers to a dataflow graph rather than to reactive
+orchestrator branches:
+
+- `forks`, `spawns`, `join_at`, and `pre_session_spawns` become static dataflow
+  edges plus AND fan-in gates (a joining node only fires once every gated
+  producer has landed).
+- Accumulated conversation history is interned **verbatim** into the unified
+  segment store, so shared prefixes dedup into a real KV-cache prefix; each
+  ancestor's **live** captured reply is spliced in worker-side at run time.
+- Per-turn `model`, `max_tokens`, `tools`, and `extra` ride dispatch overrides
+  in the legacy wire key order; per-turn `delay` maps to edge delays (the root
+  turn-0 delay is ignored, exactly as on the legacy plane).
+
+#### When to prefer each plane
+
+| You want… | Use |
+|---|---|
+| The graph async dataflow runtime, replay lanes, corpus-pass semantics, edge-delay replay timing, and unified-segment-store KV-prefix dedup | **Graph plane** (`--graph-format dag_jsonl`) |
+| `BranchStats` export in `profile_export_aiperf.json` and the legacy DAG child stop-condition rules (`--request-count` honored per child, `--num-conversations` bypassed for children) | **Legacy plane** (`--custom-dataset-type dag_jsonl`) |
+
+If you need the `BranchStats` export or the legacy child stop-condition rules,
+stay on the legacy plane — it is the plane every other section of this document
+describes. Otherwise prefer the graph plane (`--graph-format dag_jsonl`); the
+profiling wire bodies are payload-identical (canonical order-insensitive comparison), with the run-level differences listed
+in the [divergences section](#known-documented-divergences).
+
+#### Wire-parity guarantee
+
+For a given run configuration, the graph plane emits **payload-identical wire
+request bodies** to the legacy plane: same keys, same values, compared as
+canonical (sorted-keys) serializations — byte-strict on values and types, but
+key ORDER may differ (the graph plane authors `model` / `stream` / the token
+cap through native node fields, whose wire positions differ from the legacy
+`format_payload` order). This is proven for both streaming and non-streaming
+chat, by two complementary gates: the **non-streaming** case by the in-process
+transport-capture gate (`test_dag_jsonl_byte_parity.py`), and the **streaming**
+case by a live run against the in-repo mock server
+(`test_dag_jsonl_fidelity_real.py`). The guarantee is a **wire-body property**:
+it is about the JSON that goes on the wire per request, not about run-level
+accounting (see the divergences below).
+
+To reproduce the proof on your own file, run both planes with
+`--export-level raw` against the **same** endpoint, then diff the raw exports
+with the bundled fidelity tool:
+
+```bash
+# Same server for both runs: dag_jsonl fork/spawn children splice the parent's
+# LIVE reply into their prompt, so both planes must see identical replies.
+aiperf-mock-server --port 8000 --ttft 0 --itl 0 &
+
+aiperf profile --input-file conv.dag.jsonl --custom-dataset-type dag_jsonl \
+    --url http://127.0.0.1:8000 --endpoint-type chat --model test-model \
+    --streaming --export-level raw --artifact-dir ./legacy --random-seed 42
+
+aiperf profile --input-file conv.dag.jsonl --graph-format dag_jsonl \
+    --url http://127.0.0.1:8000 --endpoint-type chat --model test-model \
+    --streaming --export-level raw --artifact-dir ./graph --random-seed 42
+
+python tools/dag_jsonl_fidelity.py \
+    ./legacy/**/profile_export_raw.jsonl \
+    ./graph/**/profile_export_raw.jsonl
+```
+
+The tool matches requests by `(session_id, turn_index)` and asserts the exported
+`payload.messages`, the full parsed payload, and the re-serialized full body are
+all equal on every matching PROFILING request. A SPAWN template instantiated more
+than once per tree contributes its `#n` instances to the same
+`(session_id, turn_index)` key, so the tool compares each key as a **multiset**:
+it sorts both planes' bodies for that key and checks them element-wise, and
+additionally requires the per-key multiplicity to match (a template fired N times
+on one plane and M on the other fails loudly). The in-repo proofs are
+`tests/component_integration/graph/test_dag_jsonl_byte_parity.py` (in-process
+golden gate) and `tests/integration/graph/test_dag_jsonl_fidelity_real.py`
+(real `aiperf profile` subprocesses against a live mock server).
+
+#### Known, documented divergences
+
+Byte parity is a per-request wire-body property. These behaviors intentionally
+differ between the two planes:
+
+1. **Stop conditions and branch accounting.** The graph plane runs on lanes and
+   trace accounting, so it exports **no** `BranchStats` and treats
+   `--request-count` / `--num-conversations` per graph-replay semantics rather
+   than the legacy DAG child rules described under [stop conditions for DAG
+   children](#reference-stop-conditions-for-dag-children). Byte parity is a
+   wire-body property only.
+2. **Warmup phase.** The two planes warm differently — the legacy plane prepends
+   a system prefix to warmup requests, while the graph plane applies a 1-token
+   output cap. The parity statements above apply to the **PROFILING** phase.
+
+`--extra-inputs` is **no longer** a divergence. Per-turn `extra` beats
+`--extra-inputs` on an overlapping key on both planes, matching the legacy
+contract (the run-level value is inserted first — fixing the key's position in
+the wire body — and the turn value then wins). The graph adapter owns the fold
+at parse: it merges `endpoint.extra` into every node's `extra_body` and
+stamps the node `endpoint_extra_applied`, so the worker skips its own
+`endpoint.extra` re-merge. The proof is the `mixed-full-extra-inputs`
+parametrization in
+`tests/component_integration/graph/test_dag_jsonl_byte_parity.py`, which runs
+both planes with an `--extra-inputs` key overlapping a turn `extra` key (plus a
+fresh vendor key) under the full-body byte-equality comparison.
+
+`agent_depth` / `parent_correlation_id` record stamping is **no longer** a
+divergence. The graph plane stamps both fields on every dag record with the
+legacy semantics: roots carry `agent_depth=0` with no parent,
+FORK/SPAWN child instances carry the owner's depth + 1, and pre-session SPAWN
+children carry `agent_depth=1` with no parent — every turn of a child instance
+shares the instance's identity, so root-vs-child post-hoc filtering works
+identically on both planes. One shape note: the graph plane mints a correlation
+id per **node**, so a child's `parent_correlation_id` is the spawning parent
+*turn's* correlation id (the graph analogue of the legacy parent *session* id).
+The proofs are `test_fork_children_records_carry_dag_identity` and
+`test_prespawn_child_record_carries_depth_one_no_parent` in
+`tests/component_integration/graph/test_dag_jsonl_e2e.py`.
+
+Responses carrying `tool_calls` are **no longer** a divergence. Both planes
+capture the reply through the same `build_assistant_turn`, which reassembles the
+full assistant message (`content` plus `tool_calls`); the legacy plane splices
+that message into the FORK child's inherited seed verbatim and the graph plane
+serializes the identical dict into its dynamic pool and splices it back, so a
+mixed text+`tool_calls` reply and a `content: null` `tool_calls`-only reply both
+round-trip into child seeds byte-identically. The proof is the `fork_toolcalls`
+parametrization in
+`tests/component_integration/graph/test_dag_jsonl_byte_parity.py`, which exercises
+both variants under the same byte-exact multiset comparison.
 
 ## Related docs
 

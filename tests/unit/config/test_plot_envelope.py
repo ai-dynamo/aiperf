@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf.config import AIPerfConfig  # noqa: F401  (used by Task 3 tests below)
+from aiperf.config import AIPerfConfig  # noqa: F401  (used by resolution tests below)
 from aiperf.config.loader.core import load_config_from_string
 from aiperf.config.loader.errors import ConfigurationError
 from aiperf.config.plot import (
@@ -212,8 +212,8 @@ def test_load_plot_envelope_top_level_must_be_mapping(tmp_path: Path):
 
 def test_load_config_from_string_with_file_path_threads_source_dir(tmp_path):
     """When file_path is given, source_dir is the file's parent. No assertion
-    on plot here — that's Task 3. We just confirm the call shape still works
-    after threading the context."""
+    on plot here — envelope resolution is covered by the tests below. We just
+    confirm the call shape still works after threading the context."""
     minimal_yaml = """
 benchmark:
   models: [llama-3-8b]
@@ -229,8 +229,8 @@ benchmark:
     assert config.benchmark.models.items[0].name == "llama-3-8b"
 
 
-# Minimum viable AIPerfConfig YAML — same shape used by the threading test in
-# Task 2. Field paths/keys mirror tests/unit/config/test_envelope_restructure.py.
+# Minimum viable AIPerfConfig YAML — same shape used by the threading test
+# above. Field paths/keys mirror tests/unit/config/test_envelope_restructure.py.
 _BASE_BENCHMARK_YAML = """
 benchmark:
   models: [llama-3-8b]

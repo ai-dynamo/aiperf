@@ -327,11 +327,28 @@ class PlotMetadata(BaseModel):
     )
 
 
+class GraphAdapterMetadata(BaseModel):
+    """Metadata for graph_adapter plugins.
+
+    Referenced by: categories.yaml graph_adapter.metadata_class
+    """
+
+    detection_priority: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Detection-order priority for registered graph adapters. Higher "
+            "values run first when multiple adapters' can_load() return True "
+            "for the same file; configure concrete priorities in plugins.yaml."
+        ),
+    )
+
+
 class CustomDatasetLoaderMetadata(BaseModel):
     """Metadata schema for custom dataset loader plugins.
 
     Defines format-specific defaults for dataset loaders. When a loader specifies
-    ``block_size``, it overrides the user's ``--isl-block-size`` config default,
+    ``default_block_size``, it overrides the user's ``--isl-block-size`` config default,
     ensuring hash-based prompt generation uses the correct token block size for the
     trace format (e.g. 16 for Bailian, 512 for Mooncake).
 

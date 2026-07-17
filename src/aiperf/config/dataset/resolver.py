@@ -83,6 +83,7 @@ class DatasetResolver:
         ``FileNotFoundError`` when a file dataset path does not exist.
         """
         from aiperf.config.dataset import FileDataset, PublicDataset
+        from aiperf.dataset.graph.workload_detect import resolve_graph_workload
         from aiperf.plugin import plugins
 
         acc = _DatasetResolution()
@@ -95,9 +96,17 @@ class DatasetResolver:
                 continue
             if not isinstance(ds, FileDataset):
                 continue
-            self._resolve_one(name=ds.name, ds=ds, format_map=format_map, acc=acc)
+            self._resolve_one(
+                run=run, name=ds.name, ds=ds, format_map=format_map, acc=acc
+            )
 
         self._publish(run, acc)
+        # Eagerly resolve-and-memoize graph-ness so single-run child processes
+        # inherit it via the pickled run and never re-walk the registry. A
+        # no-op when a `_resolve_one` site already populated it; for
+        # synthetic/public/inline runs this stores None WITH the resolved
+        # marker ("not a graph run", not "never checked").
+        resolve_graph_workload(run)
 
     @staticmethod
     def _publish(run: BenchmarkRun, acc: _DatasetResolution) -> None:
@@ -123,6 +132,7 @@ class DatasetResolver:
     def _resolve_one(
         self,
         *,
+        run: BenchmarkRun,
         name: str,
         ds: object,
         format_map: dict[str, object],
@@ -133,11 +143,52 @@ class DatasetResolver:
             self._resolve_inline(name=name, ds=ds, format_map=format_map, acc=acc)
             return
 
+        # A weka HuggingFace ``org/name`` repo id is a graph workload reference,
+        # not a local path (resolved from the hub/cache by the weka adapter; the
+        # graph-store planes own its record counting), so skip file resolution.
+        # Populate the graph memo here too: this branch never reaches the main
+        # graph check below, and the accessor stores the RAW ``org/name`` id
+        # verbatim (never .resolve()d -- HF ids are not filesystem paths).
+        from pathlib import Path
+
+        from aiperf.dataset.graph.adapters.weka.trace import (
+            _looks_like_hf_dataset_id,
+        )
+        from aiperf.dataset.graph.workload_detect import (
+            is_graph_workload_path,
+            resolve_graph_workload,
+        )
+
+        is_default_dataset = ds is run.cfg.get_default_dataset()
+        raw_path = ds.path  # type: ignore[attr-defined]
+        if raw_path is not None and _looks_like_hf_dataset_id(raw_path):
+            acc.paths[name] = Path(str(raw_path))
+            if is_default_dataset:
+                resolve_graph_workload(run)
+            return
+
         # 1. Resolve and validate path
-        resolved = ds.path.resolve()  # type: ignore[attr-defined]
+        resolved = raw_path.resolve()  # type: ignore[attr-defined]
         if not resolved.exists():
             raise FileNotFoundError(f"Dataset '{name}' file not found: {resolved}")
         acc.paths[name] = resolved
+
+        # A local graph workload (dynamo/weka trace file, segmented dir) is
+        # owned by the graph-store build/schedule planes (parse_graph_workload),
+        # not the custom-dataset-loader path. Skip type detection + record
+        # counting, which text-mode read the file and crash on a .gz binary.
+        # Forced via `--graph-format`, OR auto-detected as a trace adapter.
+        # `graph_format` covers the `native`/ambiguous case that the path-level
+        # content sniff (which excludes `native`) cannot see. For the default
+        # dataset the check IS the accessor, so graph-ness is derived (and the
+        # file sniffed) exactly once and memoized onto ``run.resolved``.
+        if is_default_dataset:
+            if resolve_graph_workload(run) is not None:
+                return
+        elif getattr(ds, "graph_format", None) is not None or is_graph_workload_path(
+            resolved
+        ):
+            return
 
         # 2. Detect dataset type from explicit format or via can_load.
         # Pydantic defaults ``format`` to SINGLE_TURN, so a falsy check isn't

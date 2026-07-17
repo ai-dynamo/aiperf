@@ -14,6 +14,11 @@ from aiperf.common.enums import (
     GPUTelemetryMode,
     SweepMode,
 )
+
+# Direct-module import (not the aiperf.common.models package facade): the
+# package __init__ pulls the full model surface and works here only by
+# fragile init ordering; dataset_models.py is the precedent for this form.
+from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.redact import build_cli_command
 from aiperf.config.base import BaseConfig
 from aiperf.config.comm import BaseZMQCommunicationConfig
@@ -301,6 +306,24 @@ class BenchmarkPlan(BaseModel):
         return self
 
 
+class GraphWorkloadRef(AIPerfBaseModel):
+    """Resolved reference to a run's graph workload input.
+
+    The single source of graph-ness for a run: populated once (config
+    resolver chain, or first ``resolve_graph_workload`` call) and read by
+    every consumer thereafter -- no per-consumer re-sniffing.
+    """
+
+    path: Path = Field(
+        description="Graph input file/dir, or the HF org/name id verbatim "
+        "(never .resolve()d -- HF ids are not filesystem paths)."
+    )
+    format: str = Field(
+        description="Adapter format name (weka_trace / dynamo_trace / native "
+        "/ dag_jsonl)."
+    )
+
+
 class ResolvedConfig(BaseModel):
     """Runtime-computed state populated after construction.
 
@@ -387,6 +410,42 @@ class ResolvedConfig(BaseModel):
         default=None,
         description="Pre-built ZMQ communication config. "
         "Avoids rebuilding in every service's CommunicationMixin.",
+    )
+    scenario_outcome: Any = Field(
+        default=None,
+        description="ScenarioOutcome from the ScenarioResolver step, or None "
+        "when no --scenario was set. Typed Any to avoid importing "
+        "aiperf.common.scenario at config-module load (the resolver writes a "
+        "concrete ScenarioOutcome). Carries scenario_name / submission_valid / "
+        "submission_invalid_reasons surfaced by the metrics-JSON exporter.",
+    )
+    graph_workload: GraphWorkloadRef | None = Field(
+        default=None,
+        description="Graph workload resolved at config resolution, or memoized "
+        "on first access; None until resolved for non-graph runs -- consumers "
+        "use resolve_graph_workload(run), never this field directly.",
+    )
+    graph_workload_resolved: bool = Field(
+        default=False,
+        description="True once detection ran (distinguishes 'not a graph run' "
+        "from 'never checked').",
+    )
+    allow_dataset_wrap: bool | None = Field(
+        default=None,
+        description="Effective graph-plane dataset-wrap policy for this run: "
+        "whether selection may reuse the finite trace pool to satisfy "
+        "`--request-count`. None until resolution derives it (the resolver sets "
+        "the derived default when the user left `--allow-dataset-wrap` unset, or "
+        "carries the explicit user True/False otherwise). Read by downstream "
+        "graph-selection consumers via `run.resolved.allow_dataset_wrap`.",
+    )
+    dataset_sampling_strategy: DatasetSamplingStrategy | None = Field(
+        default=None,
+        description="Effective dataset sampling strategy for a graph workload, "
+        "surfaced from the default dataset's `sampling` field by "
+        "GraphDispatchResolver. None for non-graph runs (whose per-dataset "
+        "strategies land on `dataset_sampling_strategies` instead). Read by "
+        "graph-selection consumers via `run.resolved.dataset_sampling_strategy`.",
     )
 
 

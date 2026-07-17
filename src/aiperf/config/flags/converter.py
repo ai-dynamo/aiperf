@@ -365,7 +365,7 @@ def _promote_cli_dataset_magic_lists(
     as a scalar placeholder so AIPerfConfig validation passes; each sweep
     variation overrides per-cell at expand time. The dataset converter is
     responsible for unwrapping the list at base-build time (see
-    ``_build_synthetic_prompts_block``).
+    ``_converter_dataset._build_prompts``).
     """
     additions: dict[str, list[Any]] = {}
     for attr, path in _CLI_DATASET_MAGIC_LIST_PATHS:
@@ -531,11 +531,11 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
         "endpoint": endpoint,
         "models": models,
         "phases": phases,
-        # Dataset name "main": kept in sync with _V1_DEFAULT_DATASET_NAME in
+        # Dataset name "main": kept in sync with _DEFAULT_DATASET_NAME in
         # search_recipes.builtins (which can't import from this module without
         # creating a load-order cycle through aiperf.config/__init__.py).
-        # If renaming, update both call sites and the regression test in
-        # tests/unit/search_recipes/test_grid_recipe_converter.py.
+        # If renaming, update both call sites and the tests that assert
+        # "datasets.main.*" sweep paths (tests/unit/config/, tests/unit/search_recipes/).
         "datasets": [{"name": "main", **ds}],
         "artifacts": artifacts,
         "gpu_telemetry": gpu_telemetry,
@@ -559,6 +559,7 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     artifacts["plot_required"] = plot_required
 
     _assemble_optional(nested, cli, recipe_output=recipe_output)
+    _apply_scenario_fields(nested, cli)
     _apply_recipe_sweep_parameters(nested, recipe_output, cli)
     _apply_recipe_scenarios(nested, recipe_output, cli)
     sweep_type = getattr(cli, "sweep_type", "grid")
@@ -569,6 +570,30 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     return _wrap_under_envelope(nested)
 
 
+def _apply_scenario_fields(nested: dict[str, Any], cli: CLIConfig) -> None:
+    """Write the scenario-lock fields onto the benchmark body.
+
+    ``scenario`` / ``unsafe_override`` are plain data on ``BenchmarkConfig``
+    (the lock is applied later by ``ScenarioResolver``). They are NOT envelope
+    keys, so ``_wrap_under_envelope`` moves them under ``benchmark:``. Only
+    written when the user explicitly set them, to keep ``model_fields_set``
+    clean for downstream "was this set?" checks.
+    """
+    set_fields = cli.model_fields_set
+    if "scenario" in set_fields:
+        nested["scenario"] = cli.scenario
+    if "unsafe_override" in set_fields:
+        nested["unsafe_override"] = cli.unsafe_override
+    if "trajectory_start_min_ratio" in set_fields:
+        nested["trajectory_start_min_ratio"] = cli.trajectory_start_min_ratio
+    if "trajectory_start_max_ratio" in set_fields:
+        nested["trajectory_start_max_ratio"] = cli.trajectory_start_max_ratio
+    if "burst_phase_starts" in set_fields:
+        nested["burst_phase_starts"] = cli.burst_phase_starts
+    if "agentic_cache_warmup_duration" in set_fields:
+        nested["agentic_cache_warmup_duration"] = cli.agentic_cache_warmup_duration
+
+
 def _apply_parameter_sweep_meta_to_sweep(
     nested: dict[str, Any], cli: CLIConfig
 ) -> None:
@@ -576,8 +601,8 @@ def _apply_parameter_sweep_meta_to_sweep(
 
     Schema-2.0 moved these from ``MultiRunConfig`` to the per-sweep config
     (``GridSweep.iteration_order`` / ``GridSweep.same_seed`` /
-    ``GridSweep.cooldown_seconds``). They are CLI-set on
-    ``CLIConfig.sweeping``; lift them onto whatever sweep block
+    ``GridSweep.cooldown_seconds``). They are CLI-set as flat top-level
+    ``CLIConfig`` fields (the SWEEPING_FIELDS section); lift them onto whatever sweep block
     ``_assemble_optional`` / ``_promote_magic_lists_to_sweep_block``
     already produced. No-op when no sweep is in flight.
 

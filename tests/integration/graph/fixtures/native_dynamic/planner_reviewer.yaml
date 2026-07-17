@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Native dynamic-content graph for the mock-server E2E: `review` splices
+# `plan`'s ACTUAL response (block-level `@plan_out` ref) into its own prompt.
+# Both nodes are non-streaming so the mock returns a single assembled body the
+# test can extract verbatim. A small output cap keeps the spliced content short.
+graph:
+  nodes:
+    plan:
+      node_type: llm
+      prompt:
+        - role: user
+          content: "Make a plan for testing a cache."
+      output: plan_out
+      streaming: false
+      max_tokens: 16
+    review:
+      node_type: llm
+      prompt:
+        - role: user
+          content:
+            - "Review this plan: "
+            - "@plan_out"
+      output: review_out
+      streaming: false
+      max_tokens: 16
+  edges:
+    - {source: START, target: plan}
+    - {source: plan, target: review}
+    - {source: review, target: END}
+traces:
+  - id: conv-dynamic-1

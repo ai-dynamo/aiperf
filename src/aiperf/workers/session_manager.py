@@ -10,15 +10,23 @@ from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Conversation, Turn
 
 
-def _compute_is_fork_parent(conversation: Conversation) -> bool:
-    """True if this conversation declares any FORK-mode branch.
+def _count_fork_children(conversation: Conversation) -> int:
+    """Number of FORK-mode CHILD conversations this conversation declares.
 
-    Stamped onto ``UserSession`` at creation rather than recomputed on
-    every read because ``conversation.branches`` is dropped on the
-    PAYLOAD_BYTES context-mode wire round-trip; a lazy read after that
-    would silently flip the flag to ``False``.
+    Counts children, not branch entries: the dag_jsonl loader packs every
+    fork declared on one turn into a SINGLE ``ConversationBranchInfo``
+    whose ``child_conversation_ids`` lists all of them, and each child
+    pins the parent independently. Stamped onto ``UserSession`` at
+    creation rather than recomputed on every read because
+    ``conversation.branches`` is dropped on the PAYLOAD_BYTES context-mode
+    wire round-trip; a lazy read after that would silently flip the count
+    to zero.
     """
-    return any(b.mode == ConversationBranchMode.FORK for b in conversation.branches)
+    return sum(
+        len(b.child_conversation_ids)
+        for b in conversation.branches
+        if b.mode == ConversationBranchMode.FORK
+    )
 
 
 class UserSession(AIPerfBaseModel):
@@ -70,6 +78,24 @@ class UserSession(AIPerfBaseModel):
         "by ``pin_for_fork_child``; decremented on child join by "
         "``release_fork_child``. Eviction (``evict_if_unpinned``) is a "
         "no-op while this is non-zero.",
+    )
+    fork_children_expected: int = Field(
+        default=0,
+        ge=0,
+        description="Total FORK-mode branches this conversation declares "
+        "(stamped at ``create_and_store`` alongside ``is_fork_parent``). "
+        "``release_fork_child`` may collect a pending-eviction parent only "
+        "after this many children have pinned: a refcount of 0 alone cannot "
+        "distinguish 'all children joined' from 'a sibling child has not "
+        "arrived yet' when an earlier child completes its whole conversation "
+        "before a later child's credit reaches the worker.",
+    )
+    fork_children_pinned: int = Field(
+        default=0,
+        ge=0,
+        description="How many FORK children have pinned (and therefore "
+        "seeded from) this session so far. Monotonic; compared against "
+        "``fork_children_expected`` by ``release_fork_child``.",
     )
     pending_fork_eviction: bool = Field(
         default=False,
@@ -166,7 +192,8 @@ class UserSessionManager:
             or self._default_context_mode
             or ConversationContextMode.DELTAS_WITHOUT_RESPONSES
         )
-        is_fork_parent = _compute_is_fork_parent(conversation)
+        fork_children_expected = _count_fork_children(conversation)
+        is_fork_parent = fork_children_expected > 0
         # FORK seeding hands the parent's accumulated ``turn_list`` to
         # the child. ``MESSAGE_ARRAY_WITH_RESPONSES`` replaces ``turn_list``
         # on every ``advance_turn`` (see below), which would discard the
@@ -208,6 +235,7 @@ class UserSessionManager:
             turn_list=[],
             context_mode=context_mode,
             is_fork_parent=is_fork_parent,
+            fork_children_expected=fork_children_expected,
         )
         self.store(x_correlation_id, user_session)
         return user_session
@@ -255,6 +283,7 @@ class UserSessionManager:
                 f"{x_correlation_id!r} (parent already evicted before FORK child arrived)"
             )
         session.fork_refcount += 1
+        session.fork_children_pinned += 1
 
     def seed_from_parent(
         self, child_x_correlation_id: str, parent_x_correlation_id: str
@@ -289,15 +318,24 @@ class UserSessionManager:
         practice and must not raise.
 
         When ``pending_fork_eviction`` is set (parent's terminal turn
-        has already fired but was waiting for children to land) and
-        the refcount drops to 0, the session is evicted in the same
-        call — there is no other code path that will collect it.
+        has already fired but was waiting for children to land), the
+        refcount drops to 0, AND every declared FORK child has pinned
+        (``fork_children_pinned >= fork_children_expected``), the session
+        is evicted in the same call — there is no other code path that
+        will collect it. The pinned-count gate exists because an early
+        child can complete its WHOLE conversation before a sibling's
+        credit reaches the worker: refcount alone would hit 0 and evict
+        the parent out from under the late sibling's seed.
         """
         session = self._cache.get(x_correlation_id)
         if session is None:
             return
         session.fork_refcount = max(0, session.fork_refcount - 1)
-        if session.fork_refcount == 0 and session.pending_fork_eviction:
+        if (
+            session.fork_refcount == 0
+            and session.pending_fork_eviction
+            and session.fork_children_pinned >= session.fork_children_expected
+        ):
             self._cache.pop(x_correlation_id, None)
 
     def evict_if_unpinned(self, x_correlation_id: str) -> None:

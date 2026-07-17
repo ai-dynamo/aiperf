@@ -90,6 +90,14 @@
         "$ref": "#/$defs/PublicDatasetLoaderPlugin"
       }
     },
+    "graph_adapter": {
+      "title": "Graph Adapter Plugins",
+      "type": "object",
+      "description": "Graph adapters convert third-party trace/log files into the canonical\nParsedGraph used by the graph benchmark mode. Each adapter exposes\ncan_load(path) for format detection and parse(path, ctx) for full\nconversion, where ctx is an optional GraphParseContext of run-derived\nknobs; adapters forward a ctx field only when it is set, so a ctx-less\nparse keeps the protocol-default entry behavior. Selected by\n`--graph-format` or auto-detected from file extension + content sniff.\nDetection ordering (when multiple adapters' can_load() return True for\nthe same file) comes from each plugin's metadata `detection_priority`\nfield.",
+      "additionalProperties": {
+        "$ref": "#/$defs/GraphAdapterPlugin"
+      }
+    },
     "endpoint": {
       "title": "Endpoint Plugins",
       "type": "object",
@@ -104,6 +112,14 @@
       "description": "Transports handle the network layer for sending requests to inference servers.\nManages connection pooling, streaming, error handling, and TCP configuration.\nOne-to-one mapping based on transport_type configuration.",
       "additionalProperties": {
         "$ref": "#/$defs/TransportPlugin"
+      }
+    },
+    "session_routing": {
+      "title": "Session Routing Plugins",
+      "type": "object",
+      "description": "Session-routing transforms stamp per-session identity onto outbound\nrequests (headers or body metadata) so an external router in front of\nmultiple replicas can pin every turn of a session to one worker.\nSelected via --session-routing; parameterized via repeatable\n--session-routing-opt key=value validated against the plugin's\nOptions model. mutates_body is protocol metadata marking a mode as\nbody-mutating / incompatible with any verbatim-bytes request path; it is\nnot currently enforced by any gate on this codebase.",
+      "additionalProperties": {
+        "$ref": "#/$defs/SessionRoutingPlugin"
       }
     },
     "record_processor": {
@@ -635,7 +651,7 @@
           "type": "integer"
         },
         "metadata": {
-          "description": "Metadata schema for custom dataset loader plugins.\n\nDefines format-specific defaults for dataset loaders. When a loader specifies\n``block_size``, it overrides the user's ``--isl-block-size`` config default,\nensuring hash-based prompt generation uses the correct token block size for the\ntrace format (e.g. 16 for Bailian, 512 for Mooncake).\n\nReferenced by: categories.yaml custom_dataset_loader.metadata_class\nUsed in: plugins.yaml custom_dataset_loader entries",
+          "description": "Metadata schema for custom dataset loader plugins.\n\nDefines format-specific defaults for dataset loaders. When a loader specifies\n``default_block_size``, it overrides the user's ``--isl-block-size`` config default,\nensuring hash-based prompt generation uses the correct token block size for the\ntrace format (e.g. 16 for Bailian, 512 for Mooncake).\n\nReferenced by: categories.yaml custom_dataset_loader.metadata_class\nUsed in: plugins.yaml custom_dataset_loader entries",
           "properties": {
             "is_trace": {
               "default": false,
@@ -855,6 +871,47 @@
       "title": "Public Dataset Loader Plugin",
       "description": "Public dataset loaders fetch shared benchmark datasets without requiring a local file.\nSupports HTTP-downloaded and HuggingFace-hosted datasets.\nOne-to-one mapping: selected based on --public-dataset configuration."
     },
+    "GraphAdapterPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata for graph_adapter plugins.\n\nReferenced by: categories.yaml graph_adapter.metadata_class",
+          "properties": {
+            "detection_priority": {
+              "default": 0,
+              "description": "Detection-order priority for registered graph adapters. Higher values run first when multiple adapters' can_load() return True for the same file; configure concrete priorities in plugins.yaml.",
+              "minimum": 0,
+              "title": "Detection Priority",
+              "type": "integer"
+            }
+          },
+          "title": "GraphAdapterMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Graph Adapter Plugin",
+      "description": "Graph adapters convert third-party trace/log files into the canonical\nParsedGraph used by the graph benchmark mode. Each adapter exposes\ncan_load(path) for format detection and parse(path, ctx) for full\nconversion, where ctx is an optional GraphParseContext of run-derived\nknobs; adapters forward a ctx field only when it is set, so a ctx-less\nparse keeps the protocol-default entry behavior. Selected by\n`--graph-format` or auto-detected from file extension + content sniff.\nDetection ordering (when multiple adapters' can_load() return True for\nthe same file) comes from each plugin's metadata `detection_priority`\nfield."
+    },
     "EndpointPlugin": {
       "type": "object",
       "properties": {
@@ -1057,6 +1114,47 @@
       ],
       "title": "Transport Plugin",
       "description": "Transports handle the network layer for sending requests to inference servers.\nManages connection pooling, streaming, error handling, and TCP configuration.\nOne-to-one mapping based on transport_type configuration."
+    },
+    "SessionRoutingPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Session Routing Plugin",
+      "description": "Session-routing transforms stamp per-session identity onto outbound\nrequests (headers or body metadata) so an external router in front of\nmultiple replicas can pin every turn of a session to one worker.\nSelected via --session-routing; parameterized via repeatable\n--session-routing-opt key=value validated against the plugin's\nOptions model. mutates_body is protocol metadata marking a mode as\nbody-mutating / incompatible with any verbatim-bytes request path; it is\nnot currently enforced by any gate on this codebase."
     },
     "RecordProcessorPlugin": {
       "type": "object",

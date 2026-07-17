@@ -246,6 +246,11 @@
     ],
     [
       "C901",
+      "src/aiperf/config/dataset/resolver.py",
+      "DatasetResolver._resolve_one"
+    ],
+    [
+      "C901",
       "src/aiperf/config/distributions.py",
       "_distribution_discriminator"
     ],
@@ -281,6 +286,31 @@
     ],
     [
       "C901",
+      "src/aiperf/dataset/graph/adapters/dynamo/trie_lowering.py",
+      "dynamo_trie_nodes"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/graph/native_lowering.py",
+      "_analyze_dynamic_refs"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/graph/native_lowering.py",
+      "_assemble_prompt"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/graph/parser.py",
+      "_auto_inject_start_end"
+    ],
+    [
+      "C901",
+      "src/aiperf/dataset/graph/parser.py",
+      "_expand_single_doc"
+    ],
+    [
+      "C901",
       "src/aiperf/dataset/synthesis/synthesizer.py",
       "Synthesizer._apply_multipliers"
     ],
@@ -293,6 +323,11 @@
       "C901",
       "src/aiperf/gpu_telemetry/dcgm_collector.py",
       "DCGMTelemetryCollector._parse_metrics_to_records"
+    ],
+    [
+      "C901",
+      "src/aiperf/graph/worker_materialize.py",
+      "_assemble_items"
     ],
     [
       "C901",
@@ -498,6 +533,11 @@
       "C901",
       "src/aiperf/server_metrics/json_exporter.py",
       "ServerMetricsJsonExporter._build_hybrid_metrics"
+    ],
+    [
+      "C901",
+      "src/aiperf/timing/strategies/graph_ir_replay.py",
+      "GraphIRReplayStrategy._run_lanes"
     ],
     [
       "C901",

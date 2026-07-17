@@ -1,0 +1,16 @@
+{
+  "id": "trace_start_anchor",
+  "models": ["claude-opus-4-5-20251101"],
+  "block_size": 64,
+  "hash_id_scope": "local",
+  "requests": [
+    {"t": 0.0, "type": "n", "model": "claude-opus-4-5-20251101", "in": 128, "out": 200, "hash_ids": [1, 2], "input_types": ["text"], "output_types": ["text"], "stop": "tool_use", "api_time": 8.0, "think_time": 0.0},
+    {"t": 2.0, "type": "subagent", "agent_id": "agent_spawn", "subagent_type": "Explore", "duration_ms": 1500, "total_tokens": 300, "tool_use_count": 1, "status": "async_launched", "models": ["claude-opus-4-5-20251101"], "tool_tokens": 0, "system_tokens": 0, "requests": [
+      {"t": 2.5, "type": "n", "model": "claude-opus-4-5-20251101", "in": 128, "out": 30, "hash_ids": [50, 51], "input_types": ["text"], "output_types": ["text"], "stop": "end_turn", "api_time": 1.0, "think_time": 0.0}
+    ]},
+    {"t": 4.5, "type": "subagent", "agent_id": "agent_chain", "subagent_type": "Task", "duration_ms": 1500, "total_tokens": 300, "tool_use_count": 1, "status": "async_launched", "models": ["claude-opus-4-5-20251101"], "tool_tokens": 0, "system_tokens": 0, "requests": [
+      {"t": 5.0, "type": "n", "model": "claude-opus-4-5-20251101", "in": 192, "out": 45, "hash_ids": [60, 61, 62], "input_types": ["text"], "output_types": ["text"], "stop": "end_turn", "api_time": 1.0, "think_time": 0.0}
+    ]},
+    {"t": 9.0, "type": "n", "model": "claude-opus-4-5-20251101", "in": 256, "out": 60, "hash_ids": [1, 2, 3, 4], "input_types": ["text"], "output_types": ["text"], "stop": "end_turn", "api_time": 0.5, "think_time": 0.0}
+  ]
+}

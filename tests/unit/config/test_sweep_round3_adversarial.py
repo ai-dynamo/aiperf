@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Round-3 adversarial regressions for the sweep + config system.
+"""Adversarial regressions for the sweep + config system.
 
 Continues the H-series after ``test_sweep_round2_adversarial.py``:
 
 - H15: ``_set_nested_value`` raises a clear path-aware ValueError when a
-  dotted path crosses a scalar/None mid-traversal (was: opaque
+  dotted path crosses a scalar/None mid-traversal (otherwise: opaque
   ``TypeError: 'X' object does not support item assignment``).
 - H16: Grid sweep parameter keys go through the shared dotted-path
   validator -- empty/leading-dot/``..``/non-sweepable-prefix paths are

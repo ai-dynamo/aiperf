@@ -77,6 +77,54 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
     )
 
 
+class GraphSegmentClientMetadata(DatasetClientMetadata):
+    """Client metadata for graph unified segment-store access.
+
+    Graph runs have no conversation store: workers materialize per-node
+    payloads from the unified segment store addressed by
+    ``(trace_id, node_ordinal)``, and the TimingManager plans from the
+    graph_meta structural sidecar. Both locations travel here so no service
+    re-derives them from env conventions.
+    """
+
+    client_type: DatasetClientStoreType = DatasetClientStoreType.GRAPH_SEGMENT
+
+    store_base_path: Path = Field(
+        ...,
+        description="Base directory containing the per-benchmark "
+        "aiperf_graph_segments_<benchmark_id>/ unified store the workers open.",
+    )
+    benchmark_id: str = Field(
+        ...,
+        description="Benchmark id keying the per-run store and sidecar directories.",
+    )
+    sidecar_path: Path = Field(
+        ...,
+        description="Exact path of the graph_meta.msgpack structural sidecar "
+        "the TimingManager ingests for scheduling. Mandatory for graph runs.",
+    )
+
+
+class GraphDatasetMetadata(AIPerfBaseModel):
+    """Graph facet of the dataset structure for graph IR workloads.
+
+    Replaces the former per-trace stub conversations: the trace universe and
+    the per-node theoretical prefix-cache map are first-class here instead of
+    riding fabricated ConversationMetadata.
+    """
+
+    trace_ids: list[str] = Field(
+        default_factory=list,
+        description="Every trace id in the built graph store, in catalog order.",
+    )
+    prefix_cache_by_trace: dict[str, dict[str, list[int]]] = Field(
+        default_factory=dict,
+        description="Per-trace {node_id: [theoretical_hit_blocks, total_blocks]} "
+        "map stamped by the trie build; consumed by the records-plane "
+        "theoretical prefix-cache accumulator.",
+    )
+
+
 class Media(AIPerfBaseModel):
     """Base class for all media fields. Contains name and contents of the media data."""
 
@@ -142,6 +190,24 @@ class TurnMetadata(AIPerfBaseModel):
         "Mirrors ``Turn.prerequisites`` so consumers of "
         "``ConversationMetadata`` can reach prereqs without holding the full "
         "Turn list.",
+    )
+    theoretical_prefix_cache_hit_blocks: int | None = Field(
+        default=None,
+        ge=0,
+        description="Number of leading hash-id blocks that would be prefix-cache "
+        "hits for this turn under an infinite per-trace cache. None when the "
+        "dataset loader did not provide hash-block metadata. Mirrors "
+        "``Turn.theoretical_prefix_cache_hit_blocks`` so the "
+        "``theoretical_prefix_cache`` accumulator can read it off "
+        "``DatasetMetadata`` without holding the full Turn list.",
+    )
+    theoretical_prefix_cache_total_blocks: int | None = Field(
+        default=None,
+        ge=0,
+        description="Number of hash-id blocks considered for theoretical "
+        "prefix-cache hit accounting for this turn. Pairs with "
+        "``theoretical_prefix_cache_hit_blocks``; None when the loader did not "
+        "provide hash-block metadata.",
     )
 
 
@@ -209,6 +275,15 @@ class Turn(AIPerfBaseModel):
         "Mutually exclusive with normal turn-content fields in spirit, but no "
         "validator enforces that — loaders construct one or the other.",
     )
+    raw_payload_bytes: bytes | None = Field(
+        default=None,
+        description="Pre-serialized API request body bytes for verbatim replay. "
+        "When set, takes precedence over raw_payload: the bytes are sent to the "
+        "transport unchanged (no orjson.dumps re-encode) and recorded verbatim as "
+        "payload_bytes for ISL/raw-export. Set by the graph-IR worker bytes path "
+        "(GraphSegmentUnifiedClient.build_request_body_handles) when no content "
+        "mutation is needed; None on every other path.",
+    )
     extra_body: dict[str, Any] | None = Field(
         default=None,
         description="Non-native per-turn request-body fields (temperature, "
@@ -239,6 +314,22 @@ class Turn(AIPerfBaseModel):
         description="Duration of the audio content in seconds. Used by ASR-specific "
         "metrics like RTFx. Set by ASR dataset loaders.",
     )
+    theoretical_prefix_cache_hit_blocks: int | None = Field(
+        default=None,
+        ge=0,
+        description="Number of leading hash-id blocks that would hit an infinite "
+        "per-trace prefix cache for this turn. Set by trace loaders that walk "
+        "hash_ids during reconstruction (the WEKA graph-IR prepass); None for "
+        "all other dataset types. Consumed by the ``theoretical_prefix_cache`` "
+        "results accumulator via ``TurnMetadata``.",
+    )
+    theoretical_prefix_cache_total_blocks: int | None = Field(
+        default=None,
+        ge=0,
+        description="Number of hash-id blocks considered for theoretical "
+        "prefix-cache hit accounting for this turn. Pairs with "
+        "``theoretical_prefix_cache_hit_blocks``; None for non-trace datasets.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -247,6 +338,12 @@ class Turn(AIPerfBaseModel):
             delay_ms=self.delay,
             branch_ids=list(self.branch_ids),
             prerequisites=list(self.prerequisites),
+            theoretical_prefix_cache_hit_blocks=(
+                self.theoretical_prefix_cache_hit_blocks
+            ),
+            theoretical_prefix_cache_total_blocks=(
+                self.theoretical_prefix_cache_total_blocks
+            ),
         )
 
     def copy_with_stripped_media(self) -> "Turn":
@@ -294,10 +391,17 @@ class Turn(AIPerfBaseModel):
                 for vid in self.videos
             ],
             raw_payload=self.raw_payload,
+            raw_payload_bytes=self.raw_payload_bytes,
             extra_body=dict(self.extra_body) if self.extra_body is not None else None,
             prerequisites=list(self.prerequisites),
             branch_ids=list(self.branch_ids),
             audio_duration_seconds=self.audio_duration_seconds,
+            theoretical_prefix_cache_hit_blocks=(
+                self.theoretical_prefix_cache_hit_blocks
+            ),
+            theoretical_prefix_cache_total_blocks=(
+                self.theoretical_prefix_cache_total_blocks
+            ),
         )
 
 
@@ -366,6 +470,11 @@ class DatasetMetadata(AIPerfBaseModel):
         description="Dataset-level default for how prior turns are accumulated. "
         "Set by the loader based on dataset format semantics. "
         "Individual conversations can override this via their own context_mode field.",
+    )
+    graph: GraphDatasetMetadata | None = Field(
+        default=None,
+        description="Graph facet for graph IR workloads (trace universe + "
+        "prefix-cache map); None for conversation datasets.",
     )
 
     @field_validator("default_context_mode")
@@ -483,6 +592,12 @@ class Conversation(AIPerfBaseModel):
                     for bid in t.branch_ids
                 ),
                 prerequisites=list(t.prerequisites),
+                theoretical_prefix_cache_hit_blocks=(
+                    t.theoretical_prefix_cache_hit_blocks
+                ),
+                theoretical_prefix_cache_total_blocks=(
+                    t.theoretical_prefix_cache_total_blocks
+                ),
             )
             for t in self.turns
         ]

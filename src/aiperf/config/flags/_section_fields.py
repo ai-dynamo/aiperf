@@ -17,6 +17,7 @@ from __future__ import annotations
 ENDPOINT_FIELDS: frozenset[str] = frozenset(
     {
         "api_key",
+        "cache_bust",
         "connection_reuse_strategy",
         "custom_endpoint",
         "download_video_content",
@@ -24,6 +25,8 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "model_selection_strategy",
         "request_content_type",
         "session_header",
+        "session_routing",
+        "session_routing_opt",
         "streaming",
         "timeout_seconds",
         "transport",
@@ -42,8 +45,11 @@ INPUT_FIELDS: frozenset[str] = frozenset(
     {
         # ----- top-level input flat fields -----
         "custom_dataset_type",
+        "graph_format",
         "dataset_filters",
         "dataset_sampling_strategy",
+        "max_context_length",
+        "allow_dataset_wrap",
         "extra_inputs",
         "input_file",
         "fixed_schedule",
@@ -120,6 +126,8 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "synthesis_output_len_multiplier",
         "synthesis_max_isl",
         "synthesis_max_osl",
+        "prompt_corpus",
+        "synthesis_idle_gap_cap",
     }
 )
 

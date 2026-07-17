@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import BYTES_PER_MIB, WARMUP_SYSTEM_MESSAGE_PREFIX
 from aiperf.common.enums import (
+    CacheBustTarget,
     CommAddress,
     CommandType,
     ConversationBranchMode,
@@ -47,8 +50,10 @@ from aiperf.common.models import (
     RequestInfo,
     RequestRecord,
     SSEMessage,
+    Turn,
     WorkerTaskStats,
 )
+from aiperf.common.models.dataset_models import GraphSegmentClientMetadata
 from aiperf.common.models.record_models import find_last_non_empty_usage
 from aiperf.common.protocols import (
     PushClientProtocol,
@@ -63,11 +68,13 @@ from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
     FirstToken,
+    GraphTraceEnd,
     RouterToWorkerMessage,
     WorkerReady,
     WorkerShutdown,
 )
 from aiperf.credit.structs import Credit, CreditContext
+from aiperf.dataset.graph_segment_unified_store import GraphSegmentUnifiedClient
 from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -76,7 +83,30 @@ from aiperf.workers.inference_client import InferenceClient
 from aiperf.workers.session_manager import UserSession, UserSessionManager
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.graph.dynamic_pool import GraphCapturedReply, GraphPoolSentinel
+
+
+def _mint_x_request_id(credit: Any) -> str:
+    """Fresh per-dispatch request id (``X-Request-ID``), minted per credit.
+
+    Linear credits keep the legacy opaque ``uuid4``. Graph credits mint the
+    recoverable-plus-nonce form ``{node_id}::{nonce}``: the node id
+    (``{scope}:{turn}``, the trajectory coordinate) is derived from the
+    credit's own ``conversation_id`` (``{trace}[::{scope}]``) and
+    ``turn_index``, and the nonce keeps the id fresh per dispatch. Safe to
+    enrich because ``x_request_id`` is write-only (never read back, matched,
+    or deduped) -- it exists so an export row identifies its template node
+    without any side lookup.
+    """
+    if getattr(credit, "node_ordinal", None) is None or not credit.conversation_id:
+        return str(uuid.uuid4())
+    conversation = credit.conversation_id
+    _, sep, child_scope = conversation.partition("::")
+    scope = child_scope if sep else conversation
+    return f"{scope}:{credit.turn_index}::{uuid.uuid4().hex}"
 
 
 def _phase_needs_first_token_callback(phase) -> bool:
@@ -170,6 +200,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.task_stats: WorkerTaskStats = WorkerTaskStats()
 
         self.credit_tasks: dict[int, asyncio.Task] = {}
+        # Worker-local dynamic-content pool for graph traces (captured
+        # assistant responses). Engaged only when a
+        # node envelope carries `capture` -- inert for recorded corpora.
+        from aiperf.graph.dynamic_pool import GraphDynamicPool
+
+        self._graph_dynamic_pool = GraphDynamicPool(
+            max_bytes=Environment.GRAPH.DYNAMIC_POOL_MAX_BYTES
+        )
 
         self.inference_results_push_client: PushClientProtocol = (
             self.comms.create_push_client(
@@ -227,8 +265,36 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
 
+        # Caches a FAILED store open (missing/corrupt files) so the worker does
+        # not re-attempt the doomed open on every graph credit (F4): a single
+        # fatal, actionable error is surfaced per credit instead of a silent
+        # retry-loop that looks like a hang.
+        self._graph_store_open_error: ErrorDetails | None = None
+        # Worker-side reader for the graph unified segment store (content pool +
+        # per-node manifests) -- the SOLE graph store shape; every graph build
+        # writes one. Opened lazily on the first graph credit from the SAME
+        # (base_path, benchmark_id) the build-time GraphSegmentUnifiedBackingStore
+        # wrote to; ``_graph_unified_open_attempted`` guards a single open.
+        self._graph_unified_client: GraphSegmentUnifiedClient | None = None
+        self._graph_unified_open_attempted = False
+        # Why the unified open failed, when the failure is actionable (an
+        # on-disk store REJECTED as pre-v3 by the A2-strict reader, vs simply
+        # absent). Folded into the fatal GraphStoreUnavailable message so
+        # the operator sees "re-parse required" instead of a misleading
+        # "neither store exists".
+        self._graph_unified_open_failure: str | None = None
+        # Graph store location from the dataset broadcast (the graph-typed
+        # DatasetConfiguredNotification). The worker opens the unified store
+        # from THIS, never from env conventions -- absence is a recorded failure
+        # feeding the GraphStoreUnavailable fatal, not a temp-dir fallback.
+        self._graph_client_metadata: GraphSegmentClientMetadata | None = None
+
         # Detecting first token requires parsing each SSE chunk, so only enable
-        # FirstToken messages when a downstream consumer needs them.
+        # FirstToken messages when a downstream consumer needs them. Graph credits
+        # additionally opt in per-credit via ``credit.first_token_event`` (checked
+        # at dispatch) for post-TTFT first-token anchoring even when no phase-level
+        # consumer is active. ``_phase_needs_first_token_callback`` already covers
+        # prefill-concurrency limiting.
         self._first_token_observation_enabled: bool = any(
             _phase_needs_first_token_callback(phase) for phase in self.run.cfg.phases
         )
@@ -262,6 +328,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         self._dataset_client = ClientStoreClass(client_metadata=msg.client_metadata)
         await self._dataset_client.initialize()
+        # Graph runs carry the unified-store location on the broadcast; capture
+        # it so ``_graph_unified_reader`` opens exactly what the DatasetManager
+        # built (no env re-derivation). Non-graph broadcasts leave this None.
+        self._graph_client_metadata = (
+            msg.client_metadata
+            if isinstance(msg.client_metadata, GraphSegmentClientMetadata)
+            else None
+        )
         self.session_manager.set_default_context_mode(msg.metadata.default_context_mode)
         self._dataset_configured_event.set()
         self.debug(
@@ -310,6 +384,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 self._schedule_credit_drop_task(message)
             case CancelCredits():
                 await self._on_cancel_credits_message(message)
+            case GraphTraceEnd():
+                # Sticky-lifecycle close: evict the trace's dynamic pool entry
+                # (deferred while its credits are still in flight -- their
+                # capture writes may land after this message on cancelled
+                # paths).
+                self._graph_dynamic_pool.trace_end(
+                    message.trace_id, message.phase_variant
+                )
             case _:
                 self.warning(
                     f"Unknown credit message type: {message.__class__.__name__}"
@@ -381,6 +463,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         self.execute_async(self.credit_return_push_client.send(credit_return))
         credit_context.returned = True
+
+        # Post-session hook for routing plugins: this cancel-before-start path is a
+        # terminal disposition the finally block never sees (the credit task was
+        # cancelled before it started), so notify here too. Idempotent by contract.
+        if credit_context.credit is not None:
+            self.inference_client.notify_session_end(
+                credit_context.credit.x_correlation_id
+            )
 
         # Explicitly clear references to help refcounting (GC is disabled on workers)
         credit_context.credit = None
@@ -464,12 +554,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         - Subsequent turns: Session retrieved from cache (sticky routing ensures same worker)
         - Final turn: Session evicted from cache to free memory
         """
-        x_request_id = str(uuid.uuid4())
-        x_correlation_id = credit_context.credit.x_correlation_id
         credit = credit_context.credit
+        x_request_id = _mint_x_request_id(credit)
 
+        # First token callback - needed when a phase-level consumer is active
+        # (prefill concurrency limiting, adaptive-scale SLA) OR when this credit
+        # requests a per-credit first-token event (post-TTFT first-token
+        # anchoring). Sends FirstToken to router for prefill slot release and for
+        # the graph first-token observer.
+        # Returns True when meaningful content is found to stop looking for first token
         first_token_callback = None
-        if self._first_token_observation_enabled:
+        if self._first_token_observation_enabled or credit.first_token_event:
 
             async def first_token_callback(ttft_ns: int, message: SSEMessage) -> bool:
                 parsed = self.inference_client.endpoint.parse_response(message)
@@ -481,11 +576,43 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                         credit_id=credit.id,
                         phase=credit.phase,
                         ttft_ns=ttft_ns,
+                        trace_id=credit.trace_id,
+                        x_correlation_id=credit.x_correlation_id,
+                        turn_index=credit.turn_index,
                     )
                 )
                 credit_context.first_token_sent = True
                 return True
 
+        # Graph-IR credits carry a trace_id/node_ordinal: the worker rebuilds the
+        # node's request from the shared graph store mmap (D1) instead of taking
+        # the linear session-cache path. Any worker can serve any node.
+        if credit.trace_id is not None:
+            await self._process_graph_credit(
+                credit_context, x_request_id, first_token_callback
+            )
+            return
+
+        await self._process_session_credit(
+            credit_context, x_request_id, first_token_callback
+        )
+
+    async def _process_session_credit(
+        self,
+        credit_context: CreditContext,
+        x_request_id: str,
+        first_token_callback,
+    ) -> None:
+        """Process a linear (non-graph) credit via the sticky-routed session cache.
+
+        The original ``_process_credit`` body: look up / create the session by
+        ``x_correlation_id`` (seeding fork children from their parent), advance to
+        the credit's turn, send the request, store the response, and evict on the
+        final / cancelled turn. Behavior is unchanged -- this is a pure extraction
+        so ``_process_credit`` stays a thin graph-vs-session dispatcher.
+        """
+        x_correlation_id = credit_context.credit.x_correlation_id
+        credit = credit_context.credit
         try:
             session = self.session_manager.get(x_correlation_id)
             if session is None:
@@ -553,13 +680,572 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Mark cancelled before re-raising so finally can evict session
             credit_context.cancelled = True
             raise
-        except Exception as e:
+        except Exception as e:  # capture any request error into the credit context
             credit_context.error = ErrorDetails.from_exception(e)
             self.exception(f"Error processing credit: {e!r}")
         finally:
             # Evict session on final turn OR if cancelled (no retry expected)
             if credit_context.credit.is_final_turn or credit_context.cancelled:
                 self._release_and_evict_for_terminal(credit, x_correlation_id)
+
+    def _resolve_graph_session_headers(
+        self, envelope: dict[str, Any], credit: Credit
+    ) -> dict[str, str] | None:
+        """Resolve recorded dynamo session-identity headers for one dispatch.
+
+        Recorded dynamo session ids are stamped verbatim at build time. With a
+        live --session-routing plugin active, the plugin OWNS session identity
+        (headers stamped at the chokepoint from the credit's live corr), so the
+        recorded identity headers are stripped -- forwarding both would put two
+        conflicting identities on the wire. Otherwise, suffix them per replay
+        instance so concurrent instances of one trace never share -- or
+        session-final-evict -- a server session.
+        """
+        from aiperf.graph.worker_materialize import (
+            strip_dynamo_session_headers,
+            uniquify_dynamo_session_headers,
+        )
+
+        if self.inference_client.session_routing_active:
+            return strip_dynamo_session_headers(envelope.get("extra_headers"))
+        return uniquify_dynamo_session_headers(
+            envelope.get("extra_headers"),
+            trace_instance_id=credit.trace_id,
+            phase_variant=credit.phase_variant,
+        )
+
+    async def _process_graph_credit(
+        self,
+        credit_context: CreditContext,
+        x_request_id: str,
+        first_token_callback,
+    ) -> None:
+        """Process a graph-IR credit by materializing its request from the mmap.
+
+        Reads the credit's ``(trace_id, node_ordinal, phase_variant)`` and
+        rebuilds the node's request payload from the unified interned segment
+        store (:func:`materialize_graph_request_unified` /
+        :func:`materialize_graph_request_unified_bytes`) -- the sole graph
+        store shape. It layers the
+        run-level endpoint options the verbatim path would otherwise drop
+        (``endpoint.extra`` / ``stream_options.include_usage``) while keeping
+        the per-node ``dispatch_overrides`` / ``stream`` winning, wraps it as a
+        single-turn ``raw_payload``, sends it, and forwards the result.
+
+        A missing/corrupt store sets a fatal ``credit_context.error`` (not a
+        silent swallow + per-credit retry); a missing node ordinal sets a clean
+        ``GraphEnvelopeMissing`` error. Every pre-dispatch failure ALSO emits a
+        synthetic error ``RequestRecord`` (:meth:`_send_graph_error_record`):
+        the RecordsManager completion barrier counts success+error RECORDS
+        against the credit-side ``final_requests_completed``, so an errored
+        credit that produced no record would starve the barrier and hang the
+        run at "please wait for the results". A catch-all around the body
+        extends the same guarantee to UNANTICIPATED raisers (corrupt envelope
+        bytes, materialize bugs, transport raises): the error is attributed on
+        the context (mirroring ``_process_session_credit``) and a record is
+        emitted unless the dispatch path already sent one.
+        """
+        # Imported lazily: ``aiperf.graph.__init__`` pulls the full executor
+        # adapter chain, which is import-order fragile; deferring to the first
+        # graph credit keeps the worker module importable in any order.
+        from aiperf.graph.worker_materialize import (
+            apply_run_level_payload_options,
+            materialize_graph_request_unified,
+            materialize_graph_request_unified_bytes,
+            read_node_envelope,
+            stamp_cache_bust_marker,
+        )
+
+        credit = credit_context.credit
+        segment_store = self._graph_store_reader(credit_context)
+        if segment_store is None:
+            # Store absent/corrupt: error already set on the context. Do NOT
+            # send a garbage request; the run surfaces the fatal config error.
+            await self._send_graph_error_record(credit_context, x_request_id)
+            return
+        # ``credit.trace_id`` is the per-recycle INSTANCE id (e.g. ``t-1#0``):
+        # it rotates the cache-bust marker per recycle pass. The unified store
+        # is keyed by the BASE/template id, so strip the ``::{nonce}`` instance
+        # suffix before reading -- every recycle instance of one template reads
+        # the same build-time manifests.
+        base_trace_id = credit.trace_id.split("::", 1)[0]
+        endpoint = self.model_endpoint.endpoint
+
+        # Catch-all boundary: any exception escaping the body must still
+        # attribute the error on the context (else the CreditReturn reports
+        # success) AND emit a record (else the RecordsManager barrier starves
+        # and the run hangs). ``record_emitted`` tracks every emission inside
+        # the region so a failure AFTER a record landed never double-emits.
+        record_emitted = False
+        try:
+            # Pre-read the node envelope ONCE: routes bytes-vs-dict, carries the
+            # `capture` flag (and assembly `items`), and is handed to the
+            # materialize functions so the manifest is never decoded twice.
+            envelope = read_node_envelope(
+                segment_store, base_trace_id, credit.node_ordinal, credit.phase_variant
+            )
+            if envelope is None:
+                self._set_graph_envelope_missing(credit_context, base_trace_id)
+                await self._send_graph_error_record(credit_context, x_request_id)
+                record_emitted = True
+                return
+            capture = bool(envelope.get("capture"))
+            has_items = envelope.get("items") is not None
+            extra_headers = self._resolve_graph_session_headers(envelope, credit)
+
+            # In-flight bracket for the dynamic pool: a GraphTraceEnd arriving
+            # while this credit is mid-processing defers eviction until the
+            # bracket closes (a cancelled dispatch's FAILED write must land in a
+            # live entry, not re-create an evicted one).
+            pool = self._graph_dynamic_pool
+            pool.credit_started(credit.trace_id, credit.phase_variant)
+            try:
+                # Unified (interned A2) store: every node carries int ``handles``,
+                # so a ``None`` from the unified fns IS a genuine miss. When no
+                # content mutation is needed (cache-bust prepends a marker to the
+                # first user message, which a pre-serialized body cannot do), build
+                # the request body once from content-pool slices and send it
+                # verbatim; otherwise take the unified dict path. Slot-carrying
+                # nodes (``items``) always take the dict path: their messages are
+                # composed per request from the dynamic pool.
+                if endpoint.cache_bust == CacheBustTarget.NONE and not has_items:
+                    built = materialize_graph_request_unified_bytes(
+                        segment_store,
+                        base_trace_id,
+                        credit.node_ordinal,
+                        credit.phase_variant,
+                        use_legacy_max_tokens=endpoint.use_legacy_max_tokens,
+                        endpoint=endpoint,
+                        envelope=envelope,
+                        default_model=self.model_endpoint.primary_model_name,
+                    )
+                    if built is None:
+                        self._set_graph_envelope_missing(credit_context, base_trace_id)
+                        await self._send_graph_error_record(
+                            credit_context, x_request_id
+                        )
+                        record_emitted = True
+                        return
+                    body, _model, stream = built
+                    request_info = self._build_graph_request_info(
+                        credit_context,
+                        None,
+                        x_request_id,
+                        raw_payload_bytes=body,
+                        stream_override=stream,
+                        extra_headers=extra_headers,
+                    )
+                else:
+                    from aiperf.graph.dynamic_pool import GraphPoolMissingError
+
+                    try:
+                        payload = materialize_graph_request_unified(
+                            segment_store,
+                            base_trace_id,
+                            credit.node_ordinal,
+                            credit.phase_variant,
+                            use_legacy_max_tokens=endpoint.use_legacy_max_tokens,
+                            envelope=envelope,
+                            default_model=self.model_endpoint.primary_model_name,
+                            slot_resolver=(
+                                (
+                                    lambda ordinal: pool.get(
+                                        credit.trace_id, credit.phase_variant, ordinal
+                                    )
+                                )
+                                if has_items
+                                else None
+                            ),
+                        )
+                    except GraphPoolMissingError as e:
+                        # Broken stickiness (worker death re-route) or backstop
+                        # eviction: a loud trace error, never a silent omission.
+                        # The dispatch adapter sniffs this prefix.
+                        credit_context.error = (
+                            f"aiperf.graph.pool_missing: "
+                            f"{credit.trace_id}/{e.src_ordinal}"
+                        )
+                        await self._send_graph_error_record(
+                            credit_context, x_request_id
+                        )
+                        record_emitted = True
+                        return
+                    if payload is None:
+                        self._set_graph_envelope_missing(credit_context, base_trace_id)
+                        await self._send_graph_error_record(
+                            credit_context, x_request_id
+                        )
+                        record_emitted = True
+                        return
+                    env_stream = payload.get("stream")
+                    stream_override = (
+                        bool(env_stream) if env_stream is not None else None
+                    )
+                    apply_run_level_payload_options(
+                        payload,
+                        endpoint,
+                        stream_override=stream_override,
+                        skip_endpoint_extra=bool(
+                            envelope.get("endpoint_extra_applied")
+                        ),
+                    )
+                    if credit.trace_id is not None:
+                        stamp_cache_bust_marker(
+                            payload,
+                            benchmark_id=self.run.benchmark_id,
+                            trace_instance_id=credit.trace_id,
+                            target=endpoint.cache_bust,
+                        )
+                    request_info = self._build_graph_request_info(
+                        credit_context,
+                        payload,
+                        x_request_id,
+                        stream_override=payload.get("stream"),
+                        extra_headers=extra_headers,
+                    )
+                await self._dispatch_graph_request(
+                    request_info,
+                    credit_context,
+                    first_token_callback,
+                    capture=capture,
+                )
+                record_emitted = True
+            finally:
+                pool.credit_finished(credit.trace_id, credit.phase_variant)
+        except Exception as e:
+            credit_context.error = ErrorDetails.from_exception(e)
+            self.exception(
+                f"Error processing graph credit {credit.id} "
+                f"(trace={credit.trace_id!r} node_ordinal={credit.node_ordinal}): {e!r}"
+            )
+            if not record_emitted:
+                await self._send_graph_error_record(credit_context, x_request_id)
+        return
+
+    async def _dispatch_graph_request(
+        self,
+        request_info: RequestInfo,
+        credit_context: CreditContext,
+        first_token_callback: Callable | None,
+        *,
+        capture: bool,
+    ) -> None:
+        """Send one materialized graph request; capture the response if flagged.
+
+        The pool write happens strictly BEFORE the CreditReturn (the caller's
+        task finally), so a successor credit -- issued only after this credit
+        resolves and sticky-routed to this worker -- always observes the
+        entry. Every exit stores a value for captured nodes: a structured
+        :class:`GraphCapturedReply` on success (text plus, for tool_calls
+        replies, the verbatim assistant message JSON), ``EMPTY`` on a
+        successful response with no replayable content, ``FAILED`` on a
+        dispatch error, cancellation, or capture-extraction failure.
+        """
+        from aiperf.graph.dynamic_pool import GraphPoolSentinel
+
+        credit = credit_context.credit
+        pool_key = (credit.trace_id, credit.phase_variant, credit.node_ordinal)
+        self.task_stats.total += 1
+        try:
+            record: RequestRecord = await self.inference_client.send_request(
+                request_info, first_token_callback=first_token_callback
+            )
+        except BaseException:
+            if capture:
+                self._graph_dynamic_pool.put(*pool_key, GraphPoolSentinel.FAILED)
+            raise
+        if capture:
+            self._graph_dynamic_pool.put(
+                *pool_key, self._graph_capture_value(credit_context, record)
+            )
+        await self._send_inference_result_message(record)
+        if record.error is not None:
+            credit_context.error = record.error
+        return
+
+    def _graph_capture_value(
+        self, credit_context: CreditContext, record: RequestRecord
+    ) -> GraphCapturedReply | GraphPoolSentinel:
+        """Extract the pool value for a captured node's response record.
+
+        Plain-text replies capture as a text-only :class:`GraphCapturedReply`;
+        replies whose endpoint returned ``raw_messages`` (chat ``tool_calls`` /
+        structured content) also carry the verbatim orjson-serialized
+        assistant message so downstream splices reproduce the legacy
+        child-seed rendering byte-for-byte.
+        """
+        from aiperf.graph.dynamic_pool import GraphCapturedReply, GraphPoolSentinel
+
+        if record.error is not None:
+            return GraphPoolSentinel.FAILED
+        try:
+            turn = self.inference_client.endpoint.build_assistant_turn(record)
+            if turn is None:
+                return GraphPoolSentinel.EMPTY
+            if turn.raw_messages:
+                # A single-message capture cannot faithfully carry more than one
+                # assistant message (openai_responses can legitimately produce
+                # several); truncating to raw_messages[0] would silently drop the
+                # rest, so fail loudly instead.
+                if len(turn.raw_messages) > 1:
+                    credit_context.error = (
+                        "aiperf.graph.capture_failed: multi-entry raw_messages "
+                        f"({len(turn.raw_messages)} entries) is not representable "
+                        "in a single-message capture; single-message endpoints only"
+                    )
+                    return GraphPoolSentinel.FAILED
+                message = turn.raw_messages[0]
+                content = message.get("content")
+                return GraphCapturedReply(
+                    text=content if isinstance(content, str) else "",
+                    message_json=orjson.dumps(message).decode(),
+                )
+        except Exception as e:
+            credit_context.error = f"aiperf.graph.capture_failed: {e!r}"
+            return GraphPoolSentinel.FAILED
+        text = "".join(
+            content for t in turn.texts or [] for content in (t.contents or [])
+        )
+        if not text:
+            return GraphPoolSentinel.EMPTY
+        return GraphCapturedReply(text=text)
+
+    def _build_graph_request_info(
+        self,
+        credit_context: CreditContext,
+        payload: dict[str, Any] | None,
+        x_request_id: str,
+        *,
+        raw_payload_bytes: bytes | None = None,
+        stream_override: bool | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> RequestInfo:
+        """Wrap a materialized graph payload as a single-turn ``RequestInfo``.
+
+        Two shapes, selected by which arg is set:
+
+        - **dict path** (``payload``): a ``raw_payload`` carrying ``messages``,
+          per-node ``dispatch_overrides``, ``stream``, and -- when ``--cache-bust``
+          is set -- the stamped first-user marker.
+        - **bytes path** (``raw_payload_bytes``): a pre-serialized body built once
+          from mmap slices; ``payload`` is ``None``.
+
+        ``Turn.model`` is deliberately left unset on both shapes: the recorded
+        per-node model rides only the wire body (sent verbatim), while
+        ``record.model_name`` falls back to the run ``--model`` in
+        ``_finalize_request_record`` so tokenizer selection behaves like plain
+        aiperf -- recorded deployment ids (e.g. ``dynamo/org/model-fp8``) are
+        usually not resolvable tokenizer repos.
+
+        ``stream_override`` carries the recorded per-node wire mode (the FINAL
+        stamped ``payload["stream"]`` / bytes-path effective stream) onto the
+        ``RequestInfo`` so the transport picks the matching wire mode per-request
+        (``effective_streaming``); non-graph paths leave it ``None`` (follow the
+        global ``endpoint.streaming``).
+
+        Either way the chat endpoint's ``format_payload`` is bypassed and the body
+        is sent verbatim.
+        """
+        credit = credit_context.credit
+        turn = Turn(
+            role="user",
+            raw_payload=payload,
+            raw_payload_bytes=raw_payload_bytes,
+            # Per-node HTTP headers from the envelope (dynamo session
+            # identity: x-dynamo-session-id / -parent-session-id /
+            # -session-final). The transport merges the last turn's
+            # extra_headers into the request headers; body is untouched.
+            extra_headers=extra_headers,
+        )
+        return RequestInfo(
+            model_endpoint=self.model_endpoint,
+            credit_num=credit.id,
+            credit_phase=credit.phase,
+            cancel_after_ns=credit.cancel_after_ns,
+            x_request_id=x_request_id,
+            x_correlation_id=credit.x_correlation_id,
+            conversation_id=credit.conversation_id,
+            turn_index=credit.turn_index,
+            turns=[turn],
+            drop_perf_ns=credit_context.drop_perf_ns,
+            credit_issued_ns=credit.issued_at_ns,
+            is_final_turn=credit.is_final_turn,
+            agent_depth=credit.agent_depth,
+            parent_correlation_id=credit.parent_correlation_id,
+            # Session-routing identity facts: the graph adapter mints real
+            # per-trajectory num_turns (is_final_turn = the recorded
+            # session-final fact) and stamps the instance's root trajectory
+            # corr; finality stays conservative (no SessionTreeRegistry on
+            # the graph plane).
+            root_correlation_id=credit.effective_root_correlation_id,
+            is_parent_final=credit.is_parent_final,
+            is_tree_final=credit.is_tree_final,
+            url_index=credit.url_index,
+            stream_override=stream_override,
+        )
+
+    def _graph_unified_reader(self) -> GraphSegmentUnifiedClient | None:
+        """Return the lazily-opened unified store client, or ``None`` on failure.
+
+        Cached across credits: the doomed/successful open is attempted exactly
+        once (``_graph_unified_open_attempted``) and reused. The unified client
+        carries both the addressing face (``get_node_envelope``) and the content
+        face (``materialize_handles`` / ``build_request_body_handles``);
+        ``_graph_store_reader`` returns this ONE
+        client when the store exists on disk. A failed open is cached as
+        ``None``; the A2-strict ``ValueError`` (an on-disk pre-v3 store rejected
+        with "re-parse required") additionally remembers its reason so the
+        fatal error path reports it instead of claiming no store exists.
+        """
+        if self._graph_unified_open_attempted:
+            return self._graph_unified_client
+        self._graph_unified_open_attempted = True
+        meta = self._graph_client_metadata
+        if meta is None:
+            # A graph credit arrived but the dataset broadcast was not
+            # graph-typed: the store location is unknown by contract (no env
+            # re-derivation). Feeds the existing GraphStoreUnavailable fatal.
+            self._graph_unified_open_failure = (
+                "dataset broadcast did not carry GraphSegmentClientMetadata "
+                "(or no dataset-configured broadcast was received); the "
+                "DatasetManager must build the graph store and broadcast its "
+                "location before workers can serve graph credits"
+            )
+            return None
+        try:
+            self._graph_unified_client = GraphSegmentUnifiedClient(
+                base_path=meta.store_base_path, benchmark_id=meta.benchmark_id
+            ).open()
+        except ValueError as e:
+            # A2-strict rejection: the store EXISTS on disk but is a legacy
+            # pre-v3 shape. Unlike a missing store this is actionable, so keep
+            # the reason for the GraphStoreUnavailable fatal.
+            self._graph_unified_open_failure = str(e)
+            self.warning(lambda e=e: f"unified store rejected: {e}")
+            self._graph_unified_client = None
+        except Exception as e:
+            self.debug(lambda e=e: f"unified store not opened: {e!r}")
+            self._graph_unified_client = None
+        return self._graph_unified_client
+
+    def _graph_store_reader(
+        self, credit_context: CreditContext
+    ) -> GraphSegmentUnifiedClient | None:
+        """Return the worker's lazily-opened unified store client, or ``None``.
+
+        Resolves the store from the graph-typed dataset broadcast
+        (:class:`GraphSegmentClientMetadata.store_base_path` +
+        ``benchmark_id``), so it reads exactly what the build-time
+        :class:`GraphSegmentUnifiedBackingStore` wrote. There is NO env
+        fallback: a graph credit whose broadcast carried no graph store
+        location is a recorded failure, not a temp-dir guess.
+
+        When the store is absent or corrupt, rather than letting the failure
+        propagate to the broad ``_on_credit_drop_message_task`` ``except``
+        (which logs but does NOT attribute the error -- F4), this caches a
+        fatal, actionable
+        :class:`ErrorDetails`, sets it on the credit context, and returns
+        ``None`` so the caller skips the send. Attributing the error here is
+        NOT sufficient on its own: the caller must still emit a synthetic
+        error record (:meth:`_send_graph_error_record`), or the RecordsManager
+        completion barrier starves and the run hangs at end of phase. The
+        doomed open is attempted exactly ONCE; every later credit reuses the
+        cached error.
+        """
+        unified = self._graph_unified_reader()
+        if unified is not None:
+            return unified
+        if self._graph_store_open_error is None:
+            meta = self._graph_client_metadata
+            if meta is None:
+                # No graph store location arrived on the broadcast; the failure
+                # string already explains the missing GraphSegmentClientMetadata.
+                message = f"No graph store could be opened: {self._graph_unified_open_failure}"
+            else:
+                unified_failure = (
+                    f" The store WAS found but rejected: "
+                    f"{self._graph_unified_open_failure}."
+                    if self._graph_unified_open_failure is not None
+                    else ""
+                )
+                message = (
+                    f"No graph store could be opened under {meta.store_base_path}: "
+                    f"the unified segment store "
+                    f"(aiperf_graph_segments_{meta.benchmark_id}) could not be "
+                    f"opened.{unified_failure} The store location arrives on the "
+                    f"dataset broadcast (GraphSegmentClientMetadata.store_base_path); "
+                    f"ensure the DatasetManager built the graph store and that its "
+                    f"base path is on a shared filesystem visible to every worker."
+                )
+            self._graph_store_open_error = ErrorDetails(
+                type="GraphStoreUnavailable",
+                message=message,
+            )
+            self.error(lambda c=self._graph_store_open_error: c.message)
+        credit_context.error = self._graph_store_open_error
+        return None
+
+    def _set_graph_envelope_missing(
+        self, credit_context: CreditContext, base_trace_id: str
+    ) -> None:
+        """Set a clean ``GraphEnvelopeMissing`` error for an unaddressable node."""
+        credit = credit_context.credit
+        credit_context.error = ErrorDetails(
+            type="GraphEnvelopeMissing",
+            message=(
+                f"No graph-store envelope for trace={base_trace_id!r} "
+                f"(instance={credit.trace_id!r}) "
+                f"node_ordinal={credit.node_ordinal} "
+                f"phase_variant={credit.phase_variant!r}"
+            ),
+        )
+        self.warning(lambda c=credit_context.error: c.message)
+
+    async def _send_graph_error_record(
+        self, credit_context: CreditContext, x_request_id: str
+    ) -> None:
+        """Emit a synthetic error ``RequestRecord`` for a pre-dispatch graph failure.
+
+        Pre-dispatch failures (missing store, missing envelope, missing pool
+        entry) never reach the inference client, so no ``RequestRecord`` would
+        otherwise flow to the RecordProcessor. The RecordsManager's completion
+        barrier counts success+error RECORDS against the credit-side
+        ``final_requests_completed`` (``records_tracker``), so a credit that
+        returns with an error but no record starves the barrier and the run
+        hangs at "please wait for the results". Mirror of the session path's
+        synthetic error record for a failed conversation fetch
+        (:meth:`_request_conversation_from_dataset_manager`). The
+        ``CreditReturn`` semantics are untouched -- the caller's finally still
+        returns the credit with ``credit_context.error`` attached.
+        """
+        credit = credit_context.credit
+        error = credit_context.error
+        if not isinstance(error, ErrorDetails):
+            error = ErrorDetails(
+                type="GraphPreDispatchError",
+                message=str(error) if error else "pre-dispatch graph credit failure",
+            )
+        now_perf_ns = time.perf_counter_ns()
+        await self._send_inference_result_message(
+            RequestRecord(
+                request_info=RequestInfo(
+                    model_endpoint=self.model_endpoint,
+                    conversation_id=credit.conversation_id,
+                    turn_index=credit.turn_index,
+                    turns=[],
+                    credit_num=credit.id,
+                    credit_phase=credit.phase,
+                    x_request_id=x_request_id,
+                    x_correlation_id=credit.x_correlation_id,
+                    drop_perf_ns=credit_context.drop_perf_ns,
+                ),
+                model_name=self.model_endpoint.primary_model_name,
+                timestamp_ns=time.time_ns(),
+                start_perf_ns=now_perf_ns,
+                end_perf_ns=now_perf_ns,
+                error=error,
+            )
+        )
 
     def _parsed_responses_for_record(
         self, record: RequestRecord
@@ -686,6 +1372,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         Non-FORK and non-parent sessions evict immediately.
         """
+        # Fire the routing plugin's post-session hook on ANY terminal outcome
+        # (final turn or cancel), not just a successful final turn, so stateful
+        # plugins release sessions abandoned mid-conversation. Idempotent by
+        # contract; no-op when session routing is unset.
+        self.inference_client.notify_session_end(x_correlation_id)
         if (
             credit.parent_correlation_id is not None
             and credit.branch_mode == ConversationBranchMode.FORK
@@ -744,6 +1435,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             is_final_turn=credit.is_final_turn,
             agent_depth=credit.agent_depth,
             parent_correlation_id=credit.parent_correlation_id,
+            root_correlation_id=credit.effective_root_correlation_id,
+            is_parent_final=credit.is_parent_final,
+            is_tree_final=credit.is_tree_final,
             # Use session's url_index to ensure all turns hit the same backend
             url_index=session.url_index,
         )
@@ -878,6 +1572,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self._dataset_client = None
             await dataset_client.stop()
             self.debug("Dataset client stopped")
+
+        if self._graph_unified_client is not None:
+            self._graph_unified_client.close()
+            self._graph_unified_client = None
+            self.debug("Graph unified store client closed")
 
         self.event_loop_monitor.stop()
 
