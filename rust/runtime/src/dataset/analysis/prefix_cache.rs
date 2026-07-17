@@ -148,6 +148,98 @@ pub fn ideal_reuse(requests: &[RequestBlocks]) -> IdealReuse {
     }
 }
 
+/// A single point on the realized cache hit-rate curve: the hit rate and
+/// eviction count achieved by a finite-capacity LRU of `capacity_blocks`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct CacheCurvePoint {
+    /// LRU capacity in blocks that produced this point.
+    pub capacity_blocks: u64,
+    /// `hits / total_blocks`, or `0.0` when there are no blocks.
+    pub hit_rate: f64,
+    /// Number of block evictions performed to stay within capacity.
+    pub evictions: u64,
+}
+
+/// Simulate a block-granular LRU cache of `capacity_blocks` over `requests`
+/// processed in the given (arrival) order.
+///
+/// A block is a hit iff it is currently resident; a hit moves it to the MRU
+/// position; a miss inserts it, evicting the least-recently-used block first
+/// when the cache is full. Recency is tracked by a monotonically increasing
+/// tick stored per resident block; eviction finds the minimum-tick entry by a
+/// linear scan, so eviction is O(capacity) per miss. This is acceptable for the
+/// modest capacities used by [`realized_sweep`].
+pub fn realized_reuse(
+    requests_in_arrival_order: &[RequestBlocks],
+    capacity_blocks: u64,
+) -> CacheCurvePoint {
+    // Resident block id -> last-use tick.
+    let mut resident: HashMap<i64, u64> = HashMap::new();
+    let mut tick: u64 = 0;
+    let mut total_blocks: u64 = 0;
+    let mut hits: u64 = 0;
+    let mut evictions: u64 = 0;
+
+    let capacity = capacity_blocks.max(1) as usize;
+
+    for req in requests_in_arrival_order {
+        for &id in &req.block_ids {
+            total_blocks += 1;
+            tick += 1;
+            if let Some(last_use) = resident.get_mut(&id) {
+                // Hit: refresh recency to MRU.
+                *last_use = tick;
+                hits += 1;
+            } else {
+                // Miss: evict the LRU block if at capacity, then insert.
+                if resident.len() >= capacity {
+                    if let Some((&lru_id, _)) =
+                        resident.iter().min_by_key(|&(_, &last_use)| last_use)
+                    {
+                        resident.remove(&lru_id);
+                        evictions += 1;
+                    }
+                }
+                resident.insert(id, tick);
+            }
+        }
+    }
+
+    let hit_rate = if total_blocks > 0 {
+        hits as f64 / total_blocks as f64
+    } else {
+        0.0
+    };
+
+    CacheCurvePoint {
+        capacity_blocks,
+        hit_rate,
+        evictions,
+    }
+}
+
+/// Sweep realized LRU reuse across capacities at `ceil(unique_blocks * f)` for
+/// `f in [0.1, 0.25, 0.5, 1.0, 2.0]`, with each capacity clamped to at least 1
+/// and duplicate capacities removed (preserving ascending order).
+pub fn realized_sweep(
+    requests_in_arrival_order: &[RequestBlocks],
+    unique_blocks: u64,
+) -> Vec<CacheCurvePoint> {
+    let fractions = [0.1_f64, 0.25, 0.5, 1.0, 2.0];
+    let mut capacities: Vec<u64> = fractions
+        .iter()
+        .map(|f| (unique_blocks as f64 * f).ceil() as u64)
+        .map(|c| c.max(1))
+        .collect();
+    capacities.sort_unstable();
+    capacities.dedup();
+
+    capacities
+        .into_iter()
+        .map(|capacity| realized_reuse(requests_in_arrival_order, capacity))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,5 +291,36 @@ mod tests {
         assert_eq!(r.cached_blocks, 2);
         assert_eq!(r.cross_conversation_cached, 2);
         assert_eq!(r.intra_conversation_cached, 0);
+    }
+
+    #[test]
+    fn realized_lru_evicts_by_recency() {
+        // Arrival order: r0 [1,2], r1 [3,4], r2 [1,2] again.
+        let reqs = vec![
+            RequestBlocks {
+                conversation_id: "x".into(),
+                turn_index: 0,
+                block_ids: vec![1, 2],
+            },
+            RequestBlocks {
+                conversation_id: "x".into(),
+                turn_index: 1,
+                block_ids: vec![3, 4],
+            },
+            RequestBlocks {
+                conversation_id: "x".into(),
+                turn_index: 2,
+                block_ids: vec![1, 2],
+            },
+        ];
+        // capacity 2 blocks: after r0 cache={1,2}; r1 evicts to {3,4}; r2 misses both.
+        let c2 = realized_reuse(&reqs, 2);
+        assert_eq!(c2.hit_rate, 0.0);
+        // capacity 4 blocks: r2's [1,2] still resident → 2 hits of 6 total.
+        let c4 = realized_reuse(&reqs, 4);
+        assert!((c4.hit_rate - 2.0 / 6.0).abs() < 1e-9);
+        // unbounded-ish capacity matches ideal for this trace.
+        let big = realized_reuse(&reqs, 100);
+        assert!((big.hit_rate - 2.0 / 6.0).abs() < 1e-9);
     }
 }
