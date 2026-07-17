@@ -54,6 +54,19 @@ class TestDormancyGate:
         assert amdsmi.__version__.startswith("26")
 
 
+class TestAMDHardwareGuard:
+    def test_raises_when_kfd_present(self, load_fake_amdsmi, monkeypatch):
+        amdsmi = load_fake_amdsmi()
+        monkeypatch.setattr(amdsmi.Path, "exists", lambda self: str(self) == "/dev/kfd")
+        with pytest.raises(RuntimeError, match="real AMD GPU hardware"):
+            amdsmi.amdsmi_init()
+
+    def test_no_error_when_kfd_absent(self, load_fake_amdsmi, monkeypatch):
+        amdsmi = load_fake_amdsmi()
+        monkeypatch.setattr(amdsmi.Path, "exists", lambda self: False)
+        amdsmi.amdsmi_init()
+
+
 class TestEnumeration:
     def test_num_gpus_respected(self, load_fake_amdsmi):
         amdsmi = load_fake_amdsmi(AIPERF_MOCK_AMDSMI_NUM_GPUS=4)

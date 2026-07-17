@@ -18,6 +18,7 @@ silently claiming AMD GPUs exist. Configure behavior with ``AIPERF_MOCK_AMDSMI_*
 """
 
 import os
+from pathlib import Path
 from typing import Any
 
 from ._state import _Config, _Handle
@@ -99,9 +100,21 @@ class AmdSmiTemperatureMetric:
     CURRENT = 0
 
 
+def _amd_hardware_present() -> bool:
+    """Return True if this looks like a real AMD GPU host (Linux + /dev/kfd present)."""
+    return Path("/dev/kfd").exists()
+
+
 def amdsmi_init() -> None:
     """Initialize the fake, reading ``AIPERF_MOCK_AMDSMI_*`` config from the env."""
     global _initialized, _handles
+    if _amd_hardware_present():
+        raise RuntimeError(
+            "aiperf-mock-amdsmi is active on a host that appears to have real AMD GPU "
+            "hardware (/dev/kfd detected). The fake amdsmi module shadows the real ROCm "
+            "bindings, so actual GPU telemetry will NOT be collected. Uninstall "
+            "aiperf-mock-amdsmi or unset AIPERF_MOCK_AMDSMI to use real hardware."
+        )
     config = _Config.from_env()
     _handles = [_Handle(index=i, config=config) for i in range(config.num_gpus)]
     _initialized = True
