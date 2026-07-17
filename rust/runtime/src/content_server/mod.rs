@@ -10,12 +10,14 @@
 //! audio remains inline as required by the OpenAI `input_audio` shape.
 
 mod error;
+mod media_tag;
 mod model;
 mod publisher;
 mod server;
 mod tracker;
 
 pub use error::{ContentServerError, Result};
+pub use media_tag::{MediaTag, parse_media_tag, tag_media_urls};
 pub use model::{ContentRequestRecord, ContentServerStatus, RequestTrackerSnapshot};
 pub use publisher::ContentServerMediaPublisher;
 pub use server::{
