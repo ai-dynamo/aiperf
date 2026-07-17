@@ -230,6 +230,88 @@ pub fn length_stats(turns: &[AnalyzedTurn]) -> LengthStats {
     }
 }
 
+/// Statistics for a single turn index across all conversations that reach it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TurnIndexStat {
+    /// Zero-based turn index this row describes.
+    pub turn_index: usize,
+    /// Number of conversations that have a turn at this index.
+    pub conversations_reaching: u64,
+    /// Input-sequence-length distribution at this index, when non-empty.
+    pub isl: Option<StatSummary>,
+    /// Output-sequence-length distribution at this index, when non-empty.
+    pub osl: Option<StatSummary>,
+    /// Mean input-token growth from the previous index, averaged over
+    /// conversations present at both this index and the prior one. `None` at
+    /// index 0 or when no conversation spans both indices.
+    pub mean_history_growth: Option<f64>,
+    /// Authored inter-turn think-time distribution (from `delay_ms`) at this
+    /// index, when any delays are specified.
+    pub authored_think_time_ms: Option<StatSummary>,
+}
+
+/// Per-turn-index breakdown of a planned dataset.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TurnStats {
+    /// One row per observed turn index, ordered ascending.
+    pub by_index: Vec<TurnIndexStat>,
+}
+
+/// Compute the [`TurnStats`] over a set of planned turns. Turns are grouped by
+/// `turn_index`. `mean_history_growth` at index `i` (`i > 0`) is the mean over
+/// conversations present at both `i` and `i - 1` of `isl_i - isl_{i-1}`.
+pub fn turn_stats(turns: &[AnalyzedTurn]) -> TurnStats {
+    use std::collections::BTreeMap;
+
+    let mut by_index: BTreeMap<usize, Vec<&AnalyzedTurn>> = BTreeMap::new();
+    // ISL keyed by (conversation, turn index) for cross-index growth deltas.
+    let mut isl_by_key: BTreeMap<(&str, usize), u64> = BTreeMap::new();
+    for turn in turns {
+        by_index.entry(turn.turn_index).or_default().push(turn);
+        isl_by_key.insert(
+            (turn.conversation_id.as_str(), turn.turn_index),
+            turn.input_tokens,
+        );
+    }
+
+    let rows = by_index
+        .into_iter()
+        .map(|(turn_index, group)| {
+            let isl: Vec<f64> = group.iter().map(|t| t.input_tokens as f64).collect();
+            let osl: Vec<f64> = group.iter().map(|t| t.max_output_tokens as f64).collect();
+            let think: Vec<f64> = group.iter().filter_map(|t| t.delay_ms).collect();
+
+            let mean_history_growth = if turn_index == 0 {
+                None
+            } else {
+                let deltas: Vec<f64> = group
+                    .iter()
+                    .filter_map(|t| {
+                        let prev = isl_by_key.get(&(t.conversation_id.as_str(), turn_index - 1))?;
+                        Some(t.input_tokens as f64 - *prev as f64)
+                    })
+                    .collect();
+                if deltas.is_empty() {
+                    None
+                } else {
+                    Some(deltas.iter().sum::<f64>() / deltas.len() as f64)
+                }
+            };
+
+            TurnIndexStat {
+                turn_index,
+                conversations_reaching: group.len() as u64,
+                isl: stat_summary(&isl),
+                osl: stat_summary(&osl),
+                mean_history_growth,
+                authored_think_time_ms: stat_summary(&think),
+            }
+        })
+        .collect();
+
+    TurnStats { by_index: rows }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,5 +389,20 @@ mod tests {
         assert_eq!(l.grand_total_tokens, 540);
         assert_eq!(l.isl.unwrap().max, 200.0);
         assert_eq!(l.osl.unwrap().min, 20.0);
+    }
+
+    #[test]
+    fn turn_stats_tracks_history_growth() {
+        let t = turn_stats(&fixture_turns());
+        assert_eq!(t.by_index.len(), 2);
+        assert_eq!(t.by_index[0].turn_index, 0);
+        assert_eq!(t.by_index[0].conversations_reaching, 2);
+        assert_eq!(t.by_index[1].conversations_reaching, 1);
+        // turn 1 ISL 150 minus turn 0 ISL 100 in conversation "a" = 50
+        assert_eq!(t.by_index[1].mean_history_growth.unwrap(), 50.0);
+        assert_eq!(
+            t.by_index[1].authored_think_time_ms.as_ref().unwrap().mean,
+            500.0
+        );
     }
 }
