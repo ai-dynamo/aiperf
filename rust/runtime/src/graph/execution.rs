@@ -143,7 +143,10 @@ impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBacken
         // Flat fast path: an eligible single-node trace runs as one admitted,
         // measured dispatch over the same sink, with no scheduler / channel
         // store / trace context. Cancellation rides a `TraceContext`-free latch.
-        if !self.force_full && crate::graph::flat::is_flat_graph(&plan.graph) {
+        if !self.force_full
+            && !crate::graph::flat::flatgraph_disabled()
+            && crate::graph::flat::is_flat_graph(&plan.graph)
+        {
             let trace_id = plan.trace.id.clone();
             let abort = crate::graph::flat::FlatAbort::new();
             self.flat_aborts.borrow_mut().push(Rc::downgrade(&abort));

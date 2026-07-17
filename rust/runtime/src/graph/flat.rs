@@ -16,6 +16,7 @@
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use tokio::sync::Notify;
 
@@ -44,6 +45,20 @@ pub fn is_flat_graph(graph: &GraphRecord) -> bool {
         (Some(only), None) => only.inputs.is_empty(),
         _ => false,
     }
+}
+
+/// Global kill-switch for the flat fast path, read once from the
+/// `AIPERF_DISABLE_FLATGRAPH` environment variable (`1`/`true` forces the general
+/// executor everywhere). This lets an external `aiperf profile` run drive the flat
+/// and full arms of the same benchmark for byte-parity validation without changing
+/// the workload. Read once and cached; negligible cost on the hot path.
+pub fn flatgraph_disabled() -> bool {
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("AIPERF_DISABLE_FLATGRAPH")
+            .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
 }
 
 /// A `TraceContext`-free cancellation latch for the flat path. A placement backend
