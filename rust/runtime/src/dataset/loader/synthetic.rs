@@ -821,33 +821,7 @@ mod tests {
 
     #[tokio::test]
     async fn raw_token_synthetic_composition_never_decodes_text() {
-        struct NoDecodeTokenizer;
-
-        impl TextTokenizer for NoDecodeTokenizer {
-            fn encode(&self, _text: &str) -> Result<Vec<u32>> {
-                Ok(vec![9, 10, 9, 11])
-            }
-
-            fn decode(&self, _token_ids: &[u32]) -> Result<String> {
-                panic!("raw-token synthetic composition must not decode")
-            }
-
-            fn bos_token_id(&self) -> Option<u32> {
-                None
-            }
-
-            fn eos_token_id(&self) -> Option<u32> {
-                Some(9)
-            }
-
-            fn vocab_size(&self) -> Option<u32> {
-                Some(12)
-            }
-
-            fn name(&self) -> &str {
-                "no-decode"
-            }
-        }
+        use crate::dataset::tokenizer::NoDecodeTokenizer;
 
         let registry = LoaderRegistry::with_builtin_formats().unwrap();
         let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));

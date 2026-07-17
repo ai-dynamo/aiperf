@@ -364,6 +364,41 @@ fn special_token_id(
     LlmTokenizer::token_to_id(tokenizer, token)
 }
 
+/// Test tokenizer that encodes to a fixed token run and refuses to decode.
+///
+/// Shared by the raw-token composition/generation tests (in `dataset::prompt`
+/// and `dataset::loader::synthetic`) that must never fall back through a decode
+/// path — both wanted the identical fixture, so it lives here once.
+#[cfg(test)]
+pub(crate) struct NoDecodeTokenizer;
+
+#[cfg(test)]
+impl TextTokenizer for NoDecodeTokenizer {
+    fn encode(&self, _text: &str) -> Result<Vec<u32>> {
+        Ok(vec![9, 10, 9, 11])
+    }
+
+    fn decode(&self, _token_ids: &[u32]) -> Result<String> {
+        panic!("raw-token composition must not decode")
+    }
+
+    fn bos_token_id(&self) -> Option<u32> {
+        None
+    }
+
+    fn eos_token_id(&self) -> Option<u32> {
+        Some(9)
+    }
+
+    fn vocab_size(&self) -> Option<u32> {
+        Some(12)
+    }
+
+    fn name(&self) -> &str {
+        "no-decode"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -371,33 +371,7 @@ mod tests {
 
     #[test]
     fn raw_token_generation_skips_decode_and_replaces_eos() {
-        struct NoDecodeTokenizer;
-
-        impl TextTokenizer for NoDecodeTokenizer {
-            fn encode(&self, _text: &str) -> Result<Vec<u32>> {
-                Ok(vec![9, 10, 9, 11])
-            }
-
-            fn decode(&self, _token_ids: &[u32]) -> Result<String> {
-                panic!("raw-token generation must not decode")
-            }
-
-            fn bos_token_id(&self) -> Option<u32> {
-                None
-            }
-
-            fn eos_token_id(&self) -> Option<u32> {
-                Some(9)
-            }
-
-            fn vocab_size(&self) -> Option<u32> {
-                Some(12)
-            }
-
-            fn name(&self) -> &str {
-                "no-decode"
-            }
-        }
+        use crate::dataset::tokenizer::NoDecodeTokenizer;
 
         let tokenizer = NoDecodeTokenizer;
         let factory = CorpusPromptGeneratorFactory::new("fixture").unwrap();
