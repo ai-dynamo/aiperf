@@ -909,11 +909,13 @@ pub fn run_cellular(
     // spawn" cell tasks, so a velo accept worker can be parked in a blocking accept
     // that a graceful runtime drop would join forever. k8s tolerates this — the
     // operator deletes the pod — but a SLURM `srun` task has no external killer and
-    // would strand the whole allocation. Initiate shutdown WITHOUT waiting for a stuck
-    // worker; the process exits immediately after the caller emits `run_terminal`.
-    // (The same-host path drops cleanly, so skipping the join only affects the
-    // otherwise-hung cross-host teardown.)
-    runtime.shutdown_background();
+    // would strand the whole allocation. Leak the runtime instead of dropping it: the
+    // outcome is fully computed and the process hard-exits (`std::process::exit`) right
+    // after the caller emits `run_terminal`, so skipping teardown of a leaf process
+    // that is about to exit is sound and avoids both the join-forever hang and a
+    // background-shutdown race against the parked worker. (The same-host path drops
+    // cleanly on its own; this only affects the otherwise-hung cross-host teardown.)
+    std::mem::forget(runtime);
     result
 }
 
