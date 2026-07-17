@@ -86,10 +86,18 @@ struct OpenRequest {
     rel: String,
 }
 
-/// The controller's reply to [`OpenRequest`]: the anchor handle the cell attaches to.
+/// The controller's reply to [`OpenRequest`]: the anchor handle the cell attaches
+/// to, plus the controller's full `PeerInfo`. The endpoint-first `velo.connect`
+/// handshake does not always propagate the controller's STREAMING endpoint into the
+/// cell-visible `PeerInfo` (it registers the peer for messaging), so the anchor
+/// attach would fail with "peer not registered". Carrying the controller's complete
+/// `peer_info()` here (which advertises the streaming key) lets the cell
+/// `register_peer` it before attaching, fanning the streaming endpoint out reliably.
 #[derive(Debug, Serialize, Deserialize)]
 struct OpenReply {
     handle: StreamAnchorHandle,
+    /// The controller's full `PeerInfo` (`rmp`), advertising its streaming endpoint.
+    controller_peer: Vec<u8>,
 }
 
 /// A cell's request to wait for a per-file stream's on-disk commit.
@@ -312,7 +320,12 @@ async fn handle_open(
         }
     });
 
-    encode_reply(&OpenReply { handle })
+    let controller_peer = rmp_serde::to_vec(&velo.peer_info())
+        .map_err(|error| anyhow::anyhow!("encode controller peer: {error}"))?;
+    encode_reply(&OpenReply {
+        handle,
+        controller_peer,
+    })
 }
 
 /// Drive one per-file [`velo::StreamAnchor`] to terminal, streaming each zstd chunk
@@ -446,6 +459,13 @@ async fn ship_one_velo(
         bail!("controller rejected artifact open: {:?}", ack.error);
     }
     let open_reply: OpenReply = rmp_serde::from_slice(&reply).context("decode OpenReply")?;
+
+    // Register the controller's full PeerInfo so its STREAMING endpoint is known to
+    // this cell's anchor transport before we attach (the connect handshake alone may
+    // not have propagated it). Idempotent for the messaging side.
+    let controller_full: PeerInfo =
+        rmp_serde::from_slice(&open_reply.controller_peer).context("decode controller peer")?;
+    let _ = velo.register_peer(controller_full);
 
     // Attach the backpressured sender to the controller's anchor.
     let sender = velo
