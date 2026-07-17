@@ -8,6 +8,11 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+/// Sink for streaming each completed request record out of the tracker to a
+/// live consumer (the media-fetch aggregator), independent of the bounded
+/// retention buffer.
+pub type ContentRecordSender = tokio::sync::mpsc::UnboundedSender<ContentRequestRecord>;
+
 /// One completed HTTP request served by the content server.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentRequestRecord {

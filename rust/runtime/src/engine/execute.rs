@@ -1090,6 +1090,7 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
                         port: spec.port,
                         content_dir: spec.content_dir.clone(),
                         max_tracked_records: spec.max_tracked_records,
+                        record_sink: None,
                     })
                     .await
                     .context("starting native content server")?,

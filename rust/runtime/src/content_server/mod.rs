@@ -18,7 +18,9 @@ mod tracker;
 
 pub use error::{ContentServerError, Result};
 pub use media_tag::{MediaTag, parse_media_tag, tag_media_urls};
-pub use model::{ContentRequestRecord, ContentServerStatus, RequestTrackerSnapshot};
+pub use model::{
+    ContentRecordSender, ContentRequestRecord, ContentServerStatus, RequestTrackerSnapshot,
+};
 pub use publisher::ContentServerMediaPublisher;
 pub use server::{
     ContentServerConfig, ContentServerFactory, ContentServerRuntime, NativeContentServerFactory,

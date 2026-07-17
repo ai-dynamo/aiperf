@@ -31,7 +31,7 @@ use tokio::task::JoinHandle;
 use tower_http::services::ServeDir;
 
 use crate::content_server::model::{
-    ContentRequestRecord, ContentServerStatus, RequestTrackerSnapshot,
+    ContentRecordSender, ContentRequestRecord, ContentServerStatus, RequestTrackerSnapshot,
 };
 use crate::content_server::tracker::{
     ContentServerClock, RequestTracker, SystemContentServerClock,
@@ -39,7 +39,7 @@ use crate::content_server::tracker::{
 use crate::content_server::{ContentServerError, Result};
 
 /// Listener, serving-root, and bounded tracking policy for one run.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ContentServerConfig {
     /// Host/interface to bind and advertise.
     pub host: String,
@@ -50,6 +50,9 @@ pub struct ContentServerConfig {
     pub content_dir: Option<PathBuf>,
     /// Maximum number of recent request records to retain.
     pub max_tracked_records: usize,
+    /// Optional streaming sink; when set, every completed record is forwarded
+    /// to the media-fetch aggregator in addition to bounded retention.
+    pub record_sink: Option<ContentRecordSender>,
 }
 
 /// Control interface for a running content server.
@@ -206,7 +209,10 @@ impl ContentServerFactory for NativeContentServerFactory {
             advertised_host(&config.host),
             local_addr.port()
         );
-        let tracker = Arc::new(RequestTracker::new(config.max_tracked_records));
+        let tracker = Arc::new(RequestTracker::new_with_sink(
+            config.max_tracked_records,
+            config.record_sink,
+        ));
         let state = Arc::new(ServerState {
             tracker: tracker.clone(),
             clock: self.clock.clone(),
@@ -743,6 +749,7 @@ mod tests {
                 port: 0,
                 content_dir: Some(directory.path().to_owned()),
                 max_tracked_records: 10,
+                record_sink: None,
             })
             .await
             .unwrap();
@@ -859,6 +866,7 @@ mod tests {
                 port: 0,
                 content_dir: Some(missing),
                 max_tracked_records: 10,
+                record_sink: None,
             })
             .await
             .unwrap_err();
@@ -870,6 +878,7 @@ mod tests {
                 port: 0,
                 content_dir: None,
                 max_tracked_records: 10,
+                record_sink: None,
             })
             .await
             .unwrap();
