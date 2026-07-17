@@ -92,12 +92,18 @@ script mirroring `aiperf kube generate`'s ergonomics. `--cells N` requests
   actionable guidance; the controller path needs `cells > 1`. Degenerate single-cell
   SLURM runs would need a controller-hosted cell.
 - **Live in-sandbox multi-cell proof**: the topology, launcher selection, coordinate
-  derivation, and velo discovery/envelope-fetch are proven end-to-end by the
-  simulation in `rust/e2e/scripts/slurm_sim.sh` (both cells discover the controller
-  and fetch their sliced envelopes). A full merged-report assertion is blocked by a
-  pre-existing `--cells >= 2` failure in the current sandbox (the same
-  `request-rate conversation dataset cannot be empty` cell error reproduces on the
-  untouched local `--cells` path); it is not a SLURM-path defect.
+  derivation, velo discovery/envelope-fetch, AND the controller's merge are proven
+  end-to-end by the simulation in `rust/e2e/scripts/slurm_sim.sh` — a 3-task loopback
+  allocation (rank-0 controller + two cells) runs to completion (`controller exit=0`),
+  and the controller merges both cells' partitions into one report (`request_count`
+  total 40 over the two cells, ISL/OSL count 40, merged `cellular-heartbeat.json`
+  issued/completed 40). Two bugs the sim surfaced were fixed to reach green: the
+  worker-cap ignoring the `cells` factor (empty per-thread conversation source ->
+  `request-rate conversation dataset cannot be empty`), and the controller's HTTP
+  artifact-shipping gate not mirroring the cell's loopback carve-out (the controller
+  waited forever in `wait_for_cells` for uploads a loopback-coordinate cell never
+  sends). A real cross-node SLURM run keeps HTTP shipping on (routable coordinate);
+  the loopback sim (and any same-host allocation) co-locates on both sides.
 
 ## Source anchors
 
