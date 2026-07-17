@@ -12,16 +12,27 @@
 //! records and the compiled graph input bundle into those neutral inputs, then
 //! emits `dataset_analysis.{txt,json,csv,html}` beside the requested base path.
 //!
-//! Turn observations are derived from the retained [`CapturedRecord`] set. For a
-//! `--dry-run` the captured records carry the authored per-turn input/output
-//! sequence lengths faithfully (input token count and requested output cap), so
-//! they are the ground-truth source for the length and per-turn-index sections.
-//! The runtime [`GraphInputBundle`] model exposes neither per-turn precomputed
-//! block hashes (`hash_ids`) nor the shared system-prompt handle on its
-//! [`crate::graph::model::GraphTracePlan`] nodes, so `block_ids` and
-//! `system_handle` are left absent; the analysis then synthesizes block
-//! identities from length structure (see
-//! [`crate::dataset::analysis::CacheReuseAnalysis`]).
+//! On the graph path (recorded `weka_trace`/`dynamo_trace` or authored
+//! `dag_jsonl`) the per-request structure is present *statically* in the compiled
+//! [`GraphInputBundle`], so a `--dry-run` that dispatches zero records still
+//! yields a fully populated dataset characterization: each
+//! [`crate::graph::model::LlmNode`] carries its input token count
+//! (`metadata["input_tokens"]`), generation cap (`LlmNode::max_tokens`), stable
+//! conversation id and turn index, and — most importantly — its ordered,
+//! prefix-dependent, content-addressed prompt-segment handles
+//! ([`crate::graph::model::PromptItem::Seg`], mirrored in
+//! `metadata["prompt_segment_handles"]`). Those BLAKE3 prefix-chained handles are
+//! exactly the chained block identifiers the reuse analysis wants: an identical
+//! leading handle means the whole prefix matched, so cross- and intra-turn KV
+//! reuse is exact and the identity source is
+//! [`crate::dataset::analysis::prefix_cache::IdentitySource::HashIds`]. The raw
+//! per-block WEKA `hash_ids` (`i128`) are *not* preserved through lowering, but
+//! the content-addressed segment handles stand in with equivalent prefix-exact
+//! semantics at message granularity.
+//!
+//! The scheduled path has no [`GraphInputBundle`]; there turn observations are
+//! derived from the retained [`CapturedRecord`] set (block ids absent → the
+//! analysis synthesizes identities from length structure).
 
 use std::path::PathBuf;
 
@@ -30,6 +41,7 @@ use anyhow::{Context, Result};
 use crate::dataset::analysis::{AnalysisOptions, AnalyzedRecord, AnalyzedTurn, analyze};
 use crate::engine::records::CapturedRecord;
 use crate::graph::input::GraphInputBundle;
+use crate::graph::model::{LlmNode, PromptItem};
 
 /// A request to emit the dataset-analysis artifact family.
 pub struct DatasetAnalysisRequest {
@@ -80,25 +92,101 @@ pub fn analyzed_from_records(records: &[CapturedRecord]) -> Vec<AnalyzedRecord> 
         .collect()
 }
 
-/// Map the run's turns into neutral [`AnalyzedTurn`] observations.
+/// Collect a graph node's ordered prompt-segment handles as chained block ids.
 ///
-/// Turns are derived from the captured records — one planned turn produces one
-/// record on the dry-run graph path — because the compiled [`GraphInputBundle`]
-/// does not expose per-turn ISL or block hashes on its trace-plan nodes. The
-/// maximum output budget prefers the request-declared cap
-/// (`tokens.requested_output`) and falls back to the realized output sequence
-/// length. `block_ids` and `system_handle` are left absent (see the module
-/// docs); the analysis then falls back to length-structure identity synthesis.
+/// The prompt-assembly program interleaves static content-addressed segment
+/// handles ([`PromptItem::Seg`]/[`PromptItem::RawMessages`]/[`PromptItem::Text`])
+/// with dynamic reply splices ([`PromptItem::Splice`]). Only the static handles
+/// carry stable content identity; splices resolve from live channel state and are
+/// skipped. Each retained handle is BLAKE3 prefix-dependent (interned against its
+/// predecessor), so a shared leading handle across two prompts means the whole
+/// prefix up to it is byte-identical — the exact chained-hash reuse test the
+/// analysis performs. Handle indices are globally unique within the merged
+/// segment store, so ids never collide across conversations.
+fn node_block_ids(node: &LlmNode) -> Vec<i64> {
+    node.items
+        .iter()
+        .filter_map(|item| match item {
+            PromptItem::Seg { seg } => Some(i64::from(seg.index())),
+            PromptItem::RawMessages { raw_messages } => Some(i64::from(raw_messages.index())),
+            PromptItem::Text { text, .. } => Some(i64::from(text.index())),
+            PromptItem::Splice { .. } => None,
+        })
+        .collect()
+}
+
+/// Map the compiled graph input's per-request structure into neutral
+/// [`AnalyzedTurn`] observations — the ground truth on the graph `--dry-run`
+/// path, where zero records are dispatched.
 ///
-/// `input` is accepted for signature stability and future enrichment (e.g.
-/// mapping trace-plan `hash_ids` once the runtime model surfaces them); it does
-/// not currently contribute per-turn fields.
-pub fn analyzed_from_graph(
-    input: &GraphInputBundle,
-    records: &[CapturedRecord],
-) -> Vec<AnalyzedTurn> {
-    let _ = input;
-    analyzed_turns_from_records(records)
+/// Each [`LlmNode`] across every trace plan becomes one turn: the conversation id
+/// and turn index come from node metadata (falling back to the trace id / node
+/// order), the input token count from `metadata["input_tokens"]`, the maximum
+/// output budget from the node's generation cap ([`LlmNode::max_tokens`], falling
+/// back to the recorded output token count), and the chained `block_ids` from the
+/// node's ordered content-addressed prompt-segment handles (see
+/// [`node_block_ids`]). Because those handles are real content hashes, the
+/// analysis reports [`IdentitySource::HashIds`] with exact prefix reuse rather
+/// than length-structure synthesis.
+///
+/// Turns are emitted in arrival order (`metadata["arrival_offset_us"]` when
+/// present) so the ideal-reuse pass — which seeds its cache from earlier requests
+/// — observes prefixes before the turns that reuse them. The pure analysis's
+/// later stable re-sort by record `start_ns` preserves this order when records
+/// are empty.
+///
+/// [`IdentitySource::HashIds`]: crate::dataset::analysis::prefix_cache::IdentitySource::HashIds
+pub fn analyzed_turns_from_graph_input(input: &GraphInputBundle) -> Vec<AnalyzedTurn> {
+    let mut ordered: Vec<(u64, AnalyzedTurn)> = Vec::new();
+    for plan in &input.plans {
+        for (order, node) in plan.graph.nodes.values().enumerate() {
+            let metadata = &node.metadata;
+            let conversation_id = metadata
+                .get("conversation_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| plan.trace.id.clone());
+            let turn_index = metadata
+                .get("turn_index")
+                .and_then(serde_json::Value::as_u64)
+                .map_or(order, |value| value as usize);
+            let input_tokens = metadata
+                .get("input_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let max_output_tokens = node
+                .max_tokens
+                .map(|tokens| tokens as u64)
+                .or_else(|| {
+                    metadata
+                        .get("recorded_output_tokens")
+                        .and_then(serde_json::Value::as_u64)
+                })
+                .unwrap_or(0);
+            let block_ids = node_block_ids(node);
+            let block_ids = (!block_ids.is_empty()).then_some(block_ids);
+            let arrival = metadata
+                .get("arrival_offset_us")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(order as u64);
+            ordered.push((
+                arrival,
+                AnalyzedTurn {
+                    conversation_id,
+                    turn_index,
+                    input_tokens,
+                    max_output_tokens,
+                    delay_ms: None,
+                    block_ids,
+                    system_handle: None,
+                },
+            ));
+        }
+    }
+    // Stable sort by arrival so shared prefixes are introduced before the turns
+    // that reuse them; ties keep trace/node emission order.
+    ordered.sort_by_key(|(arrival, _)| *arrival);
+    ordered.into_iter().map(|(_, turn)| turn).collect()
 }
 
 /// Derive neutral [`AnalyzedTurn`] observations from the captured record set.
@@ -150,7 +238,7 @@ pub fn write_dataset_analysis(
     records: &[CapturedRecord],
     input: &GraphInputBundle,
 ) -> Result<()> {
-    let turns = analyzed_from_graph(input, records);
+    let turns = analyzed_turns_from_graph_input(input);
     let analyzed_records = analyzed_from_records(records);
     let analysis = analyze(&turns, &analyzed_records, &req.options);
     write_analysis_artifacts(req, &analysis)
@@ -213,12 +301,44 @@ fn write_analysis_artifacts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataset::{SegmentPool, SegmentStore};
+    use crate::dataset::{Handle, SegmentPool, SegmentStore};
     use crate::engine::records::{CapturedModelOutput, CapturedRecord};
     use crate::graph::input::{GraphInputBundle, GraphInputMetadata};
-    use crate::graph::model::{GraphRecord, GraphTracePlan, TraceRecord};
+    use crate::graph::model::{GraphRecord, GraphTracePlan, LlmNode, PromptItem, TraceRecord};
     use crate::metrics_core::{Phase, RecordIngest, TokenCounts};
+    use std::collections::BTreeMap;
     use std::sync::Arc;
+
+    /// Build an `LlmNode` carrying the metadata and content-addressed prompt
+    /// handles the graph-input analysis reads: conversation id, turn index, input
+    /// token count, generation cap, and a chained handle run.
+    fn llm_node(conversation: &str, turn: usize, isl: u64, osl: usize, handles: &[u32]) -> LlmNode {
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "conversation_id".into(),
+            serde_json::Value::String(conversation.to_string()),
+        );
+        metadata.insert("turn_index".into(), serde_json::Value::from(turn));
+        metadata.insert("input_tokens".into(), serde_json::Value::from(isl));
+        metadata.insert(
+            "arrival_offset_us".into(),
+            serde_json::Value::from(turn as u64),
+        );
+        LlmNode {
+            output: format!("{conversation}:{turn}_out"),
+            streaming: true,
+            inputs: Vec::new(),
+            min_start_delay_us: None,
+            max_tokens: Some(osl),
+            items: handles
+                .iter()
+                .map(|index| PromptItem::Seg {
+                    seg: Handle::new(*index),
+                })
+                .collect(),
+            metadata,
+        }
+    }
 
     /// Build a captured record with the fields the analysis consumes populated.
     fn captured(
@@ -250,10 +370,20 @@ mod tests {
         }
     }
 
-    /// A minimal graph bundle: one trace plan, an empty frozen segment store.
+    /// A minimal graph bundle: one trace plan with two chained turns whose leading
+    /// content-addressed handle is shared, so the graph-input analysis reports
+    /// real hash-id prefix reuse.
     fn bundle() -> GraphInputBundle {
+        let mut nodes = BTreeMap::new();
+        // Turn 1 reuses turn 0's leading handle (1) — a byte-identical prefix.
+        nodes.insert("n0".to_string(), llm_node("conv-a", 0, 64, 16, &[1, 2]));
+        nodes.insert("n1".to_string(), llm_node("conv-a", 1, 96, 16, &[1, 2, 3]));
+        let graph = GraphRecord {
+            nodes,
+            ..GraphRecord::default()
+        };
         let plans = vec![GraphTracePlan {
-            graph: GraphRecord::default(),
+            graph,
             trace: TraceRecord {
                 id: "conv-a".into(),
                 graph_ref: None,
@@ -267,7 +397,7 @@ mod tests {
             metadata: GraphInputMetadata {
                 format: "dag_jsonl".into(),
                 root_count: 1,
-                node_count: 1,
+                node_count: 2,
             },
         }
     }
@@ -347,6 +477,31 @@ mod tests {
             "cache reuse hit_rate must be present"
         );
         assert!(!json.contains("NaN"), "no non-finite tokens in JSON");
+    }
+
+    #[test]
+    fn graph_input_turns_carry_isl_cap_and_chained_hash_block_ids() {
+        let input = bundle();
+        let turns = analyzed_turns_from_graph_input(&input);
+        assert_eq!(turns.len(), 2);
+        // Emitted in arrival order (turn 0 before turn 1).
+        assert_eq!(turns[0].turn_index, 0);
+        assert_eq!(turns[0].input_tokens, 64);
+        assert_eq!(turns[0].max_output_tokens, 16);
+        assert_eq!(turns[0].block_ids, Some(vec![1, 2]));
+        assert_eq!(turns[1].block_ids, Some(vec![1, 2, 3]));
+
+        // Real content handles drive the HashIds identity path with exact reuse.
+        let analysis = analyze(&turns, &[], &AnalysisOptions::default());
+        let cache = analysis
+            .cache
+            .expect("cache section from hash-id block ids");
+        assert_eq!(
+            cache.identity_source,
+            crate::dataset::analysis::prefix_cache::IdentitySource::HashIds
+        );
+        // Turn 1 reuses turn 0's two leading blocks (ids 1 and 2).
+        assert_eq!(cache.ideal.cached_blocks, 2);
     }
 
     #[test]
