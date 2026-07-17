@@ -531,6 +531,22 @@ fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
     )>,
 ) -> Result<NativeReport> {
     validate_plan(&plan)?;
+    // Thread-per-core sharding hands each worker a disjoint conversation subset via a
+    // modulo partition (`two_level_partition`). When the scheduled dataset has fewer
+    // conversations than worker threads, the surplus threads receive an empty subset:
+    // a request-bounded phase then fails building its request-rate workload
+    // ("conversation dataset cannot be empty"), and a rate phase later fails issuing a
+    // new session ("... is not sampleable"). Cap the worker count to the conversation
+    // count so every worker owns at least one conversation and recycles it to fill its
+    // budget share (matching the Python frontend, which recycles a small dataset to
+    // fill request_count). Graph and static-accuracy plans partition differently and
+    // are left untouched.
+    if let NativeDatasetPlan::PreparedLinear(prepared) = &plan.dataset {
+        let conversations = prepared.dataset.conversations().len();
+        if conversations > 0 && plan.workers > conversations {
+            plan.workers = conversations;
+        }
+    }
     let virtual_clock = plan
         .transport
         .as_ref()
