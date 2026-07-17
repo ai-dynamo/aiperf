@@ -3,8 +3,8 @@
 //! Top-level command routing.
 
 use crate::{
-    analyze_trace, cellular_role, chat, config, delegate, profile, results_sidecar, speed_bench,
-    synthesize, validate,
+    analyze_trace, cellular_role, chat, config, delegate, profile, results_sidecar, slurm,
+    speed_bench, synthesize, validate,
 };
 
 /// Route arguments with the program name removed and return the process exit code.
@@ -15,6 +15,12 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
         Some("controller") => cellular_role::run_controller(&argv[1..]),
         Some("cell") => cellular_role::run_cell(&argv[1..]),
         Some("aggregator") => cellular_role::run_aggregator(&argv[1..]),
+        // `slurm run` is the native per-task rank dispatch; every other `slurm`
+        // subcommand (`generate`) is delegated to the Python CLI.
+        Some("slurm") if argv.get(1).map(String::as_str) == Some(slurm::RUN_SUBCOMMAND) => {
+            slurm::run(&argv[2..])
+        }
+        Some("slurm") => delegate::exec_python(argv),
         Some("results-sidecar") => results_sidecar::run(&argv[1..]),
         Some("analyze-trace") => analyze_trace::run(&argv[1..]),
         Some("chat") => chat::run(&argv[1..]),
