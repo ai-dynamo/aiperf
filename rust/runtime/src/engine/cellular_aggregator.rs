@@ -193,6 +193,52 @@ pub fn tier_counts_from_env(cell_count: u32) -> Vec<u32> {
     }
 }
 
+/// Env carrying a k8s aggregator's 0-based tier index within the
+/// [`tier_counts`] plan. The operator sets it on each `aggregators-{tier}` pod of a
+/// **multi-tier** k8s tree so the pod can locate its tier in the plan and derive both
+/// its collect barrier ([`k8s_tier_child_count`]) and its parent
+/// ([`k8s_tier_parent_id`]) — a JobSet indexed replicatedJob shares one env template, so
+/// per-pod placement must be derived, not injected. Absent for a same-host aggregator
+/// (the controller sets [`AGG_CHILD_COUNT_ENV`] + a concrete ship addr per spawned
+/// child) and for the single-tier k8s tree (tier 0, derived by default).
+pub const AGG_TIER_INDEX_ENV: &str = "AIPERF_AGG_TIER_INDEX";
+
+/// This node's collect barrier in a k8s multi-tier tree: the children assigned to
+/// aggregator `agg_id` at `tier_index` of the [`tier_counts`]`(cell_count, fanout)`
+/// plan, under the same round-robin [`children_of`] the rest of the tree uses. Tier 0's
+/// children are the cells; a higher tier's children are the nodes of the tier below.
+/// `None` when the plan has no such tier (a flat star, or an out-of-range index).
+pub fn k8s_tier_child_count(
+    cell_count: u32,
+    fanout: u32,
+    tier_index: usize,
+    agg_id: u32,
+) -> Option<u32> {
+    let tiers = tier_counts(cell_count, fanout);
+    let this_count = *tiers.get(tier_index)?;
+    let child_tier_count = if tier_index == 0 {
+        cell_count
+    } else {
+        tiers[tier_index - 1]
+    };
+    Some(children_of(agg_id, this_count, child_tier_count))
+}
+
+/// The parent aggregator id this node ships its one merged store to in a k8s multi-tier
+/// tree: round-robin `agg_id % parent_count` over the tier above (`tier_index + 1`),
+/// mirroring [`aggregator_nodes`]' `id % parent_count`. `None` when `tier_index` is the
+/// top tier (which ships to the controller, not a parent aggregator) or out of range.
+pub fn k8s_tier_parent_id(
+    cell_count: u32,
+    fanout: u32,
+    tier_index: usize,
+    agg_id: u32,
+) -> Option<u32> {
+    let tiers = tier_counts(cell_count, fanout);
+    let parent_count = *tiers.get(tier_index + 1)?;
+    Some(agg_id % parent_count)
+}
+
 /// Where a spawned aggregator ships its one merged store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShipTarget {
@@ -284,9 +330,21 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
     // 3,2,2). When AGG_CHILD_COUNT is absent, derive it from this pod's AGG_ID and the
     // static cell-count + fanout the operator injects, reusing [`children_of`] so the
     // operator and aggregator can never disagree.
+    // A k8s aggregator's 0-based tier in the multi-tier plan (default 0: the single-tier
+    // tree and every same-host aggregator, which anyway carries an explicit child count).
+    let tier_index: usize = std::env::var(AGG_TIER_INDEX_ENV)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
     let child_count: u32 = match std::env::var(AGG_CHILD_COUNT_ENV) {
         Ok(value) => value.parse().context("parsing AIPERF_AGG_CHILD_COUNT")?,
         Err(_) => {
+            // k8s: the aggregators are an indexed JobSet replicatedJob sharing one env
+            // template, so a per-agg static barrier cannot express an uneven round-robin
+            // split. Derive it from AGG_ID + the static cell-count/fanout/tier the
+            // operator injects, reusing the shared tree math so operator and aggregator
+            // can never disagree. Generalizes over the tier: tier 0 collects cells, a
+            // higher tier collects the tier below ([`k8s_tier_child_count`]).
             let cell_count: u32 = std::env::var(crate::cellular::partition::CELL_COUNT_ENV)
                 .context(
                     "AIPERF_AGG_CHILD_COUNT unset and AIPERF_CELL_COUNT missing (k8s \
@@ -294,18 +352,41 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
                 )?
                 .parse()
                 .context("parsing AIPERF_CELL_COUNT")?;
-            let agg_count = aggregator_count(cell_count).context(
-                "AIPERF_AGG_CHILD_COUNT unset and AIPERF_CELL_AGG_FANOUT does not subdivide \
-                 the cells (k8s aggregator cannot size its collect barrier)",
-            )?;
-            children_of(agg_id, agg_count, cell_count)
+            let fanout: u32 = std::env::var(CELL_AGG_FANOUT_ENV)
+                .context(
+                    "AIPERF_AGG_CHILD_COUNT unset and AIPERF_CELL_AGG_FANOUT missing (k8s \
+                     aggregator cannot size its collect barrier)",
+                )?
+                .parse()
+                .context("parsing AIPERF_CELL_AGG_FANOUT")?;
+            k8s_tier_child_count(cell_count, fanout, tier_index, agg_id).context(
+                "AIPERF_CELL_AGG_FANOUT/AIPERF_AGG_TIER_INDEX do not resolve a tier for this \
+                 k8s aggregator (cannot size its collect barrier)",
+            )?
         }
     };
     // This node ships its one merged store to its parent: an upper-tier aggregator when
     // [`AGG_SHIP_ADDR_ENV`] is set (a lower tier of a multi-tier tree), else the
     // controller (the top tier / single-tier tree). Only the ship target differs by
-    // tier; the collect+merge half below is identical everywhere.
+    // tier; the collect+merge half below is identical everywhere. On k8s the operator
+    // injects a DNS *template* with a `{agg_id}` placeholder (the indexed job shares one
+    // env), which this node resolves to its round-robin parent ([`k8s_tier_parent_id`]);
+    // a same-host lower tier carries a concrete loopback addr with no placeholder.
     let ship_coordinate = match std::env::var(AGG_SHIP_ADDR_ENV) {
+        Ok(addr) if !addr.is_empty() && addr.contains("{agg_id}") => {
+            let cell_count: u32 = std::env::var(crate::cellular::partition::CELL_COUNT_ENV)
+                .context("AIPERF_AGG_SHIP_ADDR is a template but AIPERF_CELL_COUNT is missing")?
+                .parse()
+                .context("parsing AIPERF_CELL_COUNT")?;
+            let fanout: u32 = std::env::var(CELL_AGG_FANOUT_ENV)
+                .context("AIPERF_AGG_SHIP_ADDR is a template but AIPERF_CELL_AGG_FANOUT is missing")?
+                .parse()
+                .context("parsing AIPERF_CELL_AGG_FANOUT")?;
+            let parent_id = k8s_tier_parent_id(cell_count, fanout, tier_index, agg_id).context(
+                "AIPERF_AGG_SHIP_ADDR template set on the top tier (no parent to ship to)",
+            )?;
+            addr.replace("{agg_id}", &parent_id.to_string())
+        }
         Ok(addr) if !addr.is_empty() => addr,
         _ => std::env::var(CELL_CONTROLLER_ADDR_ENV)
             .context("neither AIPERF_AGG_SHIP_ADDR nor AIPERF_CELL_CONTROLLER_ADDR set")?,
@@ -569,6 +650,53 @@ mod tests {
                 "single tier ships to controller"
             );
         }
+    }
+
+    #[test]
+    fn k8s_tier_derivations_match_the_same_host_tree() {
+        // The k8s per-pod derivations (child barrier + parent id) must equal what
+        // `aggregator_nodes` wires same-host, so the operator-built pods and the
+        // controller can never disagree with the reference tree math.
+        for &(cell_count, fanout) in &[(6u32, 3u32), (8, 2), (7, 3), (100, 3), (60, 8)] {
+            let tiers = tier_counts(cell_count, fanout);
+            let nodes = aggregator_nodes(cell_count, fanout, 9700);
+            for tier_index in 0..tiers.len() {
+                let count = tiers[tier_index];
+                for agg_id in 0..count {
+                    let node = nodes
+                        .iter()
+                        .find(|n| n.tier as usize == tier_index && n.id == agg_id)
+                        .unwrap();
+                    assert_eq!(
+                        k8s_tier_child_count(cell_count, fanout, tier_index, agg_id),
+                        Some(node.child_count),
+                        "child_count cells={cell_count} fanout={fanout} tier={tier_index} id={agg_id}"
+                    );
+                    match node.ship {
+                        ShipTarget::Controller => assert_eq!(
+                            k8s_tier_parent_id(cell_count, fanout, tier_index, agg_id),
+                            None,
+                            "top tier ships to controller"
+                        ),
+                        ShipTarget::Aggregator(_) => {
+                            let parent_count = tiers[tier_index + 1];
+                            assert_eq!(
+                                k8s_tier_parent_id(cell_count, fanout, tier_index, agg_id),
+                                Some(agg_id % parent_count),
+                            );
+                        }
+                    }
+                }
+            }
+            // Out-of-range tier is None, not a panic.
+            assert_eq!(
+                k8s_tier_child_count(cell_count, fanout, tiers.len(), 0),
+                None
+            );
+        }
+        // Flat star: no tier resolves.
+        assert_eq!(k8s_tier_child_count(6, 1, 0, 0), None);
+        assert_eq!(k8s_tier_parent_id(6, 9, 0, 0), None);
     }
 
     #[test]

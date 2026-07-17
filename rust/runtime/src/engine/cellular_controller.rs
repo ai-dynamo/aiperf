@@ -538,33 +538,37 @@ pub fn run_cellular(
         //   ([`aggregator_nodes`]) and injects each cell's tier-1 loopback ship address
         //   (via `CellLaunchContext::aggregator_count`). Depth `>= 2` tiers reduce a
         //   large cell count geometrically.
-        // - K8S: the operator created a SINGLE tier of aggregator pods and injected each
-        //   cell pod's ship-DNS, so the controller must NOT spawn and must NOT inject
-        //   loopback ship addresses (`K8sLauncher` ignores `aggregator_count` — cell env
-        //   is the pod spec's). It sizes `expected_partitions = M` and collects the M
+        // - K8S: the operator created the aggregator pods (one indexed `aggregators-{tier}`
+        //   replicatedJob per tier of the plan) and injected each cell/aggregator pod's
+        //   ship-DNS, so the controller must NOT spawn and must NOT inject loopback ship
+        //   addresses (`K8sLauncher` ignores `aggregator_count` — the pod env is the pod
+        //   spec's). It sizes `expected_partitions` from the top tier and collects those
         //   merged stores. This k8s "expect, don't spawn" path is gated on the operator
         //   having signalled it wired the aggregators ([`AGG_DNS_TEMPLATE_ENV`]); a
         //   fanout-set k8s run without that signal fails closed to the flat star.
-        //   Multi-tier k8s is a TODO — the operator builds one tier today (see
-        //   `src/aiperf/kubernetes/jobset.py`).
         use crate::engine::cellular_aggregator::{
             aggregator_base_port as agg_base_port, aggregator_count as requested_agg_count,
-            effective_aggregator_count, tier_counts_from_env, AGG_DNS_TEMPLATE_ENV,
+            tier_counts_from_env, AGG_DNS_TEMPLATE_ENV,
         };
         let aggregator_base_port = agg_base_port();
-        // Same-host uses the full multi-tier plan; k8s stays single-tier (operator-built).
+        // Both same-host and k8s use the full multi-tier plan. On k8s the plan is honored
+        // only when the operator signalled it built the aggregator pods ([`AGG_DNS_TEMPLATE_ENV`]);
+        // otherwise a fanout-set run falls closed to the flat star (the cells would ship
+        // into pods that do not exist). Off k8s the controller spawns the tiers itself.
         let tiers: Vec<u32> = if is_k8s {
-            let requested = requested_agg_count(cell_count);
             let k8s_wired = std::env::var_os(AGG_DNS_TEMPLATE_ENV).is_some();
-            let effective = effective_aggregator_count(is_k8s, k8s_wired, requested);
-            if requested.is_some() && effective.is_none() {
-                tracing::warn!(
-                    "AIPERF_CELL_AGG_FANOUT requests aggregators but the operator did not wire \
-                     the k8s aggregators (AIPERF_CELL_AGG_DNS_TEMPLATE unset); falling back to \
-                     the flat star topology"
-                );
+            if k8s_wired {
+                tier_counts_from_env(cell_count)
+            } else {
+                if requested_agg_count(cell_count).is_some() {
+                    tracing::warn!(
+                        "AIPERF_CELL_AGG_FANOUT requests aggregators but the operator did not \
+                         wire the k8s aggregators (AIPERF_CELL_AGG_DNS_TEMPLATE unset); falling \
+                         back to the flat star topology"
+                    );
+                }
+                Vec::new()
             }
-            effective.into_iter().collect()
         } else {
             tier_counts_from_env(cell_count)
         };
