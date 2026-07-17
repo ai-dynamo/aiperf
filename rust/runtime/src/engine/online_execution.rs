@@ -713,13 +713,11 @@ impl OnlineTokenizerSourceResolver for NativeOnlineTokenizerSourceResolver {
 ///
 /// Returns `Ok(Some(source))` when `name` is a tiktoken encoding or an existing
 /// local path, and `Ok(None)` when a remote Hugging Face download is required.
-/// Shared by every resolver so the no-network short-circuit and the
-/// `trust_remote_code` refusal stay identical regardless of download backend.
-fn resolve_builtin_or_local(name: &str, trust_remote_code: bool) -> Result<Option<String>> {
-    ensure!(
-        !trust_remote_code,
-        "native tokenizers never execute repository code; set tokenizer.trust_remote_code=false"
-    );
+/// Shared by every resolver so the no-network short-circuit stays identical
+/// regardless of download backend. `trust_remote_code` is intentionally ignored
+/// here: the native tokenizer never executes repository code, so the flag is
+/// inert (it is warned about once at policy-decode time, not refused).
+fn resolve_builtin_or_local(name: &str, _trust_remote_code: bool) -> Result<Option<String>> {
     let path = Path::new(name);
     if path.is_dir() || path.is_file() || name.parse::<TiktokenEncoding>().is_ok() {
         return Ok(Some(name.to_owned()));
@@ -858,10 +856,19 @@ impl AuthoredTokenizerV2 {
             !config.revision.trim().is_empty(),
             "tokenizer.revision must not be empty"
         );
-        ensure!(
-            !config.trust_remote_code,
-            "native tokenizers never execute repository code; set tokenizer.trust_remote_code=false"
-        );
+        if config.trust_remote_code {
+            // The native `tokenizers` library loads tokenizer artifacts directly
+            // and never executes repository Python, so `trust_remote_code=true`
+            // is inert rather than a capability. Accept it and warn instead of
+            // failing closed so command lines that pass the flag unconditionally
+            // (e.g. Hugging Face / SGLang benchmark harnesses) still run; the
+            // tokenizer loads exactly as if the flag were false.
+            tracing::warn!(
+                tokenizer = %config.name,
+                "tokenizer.trust_remote_code=true has no effect: the native tokenizer never \
+                 executes repository code; loading the tokenizer normally"
+            );
+        }
         Ok(config)
     }
 
@@ -1334,7 +1341,11 @@ mod tests {
     }
 
     #[test]
-    fn tokenizer_policy_rejects_repository_code_execution() {
+    fn tokenizer_policy_accepts_trust_remote_code_as_inert() {
+        // The native tokenizer never executes repository code, so
+        // `trust_remote_code=true` is inert rather than refused: decode must
+        // succeed (a warning is emitted) so harnesses that pass the flag
+        // unconditionally still run.
         let raw = RawValue::from_string(
             serde_json::json!({
                 "name": "fixture/tokenizer",
@@ -1345,12 +1356,27 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        assert!(
-            AuthoredTokenizerV2::decode(&raw)
-                .unwrap_err()
-                .to_string()
-                .contains("never execute")
-        );
+        let config = AuthoredTokenizerV2::decode(&raw).expect("trust_remote_code must be accepted");
+        assert!(config.trust_remote_code);
+        assert_eq!(config.name, "fixture/tokenizer");
+    }
+
+    #[test]
+    fn builtin_tokenizer_resolves_with_trust_remote_code() {
+        // A built-in (tiktoken) encoding must resolve identically whether or not
+        // `trust_remote_code` is set; the flag must not pre-empt the load.
+        let resolved =
+            resolve_builtin_or_local("cl100k_base", true).expect("builtin must resolve");
+        assert_eq!(resolved.as_deref(), Some("cl100k_base"));
+    }
+
+    #[test]
+    fn local_path_tokenizer_resolves_with_trust_remote_code() {
+        // A local filesystem tokenizer path must also resolve with the flag set.
+        let dir = std::env::temp_dir();
+        let resolved = resolve_builtin_or_local(dir.to_str().unwrap(), true)
+            .expect("local path must resolve");
+        assert_eq!(resolved.as_deref(), dir.to_str());
     }
 
     #[test]
