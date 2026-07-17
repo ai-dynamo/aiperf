@@ -1365,8 +1365,7 @@ mod tests {
     fn builtin_tokenizer_resolves_with_trust_remote_code() {
         // A built-in (tiktoken) encoding must resolve identically whether or not
         // `trust_remote_code` is set; the flag must not pre-empt the load.
-        let resolved =
-            resolve_builtin_or_local("cl100k_base", true).expect("builtin must resolve");
+        let resolved = resolve_builtin_or_local("cl100k_base", true).expect("builtin must resolve");
         assert_eq!(resolved.as_deref(), Some("cl100k_base"));
     }
 
@@ -1374,8 +1373,8 @@ mod tests {
     fn local_path_tokenizer_resolves_with_trust_remote_code() {
         // A local filesystem tokenizer path must also resolve with the flag set.
         let dir = std::env::temp_dir();
-        let resolved = resolve_builtin_or_local(dir.to_str().unwrap(), true)
-            .expect("local path must resolve");
+        let resolved =
+            resolve_builtin_or_local(dir.to_str().unwrap(), true).expect("local path must resolve");
         assert_eq!(resolved.as_deref(), dir.to_str());
     }
 
