@@ -140,7 +140,8 @@ type FileKey = (u32, String);
 
 /// Encode a value as an rmp `Bytes` unary reply.
 fn encode_reply<T: Serialize>(value: &T) -> anyhow::Result<Option<Bytes>> {
-    let bytes = rmp_serde::to_vec(value).map_err(|error| anyhow::anyhow!("encode reply: {error}"))?;
+    let bytes =
+        rmp_serde::to_vec(value).map_err(|error| anyhow::anyhow!("encode reply: {error}"))?;
     Ok(Some(Bytes::from(bytes)))
 }
 
@@ -197,7 +198,9 @@ impl ArtifactVeloReceiver {
                 let velo = open_velo.clone();
                 async move {
                     let Some(velo) = velo.upgrade() else {
-                        return Err(anyhow::anyhow!("velo instance dropped before artifact open"));
+                        return Err(anyhow::anyhow!(
+                            "velo instance dropped before artifact open"
+                        ));
                     };
                     handle_open(&state, &velo, ctx).await
                 }
@@ -324,7 +327,10 @@ async fn handle_open(
             );
         }
         // A dropped receiver (a cell that never CLOSEs) is benign: log and move on.
-        if commit_tx.send(result.map(|_| ()).map_err(|e| e.to_string())).is_err() {
+        if commit_tx
+            .send(result.map(|_| ()).map_err(|e| e.to_string()))
+            .is_err()
+        {
             tracing::debug!(
                 target: "aiperf_cellular_artifact",
                 cell_id,
@@ -598,19 +604,18 @@ mod tests {
         let landing = dir.path().join("controller-landing");
 
         // Controller velo + artifact receiver.
-        let controller_velo = build_velo(BindSpec::TcpLoopback).await.expect("controller velo");
+        let controller_velo = build_velo(BindSpec::TcpLoopback)
+            .await
+            .expect("controller velo");
         let controller_addr = controller_velo.peer_info();
         let controller_endpoint = {
             // Rebuild from a bound listener so the cell can connect by endpoint.
             controller_addr.clone()
         };
         let _ = controller_endpoint;
-        let receiver = ArtifactVeloReceiver::register(
-            controller_velo.clone(),
-            landing.clone(),
-            allowed,
-        )
-        .expect("register receiver");
+        let receiver =
+            ArtifactVeloReceiver::register(controller_velo.clone(), landing.clone(), allowed)
+                .expect("register receiver");
 
         // Cell velo connects to the controller by its PeerInfo (loopback).
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
@@ -621,15 +626,9 @@ mod tests {
 
         let baseline = resident_bytes();
 
-        ship_cell_artifacts_velo(
-            &cell_velo,
-            &controller_addr,
-            0,
-            &src_dir,
-            &[rel.to_owned()],
-        )
-        .await
-        .expect("ship over velo");
+        ship_cell_artifacts_velo(&cell_velo, &controller_addr, 0, &src_dir, &[rel.to_owned()])
+            .await
+            .expect("ship over velo");
 
         receiver
             .wait_for_cells(1, Duration::from_secs(30))
@@ -666,7 +665,9 @@ mod tests {
         std::fs::write(src_dir.join("secret.parquet"), b"nope").unwrap();
 
         let allowed: HashSet<String> = ["profile_export.jsonl".to_owned()].into_iter().collect();
-        let controller_velo = build_velo(BindSpec::TcpLoopback).await.expect("controller velo");
+        let controller_velo = build_velo(BindSpec::TcpLoopback)
+            .await
+            .expect("controller velo");
         let controller_peer = controller_velo.peer_info();
         let _receiver = ArtifactVeloReceiver::register(
             controller_velo.clone(),

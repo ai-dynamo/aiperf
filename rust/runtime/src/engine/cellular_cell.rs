@@ -303,9 +303,11 @@ pub fn ship_velo_artifacts_if_enabled(
     // loopback controller coordinate is a co-located run whose cells use shared-FS
     // concatenation — ship nothing unless the test/dev force seam is engaged. A
     // routable (k8s) coordinate always ships.
-    let host = coordinate
-        .strip_prefix("tcp://")
-        .map(|host_port| host_port.rsplit_once(':').map_or(host_port, |(host, _)| host));
+    let host = coordinate.strip_prefix("tcp://").map(|host_port| {
+        host_port
+            .rsplit_once(':')
+            .map_or(host_port, |(host, _)| host)
+    });
     let is_loopback = host
         .map(|host| {
             host.parse::<std::net::IpAddr>()
@@ -317,19 +319,25 @@ pub fn ship_velo_artifacts_if_enabled(
     if is_loopback && !artifact_http_force_enabled() {
         return Ok(());
     }
-    let relatives =
-        crate::engine::artifact_stream_velo::shippable_relatives_velo(artifacts);
+    let relatives = crate::engine::artifact_stream_velo::shippable_relatives_velo(artifacts);
     if relatives.is_empty() {
         return Ok(()); // metrics-only run with no files to ship
     }
     let cell_id = partition.cell_id();
+    tracing::debug!(
+        target: "aiperf_cellular_artifact",
+        cell_id,
+        coordinate = %coordinate,
+        files = relatives.len(),
+        "velo artifact shipping starting"
+    );
     let cell_dir = cell_dir.to_path_buf();
     std::thread::spawn(move || -> Result<()> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()?;
-        runtime.block_on(async move {
+        let result = runtime.block_on(async move {
             // A fresh, short-lived shipping velo instance (the same lifecycle the
             // partition ship uses): bind, dial the controller by endpoint, stream.
             let bind = cell_bind(&coordinate, "artifact");
@@ -347,7 +355,18 @@ pub fn ship_velo_artifacts_if_enabled(
                 &relatives,
             )
             .await
-        })
+        });
+        match &result {
+            Ok(()) => tracing::debug!(
+                target: "aiperf_cellular_artifact",
+                cell_id,
+                "velo artifact shipping completed"
+            ),
+            Err(error) => {
+                tracing::error!(cell_id, "velo artifact shipping failed: {error:#}")
+            }
+        }
+        result
     })
     .join()
     .map_err(|_| anyhow::anyhow!("cell velo artifact-shipping thread panicked"))?

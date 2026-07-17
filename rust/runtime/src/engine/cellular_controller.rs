@@ -277,7 +277,8 @@ pub fn run_cellular(
     // BOTH transports: velo same-host shipping needs the separate landing subtree too,
     // otherwise the velo receiver would overwrite each cell file with itself in place.
     let force_local_http = need_artifact_server && !is_k8s;
-    let force_local_landing = (need_artifact_server || (http_shipping && velo_artifacts)) && !is_k8s;
+    let force_local_landing =
+        (need_artifact_server || (http_shipping && velo_artifacts)) && !is_k8s;
     warn_dropped_sidecar_telemetry(envelope);
     // Warn about DROPPED per-record artifacts only when they genuinely cannot be
     // delivered — cross-host AND HTTP shipping disabled. When HTTP shipping is active
