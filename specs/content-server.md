@@ -51,34 +51,37 @@ carried it. This section specifies closing both gaps: correlate every content
 fetch to the originating request (and the specific media slot within it) and
 surface the timings as first-class metrics.
 
-**Correlation key — `(rid, mi)` embedded in the media URL.** The URL is the only
-datum that provenance-flows across all three hops (AIPerf → inference server →
-content-server GET); a real inference server does not forward AIPerf's
-`X-Request-ID` header onto its own fetch. At dispatch, each `http(s)`
-`image_url`/`video_url` value in the outgoing payload is tagged
-`?rid=<x_request_id>&mi=<media_ordinal>`, where `mi` is the zero-based ordinal of
-the media part within that turn's payload (assigned by walk order). `mi` is
-required, not optional: a single turn may carry many media, and `rid` alone
-collapses them into one ambiguous bucket. The content server already records the
-raw `query_string`, so capture needs no server change; `rid`/`mi` parse out at
-drain time. The join key is `(rid, mi)`.
+**Correlation key — `(rid, mi)` plus dispatch time, embedded in the media URL.**
+The URL is the only datum that provenance-flows across all three hops (AIPerf →
+inference server → content-server GET); a real inference server does not forward
+AIPerf's `X-Request-ID` header onto its own fetch. At dispatch, each `http(s)`
+`image_url`/`video_url` value whose base matches this run's content server is
+tagged `?rid=<x_request_id>&mi=<media_ordinal>&td=<dispatch_wall_ns>`, where `mi`
+is the zero-based ordinal of the media part within that turn's payload (assigned
+by walk order). `mi` is required, not optional: a single turn may carry many
+media, and `rid` alone collapses them into one ambiguous bucket. Only
+content-server URLs are tagged; user-supplied external image URLs are left
+untouched. The content server already records the raw `query_string`, so capture
+needs no server change; `rid`/`mi`/`td` parse out at drain time. The join key is
+`(rid, mi)`.
 
-**Clock bridge (the linchpin for `time_to_media_fetch`).** Benchmark dispatch
-timestamps are monotonic ns off `RealClockAnchor` (no wall component); the tracker
-records arrival as wall-clock Unix-epoch `timestamp_ns` on an independent
-`Instant` origin. The two are not directly comparable. Bridge them by capturing
-one paired `(SystemTime::now(), RealClockAnchor::now())` reading at run start;
-any benchmark `start_ns` then converts to wall-epoch via
-`wall_epoch_at_anchor + start_ns`, comparable to the record's `timestamp_ns`.
+**Self-describing records (the linchpin for `time_to_media_fetch`).** Benchmark
+dispatch timestamps are monotonic ns off `RealClockAnchor` (no wall component);
+the tracker records arrival as wall-clock Unix-epoch `timestamp_ns`. Rather than
+reconcile the two clocks across a shared map, the dispatch wall time (`td`,
+`SystemTime::now()` at tag time) travels inside the URL and is recorded verbatim
+in the content server's `query_string`. `time_to_media_fetch = timestamp_ns − td`
+is then computed from the single record with no cross-thread dispatch map and no
+run-start clock pairing — both wall-clock, same epoch.
 
 **Streaming drain (correct at 1M-scale).** A snapshot-at-teardown join is bounded
 by `max_tracked_records` (FIFO eviction) and by retain-all memory, so it silently
-drops requests under load. Instead the server drains records during the run into
-an online aggregator that (a) joins each record against a compact
-`{x_request_id -> dispatch_wall_ns}` map and (b) folds the derived values into
-`DistributionStats` streaming — no retain-all, no bounded-buffer loss. Any drop
-that does occur (e.g. a fetch whose `rid` has no matching request) is counted and
-logged, never silently discarded.
+drops requests under load. Instead the tracker forwards each completed record over
+an optional channel to an online aggregator that folds the derived values into
+`DistributionStats` streaming — no retain-all, no bounded-buffer loss. Because
+each record is self-describing (`rid`/`mi`/`td` in the query string), the
+aggregator needs no request-side state. Any record it cannot parse (missing/late
+tag) is counted and logged, never silently discarded.
 
 **Metrics.** Per `(rid, mi)`, then rolled up per request:
 
