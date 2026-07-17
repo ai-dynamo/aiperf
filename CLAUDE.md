@@ -147,7 +147,6 @@ make bundle-cli
 # bundle-cli + `maturin build` + `tools/wheel_repack.py` -> one aiperf wheel.
 make wheel
 # Editable dev install builds and installs the unified binary (make install-app runs bundle-cli);
-# AIPERF_EXEC_BIN overrides the execution child to a dynosim/custom-features build.
 ```
 
 Run the product:

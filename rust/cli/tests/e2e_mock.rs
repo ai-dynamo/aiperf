@@ -99,7 +99,6 @@ fn profile_single_run_against_mock_writes_native_report() {
             "--artifact-dir",
             out_dir.path().to_str().unwrap(),
         ])
-        .env("AIPERF_EXEC_BIN", &runner)
         .status()
         .expect("spawn aiperf profile");
 
@@ -167,7 +166,6 @@ fn profile_yaml_config_against_mock_writes_native_report() {
 
     let status = Command::new(aiperf_bin())
         .args(["profile", "--config", config.to_str().unwrap()])
-        .env("AIPERF_EXEC_BIN", &runner)
         .status()
         .expect("spawn aiperf profile --config");
 
@@ -215,7 +213,6 @@ fn profile_sweep_against_mock_writes_per_cell_reports() {
             "--artifact-dir",
             out_dir.path().to_str().unwrap(),
         ])
-        .env("AIPERF_EXEC_BIN", &runner)
         .status()
         .expect("spawn aiperf profile sweep");
     let _ = mock_child.kill();

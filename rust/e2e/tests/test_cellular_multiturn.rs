@@ -21,8 +21,8 @@
 //!    dataset (whose `inputs.json` must be captured DURING the run, forcing the retain
 //!    path) is REJECTED with a clear message, rather than silently mis-merging.
 //!
-//! Requires the launched `aiperf` (`AIPERF_EXEC_BIN`) to include the `velo`
-//! cell transport (the default runner build).
+//! Requires the launched `aiperf` to include the `cellular` cell transport
+//! (the default build).
 
 mod common;
 use common::*;

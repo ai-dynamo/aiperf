@@ -14,8 +14,8 @@
 //! gRPC target across N cells and reproduces the single-cell run's
 //! dataset-deterministic metrics byte-for-byte.
 //!
-//! Requires the launched runner (`AIPERF_EXEC_BIN`) to include the `velo` cell
-//! transport (default build), and the mock to serve its gRPC listener.
+//! Requires the launched `aiperf` to include the `cellular` cell transport
+//! (default build), and the mock to serve its gRPC listener.
 
 mod common;
 use common::*;

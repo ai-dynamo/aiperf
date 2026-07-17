@@ -38,10 +38,6 @@ fn workspace_root() -> PathBuf {
         .unwrap()
 }
 
-fn aiperf_cli() -> PathBuf {
-    workspace_root().join(".venv/bin/aiperf")
-}
-
 fn one_json_line(output: &Output) -> Value {
     let lines = output
         .stdout
@@ -604,112 +600,6 @@ async fn scheduled_pair_validates_and_executes_over_native_grpc_stdio() {
     assert_eq!(
         report["metrics"]["request_count"]["series"][0]["stats"]["total"],
         2.0
-    );
-
-    let _ = shutdown.send(());
-    server.await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn user_facing_aiperf_cli_executes_config_v2_against_mock_grpc_server() {
-    let (url, captured, shutdown, server) = start_server().await;
-    let temporary = tempfile::tempdir().unwrap();
-    let artifact_root = temporary.path().join("cli-artifacts");
-    let config_path = temporary.path().join("grpc.yaml");
-    std::fs::write(
-        &config_path,
-        format!(
-            r#"schemaVersion: "2.0"
-benchmark:
-  models: [cli-model]
-  endpoint:
-    urls: ["{url}"]
-    type: kserve_v2_infer
-    streaming: false
-    waitForModelTimeout: 0.0
-    headers:
-      authorization: Bearer fixture
-  dataset:
-    type: synthetic
-    entries: 1
-    prompts: {{isl: 4, osl: 1}}
-  phases:
-    - name: profiling
-      type: concurrency
-      requests: 1
-      concurrency: 1
-  tokenizer:
-    name: cl100k_base
-    trustRemoteCode: false
-    applyChatTemplate: false
-  gpuTelemetry: {{enabled: false}}
-  serverMetrics: {{enabled: false}}
-  artifacts:
-    dir: "{}"
-  runtime:
-    ui: none
-  transport:
-    type: grpc
-"#,
-            artifact_root.display()
-        ),
-    )
-    .unwrap();
-
-    let root = workspace_root();
-    let cli = aiperf_cli();
-    assert!(
-        cli.is_file(),
-        "missing user-facing CLI at {}",
-        cli.display()
-    );
-    let runner = binary().to_string();
-    let python_path = root.join("src");
-    let cache = temporary.path().join("cache");
-    let output = tokio::task::spawn_blocking(move || {
-        Command::new(cli)
-            .arg("profile")
-            .arg("--config")
-            .arg(config_path)
-            .env("AIPERF_EXEC_BIN", runner)
-            .env("PYTHONPATH", python_path)
-            .env("AIPERF_CACHE_DIR", cache)
-            .env("NO_COLOR", "1")
-            .current_dir(root)
-            .output()
-            .unwrap()
-    })
-    .await
-    .unwrap();
-    assert!(
-        output.status.success(),
-        "aiperf stdout={}\naiperf stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    {
-        let requests = captured.lock().unwrap();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].model_name, "cli-model");
-        assert!(!requests[0].id.is_empty());
-        assert_eq!(requests[0].inputs[0].name, "text_input");
-    }
-
-    let mut reports = Vec::new();
-    find_files(&artifact_root, "native-v2.json", &mut reports);
-    assert_eq!(
-        reports.len(),
-        1,
-        "native reports under {}: {reports:?}",
-        artifact_root.display()
-    );
-    let report: Value = serde_json::from_slice(&std::fs::read(&reports[0]).unwrap()).unwrap();
-    assert_eq!(report["run"]["transport"], "grpc");
-    assert_eq!(report["run"]["workload"], "scheduled");
-    assert_eq!(
-        report["metrics"]["request_count"]["series"][0]["stats"]["total"],
-        1.0
     );
 
     let _ = shutdown.send(());

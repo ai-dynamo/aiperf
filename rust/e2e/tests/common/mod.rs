@@ -368,7 +368,6 @@ impl AIPerfHarness {
             .env("TRANSFORMERS_OFFLINE", "1")
             .env("PYTHONUNBUFFERED", "1")
             .env("MALLOC_ARENA_MAX", "2")
-            .env("AIPERF_EXEC_BIN", exec_binary())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -465,19 +464,11 @@ fn python_binary() -> String {
 /// Resolve the unified `aiperf` execution binary (entry point + execution engine).
 ///
 /// The harness spawns this binary directly as the entry point; it re-execs itself
-/// (`current_exe()`) in the internal `--execute` mode, or honors `AIPERF_EXEC_BIN`
-/// as an override. On the legacy `aiperf-python` leg the Python orchestrator reads
-/// the same `AIPERF_EXEC_BIN` to locate the execution child. Priority:
-/// 1. `AIPERF_EXEC_BIN` env var (already set by the user or outer harness)
-/// 2. `target/release/aiperf` then `target/debug/aiperf` relative to the Cargo
+/// (`current_exe()`) in the internal `--execute` mode. Priority:
+/// 1. `target/release/aiperf` then `target/debug/aiperf` relative to the Cargo
 ///    workspace root (derived from this file's `CARGO_MANIFEST_DIR` at compile time)
-/// 3. `aiperf` on PATH as last resort
+/// 2. `aiperf` on PATH as last resort
 pub fn exec_binary() -> String {
-    if let Ok(v) = std::env::var("AIPERF_EXEC_BIN") {
-        if !v.is_empty() {
-            return v;
-        }
-    }
     // CARGO_MANIFEST_DIR is rust/e2e; workspace root is two levels up.
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace = manifest
