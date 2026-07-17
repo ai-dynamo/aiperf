@@ -779,7 +779,35 @@ async fn load_hugging_face_revision_rows(
     Ok(rows)
 }
 
+/// Load an unpinned HuggingFace dataset, preferring the Dataset Viewer `/rows`
+/// API and falling back to the pinned Parquet-artifact path at `main` when it
+/// fails (e.g. a viewer-disabled config, or a `500` scan-size limit on large
+/// datasets like `voxpopuli`). The fallback is what Python's `datasets` library
+/// effectively does, so unpinned datasets load the same way.
 async fn load_hugging_face_rows(
+    config: &LoadConfig,
+    dataset: &str,
+    subset: &str,
+    split: &str,
+    max_rows: Option<usize>,
+) -> Result<Vec<RawRow>> {
+    match load_datasets_server_rows(config, dataset, subset, split, max_rows).await {
+        Ok(rows) => Ok(rows),
+        Err(rows_error) => {
+            load_hugging_face_revision_rows(config, dataset, subset, split, max_rows, "main")
+                .await
+                .map_err(|parquet_error| {
+                    DatasetError::Validation(format!(
+                        "Hugging Face dataset {dataset:?} (config {subset:?}, split {split:?}) \
+                         failed via the /rows API ({rows_error}) and the Parquet fallback \
+                         ({parquet_error})"
+                    ))
+                })
+        }
+    }
+}
+
+async fn load_datasets_server_rows(
     config: &LoadConfig,
     dataset: &str,
     subset: &str,
