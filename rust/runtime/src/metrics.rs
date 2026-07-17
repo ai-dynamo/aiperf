@@ -159,6 +159,13 @@ struct ObserverState {
     request_slots: FxHashMap<Uuid, usize>,
     arrival_count: usize,
     metadata: FxHashMap<Uuid, RequestMetricMetadata>,
+    /// Row slots vacated by [`Self::take_terminal`], available for reuse by a
+    /// later arrival that has no externally-assigned `request_index`. This keeps
+    /// the `requests` Vec bounded to the concurrent in-flight count when one
+    /// observer is shared across a worker's whole run and every record is drained
+    /// on terminal (the graph and sketch paths). Exact retain paths never drain
+    /// mid-run, so this list stays empty and slot assignment is unchanged.
+    free_slots: Vec<usize>,
 }
 
 #[derive(Debug)]
@@ -182,7 +189,13 @@ impl ObserverState {
         let slot = *self.request_slots.get(&uuid)?;
         self.requests.get(slot)?.as_ref()?.request.terminal?;
         self.request_slots.remove(&uuid);
-        self.requests.get_mut(slot)?.take()
+        let entry = self.requests.get_mut(slot)?.take();
+        if entry.is_some() {
+            // The row is now vacant; offer it to the next unindexed arrival so a
+            // shared observer's row Vec stays bounded to concurrent in-flight.
+            self.free_slots.push(slot);
+        }
+        entry
     }
 }
 
@@ -200,10 +213,9 @@ pub struct NativeMetricsObserver {
 
 /// Final aggregate plus the exact request records that produced it.
 ///
-/// Application-layer record exporters consume the retained records through the
-/// same [`MetricsAccumulator`] formulas used for the aggregate. Keeping this
-/// boundary in Rust prevents convergence/search consumers from reconstructing
-/// latency or token metrics from lossy report statistics.
+/// Retaining records here lets exporters and convergence consumers reuse
+/// [`MetricsAccumulator`] formulas without reconstructing metrics from lossy
+/// report statistics.
 pub struct NativeMetricsCollection {
     /// Aggregate over every finalized request.
     pub summary: AccumulatorSummary,
@@ -502,18 +514,33 @@ impl PendingRequest {
             ),
             canceled: terminal == ReplayTerminalStatus::Canceled,
             tokens: TokenCounts {
-                // Under `use_server_token_count`, input accounting is
-                // tokenizer-free: the ISL comes from the server's
-                // `usage.prompt_tokens` (absent when the server reports no
-                // usage), matching Python's `_compute_server_token_counts`.
-                // Otherwise use the client-tokenized dispatch count.
+                // Under `use_server_token_count`, token accounting is
+                // tokenizer-free: ISL/OSL/reasoning come from the server's `usage`
+                // fields and remain absent when server usage is absent (mirrors the
+                // Python `InferenceResultParser._compute_server_token_counts` path).
+                // Server `completion_tokens` includes reasoning, so visible output
+                // tokens are `completion - reasoning` clamped at 0 (Python
+                // `_server_output_minus_reasoning`). Otherwise use the
+                // client-tokenized counts. Keeping the per-mode decision here (not
+                // in the accumulator) makes the record metrics a pure passthrough of
+                // `token_counts`, byte-exact with the Python record metrics.
                 input: if self.use_server_token_count {
                     prompt_tokens
                 } else {
                     Some(self.input_tokens)
                 },
-                output: Some(self.output_tokens),
-                reasoning: (self.reasoning_tokens > 0).then_some(self.reasoning_tokens),
+                output: if self.use_server_token_count {
+                    let reasoning = self.observed_usage.get(3).map(|value| value as u64);
+                    completion_tokens
+                        .map(|completion| completion.saturating_sub(reasoning.unwrap_or(0)))
+                } else {
+                    Some(self.output_tokens)
+                },
+                reasoning: if self.use_server_token_count {
+                    self.observed_usage.get(3).map(|value| value as u64)
+                } else {
+                    (self.reasoning_tokens > 0).then_some(self.reasoning_tokens)
+                },
                 requested_output: Some(self.requested_output_tokens),
             },
             usage: UsageMetrics {
@@ -562,7 +589,18 @@ impl RequestObserver for NativeMetricsObserver {
         if state.request_slots.contains_key(&uuid) {
             return;
         }
-        let slot = *metadata.request_index.get_or_insert(state.requests.len());
+        // An externally-assigned `request_index` (exact retain paths) pins the row.
+        // Otherwise prefer a slot vacated by a drained record, falling back to a
+        // fresh append. Exact retain never drains mid-run, so `free_slots` is empty
+        // and this reduces to the original `requests.len()` append.
+        let slot = match metadata.request_index {
+            Some(slot) => slot,
+            None => {
+                let slot = state.free_slots.pop().unwrap_or(state.requests.len());
+                metadata.request_index = Some(slot);
+                slot
+            }
+        };
         if state.requests.len() <= slot {
             state.requests.resize_with(slot + 1, || None);
         }
@@ -1088,7 +1126,7 @@ mod tests {
     }
 
     #[test]
-    fn observer_keeps_chunk_facts_but_uses_usage_for_labeled_token_metrics() {
+    fn observer_keeps_chunk_facts_and_uses_client_token_counts_in_default_mode() {
         let clock = Rc::new(SimClock::new());
         let observer = NativeMetricsObserver::new(clock.clone(), 0, MetricsConfig::default());
         let uuid = Uuid::from_u128(9);
@@ -1121,11 +1159,14 @@ mod tests {
         assert_eq!(collection.records[0].1.token_arrival_ns.len(), 2);
         assert_eq!(collection.records[0].1.tokens.output, Some(2));
         assert_eq!(collection.records[0].1.usage.completion_tokens, Some(5));
+        // DEFAULT mode: OSL is the CLIENT count (2 observed tokens), byte-exact
+        // with Python; the server `usage.completion_tokens` (5) is retained for the
+        // usage_* metrics and discrepancy diagnostic but is NOT authoritative here.
         assert_eq!(
             collection
                 .summary
                 .finite_value(MetricTag::TotalOutputSequenceLength),
-            Some(5.0)
+            Some(2.0)
         );
         assert_eq!(collection.summary.inference_series().len(), 1);
         assert_eq!(
@@ -1140,5 +1181,48 @@ mod tests {
             .result(MetricTag::InterChunkLatency)
             .unwrap();
         assert_eq!(icl.distribution().unwrap().count, 1);
+    }
+
+    #[test]
+    fn observer_uses_server_usage_for_token_counts_under_use_server_token_count() {
+        let clock = Rc::new(SimClock::new());
+        let mut config = MetricsConfig::default();
+        config.use_server_token_count = true;
+        let observer = NativeMetricsObserver::new(clock.clone(), 0, config);
+        let uuid = Uuid::from_u128(11);
+        observer.on_arrival(uuid, 0.0, 8, 5);
+        observer.on_admit(uuid, 0.0, 0);
+        // Two observed client tokens, but server usage is authoritative here.
+        observer.on_token(uuid, 10.0);
+        observer.on_token(uuid, 20.0);
+        observer.on_usage(
+            uuid,
+            ObservedUsage {
+                prompt_tokens: Some(8),
+                completion_tokens: Some(5),
+                ..ObservedUsage::default()
+            },
+        );
+        clock.advance_to(100_000_000);
+        observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
+
+        let collection = observer.finish_with_records();
+        // Under `use_server_token_count`, ISL comes from `usage.prompt_tokens` (8)
+        // and OSL/output from `usage.completion_tokens` (5) — NOT the two observed
+        // client tokens — matching the Python server-token-count path.
+        assert_eq!(collection.records[0].1.tokens.input, Some(8));
+        assert_eq!(collection.records[0].1.tokens.output, Some(5));
+        assert_eq!(
+            collection
+                .summary
+                .finite_value(MetricTag::TotalOutputSequenceLength),
+            Some(5.0)
+        );
+        assert_eq!(
+            collection
+                .summary
+                .finite_value(MetricTag::TotalInputSequenceLength),
+            Some(8.0)
+        );
     }
 }

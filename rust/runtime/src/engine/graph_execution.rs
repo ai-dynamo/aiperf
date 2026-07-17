@@ -676,12 +676,17 @@ impl TracePlacementFactory for GraphBackendFactory {
         let node_policy = (!policies.is_empty())
             .then(|| Rc::new(CompositeNodeDispatchPolicy::new(policies)) as Rc<_>);
 
+        let observer = Rc::new(NativeMetricsObserver::new(
+            clock.clone(),
+            self.config.run_origin_ns,
+            self.config.metrics.clone(),
+        ));
         Ok(Rc::new(GraphWorkerBackend {
             clock,
             endpoint_runtime,
             materializer: Rc::new(SegmentItemsMaterializer::new(self.config.segments.clone())),
             segments: self.config.segments.clone(),
-            metrics: self.config.metrics.clone(),
+            observer,
             phase: self.config.phase,
             worker_id,
             model: self.config.model.clone(),
@@ -706,7 +711,13 @@ struct GraphWorkerBackend {
     endpoint_runtime: Rc<dyn GraphEndpointRuntime>,
     materializer: Rc<SegmentItemsMaterializer>,
     segments: Arc<dyn SegmentStore>,
-    metrics: MetricsConfig,
+    /// One measurement observer for the worker's whole run, shared by every
+    /// trace's sink. Records are uuid-keyed and drained on terminal, so concurrent
+    /// traces stay isolated; this avoids constructing a fresh `MetricsAccumulator`
+    /// + `ColumnStore` (and cloning `MetricsConfig`) per trace, which dominated
+    /// per-trace allocation on the graph hot path. Mirrors the scheduled path's
+    /// per-worker `WorkerMeasurement`.
+    observer: Rc<NativeMetricsObserver>,
     phase: Phase,
     worker_id: usize,
     model: String,
@@ -747,11 +758,7 @@ impl TracePlacement for GraphWorkerBackend {
             .cache_bust
             .as_ref()
             .and_then(|cache_bust| cache_bust.marker(&plan.trace.id));
-        let observer = Rc::new(NativeMetricsObserver::new(
-            self.clock.clone(),
-            self.run_origin_ns,
-            self.metrics.clone(),
-        ));
+        let observer = self.observer.clone();
         let sink = Rc::new(EngineGraphSink {
             clock: self.clock.clone(),
             endpoint_runtime: self.endpoint_runtime.clone(),
@@ -769,6 +776,7 @@ impl TracePlacement for GraphWorkerBackend {
             terminal_nodes,
             events: self.events.clone(),
             cache_bust_marker,
+            arrivals: Cell::new(0),
             emitted_records: Cell::new(0),
         });
         let mut local = LocalGraphTraceExecutionBackend::new(
@@ -844,6 +852,11 @@ struct EngineGraphSink {
     /// Per-conversation first-turn cache-bust marker, minted once per trace
     /// instance. `None` when cache-bust is disabled.
     cache_bust_marker: Option<String>,
+    /// Requests this trace registered with the shared observer (one per dispatched
+    /// node). Compared against `emitted_records` at finalization; a shared
+    /// worker observer makes its global `arrival_count` cumulative, so the
+    /// per-trace invariant is tracked on the sink instead.
+    arrivals: Cell<u64>,
     emitted_records: Cell<u64>,
 }
 
@@ -936,6 +949,11 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
         let uuid = request.uuid;
         let dimensions: InferenceDimensions =
             Dispatcher::inference_dimensions(transport.as_ref(), &request);
+        // `register_metadata` discards `worker_id`/`conversation_id` and blanks
+        // `correlation_id` unless per-record dimensions are retained, so only pay
+        // for these owned strings when the run will actually keep them. Blank
+        // `correlation_id` matches the value `register_metadata` would substitute.
+        let retain_dimensions = self.observer.retains_record_dimensions();
         self.observer.register_metadata(
             uuid,
             RequestMetricMetadata {
@@ -944,13 +962,17 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                 turn_index: metadata_u64(node, "turn_index")
                     .and_then(|value| u32::try_from(value).ok())
                     .unwrap_or(0),
-                worker_id: Some(self.worker_id.to_string()),
+                worker_id: retain_dimensions.then(|| self.worker_id.to_string()),
                 // One authored root may be cycled many times by a bounded or
                 // duration phase. Metrics identity follows the unique trace
                 // instance; the authored conversation stays in node metadata.
-                conversation_id: Some(self.trace_id.clone()),
+                conversation_id: retain_dimensions.then(|| self.trace_id.clone()),
                 dimensions,
-                correlation_id: Some(format!("{}:{node_id}", self.trace_id)),
+                correlation_id: Some(if retain_dimensions {
+                    format!("{}:{node_id}", self.trace_id)
+                } else {
+                    String::new()
+                }),
                 has_credit_timestamp: false,
                 ..RequestMetricMetadata::default()
             },
@@ -963,6 +985,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
             usize::try_from(input_tokens).unwrap_or(usize::MAX),
             max_output_tokens,
         );
+        self.arrivals.set(self.arrivals.get().saturating_add(1));
         let first_token_emitted = Cell::new(false);
         let first_token_error = RefCell::new(None);
         let collected = transport
@@ -1041,11 +1064,16 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
 
 impl EngineGraphSink {
     fn verify_finalized_records(&self) -> Result<()> {
-        let (arrivals, retained) = self.observer.record_counts();
-        let emitted = usize::try_from(self.emitted_records.get()).unwrap_or(usize::MAX);
+        // The observer is shared across the worker's traces, so its global
+        // `arrival_count`/retained counts are cumulative; the per-trace invariant
+        // is that every request this trace registered emitted exactly one record.
+        // Each emitted record was drained (`take_terminal` removed its slot), so
+        // `arrivals == emitted` also implies this trace left nothing retained.
+        let arrivals = self.arrivals.get();
+        let emitted = self.emitted_records.get();
         ensure!(
-            retained == 0 && arrivals == emitted,
-            "graph trace {:?} retained {retained} of {arrivals} metric records after emitting {emitted}",
+            arrivals == emitted,
+            "graph trace {:?} registered {arrivals} requests but emitted {emitted} metric records",
             self.trace_id
         );
         Ok(())
@@ -1194,7 +1222,7 @@ mod tests {
         let registry = registry.freeze();
         assert!(
             registry
-                .compatibility_endpoint(&EndpointId::new("chat").unwrap())
+                .legacy_endpoint(&EndpointId::new("chat").unwrap())
                 .is_err()
         );
 
