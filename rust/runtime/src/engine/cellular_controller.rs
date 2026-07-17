@@ -51,6 +51,17 @@ pub const CELL_BARRIER_FREE_ENV: &str = "AIPERF_CELL_BARRIER_FREE";
 /// START to phase transitions and dataset-availability signals.
 pub const CELL_PHASER_START_ENV: &str = "AIPERF_CELL_PHASER_START";
 
+/// Env toggle standing up ONE per-run velo [hub](crate::hub) as the cellular anchor
+/// instead of the separate standalone planes. When enabled, the controller mounts the
+/// cell↔controller plugin (register/heartbeat/partition/store-partition), the
+/// `/artifact` plugin (when per-record artifacts ride velo), and the discovery plugin
+/// on a single [`Hub`](crate::hub::Hub) over the same control-plane velo instance, and
+/// serves the hub's axum HTTP surface. Default off — the standalone
+/// [`VeloControllerTransport`] + velo artifact receiver, byte-identical to today. Cells
+/// reach the hub by the same `tcp://HOST:PORT` velo coordinate either way (the hub is
+/// the connect anchor the controller already is).
+pub const CELLULAR_HUB_ENV: &str = "AIPERF_CELLULAR_HUB";
+
 /// Env toggle for the dataset fan-out data plane: the controller
 /// generates the dataset request-ids once and broadcasts them; each cell builds its
 /// owned index over velo and dispatches its owned requests. Default off
@@ -201,6 +212,15 @@ pub fn run_cellular(
     // Phaser-driven START is opt-in; the default uses the event.
     let phaser_start = matches!(
         std::env::var(CELL_PHASER_START_ENV)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "on" | "yes"
+    );
+    // Hub mode is opt-in: stand up one velo hub as the cellular anchor instead of the
+    // standalone transport + velo artifact receiver. Default off (byte-identical).
+    let hub_mode = matches!(
+        std::env::var(CELLULAR_HUB_ENV)
             .unwrap_or_default()
             .to_ascii_lowercase()
             .as_str(),
@@ -380,7 +400,10 @@ pub fn run_cellular(
         // control-plane velo instance (no second port): cells stream their zstd chunks
         // here and the receiver lands them at `landing_root/cell-{id}/{rel}`, exactly
         // where the HTTP server would, so the downstream barrier + concat are unchanged.
-        let velo_artifact_receiver = if http_shipping && velo_artifacts {
+        // In hub mode the artifact receiver is mounted as the `/artifact` hub plugin
+        // (below), so skip the standalone registration here; otherwise register it
+        // directly on the control-plane velo as today.
+        let mut velo_artifact_receiver = if !hub_mode && http_shipping && velo_artifacts {
             let allowed: std::collections::HashSet<String> =
                 crate::engine::artifact_shipping::shippable_relatives(&artifacts)
                     .into_iter()
@@ -521,9 +544,38 @@ pub fn run_cellular(
             let specs = specs.clone();
             std::sync::Arc::new(move |cell_id: u32| specs.get(cell_id as usize).cloned())
         };
-        let mut transport =
+        // Bind the controller's velo control plane. In hub mode this is done through a
+        // single per-run velo hub (cell↔controller plugin + `/artifact` plugin +
+        // discovery) served over one anchor; otherwise the standalone transport binds
+        // directly on `velo`. Either path yields the same `VeloControllerTransport` the
+        // collect loop drives; hub mode additionally captures the velo artifact
+        // receiver and keeps the served hub alive for the run.
+        let mut _hub_server: Option<crate::hub::HubServer> = None;
+        let mut transport = if hub_mode {
+            let artifact_mount = (http_shipping && velo_artifacts).then(|| {
+                let allowed: std::collections::HashSet<String> =
+                    crate::engine::artifact_shipping::shippable_relatives(&artifacts)
+                        .into_iter()
+                        .collect();
+                (landing_root.clone(), allowed)
+            });
+            let (transport, receiver, server) = build_cellular_hub(
+                velo,
+                spec_for,
+                cell_count,
+                start_handle,
+                cell_coordinate.clone(),
+                artifact_mount,
+            )
+            .await
+            .context("standing up cellular velo hub")?;
+            velo_artifact_receiver = receiver;
+            _hub_server = Some(server);
+            transport
+        } else {
             VeloControllerTransport::bind_controller(velo, spec_for, cell_count, start_handle)
-                .context("binding controller transport")?;
+                .context("binding controller transport")?
+        };
 
         // Insert a reduction TREE of aggregators between the cells and the controller.
         // Each cell ships to its round-robin tier-1 aggregator; each aggregator merges
@@ -981,6 +1033,92 @@ fn controller_bind_and_endpoint(is_k8s: bool, temp_root: &Path) -> Result<(BindS
         .local_addr()
         .context("controller loopback local_addr")?;
     Ok((BindSpec::TcpListener(listener), format!("tcp://{addr}")))
+}
+
+/// The hub's HTTP diagnostic bind. The hub's velo surface is the cellular anchor cells
+/// dial; its axum surface is a co-bound diagnostic (discovery/allowlist/status). Bound
+/// on an OS-assigned loopback port by default, overridable
+/// (`AIPERF_CELLULAR_HUB_HTTP_BIND`, e.g. `0.0.0.0:9700` for k8s).
+#[cfg(feature = "cellular")]
+fn hub_http_bind() -> std::net::SocketAddr {
+    std::env::var("AIPERF_CELLULAR_HUB_HTTP_BIND")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| std::net::SocketAddr::from(([127, 0, 0, 1], 0)))
+}
+
+/// Stand up one per-run velo [`Hub`](crate::hub::Hub) as the cellular anchor: mount the
+/// cell↔controller plugin, the `/artifact` plugin (when `artifact_mount` is `Some`),
+/// and the discovery plugin on `velo`, serve the co-bound axum surface, and return the
+/// captured [`VeloControllerTransport`] + optional [`ArtifactVeloReceiver`] + the live
+/// [`HubServer`] (held for the run). The velo handlers are identical to the standalone
+/// planes; only the mount point moves onto the hub.
+#[cfg(feature = "cellular")]
+async fn build_cellular_hub(
+    velo: std::sync::Arc<velo::Velo>,
+    spec_for: SpecFor,
+    cell_count: u32,
+    start_handle: velo::EventHandle,
+    endpoint: String,
+    artifact_mount: Option<(PathBuf, std::collections::HashSet<String>)>,
+) -> Result<(
+    VeloControllerTransport,
+    Option<crate::engine::artifact_stream_velo::ArtifactVeloReceiver>,
+    crate::hub::HubServer,
+)> {
+    use crate::hub::{
+        ArtifactHubPlugin, CellControllerHubPlugin, DiscoveryPlugin, DiscoveryState, Hub,
+    };
+
+    let hub_instance = format!("{:?}", velo.instance_id());
+    let mut hub = Hub::new(velo);
+
+    // Cell↔controller plugin: capture its transport for the collect loop to own.
+    let cell_plugin = CellControllerHubPlugin::new(spec_for, cell_count, start_handle);
+    let transport_slot = cell_plugin.transport_slot();
+    hub.register(Box::new(cell_plugin))
+        .context("mounting cell↔controller hub plugin")?;
+
+    // `/artifact` plugin (optional): capture its receiver for the completion barrier.
+    let receiver_slot = if let Some((temp_root, allowed)) = artifact_mount {
+        let plugin = ArtifactHubPlugin::new(temp_root, allowed);
+        let slot = plugin.receiver_slot();
+        hub.register(Box::new(plugin))
+            .context("mounting /artifact hub plugin")?;
+        Some(slot)
+    } else {
+        None
+    };
+
+    // Discovery plugin: the connect-by-endpoint anchor, advertising the mounted set.
+    let plugins: Vec<String> = hub.prefixes().map(str::to_owned).collect();
+    hub.register(Box::new(DiscoveryPlugin::new(DiscoveryState {
+        hub_instance,
+        endpoint,
+        plugins,
+    })))
+    .context("mounting discovery hub plugin")?;
+
+    let server = hub
+        .serve(hub_http_bind())
+        .await
+        .context("serving cellular hub HTTP surface")?;
+
+    let transport = transport_slot
+        .lock()
+        .expect("cell-controller transport slot poisoned")
+        .take()
+        .context("cell↔controller plugin did not capture a transport")?;
+    let receiver = match receiver_slot {
+        Some(slot) => Some(
+            slot.lock()
+                .expect("artifact receiver slot poisoned")
+                .take()
+                .context("/artifact plugin did not capture a receiver")?,
+        ),
+        None => None,
+    };
+    Ok((transport, receiver, server))
 }
 
 /// The deadline for collecting every cell's partition. Covers the whole run (cells
