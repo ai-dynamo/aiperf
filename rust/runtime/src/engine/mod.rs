@@ -52,6 +52,7 @@ pub mod server_metrics;
 pub mod shard_artifacts;
 pub mod sharded_scheduled;
 pub mod sidecar_input;
+pub mod slurm_topology;
 pub mod turn_execution;
 #[cfg(test)]
 mod workers_characterization;

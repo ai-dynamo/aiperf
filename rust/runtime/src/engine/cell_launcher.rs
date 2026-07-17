@@ -29,7 +29,7 @@ use crate::engine::cellular_cell::{
     CELL_ARTIFACT_ADDR_ENV, CELL_CONTROLLER_ADDR_ENV, CELL_PHASE_ORDINAL_BASES_ENV,
 };
 
-/// Env var selecting the launcher: `local` (default) or `k8s`.
+/// Env var selecting the launcher: `local` (default), `k8s`, or `slurm`.
 pub const CELL_LAUNCHER_ENV: &str = "AIPERF_CELL_LAUNCHER";
 
 /// Everything a launcher needs to start (or expect) a run's cells. The controller
@@ -183,10 +183,37 @@ impl CellLauncher for K8sLauncher {
     }
 }
 
-/// Select the launcher from [`CELL_LAUNCHER_ENV`] (`local` default, `k8s`).
+/// Expects cells that `srun` already launched as sibling tasks of this allocation.
+///
+/// Like [`K8sLauncher`], it spawns nothing: under SLURM every task of the run is
+/// launched by `srun` at once, so the rank-0 (controller) task only reports how many
+/// cell tasks to expect. Each cell task discovers the controller from the
+/// allocation-derived coordinate (rank-0 node host + velo port), injected into its
+/// environment by the `aiperf slurm run` rank dispatch — not by an operator. Cell
+/// liveness is SLURM's concern (a failed task fails the step); the controller uses
+/// its registration/collect timeout as the backstop, exactly as for k8s.
+pub struct SlurmLauncher;
+
+impl CellLauncher for SlurmLauncher {
+    fn launch(&self, ctx: &CellLaunchContext) -> Result<Vec<CellHandle>> {
+        tracing::info!(
+            cell_count = ctx.cell_count,
+            "cellular slurm launcher: expecting srun-launched cell tasks to register (no local spawn)"
+        );
+        Ok((0..ctx.cell_count)
+            .map(|cell_id| CellHandle {
+                child: None,
+                cell_id,
+            })
+            .collect())
+    }
+}
+
+/// Select the launcher from [`CELL_LAUNCHER_ENV`] (`local` default, `k8s`, `slurm`).
 pub fn select_launcher() -> Box<dyn CellLauncher> {
     match std::env::var(CELL_LAUNCHER_ENV).as_deref() {
         Ok("k8s") => Box::new(K8sLauncher),
+        Ok("slurm") => Box::new(SlurmLauncher),
         _ => Box::new(LocalLauncher),
     }
 }
@@ -264,6 +291,13 @@ mod tests {
     #[test]
     fn k8s_launcher_spawns_nothing_but_expects_all_cells() {
         let handles = K8sLauncher.launch(&context()).expect("k8s launch");
+        assert_eq!(handles.len(), 2);
+        assert!(handles.iter().all(|handle| handle.child.is_none()));
+    }
+
+    #[test]
+    fn slurm_launcher_spawns_nothing_but_expects_all_cells() {
+        let handles = SlurmLauncher.launch(&context()).expect("slurm launch");
         assert_eq!(handles.len(), 2);
         assert!(handles.iter().all(|handle| handle.child.is_none()));
     }
