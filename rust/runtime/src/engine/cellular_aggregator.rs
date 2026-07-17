@@ -184,7 +184,10 @@ pub fn tier_counts(cell_count: u32, fanout: u32) -> Vec<u32> {
 /// The tier plan for `cell_count` read from [`CELL_AGG_FANOUT_ENV`], or empty for the
 /// flat star (fanout unset, `< 2`, or `>= cell_count`).
 pub fn tier_counts_from_env(cell_count: u32) -> Vec<u32> {
-    match std::env::var(CELL_AGG_FANOUT_ENV).ok().and_then(|v| v.parse().ok()) {
+    match std::env::var(CELL_AGG_FANOUT_ENV)
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
         Some(fanout) => tier_counts(cell_count, fanout),
         None => Vec::new(),
     }
@@ -238,7 +241,11 @@ pub fn aggregator_nodes(cell_count: u32, fanout: u32, base_port: u16) -> Vec<Agg
     let mut nodes = Vec::new();
     for (tier, &count) in tiers.iter().enumerate() {
         // Children of this tier: the cells (tier 0) or the tier below.
-        let child_tier_count = if tier == 0 { cell_count } else { tiers[tier - 1] };
+        let child_tier_count = if tier == 0 {
+            cell_count
+        } else {
+            tiers[tier - 1]
+        };
         for id in 0..count {
             let ship = if tier + 1 == tiers.len() {
                 ShipTarget::Controller
@@ -437,15 +444,27 @@ mod tests {
     fn tier_counts_reduce_by_fanout_until_top_fits() {
         // Single tier: the first reduction already lands <= fanout (the original 2-level
         // tree). Byte-identical topology, so the plan is length 1.
-        assert_eq!(tier_counts(6, 3), vec![2], "6 cells / 3 → 2 aggregators, one tier");
+        assert_eq!(
+            tier_counts(6, 3),
+            vec![2],
+            "6 cells / 3 → 2 aggregators, one tier"
+        );
         assert_eq!(tier_counts(60, 8), vec![8], "60/8 = 8 <= 8, one tier");
         // Multi-tier: 8 cells / 2 → 4 → 2 → controller.
         assert_eq!(tier_counts(8, 2), vec![4, 2]);
         // Deeper: 100 cells / 3 → 34 → 12 → 4 → 2 → controller.
         assert_eq!(tier_counts(100, 3), vec![34, 12, 4, 2]);
         // Flat: fanout unset semantics (< 2) or >= cells.
-        assert_eq!(tier_counts(6, 1), Vec::<u32>::new(), "fanout 1 is a pointless flat");
-        assert_eq!(tier_counts(6, 6), Vec::<u32>::new(), "fanout >= cells is flat");
+        assert_eq!(
+            tier_counts(6, 1),
+            Vec::<u32>::new(),
+            "fanout 1 is a pointless flat"
+        );
+        assert_eq!(
+            tier_counts(6, 6),
+            Vec::<u32>::new(),
+            "fanout >= cells is flat"
+        );
         assert_eq!(tier_counts(6, 9), Vec::<u32>::new());
     }
 
@@ -484,7 +503,11 @@ mod tests {
             assert_eq!(node.tier, 0);
             assert_eq!(node.id, id);
             assert_eq!(node.bind_port, base + id as u16);
-            assert_eq!(node.child_count, children_of(id, 4, 8), "8 cells over 4 tier-1 nodes");
+            assert_eq!(
+                node.child_count,
+                children_of(id, 4, 8),
+                "8 cells over 4 tier-1 nodes"
+            );
             let parent_port = base + 4 + (id % 2) as u16;
             assert_eq!(node.ship, ShipTarget::Aggregator(parent_port));
         }
@@ -500,8 +523,16 @@ mod tests {
 
         // Barriers tile: every cell is collected exactly once by tier 0, every tier-0
         // node exactly once by tier 1.
-        let tier0_barrier: u32 = nodes.iter().filter(|n| n.tier == 0).map(|n| n.child_count).sum();
-        let tier1_barrier: u32 = nodes.iter().filter(|n| n.tier == 1).map(|n| n.child_count).sum();
+        let tier0_barrier: u32 = nodes
+            .iter()
+            .filter(|n| n.tier == 0)
+            .map(|n| n.child_count)
+            .sum();
+        let tier1_barrier: u32 = nodes
+            .iter()
+            .filter(|n| n.tier == 1)
+            .map(|n| n.child_count)
+            .sum();
         assert_eq!(tier0_barrier, 8, "tier-0 barriers cover all cells");
         assert_eq!(tier1_barrier, 4, "tier-1 barriers cover all tier-0 nodes");
 
@@ -509,7 +540,11 @@ mod tests {
         let mut ports: Vec<u16> = nodes.iter().map(|n| n.bind_port).collect();
         ports.sort_unstable();
         ports.dedup();
-        assert_eq!(ports.len(), nodes.len(), "aggregator bind ports must be unique");
+        assert_eq!(
+            ports.len(),
+            nodes.len(),
+            "aggregator bind ports must be unique"
+        );
     }
 
     #[test]
@@ -522,9 +557,17 @@ mod tests {
         for id in 0..2u32 {
             let node = &nodes[id as usize];
             assert_eq!(node.tier, 0);
-            assert_eq!(node.bind_port, base + id as u16, "tier-1 binds base + id, unchanged");
+            assert_eq!(
+                node.bind_port,
+                base + id as u16,
+                "tier-1 binds base + id, unchanged"
+            );
             assert_eq!(node.child_count, children_of(id, 2, 6));
-            assert_eq!(node.ship, ShipTarget::Controller, "single tier ships to controller");
+            assert_eq!(
+                node.ship,
+                ShipTarget::Controller,
+                "single tier ships to controller"
+            );
         }
     }
 

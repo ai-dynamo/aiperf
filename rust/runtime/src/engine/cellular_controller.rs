@@ -1737,8 +1737,8 @@ async fn spawn_aggregators(
     controller_coordinate: &str,
 ) -> Result<Vec<tokio::process::Child>> {
     use crate::engine::cellular_aggregator::{
-        aggregator_nodes, tier_counts_from_env, ShipTarget, AGG_BIND_ENV, AGG_CHILD_COUNT_ENV,
-        AGG_ID_ENV, AGG_SHIP_ADDR_ENV,
+        AGG_BIND_ENV, AGG_CHILD_COUNT_ENV, AGG_ID_ENV, AGG_SHIP_ADDR_ENV, ShipTarget,
+        aggregator_nodes, tier_counts_from_env,
     };
     use crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV;
     use std::process::Stdio;
