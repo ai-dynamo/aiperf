@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
 use aiperf_runtime::engine::application::Application;
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 use aiperf_runtime::engine::cellular_kind::CellularRunKind;
 use aiperf_runtime::engine::distribution_identity::current_distribution_id;
 use aiperf_runtime::engine::protocol_v2::{
@@ -125,7 +125,7 @@ pub fn dispatch(args: &[String]) -> ! {
 }
 
 /// Run one cell using the launcher-provided `AIPERF_CELL_*` environment.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 fn run_cell() -> ! {
     // Drop the fetch runtime before execution creates its thread-per-core runtime.
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -192,7 +192,7 @@ fn run_object_bytes(envelope: &[u8]) -> Vec<u8> {
 }
 
 /// Run a tier-T2 aggregator and send its merged store to the controller.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 fn run_aggregator(input: &[u8]) -> ! {
     let envelope = match serde_json::from_slice::<Value>(input) {
         Ok(envelope) => envelope,
@@ -223,7 +223,7 @@ fn run_aggregator(input: &[u8]) -> ! {
     }
 }
 
-#[cfg(not(feature = "velo"))]
+#[cfg(not(feature = "cellular"))]
 fn run_aggregator(_input: &[u8]) -> ! {
     tracing::error!(
         "aiperf was built without the `velo` feature; `--aggregator` (tier-T2 tree merge) requires it"
@@ -231,7 +231,7 @@ fn run_aggregator(_input: &[u8]) -> ! {
     std::process::exit(2);
 }
 
-#[cfg(not(feature = "velo"))]
+#[cfg(not(feature = "cellular"))]
 fn run_cell() -> ! {
     tracing::error!(
         "aiperf was built without the `velo` feature; `--cell` (multi-cell runs) requires it"
@@ -239,7 +239,7 @@ fn run_cell() -> ! {
     std::process::exit(2);
 }
 
-#[cfg(not(feature = "velo"))]
+#[cfg(not(feature = "cellular"))]
 fn run_controller(envelope: &Value) -> ! {
     let benchmark_id = envelope
         .pointer("/run/benchmark_id")
@@ -254,7 +254,7 @@ fn run_controller(envelope: &Value) -> ! {
 }
 
 /// Drive cellular execution and emit one terminal envelope.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 fn run_controller(envelope: &Value) -> ! {
     let benchmark_id = envelope
         .pointer("/run/benchmark_id")

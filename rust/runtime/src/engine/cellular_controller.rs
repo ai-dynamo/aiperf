@@ -30,11 +30,11 @@ use crate::engine::cellular_kind::CellularRunKind;
 // The velo transport + launcher wiring is the only part of the controller that
 // needs the `velo` feature; the validation, budget-slicing, merge, and report
 // assembly below are plain envelope/metric logic reused by the non-velo build.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 use crate::cellular::transport::connect::{BindSpec, build_velo};
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 use crate::cellular::{CellMessage, ControllerTransport, SpecFor, VeloControllerTransport};
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 use crate::engine::cell_launcher::{CellLaunchContext, select_launcher};
 
 /// Env toggle for barrier-free start: the controller
@@ -132,7 +132,7 @@ impl CellularRunKind {
 /// — no log path (env unset, e.g. a local `--cells` run whose frontend does not set
 /// it) or a transient write error just skips the tick; the authoritative report still
 /// comes from the merged partitions at finalize.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 fn emit_live_progress(log_path: Option<&Path>, heartbeats: &BTreeMap<u32, MetricsHeartbeat>) {
     use std::io::Write as _;
     let Some(path) = log_path else {
@@ -166,7 +166,7 @@ fn emit_live_progress(log_path: Option<&Path>, heartbeats: &BTreeMap<u32, Metric
 /// Runs one benchmark across `cell_count` cells and writes the merged report to
 /// `report_path`. Blocks until every cell ships. Requires the `velo` feature (the
 /// cell transport).
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub fn run_cellular(
     envelope: &serde_json::Value,
     cell_count: u32,
@@ -900,7 +900,7 @@ pub fn run_cellular(
 /// on the controller pod; cells derive the matching authority from their `tcp://`
 /// velo coordinate host + the artifact port. Distinct from the velo messaging bind
 /// (control plane) — this carries bulk artifact bytes, not coordination.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 fn controller_artifact_bind() -> std::net::SocketAddr {
     use crate::engine::cellular_cell::DEFAULT_ARTIFACT_PORT;
     std::env::var("AIPERF_CONTROLLER_ARTIFACT_BIND")
@@ -918,7 +918,7 @@ fn controller_artifact_bind() -> std::net::SocketAddr {
 ///   (`AIPERF_CELL_CONTROLLER_ADDR`), so the launcher's copy is unused (empty).
 /// - **local**: pre-bind a loopback TCP listener so the actual port is known before
 ///   build; cells connect to `tcp://127.0.0.1:<port>`.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 fn controller_bind_and_endpoint(is_k8s: bool, temp_root: &Path) -> Result<(BindSpec, String)> {
     let _ = temp_root;
     if is_k8s {
@@ -943,7 +943,7 @@ fn controller_bind_and_endpoint(is_k8s: bool, temp_root: &Path) -> Result<(BindS
 /// execute the benchmark before shipping), so it is generous and env-overridable
 /// (`AIPERF_CELL_COLLECT_TIMEOUT_SECS`, default 2 hours). Primarily a k8s backstop —
 /// a local run's per-child exit watcher catches a dead cell far sooner.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub(crate) fn collect_timeout() -> std::time::Duration {
     let secs = std::env::var("AIPERF_CELL_COLLECT_TIMEOUT_SECS")
         .ok()
@@ -960,7 +960,7 @@ pub(crate) fn collect_timeout() -> std::time::Duration {
 /// the whole-run `collect_timeout` (default 2h). Env-overridable
 /// (`AIPERF_CELL_ARTIFACT_UPLOAD_TIMEOUT`, seconds; default 5 minutes), so a cell
 /// that dies mid-upload fails the run in minutes rather than hours.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 fn artifact_upload_timeout() -> std::time::Duration {
     let secs = std::env::var("AIPERF_CELL_ARTIFACT_UPLOAD_TIMEOUT")
         .ok()
@@ -973,7 +973,7 @@ fn artifact_upload_timeout() -> std::time::Duration {
 /// only fetch their envelope here — no benchmark work yet — so this is a short
 /// startup bound (env `AIPERF_CELL_REGISTER_TIMEOUT_SECS`, default 5 minutes),
 /// unlike [`collect_timeout`] which must span the whole run.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 fn register_timeout() -> std::time::Duration {
     let secs = std::env::var("AIPERF_CELL_REGISTER_TIMEOUT_SECS")
         .ok()

@@ -73,7 +73,7 @@ async fn load_tokenizer(name: &str) -> anyhow::Result<ChatTokenizer> {
     if path.is_file() {
         return Ok(ChatTokenizer::Hf(HuggingFaceTokenizer::from_file(path)?));
     }
-    let dir = aiperf_runtime::dataset::tokenizer::download_hugging_face_tokenizer(name)
+    let dir = aiperf_runtime::dataset::download_hugging_face_tokenizer(name)
         .await
         .with_context(|| format!("resolving tokenizer {name:?}"))?;
     Ok(ChatTokenizer::Hf(HuggingFaceTokenizer::from_directory(

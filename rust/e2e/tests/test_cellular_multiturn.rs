@@ -12,8 +12,8 @@
 //! Authored `inputs_json` runs use exact folding and must match the single-cell
 //! deterministic records. Live-reply datasets require retained records and are rejected.
 //!
-//! Requires the launched `aiperf` (`AIPERF_EXEC_BIN`) to include the `velo`
-//! cell transport (the default runner build).
+//! Requires the launched `aiperf` to include the `cellular` cell transport
+//! (the default build).
 
 mod common;
 use common::*;

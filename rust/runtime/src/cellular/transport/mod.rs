@@ -23,17 +23,17 @@ use crate::cellular::heartbeat::MetricsHeartbeat;
 use crate::cellular::shard::{ColumnStorePartition, RecordsShardPartition};
 
 /// Discovery-free Velo construction and endpoint-based controller connection.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub mod connect;
 /// Velo distribution for the dataset fan-out data plane.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub mod dataset_velo;
 /// Velo distribution for the monotonic phaser control plane.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub mod phaser_velo;
 /// The velo-backed cell↔controller transport (cell client + controller
 /// endpoint), gated on the `velo` feature.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub mod velo_transport;
 
 /// One self-attributing message from a cell to the controller. A cell sends its

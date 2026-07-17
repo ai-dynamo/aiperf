@@ -9,7 +9,7 @@ license.workspace = true
 description = "Rust-native AIPerf load-generation runtime used by the subprocess runner."
 
 [features]
-default = ["parquet", "velo", "grpc"]
+default = ["parquet", "cellular", "grpc"]
 # Hosts the v2 protocol / registry / execution layer (the ~30k-line engine
 # modules under `src/engine/`). Only `aiperf-cli` opts in; `mock-server`/`e2e`
 # and other library consumers build without it, so the gated module and its
@@ -54,12 +54,11 @@ dynamo-full = [
 # Exact official-harness builds align the enabled Dynamo capability set. The
 # embedding executable, not this library, owns process-global allocator choice.
 dynamo-parity = ["dynamo-full"]
-# Cellular cross-host cell transport over the official ai-dynamo/velo messaging
-# framework. Gates all velo-dependent code (the velo CellClient/ControllerTransport
-# impls + the cell connection seam). In the default build; a lean
-# `--no-default-features` build drops it, keeps `cells=1` byte-unchanged, and fails
-# closed on `cells>1`.
-velo = ["dep:velo", "dep:zstd"]
+# Cellular cross-host cell transport, carried over the `velo` messaging framework.
+# Gates all velo-dependent code (the CellClient/ControllerTransport impls + the
+# cell connection seam). In the default build; a lean `--no-default-features` build
+# drops it, keeps `cells=1` byte-unchanged, and fails closed on `cells>1`.
+cellular = ["dep:velo", "dep:zstd"]
 
 [lib]
 name = "aiperf_runtime"
@@ -83,7 +82,10 @@ half.workspace = true
 image.workspace = true
 itoa.workspace = true
 libc.workspace = true
-llm-tokenizer.workspace = true
+dynamo-tokenizers.workspace = true
+dynamo-renderer.workspace = true
+tokenizers.workspace = true
+hf-hub.workspace = true
 parquet = { workspace = true, optional = true }
 percent-encoding.workspace = true
 petgraph.workspace = true
@@ -219,7 +221,7 @@ path = "tests/transport_http/tls.rs"
 [[example]]
 name = "velo_cell_spike"
 path = "examples/velo_cell_spike.rs"
-required-features = ["velo"]
+required-features = ["cellular"]
 
 # Synthetic prompt generation throughput benchmark (criterion). `harness = false`
 # hands `main()` to criterion instead of libtest. Run with `cargo bench -p

@@ -112,6 +112,8 @@ async fn tuned_https_single_turn_raw_timing() {
         return;
     }
 
+    // The harness supplies the subprocess machinery; its own cleartext mock is
+    // unused — the config points the run at the separate HTTPS listener below.
     let h = AIPerfHarness::new().await;
     let tls_mock = TlsMockServer::start(tuned_mock_config(TTFT_MS, ITL_MS));
 

@@ -596,7 +596,6 @@ fn measure_runner_vmhwm(url: &str, exact_fold: bool, entries: u32, requests: u32
         .env("TRANSFORMERS_OFFLINE", "1")
         .env("PYTHONUNBUFFERED", "1")
         .env("MALLOC_ARENA_MAX", "2")
-        .env("AIPERF_EXEC_BIN", exec_binary())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

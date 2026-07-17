@@ -368,309 +368,102 @@ profiler.
   `rust/runtime/src/report.rs`; strict run selection/composition is in
   `rust/runtime/src/engine/{protocol_v2,registry,execute}.rs`.
 
-## Design specs (`specs/` — intent, not code)
+## Design specs (`specs/` — intent, code is authoritative)
 
-Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/README.md).
+Full index: [`specs/README.md`](specs/README.md). Each spec states current built
+behavior plus, where present, an explicit `Future requirements` section.
 
-- `specs/2026-07-10-aiperf-rust-port-exact-vs-redo-ledger.md` — **read first**:
-  scope rulings + the credit-policy trap + the three-modes framing. Addendum:
-  online/offline parity is shared code path + report schema, not byte-identical values.
-- `specs/2026-07-10-shared-rust-architecture-northstar.md` — the target
-  abstraction (aspirational vocabulary); its latest addendum replaces the
-  native App/CLI layer with Python Config v2 plus the strict runner.
-- `specs/2026-07-12-aiperf-rust-crate-naming-layout-design.md` — **decided / not
-  implemented; authoritative for crate identity and paths**: AIPerf-owned Cargo
-  packages retain `aiperf` / `aiperf-*`, target directories shorten to
-  `rust/<capability>`, and `loadgen-core` remains neutral for eventual shared
-  use by AIPerf and AI-Dynamo Mocker. The directory migration, independent
-  shared-crate versioning, Dynamo consumption, and metadata guard remain unbuilt.
-- `specs/2026-07-10-steppable-clock-injected-engine-design.md` — **built and
-  runner-reachable behind `dynosim`**: neutral two-source DES pump,
-  in-process sink/observer/completion/cancellation seam, all profiles/topologies/
-  routers/trace formats, paced/scheduled/graph consumers, SLA/raw/timed artifacts,
-  direct raw-token/trace-hash body and encoder bypass, AIC/offload feature
-  families, and byte-exact no-server conformance against the sibling Dynamo
-  mocker. A feature-bearing runner registers scheduled and graph protocol-v2 pairs.
-  Addendum (2026-07-12): the same passive engine also runs under the real wall
-  clock (`drive_real_with_source`, selected by `transport.type: dynosim_online`)
-  through AIPerf's own flow — apples-to-apples with Dynamo's native
-  `simulate_*_live_*` driver (counts exact, latency within 3%, throughput >=
-  native); virtual replay uses `transport.type: dynosim_offline`, and there is
-  no `replay_mode` config.
-- `specs/2026-07-10-aiperf-transport-rust-port-design.md` — the Clock-injected
-  hyper transport (→ `aiperf-transport-http`); cancellation-after-send is built,
-  while complete h2 reuse and aiohttp-style trace-field parity remain narrower
-  than the original target.
-- `specs/2026-07-12-aiperf-native-grpc-kserve-v2-design.md` — **built +
-  addendum**: complete PR-664 KServe endpoint behavior plus the Clock-injected
-  Tonic/OIP crate, open gRPC binding registry, typed/raw tensor parity,
-  thread-per-core placement, and runner-v2-only HTTP/gRPC scheduled product
-  proofs. The 2026-07-12 addendum adds nine NVIDIA Riva ASR/TTS/NLP dialects,
-  config-first bidirectional ASR, server-streaming TTS, reference-grounded
-  Prost codecs, a real Tonic bidi proof, and a strict Rust runner subprocess.
-  KServe V1 Predict remains an endpoint dialect, not runner protocol v1.
-- `specs/2026-07-14-mock-server-grpc-kserve-design.md` — **built**: gives
-  `aiperf-mock-server` a KServe OIP v2 `GRPCInferenceService` target (dynamo
-  parity) so the runner's gRPC KServe client has a mock. Hand-routed tower
-  service reusing the shared `aiperf_runtime::transport::grpc::proto` prost messages (no
-  build-time protoc); `ModelInfer`/`ModelStreamInfer`/`ModelReady`/`ServerLive`/
-  `ServerReady` lower to the mock's chat generation seam; opt-in `--grpc-port`,
-  HTTP-only under `--processes N`.
-- `specs/2026-07-10-aiperf-rust-dataset-segment-seam-design.md` — **built end to
-  end + addenda** as `aiperf-dataset`: full loader→compose→dense
-  store→sampler→materializer flow shared by the runner, accuracy, and Graph-IR,
-  including exact replay, validated raw-token handles, endpoint-required load
-  checks, vocabulary-aware no-decode synthesis, decoded/synthetic media,
-  context/dispatch fields, and opaque accuracy correlation/task ids; direct `dag_jsonl` bypasses linear
-  `Dataset`/`Conversation`/`DagMetadata` composition. Rust no longer stores
-  evaluator ground truth.
-- `specs/2026-07-12-aiperf-rust-content-server-design.md` — **built**: public
-  environment-to-strict-v2 projection, injected inline/file publication,
-  stable generated image/video URLs with inline audio, ready-before-use native
-  serving, MIME/ranges, canonical traversal/symlink confinement, full streamed-
-  body tracking, bounded lifetime-safe telemetry, and run-owned cleanup.
-- `specs/2026-07-11-aiperf-rust-compile-time-extension-registry-design.md` —
-  **built + addenda** statically linked replacement for `plugins.yaml`:
-  aggregate transactional registration for dataset formats, samplers, and
-  endpoints. `Application` freezes that linked registry with input
-  resolvers, pair factories, compatibility authority, and the v2 coordinator;
-  capabilities, validation, and execution share the exact object graph.
-  Accuracy remains a directly injected evaluator process seam.
-- `specs/2026-07-11-aiperf-runner-owned-endpoint-registry-design.md` —
-  **foundation, v2 validation, and selected prepared execution built; broader convergence pending + addenda; authoritative for endpoint ownership**:
-  `aiperf-endpoints` owns open IDs, adapter-local descriptors, deterministic factory/alias
-  composition, raw/effective configuration, worker-local prepared bindings/dense keys,
-  readiness policy, and compile-once raw/template state; `aiperf-extensions` proves a genuinely
-  new dialect. Runner capability and v2 static-validation paths now consume the frozen registry;
-  prepared-binding convergence remains. The addendum also
-  pins authored preflight, completeness, the strict v2 envelope, and exact image identity;
-  mode reachability is intentionally delegated to the next spec.
-- `specs/2026-07-11-aiperf-runner-only-execution-surface-design.md` — **canonical
-  pair matrix built; wire/discovery superseded 2026-07-13**: sole native runner
-  and fail-closed reachability remain; request envelope, `supported_pairs`, and
-  distribution pinning are superseded by the BenchmarkRun wire + catalog design.
-- `specs/2026-07-11-python-orchestrator-rust-single-run-design.md` — **built
-  protocol-v2-only product path; wire/projection superseded 2026-07-13**: Python
-  CLI/Config ownership and the sole `aiperf --execute` child remain; authored
-  `transport`/`workload` projection and “no resolved” rule are superseded by the
-  BenchmarkRun wire + catalog design.
-- `specs/2026-07-13-benchmarkrun-wire-and-runner-catalog-design.md` — **built
-  (performance wire + catalog; dead-mode modules linked but off product wire)**:
-  `run` is BenchmarkRun-shaped JSON including `resolved`; the request wire has
-  since collapsed to a bare `BenchmarkRun` (operation is the argv mode —
-  `--execute` vs `--validate` — not a wire field; the response wire still carries
-  `protocol_version`); `--capabilities` emits a
-  linked-inventory JSON catalog in `plugins.yaml` category shape; no
-  distribution pin / workload / backend dialect; path selection from
-  `cfg.transport` + dataset format.
-- `specs/2026-07-10-unified-graph-runtime-design.md` — **the realization design**:
-  every load mode reduces to one dispatch verb on the clock-scheduled graph
-  executor; strategies become `Workload` schedule generators. Supersedes the
-  scheduling sketch; addendum maps old RNG wording to BLAKE3 and translates
-  north-star seam names to current `RequestSink` / `RequestObserver` symbols.
-- `specs/2026-07-11-aiperf-rust-request-rate-multiturn-design.md` — **built +
-  implementation addendum**: `RequestRateWorkload` is the source-grounded
-  single-loop issuer emitting one turn per interval (FIFO continuation-priority,
-  NOT conversation arrivals), with session + prefill `SlotPool`s, TTFT/terminal
-  release, `StopChecker` bounds, segment-pool materialization, and Clock-deferred
-  think time. Synthetic and dataset runner paths share `ScheduledRuntime`; exact
-  `SimClock`, real-HTTP, and feature-gated Dynamo tests pin policy and reply splicing.
-- `specs/2026-07-11-aiperf-rust-user-centric-fixed-schedule-design.md` — **built +
-  addendum**: shared Clock-backed `ScheduledRuntime`, conversation/scheduler/source/
-  workload traits, user-centric steady-state seeding + churn + continuation pacing,
-  and fixed absolute trace replay are wired through Config v2 and the runner. Exact `SimClock`
-  and real `aiperf-mock-server` library tests plus runner tests validate ordering,
-  drain, timing, TTFT, and reply splicing.
-- `specs/2026-07-11-aiperf-rust-phase-runner-orchestrator-design.md` — **built +
-  implementation addendum**: validated lifecycle/config/progress, direct observers,
-  Clock-driven timeout/grace/cancel/drain/force escalation, failure finalization,
-  ordered warmup→profiling execution, seamless overlap, and shared-slot debt drain live
-  in `aiperf-timing::phase`; `aiperf_runtime::phase_runtime` connects scheduled workloads,
-  phase-owned ramps, processors, `SimClock`, and real HTTP. Config v2 and runner
-  protocol v2 author ordered warmup/profiling lists. Direct Graph-IR adapts
-  `GraphWorkload` through its own execution factory into the same lifecycle,
-  including grace/drain/force, seamless handoff, and multiworker control.
-- `specs/2026-07-11-aiperf-rust-adaptive-scale-design.md` — **built + addendum**:
-  `aiperf-adaptive` implements the actuator/evaluator/step/window/controller traits,
-  Python-grounded SLA math with authoritative completion-token OSL/ITL reconciliation,
-  Clock-paced `ramp_until_fail`, and schema-v2 artifacts;
-  online and feature-gated offline modes share the injected-backend futures for
-  paced concurrency/prefill, scheduled request rate, and user-centric target users.
-- `specs/2026-07-11-aiperf-rust-ancillary-timing-policy-design.md` — **built +
-  addendum**: Clock-driven Linear/Exponential/Poisson ramps, seeded warmup-aware
-  Bernoulli fixed-delay policy, full-body send-complete HTTP 499 cancellation,
-  and turn-zero round-robin with sticky session routing are implemented and
-  wired into online issuers. Config v2 and runner phase DTOs expose applicable
-  ramps, cancellation, and endpoint selection; graph phases consume arrival/
-  prefill ramps and adaptive concurrency/prefill/request-rate controls through
-  placement-wide worker updates.
-- `specs/2026-07-10-aiperf-rust-coverage-gap-ledger.md` — research synthesis of
-  unspec'd bodies; addendum notes metrics, telemetry, and RNG gaps are now covered
-  by dedicated specs/addenda.
-- `specs/2026-07-10-aiperf-rust-accuracy-accumulator-design.md` — **static and
-  stateful runner paths built + addenda**:
-  Rust owns inference/timing/metrics/reporting and supervised pinned Python
-  workers own canonical datasets, environments, hidden tests, loops, and scoring.
-  Static Lighteval and the stateful agentic pair are runner subprocess-tested.
-  Harbor, AgentLab/BrowserGym, and MCPMark remain canonical Python providers;
-  every model call returns through Rust's scheduled endpoint/transport path.
-- `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` — **built +
-  addenda**: columnar/ragged engine, formulas/SLOs, full effective/active/ICL sweeps,
-  duration-weighted stats, authoritative completion-usage reconciliation,
-  windows/timeslices, worker merge, all-mode runtime wiring, deterministic
-  per-model/per-endpoint native-v2 series, and the typed `Reporter`.
-- `specs/2026-07-10-aiperf-rust-metric-catalog-appendix.md` — **built + addendum**:
-  103 inherited metric identities plus 16 sweep identities, exact metadata/formulas,
-  dependency validation and fingerprint; GPU energy and network-adjusted rows inject
-  when their optional producers are enabled.
-- `specs/2026-07-10-aiperf-rust-telemetry-accumulators-design.md` — **built + addenda**:
-  `aiperf-gpu-telemetry`, `aiperf-server-metrics`, and `aiperf-network-latency`
-  implement the shared side-channel accumulator seam, with `aiperf-server-metrics`
-  owning its self-contained Prometheus/OpenMetrics parsing; `aiperf-runtime` owns their
-  Clock-paced tasks, exact phase snapshots, finalize-order energy/network joins,
-  GPU-energy accuracy analysis,
-  native server report blocks, compatibility JSONL, fallback/auto-disable state
-  machine, vLLM/SGLang atlas, histogram estimator, and TCP calibration.
-- `specs/2026-07-11-aiperf-rust-exporters-overhaul-design.md` — **built (see 2026-07-14
-  addendum)**: the full native-Rust exporter plane (`aiperf_runtime::export`) is built and is
-  the default sole emitter (`AIPERF_RUNTIME_NATIVE_EXPORT=0` restores legacy Python).
-  Nine sinks behind one `Exporter` trait — aiperf-v1 (genai-perf-v1) JSON+CSV (incl. GPU `telemetry_data`), timeslice
-  JSON+CSV, server-metrics JSON+CSV+parquet, accuracy CSV, console.txt (+warning/insight
-  detectors), OTLP per-record metrics, MLflow, W&B — parity-verified byte-for-byte (or
-  schema+data for parquet) vs the retired Python exporters via the `AIPERF_EXPORT_SUBDIR`
-  same-report diff. Opt-in bounded-memory metrics: `AIPERF_METRICS_SKETCH=1` /
-  `--sketch-metrics` (default off) swaps `MetricsStorageMode::Exact` for `Sketch`, streaming
-  each Record-metric value into a per-`(phase, tag)` mergeable `cellular::sketch::TDigest`
-  (exact count/sum/min/max + Welford std, approximate percentiles) so accumulator memory is
-  O(1) in the record count; per-record artifacts + per-row-only outputs are dropped
-  fail-closed (`rust_wire`, `validate_plan`), and the online path folds+drops each finalized
-  record (`RunCapture::finish_fold_into`). Bounds the accumulator/coordinator finalize;
-  online-path peak RSS still gated by per-worker record retention until drain (follow-up).
-  Opt-in per-record sidecars: the `artifacts.records` format list takes `jsonl`, `csv`, and
-  `parquet` (any subset, e.g. `records: [jsonl, csv, parquet]`). `parquet` writes a wide
-  `profile_export.parquet` (one row per request, one nullable column per catalog record-metric,
-  `aiperf.units` file metadata, `trace_*` columns when `artifacts.trace`); `csv` writes a flat
-  `profile_export_records.csv` (metadata + a `{tag}_value`/`{tag}_unit` pair per metric +
-  `error_code`/`error_type`/`error_message`, `trace_*` when trace on), ported from the legacy
-  Python `RecordExportCsvResultsProcessor`. Runner-owned (not `Exporter`s over `NativeReport`):
-  `rust/runtime/src/engine/records.rs::write_records_{parquet,csv}` drive the writers at the scheduled +
-  graph callsites over the shared `aiperf_runtime::metrics_core::record_metric_columns`; parquet is gated
-  on the `parquet` feature (a lite runner warns/skips), CSV is stdlib. Both are force-disabled on
-  the DynoSim/sketch paths.
-- `specs/2026-07-11-aiperf-rust-endpoints-design.md` — **built + implementation/
-  token-native addenda**: every tier-1 and tier-2 dialect plus the open PR-1113
-  `vllm_generate` factory is implemented behind trait-backed prepared endpoints,
-  including exact token-array accounting/non-text outputs, raw/template JMESPath + Jinja, and input-side ISL accounting.
-  Multipart, Clock-paced polling/download, inline-media retrieval/deduplication, endpoint
-  streaming paths, and lifecycle-wide post-send cancellation live in `aiperf-transport-http`;
-  real-loopback tests cover the dialect families, wire lifecycles, and native modality metrics.
-  Its endpoint-identity/registry/config-ownership claims are superseded by the runner-owned
-  endpoint-registry spec; its formatting/parsing/replay behavior remains authoritative.
-- `specs/2026-07-10-aiperf-rust-rng-derive-system-design.md` — the hash-derived
-  RNG substrate: `blake3(f"{root}:{id}")[:8]`→u64 order-independent seed derivation
-  + canonical namespace constants + `HashIdRandomGenerator` (per-`(trace_id,
-  hash_id)` reseed) + `RandomGenerator` and generic sampler contracts; ruling: NO
-  cross-language byte parity — one deterministic PRNG (`Pcg64`) + `rand_distr`
-  with faithful distribution/edge-case semantics; internal reproducibility +
-  order-independence (lock-free per-thread, alloc-free reseed). Built as leaf crate
-  `aiperf-rng`; a Rust-internal fixed-seed profile canary pins the stream. Dataset
-  composition/samplers, recorded WEKA/Dynamo content synthesis, ancillary timing policies, and graph phase/arrival/
-  node-cancellation/worker streams consume it; broader non-graph scheduler
-  integration remains.
-- `specs/2026-07-09-graph-ir-rust-port-design.md` — Graph-IR runtime plus direct
-  authored `dag_jsonl`, `weka_trace`, and `dynamo_trace` lowering are built in
-  `aiperf-graph`; addenda supersede standalone/offline-only and parse-plane
-  non-goal framing with the current `LocalSet` + `drive_sim`/`drive_real` +
-  HTTP-dispatch path, runner-only `graph` workload, and canonical `aiperf-rng`
-  BLAKE3 recorded-content synthesis.
-- `specs/2026-07-14-python-rust-timing-parity-proof.md` — **built + proven**:
-  A/B every legacy timing mode under `AIPERF_RUNTIME_ENGINE=python` vs `rust`
-  against a deterministic mock — worst response-timing divergence 1.06% (all
-  within 5%), send-schedule adherence tighter than Python. Fixes: token-counting
-  alignment (`--use-server-token-count`), fixed-schedule anchor→issuance-start,
-  warm-start prewarm+lead barrier. Non-bugs: RNG-stream variance, Python
-  saturation jitter.
-- `specs/2026-07-14-unified-execution-substrate-design.md` — **north-star;
-  Stage 1 built**: one `Dispatcher`, one `WorkerPool`, any workload over any
-  transport. **Stage 1 shipped**: an object-safe `Dispatcher` trait
-  (`dispatch_collect(PreparedTurn)`) implemented once per transport
-  (`TransportSink`/`GrpcTransportSink`); the graph sink holds `Rc<dyn Dispatcher>`;
-  the graph endpoint runtime factory builds an HTTP or gRPC dispatcher from
-  `cfg.transport.type`; and the whole `RunnerPairFactory` layer — `pairs` map,
-  `register_pair`, the pair impls, **and** the `validate_descriptor_compatibility`
-  predicate / `supported_pairs` inventory — is **deleted**. Transports and
-  workloads are two independent registries with **no compatibility gate**; every
-  workload runs over every transport, `prepare`/`validate_run` moved onto the
-  workload factory. Deliverable proven: `transport.type: grpc` + a `dag_jsonl`
-  graph dataset dispatches graph nodes over Tonic (`rust/cli/tests/test_graph_grpc.rs`).
-  Supersedes the `RunnerPairFactory` mechanism of the runner-only execution-surface
-  spec (its 2026-07-14 addendum). Stage 2 (`WorkerPool`/`Session` merge) is design-only.
-- `specs/2026-07-13-segment-unification-design.md` — **segment unification**
-  (design): collapse `Turn`'s five body fields (content/messages/raw_payload/
-  raw_messages/raw_token_ids) into segment `Handle`s in the one `SegmentPool`;
-  lowering = the single compiler; dispatch materializes one `Full<Bytes>` by
-  concat-not-reserialize with the segment **domain as discriminant** (`raw` = 12 ns
-  clone, `message` = splice). Live continuation = runtime segments (O(depth²) but
-  cheap). Endpoint formatter runs at **lowering, not dispatch** (not-slow
-  requirement). Honors the single-`Full`-buffer + `SendCompletion` constraint (no
-  scatter-gather). Grounded in segment.rs/request.rs/model.rs/connection.rs + microbench.
-- `specs/2026-07-13-endpoint-body-construction-design.md` — **endpoint formatter
-  split** (design): `format_payload → BodyPlan` (named fields; value = literal or
-  segment `Handle`). JSON endpoints (`transport::http`) **splice** segment bytes into
-  one `Full<Bytes>` (generalizes `build_message_body_from_wires`+`Overrides`; zero
-  content re-serialize); protobuf endpoints (`transport::grpc`) pack token/tensor
-  segments into `raw_input_contents` — **no per-request `Value`/per-element walk**
-  (Python PR #664 = what-not-to-port). Formatter runs at lowering; endpoints declare
-  shape; splicing is one shared impl. Dispatch-side companion to segment-unification.
-- `specs/2026-07-13-websocket-transport-design.md` — **WebSocket inference
-  transport** (design, not built): Clock-injected `transport_ws` modeled on
-  **Codex's** WS turn stream (WS-primary + **HTTPS/SSE fallback**); OpenAI
-  **Realtime** a distinct dialect — never conflated with the generic Responses API.
-  Third `BodyPlan` materializer (`→ WS frames`; concat-not-reserialize, no
-  per-request `Value`), streaming/session dispatch (gRPC-bidi precedent), per-frame
-  `RequestObserver` measurement, SSE fallback reuses `transport::http`.
-  **upstream** `tokio-tungstenite` (`MaybeTlsStream`, single-task unsplit drive);
-  one-shot WS→SSE fallback latch, text-only frames; completeness gated on the
-  terminal event not the socket FIN; benign-close taxonomy. Single-`Full`/
-  `SendCompletion` stays HTTP-local.
-- `specs/2026-07-09-dynamo-aiperf-{shared-core,request-rate-tokenizer}-design.md`
-  — historical precursors (built on dynamo's `lib/mocker`; superseded by the
-  standalone workspace).
-- `specs/2026-07-12-{scheduled-worker-local-accumulation,cellular-ready-seams-and-roadmap}.md`
-  — **built.** The worker-local accumulation perf lever + cellular-ready seams
-  roadmap: worker-local accumulation is **built** (runner HTTP + gRPC via the
-  `execute_turn_measured`/`drain_records` measured seam; the `RunCapture` uuid-keyed
-  join it depends on is built too), and the S1–S4 cellular seams (single-issuer
-  today, cross-node autonomous cells) are built. (The earlier Track-A
-  connector/lean/compat-projection planning specs were abandoned and removed.)
-- `specs/2026-07-15-cellular-horizontal-scale-k6-parity-design.md`
-  — **path to k6-class horizontal scale without losing measurement fidelity.**
-  Verified against `grafana/k6` source that AIPerf already owns k6's hard part
-  (master-less static execution partition; k6 `execution_segment.go` == AIPerf
-  `owned_positions`/`CellularAutonomousIssuer`). The gap is the results plane:
-  AIPerf is a star topology with byte-exact retain merge, k6 streams bounded
-  aggregates to a scalable sink. Proposes a **scale-adaptive fidelity ladder**
-  (T0 exact default → T1 bounded sketch → T2 tree-merge → T3 external-sink) so
-  compromises (approx percentiles, no per-record artifacts, looser start) are
-  gated behind scale; counts/sums/rates stay exact at every tier. Six ordered
-  steps; recommended first cut = Steps 1+2 (sketch `StorePartition` ship +
-  streaming per-worker fold-and-drop) = tier T1, ~80% of k6 scale for ~20% of
-  the work, no velo change, T0 byte-exact preserved as default.
-- `specs/2026-07-15-velo-cell-transport-design.md` + `specs/2026-07-15-ultimate-cellular-velo-runtime-design.md`
-  — **the cellular cross-host + north-star pair.** The velo transport swap is
-  **built** (connect-by-endpoint on the `feat/connect-by-endpoint` velo fork:
-  `Velo::connect(Endpoint)`/`_hello`; four `aiperf.cell.*` rmp handlers;
-  synchronized START via a velo `EventHandle` + an AIPerf-side count barrier;
-  Stages B–G HTTP+zstd artifact/dataset shipping; k8s operator/JobSet
-  zero-discovery emptyDir launch; multi-turn exact-fold + graph cellular). The
-  **ultimate** spec is the Phase-3+ north-star (designed, not built): dataset
-  fan-out over a **producer-owned SPMC add-only broadcast anchor velo must add**
-  (velo today has only SPSC/MPSC consumer-owned anchors, no replay, no fan-out;
-  rendezvous RDMA is Phase-2-unbuilt), a **monotonic phaser** control plane
-  (synchronized START generalized to every phase transition, cyclic), a
-  per-request dispatch state machine with a counted `DistributionMiss`, and
-  bounded-memory record collection (ship the merged t-digest sketch as a
-  `StorePartition`). It supersedes the two prior cellular specs going forward.
+Whole system:
+
+- [`specs/architecture.md`](specs/architecture.md) — process model, crate
+  topology, and the three orthogonal seams (time, transport, workload).
+- [`specs/repository-layout.md`](specs/repository-layout.md) — Cargo workspace
+  topology, package identity, and naming rules enforced by
+  `tools/check_crate_layout.py`.
+- [`specs/extension-registry.md`](specs/extension-registry.md) — the
+  `AIPerfRegistry`/`AIPerfExtension` link-time composition seam, its capability
+  categories, and the frozen bootstrap object graph.
+- [`specs/runner-protocol.md`](specs/runner-protocol.md) — the Config-v2 ↔
+  execution boundary: the protocol-v2 stdio envelope, the `BenchmarkRun`
+  vocabulary, path selection, and `--capabilities` discovery.
+
+Execution and scheduling:
+
+- [`specs/execution-model.md`](specs/execution-model.md) — the single
+  thread-per-core hot path, the two-trait transport seam, worker-local
+  accumulation, and the shared reduce/measure layers.
+- [`specs/flatgraph-fast-path.md`](specs/flatgraph-fast-path.md) — forward design
+  (unbuilt): the `FlatGraphActor` flat-graph fast path — a straight-line
+  single-LLM-node trace executor that skips the scheduler/channel-store/context so
+  the degenerate trace costs what the flat scheduled path costs.
+- [`specs/scheduling.md`](specs/scheduling.md) — request-rate, concurrency,
+  user-centric, and fixed-schedule workloads over one `Clock`-backed runtime, and
+  how each partitions across sub-cells.
+- [`specs/phase-orchestration.md`](specs/phase-orchestration.md) — one
+  `Clock`-native warmup→profiling lifecycle: escalation ladder, cancellation
+  latch, and the seam scheduled and graph runs share.
+- [`specs/ancillary-timing.md`](specs/ancillary-timing.md) — ramping, seeded
+  request cancellation, and sticky round-robin URL selection over a running
+  phase.
+- [`specs/adaptive-scale.md`](specs/adaptive-scale.md) — the closed-loop SLA
+  controller (`ramp_until_fail`), its four live actuators, and its schema-v2
+  artifacts.
+- [`specs/cellular.md`](specs/cellular.md) — partitioning one run across cell
+  processes, the multi-process and velo cross-host topologies, and the fidelity
+  guards.
+
+Transports:
+
+- [`specs/http-transport.md`](specs/http-transport.md) — the Clock-injected hyper
+  HTTP stack: protocols, SSE streaming, endpoint binding, and post-send
+  cancellation.
+- [`specs/grpc-transport.md`](specs/grpc-transport.md) — the Clock-injected Tonic
+  gRPC stack: the binding registry, KServe OIP v2 and Riva families, the
+  protoc-free codec, and the worker-local sink.
+- [`specs/websocket-transport.md`](specs/websocket-transport.md) — the forward
+  contract for a Clock-injected WebSocket transport (Codex and Realtime dialects,
+  SSE fallback) over the existing seams.
+- [`specs/offline-cosimulation.md`](specs/offline-cosimulation.md) — socket-free
+  Dynamo co-simulation behind the `dynosim` feature: the steppable clocked engine
+  boundary and the observer contract.
+
+Inputs, endpoints, and graph:
+
+- [`specs/dataset.md`](specs/dataset.md) — the content-addressed segment store and
+  the loader→compose→store→sampler→materializer pipeline.
+- [`specs/endpoint-body-construction.md`](specs/endpoint-body-construction.md) —
+  `format_payload → BodyPlan` and the two shared materializers that turn segment
+  handles into wire bytes.
+- [`specs/endpoints.md`](specs/endpoints.md) — the `Endpoint` dialect adapter, the
+  native dialects, endpoint identity, and the registry consumed by validation and
+  execution.
+- [`specs/content-server.md`](specs/content-server.md) — the run-owned HTTP
+  delivery sidecar that serves generated media by URL, and its publication seam.
+- [`specs/rng.md`](specs/rng.md) — the hash-derived randomness substrate:
+  order-independent BLAKE3 stream derivation, generators, and sampling
+  distributions.
+- [`specs/graph-runtime.md`](specs/graph-runtime.md) — the Graph-IR runtime:
+  deterministic async dataflow, the recorded-trace compilers, and the
+  trajectory-snapshot/warmup-priming subsystem.
+
+Measurement and output:
+
+- [`specs/metrics.md`](specs/metrics.md) — the IO-free metrics engine: the
+  column-store accumulator, the metric catalog, sweep curves, and the typed
+  report; exact vs sketch modes.
+- [`specs/telemetry.md`](specs/telemetry.md) — GPU telemetry, server metrics, and
+  network latency side channels feeding the metrics seam.
+- [`specs/exporters.md`](specs/exporters.md) — the typed report core and the
+  static set of `Exporter` sinks behind one trait.
+- [`specs/accuracy.md`](specs/accuracy.md) — the Rust dispatch/capture vs
+  pinned-Python grading split, the injected evaluator seam, and sharded capture
+  with a single grade.
+
+Targets:
+
+- [`specs/mock-server.md`](specs/mock-server.md) — the standalone HTTP/gRPC
+  inference target with deterministic generation, latency and error models,
+  telemetry, and request recording.
 
 ## Build / test / run
 

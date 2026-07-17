@@ -34,6 +34,7 @@ read the record for the subsystem you are touching.
 | Spec | Purpose |
 |---|---|
 | [execution-model.md](execution-model.md) | The single thread-per-core hot path, the two-trait transport seam, worker-local accumulation, and the shared reduce/measure layers. |
+| [flatgraph-fast-path.md](flatgraph-fast-path.md) | Forward design (unbuilt): the flat-graph fast path (`FlatGraphActor`) — a straight-line single-LLM-node trace executor that skips the scheduler/channel-store/context so the degenerate trace costs what the flat scheduled path costs, the prerequisite for folding scheduled into the trace substrate. |
 | [scheduling.md](scheduling.md) | The scheduled workload shapes (request-rate, concurrency, user-centric, fixed-schedule) over one `Clock`-backed runtime, and how each partitions across sub-cells. |
 | [phase-orchestration.md](phase-orchestration.md) | One `Clock`-native lifecycle for warmup→profiling phases: the escalation ladder, cancellation latch, and the shared seam scheduled and graph runs both use. |
 | [ancillary-timing.md](ancillary-timing.md) | The three knobs that ride on a running phase: ramping, seeded request cancellation, and sticky round-robin URL selection. |

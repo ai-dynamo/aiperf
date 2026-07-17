@@ -13,9 +13,9 @@
 //! dataset-deterministic metrics byte-for-byte through the full presentation
 //! pipeline.
 //!
-//! Requires the launched `aiperf` (`AIPERF_EXEC_BIN`) to include the
-//! `velo` cell transport — it is in the default runner build, so a default
-//! `cargo test` run drives it; a lean `--no-default-features` runner fails closed.
+//! Requires the launched `aiperf` to include the `cellular` cell transport — it
+//! is in the default build, so a default `cargo test` run drives it; a lean
+//! `--no-default-features` build fails closed.
 
 mod common;
 use common::*;

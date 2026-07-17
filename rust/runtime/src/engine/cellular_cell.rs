@@ -219,7 +219,7 @@ pub fn issuance_authority_for(
 /// [`CellRecordsShipper::ship`]. The controller waits for every cell's `/done` marker
 /// (posted last by [`crate::engine::artifact_shipping::ship_cell_artifacts`])
 /// before running its concat, so this must complete before the process exits.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub fn ship_http_artifacts_if_enabled(
     cell_dir: &std::path::Path,
     artifacts: &crate::engine::protocol::ArtifactSpec,
@@ -298,7 +298,7 @@ fn cell_dataset_dir() -> std::path::PathBuf {
 ///
 /// The download runs on a dedicated thread + runtime (mirroring
 /// [`CellRecordsShipper::ship`]) so it never touches the caller's runtime.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8>> {
     use anyhow::Context;
 
@@ -367,7 +367,7 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
 /// k8s — the cell binds all interfaces so the controller reaches the pod IP. A
 /// `uds://` coordinate is a pure-local unix run. `role` disambiguates the cell's
 /// fetch vs ship velo instances so their UDS paths do not collide.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 fn cell_bind(coordinate: &str, role: &str) -> crate::cellular::transport::connect::BindSpec {
     use crate::cellular::transport::connect::BindSpec;
     if let Some(addr) = coordinate.strip_prefix("tcp://") {
@@ -398,7 +398,7 @@ fn cell_bind(coordinate: &str, role: &str) -> crate::cellular::transport::connec
 /// controller over velo, replacing the stdin spec pipe. Reads the controller
 /// coordinate + cell id from the env the launcher set. Runs on the caller's
 /// runtime; the velo instance is dropped on return.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     use crate::cellular::VeloCellClient;
     use crate::cellular::transport::connect::{build_velo, connect_controller};
@@ -465,7 +465,7 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
 /// builds an index keyed by request_id filtered to its round-robin owned positions
 /// using O(1/N) RAM, and issues each request exactly once through `DispatchTracker`.
 /// A distribution miss fails the run. The function is a no-op when the flag is unset.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub async fn verify_dataset_fanout() -> Result<()> {
     use crate::cellular::dispatch_state::{DispatchDecision, DispatchTracker};
     use crate::cellular::transport::connect::{build_velo, connect_controller};
@@ -543,7 +543,7 @@ pub async fn verify_dataset_fanout() -> Result<()> {
 /// response status code. Off the per-request measurement hot path (this is the
 /// controlled-issue dispatch of a cell's owned shard), so a raw hyper client is
 /// sufficient and no `Clock` is threaded.
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 async fn http_post_json(url: &str, body: Vec<u8>) -> anyhow::Result<u16> {
     use anyhow::Context;
     let rest = url
@@ -590,13 +590,13 @@ pub(crate) fn k8s_agg_ship_coordinate(template: &str, cell_id: u32, agg_count: u
 
 /// Ships a cell's final records-shard partition + heartbeat to the controller over
 /// velo, when this process is a cell (the controller coordinate is set).
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub struct CellRecordsShipper {
     cell_id: u32,
     coordinate: String,
 }
 
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 impl CellRecordsShipper {
     /// Builds a shipper when the controller coordinate and cell partition env vars
     /// are set, else `None` (the ordinary single-process path).

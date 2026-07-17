@@ -31,7 +31,7 @@ pub use shard::{
     merge_store_partitions,
 };
 pub use sketch::TDigest;
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub use transport::velo_transport::{SpecFor, VeloCellClient, VeloControllerTransport};
 pub use transport::{
     CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellStorePartitionShip,

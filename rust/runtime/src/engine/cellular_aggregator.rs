@@ -132,7 +132,7 @@ pub fn children_of(agg_id: u32, agg_count: u32, cell_count: u32) -> u32 {
 /// loopback port, collect its children's folded stores, merge them associatively, and
 /// ship the one merged store up to the controller. `envelope` is the run envelope the
 /// controller piped on stdin (used only for the merge `MetricsConfig`).
-#[cfg(feature = "velo")]
+#[cfg(feature = "cellular")]
 pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
     let agg_id: u32 = std::env::var(AGG_ID_ENV)
         .context("AIPERF_AGG_ID not set")?

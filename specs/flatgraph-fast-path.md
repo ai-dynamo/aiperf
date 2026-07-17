@@ -12,16 +12,20 @@ are named for sequencing but out of scope here.
 **Grounds on:** the authoritative v2 design record
 `ajc/dag-v3/docs/deps/aiperf-v2-cellular-runtime.md` (REQ 9 + §"Flat-Graph Fast Path"),
 and a four-agent adversarial verification of the current `ajc/rust` tree (verdicts inline).
-**Supersedes:** the "Stage 2a = rename `TraceExecutor`" framing in
-`specs/2026-07-14-unified-execution-substrate-design.md`. This increment is not a rename;
-it is the flat-graph fast path that makes the trace substrate cheap enough for the
-degenerate case, which is the actual prerequisite for folding scheduled into the substrate.
+**Refines:** [`execution-model.md`](execution-model.md) — adds the flat-graph fast path.
+Supersedes the "Stage 2a = rename `TraceExecutor`" / "scheduled is the degenerate case of graph
+under one executor" framing (from the now-folded unified-execution-substrate design): this
+increment is not a rename, it is the flat-graph fast path that makes the trace substrate cheap
+enough for the degenerate case — the actual prerequisite for folding scheduled into the substrate.
 
 ---
 
 ## 1. Problem
 
-AIPerf-Rust runs two disjoint execution engines:
+AIPerf-Rust splits execution on **graph vs non-graph** (the `NativeDatasetPlan` enum has
+three variants — `PreparedLinear`, `StaticAccuracy`, `Graph`; the first two are non-graph and
+both fall through to the scheduled entry). The two engines are therefore the scheduled engine
+(all non-graph workloads) and the graph engine:
 
 - **Scheduled** (rate / concurrency / fixed-schedule / user-centric) dispatches through the
   lean `TurnDispatcher` seam (`scheduled.rs:170`); selection is gated on
@@ -41,19 +45,27 @@ node count (verified against the real code):
   (`:115-119`).
 - `build_context` then allocates, per trace, an `Rc<VersionedChannelStore>` (four fresh
   `BTreeMap`s + one `Rc<Notify>` per channel, `channel_store.rs:97-112`) and an
-  `Rc<TraceContext>` (2 `HashSet`s + 3 `BTreeMap`s + 2 `Notify` behind `RefCell`,
-  `context.rs:49-64`).
+  `Rc<TraceContext>` (2 `HashSet`s + 3 `BTreeMap`s behind `RefCell`, plus 2 `Rc<Notify>`, an
+  `Rc<str>` trace_id, and a `RefCell<Option<TraceError>>` abort latch, `context.rs:49-64`).
+  The graph itself is also freshly `Rc`-boxed per trace (`execution.rs:125`).
 - The **online** production path is heavier still: `GraphWorkerBackend::execute_trace`
   (`engine/graph_execution.rs:729-799`) additionally clones the entire node map into a fresh
-  `EngineGraphSink` and builds a fresh `NativeMetricsObserver` **per trace**.
+  `EngineGraphSink` (`graph_execution.rs:759`) — *on top of* the executor's own `node_index`
+  deep-clone, so the online path traverses `graph.nodes` cloning `LlmNode`s **twice** per
+  trace — builds a fresh `NativeMetricsObserver`, and constructs a fresh
+  `LocalGraphTraceExecutionBackend` per trace (inserted into / removed from an `active`
+  HashMap), all **per trace**.
 - There is **zero cross-trace pooling or reuse** of any of these objects anywhere in
   `rust/runtime` (verified).
 
 For a single-LLM-node trace the only genuinely necessary work is **one sink dispatch** (plus, on
 the current path, a terminal channel write nothing downstream consumes); everything above is
-pure orchestration tax. This tax is the sole reason
-"scheduled is the degenerate case of graph" would be a regression, and thus the reason the
-two engines coexist today.
+pure orchestration tax. This tax is why "scheduled is the degenerate case of graph" would be a
+regression today. (The engines are *currently* selected by dataset kind / workload-factory
+descriptor — `GraphWorkloadFactoryV2` vs `ScheduledWorkloadFactoryV2`, reinforced by explicit
+guard rails at `dataset_input.rs:803-804`/`843-844` — not by any runtime cost heuristic. So the
+overhead is the *design rationale* for keeping a lean path, not a branch condition; a plain
+synthetic workload can never reach the graph engine regardless.)
 
 ### Why this matters now (the two-ontology frame)
 
@@ -89,11 +101,14 @@ the sibling `dynamo-aiperf-native`).
 
 - **Increment B** — rerouting flat *scheduled* workloads through `FlatGraphActor` (folding the
   two engines). A pilot proof of the substrate; not attempted here.
-- **Increment C** — `VirtualTraceRunner` executor-reuse + context **pooling** for *multi-node*
-  recorded traces. This is where the real porting risk lives (Python's structured-concurrency
-  `asyncio.TaskGroup`, detached-spawn-outliving-trace, `ExceptionGroup`, and the
-  monkeypatch-of-executor-slots binding trick — verified in the Python source). Deliberately
-  deferred so Increment A stays low-risk.
+- **Increment C** — `VirtualTraceRunner`-style **runner-object pooling + shared-executor reuse**
+  for *multi-node* recorded traces. Note the Python design pools the *runner object* (`RunnerPool`)
+  and reuses one immutable executor, but still allocates `TraceContext`/`VersionedChannelStore`
+  **fresh per trace** — so *pooling the context/store itself is a Rust-side extension beyond
+  Python, not a port of verified Python behavior*. This is where the real porting risk lives
+  (Python's structured-concurrency `asyncio.TaskGroup`, detached-spawn-outliving-trace,
+  `ExceptionGroup`, and the monkeypatch-of-executor-slots binding trick — verified in the Python
+  source). Deliberately deferred so Increment A stays low-risk.
 - No `LoadExecutor` merge, no span-shape change (see §4.4), no cellular changes.
 
 ## 3. Non-negotiable invariants
@@ -102,9 +117,12 @@ the sibling `dynamo-aiperf-native`).
   `RequestRecord` the current 1-node path emits. It achieves this by **reusing the same
   dispatch + measurement seam** (`GraphSink::dispatch_with_options` →
   `transport::reduce`/`transport::measure`), not by reimplementing a minimal dispatch. (In
-  Python, `FlatGraphActor` emits a deliberately minimal stub record and parity holds only
-  because both funnel through the same `HttpLocalDispatcher`; in Rust we get parity more
-  cheaply and more safely by reusing the existing `GraphSink`.)
+  Python the runner-level record/span callbacks are wired to `lambda: None` in production, so
+  `FlatGraphActor`'s minimal stub record **never reaches the artifact pipeline at all** — the
+  real `RequestRecord` flows exclusively through the shared `HttpLocalDispatcher`'s
+  `V2DispatchResult.request_record` → `record_sink`. Reusing the Rust
+  `GraphSink`/`transport::measure` seam is the exact Rust analogue of that shared-dispatcher
+  parity mechanism, and is cheaper and safer than porting the stub.)
 - **The `{Clock} × {transport}` seam is untouched.** The flat actor is clock-agnostic; no
   `Instant::now`/tokio timers. (Trivial here — a 1-node trace has no edge-delay gates.)
 - **`workers == 1` and all current graph outputs stay byte-identical** when the flat path is
@@ -127,8 +145,10 @@ Port the Python predicate (`runner.py:74-103`) faithfully:
   `graph::model` types, which differ from the Python taxonomy.
 
 Evaluated once at plan/parse time (where the `GraphTracePlan` graph is known), cached on the
-plan/placement so `execute_trace` does not re-scan per trace. A defensive re-check in the flat
-actor's bind path mirrors Python's hard guard (`runner.py:351`).
+plan/placement so `execute_trace` does not re-scan per trace. (Note: the *shipped* Python
+recomputes `is_flat_graph` on every runner bind rather than caching it — caching at plan time
+is a deliberate Rust improvement, not a port of Python behavior.) A defensive re-check in the
+flat actor's bind path mirrors Python's hard guard (`runner.py:351`).
 
 ### 4.2 `FlatGraphActor`
 
@@ -158,7 +178,11 @@ materialization + one dispatch — matching the flat scheduled path's overhead.
 `LocalGraphTraceExecutionBackend::execute_trace` (and the online `GraphWorkerBackend`) branch
 on the cached flat flag: flat → `FlatGraphActor::run`; non-flat → today's `TraceExecutor` path,
 unchanged. Both arms register with the `active` cancellation registry and use the same
-`EngineGraphSink` (online) so records/metrics are produced by the identical seam. **Naming:**
+`EngineGraphSink` (online) so records/metrics are produced by the identical seam. This
+flat/non-flat branch is **internal to the graph placement** and therefore sits *below* the
+existing cellular graph/scheduled fork (`CellularRunKind::detect`, keyed on dataset format): a
+flat graph is still `CellularRunKind::Graph`, so Increment A requires **no cellular routing
+change** — only the placement it constructs chooses flat vs full. **Naming:**
 disambiguate from the existing cellular `IssuanceAuthority` (`cellular/issuance.rs:32`), which
 is a record-ordinal authority, not a credit acquire/release runner authority — do not overload
 the name.
@@ -187,9 +211,19 @@ and (ii) the new `FlatGraphActor` path — and assert:
 - `assert_pinned_records` invariants (exact record count, no errors, ISL/OSL pinned, positive
   `request_latency`/`time_to_first_token`, `inter_token_latency` present) hold on both arms.
 
-The one wiring that does not exist today is a **"select executor impl" arm** — existing harnesses
-compare `workers`/`cells` counts or drive a single backend, never two executor implementations.
-This oracle adds that seam (a test-only switch selecting flat vs full for the same plan).
+**Two** pieces are new wiring, not reuse: (1) a **"select executor impl" arm** — no existing
+harness swaps two executor *implementations* (they vary `workers`/`cells` counts or drive a
+single backend); and (2) **routing a 1-node *graph* fixture through the native-plan entrypoint**
+to emit `profile_export.jsonl` — `workers_characterization.rs` drives a synthetic *linear* plan
+(`NativeDatasetPlan::PreparedLinear`), and the only in-crate graph-backend harness
+(`tests/graph_transport_graph.rs`) drives `LocalGraphTraceExecutionBackend` directly and inspects
+*in-memory* `result.channels`, not the JSONL artifact. Whether
+`execute_prepared_native_plan_uncommitted_selected` already accepts a `Graph` plan is unconfirmed
+(planning item §7). Two further notes: the `workers_characterization` helpers (`FixedMock`,
+`sorted_data_keys`, `assert_pinned_records`) are private to a `#[cfg(test)]` module and cannot be
+imported — the oracle **re-implements** the pattern, it does not reuse the symbols; and for the
+structural "no store/context" bypass assertion, `graph_transport_graph.rs`'s direct-backend
+inspection is the better model than the artifact-file path (which hides backend internals).
 
 Optionally, a structural assertion that the flat arm constructs no `VersionedChannelStore`/
 `TraceContext` (e.g. a `#[cfg(test)]` allocation counter or a code-path assertion), to prevent
@@ -225,7 +259,10 @@ silent regression of the bypass.
 ## 8. Sequencing
 
 - **A (this doc):** `FlatGraphActor` + `is_flat_graph` + parity oracle. Scheduled untouched.
-- **B:** route flat scheduled through `FlatGraphActor`; parity vs current `TurnDispatcher`.
+- **B:** route flat scheduled through `FlatGraphActor`; parity vs current `TurnDispatcher` — must
+  subsume **both** scheduled arms (the single-thread co-located arm *and* the `workers > 1`
+  sharded arm via `run_sharded_scheduled`), and sit **below** the existing cellular graph/scheduled
+  fork (`CellularRunKind::detect`), not just the single-`TurnDispatcher` path.
 - **C:** `VirtualTraceRunner` executor-reuse + context pooling for multi-node traces (the
   `TaskGroup`/spawn-mapping-heavy increment).
 
