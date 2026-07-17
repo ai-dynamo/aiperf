@@ -203,12 +203,7 @@ impl<M: WireMessage + 'static> TracePlacement for LocalGraphTraceExecutionBacken
         for context in active {
             context.set_abort(local_cancellation(&context.trace.id));
         }
-        for abort in self
-            .flat_aborts
-            .borrow()
-            .iter()
-            .filter_map(Weak::upgrade)
-        {
+        for abort in self.flat_aborts.borrow().iter().filter_map(Weak::upgrade) {
             abort.trip();
         }
         Ok(())
@@ -342,14 +337,20 @@ mod tests {
                 sink.clone(),
             ));
             flat.execute_trace(blocked_plan("flat")).await.unwrap();
-            assert!(!flat.executor_built.get(), "single-node plan takes the flat arm");
+            assert!(
+                !flat.executor_built.get(),
+                "single-node plan takes the flat arm"
+            );
 
             let full = Rc::new(
                 LocalGraphTraceExecutionBackend::new(clock, Rc::new(EmptyMaterializer), sink)
                     .with_force_full(true),
             );
             full.execute_trace(blocked_plan("full")).await.unwrap();
-            assert!(full.executor_built.get(), "force_full routes to the executor");
+            assert!(
+                full.executor_built.get(),
+                "force_full routes to the executor"
+            );
         }));
     }
 
@@ -380,7 +381,10 @@ mod tests {
                 matches!(error, TraceError::Cancelled(_)),
                 "flat arm reports Cancelled like the executor arm"
             );
-            assert!(!backend.executor_built.get(), "cancellation stayed on the flat arm");
+            assert!(
+                !backend.executor_built.get(),
+                "cancellation stayed on the flat arm"
+            );
         }));
     }
 }

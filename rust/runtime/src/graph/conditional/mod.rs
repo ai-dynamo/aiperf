@@ -220,10 +220,17 @@ traces:
         // unsafe: shopping path + redirect (dual terminal).
         assert_eq!(
             nodes_of(&bundle, "t-unsafe"),
-            ["brandmap", "plan", "redirect", "route", "safety", "summarize"]
-                .into_iter()
-                .map(String::from)
-                .collect()
+            [
+                "brandmap",
+                "plan",
+                "redirect",
+                "route",
+                "safety",
+                "summarize"
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect()
         );
 
         // Replay outputs fold into the shopping trace's seeded channel state.

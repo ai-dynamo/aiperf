@@ -15,7 +15,6 @@ use crate::metrics_core::{
 };
 use std::collections::BTreeMap;
 
-
 fn empty_report() -> NativeReport {
     NativeReport::new(&AccumulatorSummary::new(), None)
 }
@@ -105,7 +104,6 @@ fn assert_regression(name: &str, actual: &str) {
     assert_eq!(actual, expected, "regression golden {name}");
 }
 
-
 #[test]
 fn osl_mismatch_body_is_byte_exact() {
     let mut report = empty_report();
@@ -159,7 +157,6 @@ fn osl_mismatch_reports_na_when_diff_absent() {
     assert!(warning.body.contains("Average mismatch: N/A"));
 }
 
-
 #[test]
 fn usage_discrepancy_body_is_byte_exact() {
     let mut report = empty_report();
@@ -185,7 +182,6 @@ fn usage_discrepancy_absent_when_zero() {
         .insert("request_count".to_string(), counter_entry(10.0));
     assert!(detect_usage_discrepancy(&zero).is_none());
 }
-
 
 #[test]
 fn max_completion_tokens_body_is_byte_exact() {
@@ -287,7 +283,6 @@ fn detect_api_errors_runs_both_detectors_in_order() {
 fn no_api_error_warnings_on_empty_report() {
     assert!(detect_api_errors(&empty_report()).is_empty());
 }
-
 
 #[test]
 fn error_summary_table_absent_without_errors() {
@@ -415,7 +410,12 @@ fn set_cell_size_crops_wide_glyph_on_boundary() {
 /// column is fully right-stripped. Regenerate with `BLESS=1`.
 #[test]
 fn unicode_table_render_regression() {
-    let left = [Justify::Right, Justify::Right, Justify::Left, Justify::Right];
+    let left = [
+        Justify::Right,
+        Justify::Right,
+        Justify::Left,
+        Justify::Right,
+    ];
     let emoji = render_table(
         "NVIDIA AIPerf | Error Summary",
         &["Code", "Type", "Message", "Count"],

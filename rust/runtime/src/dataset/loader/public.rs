@@ -958,7 +958,9 @@ fn hf_hub_download_dataset_file(
     ))
     .get(path)
     .map_err(|error| {
-        DatasetError::Validation(format!("downloading hf://{dataset}@{commit}/{path}: {error}"))
+        DatasetError::Validation(format!(
+            "downloading hf://{dataset}@{commit}/{path}: {error}"
+        ))
     })
 }
 

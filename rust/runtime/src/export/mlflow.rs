@@ -528,7 +528,6 @@ fn file_store_root(tracking_uri: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
-
 mod rest {
     use super::{
         DEFAULT_EXPORT_TIMEOUT_SECONDS, ExportPlan, MAX_METRICS_PER_BATCH, MAX_PARAMS_PER_BATCH,
@@ -952,7 +951,6 @@ mod rest {
         Arc::new(config)
     }
 }
-
 
 mod file_store {
     use super::{ExportPlan, MlflowExportConfig, ResolvedArtifact, unix_millis};

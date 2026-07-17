@@ -132,7 +132,6 @@ impl Exporter for ServerMetricsExporter {
     }
 }
 
-
 /// Returns the finite payload of a present report value, dropping non-finite
 /// tails so `exclude_none`-style omission matches the Python compat path (a JSON
 /// null becomes `None` and is dropped, never emitted).
@@ -255,7 +254,6 @@ fn isoformat_naive(naive: chrono::NaiveDateTime, micros: u32) -> String {
         format!("{base}.{micros:06}")
     }
 }
-
 
 /// Builds the hybrid `server_metrics_export.json` content.
 fn build_json(
@@ -650,7 +648,6 @@ fn insert_f64(map: &mut Map<String, Value>, key: &str, value: f64) {
         .unwrap_or(Value::Null);
     map.insert(key.to_string(), number);
 }
-
 
 /// One CSV row's worth of metric facts (one native series).
 struct CsvMetricInfo<'a> {

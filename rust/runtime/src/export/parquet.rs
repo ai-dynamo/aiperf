@@ -166,7 +166,6 @@ fn profiling_boundary(report: &NativeReport) -> Result<(i64, i64)> {
     Ok((range.start_ns, range.end_ns))
 }
 
-
 /// One raw scrape record from the wire JSONL. Only the fields the Parquet render
 /// consumes are decoded; unknown fields (`is_duplicate`, `benchmark_phase`, trace
 /// timings, `endpoint_latency_ns`) are ignored.
@@ -260,7 +259,6 @@ where
         }
     }
 }
-
 
 /// Prometheus metric semantic type. Mirrors `enums.PrometheusMetricType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -718,7 +716,6 @@ fn searchsorted_left(values: &[i64], target: i64) -> usize {
 fn searchsorted_right(values: &[i64], target: i64) -> usize {
     values.partition_point(|&v| v <= target)
 }
-
 
 /// One materialized Parquet row prior to columnarization.
 #[derive(Debug)]

@@ -18,10 +18,10 @@ pub mod application;
 // Cross-host cellular artifact shipping reuses Velo bootstrap addressing and zstd.
 #[cfg(feature = "cellular")]
 pub mod artifact_shipping;
-pub mod cellular_cell;
+pub mod cell_launcher;
 #[cfg(feature = "cellular")]
 pub mod cellular_aggregator;
-pub mod cell_launcher;
+pub mod cellular_cell;
 // Barrier-synchronized cross-cell timing origin (opt-in, feature-agnostic): a
 // cell zeroes its record timeline at the velo START barrier instead of its
 // post-setup local run start.

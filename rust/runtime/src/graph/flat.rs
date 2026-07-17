@@ -165,9 +165,13 @@ impl<M: WireMessage + 'static> FlatGraphActor<M> {
                 permit.on_first_token();
             }
         };
-        let dispatch =
-            self.sink
-                .dispatch_with_options(node_id, messages, node.max_tokens, options, &on_first_token);
+        let dispatch = self.sink.dispatch_with_options(
+            node_id,
+            messages,
+            node.max_tokens,
+            options,
+            &on_first_token,
+        );
         tokio::pin!(dispatch);
         let reply = tokio::select! {
             biased;
@@ -185,9 +189,10 @@ impl<M: WireMessage + 'static> FlatGraphActor<M> {
                 permit.on_terminal(reply.status);
                 match reply.status {
                     GraphReplyStatus::Completed => return Ok(()),
-                    GraphReplyStatus::Failed => {
-                        (NodeFailureKind::FailedReply, "backend returned a failed reply".to_string())
-                    }
+                    GraphReplyStatus::Failed => (
+                        NodeFailureKind::FailedReply,
+                        "backend returned a failed reply".to_string(),
+                    ),
                     GraphReplyStatus::Cancelled => (
                         NodeFailureKind::CancelledReply,
                         "backend returned a cancelled reply".to_string(),
@@ -248,10 +253,7 @@ mod tests {
 
     fn graph(nodes: Vec<(&str, LlmNode)>) -> GraphRecord {
         GraphRecord {
-            nodes: nodes
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect(),
+            nodes: nodes.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
             ..GraphRecord::default()
         }
     }
@@ -366,6 +368,10 @@ mod tests {
         let abort = FlatAbort::new();
         abort.trip();
         actor.run(one_node_plan("t-1"), &abort).await.unwrap();
-        assert_eq!(sink.calls.borrow().len(), 0, "tripped abort dispatches nothing");
+        assert_eq!(
+            sink.calls.borrow().len(),
+            0,
+            "tripped abort dispatches nothing"
+        );
     }
 }

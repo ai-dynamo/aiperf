@@ -266,7 +266,6 @@ pub(crate) fn render_console_txt(report: &NativeReport, cfg: &ConsoleTxtExportCo
     out
 }
 
-
 /// Numeric payload of a [`ReportValue`] (non-finite tails are treated as absent,
 /// matching the detectors' `metric.avg`-is-`None` short circuit).
 fn value_f64(value: &ReportValue) -> Option<f64> {
@@ -296,7 +295,6 @@ fn metric_avg(report: &NativeReport, tag: &str) -> Option<f64> {
     }
     counter_sum
 }
-
 
 /// Insert thousands separators into a non-negative integer digit string.
 fn group_thousands(digits: &str) -> String {
@@ -335,7 +333,6 @@ fn comma_2dp(v: f64) -> String {
 fn g_fmt(v: f64) -> String {
     format!("{v}")
 }
-
 
 /// OSL-mismatch warning. Oracle: `console_osl_mismatch_exporter.py`
 /// (`export` + `_create_warning_text`). Trigger: `osl_mismatch_count.avg > 0`
@@ -542,7 +539,6 @@ pub(crate) fn detect_dynamo_session_control(report: &NativeReport) -> Option<War
     None
 }
 
-
 /// The error-summary table. Oracle: `console_error_exporter.py`. Cell values are
 /// byte-exact (`N/A` for a missing code/type, `{count:,}` grouping); the box
 /// glyphs approximate Rich's `box.HEAVY_HEAD`.
@@ -586,7 +582,6 @@ pub(crate) fn error_summary_table(report: &NativeReport, width: usize) -> Option
         width,
     ))
 }
-
 
 /// Console-group render order (Python `ConsoleMetricsExporter.console_groups`).
 /// `MetricConsoleGroup::None` is intentionally absent — those rows are hidden.
@@ -791,7 +786,6 @@ fn stat_cell(series: &MetricSeries, key: &str) -> String {
     };
     value.map_or_else(|| "N/A".to_string(), comma_2dp)
 }
-
 
 /// Column text justification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

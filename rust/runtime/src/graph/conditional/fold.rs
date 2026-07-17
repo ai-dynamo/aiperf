@@ -63,7 +63,9 @@ fn compile_prompt_items(
     for grammar in &llm.prompt {
         match grammar {
             PromptGrammarItem::ChannelRef(channel) => {
-                items.push(PromptItem::Splice { splice: channel.clone() });
+                items.push(PromptItem::Splice {
+                    splice: channel.clone(),
+                });
             }
             PromptGrammarItem::Text(text) => {
                 items.push(message_item(id, "user", text, pool, tokenizer)?);
@@ -223,7 +225,10 @@ pub fn fold_replay_and_emit(
         }
     }
 
-    Ok(FoldedTrace { graph, initial_state })
+    Ok(FoldedTrace {
+        graph,
+        initial_state,
+    })
 }
 
 /// Build the emitted static edges, skipping replay nodes by connecting each
@@ -270,8 +275,10 @@ fn emit_edges(
         }
         // Fold: DFS through the replay chain rooted at edge.target, summing each
         // replay node's latency plus the intervening edge delays.
-        let mut stack: Vec<(&str, f64)> =
-            vec![(edge.target.as_str(), delay_of(edge) + duration_us(&edge.target))];
+        let mut stack: Vec<(&str, f64)> = vec![(
+            edge.target.as_str(),
+            delay_of(edge) + duration_us(&edge.target),
+        )];
         while let Some((node, accumulated)) = stack.pop() {
             for next in out_adjacency.get(node).into_iter().flatten() {
                 if replay_ids.contains(&next.target) {
@@ -419,7 +426,9 @@ traces:
         assert!(validate(&folded.graph).is_empty());
         // summarize kept its terminal marker in metadata.
         assert_eq!(
-            folded.graph.nodes["summarize"].metadata.get("terminal_for_user"),
+            folded.graph.nodes["summarize"]
+                .metadata
+                .get("terminal_for_user"),
             Some(&Value::Bool(true))
         );
     }
