@@ -45,6 +45,12 @@ pub struct ProfileFlags {
     #[arg(long = "tokenizer-trust-remote-code", default_value_t = false)]
     pub tokenizer_trust_remote_code: bool,
 
+    /// Offload tokenization to the inference server's `/tokenize` and
+    /// `/detokenize` endpoints at this origin (`--server-tokenizer-url`, e.g.
+    /// `http://host:8000`). When unset, the local tokenizer is used.
+    #[arg(long = "server-tokenizer-url")]
+    pub server_tokenizer_url: Option<String>,
+
     /// Number of conversations to generate (`--num-conversations`); comma ⇒ sweep.
     #[arg(long = "num-conversations", visible_alias = "conversation-num")]
     pub num_conversations: Option<String>,

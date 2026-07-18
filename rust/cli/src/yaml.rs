@@ -68,6 +68,9 @@ fn apply_cli_overrides(
     if let Some(name) = flags.tokenizer.clone() {
         inputs.tokenizer_name = Some(name);
     }
+    if let Some(server_url) = flags.server_tokenizer_url.clone() {
+        inputs.server_tokenizer_url = Some(server_url);
+    }
     if let Some(level) = flags.export_level.as_deref() {
         let (records_formats, export_raw) = load::export_level_formats(Some(level))?;
         inputs.records_formats = records_formats;
@@ -597,6 +600,10 @@ struct TokenizerSection {
     trust_remote_code: bool,
     #[serde(default, alias = "applyChatTemplate")]
     apply_chat_template: bool,
+    /// Offload tokenization to the inference server's `/tokenize` and
+    /// `/detokenize` endpoints at this origin (`http://host:port`).
+    #[serde(default, alias = "serverUrl")]
+    server_url: Option<String>,
 }
 
 /// A flat single phase (shorthand) or a list of phases.
@@ -1213,16 +1220,22 @@ impl Benchmark {
             .or(dataset_entries)
             .unwrap_or(load::DEFAULT_ENTRIES);
 
-        let (tokenizer_name, tokenizer_revision, tokenizer_trust, apply_chat_template) =
-            match self.tokenizer {
-                Some(t) => (
-                    t.name,
-                    t.revision,
-                    t.trust_remote_code,
-                    t.apply_chat_template,
-                ),
-                None => (None, None, false, false),
-            };
+        let (
+            tokenizer_name,
+            tokenizer_revision,
+            tokenizer_trust,
+            apply_chat_template,
+            server_tokenizer_url,
+        ) = match self.tokenizer {
+            Some(t) => (
+                t.name,
+                t.revision,
+                t.trust_remote_code,
+                t.apply_chat_template,
+                t.server_url,
+            ),
+            None => (None, None, false, false, None),
+        };
 
         // Model-selection strategy (`models.strategy`).
         let model_strategy = self
@@ -1392,6 +1405,7 @@ impl Benchmark {
             tokenizer_name,
             tokenizer_revision,
             tokenizer_trust,
+            server_tokenizer_url,
             isl,
             osl,
             turns,
