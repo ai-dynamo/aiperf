@@ -408,7 +408,7 @@ pub async fn establish_with_resolver(
     // re-issued. Connect timeouts and every other failure surface immediately.
     let mut attempt: u32 = 0;
     loop {
-        let result = establish_once(url, cfg, clock.clone(), trace, resolver).await;
+        let result = establish_once(url, cfg, &clock, trace, resolver).await;
         match result {
             Ok(pair) => return Ok(pair),
             Err(err) => {
@@ -416,9 +416,8 @@ pub async fn establish_with_resolver(
                     return Err(err);
                 }
                 attempt += 1;
-                // Linear backoff: attempt `n` waits `backoff * n`. Slept through
-                // the injected Clock so SimClock/virtual-time replay is
-                // deterministic.
+                // Linear backoff: attempt `n` waits `backoff * n`, slept through
+                // the injected Clock for virtual-time determinism.
                 let backoff_ns = cfg
                     .connect_retry_backoff_ns
                     .saturating_mul(i64::from(attempt));
@@ -435,7 +434,7 @@ pub async fn establish_with_resolver(
 async fn establish_once(
     url: &Url,
     cfg: &ClientConfig,
-    clock: Rc<dyn Clock>,
+    clock: &Rc<dyn Clock>,
     trace: &mut TraceData,
     resolver: &dyn DnsResolver,
 ) -> Result<(Sender, SocketInfo), ErrorDetails> {
@@ -443,7 +442,7 @@ async fn establish_once(
     with_timeout(
         clock.clone(),
         timeout_ns,
-        establish_inner(url, cfg, clock, trace, resolver),
+        establish_inner(url, cfg, clock.clone(), trace, resolver),
         || ErrorDetails {
             kind: ErrorKind::Timeout,
             code: None,
@@ -660,6 +659,42 @@ mod tests {
     }
 
     #[test]
+    fn connect_retries_fire_even_with_connect_timeout_set() {
+        // A per-attempt `connect_timeout_ns` must bound each attempt without
+        // capping the whole retry sequence: the resolver fails instantly (well
+        // within the 10ms per-attempt deadline), so every retry proceeds and
+        // only the linear backoff advances virtual time.
+        let clock = Rc::new(SimClock::new());
+        let clk: Rc<dyn Clock> = clock.clone();
+        let cfg = ClientConfig {
+            connect_timeout_ns: Some(10_000_000),
+            max_connect_retries: 2,
+            connect_retry_backoff_ns: 1_000,
+            ..ClientConfig::default()
+        };
+        let resolver = Rc::new(FlakyResolver {
+            calls: Cell::new(0),
+            fail_first: u32::MAX,
+            addr_port: 9,
+            kind: ErrorKind::Connect,
+        });
+        let probe = resolver.clone();
+        let url = url::Url::parse("http://example.test:80/").unwrap();
+        let out = drive_sim(clock.clone(), async move {
+            let mut trace = TraceData::default();
+            establish_with_resolver(&url, &cfg, clk, &mut trace, &*probe)
+                .await
+                .map(|_| ())
+        });
+        let err = out.expect_err("all attempts fail");
+        assert_eq!(err.kind, ErrorKind::Connect);
+        // 3 attempts despite the connect timeout being set.
+        assert_eq!(resolver.calls.get(), 3);
+        // Only backoff advanced the clock: 1000*1 + 1000*2 = 3000ns.
+        assert_eq!(clock.now_ns(), 3_000);
+    }
+
+    #[test]
     fn connect_retry_recovers_after_transient_failures() {
         // A real cleartext HTTP/1 handshake succeeds as soon as the TCP
         // connection is accepted (hyper's client handshake needs no server
@@ -688,6 +723,8 @@ mod tests {
             let cfg = ClientConfig {
                 max_connect_retries: 3,
                 connect_retry_backoff_ns: 1_000,
+                // A per-attempt connect deadline must not defeat recovery.
+                connect_timeout_ns: Some(5_000_000_000),
                 http_version: crate::transport::http::models::HttpVersion::Http1Only,
                 ..ClientConfig::default()
             };

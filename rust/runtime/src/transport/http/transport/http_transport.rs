@@ -242,8 +242,16 @@ impl HttpTransport {
 
         let dispatch = async {
             let acquire_remaining_ns = remaining_timeout(deadline_ns, self.clock.now_ns())?;
-            let acquire_timeout_ns =
-                minimum_timeout(self.client_cfg.connect_timeout_ns, acquire_remaining_ns);
+            // `connect_timeout_ns` bounds each *attempt* inside the connection
+            // manager's retry loop; the outer acquisition cap must therefore
+            // cover every attempt plus the linear backoff between them, or a
+            // single-attempt cap would short-circuit the retries. With the
+            // default zero retries this budget collapses back to
+            // `connect_timeout_ns`, leaving established behavior unchanged.
+            let acquire_timeout_ns = minimum_timeout(
+                connect_acquire_budget_ns(&self.client_cfg),
+                acquire_remaining_ns,
+            );
             let mut lease = with_timeout(
                 self.clock.clone(),
                 acquire_timeout_ns,
@@ -378,6 +386,34 @@ fn minimum_timeout(first: Option<i64>, second: Option<i64>) -> Option<i64> {
     }
 }
 
+/// Total connection-acquisition budget covering every connect attempt plus the
+/// linear backoff waited between them.
+///
+/// Each attempt is separately bounded by `connect_timeout_ns` inside the
+/// connection manager's retry loop; this outer budget must span all
+/// `max_connect_retries + 1` attempts so the acquisition cap does not truncate
+/// the retry sequence. Returns `None` when no per-attempt connect deadline is
+/// set (the unbounded connect hot path), leaving only the total-request
+/// deadline to bound acquisition. With the default zero retries the result is
+/// exactly `connect_timeout_ns`.
+fn connect_acquire_budget_ns(cfg: &ClientConfig) -> Option<i64> {
+    let per_attempt_ns = positive_timeout(cfg.connect_timeout_ns)?;
+    let attempts = i64::from(cfg.max_connect_retries) + 1;
+    // Linear backoff sums to `backoff * (1 + 2 + ... + retries)`.
+    let retries = i64::from(cfg.max_connect_retries);
+    let backoff_total_ns = if cfg.connect_retry_backoff_ns > 0 {
+        cfg.connect_retry_backoff_ns
+            .saturating_mul(retries.saturating_mul(retries + 1) / 2)
+    } else {
+        0
+    };
+    Some(
+        per_attempt_ns
+            .saturating_mul(attempts)
+            .saturating_add(backoff_total_ns),
+    )
+}
+
 fn remaining_timeout(deadline_ns: Option<i64>, now_ns: i64) -> Result<Option<i64>, ErrorDetails> {
     let Some(deadline_ns) = deadline_ns else {
         return Ok(None);
@@ -391,4 +427,49 @@ fn remaining_timeout(deadline_ns: Option<i64>, now_ns: i64) -> Result<Option<i64
         });
     }
     Ok(Some(remaining))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connect_budget_defaults_to_connect_timeout_without_retries() {
+        // With the default zero retries the acquisition budget must equal
+        // `connect_timeout_ns` exactly, so established single-attempt behavior
+        // is preserved.
+        let cfg = ClientConfig {
+            connect_timeout_ns: Some(2_000_000),
+            ..ClientConfig::default()
+        };
+        assert_eq!(connect_acquire_budget_ns(&cfg), Some(2_000_000));
+    }
+
+    #[test]
+    fn connect_budget_spans_all_attempts_and_backoff() {
+        // The outer acquisition cap must cover every attempt plus the linear
+        // backoff, otherwise the per-attempt `connect_timeout_ns` would
+        // truncate the retry sequence. 3 attempts * 1_000_000 per attempt +
+        // backoff (500_000 * (1 + 2)) = 3_000_000 + 1_500_000.
+        let cfg = ClientConfig {
+            connect_timeout_ns: Some(1_000_000),
+            max_connect_retries: 2,
+            connect_retry_backoff_ns: 500_000,
+            ..ClientConfig::default()
+        };
+        assert_eq!(connect_acquire_budget_ns(&cfg), Some(4_500_000));
+    }
+
+    #[test]
+    fn connect_budget_is_none_without_a_connect_deadline() {
+        // No per-attempt connect deadline leaves acquisition bounded only by the
+        // total-request deadline; retries still fire (unbounded per attempt).
+        let cfg = ClientConfig {
+            connect_timeout_ns: None,
+            max_connect_retries: 3,
+            connect_retry_backoff_ns: 1_000,
+            ..ClientConfig::default()
+        };
+        assert_eq!(connect_acquire_budget_ns(&cfg), None);
+    }
 }
