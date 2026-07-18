@@ -635,13 +635,15 @@ export function App() {
       <div
         className="flow-workspace"
       >
-        <DocumentBrowser
-          activeFlowId={activeFlowId}
-          activeSceneId={activeSceneId}
-          onSelectScene={selectScene}
-          searchRef={searchRef}
-          workspace={workspace}
-        />
+        {!selectedExplainerDeckId && (
+          <DocumentBrowser
+            activeFlowId={activeFlowId}
+            activeSceneId={activeSceneId}
+            onSelectScene={selectScene}
+            searchRef={searchRef}
+            workspace={workspace}
+          />
+        )}
 
         <div className="flow-main-section">
           {!selectedExplainerDeckId && (
