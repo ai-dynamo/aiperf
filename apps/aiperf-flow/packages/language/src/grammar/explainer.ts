@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SlideAst, ExplainerAst } from "../ast.js";
+import type { SlideAst } from "../ast.js";
 
 export interface ExplainerAstCompat {
   type: "explainer";
@@ -150,7 +150,7 @@ function parseSlideBlock(tokens: TokenStream): SlideAst {
   return slide as SlideAst;
 }
 
-function parseSceneBlock(tokens: TokenStream): any {
+function parseSceneBlock(_tokens: TokenStream): any {
   // Delegate to existing scene parser
   // For now, return a placeholder; will integrate with scene parser
   return { type: "scene" };
