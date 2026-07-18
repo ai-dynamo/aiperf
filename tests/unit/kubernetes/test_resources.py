@@ -504,7 +504,7 @@ class TestKubernetesDeployment:
         cm_spec = basic_deployment.get_configmap_spec()
         assert cm_spec.name == basic_deployment.configmap_name
         assert cm_spec.namespace == basic_deployment.effective_namespace
-        assert "run_config.json" in cm_spec.data
+        assert "config.yaml" in cm_spec.data
 
     def test_get_rbac_spec(self, basic_deployment: KubernetesDeployment) -> None:
         """Test get_rbac_spec returns correct spec."""
@@ -944,8 +944,8 @@ class TestKubernetesDeploymentManifestContents:
         binding_idx = kinds.index("RoleBinding")
         assert role_idx < binding_idx
 
-    def test_configmap_contains_run_config(self, sample_config, sample_run) -> None:
-        """Test ConfigMap manifest contains run_config.json."""
+    def test_configmap_contains_config_yaml(self, sample_config, sample_run) -> None:
+        """Test ConfigMap manifest carries the Config v2 file under config.yaml."""
         deployment = KubernetesDeployment(
             job_id="test",
             config=sample_config,
@@ -954,7 +954,7 @@ class TestKubernetesDeploymentManifestContents:
         )
         manifests = deployment.get_all_manifests()
         configmap = next(m for m in manifests if m["kind"] == "ConfigMap")
-        assert "run_config.json" in configmap["data"]
+        assert "config.yaml" in configmap["data"]
 
     def test_all_manifests_have_namespace(self, sample_config) -> None:
         """Test all namespaced resources have correct namespace."""
@@ -1008,18 +1008,21 @@ class TestConfigMapMaxSizeBytes:
         assert CONFIGMAP_MAX_SIZE_BYTES == 1024 * 1024
 
 
-class TestConfigMapSpecFromBenchmarkRun:
-    """Tests for ConfigMapSpec.from_benchmark_run()."""
+class TestConfigMapSpecFromConfig:
+    """Tests for ConfigMapSpec.from_config().
 
-    def _make_benchmark_run(self):
-        from pathlib import Path
+    The cellular pods run the ``aiperf`` frontend subcommands, which read the
+    same Config v2 YAML the CLI reads locally. The ConfigMap carries that one
+    file under the ``config.yaml`` key (replacing the mesh-era
+    ``run_config.json`` BenchmarkRun envelope).
+    """
 
-        from aiperf.config import BenchmarkRun
-        from aiperf.config.config import BenchmarkConfig
+    def _make_config(self):
+        from aiperf.config.config import AIPerfConfig
 
-        cfg = BenchmarkConfig.model_validate(
-            {
-                "models": {"items": [{"name": "test-model"}]},
+        return AIPerfConfig(
+            benchmark={
+                "models": "test-model",
                 "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
                 "datasets": [
                     {
@@ -1039,42 +1042,37 @@ class TestConfigMapSpecFromBenchmarkRun:
                 ],
             }
         )
-        return BenchmarkRun(
-            benchmark_id="test-run-001",
-            cfg=cfg,
-            trial=0,
-            artifact_dir=Path("/results"),
-        )
 
-    def test_from_benchmark_run_creates_run_config_json(self) -> None:
-        run = self._make_benchmark_run()
-        cm = ConfigMapSpec.from_benchmark_run(
-            name="test-cm", namespace="default", run=run, job_id="test-001"
+    def test_from_config_creates_config_yaml(self) -> None:
+        config = self._make_config()
+        cm = ConfigMapSpec.from_config(
+            name="test-cm", namespace="default", config=config, job_id="test-001"
         )
-        assert "run_config.json" in cm.data
+        assert "config.yaml" in cm.data
 
-    def test_from_benchmark_run_has_correct_labels(self) -> None:
-        run = self._make_benchmark_run()
-        cm = ConfigMapSpec.from_benchmark_run(
-            name="test-cm", namespace="default", run=run, job_id="test-001"
+    def test_from_config_has_correct_labels(self) -> None:
+        config = self._make_config()
+        cm = ConfigMapSpec.from_config(
+            name="test-cm", namespace="default", config=config, job_id="test-001"
         )
         assert cm.labels["aiperf.nvidia.com/job-id"] == "test-001"
         assert cm.labels["app"] == "aiperf"
 
-    def test_from_benchmark_run_contains_benchmark_id(self) -> None:
-        import orjson
+    def test_from_config_yaml_round_trips_with_model(self) -> None:
+        import yaml
 
-        run = self._make_benchmark_run()
-        cm = ConfigMapSpec.from_benchmark_run(
-            name="test-cm", namespace="default", run=run, job_id="test-001"
+        config = self._make_config()
+        cm = ConfigMapSpec.from_config(
+            name="test-cm", namespace="default", config=config, job_id="test-001"
         )
-        data = orjson.loads(cm.data["run_config.json"])
-        assert data["benchmark_id"] == "test-run-001"
+        data = yaml.safe_load(cm.data["config.yaml"])
+        assert isinstance(data, dict)
+        assert "test-model" in cm.data["config.yaml"]
 
-    def test_from_benchmark_run_validates_size(self) -> None:
-        run = self._make_benchmark_run()
+    def test_from_config_validates_size(self) -> None:
+        config = self._make_config()
         # Should not raise for a small config
-        cm = ConfigMapSpec.from_benchmark_run(
-            name="test-cm", namespace="default", run=run, job_id="test-001"
+        cm = ConfigMapSpec.from_config(
+            name="test-cm", namespace="default", config=config, job_id="test-001"
         )
         assert cm.get_data_size_bytes() < CONFIGMAP_MAX_SIZE_BYTES
