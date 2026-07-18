@@ -3,28 +3,59 @@
 
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { evaluateTimelineState } from "../packages/runtime/src/evaluate/timeline-state";
+import type { RenderNodeIr } from "../packages/schema/src/ir";
 import { App } from "./App";
 import { previewNavigation, previewScene } from "./fixture";
+
+function previewCss(): string {
+  return readFileSync(join(process.cwd(), "preview/styles.css"), "utf8");
+}
+
+function matchMediaFor(query: string, matches: boolean) {
+  return {
+    matches,
+    media: query,
+    onchange: null,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    dispatchEvent: () => false,
+  };
+}
+
+function findNode(
+  roots: readonly RenderNodeIr[],
+  id: string,
+): RenderNodeIr | undefined {
+  for (const node of roots) {
+    if (node.id === id) {
+      return node;
+    }
+    if (node.kind === "group" || node.kind === "component") {
+      const nested = findNode(node.children, id);
+      if (nested !== undefined) {
+        return nested;
+      }
+    }
+  }
+  return undefined;
+}
 
 afterEach(cleanup);
 
 beforeEach(() => {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
-    value: (query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-      addListener: () => undefined,
-      removeListener: () => undefined,
-      dispatchEvent: () => false,
-    }),
+    value: (query: string) => matchMediaFor(query, false),
   });
   HTMLCanvasElement.prototype.getContext = vi.fn(() => null);
 });
@@ -49,7 +80,7 @@ describe("immersive preview host", () => {
         name: "From one request to the whole system",
       }),
     ).toBeTruthy();
-    expect(screen.getByText("SYSTEMS CHALK")).toBeTruthy();
+    expect(screen.getByText("Systems Chalk")).toBeTruthy();
 
     const sceneOutput = screen.getByRole("img", {
       name: /What made this slow\?/iu,
@@ -86,6 +117,97 @@ describe("immersive preview host", () => {
         .filter((node) => node.kind === "connector")
         .every((node) => node.style.strokeWidth === 0),
     ).toBe(true);
+  });
+
+  test("renders a scrollable narrow hub sequence when matchMedia reports 860px", () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query: string) =>
+        matchMediaFor(query, query.includes("max-width: 860px")),
+    });
+
+    render(<App />);
+
+    const scene = screen.getByRole("img", { name: /What made this slow\?/iu });
+    expect(scene.getAttribute("viewBox")).toBe("0 0 320 1230");
+
+    const css = previewCss();
+    const scrollContract = css.match(
+      /@media \(width <= 860px\)[\s\S]*?\.preview-shell\[data-preview-layout="hub-spoke"\] \.runtime-story\s*\{[^}]*overflow:\s*auto/u,
+    );
+    expect(scrollContract).toBeTruthy();
+    expect(css).not.toMatch(
+      /@media \(width <= 680px\)[\s\S]*?\.preview-shell\[data-preview-layout="hub-spoke"\] \.runtime-story\s*\{[^}]*overflow:\s*auto/u,
+    );
+  });
+
+  test("authors Systems Chalk cards with neutral borders and circular badges", () => {
+    const scene = previewScene();
+    const gateway = findNode(scene.roots, "gateway");
+    expect(gateway?.kind).toBe("group");
+
+    const panel = findNode(scene.roots, "gateway-panel");
+    expect(panel?.kind).toBe("rect");
+    if (panel?.kind === "rect") {
+      expect(panel.style.stroke).toBe("rgba(255,255,255,0.1)");
+      expect(panel.style.stroke).not.toBe("#f6bd60");
+    }
+
+    const badge = findNode(scene.roots, "gateway-number-badge");
+    expect(badge?.kind).toBe("rect");
+    if (badge?.kind === "rect") {
+      expect(badge.geometry.width).toBe(badge.geometry.height);
+      expect(badge.style.stroke).toBe("#f6bd60");
+    }
+
+    const number = findNode(scene.roots, "gateway-number");
+    expect(number?.kind).toBe("text");
+    if (number?.kind === "text") {
+      expect(number.text).toBe("1");
+    }
+
+    expect(findNode(scene.roots, "gateway-client")?.kind).toBe("rect");
+    expect(findNode(scene.roots, "gateway-edge")?.kind).toBe("rect");
+    expect(findNode(scene.roots, "gateway-diagram-link")?.kind).toBe(
+      "connector",
+    );
+    expect(findNode(scene.roots, "gateway-diagram")?.kind).toBeUndefined();
+
+    const hubDetail = findNode(scene.roots, "request-hub-detail");
+    expect(hubDetail?.kind).toBe("text");
+    if (hubDetail?.kind === "text") {
+      expect(hubDetail.text).toBe(
+        "Follow one causal path across every layer of inference.",
+      );
+    }
+
+    expect(findNode(scene.roots, "prefill-bar-3")?.kind).toBe("rect");
+    expect(findNode(scene.roots, "admission-queue-9")?.kind).toBe("rect");
+  });
+
+  test("active cause path draw-on follows the authored timeline trace", () => {
+    const css = previewCss();
+    expect(css).not.toContain("preview-cause-draw");
+    expect(css).not.toMatch(
+      /\[data-draw-command-id="request-to-gateway"\][\s\S]{0,200}animation:/u,
+    );
+
+    const scene = previewScene();
+    const before = evaluateTimelineState(scene.timeline, 0);
+    const mid = evaluateTimelineState(scene.timeline, 1_000);
+    const after = evaluateTimelineState(scene.timeline, 2_000);
+
+    expect(before.targets["request-to-gateway"]).toMatchObject({
+      action: "trace",
+      progress: 0,
+    });
+    expect(mid.targets["request-to-gateway"]?.action).toBe("trace");
+    expect(mid.targets["request-to-gateway"]?.progress).toBeGreaterThan(0);
+    expect(mid.targets["request-to-gateway"]?.progress).toBeLessThan(1);
+    expect(after.targets["request-to-gateway"]).toMatchObject({
+      action: "trace",
+      progress: 1,
+    });
   });
 
   test("mounts one shared Causal Field without legacy player chrome", () => {
