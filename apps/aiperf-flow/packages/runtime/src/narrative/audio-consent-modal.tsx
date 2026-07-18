@@ -8,35 +8,6 @@ import "./audio-consent-modal.css";
 /** User choice from the first-load audio consent dialog. */
 export type AudioConsentChoice = "with-audio" | "without-audio";
 
-const AUDIO_CONSENT_STORAGE_KEY = "aiperf-flow:audio-consent";
-
-/** Loads the audio choice retained for the current browser-tab visit. */
-export function loadAudioConsentChoice(): AudioConsentChoice | null {
-  if (typeof sessionStorage === "undefined") {
-    return null;
-  }
-  try {
-    const stored = sessionStorage.getItem(AUDIO_CONSENT_STORAGE_KEY);
-    return stored === "with-audio" || stored === "without-audio"
-      ? stored
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Retains an audio choice until the current browser-tab visit ends. */
-export function saveAudioConsentChoice(choice: AudioConsentChoice): void {
-  if (typeof sessionStorage === "undefined") {
-    return;
-  }
-  try {
-    sessionStorage.setItem(AUDIO_CONSENT_STORAGE_KEY, choice);
-  } catch {
-    // Storage can be disabled; consent still applies to the mounted app.
-  }
-}
-
 export type AudioConsentModalProps = Readonly<{
   open: boolean;
   onChoose(choice: AudioConsentChoice): void;
@@ -44,8 +15,9 @@ export type AudioConsentModalProps = Readonly<{
 }>;
 
 /**
- * First-load gate that unlocks Web Audio from a real user gesture when the
- * viewer chooses audible playback.
+ * Full-page-load gate that unlocks Web Audio from a real user gesture when the
+ * viewer chooses audible playback. Choice lives in component state only, so a
+ * reload asks again while in-SPA scene changes keep playing.
  */
 export function AudioConsentModal({
   open,

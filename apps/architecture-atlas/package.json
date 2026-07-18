@@ -1,0 +1,50 @@
+{
+  "name": "@aiperf/architecture-atlas",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "lint": "oxlint .",
+    "validate:content": "tsx scripts/validate-content.ts",
+    "check": "npm run validate:content && npm run typecheck && npm run lint && npm test && npm run build",
+    "check:all": "npm run check && npm run e2e"
+  },
+  "dependencies": {
+    "@tanstack/react-router": "^1.170.17",
+    "@xyflow/react": "^12.11.2",
+    "elkjs": "^0.11.1",
+    "lz-string": "^1.5.0",
+    "motion": "^12.42.2",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.61.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/jest-axe": "^3.5.9",
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "jest-axe": "^10.0.0",
+    "jsdom": "^29.1.1",
+    "oxlint": "^1.73.0",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4",
+    "vitest": "^4.1.10"
+  }
+}

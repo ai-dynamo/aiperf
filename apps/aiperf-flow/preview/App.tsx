@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { FlowIr, SceneIr } from "../packages/schema/src/ir";
-import React, {
+import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
@@ -27,9 +27,11 @@ import {
   type ExplorationSnapshot,
 } from "../packages/runtime/src/exploration";
 import {
-  NarratorController,
-} from "../packages/runtime/src/narrative/narrator";
+  AudioConsentModal,
+  type AudioConsentChoice,
+} from "../packages/runtime/src/narrative/audio-consent-modal";
 import type { KokoroNarratorSnapshot } from "../packages/runtime/src/narrative/kokoro-narrator";
+import { NarratorController } from "../packages/runtime/src/narrative/narrator";
 import {
   SubtitleOverlay,
   type SubtitleState,
@@ -371,10 +373,12 @@ export function App() {
   const scenes = flow.scenes;
   const sourceName = text(flow.sourceMap.source, `${flow.id}.flow`);
   const preferCanvas = useMemo(() => canvas2dAvailable(), []);
-
   const [sceneIndex, setSceneIndex] = useState(0);
   const [timeMs, setTimeMs] = useState(0);
-  const [playing, setPlaying] = useState(true);
+  const [playing, setPlaying] = useState(false);
+  const [audioConsent, setAudioConsent] = useState<AudioConsentChoice | null>(
+    null,
+  );
   const [reducedMotion, setReducedMotion] = useState(false);
   const [browserCollapsed, setBrowserCollapsed] = useState(false);
   const [tool, setTool] = useState<CanvasTool>("play");
@@ -383,7 +387,7 @@ export function App() {
   );
   const [focusedEntityId, setFocusedEntityId] = useState<string | null>(null);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
-  const [narratorMode, setNarratorMode] = useState<NarratorMode>("on");
+  const [narratorMode, setNarratorMode] = useState<NarratorMode>("off");
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
   const [kokoroState, setKokoroState] = useState<KokoroNarratorSnapshot | null>(
     null,
@@ -448,7 +452,7 @@ export function App() {
   }, [scene?.id, narrator]);
 
   useEffect(() => {
-    if (exploration !== null) {
+    if (audioConsent === null || exploration !== null) {
       player.pause();
       setPlaying(false);
       return;
@@ -463,7 +467,7 @@ export function App() {
     } else {
       player.pause();
     }
-  }, [exploration, playing, reducedMotion, player]);
+  }, [audioConsent, exploration, playing, reducedMotion, player]);
 
   const durationMs = scene === undefined ? 0 : previewDurationMs(scene);
   const progress =
@@ -497,7 +501,7 @@ export function App() {
 
   useEffect(() => {
     const beatMs = evaluationTimeMs;
-    if (narratorMode === "off" || reducedMotion) {
+    if (audioConsent === null || narratorMode === "off" || reducedMotion) {
       narrator.stop();
       return;
     }
@@ -514,6 +518,7 @@ export function App() {
     }
     narrator.sync(beatMs);
   }, [
+    audioConsent,
     evaluationTimeMs,
     exploration,
     narrator,
@@ -541,10 +546,28 @@ export function App() {
   function navigate(nextIndex: number): void {
     narrator.stop();
     player.reset();
-    setPlaying(false);
     setTimeMs(0);
     setExploration(null);
     setSceneIndex(nextIndex);
+    if (audioConsent !== null && !reducedMotion) {
+      setPlaying(true);
+    } else {
+      setPlaying(false);
+    }
+  }
+
+  function chooseAudioConsent(choice: AudioConsentChoice): void {
+    setAudioConsent(choice);
+    if (choice === "with-audio") {
+      unlockPreviewSpeech();
+      setNarratorMode("on");
+    } else {
+      setNarratorMode("off");
+    }
+    setTool("play");
+    if (!reducedMotion) {
+      setPlaying(true);
+    }
   }
 
   function cycleNarratorMode(): void {
@@ -555,10 +578,12 @@ export function App() {
   }
 
   function togglePlayback(): void {
-    if (exploration !== null) {
+    if (exploration !== null || audioConsent === null) {
       return;
     }
-    unlockPreviewSpeech();
+    if (!playing && narratorMode !== "off") {
+      unlockPreviewSpeech();
+    }
     setTool("play");
     setPlaying((value) => !value);
   }
@@ -648,6 +673,10 @@ export function App() {
 
   return (
     <div className="preview-shell">
+      <AudioConsentModal
+        onChoose={chooseAudioConsent}
+        open={audioConsent === null}
+      />
       <header className="preview-topbar">
         <div className="preview-brand-cluster">
           <button
@@ -827,7 +856,7 @@ export function App() {
                   className={
                     tool === "play" && !exploring ? "is-active" : undefined
                   }
-                  disabled={exploring}
+                  disabled={exploring || audioConsent === null}
                   onClick={togglePlayback}
                 >
                   {playing && !exploring ? "Ⅱ" : "▶"}

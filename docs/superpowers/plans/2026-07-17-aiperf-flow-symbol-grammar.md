@@ -175,17 +175,17 @@ formatter tests.
 - Modify: `apps/aiperf-flow/packages/compiler/test/expand-symbols.test.ts`
 
 **Interfaces:**
-- Consumes: `LinkedDocument`, `SymbolTable`.
+- Consumes: `DocumentAst`, `SymbolTable`.
 - Produces:
-  `expandSymbolInvocations(linked: LinkedDocument, symbols: SymbolTable):
-  Result<LinkedDocument>`.
+  `expandSymbolInvocations(document: DocumentAst, symbols: SymbolTable):
+  Result<DocumentAst>`.
 - Reuses: `validateProps`.
 
 - [ ] **Step 1: Replace stub-oriented tests with failing expansion tests**
 
 Cover these cases with small immutable AST fixtures:
 
-1. An empty symbol table returns the same `LinkedDocument` object.
+1. An empty symbol table returns the same `DocumentAst` object.
 2. A scene invocation absent from the symbol table remains unchanged as a leaf
    capability invocation.
 3. A scene invocation matching a symbol is replaced in place by the symbol
@@ -211,8 +211,8 @@ cd /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/aiperf-flow
 npm test -w @aiperf/flow-compiler -- test/expand-symbols.test.ts
 ```
 
-Expected: FAIL because the stub rejects every non-empty body and accepts an
-arbitrary generic document rather than a `LinkedDocument`.
+Historical TDD expectation: FAIL before recursive expansion was implemented.
+The landed function accepts and returns `DocumentAst`.
 
 - [ ] **Step 3: Derive strict symbol-call schemas**
 
@@ -232,7 +232,7 @@ const BUILTIN_PARAM_KINDS = {
 
 Treat other nominal type names as `"json"` until the language gains a complete
 type system. Resolve literal call props directly and resolve `token(...)`
-through `linked.tokens` before calling `validateProps`. Keep a separate map of
+through `document.tokens` before calling `validateProps`. Keep a separate map of
 the authored `ValueAst` bindings for substitution so token references retain
 their source form instead of being replaced by resolved literals.
 
@@ -263,21 +263,17 @@ For a matching local symbol call:
 For a non-matching invocation, clone only when substitution changed one of its
 props; otherwise preserve the original object.
 
-Return a new `LinkedDocument` with:
+Return a new `DocumentAst` with:
 
 ```typescript
 {
-  ...linked,
-  document: {
-    ...linked.document,
-    scenes: expandedScenes,
-  },
+  ...document,
+  scenes: expandedScenes,
 }
 ```
 
-The existing token and scene link tables remain valid because this increment
-expands only `ComponentInvocationAst` nodes; component invocations do not
-participate in the linker's rect/connector ID tables.
+Linking runs after expansion and constructs token and scene tables from the
+expanded document.
 
 Update `lower.ts`'s exhaustive prop-value handling for the widened language
 union. A surviving `parameter-reference` is an internal pipeline invariant
@@ -305,10 +301,11 @@ Expected: PASS. The obsolete assertion that every non-empty body produces
 - Modify: `apps/aiperf-flow/packages/compiler/test/compile.test.ts`
 
 **Interfaces:**
-- Consumes: `collectSymbols(parsed.value)`, `link(parsed.value)`,
-  `expandSymbolInvocations(linked.value, symbols.value)`.
+- Consumes: `collectSymbols(parsed.value)`,
+  `expandSymbolInvocations(parsed.value, symbols.value)`,
+  `link(expanded.value)`.
 - Produces pipeline:
-  parse → collect symbols → link → expand → validate → lower →
+  parse → collect symbols → expand → link → validate → lower →
   schema-validate.
 
 - [ ] **Step 1: Add a failing end-to-end compiler test**
@@ -351,20 +348,19 @@ cd /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/aiperf-flow
 npm test -w @aiperf/flow-compiler -- test/compile.test.ts
 ```
 
-Expected: FAIL because `compileSource` does not call `collectSymbols` or
-`expandSymbolInvocations`.
+Historical TDD expectation: FAIL before `compileSource` called
+`collectSymbols` and `expandSymbolInvocations`. The landed pipeline passes.
 
 - [ ] **Step 4: Update the compiler pipeline**
 
-After parsing, collect symbols and short-circuit on duplicate exports. Link the
-parsed document, then call expansion with the linked value and symbol table.
-Pass the expanded linked document to `validate`, and pass the validated result
-to `lower`.
+After parsing, collect symbols and short-circuit on duplicate exports. Expand
+the parsed document with the symbol table, then link the expanded value. Pass
+the linked document to `validate`, and pass the validated result to `lower`.
 
 On success, accumulate diagnostics in stage order:
 
 ```text
-parse → collect symbols → link → expand → validate → schema validation
+parse → collect symbols → expand → link → validate → schema validation
 ```
 
 Do not lower or validate the pre-expansion document.
@@ -451,7 +447,7 @@ Task 1 → Task 2 → Task 3 → Task 4
 | Replace fail-closed expansion stub | Task 2 |
 | Expand local symbol invocations | Task 2 |
 | Substitute symbol parameters | Tasks 1–2 |
-| Wire expansion between link and validate | Task 3 |
+| Wire expansion before link and validation | Task 3 |
 | Preserve non-symbol capability invocations | Tasks 2–3 |
 | Detect recursive expansion | Tasks 2–3 |
 | Defer slots and `for` loops | Global Constraints, Deferred follow-up tasks |

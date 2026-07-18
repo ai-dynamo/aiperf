@@ -1,0 +1,4 @@
+# Nested git worktrees are full repo copies; excluding them keeps Cursor's
+# sandbox deny-mount planning under the per-command mount ceiling.
+.claude/worktrees/
+.cursor/worktrees/

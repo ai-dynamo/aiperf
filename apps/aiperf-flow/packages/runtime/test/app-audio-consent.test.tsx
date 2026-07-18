@@ -32,15 +32,15 @@ const sourceMap = {
   end: { offset: 1, line: 1, column: 2 },
 };
 
-function flow(): FlowIr {
-  const scene: SceneIr = {
-    id: "scene",
-    title: "Scene",
-    summary: "Narrated scene",
+function scene(id: string, title: string): SceneIr {
+  return {
+    id,
+    title,
+    summary: `${title} summary`,
     roots: [
       {
         kind: "rect",
-        id: "cli",
+        id: `${id}-cli`,
         geometry: { x: 0, y: 0, width: 40, height: 20 },
         style: { fill: "#315b8a" },
         accessibility: { label: "CLI" },
@@ -51,28 +51,31 @@ function flow(): FlowIr {
     camera: [],
     timeline: [
       {
-        id: "reveal",
+        id: `${id}-reveal`,
         at: 0,
         duration: 400,
         action: "reveal",
-        target: "cli",
+        target: `${id}-cli`,
         sourceMap,
       },
     ],
     narration: "Kokoro narrates this scene after audio consent.",
     interactions: [],
     responsive: [],
-    accessibility: { label: "Scene", readingOrder: ["cli"] },
-    fallback: "Scene",
+    accessibility: { label: title, readingOrder: [`${id}-cli`] },
+    fallback: title,
     sourceMap,
   };
+}
+
+function flow(scenes: readonly SceneIr[] = [scene("scene", "Scene")]): FlowIr {
   return {
     irVersion: 1,
     id: "flow",
     title: "Flow",
     capabilities: [],
     tokens: {},
-    scenes: [scene],
+    scenes: [...scenes],
     sourceMap,
   };
 }
@@ -109,7 +112,7 @@ test("Play without audio starts muted playback", () => {
   expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
 });
 
-test("remembers the audio choice when another flow mounts during the visit", () => {
+test("asks again on a fresh mount instead of retaining visit storage", () => {
   const first = render(
     <FlowApp flow={flow()} forceSvgFallback requireAudioConsent />,
   );
@@ -118,6 +121,24 @@ test("remembers the audio choice when another flow mounts during the visit", () 
 
   render(<FlowApp flow={flow()} forceSvgFallback requireAudioConsent />);
 
+  expect(screen.getByRole("dialog", { name: "Audio preference" })).toBeTruthy();
+});
+
+test("autoplays the next scene after consent without asking again", () => {
+  render(
+    <FlowApp
+      flow={flow([scene("one", "One"), scene("two", "Two")])}
+      forceSvgFallback
+      requireAudioConsent
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Play with audio" }));
+  expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Next scene" }));
+
   expect(screen.queryByRole("dialog")).toBeNull();
-  expect(screen.getByRole("button", { name: "Unmute narration" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Two" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
 });

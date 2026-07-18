@@ -51,12 +51,14 @@ twin, SVG fallback, and three schema-valid flagship IR fixtures are landed and
 tested. `FlowApp` mounts the cinematic Canvas/SVG/twin stack. Three flat P0
 flagship `.flow` authoring stubs exist under `stdlib/`; the planned namespaced
 `stdlib/{core,viz}` tree, barrels, and per-component fixtures do not. Symbol
-grammar remains partial, and hybrid evaluators are not integrated.
+grammar remains partial. All six hybrid contributions are integrated through
+the shared scene evaluator; correspondence-tween remains an optional deferred
+motion leaf for `core.semantic-morph`.
 
-Tasks 1–7 and the foundation portion of Task 9 describe landed work. Task 8 is
-superseded in detail by the backend-neutral hybrid-evaluators plan; an unwired
-experimental `glyph-run.tsx` is not the target architecture. Tasks 10–12 remain
-delivery work.
+Tasks 1–9 describe landed substrate. Task 8 is superseded in detail by the
+backend-neutral hybrid-evaluators plan; its contribution seam is integrated and
+must be hardened in place. An unwired experimental `glyph-run.tsx` is not the
+target architecture. Tasks 10–12 remain delivery work.
 
 **Scope split:** preview UI/fixture work is owned by a separate agent. This plan
 covers schema, language, compiler, runtime leaves/capabilities, stdlib, and

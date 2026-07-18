@@ -6,6 +6,33 @@
 export type KokoroDevice = "webgpu" | "wasm";
 export type KokoroDtype = "fp32" | "q8";
 
+/** Local ONNX Runtime asset URLs required by Kokoro / Transformers.js. */
+export type KokoroWasmPaths = Readonly<{
+  wasm: string;
+  mjs: string;
+}>;
+
+type KokoroEnv = {
+  wasmPaths?: unknown;
+};
+
+/**
+ * Pins ORT to same-origin bundled assets.
+ *
+ * Transformers.js otherwise defaults `wasmPaths` to a jsDelivr CDN URL and
+ * dynamically imports `ort-wasm-simd-threaded.jsep.mjs`. That import fails in
+ * Vite module workers, which surfaces as "no available backend" for wasm.
+ */
+export function configureKokoroWasmPaths(
+  env: KokoroEnv,
+  paths: KokoroWasmPaths,
+): void {
+  env.wasmPaths = Object.freeze({
+    wasm: paths.wasm,
+    mjs: paths.mjs,
+  });
+}
+
 /** Commands accepted by the Kokoro inference worker. */
 export type KokoroWorkerCommand =
   | Readonly<{
@@ -176,7 +203,11 @@ if (
   const scope = candidateScope as WorkerScope;
   const runtime = createKokoroWorkerRuntime({
     load: async (modelId, options) => {
-      const { KokoroTTS } = await import("kokoro-js");
+      const [{ env, KokoroTTS }, paths] = await Promise.all([
+        import("kokoro-js"),
+        resolveBundledOrtWasmPaths(),
+      ]);
+      configureKokoroWasmPaths(env, paths);
       return (await KokoroTTS.from_pretrained(modelId, {
         device: options.device,
         dtype: options.dtype,
@@ -187,5 +218,20 @@ if (
   });
   scope.addEventListener("message", (event) => {
     void runtime.handle(event.data);
+  });
+}
+
+/**
+ * Resolves Vite-emitted absolute URLs for the ORT jsep wasm glue pair.
+ *
+ * Kept in a dedicated module so Vite's worker build sees static `?url` imports
+ * and emits both the `.mjs` and `.wasm` assets into `dist/assets`.
+ */
+async function resolveBundledOrtWasmPaths(): Promise<KokoroWasmPaths> {
+  const { BUNDLED_ORT_WASM_PATHS } = await import("./ort-wasm-assets.js");
+  const base = self.location.href;
+  return Object.freeze({
+    wasm: new URL(BUNDLED_ORT_WASM_PATHS.wasm, base).href,
+    mjs: new URL(BUNDLED_ORT_WASM_PATHS.mjs, base).href,
   });
 }

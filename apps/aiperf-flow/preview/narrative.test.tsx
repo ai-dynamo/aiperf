@@ -21,6 +21,7 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  sessionStorage.clear();
   Object.defineProperty(window, "matchMedia", {
     writable: true,
     configurable: true,
@@ -105,8 +106,37 @@ describe("preview App narration vertical slice", () => {
     return transport;
   }
 
+  function chooseAudio(choice: "with-audio" | "without-audio" = "with-audio"): void {
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: choice === "with-audio" ? "Play with audio" : "Play without audio",
+      }),
+    );
+  }
+
+  test("asks for audio preference before playback starts", () => {
+    render(<App />);
+
+    expect(
+      screen.getByRole("dialog", { name: "Audio preference" }),
+    ).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Play scene" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    chooseAudio("with-audio");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Mute narrator" }).getAttribute(
+        "data-narrator-mode",
+      ),
+    ).toBe("on");
+  });
+
   test("renders a visible subtitle overlay for the execution scene", () => {
     render(<App />);
+    chooseAudio("without-audio");
 
     expect(screen.getByRole("region", { name: "Subtitles" })).toBeTruthy();
     expect(
@@ -119,6 +149,7 @@ describe("preview App narration vertical slice", () => {
 
   test("cycles narrator on, mute, and off from the canvas control", () => {
     render(<App />);
+    chooseAudio("with-audio");
 
     const narrator = screen.getByRole("button", { name: "Mute narrator" });
     expect(narrator.getAttribute("data-narrator-mode")).toBe("on");
@@ -141,6 +172,7 @@ describe("preview App narration vertical slice", () => {
 
   test("pauses narration with exploration and resumes the exact beat", () => {
     render(<App />);
+    chooseAudio("with-audio");
 
     fireEvent.click(screen.getByRole("button", { name: "Select tool" }));
     expect(transportStatus().textContent).toMatch(/exploring/i);
@@ -161,6 +193,7 @@ describe("preview App narration vertical slice", () => {
     const cancel = window.speechSynthesis.cancel as ReturnType<typeof vi.fn>;
     cancel.mockClear();
     const { unmount } = render(<App />);
+    chooseAudio("with-audio");
     unmount();
     expect(cancel.mock.calls.length).toBeGreaterThan(0);
   });

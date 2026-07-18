@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, test } from "vitest";
 
-import { safeParseFlowIr } from "../src/ir.js";
+import { safeParseFlowIr, upgradeFlowIrV1ToV2 } from "../src/ir.js";
 
 const examplesRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -27,11 +27,12 @@ describe("flagship IR fixtures", () => {
     test(`${fixture} passes strict Flow IR validation`, () => {
       const filePath = path.join(examplesRoot, fixture);
       const input = JSON.parse(readFileSync(filePath, "utf8"));
-      const parsed = safeParseFlowIr(input);
+      const parsed = safeParseFlowIr(upgradeFlowIrV1ToV2(input));
 
       expect(parsed.ok, JSON.stringify(parsed.diagnostics, null, 2)).toBe(true);
       if (parsed.ok) {
-        expect(parsed.value.irVersion).toBe(1);
+        expect(parsed.value.irVersion).toBe(2);
+        expect(parsed.value.themes).toEqual([]);
       }
     });
   }

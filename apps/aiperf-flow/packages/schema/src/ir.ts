@@ -13,6 +13,12 @@ import {
   semanticModelSchema,
   type SemanticModelIr,
 } from "./semantic-model.js";
+import {
+  flowThemeIrSchema,
+  themeRoleReferenceIrSchema,
+  type FlowThemeIr,
+  type StyleValueIr,
+} from "./theme.js";
 
 export type CapabilityRequirement = Readonly<{
   id: string;
@@ -38,7 +44,7 @@ export type RenderNodeBaseIr = Readonly<{
   id: string;
   capabilityId?: string | undefined;
   geometry: GeometryIr;
-  style: Readonly<Record<string, string | number | boolean>>;
+  style: Readonly<Record<string, StyleValueIr>>;
   accessibility: NodeAccessibilityIr;
   fallback: string;
   sourceMap: SourceRange;
@@ -159,11 +165,13 @@ export type SceneIr = Readonly<{
 }>;
 
 export type FlowIr = Readonly<{
-  irVersion: 1;
+  irVersion: 2;
   id: string;
   title: string;
   capabilities: readonly CapabilityRequirement[];
   tokens: Readonly<Record<string, string | number | boolean>>;
+  themes: readonly FlowThemeIr[];
+  defaultTheme?: string;
   scenes: readonly SceneIr[];
   sourceMap: SourceRange;
 }>;
@@ -181,7 +189,8 @@ const sourceRangeSchema = z.strictObject({
 });
 
 const scalarSchema = z.union([z.string(), z.number().finite(), z.boolean()]);
-const styleSchema = z.record(z.string(), scalarSchema);
+const styleValueSchema = z.union([scalarSchema, themeRoleReferenceIrSchema]);
+const styleSchema = z.record(z.string(), styleValueSchema);
 const geometrySchema = z.strictObject({
   x: z.number().finite(),
   y: z.number().finite(),
@@ -361,7 +370,7 @@ const sceneSchema = z.strictObject({
 });
 
 const flowIrSchema = z.strictObject({
-  irVersion: z.literal(1),
+  irVersion: z.literal(2),
   id: z.string().min(1),
   title: z.string().min(1),
   capabilities: z.array(
@@ -371,6 +380,8 @@ const flowIrSchema = z.strictObject({
     }),
   ),
   tokens: z.record(z.string(), scalarSchema).default({}),
+  themes: z.array(flowThemeIrSchema),
+  defaultTheme: z.string().min(1).optional(),
   scenes: z.array(sceneSchema),
   sourceMap: sourceRangeSchema,
 });
@@ -390,9 +401,28 @@ function inputRange(input: unknown): SourceRange {
   return parsed.success ? parsed.data : unknownRange;
 }
 
-/** Parses and validates strict version-one Flow IR. */
+/** Parses and validates strict version-two Flow IR. */
 export function parseFlowIr(input: unknown): FlowIr {
   return flowIrSchema.parse(input);
+}
+
+/** Upgrades a version-one Flow IR object to the strict version-two shape. */
+export function upgradeFlowIrV1ToV2(input: unknown): unknown {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    Array.isArray(input) ||
+    !("irVersion" in input) ||
+    input.irVersion !== 1
+  ) {
+    return input;
+  }
+
+  return {
+    ...input,
+    irVersion: 2,
+    themes: [],
+  };
 }
 
 /** Parses and validates a single scene against the canonical schema. */

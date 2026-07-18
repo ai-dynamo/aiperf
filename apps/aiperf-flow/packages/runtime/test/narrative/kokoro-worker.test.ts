@@ -4,11 +4,24 @@
 import { describe, expect, test, vi } from "vitest";
 
 import {
+  configureKokoroWasmPaths,
   createKokoroWorkerRuntime,
   type KokoroModel,
 } from "../../src/narrative/kokoro-worker.js";
 
 describe("Kokoro worker runtime", () => {
+  test("pins ONNX Runtime wasmPaths to local Vite-bundled assets before load", () => {
+    const env: { wasmPaths?: unknown } = {};
+    configureKokoroWasmPaths(env, {
+      wasm: "https://preview.test/assets/ort-wasm-simd-threaded.jsep.wasm",
+      mjs: "https://preview.test/assets/ort-wasm-simd-threaded.jsep.mjs",
+    });
+    expect(env.wasmPaths).toEqual({
+      wasm: "https://preview.test/assets/ort-wasm-simd-threaded.jsep.wasm",
+      mjs: "https://preview.test/assets/ort-wasm-simd-threaded.jsep.mjs",
+    });
+  });
+
   test("loads the requested model profile and transfers generated WAV audio", async () => {
     const wav = new ArrayBuffer(16);
     const model: KokoroModel = {

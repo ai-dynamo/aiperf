@@ -71,7 +71,7 @@ Use a narrow rail with compact typography, tree guides, cyan active edge, search
 
 Collapse the browser at tablet widths and expose its identity as a compact top control without reducing the scene below a usable minimum.
 
-- [x] **Step 5: Verify**
+- [ ] **Step 5: Verify**
 
 Run:
 
@@ -85,9 +85,12 @@ Expected: all Flow workspace packages compile successfully.
 
 Run IDE diagnostics for `preview/App.tsx` and `preview/styles.css`.
 
-Verified on 2026-07-17: `npm run flow:check` passes with 34 test files and 121
-tests across the workspace, all package builds pass, and IDE diagnostics report
-no errors in `preview/App.tsx` or `preview/styles.css`.
+Preview IDE diagnostics report no errors in `preview/App.tsx` or
+`preview/styles.css`. The current workspace gate is not green: the 2026-07-18
+run reached 43 passing and 3 failing runtime test files, with failures in Canvas
+text-atlas measurement, audio-consent dialog naming, and semantic-twin table
+fallback plus narrator-worker rejections in jsdom. Rerun Step 5 after those
+runtime changes stabilize.
 
 ---
 

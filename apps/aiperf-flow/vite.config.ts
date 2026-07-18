@@ -9,6 +9,7 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   root: path.join(rootDir, "preview"),
   plugins: [react()],
+  assetsInclude: ["**/*.wasm"],
   worker: {
     format: "es",
   },
@@ -23,5 +24,8 @@ export default defineConfig({
     port: 5188,
     strictPort: true,
     open: false,
+    fs: {
+      allow: [rootDir],
+    },
   },
 });

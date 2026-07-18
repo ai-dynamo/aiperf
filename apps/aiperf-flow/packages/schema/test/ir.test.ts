@@ -14,11 +14,12 @@ const sourceMap = {
 describe("Flow IR", () => {
   test("parses component nodes with semantic and layout attachments", () => {
     const flow = parseFlowIr({
-      irVersion: 1,
+      irVersion: 2,
       id: "token-span-morph",
       title: "Token span morph",
       capabilities: [{ id: "core.span-map", range: "1.0.0" }],
       tokens: {},
+      themes: [],
       scenes: [
         {
           id: "main",
@@ -83,11 +84,12 @@ describe("Flow IR", () => {
 
   test("rejects unknown component props fields at the node level", () => {
     const result = safeParseFlowIr({
-      irVersion: 1,
+      irVersion: 2,
       id: "bad",
       title: "Bad",
       capabilities: [],
       tokens: {},
+      themes: [],
       scenes: [
         {
           id: "main",

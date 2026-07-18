@@ -40,8 +40,6 @@ import {
 import {
   AudioConsentModal,
   type AudioConsentChoice,
-  loadAudioConsentChoice,
-  saveAudioConsentChoice,
 } from "./narrative/audio-consent-modal.js";
 import {
   createBrowserSpeechSynthesisBackend,
@@ -500,10 +498,7 @@ export function FlowApp({
   const [timeMs, setTimeMs] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [audioConsent, setAudioConsent] = useState<AudioConsentChoice | null>(
-    () =>
-      requireAudioConsent
-        ? loadAudioConsentChoice()
-        : "with-audio",
+    () => (requireAudioConsent ? null : "with-audio"),
   );
   const [muted, setMuted] = useState(audioConsent === "without-audio");
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
@@ -577,6 +572,30 @@ export function FlowApp({
     setInspectorOpen(false);
     focusCoordinatorRef.current = null;
   }, [sceneIndex]);
+
+  useEffect(() => {
+    if (
+      audioConsent === null ||
+      exploration !== null ||
+      reducedMotion ||
+      !playing
+    ) {
+      return;
+    }
+    const snapshot = player.play();
+    setTimeMs(snapshot.timeMs);
+    if (!muted) {
+      narrator.play(snapshot.timeMs);
+    }
+  }, [
+    audioConsent,
+    exploration,
+    muted,
+    narrator,
+    player,
+    playing,
+    reducedMotion,
+  ]);
 
   const properties = scene === undefined ? {} : record(scene);
   const transcript = scene === undefined ? "" : sceneTranscript(scene);
@@ -677,16 +696,19 @@ export function FlowApp({
   function navigate(nextIndex: number): void {
     narrator.stop();
     player.reset();
-    setPlaying(false);
     setTimeMs(0);
     setExploration(null);
     setCameraTakeover(null);
     setInspectorOpen(false);
     setSceneIndex(nextIndex);
+    if (audioConsent !== null && !reducedMotion) {
+      setPlaying(true);
+    } else {
+      setPlaying(false);
+    }
   }
 
   function chooseAudioConsent(choice: AudioConsentChoice): void {
-    saveAudioConsentChoice(choice);
     setAudioConsent(choice);
     if (choice === "with-audio") {
       setMuted(false);

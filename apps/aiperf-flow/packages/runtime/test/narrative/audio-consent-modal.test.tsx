@@ -6,31 +6,10 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import {
-  AudioConsentModal,
-  loadAudioConsentChoice,
-  saveAudioConsentChoice,
-} from "../../src/narrative/audio-consent-modal.js";
+import { AudioConsentModal } from "../../src/narrative/audio-consent-modal.js";
 
 afterEach(() => {
   cleanup();
-  sessionStorage.clear();
-});
-
-describe("audio consent visit persistence", () => {
-  test("remembers a choice for the current tab visit", () => {
-    expect(loadAudioConsentChoice()).toBeNull();
-
-    saveAudioConsentChoice("with-audio");
-
-    expect(loadAudioConsentChoice()).toBe("with-audio");
-  });
-
-  test("ignores invalid stored values", () => {
-    sessionStorage.setItem("aiperf-flow:audio-consent", "unexpected");
-
-    expect(loadAudioConsentChoice()).toBeNull();
-  });
 });
 
 describe("AudioConsentModal", () => {

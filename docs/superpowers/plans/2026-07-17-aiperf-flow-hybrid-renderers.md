@@ -2,11 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Integrate the five P0 hybrids with landed leaves—glyph-run, span-map,
-segment-strip, waterfall, and queue—by contributing immutable layout, semantic,
-and display fragments to the shared scene evaluator. `core.semantic-morph`
-remains a sixth P0 hybrid descriptor and joins this seam when
-`leaf.correspondence-tween` is implemented.
+**Goal:** Harden the six landed P0 hybrid contributions—glyph-run, span-map,
+semantic-morph, segment-strip, waterfall, and queue—inside the shared scene
+evaluator. `leaf.correspondence-tween` may later improve semantic-morph motion
+but is not required for its backend-neutral contribution.
 
 **Architecture:** Hybrid components are backend-neutral evaluators, not React or SVG renderers. The shared scene evaluator merges their fragments and produces one `DisplayList` and one `SemanticProjection`; Canvas, the always-mounted semantic HTML twin, and the simplified SVG/HTML fallback consume only those two products.
 
@@ -23,10 +22,9 @@ remains a sixth P0 hybrid descriptor and joins this seam when
 
 ## Global Constraints
 
-- The five landed-leaf hybrids in this plan are `core.glyph-run`,
-  `core.span-map`, `core.segment-strip`, `viz.waterfall`, and `viz.queue`.
-  `core.semantic-morph` follows the same evaluator contract after its leaf
-  implementation lands; it must not receive a competing renderer.
+- The six P0 hybrid contributions are `core.glyph-run`, `core.span-map`,
+  `core.semantic-morph`, `core.segment-strip`, `viz.waterfall`, and
+  `viz.queue`.
 - Hybrids contribute immutable `layout`, `semantic`, and `display` fragments into the existing shared scene evaluator. They do not own a renderer or create a second evaluator.
 - Canvas, semantic HTML twin, and SVG/HTML fallback accept `DisplayList` plus `SemanticProjection` only. They must not inspect `ComponentNodeIr`, call leaves, or dispatch by hybrid capability id.
 - Do not create React/SVG-primary capability renderers. In particular, do not create `capabilities/*.tsx` implementations for these hybrids and do not add JSX-returning `render` methods as their primary path.
@@ -76,19 +74,36 @@ Shared SceneEvaluator
 The display-list plan owns evaluated-scene/display-list product types and
 deterministic merging. The semantic-projection plan owns the single runtime
 projection. The live-cinematic plan owns the three consumers and mounted viewer
-behavior. This plan owns only the landed-leaf hybrid evaluators and their
+behavior. This plan owns only the six hybrid contributions and their
 registration with the shared evaluator.
+
+## Current implementation baseline
+
+The contribution seam is landed and integrated:
+
+- `evaluate/contributions/` contains all six component contributions;
+- `evaluate/registry.ts` binds capability IDs;
+- `evaluate/merge-contributions.ts` deterministically merges products;
+- `scene-evaluator.ts` evaluates component nodes through that registry;
+- contribution and component-scene-evaluator tests cover the mounted path.
+
+Tasks 1–8 describe landed outcomes. Preserve the existing
+`contributions/`/registry/merge structure; do not create parallel
+`component-fragment.ts` or `component-evaluators.ts` modules. Remaining work is
+hardening diagnostics, deterministic merge invariants, quality behavior,
+cross-backend parity, and the verification gate.
 
 ---
 
-## Task 1: Define the hybrid contribution seam
+## Task 1: Harden the landed hybrid contribution seam
 
 **Files:**
-- Create: `apps/aiperf-flow/packages/runtime/src/evaluate/component-fragment.ts`
-- Create: `apps/aiperf-flow/packages/runtime/src/evaluate/component-evaluators.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/src/evaluate/contributions/types.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/src/evaluate/registry.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/src/evaluate/merge-contributions.ts`
 - Modify: `apps/aiperf-flow/packages/runtime/src/evaluate/scene-evaluator.ts`
 - Modify: `apps/aiperf-flow/packages/runtime/src/evaluate/types.ts`
-- Create: `apps/aiperf-flow/packages/runtime/test/evaluate/component-fragment.test.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/test/evaluate/component-scene-evaluator.test.ts`
 
 **Interfaces:**
 - Consumes: `ComponentNodeIr`, canonical evaluation context, and capability id resolved through `resolveCapabilityId`.
@@ -126,8 +141,8 @@ Expected: PASS.
 ## Task 2: Evaluate `core.glyph-run`
 
 **Files:**
-- Create: `apps/aiperf-flow/packages/runtime/src/evaluate/components/glyph-run.ts`
-- Create: `apps/aiperf-flow/packages/runtime/test/evaluate/components/glyph-run.test.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/src/evaluate/contributions/glyph-run.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/test/evaluate/glyph-run-contribution.test.ts`
 - Reuse: `apps/aiperf-flow/packages/runtime/src/leaves/glyph-measure.ts`
 
 **Contract:**
@@ -147,7 +162,8 @@ cd /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/aiperf-flow
 npm test -w @aiperf/flow-runtime -- glyph-run
 ```
 
-Expected: FAIL because `core.glyph-run` has no component evaluator.
+Expected: PASS for landed behavior; new hardening assertions fail before their
+corresponding invariant is implemented.
 
 - [ ] **Step 3: Implement the pure hybrid evaluator**
   - Call `glyph-measure` only for missing derived geometry.
@@ -162,8 +178,8 @@ Expected: PASS.
 ## Task 3: Evaluate `core.span-map`
 
 **Files:**
-- Create: `apps/aiperf-flow/packages/runtime/src/evaluate/components/span-map.ts`
-- Create: `apps/aiperf-flow/packages/runtime/test/evaluate/components/span-map.test.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/src/evaluate/contributions/span-map.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/test/evaluate/span-map-contribution.test.ts`
 - Reuse: `apps/aiperf-flow/packages/runtime/src/leaves/span-interval.ts`
 
 **Contract:**
@@ -183,7 +199,8 @@ cd /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/aiperf-flow
 npm test -w @aiperf/flow-runtime -- span-map
 ```
 
-Expected: FAIL because `core.span-map` has no component evaluator.
+Expected: PASS for landed behavior; new hardening assertions fail before their
+corresponding invariant is implemented.
 
 - [ ] **Step 3: Implement the pure hybrid evaluator**
   - Keep interval analysis in `span-interval.ts`.
@@ -198,8 +215,8 @@ Expected: PASS.
 ## Task 4: Evaluate `core.segment-strip`
 
 **Files:**
-- Create: `apps/aiperf-flow/packages/runtime/src/evaluate/components/segment-strip.ts`
-- Create: `apps/aiperf-flow/packages/runtime/test/evaluate/components/segment-strip.test.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/src/evaluate/contributions/segment-strip.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/test/evaluate/segment-strip-contribution.test.ts`
 - Reuse: `apps/aiperf-flow/packages/runtime/src/leaves/segment-strip-layout.ts`
 
 **Contract:**
@@ -219,7 +236,8 @@ cd /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/aiperf-flow
 npm test -w @aiperf/flow-runtime -- segment-strip
 ```
 
-Expected: FAIL because `core.segment-strip` has no component evaluator.
+Expected: PASS for landed behavior; new hardening assertions fail before their
+corresponding invariant is implemented.
 
 - [ ] **Step 3: Implement the pure hybrid evaluator**
   - Keep packing and clipping calculations in the leaf.
@@ -234,8 +252,8 @@ Expected: PASS.
 ## Task 5: Evaluate `viz.waterfall`
 
 **Files:**
-- Create: `apps/aiperf-flow/packages/runtime/src/evaluate/components/waterfall.ts`
-- Create: `apps/aiperf-flow/packages/runtime/test/evaluate/components/waterfall.test.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/src/evaluate/contributions/waterfall.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/test/evaluate/waterfall-contribution.test.ts`
 - Reuse: `apps/aiperf-flow/packages/runtime/src/leaves/waterfall-nest-layout.ts`
 
 **Contract:**
@@ -255,7 +273,8 @@ cd /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/aiperf-flow
 npm test -w @aiperf/flow-runtime -- waterfall
 ```
 
-Expected: FAIL because `viz.waterfall` has no component evaluator.
+Expected: PASS for landed behavior; new hardening assertions fail before their
+corresponding invariant is implemented.
 
 - [ ] **Step 3: Implement the pure hybrid evaluator**
   - Keep nesting and lane placement in the leaf.
@@ -270,8 +289,8 @@ Expected: PASS.
 ## Task 6: Evaluate `viz.queue`
 
 **Files:**
-- Create: `apps/aiperf-flow/packages/runtime/src/evaluate/components/queue.ts`
-- Create: `apps/aiperf-flow/packages/runtime/test/evaluate/components/queue.test.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/src/evaluate/contributions/queue.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/test/evaluate/queue-contribution.test.ts`
 - Reuse: `apps/aiperf-flow/packages/runtime/src/leaves/queue-policy.ts`
 
 **Contract:**
@@ -291,7 +310,8 @@ cd /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/aiperf-flow
 npm test -w @aiperf/flow-runtime -- queue
 ```
 
-Expected: FAIL because `viz.queue` has no component evaluator.
+Expected: PASS for landed behavior; new hardening assertions fail before their
+corresponding invariant is implemented.
 
 - [ ] **Step 3: Implement the pure hybrid evaluator**
   - Keep scheduling policy and event-series generation in the leaf.
@@ -303,21 +323,22 @@ Expected: PASS.
 
 ---
 
-## Task 7: Register exactly the five P0 evaluators
+## Task 7: Harden the six-entry P0 contribution registry
 
 **Files:**
-- Create: `apps/aiperf-flow/packages/runtime/src/evaluate/create-p0-evaluators.ts`
-- Modify: `apps/aiperf-flow/packages/runtime/src/evaluate/component-evaluators.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/src/evaluate/registry.ts`
 - Modify: `apps/aiperf-flow/packages/runtime/src/index.ts`
-- Create: `apps/aiperf-flow/packages/runtime/test/evaluate/create-p0-evaluators.test.ts`
+- Modify: `apps/aiperf-flow/packages/runtime/test/evaluate/component-scene-evaluator.test.ts`
 
 **Interfaces:**
-- Produces evaluator registrations for exactly `core.glyph-run`, `core.span-map`, `core.segment-strip`, `viz.waterfall`, and `viz.queue`.
+- Preserves registrations for exactly `core.glyph-run`, `core.span-map`,
+  `core.semantic-morph`, `core.segment-strip`, `viz.waterfall`, and
+  `viz.queue`.
 - Preserves descriptor manifest sorting, duplicate-id rejection, and `resolveCapabilityId` dispatch.
 - Does not add React `render` methods to P0 entries.
 
-- [ ] **Step 1: Write failing registry tests**
-  - Assert all five and only the five requested P0 hybrid ids are registered.
+- [ ] **Step 1: Extend registry tests**
+  - Assert all six and only the six P0 hybrid ids are registered.
   - Assert duplicate ids and unknown ids fail closed.
   - Assert each registration exposes fragment evaluation and no JSX renderer.
 
@@ -329,9 +350,10 @@ cd /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/aiperf-flow
 npm test -w @aiperf/flow-runtime -- create-p0-evaluators
 ```
 
-Expected: FAIL because the P0 evaluator set is not composed.
+Expected: PASS for the landed set; new hardening assertions fail before their
+corresponding diagnostic or invariant is implemented.
 
-- [ ] **Step 3: Register the five evaluators with the shared scene evaluator**
+- [ ] **Step 3: Preserve all six contributions in the shared scene evaluator**
   - Keep foundation React/SVG fallback compatibility outside this evaluator set.
   - Do not route P0 hybrids through `RuntimeCapability.render`.
 
@@ -353,7 +375,7 @@ Expected: PASS.
 - Proves: all three consumers preserve semantic ids, focus targets, reading order, and selection without access to source hybrid nodes or leaves.
 
 - [ ] **Step 1: Write a failing conformance matrix**
-  - Evaluate one fixture for each of the five P0 hybrids.
+  - Evaluate one fixture for each of the six P0 hybrids.
   - Pass only `DisplayList` and `SemanticProjection` to Canvas, twin, and SVG/HTML fallback harnesses.
   - Assert matching semantic ids and hit/focus targets across consumers.
   - Assert backend modules do not import `ComponentNodeIr`, P0 leaves, or P0 evaluator modules.
@@ -374,7 +396,7 @@ Expected: FAIL until every backend consumes the shared products without capabili
 
 - [ ] **Step 4: Rerun conformance tests**
 
-Expected: PASS for all five hybrids and all three consumers.
+Expected: PASS for all six hybrids and all three consumers.
 
 ---
 
