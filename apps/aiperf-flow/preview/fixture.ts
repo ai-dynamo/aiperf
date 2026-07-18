@@ -199,12 +199,18 @@ function previewRect(
   fill: string,
   stroke: string,
   strokeWidth = 1,
+  radius = 0,
 ): RenderNodeIr {
   return {
     kind: "rect",
     id: input.id,
     geometry: input.geometry,
-    style: { fill, stroke, strokeWidth },
+    style: {
+      fill,
+      stroke,
+      strokeWidth,
+      ...(radius > 0 ? { radius } : {}),
+    },
     accessibility: {
       label: input.label,
       ...(input.description === undefined
@@ -240,20 +246,199 @@ function previewText(
   };
 }
 
+/** One glyph in a card's inline "signature" diagram row. */
+type CardGlyph =
+  | Readonly<{ kind: "pill"; idSuffix: string; label: string; accented?: boolean }>
+  | Readonly<{ kind: "queue"; idSuffix: string; labels: readonly string[]; activeIndex?: number }>
+  | Readonly<{ kind: "bars"; idSuffix: string; heights: readonly number[] }>;
+
 type EvidenceCard = Readonly<{
   number: number;
   id: string;
   title: string;
   detail: string;
-  diagram: string;
+  left: CardGlyph;
+  right: CardGlyph;
   accent: string;
   x: number;
   y: number;
 }>;
 
+const CARD_WIDTH = 252;
+const CARD_HEIGHT = 138;
+const CARD_PAD = 18;
+const ROW_Y = 68;
+const GLYPH_HEIGHT = 26;
+const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
+
+/** Approximate rendered width of a monospace label at a given size. */
+function monoWidth(label: string, fontSize: number): number {
+  return label.length * fontSize * 0.62;
+}
+
+/** Centered monospace caption inside a token rectangle. */
+function tokenLabel(
+  id: string,
+  bounds: GeometryIr,
+  text: string,
+  fill: string,
+  fontSize: number,
+): RenderNodeIr {
+  const x = bounds.x + (bounds.width - monoWidth(text, fontSize)) / 2;
+  const y = bounds.y + bounds.height / 2 + fontSize * 0.36;
+  return previewText(
+    {
+      id,
+      geometry: { x, y, width: bounds.width, height: fontSize + 2 },
+      label: text,
+      text,
+    },
+    fill,
+    fontSize,
+    700,
+    MONO,
+  );
+}
+
+/** Intrinsic width of a glyph so a row can be right-aligned. */
+function glyphWidth(glyph: CardGlyph): number {
+  switch (glyph.kind) {
+    case "pill":
+      return Math.max(46, monoWidth(glyph.label, 10) + 22);
+    case "queue":
+      return glyph.labels.length * 26 - 4;
+    case "bars":
+      return glyph.heights.length * 9 - 3;
+  }
+}
+
+/** Builds one glyph's nodes and its connector anchor id at a row origin. */
+function glyphNodes(
+  card: EvidenceCard,
+  glyph: CardGlyph,
+  originX: number,
+  rowTop: number,
+): Readonly<{ nodes: readonly RenderNodeIr[]; anchorId: string }> {
+  const id = `${card.id}-${glyph.idSuffix}`;
+  switch (glyph.kind) {
+    case "pill": {
+      const width = glyphWidth(glyph);
+      const bounds = { x: originX, y: rowTop, width, height: GLYPH_HEIGHT };
+      const stroke = glyph.accented ? card.accent : "rgba(255,255,255,0.18)";
+      const ink = glyph.accented ? card.accent : SYSTEMS_CHALK.ink;
+      return {
+        anchorId: id,
+        nodes: [
+          previewRect(
+            { id, geometry: bounds, label: glyph.label },
+            "#22282b",
+            stroke,
+            1,
+            8,
+          ),
+          tokenLabel(`${id}-label`, bounds, glyph.label, ink, 10),
+        ],
+      };
+    }
+    case "queue": {
+      const size = 22;
+      const nodes: RenderNodeIr[] = [];
+      glyph.labels.forEach((value, index) => {
+        const chipId = `${card.id}-queue-${value}`;
+        const bounds = {
+          x: originX + index * 26,
+          y: rowTop + (GLYPH_HEIGHT - size) / 2,
+          width: size,
+          height: size,
+        };
+        const active = index === (glyph.activeIndex ?? -1);
+        nodes.push(
+          previewRect(
+            { id: chipId, geometry: bounds, label: `Queue slot ${value}` },
+            "#22282b",
+            active ? card.accent : "rgba(255,255,255,0.16)",
+            active ? 1.5 : 1,
+            size / 2,
+          ),
+          tokenLabel(
+            `${chipId}-label`,
+            bounds,
+            value,
+            active ? card.accent : SYSTEMS_CHALK.muted,
+            9,
+          ),
+        );
+      });
+      const last = glyph.labels.at(-1) ?? "";
+      return { nodes, anchorId: `${card.id}-queue-${last}` };
+    }
+    case "bars": {
+      const nodes: RenderNodeIr[] = [];
+      const barWidth = 6;
+      const baseline = rowTop + GLYPH_HEIGHT;
+      glyph.heights.forEach((fraction, index) => {
+        const barId = `${card.id}-bar-${index + 1}`;
+        const height = Math.max(4, Math.round(GLYPH_HEIGHT * fraction));
+        nodes.push(
+          previewRect(
+            {
+              id: barId,
+              geometry: {
+                x: originX + index * 9,
+                y: baseline - height,
+                width: barWidth,
+                height,
+              },
+              label: `Bar ${index + 1}`,
+            },
+            card.accent,
+            card.accent,
+            0,
+            2,
+          ),
+        );
+      });
+      return { nodes, anchorId: `${card.id}-bar-1` };
+    }
+  }
+}
+
 function evidenceCard(card: EvidenceCard): RenderNodeIr {
-  const geometry = { x: card.x, y: card.y, width: 252, height: 130 };
+  const geometry = { x: card.x, y: card.y, width: CARD_WIDTH, height: CARD_HEIGHT };
   const label = `${card.number}. ${card.title}`;
+  const rowTop = card.y + ROW_Y;
+
+  const left = glyphNodes(card, card.left, card.x + CARD_PAD, rowTop);
+  const rightWidth = glyphWidth(card.right);
+  const right = glyphNodes(
+    card,
+    card.right,
+    card.x + CARD_WIDTH - CARD_PAD - rightWidth,
+    rowTop,
+  );
+  const link: RenderNodeIr = {
+    kind: "connector",
+    id: `${card.id}-diagram-link`,
+    geometry: { x: 0, y: 0, width: 0, height: 0 },
+    style: { stroke: "rgba(255,255,255,0.22)", strokeWidth: 1.5 },
+    from: { nodeId: left.anchorId },
+    to: { nodeId: right.anchorId },
+    accessibility: {
+      label: `${card.title} signature`,
+      description: `${card.title} data path`,
+    },
+    fallback: card.title,
+    sourceMap: requestSourceMap,
+  };
+
+  const badgeSize = 24;
+  const badge = {
+    x: card.x + CARD_PAD,
+    y: card.y + 20,
+    width: badgeSize,
+    height: badgeSize,
+  };
+
   return {
     kind: "group",
     id: card.id,
@@ -269,25 +454,38 @@ function evidenceCard(card: EvidenceCard): RenderNodeIr {
           geometry,
           label: `${card.title} card`,
         },
-        SYSTEMS_CHALK.panel,
-        card.accent,
+        "#1c2023",
+        "rgba(255,255,255,0.1)",
+        1,
+        16,
       ),
-      previewText(
+      // Connector paints before the tokens so the tokens overdraw its ends,
+      // leaving only the visible span between them.
+      link,
+      ...left.nodes,
+      ...right.nodes,
+      previewRect(
         {
-          id: `${card.id}-number`,
-          geometry: { x: card.x + 16, y: card.y + 29, width: 22, height: 22 },
-          label: `Step ${card.number}`,
-          text: String(card.number).padStart(2, "0"),
+          id: `${card.id}-number-badge`,
+          geometry: badge,
+          label: `Step ${card.number} badge`,
         },
+        "#22282b",
         card.accent,
-        10,
-        700,
-        "ui-monospace, SFMono-Regular, Menlo, monospace",
+        1.5,
+        badgeSize / 2,
+      ),
+      tokenLabel(
+        `${card.id}-number`,
+        badge,
+        String(card.number),
+        card.accent,
+        12,
       ),
       previewText(
         {
           id: `${card.id}-title`,
-          geometry: { x: card.x + 48, y: card.y + 29, width: 188, height: 18 },
+          geometry: { x: card.x + CARD_PAD + 34, y: card.y + 32, width: 176, height: 18 },
           label: `${card.title} title`,
           text: card.title,
         },
@@ -297,20 +495,8 @@ function evidenceCard(card: EvidenceCard): RenderNodeIr {
       ),
       previewText(
         {
-          id: `${card.id}-diagram`,
-          geometry: { x: card.x + 30, y: card.y + 73, width: 192, height: 18 },
-          label: `${card.title} diagram`,
-          text: card.diagram,
-        },
-        card.accent,
-        11,
-        700,
-        "ui-monospace, SFMono-Regular, Menlo, monospace",
-      ),
-      previewText(
-        {
           id: `${card.id}-detail`,
-          geometry: { x: card.x + 16, y: card.y + 110, width: 220, height: 14 },
+          geometry: { x: card.x + CARD_PAD, y: card.y + 116, width: 220, height: 14 },
           label: `${card.title} annotation`,
           text: card.detail,
         },
@@ -346,7 +532,8 @@ function requestInvestigationScene(): SceneIr {
       id: "gateway",
       title: "Prompt enters the gateway",
       detail: "Route and admission decisions become the first authored beat.",
-      diagram: "CLIENT ···→ EDGE",
+      left: { kind: "pill", idSuffix: "client", label: "CLIENT" },
+      right: { kind: "pill", idSuffix: "edge", label: "EDGE", accented: true },
       accent: SYSTEMS_CHALK.amber,
       x: 23,
       y: 41,
@@ -356,7 +543,13 @@ function requestInvestigationScene(): SceneIr {
       id: "admission",
       title: "Admission queues the work",
       detail: "Queue depth and wait time remain attached to the request.",
-      diagram: "08 · 09 · 10 ···→ GPU",
+      left: {
+        kind: "queue",
+        idSuffix: "queue",
+        labels: ["8", "9", "10"],
+        activeIndex: 1,
+      },
+      right: { kind: "pill", idSuffix: "gpu", label: "GPU", accented: true },
       accent: SYSTEMS_CHALK.blue,
       x: 454,
       y: 7,
@@ -366,7 +559,8 @@ function requestInvestigationScene(): SceneIr {
       id: "prefix-cache",
       title: "Prefix cache is consulted",
       detail: "A cache hit shortens prefill; a miss explains the extra work.",
-      diagram: "HASH ···→ KV",
+      left: { kind: "pill", idSuffix: "hash", label: "HASH" },
+      right: { kind: "pill", idSuffix: "kv", label: "KV", accented: true },
       accent: SYSTEMS_CHALK.violet,
       x: 885,
       y: 41,
@@ -376,7 +570,8 @@ function requestInvestigationScene(): SceneIr {
       id: "prefill",
       title: "Prefill claims compute",
       detail: "Batch pressure and memory occupancy explain time to first token.",
-      diagram: "PREFILL ···→ ▂▅█▆",
+      left: { kind: "pill", idSuffix: "prefill", label: "PREFILL" },
+      right: { kind: "bars", idSuffix: "bars", heights: [0.4, 0.7, 1, 0.6] },
       accent: SYSTEMS_CHALK.green,
       x: 0,
       y: 352,
@@ -386,7 +581,8 @@ function requestInvestigationScene(): SceneIr {
       id: "decode",
       title: "Decode streams tokens",
       detail: "Inter-token gaps reveal contention without losing narrative rhythm.",
-      diagram: "GPU ···→ t₁ · t₂ · t₃",
+      left: { kind: "pill", idSuffix: "gpu", label: "GPU" },
+      right: { kind: "pill", idSuffix: "tokens", label: "t·t·t", accented: true },
       accent: SYSTEMS_CHALK.coral,
       x: 908,
       y: 352,
@@ -396,7 +592,8 @@ function requestInvestigationScene(): SceneIr {
       id: "telemetry",
       title: "Telemetry supplies evidence",
       detail: "Metrics are supporting evidence, not a competing dashboard.",
-      diagram: "▂▄█▅▇ ···→ TRACE",
+      left: { kind: "bars", idSuffix: "bars", heights: [0.5, 0.8, 0.4, 1, 0.7] },
+      right: { kind: "pill", idSuffix: "trace", label: "TRACE", accented: true },
       accent: SYSTEMS_CHALK.cyan,
       x: 209,
       y: 560,
@@ -406,7 +603,8 @@ function requestInvestigationScene(): SceneIr {
       id: "resolution",
       title: "The causal path resolves",
       detail: "Every spoke collapses back into one explainable request story.",
-      diagram: "ARRIVE ···→ DONE",
+      left: { kind: "pill", idSuffix: "arrive", label: "ARRIVE" },
+      right: { kind: "pill", idSuffix: "done", label: "DONE", accented: true },
       accent: SYSTEMS_CHALK.amber,
       x: 699,
       y: 560,
@@ -432,8 +630,10 @@ function requestInvestigationScene(): SceneIr {
           geometry: hubGeometry,
           label: "Selected request R-017",
         },
-        SYSTEMS_CHALK.panel,
+        "#241d38",
         SYSTEMS_CHALK.violet,
+        1.5,
+        18,
       ),
       previewText(
         {
@@ -463,7 +663,7 @@ function requestInvestigationScene(): SceneIr {
           id: "request-hub-detail",
           geometry: { x: 480, y: 382, width: 200, height: 16 },
           label: "Investigation instruction",
-          text: "Follow one causal path across every layer.",
+          text: "Follow one causal path across every layer of inference.",
         },
         SYSTEMS_CHALK.muted,
         10,
