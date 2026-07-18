@@ -671,22 +671,23 @@ fn build_prefix_pool(
         .collect()
 }
 
-/// Deterministic bimodal prefix reuse layered on the corpus block generator.
+/// Deterministic shared-prefix targeting layered over the corpus block generator.
 ///
-/// A configured fraction of prompts draw an identical leading token run — the
-/// shared prefix — so a server KV cache observes genuine prefix hits, while the
-/// remaining prompts stay fully unique. The shared prefix is grown on demand and
-/// never rewritten, so every reusing prompt shares a byte-identical leading token
-/// sequence regardless of its own sampled input length, and exact-length input
-/// targeting is preserved because the prompt is assembled from exact token ids.
+/// A configured share of prompts is steered onto a single reusable leading token
+/// run so an upstream KV cache registers real prefix hits; the rest keep their
+/// fully independent prompts. The reusable run is extended lazily and its already
+/// materialized ids are never rewritten, so every reusing prompt exposes the same
+/// leading token sequence no matter what input length it sampled. Because each
+/// prompt is stitched together from concrete token ids, the requested
+/// `input_tokens` target is met exactly.
 struct PrefixReuse {
-    /// Probability, in `[0, 1]`, that a prompt draws the shared prefix.
+    /// Probability, in `[0, 1]`, that a prompt is steered onto the reusable run.
     fraction: f64,
-    /// Fraction of a reusing prompt's input length occupied by the shared prefix.
+    /// Portion of a reusing prompt's input length taken from the reusable run.
     ratio: f64,
-    /// Seeded warm/cold selector, independent of the corpus sampling stream.
+    /// Selection stream deciding reuse, kept apart from the corpus sampling draw.
     decision: RandomGenerator,
-    /// The shared prefix token ids, frozen once grown so warm prompts match.
+    /// Reusable prefix ids, held stable once materialized so every hit lines up.
     shared: Vec<u32>,
 }
 
@@ -701,8 +702,8 @@ impl PrefixReuse {
         })
     }
 
-    /// Assemble one exact-length prompt, prepending the shared prefix for the
-    /// deterministically selected warm fraction of prompts.
+    /// Build one exact-length prompt, leading it with the reusable run for the
+    /// deterministically selected reusing share of prompts.
     fn prompt_tokens(
         &mut self,
         generator: &mut dyn PromptGenerator,
@@ -722,8 +723,8 @@ impl PrefixReuse {
         Ok(tokens)
     }
 
-    /// Extend the shared prefix to at least `needed` tokens without disturbing the
-    /// tokens already committed, keeping every warm prefix byte-identical.
+    /// Grow the reusable run up to at least `needed` tokens, leaving the ids
+    /// already materialized untouched so every reusing prompt stays aligned.
     fn grow_shared(&mut self, generator: &mut dyn PromptGenerator, needed: usize) -> Result<()> {
         while self.shared.len() < needed {
             let delta = needed - self.shared.len();
@@ -836,6 +837,40 @@ mod tests {
         assert_eq!(&first[..5], &second[..5]);
         assert_eq!(&first[..5], &reuse.shared[..5]);
         assert_ne!(&first[5..], &second[5..]);
+    }
+
+    #[test]
+    fn prefix_reuse_holds_shared_run_across_differing_input_lengths() {
+        use crate::dataset::prompt::{CorpusPromptGeneratorFactory, PromptGeneratorFactory};
+
+        let tokenizer = TiktokenTokenizer::builtin();
+        let factory = CorpusPromptGeneratorFactory::default();
+        let mut generator = factory.create(&tokenizer, RngRoot::new(Some(23))).unwrap();
+        // A unit fraction steers every prompt onto the reusable run. Each prompt
+        // asks for a different input length, so the reusable run must grow once
+        // and freeze: the shared portion stays byte-identical even though the
+        // reserved prefix length rises with the (larger) target input length.
+        let mut reuse = PrefixReuse {
+            fraction: 1.0,
+            ratio: 0.5,
+            decision: RandomGenerator::from_seed(RngRoot::new(Some(23)).derive_seed("test.reuse")),
+            shared: Vec::new(),
+        };
+        // ratio 0.5 reserves prefixes of 4, 8, and 12 tokens for these lengths.
+        let short = reuse.prompt_tokens(generator.as_mut(), 8).unwrap();
+        let medium = reuse.prompt_tokens(generator.as_mut(), 16).unwrap();
+        let long = reuse.prompt_tokens(generator.as_mut(), 24).unwrap();
+        assert_eq!(short.len(), 8);
+        assert_eq!(medium.len(), 16);
+        assert_eq!(long.len(), 24);
+        // The shortest reserved prefix (4 tokens) is a common leading run of all
+        // three prompts even though every prompt targeted a different length.
+        assert_eq!(&short[..4], &medium[..4]);
+        assert_eq!(&short[..4], &long[..4]);
+        // The reusable run only ever grew; a length seen earlier is a strict
+        // prefix of one reserved later, never rewritten.
+        assert_eq!(&medium[..8], &long[..8]);
+        assert_eq!(&short[..4], &reuse.shared[..4]);
     }
 
     #[tokio::test]
