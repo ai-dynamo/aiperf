@@ -526,10 +526,19 @@ fn special_token_id(tokenizer: &HfTokenizer, config: &Value, field: &str) -> Opt
 /// Clock-injected client the dataset/hub loader and server-metrics scraper use
 /// for control-plane HTTP — so it inherits that stack's direct, proxy-free
 /// connections (loopback benchmarking must never route through an ambient
-/// proxy) and its Clock-enforced connect/request deadlines. The transport is
-/// `!Send` and drives on a current-thread `LocalSet`, so each call is bridged
-/// from this synchronous seam onto a dedicated one-shot runtime thread, mirroring
-/// [`crate::dataset::fetch`]'s `fetch_on_local_runtime` idiom.
+/// proxy) and its Clock-enforced connect/request deadlines.
+///
+/// `HttpTransport` is `!Send` and drives on a current-thread `LocalSet`, but
+/// this tokenizer is wrapped in a `Send + Sync` `Arc<dyn TextTokenizer>` and is
+/// exercised on the online hot path (per-response `count`, per-request chat
+/// templating). So a single long-lived worker thread owns one runtime, one
+/// `LocalSet`, and one `HttpTransport` — its connection pool and keep-alive
+/// persist across calls — and this handle holds only the channel sender. Each
+/// synchronous `encode`/`decode` hands one request to that worker and blocks on
+/// a reply channel: this cannot re-enter the ambient composition runtime or
+/// nested-`block_on`-panic, and the worker's own reactor drives the I/O while
+/// the caller waits the network round-trip. The worker shuts down cleanly when
+/// this handle drops (the request channel closes and the loop exits).
 ///
 /// Only `http`/`https` origins are accepted; any other scheme is rejected at
 /// construction. BOS/EOS and vocabulary size are not exposed by the two
@@ -544,21 +553,35 @@ pub struct ServerTokenizer {
     ///
     /// Absent when the server hosts a single tokenizer and needs no selector.
     model: Option<String>,
-    /// Clock-enforced connect/request/total deadline for each round-trip.
-    timeout: Duration,
     /// Stable diagnostic name (`server:<base-url>`).
     name: String,
+    /// Sender to the long-lived transport worker. `None` only transiently during
+    /// [`Drop`], which closes the channel to signal shutdown.
+    requests: Option<tokio::sync::mpsc::UnboundedSender<TransportRequest>>,
+    /// Join handle for the worker thread, taken and joined on [`Drop`].
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+/// One POST job handed to the transport worker with a channel for its reply.
+struct TransportRequest {
+    /// Absolute endpoint URL to POST to.
+    url: String,
+    /// Serialized JSON request body.
+    payload: Vec<u8>,
+    /// One-shot reply channel carrying the response body bytes or an error.
+    reply: std::sync::mpsc::Sender<Result<Vec<u8>>>,
 }
 
 impl ServerTokenizer {
-    /// Default per-call transport deadline.
+    /// Default Clock-enforced connect/request/total deadline per round-trip.
     const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
     /// Build a server tokenizer targeting `base_url` (e.g. `http://host:8000`).
     ///
     /// `model` is forwarded verbatim in every request body when present. The
     /// tokenize and detokenize endpoints default to `<base>/tokenize` and
-    /// `<base>/detokenize`.
+    /// `<base>/detokenize`. The long-lived transport worker thread is spawned
+    /// here and lives until this handle drops.
     pub fn new(base_url: &str, model: Option<String>) -> Result<Self> {
         let parsed = url::Url::parse(base_url).map_err(|error| {
             DatasetError::Tokenizer(format!(
@@ -577,12 +600,15 @@ impl ServerTokenizer {
             )));
         }
         let base = base_url.trim_end_matches('/');
+        let timeout_ns = i64::try_from(Self::DEFAULT_TIMEOUT.as_nanos()).unwrap_or(i64::MAX);
+        let (requests, worker) = spawn_transport_worker(timeout_ns)?;
         Ok(Self {
             tokenize_url: format!("{base}/tokenize"),
             detokenize_url: format!("{base}/detokenize"),
             model,
-            timeout: Self::DEFAULT_TIMEOUT,
             name: format!("server:{base_url}"),
+            requests: Some(requests),
+            worker: Some(worker),
         })
     }
 
@@ -601,87 +627,147 @@ impl ServerTokenizer {
         })
     }
 
-    /// Perform one POST round-trip through the shared native HTTP transport and
-    /// return the response body bytes.
+    /// Hand one POST to the long-lived transport worker and block on its reply.
     ///
-    /// The transport is `!Send` and must run on a current-thread `LocalSet`;
-    /// this seam is synchronous and may itself be invoked from within the
-    /// composition runtime, so the round-trip is bridged onto a dedicated
-    /// one-shot runtime thread where `block_on` cannot re-enter an ambient
-    /// runtime.
+    /// Blocking is on a plain channel (not `block_on`), so it is safe from
+    /// within the ambient composition runtime and never re-enters it; the
+    /// worker's own reactor drives the request while this thread waits the
+    /// network round-trip.
     fn exchange(&self, url: &str, payload: Vec<u8>) -> Result<Vec<u8>> {
-        let url = url.to_string();
-        let timeout_ns = i64::try_from(self.timeout.as_nanos()).unwrap_or(i64::MAX);
-        std::thread::scope(|scope| {
-            scope
-                .spawn(|| request_on_local_runtime(url, payload, timeout_ns))
-                .join()
-                .map_err(|_| {
-                    DatasetError::Tokenizer("server tokenizer request thread panicked".to_string())
-                })?
-        })
+        let (reply, reply_rx) = std::sync::mpsc::channel();
+        let requests = self.requests.as_ref().ok_or_else(|| {
+            DatasetError::Tokenizer("server tokenizer worker is shutting down".to_string())
+        })?;
+        requests
+            .send(TransportRequest {
+                url: url.to_string(),
+                payload,
+                reply,
+            })
+            .map_err(|_| {
+                DatasetError::Tokenizer("server tokenizer worker is not running".to_string())
+            })?;
+        reply_rx.recv().map_err(|_| {
+            DatasetError::Tokenizer(
+                "server tokenizer worker dropped the request before replying".to_string(),
+            )
+        })?
     }
 }
 
-/// Run one server-tokenizer POST on a fresh current-thread runtime + `LocalSet`.
-///
-/// Builds a [`RealClock`] and the shared [`HttpTransport`] with Clock-enforced
-/// connect/request/total deadlines, dispatches the JSON body, and classifies the
-/// terminal record: a non-2xx status is surfaced with a bounded body snippet, a
-/// missing status (connect failure or deadline) as a transport error.
-fn request_on_local_runtime(url: String, payload: Vec<u8>, timeout_ns: i64) -> Result<Vec<u8>> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(DatasetError::Io)?;
-    let local = tokio::task::LocalSet::new();
-    runtime.block_on(local.run_until(async move {
-        let clock: Rc<dyn Clock> = RealClock::new();
-        let client = ClientConfig {
-            connect_timeout_ns: Some(timeout_ns),
-            request_timeout_ns: Some(timeout_ns),
-            total_timeout_ns: Some(timeout_ns),
-            ..ClientConfig::default()
-        };
-        let transport = HttpTransport::new(clock, client).with_user_agent("aiperf-tokenizer/0");
-        let record = transport
-            .send_request_bytes(
-                &RequestConfig::new(url.clone()),
-                Bytes::from(payload),
-                false,
-                |_| {},
-            )
-            .await;
-
-        let body = record
-            .responses
-            .into_iter()
-            .find_map(|response| match response {
-                Response::Text(text) => Some(text.text),
-                Response::Sse(_) => None,
-            });
-
-        match record.status {
-            Some(status) if (200..300).contains(&status) => {
-                Ok(body.unwrap_or_default().into_bytes())
-            }
-            Some(status) => {
-                let snippet: String = body.unwrap_or_default().chars().take(200).collect();
-                Err(DatasetError::Tokenizer(format!(
-                    "server tokenizer {url} returned HTTP {status}: {snippet}"
-                )))
-            }
-            None => {
-                let detail = record
-                    .error
-                    .map(|error| error.message)
-                    .unwrap_or_else(|| "no response".to_string());
-                Err(DatasetError::Tokenizer(format!(
-                    "server tokenizer request to {url} failed: {detail}"
-                )))
-            }
+impl Drop for ServerTokenizer {
+    fn drop(&mut self) {
+        // Close the request channel so the worker's `recv().await` yields `None`
+        // and its runtime tears down, then join the now-exiting thread.
+        self.requests = None;
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
         }
-    }))
+    }
+}
+
+/// Spawn the long-lived transport worker: one thread owning one current-thread
+/// runtime, one `LocalSet`, and one [`HttpTransport`] whose connection pool and
+/// keep-alive persist for the tokenizer's lifetime.
+///
+/// Returns the request sender and the thread's join handle. Construction blocks
+/// until the worker signals that its runtime built successfully, so a runtime
+/// failure surfaces as a clear construction error rather than a later send error.
+fn spawn_transport_worker(
+    timeout_ns: i64,
+) -> Result<(
+    tokio::sync::mpsc::UnboundedSender<TransportRequest>,
+    std::thread::JoinHandle<()>,
+)> {
+    let (requests, mut request_rx) = tokio::sync::mpsc::unbounded_channel::<TransportRequest>();
+    let (ready, ready_rx) = std::sync::mpsc::channel::<std::result::Result<(), String>>();
+    let worker = std::thread::Builder::new()
+        .name("aiperf-server-tokenizer".to_string())
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    let _ = ready.send(Err(error.to_string()));
+                    return;
+                }
+            };
+            let _ = ready.send(Ok(()));
+            let local = tokio::task::LocalSet::new();
+            runtime.block_on(local.run_until(async move {
+                let clock: Rc<dyn Clock> = RealClock::new();
+                let client = ClientConfig {
+                    connect_timeout_ns: Some(timeout_ns),
+                    request_timeout_ns: Some(timeout_ns),
+                    total_timeout_ns: Some(timeout_ns),
+                    ..ClientConfig::default()
+                };
+                let transport =
+                    HttpTransport::new(clock, client).with_user_agent("aiperf-tokenizer/0");
+                // Await requests on the async channel so the reactor keeps
+                // polling the connection pool (keep-alive) between jobs; a
+                // blocking `recv` would park the reactor and stall idle sockets.
+                // The loop exits when the sender drops (tokenizer shutdown).
+                while let Some(request) = request_rx.recv().await {
+                    let result = dispatch_once(&transport, &request.url, request.payload).await;
+                    let _ = request.reply.send(result);
+                }
+            }));
+        })
+        .map_err(DatasetError::Io)?;
+    match ready_rx.recv() {
+        Ok(Ok(())) => Ok((requests, worker)),
+        Ok(Err(message)) => Err(DatasetError::Tokenizer(format!(
+            "server tokenizer worker failed to start: {message}"
+        ))),
+        Err(_) => Err(DatasetError::Tokenizer(
+            "server tokenizer worker exited before signaling readiness".to_string(),
+        )),
+    }
+}
+
+/// Dispatch one POST over the shared transport and classify the terminal record.
+///
+/// A non-2xx status is surfaced with a bounded body snippet; a missing status
+/// (connect failure or Clock-enforced deadline) is surfaced as a transport error.
+async fn dispatch_once(transport: &HttpTransport, url: &str, payload: Vec<u8>) -> Result<Vec<u8>> {
+    let record = transport
+        .send_request_bytes(
+            &RequestConfig::new(url.to_string()),
+            Bytes::from(payload),
+            false,
+            |_| {},
+        )
+        .await;
+
+    let body = record
+        .responses
+        .into_iter()
+        .find_map(|response| match response {
+            Response::Text(text) => Some(text.text),
+            Response::Sse(_) => None,
+        });
+
+    match record.status {
+        Some(status) if (200..300).contains(&status) => Ok(body.unwrap_or_default().into_bytes()),
+        Some(status) => {
+            let snippet: String = body.unwrap_or_default().chars().take(200).collect();
+            Err(DatasetError::Tokenizer(format!(
+                "server tokenizer {url} returned HTTP {status}: {snippet}"
+            )))
+        }
+        None => {
+            let detail = record
+                .error
+                .map(|error| error.message)
+                .unwrap_or_else(|| "no response".to_string());
+            Err(DatasetError::Tokenizer(format!(
+                "server tokenizer request to {url} failed: {detail}"
+            )))
+        }
+    }
 }
 
 impl TextTokenizer for ServerTokenizer {
@@ -819,29 +905,43 @@ impl TextTokenizer for NoDecodeTokenizer {
 mod tests {
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
 
     use super::*;
 
-    /// Deterministic in-process `/tokenize` + `/detokenize` server for the
-    /// [`ServerTokenizer`] round-trip test.
+    /// Deterministic in-process keep-alive `/tokenize` + `/detokenize` server for
+    /// the [`ServerTokenizer`] tests.
     ///
     /// Maps each Unicode scalar to its code point as a token id and back, so a
-    /// round-trip is byte-exact and token counts come verifiably from the
-    /// server, not a local encoding. Serves `connections` requests then exits.
-    /// Binds `127.0.0.1` explicitly (never `localhost`) so the client's direct
-    /// connection cannot resolve to an IPv6 loopback the listener does not own.
-    fn spawn_tokenize_server(connections: usize) -> (String, thread::JoinHandle<()>) {
+    /// round-trip is byte-exact and token counts come verifiably from the server,
+    /// not a local encoding. Accepts exactly ONE client connection and serves
+    /// `requests` keep-alive requests over it (responses omit `Connection: close`),
+    /// so a client that reuses one pooled connection is served entirely on that
+    /// single accepted socket. Returns a counter of accepted connections, letting
+    /// a test assert the transport was reused across calls. Binds `127.0.0.1`
+    /// explicitly (never `localhost`) so the client's direct connection cannot
+    /// resolve to an IPv6 loopback the listener does not own.
+    fn spawn_keepalive_tokenize_server(
+        requests: usize,
+    ) -> (String, Arc<AtomicUsize>, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let base_url = format!("http://127.0.0.1:{}", address.port());
+        let connections = Arc::new(AtomicUsize::new(0));
+        let counter = connections.clone();
         let handle = thread::spawn(move || {
-            for _ in 0..connections {
-                let (mut stream, _) = listener.accept().unwrap();
-                let mut reader = BufReader::new(&mut stream);
+            let (stream, _) = listener.accept().unwrap();
+            counter.fetch_add(1, Ordering::SeqCst);
+            let mut writer = stream.try_clone().unwrap();
+            let mut reader = BufReader::new(stream);
 
+            for _ in 0..requests {
                 let mut request_line = String::new();
-                reader.read_line(&mut request_line).unwrap();
+                if reader.read_line(&mut request_line).unwrap() == 0 {
+                    break;
+                }
                 let path = request_line.split_whitespace().nth(1).unwrap().to_string();
 
                 let mut content_length = 0usize;
@@ -877,35 +977,50 @@ mod tests {
                 };
 
                 let payload = serde_json::to_vec(&reply).unwrap();
+                // No `Connection: close`: the connection stays keep-alive so a
+                // pooling client reuses it for every subsequent request.
                 let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
                     payload.len()
                 );
-                stream.write_all(response.as_bytes()).unwrap();
-                stream.write_all(&payload).unwrap();
-                stream.flush().unwrap();
+                writer.write_all(response.as_bytes()).unwrap();
+                writer.write_all(&payload).unwrap();
+                writer.flush().unwrap();
             }
         });
-        (base_url, handle)
+        (base_url, connections, handle)
     }
 
     // End-to-end: the server tokenizer must round-trip text through the live
     // `/tokenize` and `/detokenize` endpoints, and its token count must be the
-    // one the server reports (never a local encoding).
+    // one the server reports (never a local encoding). The three calls must be
+    // served over a SINGLE accepted connection, proving the long-lived worker's
+    // HttpTransport (and its pool/keep-alive) is reused across calls rather than
+    // rebuilt per call.
     #[test]
-    fn server_tokenizer_round_trips_over_http() {
-        let (base_url, handle) = spawn_tokenize_server(3);
+    fn server_tokenizer_round_trips_and_reuses_one_connection() {
+        let (base_url, connections, handle) = spawn_keepalive_tokenize_server(3);
         let tokenizer = ServerTokenizer::new(&base_url, Some("test-model".to_string())).unwrap();
 
         let text = "abc€";
         let tokens = tokenizer.encode(text).unwrap();
         // 'a','b','c' are one scalar each; '€' is U+20AC.
         assert_eq!(tokens, vec![97, 98, 99, 0x20AC]);
+        // `count` re-encodes (second request); `decode` is the third — all three
+        // over the one pooled connection.
         assert_eq!(tokenizer.count(text).unwrap(), 4);
         assert_eq!(tokenizer.decode(&tokens).unwrap(), text);
         assert_eq!(tokenizer.name(), format!("server:{base_url}"));
 
         handle.join().unwrap();
+        assert_eq!(
+            connections.load(Ordering::SeqCst),
+            1,
+            "three tokenizer calls must reuse a single transport connection"
+        );
+
+        // Dropping the tokenizer shuts the worker down cleanly.
+        drop(tokenizer);
     }
 
     // An unsupported scheme is rejected at construction with a clear message.
