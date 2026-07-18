@@ -43,7 +43,7 @@ fn ramp_steady_drain_accumulator() -> MetricsAccumulator {
         record("ramp-a", 0, 5),
         record("ramp-b", 2, 7),
         // Steady plateau: six 10s requests staggered by 1s. Concurrency reaches
-        // 4 at t=13s (up-crossing) and last falls below 4 at t=22s.
+        // 4 at t=13s and last falls below 4 at t=22s.
         record("steady-0", 10, 20),
         record("steady-1", 11, 21),
         record("steady-2", 12, 22),
@@ -74,7 +74,7 @@ fn steady_window_excludes_ramp_and_drain_records() {
     let outcome = steady_state_summary(&accumulator, &accumulator_config(), 5)
         .expect("steady window must be detected for a saturated concurrency run");
 
-    // Window bounds land on the up-crossing and last down-crossing.
+    // Window bounds land on the first threshold entry and last drop below it.
     assert_eq!(outcome.window.start_ns, 13 * SECOND_NS);
     assert_eq!(outcome.window.end_ns, 22 * SECOND_NS);
     assert_eq!(outcome.window.threshold, 4);

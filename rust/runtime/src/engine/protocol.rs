@@ -134,7 +134,7 @@ pub struct MetricsSpec {
 }
 
 /// Steady-state windowing settings lowered from Config v2.
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SteadyStateSpec {
     /// Enables steady-state detection and summarization.
@@ -144,15 +144,6 @@ pub struct SteadyStateSpec {
     /// default (0.8).
     #[serde(default)]
     pub fraction: Option<f64>,
-}
-
-impl Default for SteadyStateSpec {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            fraction: None,
-        }
-    }
 }
 
 /// Artifact paths relative to the exclusive run directory.

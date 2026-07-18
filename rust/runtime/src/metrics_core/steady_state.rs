@@ -10,8 +10,9 @@
 //!
 //! This module detects the steady-state window automatically: the interval
 //! during which in-flight concurrency is at or above a configured fraction of
-//! the target. The window opens at the first up-crossing of that threshold and
-//! closes at the last down-crossing, so ramp-up and drain are excluded. The
+//! the target. The window opens the first time in-flight concurrency rises to
+//! that threshold and closes the last time it falls back below it, so ramp-up
+//! and drain are excluded. The
 //! steady summary is then computed by the ordinary [`MetricsAccumulator`]
 //! machinery over a half-open `[start, end)` time range, reusing the exact same
 //! record timestamps and summary computation as the whole-run summary — no
@@ -74,13 +75,15 @@ impl SteadyStateConfig {
 /// The detected steady-state interval and the concurrency profile that bounds it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SteadyWindow {
-    /// Inclusive lower bound in nanoseconds (first up-crossing of the threshold).
+    /// Inclusive lower bound in nanoseconds (first time in-flight concurrency
+    /// rises to the threshold).
     pub start_ns: i64,
-    /// Exclusive upper bound in nanoseconds (last down-crossing of the threshold).
+    /// Exclusive upper bound in nanoseconds (last time in-flight concurrency
+    /// falls back below the threshold).
     pub end_ns: i64,
     /// Concurrency threshold, `ceil(fraction * target_concurrency)`.
     pub threshold: usize,
-    /// Peak in-flight concurrency observed over the run.
+    /// Peak in-flight concurrency observed over the profiling phase.
     pub peak_concurrency: usize,
 }
 
@@ -98,9 +101,10 @@ pub struct SteadyStateOutcome {
     pub window: SteadyWindow,
     /// Summary computed over records started within the half-open window.
     pub summary: AccumulatorSummary,
-    /// Full run span start in nanoseconds (earliest record start).
+    /// Profiling-phase span start in nanoseconds (earliest profiling record
+    /// start).
     pub run_start_ns: i64,
-    /// Full run span end in nanoseconds (latest record end).
+    /// Profiling-phase span end in nanoseconds (latest profiling record end).
     pub run_end_ns: i64,
     /// True when the window is shorter than `max(10s, 10% of run duration)`.
     pub short_window: bool,
@@ -126,14 +130,13 @@ impl SteadyStateOutcome {
 
 /// Detects the steady-state window from per-record `[start, end)` intervals.
 ///
-/// A two-pointer merge walks the sorted start and end events in timestamp order,
-/// maintaining running in-flight concurrency. At tied timestamps starts are
-/// processed before ends so a request that ends exactly as another starts does
-/// not create a spurious dip. The window opens at the first start event that
-/// raises concurrency to the threshold (up-crossing) and closes at the last end
-/// event that lowers concurrency from the threshold back below it
-/// (down-crossing). Returns `None` when no interval is supplied, the target is
-/// zero, or concurrency never reaches the threshold.
+/// The sorted start and end events are swept in timestamp order while tracking
+/// the running in-flight count. At tied timestamps starts are applied before
+/// ends so a request that ends exactly as another starts does not create a
+/// spurious dip. The window opens at the first start that lifts the in-flight
+/// count up to the threshold and closes at the last end that drops it from the
+/// threshold back below. Returns `None` when no interval is supplied, the target
+/// is zero, or concurrency never reaches the threshold.
 pub fn detect_steady_window(
     intervals: &[(i64, i64)],
     target_concurrency: usize,
@@ -177,7 +180,7 @@ pub fn detect_steady_window(
         if take_start {
             active += 1;
             peak = peak.max(active);
-            // Up-crossing: first time we reach the threshold from below.
+            // First moment the in-flight count reaches the threshold from below.
             if active == threshold && window_start.is_none() {
                 window_start = Some(starts[i]);
             }
@@ -185,9 +188,8 @@ pub fn detect_steady_window(
         } else {
             let before = active;
             active = active.saturating_sub(1);
-            // Down-crossing: dropping from exactly the threshold necessarily
-            // lands below it. Keep the latest so the window closes at the *last*
-            // sustained descent.
+            // Dropping from exactly the threshold necessarily lands below it.
+            // Keep overwriting so the window closes at the *last* such descent.
             if before == threshold && window_start.is_some() {
                 window_end = Some(ends[j]);
             }
@@ -311,30 +313,33 @@ mod tests {
     }
 
     #[test]
-    fn window_opens_at_up_crossing_and_closes_at_last_down_crossing() {
+    fn window_opens_at_threshold_entry_and_closes_at_last_drop_below() {
         // Concurrency profile with target 4, threshold ceil(0.8*4)=4.
-        // Ramp: starts at 0,1,2,3 (reaches 4 in-flight at t=3 -> up-crossing).
+        // Ramp: starts at 0,1,2,3 (reaches 4 in-flight at t=3).
         // Steady: all four overlap until staggered drain.
         // Drain: ends at 20,21,22,23. Concurrency drops below 4 at the first
         // end (t=20) but a fresh start at t=19 re-saturates so the *last*
-        // down-crossing governs.
+        // descent below the threshold governs.
         let intervals = vec![
             (0, 20),  // A
             (1, 21),  // B
             (2, 22),  // C
-            (3, 30),  // D  (reaches 4 in-flight at its start -> up-cross at t=3)
+            (3, 30),  // D  (reaches 4 in-flight at its start at t=3)
             (19, 31), // E  (re-saturates after A leaves)
             (40, 45), // late straggler, below threshold, must be excluded
         ];
         let window = detect_steady_window(&intervals, 4, 0.8).unwrap();
         assert_eq!(window.threshold, 4);
-        assert_eq!(window.start_ns, 3, "window must open at the up-crossing");
+        assert_eq!(
+            window.start_ns, 3,
+            "window must open where in-flight first reaches the threshold"
+        );
         // E's start at 19 lifts in-flight to 5, so A ending at 20 only drops it
         // to 4 (still saturated). The last descent from 4 to 3 is B ending at
         // 21; C(22) and the late straggler are past the window.
         assert_eq!(
             window.end_ns, 21,
-            "window must close at the last threshold down-crossing"
+            "window must close at the last drop below the threshold"
         );
         assert_eq!(window.peak_concurrency, 5);
     }

@@ -941,15 +941,17 @@ pub struct EvaluatorReportInfo {
 /// whole-run report, computed over the auto-detected saturated window.
 #[derive(Debug, Clone, PartialEq, DeriveSerialize)]
 pub struct ReportSteadyState {
-    /// Inclusive window start in nanoseconds (first threshold up-crossing).
+    /// Inclusive window start in nanoseconds (first time in-flight concurrency
+    /// reaches the threshold).
     pub window_start_ns: i64,
-    /// Exclusive window end in nanoseconds (last threshold down-crossing).
+    /// Exclusive window end in nanoseconds (last time in-flight concurrency
+    /// falls back below the threshold).
     pub window_end_ns: i64,
     /// Window duration in seconds.
     pub duration_s: f64,
     /// Concurrency threshold, `ceil(fraction * target_concurrency)`.
     pub threshold_concurrency: usize,
-    /// Peak in-flight concurrency observed over the run.
+    /// Peak in-flight concurrency observed over the profiling phase.
     pub peak_concurrency: usize,
     /// True when the window is shorter than `max(10s, 10% of run duration)`.
     pub short_window: bool,
