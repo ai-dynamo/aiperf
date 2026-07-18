@@ -716,7 +716,9 @@ export function App() {
                 flow={flow}
                 narratorBackend={narratorBackend}
                 reducedMotion={reducedMotion}
-                requireAudioConsent={audioConsent === "unset" && !showExplainerPicker}
+                requireAudioConsent={
+                  audioConsent === "unset" && !showExplainerPicker && !showHome
+                }
                 onAudioConsentChange={(hasConsented) => {
                   setAudioConsent(hasConsented ? "yes" : "no");
                 }}

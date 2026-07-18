@@ -83,6 +83,10 @@ export function ExplainerDeckPicker({
 
       <style>{`
         .explainer-deck-picker {
+          position: fixed;
+          inset: 0;
+          z-index: 9999;
+          overflow-y: auto;
           padding: 2rem;
           background: var(--preview-board, #0d1117);
           color: var(--preview-chalk, #f0f6fc);
