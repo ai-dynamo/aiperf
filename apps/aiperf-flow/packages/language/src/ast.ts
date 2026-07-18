@@ -255,6 +255,30 @@ export type SceneAst = AstNode<"scene"> &
     fallback?: FallbackAst;
   }>;
 
+export type SlideAst = AstNode<"slide"> &
+  Readonly<{
+    eyebrow: string;
+    title: string;
+    lede: string;
+    narration: string;
+    term?: Readonly<{ word: string; meaning: string }>;
+    points: readonly string[];
+    caption: string;
+    sceneIr?: SceneAst;
+  }>;
+
+export type ExplainerAst = AstNode<"explainer"> &
+  Readonly<{
+    id: string;
+    metadata: Readonly<{
+      route: string;
+      topic: string;
+      eyebrowLabel: string;
+      startGateTitle: string;
+    }>;
+    slides: readonly SlideAst[];
+  }>;
+
 export type DocumentAst = AstNode<"document"> &
   Readonly<{
     title: string;
@@ -267,4 +291,5 @@ export type DocumentAst = AstNode<"document"> &
     useTheme?: UseThemeAst;
     symbols: readonly SymbolDefinitionAst[];
     scenes: readonly SceneAst[];
+    explainers?: readonly ExplainerAst[];
   }>;

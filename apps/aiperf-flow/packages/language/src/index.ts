@@ -6,3 +6,9 @@ export const FLOW_LANGUAGE_VERSION = 1 as const;
 export * from "./ast.js";
 export { formatDocument } from "./formatter.js";
 export { parseDocument } from "./parser.js";
+export {
+  parseExplainerBlock,
+  type ExplainerAstCompat,
+  type SlideAstCompat,
+  type TokenStream,
+} from "./grammar/explainer.js";

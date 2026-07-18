@@ -103,6 +103,8 @@ export const ColorKind = keyword("ColorKind", /color/);
 export const NumberKind = keyword("NumberKind", /number/);
 export const FontKind = keyword("FontKind", /font/);
 export const EnumKind = keyword("EnumKind", /enum/);
+export const Explainer = keyword("Explainer", /explainer/);
+export const Slide = keyword("Slide", /slide/);
 
 export const LessEqual = createToken({ name: "LessEqual", pattern: /<=/ });
 export const GreaterEqual = createToken({ name: "GreaterEqual", pattern: />=/ });
@@ -180,6 +182,8 @@ export const allTokens = [
   NumberKind,
   FontKind,
   EnumKind,
+  Explainer,
+  Slide,
   LessEqual,
   GreaterEqual,
   EqualEqual,
