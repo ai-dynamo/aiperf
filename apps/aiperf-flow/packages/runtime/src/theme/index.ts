@@ -394,23 +394,23 @@ export const SYSTEMS_CHALK: FlowThemeIr = deepFreeze({
     "accent.focus": { kind: "color", value: "#9BDBF5" },
     "font.display": {
       kind: "font",
-      value: ["Nunito Sans", "Inter", "sans-serif"],
+      value: ["Nunito Sans", "Segoe UI", "sans-serif"],
     },
     "font.body": {
       kind: "font",
-      value: ["Nunito Sans", "Inter", "sans-serif"],
+      value: ["Nunito Sans", "Segoe UI", "sans-serif"],
     },
     "font.data": {
       kind: "font",
-      value: ["IBM Plex Mono", "ui-monospace", "monospace"],
+      value: ["IBM Plex Mono", "Cascadia Code", "monospace"],
     },
     "weight.regular": { kind: "number", value: 400 },
-    "weight.label": { kind: "number", value: 600 },
-    "weight.emphasis": { kind: "number", value: 700 },
-    "size.caption": { kind: "number", value: 12 },
-    "size.body": { kind: "number", value: 14 },
-    "size.label": { kind: "number", value: 16 },
-    "size.title": { kind: "number", value: 24 },
+    "weight.label": { kind: "number", value: 500 },
+    "weight.emphasis": { kind: "number", value: 600 },
+    "size.caption": { kind: "number", value: 11 },
+    "size.body": { kind: "number", value: 13 },
+    "size.label": { kind: "number", value: 12 },
+    "size.title": { kind: "number", value: 18 },
     "stroke.hairline": { kind: "number", value: 1 },
     "stroke.standard": { kind: "number", value: 2 },
     "stroke.emphasis": { kind: "number", value: 3 },
@@ -443,3 +443,18 @@ export function selectActiveThemeId(
 ): string | undefined {
   return selection.overrideId ?? selection.documentDefault ?? selection.legacyId;
 }
+
+export { LEGACY_VISUAL_FALLBACKS } from "./legacy-defaults.js";
+export { SYSTEMS_CHALK_SHAPE } from "./systems-chalk.js";
+export {
+  freezeThemeRegistry,
+  getActiveTheme,
+  getActiveThemeId,
+  getRegisteredThemeIds,
+  hasTheme,
+  registerTheme,
+  registerThemes,
+  resetThemeRegistry,
+  resolveTheme,
+  setActiveThemeId,
+} from "./runtime-registry.js";
