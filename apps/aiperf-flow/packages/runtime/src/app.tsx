@@ -743,6 +743,7 @@ export function FlowApp({
               text:
                 narrativeTimeline.subtitleText ??
                 narrativeTimeline.activeCue.spokenText,
+              progress: narrativeTimeline.progress,
             },
     }),
     [narrativeTimeline, subtitlesEnabled],

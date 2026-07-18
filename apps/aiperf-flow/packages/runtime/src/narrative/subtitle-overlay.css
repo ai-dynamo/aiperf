@@ -25,7 +25,6 @@
   margin: 0;
   padding: 0.72rem 1.1rem 0.78rem;
   border: var(--flow-stroke) solid var(--flow-guide);
-  border-inline-start: 0.25rem solid var(--flow-subtitle-edge);
   border-radius: var(--flow-radius);
   color: var(--flow-subtitle-ink);
   background: var(--flow-subtitle-surface);
@@ -34,20 +33,48 @@
   font-weight: 580;
   line-height: 1.4;
   letter-spacing: 0.012em;
-  text-align: center;
-  text-wrap: balance;
+  text-align: start;
+  text-wrap: pretty;
   animation: aiperf-flow-subtitle-in 140ms ease-out both;
 }
 
-.aiperf-flow__subtitle-speaker {
+.aiperf-flow__subtitle-label {
   display: block;
-  margin-block-end: 0.18rem;
+  margin-block-end: 0.35rem;
   color: var(--flow-subtitle-edge);
   font-family: var(--flow-font-data);
-  font-size: 0.68em;
+  font-size: 0.62em;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
+}
+
+.aiperf-flow__subtitle-words {
+  display: block;
+}
+
+/* Karaoke word states: spoken words read at full ink, the active word sits on
+ * an accent chip, and upcoming words stay quiet so the eye tracks the voice. */
+.aiperf-flow__subtitle-word {
+  border-radius: 4px;
+  transition:
+    color 90ms ease,
+    background-color 90ms ease;
+}
+
+.aiperf-flow__subtitle-word[data-state="upcoming"] {
+  color: var(--flow-chalk-muted);
+}
+
+.aiperf-flow__subtitle-word[data-state="spoken"] {
+  color: var(--flow-subtitle-ink);
+}
+
+.aiperf-flow__subtitle-word[data-state="active"] {
+  padding: 0.02em 0.22em;
+  margin-inline: -0.06em;
+  color: var(--flow-board);
+  background: var(--flow-subtitle-edge);
 }
 
 .aiperf-flow .aiperf-flow__subtitle-control {

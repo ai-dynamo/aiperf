@@ -143,8 +143,7 @@
 }
 
 .aiperf-flow__header > div {
-  padding-inline-start: 0.75rem;
-  border-inline-start: var(--flow-stroke) solid var(--flow-structure);
+  padding-inline-start: 0;
 }
 
 .aiperf-flow__header h1 {
@@ -401,12 +400,21 @@
   border-color: var(--flow-beat);
 }
 
-.aiperf-flow__semantic-twin--compact {
-  width: min(18rem, 27vw);
-  font-size: 0.85rem;
+/* The semantic twin is an accessibility mirror of the stage. It stays in the
+ * a11y tree, but visually it reads as a quiet outline — no numbered markers,
+ * no repeated prose — so it never competes with the diagram it describes. */
+.aiperf-flow__semantic-twin {
+  width: min(15rem, 24vw);
+  padding: 0.85rem 0.7rem;
+  border-color: rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 2%);
 }
 
-.aiperf-flow__semantic-twin h2,
+.aiperf-flow__semantic-twin--compact {
+  width: min(15rem, 24vw);
+  font-size: 0.8rem;
+}
+
 .aiperf-flow__context-lens h2,
 .aiperf-flow__inspector h2 {
   margin-block-start: 0;
@@ -424,11 +432,45 @@
   margin-block-end: 0.75rem;
 }
 
+/* Quiet outline: drop list numbering (entity labels already carry their step
+ * number) and keep the descriptive prose and relation list for screen readers
+ * only, so the visible panel is just the tappable entity names. */
+.aiperf-flow__semantic-twin .aiperf-flow__semantic-entities {
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+.aiperf-flow__semantic-twin .aiperf-flow__semantic-entities li p,
+.aiperf-flow__semantic-twin .aiperf-flow__semantic-relations {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .aiperf-flow__semantic-twin button {
   width: 100%;
   min-height: 2rem;
   margin-block: 0.15rem;
   text-align: start;
+}
+
+.aiperf-flow__semantic-twin button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--flow-chalk-muted);
+  font-size: 0.78rem;
+}
+
+.aiperf-flow__semantic-twin button:hover:not(:disabled),
+.aiperf-flow__semantic-twin button[aria-current="true"] {
+  border-color: rgb(255 255 255 / 10%);
+  background: rgb(255 255 255 / 4%);
+  color: var(--flow-chalk);
 }
 
 .aiperf-flow__inspector strong,
@@ -555,7 +597,8 @@
   max-width: min(72ch, calc(100% - var(--flow-safe-left) - var(--flow-safe-right)));
   margin-inline: auto;
   padding: 0.75rem 1rem;
-  border-inline-start: var(--flow-stroke) solid var(--flow-signal);
+  border: var(--flow-stroke) solid var(--flow-guide);
+  border-radius: var(--flow-radius);
   color: var(--flow-chalk-muted);
   background: var(--flow-panel);
 }
@@ -592,7 +635,6 @@
   clip-path: none;
   white-space: normal;
   border: var(--flow-stroke) solid var(--flow-guide);
-  border-inline-start-color: var(--flow-signal);
   border-radius: var(--flow-radius);
   color: var(--flow-chalk-muted);
   background: var(--flow-panel);

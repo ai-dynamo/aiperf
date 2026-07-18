@@ -16,6 +16,8 @@ export type SubtitleCue = Readonly<{
   id: string;
   text: string;
   speaker?: string;
+  /** Spoken progress through this cue, 0..1, for word-level highlighting. */
+  progress?: number;
 }>;
 
 /** Controlled subtitle visibility and currently active timeline cue. */
@@ -31,6 +33,42 @@ export type SubtitleOverlayProps = Readonly<{
   contrast?: "standard" | "high";
   reducedMotion?: boolean;
 }>;
+
+/**
+ * Renders a cue as karaoke word spans: words already spoken read bright, the
+ * word at the current spoken position is highlighted, and upcoming words stay
+ * dim. A trailing space after each word preserves the plain-text reading.
+ */
+function karaokeWords(text: string, progress?: number): ReactNode {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const clamped = Math.min(1, Math.max(0, progress ?? 0));
+  // No progress signal (progress absent) leaves every word in its resting
+  // state; an active index of -1 selects "spoken" for none.
+  const activeIndex =
+    progress === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.min(words.length - 1, Math.floor(clamped * words.length));
+  return words.map((word, index) => {
+    const state =
+      progress === undefined
+        ? "spoken"
+        : index < activeIndex
+          ? "spoken"
+          : index === activeIndex
+            ? "active"
+            : "upcoming";
+    return (
+      <span
+        className="aiperf-flow__subtitle-word"
+        data-state={state}
+        key={`${index}-${word}`}
+      >
+        {word}
+        {index < words.length - 1 ? " " : ""}
+      </span>
+    );
+  });
+}
 
 function announcementFor(cue: SubtitleCue | null): string {
   if (cue === null) {
@@ -104,12 +142,12 @@ export function SubtitleOverlay({
             className="aiperf-flow__subtitle-cue"
             key={cue.id}
           >
-            {cue.speaker === undefined ? null : (
-              <span className="aiperf-flow__subtitle-speaker">
-                {cue.speaker}
-              </span>
-            )}
-            <span>{cue.text}</span>
+            <span className="aiperf-flow__subtitle-label">
+              {cue.speaker ?? "Subtitles"}
+            </span>
+            <span className="aiperf-flow__subtitle-words">
+              {karaokeWords(cue.text, cue.progress)}
+            </span>
           </p>
         )}
       </div>
