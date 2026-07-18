@@ -11,16 +11,22 @@ use std::fmt::{self, Display};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use base64::Engine as _;
 use dynamo_renderer::{ChatTemplate, ContextMixins, OAIChatLikeRequest, PromptFormatter};
 use dynamo_tokenizers::HuggingFaceTokenizer as DynamoHuggingFaceTokenizer;
 use dynamo_tokenizers::traits::{Decoder as _, Encoder as _};
 use minijinja::Value as JinjaValue;
+use rustc_hash::FxHashMap;
 use serde::Deserialize;
 use serde_json::Value;
 use tiktoken_rs::{
     CoreBPE, cl100k_base_singleton, o200k_base_singleton, o200k_harmony_singleton,
     p50k_base_singleton, p50k_edit_singleton, r50k_base_singleton,
 };
+// tiktoken-rs 0.9's `CoreBPE::new` wants `rustc_hash` 1.x maps; this bridged pin
+// (renamed `rustc-hash` 1.x) matches its hasher type, because the workspace
+// `rustc_hash` is 2.x whose `FxHashMap` is a distinct, incompatible type.
+use tiktoken_rustc_hash::FxHashMap as TiktokenFxHashMap;
 use tokenizers::Tokenizer as HfTokenizer;
 
 use crate::dataset::error::{DatasetError, Result};
@@ -236,6 +242,307 @@ impl TextTokenizer for TiktokenTokenizer {
 
     fn name(&self) -> &str {
         self.encoding.as_str()
+    }
+}
+
+/// Candidate `tiktoken.model` filenames shipped by tiktoken-vocab repositories.
+///
+/// Ordered by prevalence: Kimi K2 / DeepSeek ship `tiktoken.model`, Llama-3 and
+/// some Qwen checkpoints ship `tokenizer.model` (a base64-rank BPE file, not a
+/// SentencePiece proto), and older Qwen ships a repo-named `*.tiktoken`. The
+/// discovery walks these names; a `*.tiktoken` is matched by extension.
+const TIKTOKEN_MODEL_FILENAMES: &[&str] = &["tiktoken.model", "tokenizer.model"];
+
+/// `cl100k_base` pre-tokenization regex (GPT-4, and the default for tiktoken
+/// vocab models such as Qwen), matching HuggingFace `TikTokenConverter`.
+const CL100K_BASE_PATTERN: &str = r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
+
+/// Kimi K2 pre-tokenization regex from `tokenization_kimi.py`. Kimi/DeepSeek-V3
+/// tiktoken vocabs need this Han-aware split to reproduce upstream token ids.
+const KIMI_PATTERN: &str = r"[\p{Han}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]*[\p{Ll}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]+[\p{Ll}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
+
+/// Fallback reserved special-token slot count when `config.json` has no
+/// `vocab_size`. 256 is the `num_reserved_special_tokens` used by Kimi K2 and
+/// Llama-3, the common convention for modern tiktoken-vocab HF tokenizers.
+const FALLBACK_NUM_RESERVED_SPECIAL_TOKENS: u32 = 256;
+
+/// Locate a native `tiktoken.model` / `tokenizer.model` / `*.tiktoken` BPE vocab
+/// file in a model directory, or `None` when the directory has none.
+///
+/// A repository that ships a `tokenizer.json` is loaded through the HuggingFace
+/// fast path instead; this is only consulted when that file is absent.
+pub fn find_tiktoken_model_file(directory: &Path) -> Option<PathBuf> {
+    for name in TIKTOKEN_MODEL_FILENAMES {
+        let candidate = directory.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    // Fall back to any `*.tiktoken` (older Qwen ships a repo-named one, e.g.
+    // `qwen.tiktoken`).
+    std::fs::read_dir(directory).ok().and_then(|entries| {
+        entries
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.is_file()
+                    && path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("tiktoken"))
+            })
+    })
+}
+
+/// One `added_tokens_decoder` entry from `tokenizer_config.json`.
+#[derive(Debug, Clone, Deserialize)]
+struct TiktokenAddedToken {
+    content: String,
+    /// HuggingFace marks placeholder/control tokens `"special": true`. Defaults
+    /// to `false` (matching the `AddedToken` default) when the field is absent.
+    #[serde(default)]
+    special: bool,
+}
+
+/// Minimal `tokenizer_config.json` view for the tiktoken loader.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct TiktokenTokenizerConfig {
+    added_tokens_decoder: FxHashMap<u32, TiktokenAddedToken>,
+    bos_token: Option<Value>,
+    eos_token: Option<Value>,
+}
+
+/// Minimal `config.json` view for the tiktoken loader.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct TiktokenModelConfig {
+    model_type: Option<String>,
+    vocab_size: Option<u32>,
+}
+
+/// Native `tiktoken.model` tokenizer for Kimi/Qwen/DeepSeek-class models.
+///
+/// Loads the base64-rank BPE vocabulary (one `<base64-token-bytes> <rank>` pair
+/// per line — OpenAI's tiktoken format, also emitted by DeepSeek and Kimi K2),
+/// registers the model's special tokens over the reserved id range that follows
+/// the BPE vocabulary, and builds a working [`CoreBPE`]. This is the pure-Rust
+/// client-side equivalent of loading a `trust_remote_code` Python tokenizer over
+/// a tiktoken vocab, so AIPerf tokenizes these models without a server round-trip.
+pub struct NativeTiktokenTokenizer {
+    bpe: CoreBPE,
+    name: String,
+    /// Exclusive upper bound on decodable ids (base BPE tokens + reserved
+    /// special slots), used for `vocab_size` range checks.
+    vocab_upper_bound: u32,
+    /// Dense `id -> raw bytes` map for lossy decode. Base tokens hold their BPE
+    /// bytes; reserved/special slots hold the token string bytes. Empty entries
+    /// are ids no source named.
+    decoder: Vec<Vec<u8>>,
+    bos_token_id: Option<u32>,
+    eos_token_id: Option<u32>,
+}
+
+impl NativeTiktokenTokenizer {
+    /// Load from a model directory that contains a `tiktoken.model` /
+    /// `tokenizer.model` / `*.tiktoken` file, reading sibling
+    /// `tokenizer_config.json` and `config.json` for special tokens, vocab size,
+    /// and the pre-tokenization regex.
+    pub fn from_directory(directory: impl AsRef<Path>) -> Result<Self> {
+        let directory = directory.as_ref();
+        let model_path = find_tiktoken_model_file(directory).ok_or_else(|| {
+            DatasetError::Tokenizer(format!(
+                "no tiktoken model file ({}) found in {}",
+                TIKTOKEN_MODEL_FILENAMES.join(", "),
+                directory.display()
+            ))
+        })?;
+        Self::from_model_file(&model_path, directory)
+    }
+
+    /// Load from an explicit BPE vocab `model_path`, reading optional sibling
+    /// config files from `directory`.
+    pub fn from_model_file(model_path: &Path, directory: &Path) -> Result<Self> {
+        let content = std::fs::read_to_string(model_path).map_err(|error| {
+            DatasetError::Tokenizer(format!(
+                "reading tiktoken model {}: {error}",
+                model_path.display()
+            ))
+        })?;
+
+        let mut encoder: TiktokenFxHashMap<Vec<u8>, u32> =
+            TiktokenFxHashMap::with_capacity_and_hasher(
+                content.lines().count(),
+                Default::default(),
+            );
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let mut parts = line.split_whitespace();
+            let (Some(token_b64), Some(rank_str)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            let token_bytes = base64::engine::general_purpose::STANDARD
+                .decode(token_b64)
+                .map_err(|error| {
+                    DatasetError::Tokenizer(format!(
+                        "invalid base64 token in {}: {error}",
+                        model_path.display()
+                    ))
+                })?;
+            let rank: u32 = rank_str.parse().map_err(|error| {
+                DatasetError::Tokenizer(format!(
+                    "invalid rank in {}: {error}",
+                    model_path.display()
+                ))
+            })?;
+            encoder.insert(token_bytes, rank);
+        }
+        if encoder.is_empty() {
+            return Err(DatasetError::Tokenizer(format!(
+                "tiktoken model {} contains no tokens",
+                model_path.display()
+            )));
+        }
+
+        // Ranks are token ids and need not be contiguous, so the base-vocab
+        // boundary is `max_rank + 1`, not `encoder.len()`.
+        let num_base_tokens = encoder
+            .values()
+            .copied()
+            .max()
+            .map_or(0, |max| max.saturating_add(1));
+
+        let tokenizer_config: TiktokenTokenizerConfig =
+            read_optional_json(&directory.join("tokenizer_config.json")).unwrap_or_default();
+        let model_config: TiktokenModelConfig =
+            read_optional_json(&directory.join("config.json")).unwrap_or_default();
+
+        let added_by_id = &tokenizer_config.added_tokens_decoder;
+        let max_added_id = added_by_id.keys().copied().max().unwrap_or(0);
+        let reserved_end = model_config
+            .vocab_size
+            .unwrap_or_else(|| num_base_tokens.saturating_add(FALLBACK_NUM_RESERVED_SPECIAL_TOKENS))
+            .max(num_base_tokens)
+            .max(max_added_id.saturating_add(1));
+
+        // Build the special-token encoder over the reserved id range. Named
+        // entries come from `added_tokens_decoder`; unnamed reserved slots get
+        // Python-compatible `<|reserved_token_{id}|>` placeholders so any
+        // sampled id in range still decodes (matching `tokenization_kimi.py`).
+        let mut special_tokens_encoder: TiktokenFxHashMap<String, u32> =
+            TiktokenFxHashMap::default();
+        for id in num_base_tokens..reserved_end {
+            let name = match added_by_id.get(&id) {
+                Some(token) => token.content.clone(),
+                None => format!("<|reserved_token_{id}|>"),
+            };
+            special_tokens_encoder.insert(name, id);
+        }
+
+        // Dense id -> bytes decoder for lossy reconstruction.
+        let mut decoder = vec![Vec::new(); reserved_end as usize];
+        for (bytes, &id) in &encoder {
+            if let Some(slot) = decoder.get_mut(id as usize) {
+                *slot = bytes.clone();
+            }
+        }
+        for (name, &id) in &special_tokens_encoder {
+            if let Some(slot) = decoder.get_mut(id as usize) {
+                *slot = name.as_bytes().to_vec();
+            }
+        }
+
+        // Resolve BOS/EOS by name through the special-token map.
+        let name_to_id: FxHashMap<&str, u32> = special_tokens_encoder
+            .iter()
+            .map(|(name, &id)| (name.as_str(), id))
+            .collect();
+        let bos_token_id = special_token_name(tokenizer_config.bos_token.as_ref())
+            .and_then(|n| name_to_id.get(n.as_str()).copied());
+        let eos_token_id = special_token_name(tokenizer_config.eos_token.as_ref())
+            .and_then(|n| name_to_id.get(n.as_str()).copied());
+
+        let pattern = match model_config.model_type.as_deref() {
+            Some("kimi" | "kimi_k2" | "kimi_k25" | "deepseek_v3") => KIMI_PATTERN,
+            _ => CL100K_BASE_PATTERN,
+        };
+
+        let bpe = CoreBPE::new(encoder, special_tokens_encoder, pattern).map_err(|error| {
+            DatasetError::Tokenizer(format!(
+                "building tiktoken BPE from {}: {error}",
+                model_path.display()
+            ))
+        })?;
+
+        Ok(Self {
+            bpe,
+            name: directory.display().to_string(),
+            vocab_upper_bound: reserved_end,
+            decoder,
+            bos_token_id,
+            eos_token_id,
+        })
+    }
+}
+
+/// Read and parse an optional JSON metadata file, returning `None` when it is
+/// missing or unparsable (best-effort enrichment, never fatal).
+fn read_optional_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
+    let bytes = std::fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Extract the string content of a `bos_token`/`eos_token` field, tolerating
+/// either a bare string or an `AddedToken`-style `{ "content": "…" }` object.
+fn special_token_name(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(token) => Some(token.clone()),
+        Value::Object(object) => object.get("content")?.as_str().map(str::to_owned),
+        _ => None,
+    }
+}
+
+impl TextTokenizer for NativeTiktokenTokenizer {
+    fn encode(&self, text: &str) -> Result<Vec<u32>> {
+        // `encode_with_special_tokens` recognizes the registered special tokens
+        // in the input, matching Python `encode(allowed_special="all")`.
+        Ok(self.bpe.encode_with_special_tokens(text))
+    }
+
+    fn decode(&self, token_ids: &[u32]) -> Result<String> {
+        self.decode_lossy(token_ids)
+    }
+
+    fn decode_lossy(&self, token_ids: &[u32]) -> Result<String> {
+        // Reassemble raw per-id bytes and substitute ill-formed subsequences with
+        // U+FFFD, matching Python `tiktoken`'s default `errors="replace"`. Ids at
+        // or above the vocabulary bound have no bytes and are skipped.
+        let mut bytes = Vec::with_capacity(token_ids.len().saturating_mul(4));
+        for &id in token_ids {
+            if let Some(token_bytes) = self.decoder.get(id as usize) {
+                bytes.extend_from_slice(token_bytes);
+            }
+        }
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    fn bos_token_id(&self) -> Option<u32> {
+        self.bos_token_id
+    }
+
+    fn eos_token_id(&self) -> Option<u32> {
+        self.eos_token_id
+    }
+
+    fn vocab_size(&self) -> Option<u32> {
+        Some(self.vocab_upper_bound)
+    }
+
+    fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -544,6 +851,113 @@ impl TextTokenizer for NoDecodeTokenizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Write a minimal but format-faithful `tiktoken.model`: single-byte tokens
+    /// for bytes 0..=255 (ranks 0..=255) plus a couple of multi-byte merges, so
+    /// the base64-rank parser and BPE round-trip run without any pretrained asset.
+    fn write_synthetic_tiktoken_model(dir: &Path) -> PathBuf {
+        let engine = base64::engine::general_purpose::STANDARD;
+        let mut content = String::new();
+        for byte in 0u8..=255 {
+            content.push_str(&format!("{} {}\n", engine.encode([byte]), byte as u32));
+        }
+        // A couple of higher-rank merges so encode produces multi-byte tokens.
+        content.push_str(&format!("{} 256\n", engine.encode(b"hello")));
+        content.push_str(&format!("{} 257\n", engine.encode(b" world")));
+        let path = dir.join("tiktoken.model");
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn native_tiktoken_round_trips_and_maps_special_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        write_synthetic_tiktoken_model(dir.path());
+        // Kimi-shaped config: special tokens declared in the reserved range that
+        // follows the 258-token base vocab (max rank 257 -> num_base_tokens 258).
+        std::fs::write(
+            dir.path().join("tokenizer_config.json"),
+            r#"{
+  "bos_token": "[BOS]",
+  "eos_token": "[EOS]",
+  "added_tokens_decoder": {
+    "258": {"content": "[BOS]", "special": true},
+    "259": {"content": "[EOS]", "special": true}
+  }
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"model_type": "kimi_k2", "vocab_size": 512}"#,
+        )
+        .unwrap();
+
+        let tokenizer = NativeTiktokenTokenizer::from_directory(dir.path()).unwrap();
+
+        // Base-text round-trip through the parsed BPE.
+        let text = "hello world";
+        let ids = tokenizer.encode(text).unwrap();
+        assert!(!ids.is_empty());
+        assert_eq!(tokenizer.decode(&ids).unwrap(), text);
+
+        // Special tokens resolve to their reserved ids and BOS/EOS are wired.
+        assert_eq!(tokenizer.bos_token_id(), Some(258));
+        assert_eq!(tokenizer.eos_token_id(), Some(259));
+        assert_eq!(tokenizer.encode("[BOS]").unwrap(), vec![258]);
+        assert_eq!(tokenizer.encode("[EOS]").unwrap(), vec![259]);
+        // vocab_size honors config.json vocab_size (reserved upper bound).
+        assert_eq!(tokenizer.vocab_size(), Some(512));
+        // Token counts are stable and match the encoded length (no network).
+        let repeated = "hello world hello";
+        assert_eq!(
+            tokenizer.count(repeated).unwrap(),
+            tokenizer.encode(repeated).unwrap().len()
+        );
+        assert_eq!(
+            tokenizer.encode(repeated).unwrap(),
+            tokenizer.encode(repeated).unwrap()
+        );
+        assert_eq!(
+            tokenizer
+                .decode(&tokenizer.encode(repeated).unwrap())
+                .unwrap(),
+            repeated
+        );
+    }
+
+    #[test]
+    fn native_tiktoken_defaults_reserved_slots_without_config() {
+        let dir = tempfile::tempdir().unwrap();
+        write_synthetic_tiktoken_model(dir.path());
+        // No tokenizer_config.json / config.json: fall back to 256 reserved slots.
+        let tokenizer = NativeTiktokenTokenizer::from_directory(dir.path()).unwrap();
+        // num_base_tokens = 258 (max rank 257 + 1); + 256 reserved = 514.
+        assert_eq!(tokenizer.vocab_size(), Some(514));
+        assert_eq!(tokenizer.bos_token_id(), None);
+        assert_eq!(
+            tokenizer.decode(&tokenizer.encode("hi").unwrap()).unwrap(),
+            "hi"
+        );
+        // An unnamed reserved slot decodes to its placeholder token.
+        assert_eq!(
+            tokenizer.encode("<|reserved_token_300|>").unwrap(),
+            vec![300]
+        );
+    }
+
+    #[test]
+    fn find_tiktoken_model_file_discovers_named_variants() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(find_tiktoken_model_file(dir.path()).is_none());
+        std::fs::write(dir.path().join("qwen.tiktoken"), "AAAA 0\n").unwrap();
+        assert!(
+            find_tiktoken_model_file(dir.path())
+                .unwrap()
+                .extension()
+                .is_some_and(|ext| ext == "tiktoken")
+        );
+    }
 
     #[test]
     fn builtin_is_exact_and_round_trips_unicode() {

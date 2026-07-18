@@ -96,6 +96,11 @@ rand_pcg.workspace = true
 rayon.workspace = true
 regex.workspace = true
 rustc-hash.workspace = true
+# tiktoken-rs 0.9's `CoreBPE::new` takes `rustc_hash 1.x` `FxHashMap`s; the
+# workspace `rustc-hash` is 2.x, whose `FxHashMap` is a distinct type. This
+# renamed pin bridges to the exact 1.x version tiktoken-rs links so the native
+# `tiktoken.model` loader can hand it maps without a hasher-type mismatch.
+tiktoken-rustc-hash = { package = "rustc-hash", version = "1.1" }
 serde.workspace = true
 serde_json = { workspace = true, features = ["preserve_order", "raw_value"] }
 serde_yaml = "0.9"

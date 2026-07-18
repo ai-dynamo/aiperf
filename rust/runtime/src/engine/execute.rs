@@ -33,13 +33,14 @@ use crate::content_server::{
 };
 use crate::dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, ModelId,
-    ModelSelector, ModelSelectorFactory, RandomModelSelectorFactory,
+    ModelSelector, ModelSelectorFactory, NativeTiktokenTokenizer, RandomModelSelectorFactory,
     RoundRobinModelSelectorFactory, SourceImageSampling, SyntheticAudioConfig,
     SyntheticAudioFormat, SyntheticDatasetConfig, SyntheticImageConfig, SyntheticImageFormat,
     SyntheticImageSource, SyntheticMediaGeneratorFactory, SyntheticPrefixConfig,
     SyntheticPromptConfig, SyntheticRankingsConfig, SyntheticVideoAudioConfig,
     SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern, TextTokenizer,
     TiktokenEncoding, TiktokenTokenizer, TracePromptStoragePolicy, TraceSynthesisConfig,
+    find_tiktoken_model_file,
 };
 use crate::endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
 use crate::export::otel::OtelRecordAccumulator;
@@ -4991,6 +4992,17 @@ pub(crate) fn load_tokenizer(spec: Option<&str>) -> Result<Arc<dyn TextTokenizer
     let spec = spec.unwrap_or("builtin");
     let path = Path::new(spec);
     if path.is_dir() {
+        // Resolution order mirrors vLLM's Rust frontend: the HuggingFace fast
+        // tokenizer (`tokenizer.json`) first, then a native `tiktoken.model` /
+        // `tokenizer.model` / `*.tiktoken` BPE vocab for Kimi/Qwen/DeepSeek-class
+        // repositories that ship no `tokenizer.json`. Only when neither is
+        // present do we fall through to the actionable error at the resolver.
+        if path.join("tokenizer.json").is_file() {
+            return Ok(Arc::new(HuggingFaceTokenizer::from_directory(path)?));
+        }
+        if find_tiktoken_model_file(path).is_some() {
+            return Ok(Arc::new(NativeTiktokenTokenizer::from_directory(path)?));
+        }
         return Ok(Arc::new(HuggingFaceTokenizer::from_directory(path)?));
     }
     if path.is_file() {
@@ -6151,6 +6163,29 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn load_tokenizer_loads_tiktoken_model_dir_natively() {
+        // A resolved directory with a `tiktoken.model` (Kimi/Qwen-class) and no
+        // `tokenizer.json` must load through the native tiktoken loader, not fail.
+        use base64::Engine as _;
+        let dir = tempfile::tempdir().unwrap();
+        let engine = base64::engine::general_purpose::STANDARD;
+        let mut model = String::new();
+        for byte in 0u8..=255 {
+            model.push_str(&format!("{} {}\n", engine.encode([byte]), byte as u32));
+        }
+        std::fs::write(dir.path().join("tiktoken.model"), model).unwrap();
+
+        let tokenizer = load_tokenizer(dir.path().to_str()).expect("native tiktoken load");
+        let text = "hello world";
+        assert_eq!(
+            tokenizer.decode(&tokenizer.encode(text).unwrap()).unwrap(),
+            text
+        );
+        // Deterministic, network-free token count.
+        assert_eq!(tokenizer.count("hi").unwrap(), 2);
+    }
 
     /// Streamable artifacts do not disqualify exact-fold. `inputs.json` still
     /// disqualifies ONLY when the dataset cannot be generated up front

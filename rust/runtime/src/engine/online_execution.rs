@@ -16,7 +16,7 @@ use crate::content_server::ContentServerMediaPublisher;
 use crate::dataset::{
     DatasetFetcher, HttpDatasetFetcher, MaterializedTracePromptStorage,
     NativeSyntheticMediaGeneratorFactory, SyntheticMediaGeneratorFactory, TiktokenEncoding,
-    download_hugging_face_tokenizer,
+    download_hugging_face_tokenizer, find_tiktoken_model_file,
 };
 use crate::endpoints::Modality;
 use crate::failure::OnFailure;
@@ -566,6 +566,43 @@ fn default_revision() -> String {
     "main".into()
 }
 
+/// Actionable diagnostic for a tokenizer repository AIPerf cannot load natively.
+///
+/// The native tokenizer accepts `tokenizer.json` (HuggingFace fast), a native
+/// `tiktoken.model` / `tokenizer.model` / `*.tiktoken` BPE vocab (Kimi/Qwen/
+/// DeepSeek-class), or a built-in tiktoken encoding, and never executes
+/// repository Python. A repository that ships none of these — only a custom
+/// Python tokenizer with no vocab file AIPerf can parse — cannot be loaded.
+/// Substituting a different tokenizer would silently report wrong token counts —
+/// the worst failure for a benchmark tool — so this fails closed with guidance.
+fn remote_code_tokenizer_error(name: &str) -> String {
+    format!(
+        "tokenizer {name:?} cannot be loaded by AIPerf's native tokenizer: the repository \
+         provides neither a `tokenizer.json` nor a native tiktoken vocab file \
+         (`tiktoken.model`, `tokenizer.model`, or `*.tiktoken`) and requires executing custom \
+         repository code (`trust_remote_code`), which the native tokenizer never does. Loading \
+         a substitute tokenizer would report incorrect token counts, so AIPerf refuses rather \
+         than guess. Point the tokenizer at a repository or local directory that contains a \
+         `tokenizer.json` or a tiktoken vocab file, or run with `--use-server-token-count` so \
+         the endpoint's reported `usage` supplies authoritative token counts."
+    )
+}
+
+/// Reject a resolved tokenizer directory that has no native-loadable tokenizer,
+/// naming the model in an actionable error. A directory is native-loadable when
+/// it holds either a `tokenizer.json` (HuggingFace fast path) or a native
+/// tiktoken vocab file (`tiktoken.model` / `tokenizer.model` / `*.tiktoken`).
+/// Shared by every resolver so a custom-code-only repository fails identically
+/// instead of surfacing a bare "No such file" at [`load_tokenizer`] time.
+fn ensure_native_tokenizer_loadable(name: &str, directory: &Path) -> Result<()> {
+    ensure!(
+        directory.join("tokenizer.json").is_file() || find_tiktoken_model_file(directory).is_some(),
+        "{}",
+        remote_code_tokenizer_error(name)
+    );
+    Ok(())
+}
+
 /// Preparation-time tokenizer acquisition for protocol-v2 online workloads.
 ///
 /// The native implementation accepts built-in encodings and local paths
@@ -655,42 +692,66 @@ impl NativeOnlineTokenizerSourceResolver {
             return Ok(resolved_directory);
         }
 
-        let tokenizer_url =
-            hugging_face_model_url(&self.hugging_face_endpoint, name, Some(("resolve", commit)))?
-                + "/tokenizer.json";
-        let tokenizer = self
-            .fetcher
-            .fetch(
-                &tokenizer_url,
-                &format!("hf-tokenizer-file:{name}:{commit}:tokenizer.json"),
-                token.as_deref(),
-            )
-            .await
-            .with_context(|| format!("downloading tokenizer.json for {name:?}@{commit}"))?;
-        persist_tokenizer_file(&tokenizer_path, tokenizer.as_ref())?;
-
-        // `tokenizer_config.json` enriches BOS/EOS and chat-template policy but
-        // is not universal. A missing optional file must not invalidate a
-        // complete tokenizer.json; malformed present files are rejected later
-        // by `HuggingFaceTokenizer::from_directory`.
-        let config_url =
-            hugging_face_model_url(&self.hugging_face_endpoint, name, Some(("resolve", commit)))?
-                + "/tokenizer_config.json";
-        if let Ok(config) = self
-            .fetcher
-            .fetch(
-                &config_url,
-                &format!("hf-tokenizer-file:{name}:{commit}:tokenizer_config.json"),
-                token.as_deref(),
-            )
+        // Fetch `tokenizer.json` (HuggingFace fast path) best-effort. A repository
+        // can resolve (commit sha present) yet ship no `tokenizer.json` because it
+        // uses a tiktoken vocab (Kimi/Qwen/DeepSeek) or a custom Python tokenizer,
+        // so its absence is not fatal here — the tiktoken fallback and the final
+        // `ensure_native_tokenizer_loadable` guard decide loadability.
+        if let Some(bytes) = self
+            .fetch_optional_file(name, commit, "tokenizer.json", token.as_deref())
             .await
         {
-            persist_tokenizer_file(
-                &resolved_directory.join("tokenizer_config.json"),
-                config.as_ref(),
-            )?;
+            persist_tokenizer_file(&tokenizer_path, bytes.as_ref())?;
+        } else {
+            // No `tokenizer.json`: pull a native tiktoken vocab file if present,
+            // so the loader can tokenize Kimi/Qwen-class models client-side.
+            for vocab_name in ["tiktoken.model", "tokenizer.model"] {
+                if let Some(bytes) = self
+                    .fetch_optional_file(name, commit, vocab_name, token.as_deref())
+                    .await
+                {
+                    persist_tokenizer_file(&resolved_directory.join(vocab_name), bytes.as_ref())?;
+                    break;
+                }
+            }
+        }
+
+        // `tokenizer_config.json` (special tokens, BOS/EOS, chat template) and
+        // `config.json` (`vocab_size`, `model_type` for the tiktoken regex) enrich
+        // loading but are not universal; a missing optional file must not
+        // invalidate an otherwise-complete tokenizer.
+        for optional in ["tokenizer_config.json", "config.json"] {
+            if let Some(bytes) = self
+                .fetch_optional_file(name, commit, optional, token.as_deref())
+                .await
+            {
+                persist_tokenizer_file(&resolved_directory.join(optional), bytes.as_ref())?;
+            }
         }
         Ok(resolved_directory)
+    }
+
+    /// Fetch one repository file at `commit`, returning `None` when it is absent
+    /// (any fetch error) rather than failing the whole resolution.
+    async fn fetch_optional_file(
+        &self,
+        name: &str,
+        commit: &str,
+        filename: &str,
+        token: Option<&str>,
+    ) -> Option<bytes::Bytes> {
+        let url =
+            hugging_face_model_url(&self.hugging_face_endpoint, name, Some(("resolve", commit)))
+                .ok()?
+                + &format!("/{filename}");
+        self.fetcher
+            .fetch(
+                &url,
+                &format!("hf-tokenizer-file:{name}:{commit}:{filename}"),
+                token,
+            )
+            .await
+            .ok()
     }
 }
 
@@ -705,6 +766,7 @@ impl OnlineTokenizerSourceResolver for NativeOnlineTokenizerSourceResolver {
             .context("creating tokenizer preparation runtime")?;
         let local = tokio::task::LocalSet::new();
         let resolved = local.block_on(&runtime, self.resolve_remote(name, revision))?;
+        ensure_native_tokenizer_loadable(name, &resolved)?;
         tokenizer_directory_to_string(&resolved)
     }
 }
@@ -713,13 +775,11 @@ impl OnlineTokenizerSourceResolver for NativeOnlineTokenizerSourceResolver {
 ///
 /// Returns `Ok(Some(source))` when `name` is a tiktoken encoding or an existing
 /// local path, and `Ok(None)` when a remote Hugging Face download is required.
-/// Shared by every resolver so the no-network short-circuit and the
-/// `trust_remote_code` refusal stay identical regardless of download backend.
-fn resolve_builtin_or_local(name: &str, trust_remote_code: bool) -> Result<Option<String>> {
-    ensure!(
-        !trust_remote_code,
-        "native tokenizers never execute repository code; set tokenizer.trust_remote_code=false"
-    );
+/// Shared by every resolver so the no-network short-circuit stays identical
+/// regardless of download backend. `trust_remote_code` is intentionally ignored
+/// here: the native tokenizer never executes repository code, so the flag is
+/// inert (it is warned about once at policy-decode time, not refused).
+fn resolve_builtin_or_local(name: &str, _trust_remote_code: bool) -> Result<Option<String>> {
     let path = Path::new(name);
     if path.is_dir() || path.is_file() || name.parse::<TiktokenEncoding>().is_ok() {
         return Ok(Some(name.to_owned()));
@@ -776,6 +836,12 @@ impl OnlineTokenizerSourceResolver for HfHubOnlineTokenizerSourceResolver {
         let directory = runtime
             .block_on(download_hugging_face_tokenizer(name))
             .with_context(|| format!("resolving tokenizer repository {name:?}"))?;
+        // `download_hugging_face_tokenizer` accepts a repository whose only
+        // tokenizer artifact is `tokenizer_config.json` (a Kimi-class custom-code
+        // repo), returning a directory with no native-loadable `tokenizer.json`.
+        // Fail here with actionable guidance rather than a bare "No such file"
+        // from `from_directory`, and never substitute a wrong tokenizer.
+        ensure_native_tokenizer_loadable(name, &directory)?;
         tokenizer_directory_to_string(&directory)
     }
 }
@@ -858,10 +924,19 @@ impl AuthoredTokenizerV2 {
             !config.revision.trim().is_empty(),
             "tokenizer.revision must not be empty"
         );
-        ensure!(
-            !config.trust_remote_code,
-            "native tokenizers never execute repository code; set tokenizer.trust_remote_code=false"
-        );
+        if config.trust_remote_code {
+            // The native `tokenizers` library loads tokenizer artifacts directly
+            // and never executes repository Python, so `trust_remote_code=true`
+            // is inert rather than a capability. Accept it and warn instead of
+            // failing closed so command lines that pass the flag unconditionally
+            // (e.g. Hugging Face / SGLang benchmark harnesses) still run; the
+            // tokenizer loads exactly as if the flag were false.
+            tracing::warn!(
+                tokenizer = %config.name,
+                "tokenizer.trust_remote_code=true has no effect: the native tokenizer never \
+                 executes repository code; loading the tokenizer normally"
+            );
+        }
         Ok(config)
     }
 
@@ -1334,7 +1409,11 @@ mod tests {
     }
 
     #[test]
-    fn tokenizer_policy_rejects_repository_code_execution() {
+    fn tokenizer_policy_accepts_trust_remote_code_as_inert() {
+        // The native tokenizer never executes repository code, so
+        // `trust_remote_code=true` is inert rather than refused: decode must
+        // succeed (a warning is emitted) so harnesses that pass the flag
+        // unconditionally still run.
         let raw = RawValue::from_string(
             serde_json::json!({
                 "name": "fixture/tokenizer",
@@ -1345,12 +1424,26 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        assert!(
-            AuthoredTokenizerV2::decode(&raw)
-                .unwrap_err()
-                .to_string()
-                .contains("never execute")
-        );
+        let config = AuthoredTokenizerV2::decode(&raw).expect("trust_remote_code must be accepted");
+        assert!(config.trust_remote_code);
+        assert_eq!(config.name, "fixture/tokenizer");
+    }
+
+    #[test]
+    fn builtin_tokenizer_resolves_with_trust_remote_code() {
+        // A built-in (tiktoken) encoding must resolve identically whether or not
+        // `trust_remote_code` is set; the flag must not pre-empt the load.
+        let resolved = resolve_builtin_or_local("cl100k_base", true).expect("builtin must resolve");
+        assert_eq!(resolved.as_deref(), Some("cl100k_base"));
+    }
+
+    #[test]
+    fn local_path_tokenizer_resolves_with_trust_remote_code() {
+        // A local filesystem tokenizer path must also resolve with the flag set.
+        let dir = std::env::temp_dir();
+        let resolved =
+            resolve_builtin_or_local(dir.to_str().unwrap(), true).expect("local path must resolve");
+        assert_eq!(resolved.as_deref(), dir.to_str());
     }
 
     #[test]
@@ -1422,5 +1515,100 @@ mod tests {
             "/fixture/model/resolve/{}/tokenizer.json",
             "a".repeat(40)
         ))));
+    }
+
+    /// A repository whose only tokenizer artifact is a custom Python tokenizer
+    /// (no `tokenizer.json`). The metadata request resolves a commit, but the
+    /// `tokenizer.json` fetch fails, mirroring a Kimi-K2-class remote-code repo.
+    #[derive(Default)]
+    struct RemoteCodeOnlyFetcher {
+        urls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl DatasetFetcher for RemoteCodeOnlyFetcher {
+        async fn fetch(
+            &self,
+            url: &str,
+            _cache_key: &str,
+            _bearer_token: Option<&str>,
+        ) -> crate::dataset::Result<Bytes> {
+            self.urls.lock().unwrap().push(url.to_owned());
+            if url.contains("/api/models/") {
+                return Ok(Bytes::from(
+                    serde_json::json!({"sha": "b".repeat(40)}).to_string(),
+                ));
+            }
+            // No `tokenizer.json` in the repository: the native tokenizer cannot
+            // load a custom-code tokenizer, so this download 404s upstream.
+            Err(crate::dataset::DatasetError::Validation(
+                "tokenizer.json is absent (custom-code-only repository)".into(),
+            ))
+        }
+    }
+
+    #[test]
+    fn remote_code_only_tokenizer_fails_with_actionable_error_not_silent_substitution() {
+        // Invariant: a Kimi-class repository that ships only a custom Python
+        // tokenizer must NOT silently resolve to a substitute (builtin/gpt2/
+        // cl100k) tokenizer. It must fail loudly with guidance that names the
+        // `--use-server-token-count` escape hatch. Wrong token counts are the
+        // worst failure mode for a benchmark tool.
+        let fetcher = Arc::new(RemoteCodeOnlyFetcher::default());
+        let cache = tempfile::tempdir().unwrap();
+        let resolver =
+            NativeOnlineTokenizerSourceResolver::new(fetcher.clone(), cache.path().to_path_buf());
+        let error = resolver
+            .resolve("moonshotai/Kimi-K2", "locked-revision", true)
+            .expect_err("a custom-code-only tokenizer must not resolve to a substitute");
+        let message = format!("{error:#}");
+        // Names the model, explains why, and points to the honest escape hatch.
+        assert!(message.contains("Kimi-K2"), "message: {message}");
+        assert!(
+            message.contains("--use-server-token-count"),
+            "message: {message}"
+        );
+        assert!(
+            message.contains("native tokenizer") && message.contains("tokenizer.json"),
+            "message: {message}"
+        );
+        // Never leaked a substitute encoding name as a resolved source.
+        assert!(!message.contains("cl100k") && !message.contains("gpt2"));
+    }
+
+    #[test]
+    fn resolved_directory_without_tokenizer_json_is_rejected() {
+        // The shared guard both online resolvers call: a resolved directory that
+        // has no `tokenizer.json` (a custom-code repo whose config-only files
+        // downloaded successfully) is rejected before it reaches `load_tokenizer`,
+        // where it would otherwise surface a bare "No such file" error.
+        let directory = tempfile::tempdir().unwrap();
+        let error = ensure_native_tokenizer_loadable("moonshotai/Kimi-K2", directory.path())
+            .expect_err("a directory without tokenizer.json must be rejected");
+        let message = format!("{error:#}");
+        assert!(message.contains("Kimi-K2"));
+        assert!(message.contains("--use-server-token-count"));
+
+        // A directory that DOES contain tokenizer.json passes the guard.
+        std::fs::write(directory.path().join("tokenizer.json"), b"{}").unwrap();
+        ensure_native_tokenizer_loadable("moonshotai/Kimi-K2", directory.path())
+            .expect("a directory with tokenizer.json is natively loadable");
+    }
+
+    #[test]
+    fn resolved_directory_with_tiktoken_model_is_natively_loadable() {
+        // A Kimi/Qwen-class repo ships a `tiktoken.model` BPE vocab instead of a
+        // `tokenizer.json`. The guard must accept it so the native tiktoken loader
+        // runs, rather than firing the actionable remote-code error.
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("tiktoken.model"), b"AAAA 0\n").unwrap();
+        ensure_native_tokenizer_loadable("moonshotai/Kimi-K2", directory.path())
+            .expect("a directory with tiktoken.model is natively loadable");
+
+        // `tokenizer.model` (Llama-3 / some Qwen) and `*.tiktoken` (older Qwen)
+        // are equally acceptable.
+        let alt = tempfile::tempdir().unwrap();
+        std::fs::write(alt.path().join("tokenizer.model"), b"AAAA 0\n").unwrap();
+        ensure_native_tokenizer_loadable("Qwen/Qwen", alt.path()).unwrap();
     }
 }
