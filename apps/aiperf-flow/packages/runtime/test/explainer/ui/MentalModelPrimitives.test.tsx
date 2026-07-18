@@ -45,8 +45,8 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText("Service")).toBeInTheDocument();
-      expect(screen.getByText("A sample service")).toBeInTheDocument();
+      expect(screen.getByText("Service")).not.toBeNull();
+      expect(screen.getByText("A sample service")).not.toBeNull();
     });
 
     test("renders with custom box type styling", () => {
@@ -59,7 +59,7 @@ describe("MentalModelPrimitives", () => {
       );
 
       const box = container.firstChild as HTMLElement;
-      expect(box).toHaveStyle({ borderRadius: "8px" });
+      expect(box.style.borderRadius).toBe("8px");
     });
 
     test("renders with custom dimensions", () => {
@@ -84,7 +84,7 @@ describe("MentalModelPrimitives", () => {
         </ArchitectureBox>
       );
 
-      expect(screen.getByText("Child Content")).toBeInTheDocument();
+      expect(screen.getByText("Child Content")).not.toBeNull();
     });
 
     test("renders with icon", () => {
@@ -96,7 +96,7 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText("📦")).toBeInTheDocument();
+      expect(screen.getByText("📦")).not.toBeNull();
     });
 
     test("renders all box types", () => {
@@ -115,7 +115,7 @@ describe("MentalModelPrimitives", () => {
             boxType={type}
           />
         );
-        expect(screen.getByText(`Box-${type}`)).toBeInTheDocument();
+        expect(screen.getByText(`Box-${type}`)).not.toBeNull();
         unmount();
       });
     });
@@ -145,8 +145,8 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(container.querySelector("svg")).toBeInTheDocument();
-      expect(screen.getByText("Request")).toBeInTheDocument();
+      expect(container.querySelector("svg")).not.toBeNull();
+      expect(screen.getByText("Request")).not.toBeNull();
     });
 
     test("renders all arrow directions", () => {
@@ -166,7 +166,7 @@ describe("MentalModelPrimitives", () => {
             label={`Arrow-${dir}`}
           />
         );
-        expect(screen.getByText(`Arrow-${dir}`)).toBeInTheDocument();
+        expect(screen.getByText(`Arrow-${dir}`)).not.toBeNull();
         unmount();
       });
     });
@@ -186,7 +186,7 @@ describe("MentalModelPrimitives", () => {
             label={variant}
           />
         );
-        expect(screen.getByText(variant)).toBeInTheDocument();
+        expect(screen.getByText(variant)).not.toBeNull();
         unmount();
       });
     });
@@ -200,7 +200,7 @@ describe("MentalModelPrimitives", () => {
       );
 
       const svg = container.querySelector("svg");
-      expect(svg).toHaveAttribute("width", "100");
+      expect(svg?.getAttribute("width")).toBe("100");
     });
 
     test("renders arrow without label", () => {
@@ -208,8 +208,8 @@ describe("MentalModelPrimitives", () => {
         <DataFlowArrow theme={mockTheme} />
       );
 
-      expect(container.querySelector("svg")).toBeInTheDocument();
-      expect(screen.queryByText(/^Arrow/)).not.toBeInTheDocument();
+      expect(container.querySelector("svg")).not.toBeNull();
+      expect(screen.queryByText(/^Arrow/)).toBeNull();
     });
   });
 
@@ -223,9 +223,9 @@ describe("MentalModelPrimitives", () => {
         </GridLayout>
       );
 
-      expect(screen.getByText("Item 1")).toBeInTheDocument();
-      expect(screen.getByText("Item 2")).toBeInTheDocument();
-      expect(screen.getByText("Item 3")).toBeInTheDocument();
+      expect(screen.getByText("Item 1")).not.toBeNull();
+      expect(screen.getByText("Item 2")).not.toBeNull();
+      expect(screen.getByText("Item 3")).not.toBeNull();
     });
 
     test("renders grid with custom column count", () => {
@@ -268,11 +268,11 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText("Step 1")).toBeInTheDocument();
-      expect(screen.getByText("Step 2")).toBeInTheDocument();
-      expect(screen.getByText("Step 3")).toBeInTheDocument();
-      expect(screen.getByText("First step")).toBeInTheDocument();
-      expect(screen.getByText("Second step")).toBeInTheDocument();
+      expect(screen.getByText("Step 1")).not.toBeNull();
+      expect(screen.getByText("Step 2")).not.toBeNull();
+      expect(screen.getByText("Step 3")).not.toBeNull();
+      expect(screen.getByText("First step")).not.toBeNull();
+      expect(screen.getByText("Second step")).not.toBeNull();
     });
 
     test("renders with active step indicator", () => {
@@ -345,9 +345,9 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText("Primary Surface")).toBeInTheDocument();
-      expect(screen.getByText("Primary Text")).toBeInTheDocument();
-      expect(screen.getByText("Execute")).toBeInTheDocument();
+      expect(screen.getByText("Primary Surface")).not.toBeNull();
+      expect(screen.getByText("Primary Text")).not.toBeNull();
+      expect(screen.getByText("Execute")).not.toBeNull();
     });
 
     test("renders in grid format", () => {
@@ -391,7 +391,7 @@ describe("MentalModelPrimitives", () => {
             size={size}
           />
         );
-        expect(screen.getByText("Primary Surface")).toBeInTheDocument();
+        expect(screen.getByText("Primary Surface")).not.toBeNull();
         unmount();
       });
     });
@@ -404,9 +404,9 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText("#303334")).toBeInTheDocument();
-      expect(screen.getByText("#f1f3f2")).toBeInTheDocument();
-      expect(screen.getByText("#7dce82")).toBeInTheDocument();
+      expect(screen.getByText("#303334")).not.toBeNull();
+      expect(screen.getByText("#f1f3f2")).not.toBeNull();
+      expect(screen.getByText("#7dce82")).not.toBeNull();
     });
   });
 
@@ -434,8 +434,8 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText("High Contrast")).toBeInTheDocument();
-      expect(screen.getByText("Medium Contrast")).toBeInTheDocument();
+      expect(screen.getByText("High Contrast")).not.toBeNull();
+      expect(screen.getByText("Medium Contrast")).not.toBeNull();
     });
 
     test("displays contrast ratios", () => {
@@ -446,8 +446,8 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText(/Ratio: 8\.20:1/)).toBeInTheDocument();
-      expect(screen.getByText(/Ratio: 3\.50:1/)).toBeInTheDocument();
+      expect(screen.getByText(/Ratio: 8\.20:1/)).not.toBeNull();
+      expect(screen.getByText(/Ratio: 3\.50:1/)).not.toBeNull();
     });
 
     test("applies pass/fail styling based on ratio", () => {
@@ -479,7 +479,7 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText("No Ratio")).toBeInTheDocument();
+      expect(screen.getByText("No Ratio")).not.toBeNull();
     });
   });
 
@@ -507,10 +507,10 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText("Entry 1")).toBeInTheDocument();
-      expect(screen.getByText("Entry 2")).toBeInTheDocument();
-      expect(screen.getByText("Entry 3")).toBeInTheDocument();
-      expect(screen.getByText("First entry")).toBeInTheDocument();
+      expect(screen.getByText("Entry 1")).not.toBeNull();
+      expect(screen.getByText("Entry 2")).not.toBeNull();
+      expect(screen.getByText("Entry 3")).not.toBeNull();
+      expect(screen.getByText("First entry")).not.toBeNull();
     });
 
     test("renders legend with title", () => {
@@ -522,7 +522,7 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText("Legend Title")).toBeInTheDocument();
+      expect(screen.getByText("Legend Title")).not.toBeNull();
     });
 
     test("renders vertical orientation", () => {
@@ -573,7 +573,7 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText("🔷")).toBeInTheDocument();
+      expect(screen.getByText("🔷")).not.toBeNull();
     });
 
     test("renders entries without color or icon", () => {
@@ -584,7 +584,7 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText("Entry 3")).toBeInTheDocument();
+      expect(screen.getByText("Entry 3")).not.toBeNull();
     });
   });
 
@@ -619,7 +619,7 @@ describe("MentalModelPrimitives", () => {
       );
 
       // All components should render without error
-      expect(container.firstChild).toBeInTheDocument();
+      expect(container.firstChild).not.toBeNull();
     });
   });
 
@@ -639,10 +639,10 @@ describe("MentalModelPrimitives", () => {
         </GridLayout>
       );
 
-      expect(screen.getByText("Box 1")).toBeInTheDocument();
-      expect(screen.getByText("Box 2")).toBeInTheDocument();
-      expect(screen.getByText("Flow")).toBeInTheDocument();
-      expect(screen.getByText("Legend")).toBeInTheDocument();
+      expect(screen.getByText("Box 1")).not.toBeNull();
+      expect(screen.getByText("Box 2")).not.toBeNull();
+      expect(screen.getByText("Flow")).not.toBeNull();
+      expect(screen.getByText("Legend")).not.toBeNull();
     });
   });
 
@@ -674,8 +674,8 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText("First Step")).toBeInTheDocument();
-      expect(screen.getByText("Second Step")).toBeInTheDocument();
+      expect(screen.getByText("First Step")).not.toBeNull();
+      expect(screen.getByText("Second Step")).not.toBeNull();
     });
 
     test("legend entries are readable", () => {
@@ -690,8 +690,8 @@ describe("MentalModelPrimitives", () => {
         />
       );
 
-      expect(screen.getByText("Important")).toBeInTheDocument();
-      expect(screen.getByText("This is important")).toBeInTheDocument();
+      expect(screen.getByText("Important")).not.toBeNull();
+      expect(screen.getByText("This is important")).not.toBeNull();
     });
   });
 });
