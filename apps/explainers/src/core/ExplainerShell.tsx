@@ -20,7 +20,6 @@ import {
   Divider,
   Pill,
   Row,
-  Spacer,
   Stack,
   StartGate,
   Subtitles,
@@ -205,6 +204,22 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
           ))}
         </div>
 
+        <Row gap={10} align="center">
+          <Button variant="secondary" disabled={index === 0} onClick={() => goTo(index - 1)}>
+            Back
+          </Button>
+          <Text tone="secondary">
+            {index + 1} / {slides.length}
+          </Text>
+          <Button
+            disabled={index === slides.length - 1}
+            style={{ background: t.category.green, color: t.text.onAccent }}
+            onClick={() => goTo(index + 1)}
+          >
+            Next
+          </Button>
+        </Row>
+
         <Row gap={10} align="center" wrap>
           <Button
             style={{ background: t.category.green, color: t.text.onAccent }}
@@ -341,20 +356,6 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
 
         <Divider />
         <Row gap={10} align="center">
-          <Button variant="secondary" disabled={index === 0} onClick={() => goTo(index - 1)}>
-            Back
-          </Button>
-          <Text tone="secondary">
-            {index + 1} / {slides.length}
-          </Text>
-          <Button
-            disabled={index === slides.length - 1}
-            style={{ background: t.category.green, color: t.text.onAccent }}
-            onClick={() => goTo(index + 1)}
-          >
-            Next
-          </Button>
-          <Spacer />
           <Link
             to="/"
             style={{ color: t.text.secondary, textDecoration: "none", fontSize: 14, fontWeight: 600 }}
