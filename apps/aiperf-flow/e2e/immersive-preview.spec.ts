@@ -509,9 +509,13 @@ for (const screenshot of screenshotMatrix) {
   test(`matches deterministic immersive state: ${screenshot.name}`, async ({
     page,
   }) => {
+    await page.clock.install({ time: new Date(0) });
     await page.setViewportSize(screenshot.viewport);
     await openPreview(page, screenshot.open);
     await screenshot.prepare?.(page);
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+    });
     await expect(page).toHaveScreenshot(screenshot.name, {
       animations: "disabled",
       caret: "hide",
