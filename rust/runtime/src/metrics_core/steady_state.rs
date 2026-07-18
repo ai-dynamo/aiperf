@@ -22,7 +22,7 @@
 //! `None` and behavior is unchanged.
 
 use crate::metrics_core::accumulator::{AccumulatorSummary, MetricsAccumulator};
-use crate::metrics_core::window::ExportContext;
+use crate::metrics_core::window::{ExportContext, Phase};
 
 /// Wall-clock floor for the steady window before a short-window warning fires.
 const MIN_STEADY_WINDOW_NS: i64 = 10_000_000_000; // 10 seconds
@@ -235,12 +235,19 @@ pub fn steady_state_summary(
     let store = accumulator.column_store();
     let starts = store.start_ns();
     let ends = store.end_ns();
-    // Absent rows carry NaN; keep only fully timestamped, finite intervals.
+    // Steady-state windowing is a profiling-phase concept: warmup traffic ramps
+    // admission separately and must not perturb the concurrency profile.
+    let profiling = store.mask_for(&ExportContext::phase(Phase::Profiling));
+    // Absent rows carry NaN; keep only fully timestamped, finite profiling
+    // intervals.
     let intervals: Vec<(i64, i64)> = starts
         .iter()
         .zip(ends.iter())
-        .filter(|(s, e)| s.is_finite() && e.is_finite())
-        .map(|(&s, &e)| (s as i64, e as i64))
+        .enumerate()
+        .filter(|(row, (s, e))| {
+            profiling.get(*row).copied().unwrap_or(false) && s.is_finite() && e.is_finite()
+        })
+        .map(|(_, (&s, &e))| (s as i64, e as i64))
         .collect();
     if intervals.is_empty() {
         return None;
