@@ -487,14 +487,14 @@ explainer "SLURM + Velo from scratch" {
           capability: "core.path"
           d: "M350 136 V168"
           layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.5 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.5 , markerEnd: "none" }
         },
 {
           id: "s2-bar"
           capability: "core.path"
           d: "M150 168 H550"
           layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.5 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.5 , markerEnd: "none" }
         },
 {
           id: "s2-d0"
@@ -644,7 +644,7 @@ explainer "SLURM + Velo from scratch" {
           capability: "core.path"
           d: "M292 178 H408"
           layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.ink.secondary, strokeWidth: 2 }
+          style: { fill: "none", stroke: @theme.ink.secondary, strokeWidth: 2 , markerEnd: "none" }
         },
             {
               id: "s3-link-l"
