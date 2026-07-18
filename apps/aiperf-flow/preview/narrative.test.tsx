@@ -95,15 +95,8 @@ describe("preview narrative adapters", () => {
 });
 
 describe("preview App narration vertical slice", () => {
-  function transportStatus(): HTMLElement {
-    const statuses = screen.getAllByRole("status");
-    const transport = statuses.find((node) =>
-      /Scene \d+ of \d+/i.test(node.textContent ?? ""),
-    );
-    if (transport === undefined) {
-      throw new Error("Transport status not found");
-    }
-    return transport;
+  function playbackTime(): HTMLElement {
+    return screen.getByRole("status", { name: "Playback time" });
   }
 
   function chooseAudio(choice: "with-audio" | "without-audio" = "with-audio"): void {
@@ -120,9 +113,7 @@ describe("preview App narration vertical slice", () => {
     chooseAudio(choice);
     await vi.waitFor(() => {
       expect(screen.queryByRole("dialog")).toBeNull();
-      expect(
-        screen.getByRole("button", { name: "Pause scene" }),
-      ).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
     });
   }
 
@@ -133,7 +124,7 @@ describe("preview App narration vertical slice", () => {
       screen.getByRole("dialog", { name: "Audio preference" }),
     ).toBeTruthy();
     expect(
-      (screen.getByRole("button", { name: "Play scene" }) as HTMLButtonElement)
+      (screen.getByRole("button", { name: "Play" }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
 
@@ -171,7 +162,6 @@ describe("preview App narration vertical slice", () => {
         "data-narrator-mode",
       ),
     ).toBe("muted");
-    expect(transportStatus().textContent).toMatch(/narrator muted/i);
 
     fireEvent.click(screen.getByRole("button", { name: "Turn narrator off" }));
     expect(
@@ -185,19 +175,17 @@ describe("preview App narration vertical slice", () => {
     render(<App />);
     await chooseAudioAndWait("with-audio");
 
-    fireEvent.click(screen.getByRole("button", { name: "Select tool" }));
-    expect(transportStatus().textContent).toMatch(/exploring/i);
+    const pausedProgress = playbackTime().textContent;
+    fireEvent.click(screen.getByRole("button", { name: "Explore" }));
     expect(
-      screen.getByRole("button", { name: "Resume lesson from current beat" }),
+      screen.getByRole("button", { name: "Resume lesson" }),
     ).toBeTruthy();
 
-    const pausedProgress = transportStatus().textContent;
-    fireEvent.click(
-      screen.getByRole("button", { name: "Resume lesson from current beat" }),
-    );
+    expect(playbackTime().textContent).toBe(pausedProgress);
+    fireEvent.click(screen.getByRole("button", { name: "Resume lesson" }));
 
-    expect(transportStatus().textContent).not.toMatch(/exploring/i);
-    expect(pausedProgress).toMatch(/\d+\.\d+s/);
+    expect(screen.getByRole("button", { name: "Explore" })).toBeTruthy();
+    expect(playbackTime().textContent).toBe(pausedProgress);
   });
 
   test("stops narration when the preview shell unmounts", async () => {

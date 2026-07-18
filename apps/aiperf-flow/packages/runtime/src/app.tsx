@@ -85,7 +85,10 @@ import {
 } from "./narrative/subtitle-overlay.js";
 import { evaluateNarrativeTimeline } from "./narrative/timeline.js";
 import { type Clock, PerformanceClock, TimelinePlayer } from "./player.js";
-import { createFoundationRegistry } from "./renderer.js";
+import {
+  createFoundationRegistry,
+  measureRuntimePhase,
+} from "./renderer.js";
 import type { CapabilityRegistry } from "./registry.js";
 import {
   createFocusCoordinator,
@@ -707,10 +710,14 @@ export function FlowApp({
     try {
       return {
         ok: true,
-        frame: evaluateFrame(scene, evaluationTimeMs, {
-          quality: qualityProfile,
-          previousDisplayList: previousDisplayListRef.current,
-        }),
+        frame: measureRuntimePhase("evaluation", () =>
+          evaluateFrame(scene, evaluationTimeMs, {
+            quality: qualityProfile,
+            ...(previousDisplayListRef.current === undefined
+              ? {}
+              : { previousDisplayList: previousDisplayListRef.current }),
+          }),
+        ),
       };
     } catch (error) {
       return {
@@ -1260,12 +1267,14 @@ export function FlowApp({
         category: "action",
         keywords: Object.freeze(["play", "pause", "playback"]),
         shortcut: "Space",
-        disabledReason:
-          exploring
-            ? "Pause exploration before changing playback."
-            : audioConsent === null
-              ? "Choose an audio preference first."
-              : undefined,
+        ...(exploring
+          ? {
+              disabledReason:
+                "Pause exploration before changing playback.",
+            }
+          : audioConsent === null
+            ? { disabledReason: "Choose an audio preference first." }
+            : {}),
         execute: () => {
           togglePlayback();
           dispatchImmersive({ type: "close-command" });
@@ -1339,7 +1348,7 @@ export function FlowApp({
         label: "Pan",
         category: "action",
         keywords: Object.freeze(["pan", "camera", "explore"]),
-        disabledReason: exploring ? undefined : "Start exploration to pan.",
+        ...(exploring ? {} : { disabledReason: "Start exploration to pan." }),
         execute: () => {
           panExplore();
           dispatchImmersive({ type: "close-command" });
@@ -1350,7 +1359,7 @@ export function FlowApp({
         label: "Zoom in",
         category: "action",
         keywords: Object.freeze(["zoom", "camera", "explore"]),
-        disabledReason: exploring ? undefined : "Start exploration to zoom.",
+        ...(exploring ? {} : { disabledReason: "Start exploration to zoom." }),
         execute: () => {
           zoomExplore();
           dispatchImmersive({ type: "close-command" });
@@ -1361,7 +1370,7 @@ export function FlowApp({
         label: "Fit",
         category: "action",
         keywords: Object.freeze(["fit", "camera", "explore"]),
-        disabledReason: exploring ? undefined : "Start exploration to fit.",
+        ...(exploring ? {} : { disabledReason: "Start exploration to fit." }),
         execute: () => {
           fitExplore();
           dispatchImmersive({ type: "close-command" });
@@ -1372,10 +1381,9 @@ export function FlowApp({
         label: "Leave Focus World",
         category: "action",
         keywords: Object.freeze(["focus", "world", "leave"]),
-        disabledReason:
-          immersive.focusWorldEntityId === null
-            ? "Focus World is not active."
-            : undefined,
+        ...(immersive.focusWorldEntityId === null
+          ? { disabledReason: "Focus World is not active." }
+          : {}),
         execute: () => {
           leaveFocusWorld();
           dispatchImmersive({ type: "close-command" });

@@ -56,18 +56,19 @@ function isGeometryKey(value: string): value is GeometryKey {
   return (GEOMETRY_KEYS as readonly string[]).includes(value);
 }
 
-function lowerStyleValue(
-  value: ValueAst,
+function resolveLiteralValue(
+  value: LiteralAst | Extract<ValueAst, { kind: "token-reference" }>,
   tokens: ReadonlyMap<string, LiteralAst["value"]>,
-): StyleValueIr {
+): LiteralAst["value"] {
   switch (value.kind) {
-    case "literal":
+    case "literal": {
       if (typeof value.value === "number" && !Number.isFinite(value.value)) {
         throw new Error(
-          "Internal error: style values must contain only finite numbers.",
+          "Internal error: component values must contain only finite JSON numbers.",
         );
       }
       return value.value;
+    }
     case "token-reference": {
       const resolved = tokens.get(value.token);
       if (resolved === undefined) {
@@ -77,11 +78,22 @@ function lowerStyleValue(
       }
       if (typeof resolved === "number" && !Number.isFinite(resolved)) {
         throw new Error(
-          "Internal error: style values must contain only finite numbers.",
+          "Internal error: component values must contain only finite JSON numbers.",
         );
       }
       return resolved;
     }
+  }
+}
+
+function lowerStyleValue(
+  value: ValueAst,
+  tokens: ReadonlyMap<string, LiteralAst["value"]>,
+): StyleValueIr {
+  switch (value.kind) {
+    case "literal":
+    case "token-reference":
+      return resolveLiteralValue(value, tokens);
     case "theme-role-reference":
       return { kind: "theme-role", role: value.role as ThemeRole };
   }
@@ -94,7 +106,7 @@ function resolveArgumentValue(
   switch (value.kind) {
     case "literal":
     case "token-reference":
-      return lowerStyleValue(value, tokens);
+      return resolveLiteralValue(value, tokens);
     case "identifier-reference":
       return value.name;
     case "object-literal":

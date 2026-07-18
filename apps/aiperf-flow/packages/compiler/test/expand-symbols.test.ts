@@ -150,6 +150,63 @@ describe("expandSymbolInvocations", () => {
     }
   });
 
+  test("reports a diagnostic when a theme role is used as a symbol argument", () => {
+    const parsed = document();
+    const withThemeArgument = {
+      ...parsed,
+      scenes: [
+        {
+          ...parsed.scenes[0]!,
+          renderDeclarations: [
+            {
+              kind: "component-invocation" as const,
+              name: "Queue",
+              props: [
+                {
+                  kind: "prop-assignment" as const,
+                  name: "label",
+                  value: {
+                    kind: "theme-role-reference" as const,
+                    role: "ink.primary",
+                    sourceMap: range(),
+                  },
+                  sourceMap: range(),
+                },
+              ],
+              sourceMap: range(),
+            },
+          ],
+        },
+      ],
+    };
+    const symbols = table({
+      kind: "symbol-definition",
+      name: "Queue",
+      params: [
+        {
+          kind: "param",
+          name: "label",
+          type: { kind: "type-ref", name: "string", sourceMap: range() },
+          sourceMap: range(),
+        },
+      ],
+      body: [],
+      sourceMap: range(),
+    });
+
+    const result = expandSymbolInvocations(withThemeArgument, symbols);
+
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "PROP_TYPE_MISMATCH",
+          message: expect.stringContaining("theme role"),
+        }),
+      ]),
+    );
+  });
+
   test("preserves duplicate detection when collecting symbols before expansion", () => {
     const parsed = document();
     const duplicate = {

@@ -13,10 +13,6 @@ import {
 
 import { FlowApp } from "../packages/runtime/src/app";
 import type { KokoroNarratorSnapshot } from "../packages/runtime/src/narrative/kokoro-narrator";
-import type {
-  NarratorBackend,
-  NarratorUtterance,
-} from "../packages/runtime/src/narrative/narrator";
 import type { NarrativeCue } from "../packages/runtime/src/narrative/timeline";
 
 import {
@@ -28,11 +24,7 @@ import {
   createPreviewNarratorBackend,
   prewarmPreviewNarrator,
   subscribePreviewKokoroState,
-  unlockPreviewSpeech,
 } from "./narrator-backend";
-
-/** Preview narrator modes: silent off, audible on, or muted cue tracking. */
-export type NarratorMode = "off" | "on" | "muted";
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
 
@@ -161,56 +153,6 @@ function flowWithActiveSceneFirst(flow: FlowIr, sceneId: string): FlowIr {
     return flow;
   }
   return { ...flow, scenes: [active, ...scenes] };
-}
-
-type ModeAwareBackend = NarratorBackend &
-  Partial<{
-    prewarm(): Promise<void> | void;
-    activate(): Promise<void> | void;
-    subscribe(listener: (state: KokoroNarratorSnapshot) => void): () => void;
-  }>;
-
-/**
- * Hosts preview narrator modes over the shared backend without owning
- * NarratorController / TimelinePlayer state.
- */
-function createModeAwareNarratorBackend(
-  modeRef: RefObject<NarratorMode>,
-): ModeAwareBackend {
-  const inner = createPreviewNarratorBackend() as ModeAwareBackend;
-  const audible = (): boolean => modeRef.current === "on";
-  return {
-    get available() {
-      return inner.available;
-    },
-    voices: () => inner.voices(),
-    speak(utterance: NarratorUtterance): void {
-      if (!audible()) {
-        return;
-      }
-      inner.speak(utterance);
-    },
-    pause: () => inner.pause(),
-    resume: () => {
-      if (!audible()) {
-        return;
-      }
-      inner.resume();
-    },
-    cancel: () => inner.cancel(),
-    prewarm:
-      typeof inner.prewarm === "function"
-        ? () => inner.prewarm?.()
-        : undefined,
-    activate:
-      typeof inner.activate === "function"
-        ? () => inner.activate?.()
-        : undefined,
-    subscribe:
-      typeof inner.subscribe === "function"
-        ? (listener) => inner.subscribe?.(listener) ?? (() => undefined)
-        : undefined,
-  };
 }
 
 type DocumentBrowserProps = Readonly<{
@@ -346,21 +288,17 @@ export function App() {
   const [activeSceneId, setActiveSceneId] = useState(
     workspace.navigation.active.sceneId,
   );
-  const [narratorMode, setNarratorMode] = useState<NarratorMode>("on");
   const [reducedMotion, setReducedMotion] = useState(false);
   const [kokoroState, setKokoroState] = useState<KokoroNarratorSnapshot | null>(
     null,
   );
-  const narratorModeRef = useRef<NarratorMode>(narratorMode);
-  narratorModeRef.current = narratorMode;
-
   const flow = useMemo(() => {
     const base = workspace.flows[activeFlowId] ?? workspace.flow;
     return flowWithActiveSceneFirst(base, activeSceneId);
   }, [workspace, activeFlowId, activeSceneId]);
 
   const narratorBackend = useMemo(
-    () => createModeAwareNarratorBackend(narratorModeRef),
+    () => createPreviewNarratorBackend(),
     [],
   );
 
@@ -390,19 +328,6 @@ export function App() {
     return () => media.removeEventListener("change", sync);
   }, []);
 
-  useEffect(() => {
-    if (narratorMode !== "on") {
-      narratorBackend.cancel();
-    }
-  }, [narratorMode, narratorBackend]);
-
-  function cycleNarratorMode(): void {
-    void unlockPreviewSpeech();
-    setNarratorMode((mode) =>
-      mode === "on" ? "muted" : mode === "muted" ? "off" : "on",
-    );
-  }
-
   function selectScene(flowId: string, sceneId: string): void {
     setActiveFlowId(flowId);
     setActiveSceneId(sceneId);
@@ -410,14 +335,10 @@ export function App() {
 
   const voiceStatus =
     kokoroState?.status === "loading"
-      ? `voice ${Math.round((kokoroState.progress ?? 0) * 100)}%`
+      ? `Loading voice ${Math.round((kokoroState.progress ?? 0) * 100)}%`
       : kokoroState?.status === "needs-user-activation"
-        ? "tap play for voice"
-        : kokoroState?.engine === "webgpu"
-          ? "kokoro gpu"
-          : kokoroState?.engine === "wasm"
-            ? "kokoro wasm"
-            : null;
+        ? "Press play for voice"
+        : null;
 
   return (
     <div className="preview-shell">
@@ -446,14 +367,11 @@ export function App() {
             </span>
           </a>
         </div>
-        <div className="preview-status">
-          <span className="preview-status-dot" />
-          Runtime connected
-          <span className="preview-build">cinematic / live</span>
-          {voiceStatus !== null ? (
-            <span className="preview-build">{voiceStatus}</span>
-          ) : null}
-        </div>
+        {voiceStatus === null ? null : (
+          <p className="preview-status" aria-live="polite">
+            {voiceStatus}
+          </p>
+        )}
       </header>
 
       <div
@@ -470,44 +388,15 @@ export function App() {
           workspace={workspace}
         />
 
-        <div className="runtime-story">
-          <div className="causal-field" data-accent="transport">
-            <div className="story-figure">
-              <div
-                aria-label="Narrator controls"
-                className="preview-canvas-tools"
-              >
-                <button
-                  aria-label={
-                    narratorMode === "on"
-                      ? "Mute narrator"
-                      : narratorMode === "muted"
-                        ? "Turn narrator off"
-                        : "Turn narrator on"
-                  }
-                  aria-pressed={narratorMode !== "off"}
-                  className={narratorMode !== "off" ? "is-active" : undefined}
-                  data-narrator-mode={narratorMode}
-                  onClick={cycleNarratorMode}
-                  type="button"
-                >
-                  {narratorMode === "on"
-                    ? "🔊"
-                    : narratorMode === "muted"
-                      ? "🔇"
-                      : "⏹"}
-                </button>
-              </div>
-              <FlowApp
-                key={`${activeFlowId}:${activeSceneId}`}
-                flow={flow}
-                narratorBackend={narratorBackend}
-                reducedMotion={reducedMotion}
-                requireAudioConsent
-              />
-            </div>
-          </div>
-        </div>
+        <main className="runtime-story">
+          <FlowApp
+            key={`${activeFlowId}:${activeSceneId}`}
+            flow={flow}
+            narratorBackend={narratorBackend}
+            reducedMotion={reducedMotion}
+            requireAudioConsent
+          />
+        </main>
       </div>
     </div>
   );

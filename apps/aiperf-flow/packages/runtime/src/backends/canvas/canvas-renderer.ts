@@ -295,30 +295,25 @@ export function renderDisplayList(
   options: CanvasRenderOptions = {},
 ): CanvasRenderMetrics {
   return measureRuntimePhase("total", () => {
-    const prepared = measureRuntimePhase("evaluation", () => {
-      const ratio = options.devicePixelRatio ?? 1;
-      if (!Number.isFinite(ratio) || ratio <= 0) {
-        throw new RangeError("devicePixelRatio must be a positive finite number.");
-      }
-      return {
-        ratio,
-        textAtlas: options.textAtlas ?? new CanvasTextAtlas(context),
-      };
-    });
+    const ratio = options.devicePixelRatio ?? 1;
+    if (!Number.isFinite(ratio) || ratio <= 0) {
+      throw new RangeError("devicePixelRatio must be a positive finite number.");
+    }
+    const textAtlas = options.textAtlas ?? new CanvasTextAtlas(context);
 
     return measureRuntimePhase("draw", () => {
-      if (prepared.ratio !== 1) {
+      if (ratio !== 1) {
         context.save();
-        context.scale(prepared.ratio, prepared.ratio);
+        context.scale(ratio, ratio);
       }
 
       const commandCount = displayList.commands.reduce(
         (count, command) =>
-          count + drawCommand(context, prepared.textAtlas, command),
+          count + drawCommand(context, textAtlas, command),
         0,
       );
 
-      if (prepared.ratio !== 1) {
+      if (ratio !== 1) {
         context.restore();
       }
       return { commandCount };

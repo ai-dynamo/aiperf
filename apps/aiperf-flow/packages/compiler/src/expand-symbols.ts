@@ -94,23 +94,24 @@ function resolveValue(
     );
     return undefined;
   }
+  if (value.kind === "theme-role-reference") {
+    diagnostics.push(
+      diagnostic(
+        "SYMBOL_INVALID_THEME_REFERENCE",
+        "error",
+        `Theme role "${value.role}" cannot be used as a component argument.`,
+        value.sourceMap,
+        "Use theme role references only in render style properties.",
+      ),
+    );
+    return undefined;
+  }
   if (isIdentifierReference(value)) {
     diagnostics.push(
       diagnostic(
         "SYMBOL_UNKNOWN_PARAMETER",
         "error",
         `Unknown symbol parameter "${value.name}".`,
-        value.sourceMap,
-      ),
-    );
-    return undefined;
-  }
-  if (value.kind === "theme-role-reference") {
-    diagnostics.push(
-      diagnostic(
-        "SYMBOL_THEME_REFERENCE",
-        "error",
-        "Theme role references are not supported in symbol argument values.",
         value.sourceMap,
       ),
     );

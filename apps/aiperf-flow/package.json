@@ -7,11 +7,12 @@
     "dev": "vite",
     "e2e": "playwright test",
     "e2e:update": "playwright test --update-snapshots",
-    "flow:test": "npm test --workspaces --if-present",
+    "flow:test": "npm test --workspaces --if-present && npm run preview:test",
     "flow:build": "npm run build --workspace @aiperf/flow-schema && npm run build --workspace @aiperf/flow-language && npm run build --workspace @aiperf/flow-compiler && npm run build --workspace @aiperf/flow-runtime && npm run build --workspace @aiperf/flow-cli",
     "flow:check": "npm run flow:build && npm run flow:test",
     "flow:verify": "npm run flow:check && npm run e2e && npm run measure:runtime",
-    "measure:runtime": "node scripts/measure-runtime.mjs"
+    "measure:runtime": "node scripts/measure-runtime.mjs",
+    "preview:test": "vitest run preview/*.test.tsx --environment jsdom"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
