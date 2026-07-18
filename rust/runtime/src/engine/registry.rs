@@ -946,6 +946,17 @@ struct EndpointProfileConfigV2 {
     connection_limit: usize,
     #[serde(default = "default_keepalive_timeout")]
     keepalive_timeout: f64,
+    /// Extra attempts to (re)establish a connection after a connect-phase
+    /// failure (DNS/TCP/TLS/handshake). Retries apply only before any request
+    /// bytes are sent, so a partially processed request is never re-issued.
+    /// `0` (the default) preserves fail-fast behavior.
+    #[serde(default)]
+    max_connect_retries: u32,
+    /// Base linear backoff, in seconds, slept between connect retries. Attempt
+    /// `n` (1-based) waits `connect_retry_backoff_seconds * n`. `0` (the
+    /// default) retries with no wait.
+    #[serde(default)]
+    connect_retry_backoff_seconds: f64,
 }
 
 /// One statically validated endpoint profile and its normalized policy.
@@ -1274,6 +1285,11 @@ pub fn validate_endpoint_profiles_v2(
                 &format!("endpoint profile {index}.keepalive_timeout"),
             )?),
             max_connections_per_origin: config.connection_limit,
+            max_connect_retries: config.max_connect_retries,
+            connect_retry_backoff_ns: seconds_to_ns(
+                config.connect_retry_backoff_seconds,
+                &format!("endpoint profile {index}.connect_retry_backoff_seconds"),
+            )?,
             ..ClientConfig::default()
         };
         validated.push(ValidatedEndpointProfileV2 {

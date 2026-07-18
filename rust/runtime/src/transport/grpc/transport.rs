@@ -800,14 +800,50 @@ impl GrpcTransport {
                 )
             })?;
         }
+        record
+            .trace
+            .connect_start_ns
+            .get_or_insert(self.clock.now_ns());
+        // One initial attempt plus up to `max_connect_retries` further tries.
+        // Only a genuine pre-RPC `Endpoint::connect` failure
+        // ([`GrpcErrorKind::Other`]) is retried: no request has been dispatched
+        // yet, so re-establishing the channel cannot re-issue an observed RPC. A
+        // channel-ready/whole-request timeout ([`deadline_error`]) is handed back
+        // unchanged and never consumes a retry, mirroring the HTTP transport's
+        // treatment of connect timeouts. This matches
+        // `client::connection::establish_with_resolver`.
+        let channel = retry_connect(
+            &self.clock,
+            self.config.max_connect_retries,
+            self.config.connect_retry_backoff_ns,
+            || self.connect_once(&endpoint, target, total_deadline),
+        )
+        .await?;
+        record.trace.connect_end_ns = Some(self.clock.now_ns());
+        Ok(channel)
+    }
+
+    /// Establish one channel with the channel-ready deadline applied, but
+    /// without retry. `connect_target` layers retry-with-backoff on top of this.
+    ///
+    /// The channel-ready deadline is anchored fresh at each attempt (so every
+    /// try gets the full `channel_ready_timeout_ns`) but is still capped by the
+    /// whole-request `total_deadline`. A deadline expiry returns the mapped
+    /// timeout error; a connect failure returns [`GrpcErrorKind::Other`], the
+    /// only category `connect_target` retries.
+    async fn connect_once(
+        &self,
+        endpoint: &Endpoint,
+        target: &GrpcTarget,
+        total_deadline: Option<i64>,
+    ) -> Result<Channel, GrpcTransportError> {
         let start_ns = self.clock.now_ns();
-        record.trace.connect_start_ns = Some(start_ns);
         let ready_deadline = start_ns.saturating_add(self.config.channel_ready_timeout_ns);
         let (at_ns, kind) = match total_deadline {
             Some(total) if total < ready_deadline => (total, DeadlineKind::Total),
             _ => (ready_deadline, DeadlineKind::ChannelReady),
         };
-        let channel = await_deadline(
+        await_deadline(
             self.clock.clone(),
             Some(Deadline { at_ns, kind }),
             endpoint.connect(),
@@ -820,9 +856,7 @@ impl GrpcTransport {
                 format!("connect gRPC target {}: {error}", target.authority),
                 503,
             )
-        })?;
-        record.trace.connect_end_ns = Some(self.clock.now_ns());
-        Ok(channel)
+        })
     }
 
     fn selected_target(&self, url_index: Option<u32>) -> Result<&GrpcTarget, GrpcTransportError> {
@@ -1008,6 +1042,45 @@ fn request_deadline(
             kind: DeadlineKind::Total,
         }),
         (None, None) => None,
+    }
+}
+
+/// Drive a connect-phase `attempt` with retry-on-connect-failure and linear
+/// backoff. `attempt` is invoked once, then up to `max_connect_retries` more
+/// times whenever it yields a genuine pre-RPC connect failure
+/// ([`GrpcErrorKind::Other`]). Any other failure category — including the mapped
+/// channel-ready and whole-request timeouts from [`deadline_error`] — is
+/// returned immediately without consuming a retry. Retry `n` (1-based) sleeps
+/// `n * connect_retry_backoff_ns` on the injected [`Clock`] before re-invoking
+/// `attempt`, so virtual-time replays stay deterministic. This is the gRPC
+/// analogue of `client::connection::establish_with_resolver`'s retry loop.
+async fn retry_connect<T, F, Fut>(
+    clock: &Rc<dyn Clock>,
+    max_connect_retries: u32,
+    connect_retry_backoff_ns: i64,
+    mut attempt: F,
+) -> Result<T, GrpcTransportError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, GrpcTransportError>>,
+{
+    let mut retries_taken: u32 = 0;
+    loop {
+        match attempt().await {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                if error.details.kind != GrpcErrorKind::Other
+                    || retries_taken >= max_connect_retries
+                {
+                    return Err(error);
+                }
+                retries_taken += 1;
+                let wait_ns = connect_retry_backoff_ns.saturating_mul(i64::from(retries_taken));
+                if wait_ns > 0 {
+                    clock.clone().sleep(wait_ns).await;
+                }
+            }
+        }
     }
 }
 
@@ -1226,5 +1299,151 @@ const fn grpc_code_name(code: i32) -> &'static str {
         15 => "DATA_LOSS",
         16 => "UNAUTHENTICATED",
         _ => "UNKNOWN",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        GrpcClientConfig, GrpcErrorKind, GrpcTransport, GrpcTransportError, retry_connect,
+    };
+    use crate::clock::{Clock, RealClock, SimClock, drive_sim};
+    use crate::transport::grpc::GrpcRequestRecord;
+    use crate::transport::grpc::models::{ConnectionReuseStrategy, GrpcRequestConfig};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    /// Build a transport-error of the requested category for the retry seam.
+    fn err(kind: GrpcErrorKind) -> GrpcTransportError {
+        GrpcTransportError::new(kind, format!("synthetic {kind:?}"), 503)
+    }
+
+    #[test]
+    fn connect_retries_exhaust_then_surface_last_connect_error() {
+        let clock = Rc::new(SimClock::new());
+        let clk: Rc<dyn Clock> = clock.clone();
+        let calls = Cell::new(0_u32);
+        let out = drive_sim(clock.clone(), async move {
+            retry_connect(&clk, 2, 1_000, || {
+                calls.set(calls.get() + 1);
+                async { Err::<(), _>(err(GrpcErrorKind::Other)) }
+            })
+            .await
+            .map(|_| ())
+            .map_err(|e| (e, calls.get()))
+        });
+        let (error, made) = out.expect_err("all attempts fail");
+        assert_eq!(error.details().kind, GrpcErrorKind::Other);
+        // 1 initial attempt + 2 retries.
+        assert_eq!(made, 3);
+        // Linear backoff between retries: 1000*1 + 1000*2 = 3000ns virtual.
+        assert_eq!(clock.now_ns(), 3_000);
+    }
+
+    #[test]
+    fn connect_retries_recover_after_transient_failures() {
+        let clock = Rc::new(SimClock::new());
+        let clk: Rc<dyn Clock> = clock.clone();
+        let calls = Cell::new(0_u32);
+        let out = drive_sim(clock.clone(), async move {
+            let made = Cell::new(0_u32);
+            let result = retry_connect(&clk, 5, 1_000, || {
+                calls.set(calls.get() + 1);
+                made.set(calls.get());
+                async {
+                    if calls.get() <= 2 {
+                        Err::<u32, _>(err(GrpcErrorKind::Other))
+                    } else {
+                        Ok(calls.get())
+                    }
+                }
+            })
+            .await;
+            result.map(|v| (v, made.get()))
+        });
+        let (value, made) = out.expect("recovers on third attempt");
+        assert_eq!(made, 3);
+        assert_eq!(value, 3);
+        // Backoff for the two failed retries: 1000*1 + 1000*2 = 3000ns.
+        assert_eq!(clock.now_ns(), 3_000);
+    }
+
+    #[test]
+    fn channel_ready_timeout_is_not_retried() {
+        // A mapped channel-ready timeout (`RequestSendTimeout`) is a per-attempt
+        // deadline, not a connect failure: it must surface immediately without
+        // consuming a retry, exactly like the HTTP transport hands back connect
+        // timeouts. This proves a configured connect timeout does not
+        // short-circuit *connect* retries yet is itself never retried.
+        let clock = Rc::new(SimClock::new());
+        let clk: Rc<dyn Clock> = clock.clone();
+        let calls = Cell::new(0_u32);
+        let out = drive_sim(clock.clone(), async move {
+            retry_connect(&clk, 5, 1_000, || {
+                calls.set(calls.get() + 1);
+                async { Err::<(), _>(err(GrpcErrorKind::RequestSendTimeout)) }
+            })
+            .await
+            .map(|_| ())
+            .map_err(|e| (e, calls.get()))
+        });
+        let (error, made) = out.expect_err("timeout surfaces");
+        assert_eq!(error.details().kind, GrpcErrorKind::RequestSendTimeout);
+        assert_eq!(made, 1);
+        assert_eq!(clock.now_ns(), 0);
+    }
+
+    #[test]
+    fn zero_retries_makes_a_single_attempt() {
+        let clock = Rc::new(SimClock::new());
+        let clk: Rc<dyn Clock> = clock.clone();
+        let calls = Cell::new(0_u32);
+        let out = drive_sim(clock.clone(), async move {
+            retry_connect(&clk, 0, 1_000, || {
+                calls.set(calls.get() + 1);
+                async { Err::<(), _>(err(GrpcErrorKind::Other)) }
+            })
+            .await
+            .map(|_| ())
+            .map_err(|e| (e, calls.get()))
+        });
+        let (_, made) = out.expect_err("single attempt fails");
+        assert_eq!(made, 1);
+        assert_eq!(clock.now_ns(), 0);
+    }
+
+    #[test]
+    fn real_refused_connect_retries_then_surfaces_other() {
+        // End-to-end proof that the real `Endpoint::connect` refusal classifies
+        // as `GrpcErrorKind::Other` (the retried category) and that
+        // `connect_target` runs the full attempt budget against a genuinely
+        // closed port. A per-attempt channel-ready timeout is set to confirm it
+        // does not short-circuit the connect retries.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+        local.block_on(&runtime, async move {
+            // Bind then drop to obtain a port guaranteed to refuse connects.
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            drop(listener);
+
+            let clock: Rc<dyn Clock> = RealClock::new();
+            let config = GrpcClientConfig {
+                channel_ready_timeout_ns: 5_000_000_000,
+                max_connect_retries: 2,
+                connect_retry_backoff_ns: 1_000,
+                ..GrpcClientConfig::default()
+            };
+            let transport =
+                GrpcTransport::new(clock, config, [format!("grpc://127.0.0.1:{port}")]).unwrap();
+            let request = GrpcRequestConfig::new("model").reuse(ConnectionReuseStrategy::Never);
+            let mut record = GrpcRequestRecord::started(0);
+            let result = transport.acquire_channel(&request, None, &mut record).await;
+            let error = result.expect_err("refused connect");
+            assert_eq!(error.details().kind, GrpcErrorKind::Other);
+        });
     }
 }
