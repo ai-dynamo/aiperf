@@ -127,6 +127,32 @@ pub struct MetricsSpec {
     /// default; enabled by `AIPERF_METRICS_SKETCH` / `--sketch-metrics`.
     #[serde(default)]
     pub sketch: bool,
+    /// Closed-loop steady-state windowing for concurrency-target runs. Disabled
+    /// by default; enabled by `--steady-state`.
+    #[serde(default)]
+    pub steady_state: SteadyStateSpec,
+}
+
+/// Steady-state windowing settings lowered from Config v2.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteadyStateSpec {
+    /// Enables steady-state detection and summarization.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Occupancy fraction of the concurrency target; absent selects the native
+    /// default (0.8).
+    #[serde(default)]
+    pub fraction: Option<f64>,
+}
+
+impl Default for SteadyStateSpec {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            fraction: None,
+        }
+    }
 }
 
 /// Artifact paths relative to the exclusive run directory.

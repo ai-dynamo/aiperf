@@ -803,6 +803,18 @@ pub struct ProfileFlags {
     #[arg(long = "sketch-metrics", default_value_t = false)]
     pub sketch_metrics: bool,
 
+    /// Emit a closed-loop steady-state summary for concurrency-target runs
+    /// (`--steady-state`). Detects the window where in-flight concurrency is at
+    /// or above a fraction of the target, excluding ramp-up and drain.
+    #[arg(long = "steady-state", default_value_t = false)]
+    pub steady_state: bool,
+
+    /// Steady-state occupancy fraction of the concurrency target
+    /// (`--steady-state-fraction`, default 0.8). Ignored unless `--steady-state`
+    /// is set and a concurrency target is configured.
+    #[arg(long = "steady-state-fraction")]
+    pub steady_state_fraction: Option<f64>,
+
     /// Synthetic image width mean, pixels (`--image-width-mean`).
     #[arg(long = "image-width-mean")]
     pub image_width_mean: Option<f64>,

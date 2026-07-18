@@ -254,6 +254,10 @@ pub(crate) struct Inputs {
     pub isl_block_size: Option<u32>,
     /// Bounded-memory sketch metric retention.
     pub sketch_metrics: bool,
+    /// Closed-loop steady-state summary for concurrency-target runs.
+    pub steady_state: bool,
+    /// Steady-state occupancy fraction of the concurrency target.
+    pub steady_state_fraction: Option<f64>,
     /// Synthetic image spec (present when any image flag is set).
     pub image_spec: Option<ImageSpec>,
     /// Synthetic audio spec.
@@ -591,6 +595,8 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         slice_duration: flags.slice_duration,
         isl_block_size: flags.isl_block_size,
         sketch_metrics: flags.sketch_metrics,
+        steady_state: flags.steady_state,
+        steady_state_fraction: flags.steady_state_fraction,
         image_spec: build_image_spec(flags),
         audio_spec: build_audio_spec(flags),
         video_spec: build_video_spec(flags),
@@ -995,6 +1001,12 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             slos: inputs.slos.clone(),
             slice_duration_seconds: inputs.slice_duration,
             sketch: sketch_metrics.then_some(true),
+            steady_state: inputs
+                .steady_state
+                .then(|| crate::model::metrics::SteadyState {
+                    enabled: true,
+                    fraction: inputs.steady_state_fraction,
+                }),
         }),
         slos: (!inputs.slos.is_empty()).then(|| inputs.slos.clone()),
         artifacts: Some({
