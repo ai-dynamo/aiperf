@@ -34,13 +34,14 @@ type HomePageProps = Readonly<{
     scenes: readonly SceneCardInfo[];
   }>[];
   onSelectScene(flowId: string, sceneId: string): void;
+  onOpenExplainers(): void;
 }>;
 
 /**
  * Home page displaying all available Flow scenes and decks.
  * Organized by flow with clickable scene cards.
  */
-export function HomePage({ scenesByFlow, onSelectScene }: HomePageProps): ReactNode {
+export function HomePage({ scenesByFlow, onSelectScene, onOpenExplainers }: HomePageProps): ReactNode {
   const totalScenes = scenesByFlow.reduce(
     (sum, flow) => sum + flow.scenes.length,
     0,
@@ -49,10 +50,46 @@ export function HomePage({ scenesByFlow, onSelectScene }: HomePageProps): ReactN
   return (
     <div className="home-page">
       <header className="home-header">
-        <h1>AIPerf Flow Scenes</h1>
-        <p className="home-subtitle">
-          Explore {scenesByFlow.length} flows with {totalScenes} interactive scenes
-        </p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1>AIPerf Flow Scenes</h1>
+            <p className="home-subtitle">
+              Explore {scenesByFlow.length} flows with {totalScenes} interactive scenes
+            </p>
+          </div>
+          <button
+            onClick={onOpenExplainers}
+            type="button"
+            aria-label="Open explainer decks"
+            style={{
+              padding: '0.75rem 1.5rem',
+              background: 'var(--preview-signal, #3fb950)',
+              color: 'var(--preview-board, #0d1117)',
+              border: 'none',
+              borderRadius: '6px',
+              fontSize: '0.95rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              textTransform: 'uppercase',
+              letterSpacing: '0.03em',
+              transition: 'all 0.2s ease',
+              whiteSpace: 'nowrap',
+              marginLeft: '1rem',
+            }}
+            onMouseEnter={(e) => {
+              const target = e.currentTarget as HTMLButtonElement;
+              target.style.opacity = '0.9';
+              target.style.transform = 'translateY(-2px)';
+            }}
+            onMouseLeave={(e) => {
+              const target = e.currentTarget as HTMLButtonElement;
+              target.style.opacity = '1';
+              target.style.transform = 'translateY(0)';
+            }}
+          >
+            📚 Explainers
+          </button>
+        </div>
       </header>
 
       <div className="flows-container">
@@ -84,9 +121,20 @@ export function HomePage({ scenesByFlow, onSelectScene }: HomePageProps): ReactN
         .home-header {
           max-width: 1200px;
           margin: 0 auto 3rem;
-          text-align: center;
           padding-bottom: 2rem;
           border-bottom: 1px solid var(--preview-guide, #30363d);
+        }
+
+        .home-header > div {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 2rem;
+        }
+
+        .home-header > div > div {
+          flex: 1;
+          text-align: center;
         }
 
         .home-header h1 {
@@ -205,6 +253,15 @@ export function HomePage({ scenesByFlow, onSelectScene }: HomePageProps): ReactN
           .home-header {
             margin-bottom: 2rem;
             padding-bottom: 1.5rem;
+          }
+
+          .home-header > div {
+            flex-direction: column;
+            align-items: center;
+          }
+
+          .home-header > div > div {
+            width: 100%;
           }
 
           .scene-cards-grid {

@@ -14,7 +14,6 @@ import React, {
 import { FlowApp } from "../packages/runtime/src/app";
 import type { KokoroNarratorSnapshot } from "../packages/runtime/src/narrative/kokoro-narrator";
 import { COMPILED_EXPLAINER_DECKS } from "../packages/runtime/src/explainer/compiled-decks";
-import { ExplainerSlideViewer } from "../packages/runtime/src/explainer/ui/ExplainerSlideViewer";
 
 import {
   previewWorkspace,
@@ -22,6 +21,8 @@ import {
   discoverScenesByFlow,
 } from "./fixture";
 import { HomePage } from "./home-page";
+import { ExplainerDeckPicker } from "./explainer-deck-picker";
+import { ExplainerDeckNavigator } from "./explainer-deck-navigator";
 import {
   createPreviewNarratorBackend,
   prewarmPreviewNarrator,
@@ -357,7 +358,9 @@ export function App() {
   const [showThemeMenu, setShowThemeMenu] = useState(false);
   const [audioConsent, setAudioConsent] = useState<AudioConsent>("unset");
   const [hasLeftSite, setHasLeftSite] = useState(false);
-  const [showExplainerDeckId, setShowExplainerDeckId] = useState<string | null>(null);
+  const [selectedExplainerDeckId, setSelectedExplainerDeckId] = useState<string | null>(null);
+  const [explainerSlideIndex, setExplainerSlideIndex] = useState(0);
+  const [showExplainerPicker, setShowExplainerPicker] = useState(false);
   const flow = useMemo(() => {
     const base = workspace.flows[activeFlowId] ?? workspace.flow;
     const responsive = narrowLayout
@@ -452,6 +455,28 @@ export function App() {
 
   function goHome(): void {
     setShowHome(true);
+  }
+
+  function openExplainerPicker(): void {
+    setShowExplainerPicker(true);
+    setShowHome(false);
+  }
+
+  function selectExplainerDeck(deckId: string): void {
+    setSelectedExplainerDeckId(deckId);
+    setExplainerSlideIndex(0);
+    setShowExplainerPicker(false);
+  }
+
+  function closeExplainerDeck(): void {
+    setSelectedExplainerDeckId(null);
+    setExplainerSlideIndex(0);
+    setShowExplainerPicker(false);
+    setShowHome(true);
+  }
+
+  function handleExplainerSlideChange(newIndex: number): void {
+    setExplainerSlideIndex(newIndex);
   }
 
   function handleThemeChange(newTheme: Theme): void {
@@ -648,40 +673,24 @@ export function App() {
               } as React.CSSProperties),
             }}
           >
-            {showExplainerDeckId ? (
-              <div style={{ padding: '20px', backgroundColor: '#fff' }}>
-                {(() => {
-                  const deck = COMPILED_EXPLAINER_DECKS.find(
-                    (d) => d.id === showExplainerDeckId
-                  );
-                  if (!deck) return <div>Deck not found</div>;
-                  return <ExplainerSlideViewer deck={deck} slideIndex={0} />;
-                })()}
-                <button
-                  onClick={() => setShowExplainerDeckId(null)}
-                  style={{
-                    marginTop: '40px',
-                    padding: '10px 20px',
-                    backgroundColor: '#f0f0f0',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Back
-                </button>
-              </div>
+            {selectedExplainerDeckId ? (
+              <ExplainerDeckNavigator
+                deckId={selectedExplainerDeckId}
+                slideIndex={explainerSlideIndex}
+                onSlideChange={handleExplainerSlideChange}
+                onBackClick={closeExplainerDeck}
+              />
             ) : (
               <FlowApp
-              key={`${activeFlowId}:${activeSceneId}`}
-              flow={flow}
-              narratorBackend={narratorBackend}
-              reducedMotion={reducedMotion}
-              requireAudioConsent={audioConsent === "unset"}
-              onAudioConsentChange={(hasConsented) => {
-                setAudioConsent(hasConsented ? "yes" : "no");
-              }}
-              autoPlay={audioConsent === "yes"}
+                key={`${activeFlowId}:${activeSceneId}`}
+                flow={flow}
+                narratorBackend={narratorBackend}
+                reducedMotion={reducedMotion}
+                requireAudioConsent={audioConsent === "unset"}
+                onAudioConsentChange={(hasConsented) => {
+                  setAudioConsent(hasConsented ? "yes" : "no");
+                }}
+                autoPlay={audioConsent === "yes"}
               />
             )}
           </main>
@@ -699,6 +708,13 @@ export function App() {
         <HomePage
           scenesByFlow={scenesByFlow}
           onSelectScene={selectScene}
+          onOpenExplainers={openExplainerPicker}
+        />
+      )}
+      {showExplainerPicker && !selectedExplainerDeckId && (
+        <ExplainerDeckPicker
+          decks={COMPILED_EXPLAINER_DECKS}
+          onDeckSelect={selectExplainerDeck}
         />
       )}
       {!showHome && activeSceneId === "request-investigation" ? (
