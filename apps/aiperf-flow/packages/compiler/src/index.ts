@@ -27,6 +27,7 @@ import { validate } from "./validate.js";
 export * from "./components.js";
 export * from "./expand-symbols.js";
 export * from "./link.js";
+export * from "./lower-explainer.js";
 export * from "./pack.js";
 export * from "./symbols.js";
 export * from "./themes.js";
