@@ -402,6 +402,43 @@ pub async fn establish_with_resolver(
     trace: &mut TraceData,
     resolver: &dyn DnsResolver,
 ) -> Result<(Sender, SocketInfo), ErrorDetails> {
+    // Total attempts = 1 initial + `max_connect_retries` retries. Only
+    // `ErrorKind::Connect` failures (DNS/TCP/TLS/handshake, all pre-send) are
+    // retried, so a request that may have already reached the server is never
+    // re-issued. Connect timeouts and every other failure surface immediately.
+    let mut attempt: u32 = 0;
+    loop {
+        let result = establish_once(url, cfg, clock.clone(), trace, resolver).await;
+        match result {
+            Ok(pair) => return Ok(pair),
+            Err(err) => {
+                if err.kind != ErrorKind::Connect || attempt >= cfg.max_connect_retries {
+                    return Err(err);
+                }
+                attempt += 1;
+                // Linear backoff: attempt `n` waits `backoff * n`. Slept through
+                // the injected Clock so SimClock/virtual-time replay is
+                // deterministic.
+                let backoff_ns = cfg
+                    .connect_retry_backoff_ns
+                    .saturating_mul(i64::from(attempt));
+                if backoff_ns > 0 {
+                    clock.clone().sleep(backoff_ns).await;
+                }
+            }
+        }
+    }
+}
+
+/// Establish a connection with the connect-phase deadline applied, but without
+/// retry. `establish_with_resolver` layers retry-with-backoff on top of this.
+async fn establish_once(
+    url: &Url,
+    cfg: &ClientConfig,
+    clock: Rc<dyn Clock>,
+    trace: &mut TraceData,
+    resolver: &dyn DnsResolver,
+) -> Result<(Sender, SocketInfo), ErrorDetails> {
     let timeout_ns = cfg.connect_timeout_ns;
     with_timeout(
         clock.clone(),
