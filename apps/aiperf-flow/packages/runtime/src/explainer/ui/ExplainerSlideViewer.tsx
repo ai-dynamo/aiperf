@@ -6,6 +6,7 @@ import React, { useEffect, useRef } from 'react';
 interface ExplainerSlideViewerProps {
   deck: any;
   slideIndex?: number;
+  onSlideChange?: (newIndex: number) => void;
 }
 
 interface NodeGeometry {
@@ -31,9 +32,25 @@ interface NodeStyle {
 export function ExplainerSlideViewer({
   deck,
   slideIndex = 0,
+  onSlideChange,
 }: ExplainerSlideViewerProps): React.ReactNode {
   const slide = deck.slides[slideIndex];
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const isPrevDisabled = slideIndex === 0;
+  const isNextDisabled = slideIndex >= deck.slides.length - 1;
+
+  const handlePrevious = (): void => {
+    if (!isPrevDisabled && onSlideChange) {
+      onSlideChange(slideIndex - 1);
+    }
+  };
+
+  const handleNext = (): void => {
+    if (!isNextDisabled && onSlideChange) {
+      onSlideChange(slideIndex + 1);
+    }
+  };
 
   if (!slide) {
     return <div>No slide at index {slideIndex}</div>;
@@ -148,17 +165,129 @@ export function ExplainerSlideViewer({
   }
 
   return (
-    <div style={{ width: '100%', height: '100vh', overflow: 'auto', backgroundColor: '#f5f5f5' }}>
-      <canvas
-        ref={canvasRef}
+    <div
+      style={{
+        width: '100%',
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'auto',
+        backgroundColor: 'var(--flow-board, #232526)',
+      }}
+    >
+      <div
         style={{
-          display: 'block',
-          maxWidth: '100%',
-          height: 'auto',
-          backgroundColor: '#fff',
-          margin: '20px auto',
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'auto',
+          minHeight: 0,
         }}
-      />
+      >
+        <canvas
+          ref={canvasRef}
+          style={{
+            display: 'block',
+            maxWidth: '100%',
+            height: 'auto',
+            backgroundColor: 'var(--flow-raised, #303334)',
+            margin: '20px auto',
+          }}
+        />
+      </div>
+
+      <nav
+        aria-label="Slide navigation"
+        style={{
+          display: 'flex',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: '0.75rem',
+          padding: '1rem',
+          borderTop: '2px solid var(--flow-guide, #777d80)',
+          backgroundColor: 'var(--flow-panel, #292c2d)',
+        }}
+      >
+        <button
+          disabled={isPrevDisabled}
+          onClick={handlePrevious}
+          type="button"
+          style={{
+            minHeight: '2.5rem',
+            padding: '0.48rem 0.75rem',
+            border: '2px solid var(--flow-guide, #777d80)',
+            borderRadius: 'calc(12px - 4px)',
+            color: 'var(--flow-chalk, #f1f3f2)',
+            backgroundColor: 'var(--flow-control-surface, #383c3e)',
+            cursor: isPrevDisabled ? 'not-allowed' : 'pointer',
+            opacity: isPrevDisabled ? 0.5 : 1,
+            fontFamily: 'inherit',
+            fontSize: 'inherit',
+            transition: 'all 160ms ease-out',
+          }}
+          onMouseEnter={(e) => {
+            if (!isPrevDisabled) {
+              const target = e.target as HTMLButtonElement;
+              target.style.borderColor = 'var(--flow-signal, #71d8d0)';
+              target.style.color = 'var(--flow-signal, #71d8d0)';
+            }
+          }}
+          onMouseLeave={(e) => {
+            const target = e.target as HTMLButtonElement;
+            target.style.borderColor = 'var(--flow-guide, #777d80)';
+            target.style.color = 'var(--flow-chalk, #f1f3f2)';
+          }}
+        >
+          ← Previous
+        </button>
+
+        <div
+          style={{
+            color: 'var(--flow-chalk-muted, #aeb4b5)',
+            fontFamily: '"IBM Plex Mono", "Cascadia Code", monospace',
+            fontSize: '0.875rem',
+            fontWeight: '500',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Slide {slideIndex + 1} of {deck.slides.length}
+        </div>
+
+        <button
+          disabled={isNextDisabled}
+          onClick={handleNext}
+          type="button"
+          style={{
+            minHeight: '2.5rem',
+            padding: '0.48rem 0.75rem',
+            border: '2px solid var(--flow-guide, #777d80)',
+            borderRadius: 'calc(12px - 4px)',
+            color: 'var(--flow-chalk, #f1f3f2)',
+            backgroundColor: 'var(--flow-control-surface, #383c3e)',
+            cursor: isNextDisabled ? 'not-allowed' : 'pointer',
+            opacity: isNextDisabled ? 0.5 : 1,
+            fontFamily: 'inherit',
+            fontSize: 'inherit',
+            transition: 'all 160ms ease-out',
+          }}
+          onMouseEnter={(e) => {
+            if (!isNextDisabled) {
+              const target = e.target as HTMLButtonElement;
+              target.style.borderColor = 'var(--flow-signal, #71d8d0)';
+              target.style.color = 'var(--flow-signal, #71d8d0)';
+            }
+          }}
+          onMouseLeave={(e) => {
+            const target = e.target as HTMLButtonElement;
+            target.style.borderColor = 'var(--flow-guide, #777d80)';
+            target.style.color = 'var(--flow-chalk, #f1f3f2)';
+          }}
+        >
+          Next →
+        </button>
+      </nav>
     </div>
   );
 }
