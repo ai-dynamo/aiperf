@@ -35,6 +35,7 @@ export const rustArchitectureDeck: DeckDefinition = {
       "Narrated walkthrough of the native workspace, self-execution seam, registry bootstrap, request lifecycle, workers, cellular mode, and feature gates.",
   },
   slides: SLIDES,
+  glossary: [],
   MentalModel: ({ slideIndex }) => <MentalModel slideIndex={slideIndex} slide={SLIDES[slideIndex]} />,
   css: CSS,
   FinalCard,

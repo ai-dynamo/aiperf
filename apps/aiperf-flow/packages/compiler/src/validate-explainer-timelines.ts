@@ -34,7 +34,7 @@ export function validateExplainerTimelines(
         diagnostic(
           "EXPLAINER_SCENE_ROOTS_REQUIRED",
           "error",
-          `Slide "${slide.id}" has render.kind "scene" but scene.roots is empty.`,
+          `Slide "${slide.id}" has render.kind "scene" but scene.roots is empty (fail-closed).`,
           slide.render.scene.sourceMap,
           "Lower embedded @scene roots into at least one diagram node.",
         ),
@@ -45,8 +45,33 @@ export function validateExplainerTimelines(
         diagnostic(
           "EXPLAINER_TIMELINE_REQUIRED",
           "error",
-          `Slide "${slide.id}" has render.kind "scene" but scene.timeline is empty.`,
+          `Slide "${slide.id}" has render.kind "scene" but scene.timeline is empty (fail-closed).`,
           slide.render.scene.sourceMap,
+          "Add at least one timeline cue that drives enter, draw, or emphasis motion.",
+        ),
+      );
+    }
+  }
+
+  if (deck.finalCard?.kind === "scene") {
+    if (deck.finalCard.scene.roots.length === 0) {
+      diagnostics.push(
+        diagnostic(
+          "EXPLAINER_SCENE_ROOTS_REQUIRED",
+          "error",
+          `Slide "finalCard" has render.kind "scene" but scene.roots is empty (fail-closed).`,
+          deck.finalCard.scene.sourceMap,
+          "Lower embedded @scene roots into at least one diagram node.",
+        ),
+      );
+    }
+    if (deck.finalCard.scene.timeline.length === 0) {
+      diagnostics.push(
+        diagnostic(
+          "EXPLAINER_TIMELINE_REQUIRED",
+          "error",
+          `Slide "finalCard" has render.kind "scene" but scene.timeline is empty (fail-closed).`,
+          deck.finalCard.scene.sourceMap,
           "Add at least one timeline cue that drives enter, draw, or emphasis motion.",
         ),
       );

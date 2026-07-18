@@ -123,6 +123,7 @@ function lowerSlide(
 
   if (slide.sceneIr !== undefined) {
     const sceneResult = lowerExplainerScene(slide.sceneIr, {
+      slideId: id,
       defaults: {
         id: `scene-${id}`,
         title: title || id,
@@ -230,6 +231,25 @@ export function lowerExplainerToDeckPackage(
     lowerSlide(slide, index, diagnostics),
   );
 
+  let finalCard: DeckPackage["finalCard"];
+  if (ast.finalCard !== undefined) {
+    const finalResult = lowerExplainerScene(ast.finalCard, {
+      slideId: "finalCard",
+      defaults: {
+        id: `scene-${id || "deck"}-final`,
+        title: startGateTitle || hubTitle || id || "Final card",
+        summary: hubDescription || startGateTitle || id || "Final card",
+        narration: hubDescription || "",
+        fallback: hubTitle || id || "Final card",
+      },
+    });
+    if (!finalResult.ok) {
+      diagnostics.push(...finalResult.diagnostics);
+    } else {
+      finalCard = finalResult.value;
+    }
+  }
+
   if (hasErrors(diagnostics)) {
     return { ok: false, diagnostics };
   }
@@ -250,6 +270,7 @@ export function lowerExplainerToDeckPackage(
     },
     slides,
     glossary: collectGlossary(ast.slides ?? [], ast.glossary),
+    ...(finalCard === undefined ? {} : { finalCard }),
   };
 
   if (meta.css !== undefined) {

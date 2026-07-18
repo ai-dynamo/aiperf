@@ -14,7 +14,6 @@ import {
 import { useHostTheme, type Theme } from "../ui";
 import { FlowArrow } from "./FlowArrow";
 import { MotionSignal } from "./MotionSignal";
-import { MotionSignal } from "./MotionSignal";
 
 /** Minimal geometry for a scene node. */
 export type SceneGeometryLike = Readonly<{
@@ -112,12 +111,108 @@ export type SceneRendererProps = Readonly<{
 const VIEWPORT_WIDTH = 700;
 const VIEWPORT_HEIGHT = 400;
 const DEFAULT_ARROW_STROKE_WIDTH = 2.2;
+const DEFAULT_DOT_RADIUS = 5;
 const PULSE_CYCLE_MS = 2200;
 const PULSE_DELAY_MS = 800;
 const MOTION_DOT_DURATION = "2.2s";
 const MOTION_DOT_DELAY = "0.8s";
+const DASHED_STROKE = "8 4";
+const DOTTED_STROKE = "2 3";
+
+const ARROW_CAPABILITIES = new Set([
+  "core.line",
+  "core.path",
+  "core.arrow",
+  "core.connector",
+]);
+
+const ARROW_KINDS = new Set(["line", "path", "arrow", "connector"]);
+
+const DOT_CAPABILITIES = new Set(["core.dot", "core.circle"]);
+
+const DOT_KINDS = new Set(["dot", "circle"]);
+
+const MOTION_SIGNAL_CAPABILITIES = new Set([
+  "motion.signal",
+  "motion.dot",
+  "core.motion",
+]);
 
 type CameraTransform = Readonly<{ x: number; y: number; zoom: number }>;
+
+type TimelineState = "hidden" | "entering" | "revealed" | "unchanged";
+
+type TimelineAppearance = Readonly<{
+  state: TimelineState;
+  opacity: number;
+}>;
+
+/** Transient emphasize/emphasis/pulse envelope applied during an active cue. */
+type EmphasisAppearance = Readonly<{
+  intensity: number;
+  strokeScale: number;
+  opacityScale: number;
+  filter: string;
+}>;
+
+/** Continuous box-pulse envelope (legacy MentalModel CSS keyframes). */
+type PulseAppearance = Readonly<{
+  intensity: number;
+  opacity: number;
+}>;
+
+type PlaybackContext = Readonly<{
+  playing: boolean;
+  reducedMotion: boolean;
+  restartKey: number;
+}>;
+
+type LayoutOrigin = Readonly<{ x: number; y: number }>;
+
+const ZERO_ORIGIN: LayoutOrigin = { x: 0, y: 0 };
+
+/** Scene node index plus world-space geometry (after group/container offsets). */
+type SceneNodeIndex = Readonly<{
+  nodesById: ReadonlyMap<string, SceneNodeLike>;
+  worldGeometryById: ReadonlyMap<string, SceneGeometryLike>;
+}>;
+
+function finiteNumber(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function clamp01(value: number): number {
+  if (value <= 0) {
+    return 0;
+  }
+  if (value >= 1) {
+    return 1;
+  }
+  return value;
+}
+
+function capabilityOf(node: SceneNodeLike): string {
+  if (typeof node.capabilityId === "string" && node.capabilityId.length > 0) {
+    return node.capabilityId;
+  }
+  if (typeof node.capability === "string" && node.capability.length > 0) {
+    return node.capability;
+  }
+  if (typeof node.kind === "string" && node.kind.length > 0) {
+    return `core.${node.kind}`;
+  }
+  return "";
+}
+
+function geometryOf(node: SceneNodeLike): SceneGeometryLike {
+  const geometry = node.geometry ?? node.layout;
+  return {
+    x: finiteNumber(geometry?.x),
+    y: finiteNumber(geometry?.y),
+    width: finiteNumber(geometry?.width),
+    height: finiteNumber(geometry?.height),
+  };
+}
 
 /** Resolve authored viewport size, falling back to the ExplainerShell default. */
 function resolveViewportSize(
@@ -206,94 +301,6 @@ function sceneViewBox(
   const minY = camera.y - visibleHeight / 2;
   return `${minX} ${minY} ${visibleWidth} ${visibleHeight}`;
 }
-
-const ARROW_CAPABILITIES = new Set([
-  "core.line",
-  "core.path",
-  "core.arrow",
-  "core.connector",
-]);
-
-const ARROW_KINDS = new Set(["line", "path", "arrow", "connector"]);
-
-const DOT_CAPABILITIES = new Set(["core.dot", "core.circle"]);
-
-const DOT_KINDS = new Set(["dot", "circle"]);
-
-const MOTION_SIGNAL_CAPABILITIES = new Set([
-  "motion.signal",
-  "motion.dot",
-  "core.motion",
-]);
-
-const DEFAULT_DOT_RADIUS = 5;
-const DASHED_STROKE = "8 4";
-const DOTTED_STROKE = "2 3";
-
-type TimelineState = "hidden" | "entering" | "revealed" | "unchanged";
-
-type TimelineAppearance = Readonly<{
-  state: TimelineState;
-  opacity: number;
-}>;
-
-/** Transient emphasize/emphasis/pulse envelope applied during an active cue. */
-type EmphasisAppearance = Readonly<{
-  /** 0–1 sine envelope peaking mid-cue. */
-  intensity: number;
-  strokeScale: number;
-  opacityScale: number;
-  filter: string;
-}>;
-
-/** Continuous box-pulse envelope (legacy MentalModel CSS keyframes). */
-type PulseAppearance = Readonly<{
-  intensity: number;
-  opacity: number;
-}>;
-
-type PlaybackContext = Readonly<{
-  playing: boolean;
-  reducedMotion: boolean;
-  restartKey: number;
-}>;
-
-function finiteNumber(value: unknown, fallback = 0): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-function capabilityOf(node: SceneNodeLike): string {
-  if (typeof node.capabilityId === "string" && node.capabilityId.length > 0) {
-    return node.capabilityId;
-  }
-  if (typeof node.capability === "string" && node.capability.length > 0) {
-    return node.capability;
-  }
-  if (typeof node.kind === "string" && node.kind.length > 0) {
-    return `core.${node.kind}`;
-  }
-  return "";
-}
-
-function geometryOf(node: SceneNodeLike): SceneGeometryLike {
-  const geometry = node.geometry ?? node.layout;
-  return {
-    x: finiteNumber(geometry?.x),
-    y: finiteNumber(geometry?.y),
-    width: finiteNumber(geometry?.width),
-    height: finiteNumber(geometry?.height),
-  };
-}
-
-type LayoutOrigin = Readonly<{ x: number; y: number }>;
-
-const ZERO_ORIGIN: LayoutOrigin = { x: 0, y: 0 };
-
-/** Scene node index plus world-space geometry (after group/container offsets). */
-type SceneNodeIndex = Readonly<{
-  nodesById: ReadonlyMap<string, SceneNodeLike>;
-  worldGeometryById: ReadonlyMap<string, SceneGeometryLike>;
-}>;
 
 /** Pure group container: nests children in a `<g>` with no leaf body of its own. */
 function isGroupLike(node: SceneNodeLike, capability: string): boolean {
@@ -510,32 +517,64 @@ function isPulseAction(action: string): boolean {
   return action === "pulse";
 }
 
-function clamp01(value: number): number {
-  if (value <= 0) {
-    return 0;
+function isArrowLike(node: SceneNodeLike, capability: string): boolean {
+  if (ARROW_CAPABILITIES.has(capability)) {
+    return true;
   }
-  if (value >= 1) {
-    return 1;
-  }
-  return value;
+  return typeof node.kind === "string" && ARROW_KINDS.has(node.kind);
 }
 
-/** True when this path is a traveling motion-dot guide (not a directed edge). */
-function isMotionSignalNode(node: SceneNodeLike): boolean {
+function isDotLike(node: SceneNodeLike, capability: string): boolean {
+  if (DOT_CAPABILITIES.has(capability)) {
+    return true;
+  }
+  if (typeof node.kind === "string" && DOT_KINDS.has(node.kind)) {
+    return true;
+  }
+  const radius = node.style?.r;
+  return typeof radius === "number" && Number.isFinite(radius) && radius > 0;
+}
+
+/** Traveling MentalModel-style motion dots (often authored as `motion-sig` paths). */
+function isMotionSignalNode(node: SceneNodeLike, capability = ""): boolean {
+  const cap = capability.length > 0 ? capability : capabilityOf(node);
+  if (MOTION_SIGNAL_CAPABILITIES.has(cap)) {
+    return true;
+  }
+  if (/motion[-_]?sig/i.test(node.id)) {
+    return true;
+  }
   const label = (node.accessibility?.label ?? "").toLowerCase();
   if (label.includes("motion signal")) {
     return true;
   }
-  const id = node.id.toLowerCase();
-  if (id.includes("motion-sig") || id.includes("motion_sig")) {
-    return true;
-  }
+  const motion = node.style?.motion;
   const role = node.style?.role;
-  return role === "motion" || role === "motion-signal";
+  return (
+    motion === true ||
+    motion === 1 ||
+    motion === "signal" ||
+    motion === "dot" ||
+    role === "motion" ||
+    role === "motion-signal"
+  );
 }
 
-/** True when this rect is a legacy-style pulsing outline box. */
-function isPulseNode(node: SceneNodeLike): boolean {
+/** Rects tagged for a gentle float/pulse (style.pulse, motion.pulse, or pulse-* ids). */
+function isPulseNode(node: SceneNodeLike, capability = ""): boolean {
+  const cap = capability.length > 0 ? capability : capabilityOf(node);
+  if (cap === "motion.pulse") {
+    return true;
+  }
+  const pulse = node.style?.pulse;
+  if (
+    pulse === true ||
+    pulse === 1 ||
+    pulse === "true" ||
+    (typeof pulse === "string" && pulse.length > 0)
+  ) {
+    return true;
+  }
   const label = (node.accessibility?.label ?? "").toLowerCase();
   if (label.includes("motion pulse") || label === "pulse") {
     return true;
@@ -556,7 +595,7 @@ function markerEndDisabled(style: SceneNodeLike["style"]): boolean {
 
 /** Directed edges get arrowheads; motion guides and undirected lines do not. */
 function shouldShowArrowhead(node: SceneNodeLike, capability: string): boolean {
-  if (isMotionSignalNode(node) || markerEndDisabled(node.style)) {
+  if (isMotionSignalNode(node, capability) || markerEndDisabled(node.style)) {
     return false;
   }
   if (
@@ -576,6 +615,62 @@ function shouldShowArrowhead(node: SceneNodeLike, capability: string): boolean {
       : true;
   }
   return false;
+}
+
+function isDashedStyle(style: SceneNodeLike["style"]): boolean {
+  if (style === undefined) {
+    return false;
+  }
+  if (style.dashed === true || style.dashed === 1 || style.dashed === "true") {
+    return true;
+  }
+  const strokeStyle = style.strokeStyle ?? style.variant;
+  if (strokeStyle === "dashed" || strokeStyle === "dotted") {
+    return true;
+  }
+  const dash = style.strokeDasharray ?? style.dashArray;
+  return (
+    (typeof dash === "string" && dash.length > 0 && dash !== "none") ||
+    (typeof dash === "number" && Number.isFinite(dash))
+  );
+}
+
+function authoredStrokeDasharray(
+  style: SceneNodeLike["style"],
+): string | undefined {
+  if (style === undefined) {
+    return undefined;
+  }
+  const dash = style.strokeDasharray ?? style.dashArray;
+  if (typeof dash === "string" && dash.length > 0 && dash !== "none") {
+    return dash;
+  }
+  if (typeof dash === "number" && Number.isFinite(dash)) {
+    return String(dash);
+  }
+  const strokeStyle = style.strokeStyle ?? style.variant;
+  if (strokeStyle === "dashed") {
+    return DASHED_STROKE;
+  }
+  if (strokeStyle === "dotted") {
+    return DOTTED_STROKE;
+  }
+  if (style.dashed === true || style.dashed === 1 || style.dashed === "true") {
+    return DASHED_STROKE;
+  }
+  return undefined;
+}
+
+function circleRadius(node: SceneNodeLike, geom: SceneGeometryLike): number {
+  const styled = node.style?.r;
+  if (typeof styled === "number" && Number.isFinite(styled) && styled > 0) {
+    return styled;
+  }
+  const fromBox = Math.min(geom.width, geom.height) / 2;
+  if (fromBox > 0) {
+    return fromBox;
+  }
+  return DEFAULT_DOT_RADIUS;
 }
 
 function enterCueForNode(
@@ -702,9 +797,7 @@ function emphasisForNode(
   };
 }
 
-/**
- * Authored `pulse` cue envelope (same half-sine shape as emphasize, no glow).
- */
+/** Authored `pulse` cue envelope (same half-sine shape as emphasize, no glow). */
 function pulseCueForNode(
   nodeId: string,
   timeline: readonly SceneTimelineCueLike[],
@@ -756,21 +849,26 @@ function pulseCueForNode(
  */
 function continuousPulseForNode(
   node: SceneNodeLike,
+  capability: string,
   appearance: TimelineAppearance,
   playbackTimeMs: number,
   playback: PlaybackContext,
 ): PulseAppearance | undefined {
-  if (!isPulseNode(node) || playback.reducedMotion || !playback.playing) {
+  if (!isPulseNode(node, capability) || playback.reducedMotion) {
     return undefined;
   }
   if (appearance.state === "hidden") {
     return undefined;
   }
+  // When paused (not playing), hold the final-ish mid pulse so the outline stays visible.
+  if (!playback.playing) {
+    return { intensity: 0.5, opacity: 0.45 };
+  }
   if (playbackTimeMs < PULSE_DELAY_MS) {
     return { intensity: 0, opacity: 0 };
   }
-  const cycle = ((playbackTimeMs - PULSE_DELAY_MS) % PULSE_CYCLE_MS) / PULSE_CYCLE_MS;
-  // Match rust-arch-box-pulse: peak early, fade by ~21% of the cycle.
+  const cycle =
+    ((playbackTimeMs - PULSE_DELAY_MS) % PULSE_CYCLE_MS) / PULSE_CYCLE_MS;
   let opacity = 0;
   if (cycle < 0.04) {
     opacity = (cycle / 0.04) * 0.72;
@@ -780,6 +878,22 @@ function continuousPulseForNode(
     opacity = 0.72 * (1 - (cycle - 0.12) / 0.09);
   }
   return { intensity: opacity / 0.72, opacity };
+}
+
+/** Gentle vertical float for pulse-tagged shapes while playing. */
+function pulseFloatStyle(
+  playback: PlaybackContext,
+  playbackTimeMs: number,
+): CSSProperties | undefined {
+  if (playback.reducedMotion || !playback.playing) {
+    return undefined;
+  }
+  const wave = Math.sin((playbackTimeMs / 900) * Math.PI * 2);
+  return {
+    transform: `translateY(${(wave * 1.6).toFixed(2)}px)`,
+    transformBox: "fill-box",
+    transformOrigin: "center",
+  };
 }
 
 /**
@@ -894,7 +1008,15 @@ function styleToCss(
       key === "fill" ||
       key === "stroke" ||
       key === "markerEnd" ||
-      key === "role"
+      key === "role" ||
+      key === "motion" ||
+      key === "pulse" ||
+      key === "dashed" ||
+      key === "strokeDasharray" ||
+      key === "dashArray" ||
+      key === "strokeStyle" ||
+      key === "variant" ||
+      key === "r"
     ) {
       continue;
     }
@@ -911,162 +1033,46 @@ function styleToCss(
   return css;
 }
 
-function isArrowLike(node: SceneNodeLike, capability: string): boolean {
-  if (ARROW_CAPABILITIES.has(capability)) {
-    return true;
-  }
-  return typeof node.kind === "string" && ARROW_KINDS.has(node.kind);
-}
-
-function isDotLike(node: SceneNodeLike, capability: string): boolean {
-  if (DOT_CAPABILITIES.has(capability)) {
-    return true;
-  }
-  if (typeof node.kind === "string" && DOT_KINDS.has(node.kind)) {
-    return true;
-  }
-  const radius = node.style?.r;
-  return typeof radius === "number" && Number.isFinite(radius) && radius > 0;
-}
-
-/** Traveling MentalModel-style motion dots (often authored as `motion-sig` paths). */
-function isMotionSignalNode(node: SceneNodeLike, capability: string): boolean {
-  if (MOTION_SIGNAL_CAPABILITIES.has(capability)) {
-    return true;
-  }
-  if (/motion[-_]?sig/i.test(node.id)) {
-    return true;
-  }
-  const label = node.accessibility?.label ?? "";
-  if (/motion\s*signal/i.test(label)) {
-    return true;
-  }
-  const motion = node.style?.motion;
-  return (
-    motion === true ||
-    motion === 1 ||
-    motion === "signal" ||
-    motion === "dot" ||
-    node.style?.role === "motion"
-  );
-}
-
-/** Rects tagged for a gentle float/pulse (style.pulse, motion.pulse, or pulse-* ids). */
-function isPulseTagged(node: SceneNodeLike, capability: string): boolean {
-  if (capability === "motion.pulse") {
-    return true;
-  }
-  const pulse = node.style?.pulse;
-  if (
-    pulse === true ||
-    pulse === 1 ||
-    pulse === "true" ||
-    (typeof pulse === "string" && pulse.length > 0)
-  ) {
-    return true;
-  }
-  if (/^pulse[-_]/i.test(node.id)) {
-    return true;
-  }
-  return /motion\s*pulse/i.test(node.accessibility?.label ?? "");
-}
-
-function isDashedStyle(style: SceneNodeLike["style"]): boolean {
-  if (style === undefined) {
-    return false;
-  }
-  if (style.dashed === true || style.dashed === 1 || style.dashed === "true") {
-    return true;
-  }
-  const strokeStyle = style.strokeStyle ?? style.variant;
-  if (strokeStyle === "dashed" || strokeStyle === "dotted") {
-    return true;
-  }
-  const dash = style.strokeDasharray ?? style.dashArray;
-  return (
-    (typeof dash === "string" && dash.length > 0 && dash !== "none") ||
-    (typeof dash === "number" && Number.isFinite(dash))
-  );
-}
-
-function authoredStrokeDasharray(
-  style: SceneNodeLike["style"],
+/**
+ * Resolve SVG path data for line / path / arrow / connector nodes.
+ * Precedence: authored `d` → `path` → `points` polyline → `from`/`to`.
+ */
+function arrowPathData(
+  node: SceneNodeLike,
+  index: SceneNodeIndex,
+  layoutOrigin: LayoutOrigin,
 ): string | undefined {
-  if (style === undefined) {
-    return undefined;
+  if (typeof node.d === "string" && node.d.length > 0) {
+    return node.d;
   }
-  const dash = style.strokeDasharray ?? style.dashArray;
-  if (typeof dash === "string" && dash.length > 0 && dash !== "none") {
-    return dash;
+  if (typeof node.path === "string" && node.path.length > 0) {
+    return node.path;
   }
-  if (typeof dash === "number" && Number.isFinite(dash)) {
-    return String(dash);
+  if (Array.isArray(node.points) && node.points.length > 0) {
+    return polylinePathData(node.points, index, layoutOrigin);
   }
-  const strokeStyle = style.strokeStyle ?? style.variant;
-  if (strokeStyle === "dashed") {
-    return DASHED_STROKE;
-  }
-  if (strokeStyle === "dotted") {
-    return DOTTED_STROKE;
-  }
-  if (style.dashed === true || style.dashed === 1 || style.dashed === "true") {
-    return DASHED_STROKE;
+  if (node.from !== undefined || node.to !== undefined) {
+    const start = resolveEndpoint(node.from, index, layoutOrigin);
+    const end = resolveEndpoint(node.to, index, layoutOrigin);
+    return `M${start.x} ${start.y} L${end.x} ${end.y}`;
   }
   return undefined;
 }
 
-function circleRadius(node: SceneNodeLike, geom: SceneGeometryLike): number {
-  const styled = node.style?.r;
-  if (typeof styled === "number" && Number.isFinite(styled) && styled > 0) {
-    return styled;
-  }
-  const fromBox = Math.min(geom.width, geom.height) / 2;
-  if (fromBox > 0) {
-    return fromBox;
-  }
-  return DEFAULT_DOT_RADIUS;
+function strokeWidthFromStyle(
+  style: SceneNodeLike["style"],
+  fallback = DEFAULT_ARROW_STROKE_WIDTH,
+): number {
+  const width = style?.strokeWidth;
+  return typeof width === "number" && Number.isFinite(width) ? width : fallback;
 }
 
-/**
- * Soft opacity envelope for pulse-tagged rects (MentalModel box-pulse parity).
- * Returns undefined when the node should keep authored opacity only.
- */
-function pulseOpacityScale(
-  playbackTimeMs: number,
-  reducedMotion: boolean,
-): number | undefined {
-  if (reducedMotion) {
-    return undefined;
-  }
-  const cycleMs = 2200;
-  const phase = (Math.max(0, playbackTimeMs) % cycleMs) / cycleMs;
-  // 0 → 0.04 fade in, hold to 0.12, fade out by 0.21, idle until loop.
-  if (phase < 0.04) {
-    return (phase / 0.04) * 0.72;
-  }
-  if (phase < 0.12) {
-    return 0.72;
-  }
-  if (phase < 0.21) {
-    return 0.72 * (1 - (phase - 0.12) / 0.09);
-  }
-  return 0;
-}
-
-/** Gentle vertical float + stroke breathe for pulse-tagged shapes. */
-function pulseFloatStyle(
-  playbackTimeMs: number,
-  reducedMotion: boolean,
-): CSSProperties | undefined {
-  if (reducedMotion) {
-    return undefined;
-  }
-  const wave = Math.sin((playbackTimeMs / 900) * Math.PI * 2);
-  return {
-    transform: `translateY(${(wave * 1.6).toFixed(2)}px)`,
-    transformBox: "fill-box",
-    transformOrigin: "center",
-  };
+function cornerRadiusFromStyle(
+  style: SceneNodeLike["style"],
+  fallback = 10,
+): number {
+  const radius = style?.radius ?? style?.rx ?? style?.borderRadius;
+  return typeof radius === "number" && Number.isFinite(radius) ? radius : fallback;
 }
 
 /**
@@ -1123,45 +1129,6 @@ function renderChildren(
   );
 }
 
-/**
- * Resolve SVG path data for line / path / arrow / connector nodes.
- * Precedence: authored `d` → `path` → `points` polyline → `from`/`to`.
- */
-function arrowPathData(
-  node: SceneNodeLike,
-  index: SceneNodeIndex,
-  layoutOrigin: LayoutOrigin,
-): string | undefined {
-  if (typeof node.d === "string" && node.d.length > 0) {
-    return node.d;
-  }
-  if (typeof node.path === "string" && node.path.length > 0) {
-    return node.path;
-  }
-  if (Array.isArray(node.points) && node.points.length > 0) {
-    return polylinePathData(node.points, index, layoutOrigin);
-  }
-  if (node.from !== undefined || node.to !== undefined) {
-    const start = resolveEndpoint(node.from, index, layoutOrigin);
-    const end = resolveEndpoint(node.to, index, layoutOrigin);
-    return `M${start.x} ${start.y} L${end.x} ${end.y}`;
-  }
-  return undefined;
-}
-
-function strokeWidthFromStyle(
-  style: SceneNodeLike["style"],
-  fallback = DEFAULT_ARROW_STROKE_WIDTH,
-): number {
-  const width = style?.strokeWidth;
-  return typeof width === "number" && Number.isFinite(width) ? width : fallback;
-}
-
-function cornerRadiusFromStyle(style: SceneNodeLike["style"], fallback = 10): number {
-  const radius = style?.radius ?? style?.rx ?? style?.borderRadius;
-  return typeof radius === "number" && Number.isFinite(radius) ? radius : fallback;
-}
-
 function renderNode(
   node: SceneNodeLike,
   timeline: readonly SceneTimelineCueLike[],
@@ -1186,12 +1153,12 @@ function renderNode(
   const pulseCue = pulseCueForNode(node.id, timeline, playbackTimeMs);
   const continuousPulse = continuousPulseForNode(
     node,
+    capability,
     appearance,
     playbackTimeMs,
     playback,
   );
   const activeEmphasis = emphasis ?? pulseCue;
-  // Prefer authored accessibility.label; fall back to id only when absent.
   const label = node.accessibility?.label ?? node.id;
   const description = node.accessibility?.description;
   const descriptionId =
@@ -1216,15 +1183,17 @@ function renderNode(
   const themeText = theme.text.primary;
   const groupLike = isGroupLike(node, capability);
   const strokeScale = activeEmphasis?.strokeScale ?? 1;
+  const pulseTagged = isPulseNode(node, capability);
+  const pulseFloat = pulseTagged
+    ? pulseFloatStyle(playback, playbackTimeMs)
+    : undefined;
 
   let body: ReactNode = null;
   if (capability === "core.rect" || node.kind === "rect") {
     const strokePaint = paintFromStyle(node.style, "stroke", theme, themeStroke);
     const fillPaint = paintFromStyle(node.style, "fill", theme, themeBg);
     const pulseOpacity =
-      continuousPulse !== undefined
-        ? continuousPulse.opacity
-        : undefined;
+      continuousPulse !== undefined ? continuousPulse.opacity : undefined;
     body = (
       <rect
         x={geom.x}
@@ -1234,13 +1203,21 @@ function renderNode(
         rx={cornerRadiusFromStyle(node.style)}
         fill={fillPaint}
         stroke={strokePaint}
-        strokeWidth={strokeWidthFromStyle(node.style, 1.3) * strokeScale}
+        strokeWidth={
+          strokeWidthFromStyle(node.style, 1.3) *
+          strokeScale *
+          (pulseTagged && continuousPulse !== undefined
+            ? 1 + continuousPulse.intensity * 0.25
+            : 1)
+        }
         focusable={false}
         aria-hidden="true"
         style={{
           ...styleToCss(node.style, theme),
+          ...pulseFloat,
           ...(pulseOpacity !== undefined ? { opacity: pulseOpacity } : {}),
         }}
+        data-flow-pulse={pulseTagged ? "true" : undefined}
         data-pulse-intensity={
           continuousPulse === undefined
             ? undefined
@@ -1272,39 +1249,62 @@ function renderNode(
         {node.text ?? ""}
       </text>
     );
-  } else if (isArrowLike(node, capability)) {
+  } else if (isDotLike(node, capability) && !isArrowLike(node, capability)) {
+    const radius = circleRadius(node, geom);
+    const cx =
+      geom.width > 0 || geom.height > 0 ? geom.x + geom.width / 2 : geom.x;
+    const cy =
+      geom.width > 0 || geom.height > 0 ? geom.y + geom.height / 2 : geom.y;
+    body = (
+      <circle
+        cx={cx}
+        cy={cy}
+        r={radius}
+        fill={paintFromStyle(node.style, "fill", theme, themeAccent)}
+        stroke={paintFromStyle(node.style, "stroke", theme, "none")}
+        strokeWidth={strokeWidthFromStyle(node.style, 0) * strokeScale}
+        focusable={false}
+        aria-hidden="true"
+        data-flow-dot="true"
+        style={styleToCss(node.style, theme)}
+      />
+    );
+  } else if (isMotionSignalNode(node, capability)) {
     const d = arrowPathData(node, index, layoutOrigin);
     if (d !== undefined) {
       const stroke = paintFromStyle(node.style, "stroke", theme, themeAccent);
-      const motionSignal = isMotionSignalNode(node);
-      const showMarker = shouldShowArrowhead(node, capability);
-      const nodeMarkerId = `${arrowMarkerId}-${node.id}`;
-      const motionActive =
-        motionSignal &&
+      const motionProgress =
+        drawProgress !== undefined
+          ? drawProgress
+          : appearance.state === "unchanged"
+            ? undefined
+            : appearance.opacity;
+      const smilActive =
+        motionProgress === undefined &&
         playback.playing &&
         !playback.reducedMotion &&
-        appearance.state !== "hidden" &&
-        (drawProgress === undefined || drawProgress > 0);
-
+        appearance.state !== "hidden";
       body = (
         <>
-          <FlowArrow
+          {/* Guide path stays invisible — MentalModel motion signals are dots-only. */}
+          <path
             d={d}
-            markerId={nodeMarkerId}
-            showMarker={showMarker}
-            color={stroke}
-            strokeWidth={strokeWidthFromStyle(node.style) * strokeScale}
-            pathLength={drawProgress === undefined ? undefined : 1}
-            strokeDasharray={drawProgress === undefined ? undefined : 1}
-            strokeDashoffset={
-              drawProgress === undefined ? undefined : 1 - drawProgress
-            }
-            focusable={false}
+            fill="none"
+            stroke="none"
             aria-hidden="true"
-            style={styleToCss(node.style, theme)}
-            data-flow-arrowhead={showMarker ? "true" : "false"}
+            focusable={false}
           />
-          {motionSignal ? (
+          {motionProgress !== undefined ? (
+            <MotionSignal
+              path={d}
+              color={stroke}
+              progress={motionProgress}
+              reducedMotion={playback.reducedMotion}
+              active={appearance.state !== "hidden"}
+              r={DEFAULT_DOT_RADIUS}
+              data-flow-motion-signal={node.id}
+            />
+          ) : (
             <MotionSignal
               key={`motion-${playback.restartKey}-${node.id}`}
               path={d}
@@ -1312,8 +1312,57 @@ function renderNode(
               delay={MOTION_DOT_DELAY}
               duration={MOTION_DOT_DURATION}
               reducedMotion={playback.reducedMotion}
-              active={motionActive}
+              active={smilActive}
+              r={DEFAULT_DOT_RADIUS}
               data-flow-motion-signal={node.id}
+            />
+          )}
+        </>
+      );
+    }
+  } else if (isArrowLike(node, capability)) {
+    const d = arrowPathData(node, index, layoutOrigin);
+    if (d !== undefined) {
+      const stroke = paintFromStyle(node.style, "stroke", theme, themeAccent);
+      const showMarker = shouldShowArrowhead(node, capability);
+      const drawing = drawProgress !== undefined;
+      const authoredDash = authoredStrokeDasharray(node.style);
+      const dashed = isDashedStyle(node.style);
+      body = (
+        <>
+          <FlowArrow
+            d={d}
+            markerId={arrowMarkerId}
+            showMarker={showMarker}
+            color={stroke}
+            dashed={!drawing && dashed}
+            strokeWidth={strokeWidthFromStyle(node.style) * strokeScale}
+            pathLength={drawing ? 1 : undefined}
+            strokeDasharray={
+              drawing
+                ? 1
+                : authoredDash !== undefined
+                  ? authoredDash
+                  : undefined
+            }
+            strokeDashoffset={drawing ? 1 - drawProgress : undefined}
+            focusable={false}
+            aria-hidden="true"
+            style={styleToCss(node.style, theme)}
+            data-flow-arrowhead={showMarker ? "true" : "false"}
+          />
+          {/* Tip dot rides the stroke head while a draw cue is in flight. */}
+          {drawing &&
+          drawProgress > 0 &&
+          drawProgress < 1 &&
+          !playback.reducedMotion ? (
+            <MotionSignal
+              path={d}
+              color={stroke}
+              progress={drawProgress}
+              reducedMotion={playback.reducedMotion}
+              active
+              r={DEFAULT_DOT_RADIUS}
             />
           ) : null}
         </>
@@ -1354,8 +1403,10 @@ function renderNode(
       data-flow-node-id={node.id}
       data-flow-kind={flowKind}
       data-flow-local-layout={localChildren ? "true" : undefined}
-      data-flow-motion-signal={isMotionSignalNode(node) ? "true" : undefined}
-      data-flow-pulse={isPulseNode(node) ? "true" : undefined}
+      data-flow-motion-signal={
+        isMotionSignalNode(node, capability) ? "true" : undefined
+      }
+      data-flow-pulse={pulseTagged ? "true" : undefined}
       data-timeline-state={appearance.state}
       data-draw-progress={
         drawProgress === undefined ? undefined : String(drawProgress)
@@ -1386,9 +1437,9 @@ function renderNode(
  * Plays authored timeline cues when `playing`, freezes when paused,
  * restarts on `restartKey`, and collapses to the final frame under reduced motion.
  *
- * Supports `core.rect` / `core.text` / `core.line|path|arrow|connector`, nested
- * children with layout offsets, enter/draw/emphasize/pulse cues, camera viewBox,
- * theme paints, motion dots on motion-signal paths, and arrowheads on directed edges.
+ * Supports `core.rect` / `core.text` / `core.dot|circle` / `core.line|path|arrow|connector`,
+ * nested children with layout offsets, enter/draw/emphasize/pulse cues, camera viewBox,
+ * theme paints, motion dots on motion-signal paths, dashed strokes, and arrowheads.
  */
 export function SceneRenderer({
   scene,
@@ -1468,6 +1519,7 @@ export function SceneRenderer({
     reducedMotion,
     restartKey,
   };
+  const arrowColor = theme.accent.primary;
 
   return (
     <svg
@@ -1482,6 +1534,19 @@ export function SceneRenderer({
       data-scene-reduced-motion={reducedMotion ? "true" : "false"}
       data-scene-restart-key={String(restartKey)}
     >
+      <defs>
+        <marker
+          id={arrowMarkerId}
+          markerWidth={8}
+          markerHeight={8}
+          refX={6}
+          refY={3}
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <path d="M0,0 L6,3 L0,6 Z" fill={arrowColor} focusable={false} />
+        </marker>
+      </defs>
       {summaryDescId !== undefined ? (
         <desc id={summaryDescId}>{scene.summary}</desc>
       ) : null}

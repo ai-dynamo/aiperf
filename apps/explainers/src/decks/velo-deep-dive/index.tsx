@@ -36,6 +36,7 @@ export const veloDeepDiveDeck: DeckDefinition = {
       "Ten mechanisms behind AIPerf's cellular Velo plane: connection resolve, registration reply, synchronized START, MessagePack, heartbeat, partition shipping, merge, phaser replay, dataset floodgate, and the aggregator tree. Deeper than the beginner SLURM & Velo tour.",
   },
   slides: SLIDES,
+  glossary: [],
   MentalModel: ({ slideIndex, slide }) => (
     <MentalModel slideIndex={slideIndex} slide={slide} />
   ),

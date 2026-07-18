@@ -33,6 +33,7 @@ export const dynosimDeck: DeckDefinition = {
       "Concise tour of dynosim transports, SimClock vs RealClock, the sim pump, token flow through RequestObserver, and metric parity with HTTP runs.",
   },
   slides: SLIDES,
+  glossary: [],
   MentalModel: ({ slideIndex, slide }) => (
     <MentalModel slideIndex={slideIndex} slide={slide} />
   ),

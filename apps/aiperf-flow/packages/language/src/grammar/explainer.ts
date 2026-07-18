@@ -21,8 +21,11 @@ export interface ExplainerAstCompat {
     eyebrowLabel: string;
     startGateTitle: string;
     hub: ExplainerHubAst;
+    css?: string;
   };
   slides: SlideAst[];
+  /** Optional `finalCard: @scene { ... }` (package or native dialect). */
+  finalCard?: EmbeddedSceneSource | PackageSceneIrAst;
 }
 
 export interface SlideAstCompat {
@@ -33,7 +36,7 @@ export interface SlideAstCompat {
   term?: { word: string; meaning: string };
   points: string[];
   caption: string;
-  sceneIr?: any;
+  sceneIr?: EmbeddedSceneSource | PackageSceneIrAst;
 }
 
 /** Simplified TokenStream-like interface for validation/parsing. */
@@ -72,6 +75,8 @@ type ExplainerMetadata = ExplainerAstCompat["metadata"] & { id?: string };
  *     caption: "caption"
  *     render: @scene { ... }
  *   }
+ *
+ *   finalCard: @scene { ... }
  * }
  */
 export function parseExplainerBlock(tokens: TokenStream): ExplainerAstCompat {
@@ -81,13 +86,13 @@ export function parseExplainerBlock(tokens: TokenStream): ExplainerAstCompat {
 
   const raw = parseExplainerMetadata(tokens);
   const slides = parseSlides(tokens);
-  // Optional trailing finalCard scene — captured and ignored until schema lands it.
+  let finalCard: EmbeddedSceneSource | PackageSceneIrAst | undefined;
   if (tokens.match("finalCard")) {
     tokens.advance();
     tokens.expect(":");
     tokens.expect("@");
     tokens.expect("scene");
-    captureEmbeddedScene(tokens as PeekableTokenStream);
+    finalCard = parseSceneBlock(tokens as PeekableTokenStream);
   }
 
   tokens.expect("}");
@@ -97,7 +102,13 @@ export function parseExplainerBlock(tokens: TokenStream): ExplainerAstCompat {
   void _idField;
   const metadata = requireExplainerMetadata(metadataFields);
 
-  return { type: "explainer", id, metadata, slides };
+  return {
+    type: "explainer",
+    id,
+    metadata,
+    slides,
+    ...(finalCard === undefined ? {} : { finalCard }),
+  };
 }
 
 function requireExplainerMetadata(
@@ -130,6 +141,9 @@ function requireExplainerMetadata(
     eyebrowLabel: meta.eyebrowLabel!,
     startGateTitle: meta.startGateTitle!,
     hub: meta.hub,
+    ...(typeof meta.css === "string" && meta.css.length > 0
+      ? { css: meta.css }
+      : {}),
   };
 }
 
@@ -236,11 +250,11 @@ function parseSlideBlock(tokens: TokenStream): SlideAst {
 }
 
 /**
- * Parses `render: @scene { ... }` so package `roots`/`timeline` survive on the
- * AST (`PackageSceneIrAst`), and native cinematic bodies remain as capture
- * source for `parseNativeEmbeddedScene`.
+ * Parses `render: @scene { ... }` / `finalCard: @scene { ... }` so package
+ * `roots`/`timeline` survive on the AST (`PackageSceneIrAst`), and native
+ * cinematic bodies remain as capture source for `parseNativeEmbeddedScene`.
  */
-function parseSceneBlock(
+export function parseSceneBlock(
   tokens: PeekableTokenStream,
 ): EmbeddedSceneSource | PackageSceneIrAst {
   const captured = captureEmbeddedScene(tokens);

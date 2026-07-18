@@ -40,6 +40,11 @@ import { lower } from "./lower.js";
 
 export type LowerExplainerSceneOptions = Readonly<{
   tokens?: ReadonlyMap<string, LiteralAst["value"]>;
+  /**
+   * Owning slide id for fail-closed empty roots/timeline diagnostics.
+   * When set, messages name the slide so authors can locate the bad `@scene`.
+   */
+  slideId?: string;
   /** Fill-ins when package scenes omit SceneIr identity fields. */
   defaults?: Readonly<{
     id?: string;
@@ -154,6 +159,52 @@ function invalidScene(
   };
 }
 
+function slideLabel(options: LowerExplainerSceneOptions): string {
+  return options.slideId !== undefined && options.slideId.length > 0
+    ? `Slide "${options.slideId}"`
+    : "Embedded @scene";
+}
+
+/** Fail-closed diagnostic when scene.roots or scene.timeline is empty. */
+function emptySceneField(
+  field: "roots" | "timeline",
+  options: LowerExplainerSceneOptions,
+  range: SourceRange = unknownRange,
+  sceneId?: string,
+): Result<SceneRender> {
+  const owner = slideLabel(options);
+  const sceneBit =
+    sceneId !== undefined && sceneId.length > 0
+      ? ` (scene "${sceneId}")`
+      : "";
+  if (field === "roots") {
+    return {
+      ok: false,
+      diagnostics: [
+        diagnostic(
+          "EXPLAINER_SCENE_ROOTS_REQUIRED",
+          "error",
+          `${owner}${sceneBit} has an embedded @scene with empty scene.roots.`,
+          range,
+          "Lower embedded @scene roots into at least one diagram node.",
+        ),
+      ],
+    };
+  }
+  return {
+    ok: false,
+    diagnostics: [
+      diagnostic(
+        "EXPLAINER_TIMELINE_REQUIRED",
+        "error",
+        `${owner}${sceneBit} has an embedded @scene with empty scene.timeline.`,
+        range,
+        "Add at least one timeline cue that drives enter, draw, or emphasis motion.",
+      ),
+    ],
+  };
+}
+
 function lowerNativeSceneAst(
   scene: SceneAst,
   options: LowerExplainerSceneOptions,
@@ -176,16 +227,10 @@ function lowerNativeSceneAst(
   }
 
   if (sceneIr.roots.length === 0) {
-    return invalidScene(
-      `Scene "${scene.id}" lowered with empty scene.roots.`,
-      scene.sourceMap,
-    );
+    return emptySceneField("roots", options, scene.sourceMap, scene.id);
   }
   if (sceneIr.timeline.length === 0) {
-    return invalidScene(
-      `Scene "${scene.id}" lowered with empty scene.timeline.`,
-      scene.sourceMap,
-    );
+    return emptySceneField("timeline", options, scene.sourceMap, scene.id);
   }
 
   return validateSceneRender(sceneIr, scene.sourceMap);
@@ -269,6 +314,116 @@ function styleOf(node: Record<string, unknown>): Record<string, string | number 
   return out;
 }
 
+function finiteOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** Preserve authored SVG path data (`d` authoring alias → IR `path`). */
+function pathOf(node: Record<string, unknown>): string | undefined {
+  if (typeof node.path === "string" && node.path.length > 0) {
+    return node.path;
+  }
+  if (typeof node.d === "string" && node.d.length > 0) {
+    return node.d;
+  }
+  return undefined;
+}
+
+function pointsOf(
+  node: Record<string, unknown>,
+): ReadonlyArray<{ x: number; y: number }> | undefined {
+  if (!Array.isArray(node.points) || node.points.length === 0) {
+    return undefined;
+  }
+  const points: Array<{ x: number; y: number }> = [];
+  for (const point of node.points) {
+    const record = asRecord(point);
+    if (record === undefined) {
+      continue;
+    }
+    const x = finiteOrUndefined(record.x);
+    const y = finiteOrUndefined(record.y);
+    if (x === undefined || y === undefined) {
+      continue;
+    }
+    points.push({ x, y });
+  }
+  return points.length > 0 ? points : undefined;
+}
+
+/**
+ * Normalize package `from`/`to` endpoints.
+ *
+ * Decks-flow lines use `{ x, y }`; cinematic connectors use `{ nodeId, anchor? }`.
+ * Path-only nodes without endpoints get a zero-point stub so schema stays
+ * satisfiable while SceneRenderer prefers authored `path` / `d`.
+ */
+function connectorEndpointOf(
+  value: unknown,
+  fallback: "from" | "to",
+): {
+  nodeId?: string;
+  anchor?: string;
+  x?: number;
+  y?: number;
+} {
+  const record = asRecord(value);
+  if (record === undefined) {
+    return { x: 0, y: 0 };
+  }
+  const x = finiteOrUndefined(record.x);
+  const y = finiteOrUndefined(record.y);
+  const nodeId =
+    typeof record.nodeId === "string" && record.nodeId.length > 0
+      ? record.nodeId
+      : typeof record.id === "string" && record.id.length > 0
+        ? record.id
+        : undefined;
+  const anchor =
+    typeof record.anchor === "string" && record.anchor.length > 0
+      ? record.anchor
+      : undefined;
+  if (x !== undefined && y !== undefined) {
+    return {
+      x,
+      y,
+      ...(nodeId !== undefined ? { nodeId } : {}),
+      ...(anchor !== undefined ? { anchor } : {}),
+    };
+  }
+  if (nodeId !== undefined) {
+    return {
+      nodeId,
+      ...(anchor !== undefined ? { anchor } : {}),
+    };
+  }
+  void fallback;
+  return { x: 0, y: 0 };
+}
+
+function geometryFromEndpoints(
+  from: { x?: number; y?: number },
+  to: { x?: number; y?: number },
+  fallback: SceneIr["roots"][number]["geometry"],
+): SceneIr["roots"][number]["geometry"] {
+  if (
+    typeof from.x !== "number" ||
+    typeof from.y !== "number" ||
+    typeof to.x !== "number" ||
+    typeof to.y !== "number"
+  ) {
+    return fallback;
+  }
+  const x = Math.min(from.x, to.x);
+  const y = Math.min(from.y, to.y);
+  return {
+    x,
+    y,
+    width: Math.max(Math.abs(to.x - from.x), 0),
+    height: Math.max(Math.abs(to.y - from.y), 0),
+  };
+}
+
 function normalizePackageNode(value: unknown): RenderNodeIr {
   const node = asRecord(value);
   if (node === undefined) {
@@ -281,7 +436,9 @@ function normalizePackageNode(value: unknown): RenderNodeIr {
       : typeof node.capability === "string"
         ? node.capability
         : typeof node.kind === "string"
-          ? `core.${node.kind}`
+          ? node.kind.includes(".")
+            ? node.kind
+            : `core.${node.kind}`
           : "core.rect";
   const children = Array.isArray(node.children)
     ? node.children.map(normalizePackageNode)
@@ -290,20 +447,34 @@ function normalizePackageNode(value: unknown): RenderNodeIr {
     children !== undefined && children.length > 0
       ? "group"
       : capabilityKind(capability);
+  const accessibilityRecord = asRecord(node.accessibility) ?? {};
   const label =
     typeof node.text === "string"
       ? node.text
-      : typeof asRecord(node.accessibility)?.label === "string"
-        ? String(asRecord(node.accessibility)!.label)
+      : typeof accessibilityRecord.label === "string"
+        ? accessibilityRecord.label
         : id;
+  const description =
+    typeof accessibilityRecord.description === "string" &&
+    accessibilityRecord.description.length > 0
+      ? accessibilityRecord.description
+      : undefined;
+  const path = pathOf(node);
+  const points = pointsOf(node);
+  let geometry = geometryOf(node);
   const base = {
     id,
     capabilityId: capability,
-    geometry: geometryOf(node),
+    geometry,
     style: styleOf(node),
-    accessibility: { label },
+    accessibility: {
+      label,
+      ...(description !== undefined ? { description } : {}),
+    },
     fallback: typeof node.fallback === "string" ? node.fallback : label,
     sourceMap: unknownRange,
+    ...(path !== undefined ? { path } : {}),
+    ...(points !== undefined ? { points } : {}),
   };
 
   if (kind === "group") {
@@ -317,19 +488,22 @@ function normalizePackageNode(value: unknown): RenderNodeIr {
     };
   }
   if (kind === "connector") {
-    const from = asRecord(node.from);
-    const to = asRecord(node.to);
+    const from = connectorEndpointOf(node.from, "from");
+    const to = connectorEndpointOf(node.to, "to");
+    if (
+      geometry.width === 0 &&
+      geometry.height === 0 &&
+      geometry.x === 0 &&
+      geometry.y === 0
+    ) {
+      geometry = geometryFromEndpoints(from, to, geometry);
+    }
     return {
       ...base,
+      geometry,
       kind: "connector",
-      from: {
-        nodeId: String(from?.nodeId ?? from?.id ?? "from"),
-        ...(typeof from?.anchor === "string" ? { anchor: from.anchor } : {}),
-      },
-      to: {
-        nodeId: String(to?.nodeId ?? to?.id ?? "to"),
-        ...(typeof to?.anchor === "string" ? { anchor: to.anchor } : {}),
-      },
+      from,
+      to,
     };
   }
   return { ...base, kind: "rect" };
@@ -355,14 +529,10 @@ function lowerPackageScene(
   const roots = scene.roots.map(normalizePackageNode);
   const timeline = (scene.timeline ?? []).map(normalizePackageTimeline);
   if (roots.length === 0) {
-    return invalidScene(
-      "Embedded @scene must emit at least one scene.roots node.",
-    );
+    return emptySceneField("roots", options);
   }
   if (timeline.length === 0) {
-    return invalidScene(
-      "Embedded @scene must emit at least one scene.timeline cue.",
-    );
+    return emptySceneField("timeline", options);
   }
   const id = defaults.id ?? "embedded";
   const title = defaults.title ?? "Embedded scene";
@@ -432,12 +602,11 @@ export function lowerExplainerScene(
 
   if (!isSceneAst(scene)) {
     if (isPackageSceneAst(scene)) {
-      return invalidScene(
-        "Embedded @scene must emit at least one scene.roots node.",
-      );
+      // Package-scene with empty roots never enters lowerPackageScene above.
+      return emptySceneField("roots", options);
     }
     return invalidScene(
-      'Expected an embedded @scene AST (native SceneAst, package-scene, or native source).',
+      `${slideLabel(options)}: expected an embedded @scene AST (native SceneAst, package-scene, or native source).`,
     );
   }
 

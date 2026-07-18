@@ -115,6 +115,7 @@ function lowerSlideText(
 
   if (slide.sceneIr !== undefined) {
     const sceneResult = lowerExplainerScene(slide.sceneIr, {
+      slideId: id,
       defaults: {
         id: `scene-${id}`,
         title: title || id,

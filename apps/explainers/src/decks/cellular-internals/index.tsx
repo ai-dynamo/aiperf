@@ -37,6 +37,7 @@ export const cellularInternalsDeck: DeckDefinition = {
       "Twenty-slide walkthrough of AIPerf's cellular runtime in five chapters: promotion and validation, deterministic distribution, autonomous execution, retain/fold/sketch reduction, and flat-or-tree merge to one report. Grounded in rust/runtime source, deeper than the SLURM & Velo tour.",
   },
   slides: SLIDES,
+  glossary: [],
   MentalModel: ({ slideIndex, slide }) => (
     <MentalModel slideIndex={slideIndex} slide={slide} />
   ),

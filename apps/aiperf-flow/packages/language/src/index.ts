@@ -26,6 +26,7 @@ export { formatDocument } from "./formatter.js";
 export { parseDocument, parseNativeEmbeddedScene } from "./parser.js";
 export {
   parseExplainerBlock,
+  parseSceneBlock,
   type ExplainerAstCompat,
   type SlideAstCompat,
   type TokenStream,

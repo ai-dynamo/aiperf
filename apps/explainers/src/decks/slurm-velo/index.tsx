@@ -48,6 +48,7 @@ export const slurmVeloDeck: DeckDefinition = {
       "Step-by-step slideshow for how SLURM launches cellular AIPerf runs and how Velo wires the control plane.",
   },
   slides: SLIDES,
+  glossary: [],
   MentalModel: ({ slideIndex, slide }) => (
     <MentalModel slideIndex={slideIndex} slide={slide} />
   ),

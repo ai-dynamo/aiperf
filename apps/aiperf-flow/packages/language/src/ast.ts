@@ -289,8 +289,14 @@ export type ExplainerAst = AstNode<"explainer"> &
       eyebrowLabel: string;
       startGateTitle: string;
       hub: ExplainerHubAst;
+      css?: string | undefined;
     }>;
     slides: readonly SlideAst[];
+    /**
+     * Optional end-card diagram from `finalCard: @scene { ... }`.
+     * Same embedded-scene dialects as slide `render` (`package` / `native`).
+     */
+    finalCard?: unknown;
   }>;
 
 export type DocumentAst = AstNode<"document"> &

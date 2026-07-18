@@ -38,7 +38,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s0-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -48,155 +48,257 @@ explainer "Dynosim" {
               id: "s0-hdr-label"
               capability: "core.text"
               text: "NO SERVING SOCKET"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s0-hdr-caption"
               capability: "core.text"
               text: "No serving socket on the hot path."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
+{
           id: "s0-aiperf"
           capability: "core.rect"
-          layout: { x: 80, y: 130, width: 160, height: 96 }
+          layout: { x: 70, y: 100, width: 150, height: 90 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s0-aiperf-title"
               capability: "core.text"
               text: "AIPerf workload"
-              layout: { x: 88, y: 158, width: 144, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 78, y: 128, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s0-aiperf-detail"
               capability: "core.text"
               text: "schedule + observe"
-              layout: { x: 88, y: 182, width: 144, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 78, y: 152, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s0-sink"
           capability: "core.rect"
-          layout: { x: 280, y: 130, width: 160, height: 96 }
+          layout: { x: 275, y: 100, width: 150, height: 90 }
           style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s0-sink-title"
               capability: "core.text"
               text: "DynosimSink"
-              layout: { x: 288, y: 158, width: 144, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 283, y: 128, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s0-sink-detail"
               capability: "core.text"
               text: "in-process"
-              layout: { x: 288, y: 182, width: 144, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 283, y: 152, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s0-replay"
           capability: "core.rect"
-          layout: { x: 480, y: 130, width: 140, height: 96 }
+          layout: { x: 480, y: 100, width: 140, height: 90 }
           style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s0-replay-title"
               capability: "core.text"
               text: "SteppableReplay"
-              layout: { x: 488, y: 158, width: 124, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 488, y: 128, width: 124, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s0-replay-detail"
               capability: "core.text"
               text: "Dynamo mocker"
-              layout: { x: 488, y: 182, width: 124, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 488, y: 152, width: 124, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s0-a1"
           capability: "core.line"
-          from: { x: 240, y: 178 }
-          to: { x: 280, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 220, y: 145 }
+          to: { x: 275, y: 145 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s0-a2"
           capability: "core.line"
-          from: { x: 440, y: 178 }
-          to: { x: 480, y: 178 }
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2 }
+          from: { x: 425, y: 145 }
+          to: { x: 480, y: 145 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
         },
-        {
+{
+          id: "s0-c1"
+          capability: "core.rect"
+          layout: { x: 70, y: 210, width: 150, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s0-c1-t"
+              capability: "core.text"
+              text: "Clock · Observer · merge"
+              layout: { x: 76, y: 218, width: 138, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s0-c2"
+          capability: "core.rect"
+          layout: { x: 275, y: 210, width: 150, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s0-c2-t"
+              capability: "core.text"
+              text: "RequestSink · no wire"
+              layout: { x: 281, y: 218, width: 138, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s0-c3"
+          capability: "core.rect"
+          layout: { x: 480, y: 210, width: 140, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s0-c3-t"
+              capability: "core.text"
+              text: "passive mock engine"
+              layout: { x: 486, y: 218, width: 128, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
           id: "s0-note"
           capability: "core.text"
           text: "HTTP/gRPC socket omitted on the hot path"
-          layout: { x: 120, y: 280, width: 460, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary }
+          layout: { x: 100, y: 270, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s0-sub"
+          capability: "core.text"
+          text: "Same metric vocabulary as online runs when configured for parity."
+          layout: { x: 100, y: 300, width: 500, height: 24 }
+          style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s0-motion"
+          capability: "core.path"
+          d: "M145 145 H550"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.5 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s0-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s0-hdr"
           action: "enter"
         },
         {
           id: "s0-enter-aiperf"
           at: 200
-          duration: 250
+          duration: 280
           target: "s0-aiperf"
           action: "enter"
         },
         {
           id: "s0-enter-sink"
-          at: 400
-          duration: 250
+          at: 350
+          duration: 280
           target: "s0-sink"
           action: "enter"
         },
         {
           id: "s0-enter-replay"
-          at: 600
-          duration: 250
+          at: 500
+          duration: 280
           target: "s0-replay"
           action: "enter"
         },
         {
           id: "s0-draw-a1"
-          at: 800
-          duration: 250
+          at: 650
+          duration: 320
           target: "s0-a1"
           action: "draw"
         },
         {
           id: "s0-draw-a2"
-          at: 1000
-          duration: 250
+          at: 800
+          duration: 320
           target: "s0-a2"
           action: "draw"
         },
         {
+          id: "s0-enter-c1"
+          at: 950
+          duration: 280
+          target: "s0-c1"
+          action: "enter"
+        },
+        {
+          id: "s0-enter-c2"
+          at: 1070
+          duration: 280
+          target: "s0-c2"
+          action: "enter"
+        },
+        {
+          id: "s0-enter-c3"
+          at: 1190
+          duration: 280
+          target: "s0-c3"
+          action: "enter"
+        },
+        {
           id: "s0-enter-note"
-          at: 1200
-          duration: 250
+          at: 1310
+          duration: 280
           target: "s0-note"
           action: "enter"
+        },
+        {
+          id: "s0-enter-sub"
+          at: 1410
+          duration: 280
+          target: "s0-sub"
+          action: "enter"
+        },
+        {
+          id: "s0-draw-motion"
+          at: 700
+          duration: 900
+          target: "s0-motion"
+          action: "draw"
+        },
+        {
+          id: "s0-emph"
+          at: 1900
+          duration: 400
+          target: "s0-sink"
+          action: "emphasis"
         }
       ]
     }
@@ -224,7 +326,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s1-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -234,98 +336,178 @@ explainer "Dynosim" {
               id: "s1-hdr-label"
               capability: "core.text"
               text: "FEATURE GATE"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s1-hdr-caption"
               capability: "core.text"
               text: "Opt-in at compile time, selected at config time."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
-          id: "s1-cargo"
+{
+          id: "s1-feat"
           capability: "core.rect"
-          layout: { x: 120, y: 120, width: 200, height: 110 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 100, y: 110, width: 200, height: 110 }
+          style: { fill: @theme.accent.warning, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s1-cargo-title"
+              id: "s1-feat-title"
               capability: "core.text"
               text: "Cargo feature"
-              layout: { x: 128, y: 148, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 108, y: 138, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s1-cargo-detail"
+              id: "s1-feat-detail"
               capability: "core.text"
               text: "dynosim"
-              layout: { x: 128, y: 172, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 108, y: 162, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s1-a1"
           capability: "core.line"
-          from: { x: 320, y: 175 }
-          to: { x: 380, y: 175 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 300, y: 165 }
+          to: { x: 380, y: 165 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s1-ids"
           capability: "core.rect"
-          layout: { x: 380, y: 120, width: 200, height: 110 }
+          layout: { x: 380, y: 110, width: 200, height: 110 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s1-ids-title"
               capability: "core.text"
               text: "Registry IDs"
-              layout: { x: 388, y: 148, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 388, y: 138, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s1-ids-detail"
               capability: "core.text"
               text: "offline · online"
-              layout: { x: 388, y: 172, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 388, y: 162, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
+        },
+{
+          id: "s1-c1"
+          capability: "core.rect"
+          layout: { x: 100, y: 250, width: 200, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s1-c1-t"
+              capability: "core.text"
+              text: "cargo build --features dynosim"
+              layout: { x: 106, y: 258, width: 188, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s1-c2"
+          capability: "core.rect"
+          layout: { x: 380, y: 250, width: 200, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s1-c2-t"
+              capability: "core.text"
+              text: "unknown ID fails closed"
+              layout: { x: 386, y: 258, width: 188, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s1-note"
+          capability: "core.text"
+          text: "Lean HTTP builds omit dynosim entirely."
+          layout: { x: 120, y: 310, width: 460, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s1-motion"
+          capability: "core.path"
+          d: "M200 165 H480"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s1-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s1-hdr"
           action: "enter"
         },
         {
-          id: "s1-enter-cargo"
+          id: "s1-enter-feat"
           at: 200
-          duration: 250
-          target: "s1-cargo"
+          duration: 280
+          target: "s1-feat"
           action: "enter"
         },
         {
           id: "s1-draw-a1"
-          at: 400
-          duration: 250
+          at: 320
+          duration: 320
           target: "s1-a1"
           action: "draw"
         },
         {
           id: "s1-enter-ids"
-          at: 600
-          duration: 250
+          at: 460
+          duration: 280
           target: "s1-ids"
           action: "enter"
+        },
+        {
+          id: "s1-enter-c1"
+          at: 580
+          duration: 280
+          target: "s1-c1"
+          action: "enter"
+        },
+        {
+          id: "s1-enter-c2"
+          at: 700
+          duration: 280
+          target: "s1-c2"
+          action: "enter"
+        },
+        {
+          id: "s1-enter-note"
+          at: 820
+          duration: 280
+          target: "s1-note"
+          action: "enter"
+        },
+        {
+          id: "s1-draw-motion"
+          at: 650
+          duration: 900
+          target: "s1-motion"
+          action: "draw"
+        },
+        {
+          id: "s1-emph"
+          at: 1800
+          duration: 400
+          target: "s1-ids"
+          action: "emphasis"
         }
       ]
     }
@@ -353,7 +535,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s2-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -363,141 +545,243 @@ explainer "Dynosim" {
               id: "s2-hdr-label"
               capability: "core.text"
               text: "TRANSPORT → CLOCK"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s2-hdr-caption"
               capability: "core.text"
               text: "Config is shared; transport picks real vs. virtual time."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
+{
           id: "s2-run"
           capability: "core.rect"
-          layout: { x: 60, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 50, y: 110, width: 150, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.5 }
           children: [
             {
               id: "s2-run-title"
               capability: "core.text"
               text: "BenchmarkRun"
-              layout: { x: 68, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 58, y: 138, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s2-run-detail"
               capability: "core.text"
               text: "Config v2"
-              layout: { x: 68, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 58, y: 162, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s2-a1"
           capability: "core.line"
-          from: { x: 210, y: 178 }
-          to: { x: 260, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 200, y: 158 }
+          to: { x: 250, y: 158 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
-          id: "s2-tt"
+{
+          id: "s2-transport"
           capability: "core.rect"
-          layout: { x: 260, y: 130, width: 180, height: 96 }
+          layout: { x: 250, y: 110, width: 180, height: 96 }
           style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s2-tt-title"
+              id: "s2-transport-title"
               capability: "core.text"
               text: "transport.type"
-              layout: { x: 268, y: 158, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 258, y: 138, width: 164, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s2-tt-detail"
+              id: "s2-transport-detail"
               capability: "core.text"
               text: "selects driver"
-              layout: { x: 268, y: 182, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 258, y: 162, width: 164, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s2-a2"
           capability: "core.line"
-          from: { x: 440, y: 178 }
-          to: { x: 490, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 430, y: 158 }
+          to: { x: 480, y: 158 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
-          id: "s2-clk"
+{
+          id: "s2-clock"
           capability: "core.rect"
-          layout: { x: 490, y: 130, width: 150, height: 96 }
+          layout: { x: 480, y: 110, width: 150, height: 96 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s2-clk-title"
+              id: "s2-clock-title"
               capability: "core.text"
               text: "Clock"
-              layout: { x: 498, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 488, y: 138, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s2-clk-detail"
+              id: "s2-clock-detail"
               capability: "core.text"
               text: "Sim or Real"
-              layout: { x: 498, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 488, y: 162, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
+        },
+{
+          id: "s2-c1"
+          capability: "core.rect"
+          layout: { x: 50, y: 240, width: 190, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s2-c1-t"
+              capability: "core.text"
+              text: "dynosim_offline → SimClock"
+              layout: { x: 56, y: 248, width: 178, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s2-c2"
+          capability: "core.rect"
+          layout: { x: 260, y: 240, width: 190, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s2-c2-t"
+              capability: "core.text"
+              text: "dynosim_online → RealClock"
+              layout: { x: 266, y: 248, width: 178, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s2-c3"
+          capability: "core.rect"
+          layout: { x: 470, y: 240, width: 160, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s2-c3-t"
+              capability: "core.text"
+              text: "shared workload plan"
+              layout: { x: 476, y: 248, width: 148, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s2-note"
+          capability: "core.text"
+          text: "Workload, phases, and artifacts stay shared."
+          layout: { x: 100, y: 300, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s2-motion"
+          capability: "core.path"
+          d: "M125 158 H555"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s2-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s2-hdr"
           action: "enter"
         },
         {
           id: "s2-enter-run"
           at: 200
-          duration: 250
+          duration: 280
           target: "s2-run"
           action: "enter"
         },
         {
           id: "s2-draw-a1"
-          at: 400
-          duration: 250
+          at: 320
+          duration: 320
           target: "s2-a1"
           action: "draw"
         },
         {
-          id: "s2-enter-tt"
-          at: 600
-          duration: 250
-          target: "s2-tt"
+          id: "s2-enter-transport"
+          at: 460
+          duration: 280
+          target: "s2-transport"
           action: "enter"
         },
         {
           id: "s2-draw-a2"
-          at: 800
-          duration: 250
+          at: 580
+          duration: 320
           target: "s2-a2"
           action: "draw"
         },
         {
-          id: "s2-enter-clk"
-          at: 1000
-          duration: 250
-          target: "s2-clk"
+          id: "s2-enter-clock"
+          at: 720
+          duration: 280
+          target: "s2-clock"
           action: "enter"
+        },
+        {
+          id: "s2-enter-c1"
+          at: 840
+          duration: 280
+          target: "s2-c1"
+          action: "enter"
+        },
+        {
+          id: "s2-enter-c2"
+          at: 960
+          duration: 280
+          target: "s2-c2"
+          action: "enter"
+        },
+        {
+          id: "s2-enter-c3"
+          at: 1080
+          duration: 280
+          target: "s2-c3"
+          action: "enter"
+        },
+        {
+          id: "s2-enter-note"
+          at: 1200
+          duration: 280
+          target: "s2-note"
+          action: "enter"
+        },
+        {
+          id: "s2-draw-motion"
+          at: 700
+          duration: 900
+          target: "s2-motion"
+          action: "draw"
+        },
+        {
+          id: "s2-emph"
+          at: 1900
+          duration: 400
+          target: "s2-transport"
+          action: "emphasis"
         }
       ]
     }
@@ -525,7 +809,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s3-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -535,98 +819,164 @@ explainer "Dynosim" {
               id: "s3-hdr-label"
               capability: "core.text"
               text: "REGISTRY ROUTE"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s3-hdr-caption"
               capability: "core.text"
               text: "Transport ID → dynosim factory, not HTTP stack."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
+{
           id: "s3-http"
           capability: "core.rect"
-          layout: { x: 90, y: 120, width: 180, height: 110 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 70, y: 110, width: 200, height: 110 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.5 }
           children: [
             {
               id: "s3-http-title"
               capability: "core.text"
               text: "HTTP factory"
-              layout: { x: 98, y: 148, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 78, y: 138, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s3-http-detail"
               capability: "core.text"
               text: "not used"
-              layout: { x: 98, y: 172, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 78, y: 162, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s3-dyno"
           capability: "core.rect"
-          layout: { x: 430, y: 120, width: 180, height: 110 }
+          layout: { x: 430, y: 110, width: 200, height: 110 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s3-dyno-title"
               capability: "core.text"
               text: "Dynosim factory"
-              layout: { x: 438, y: 148, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 438, y: 138, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s3-dyno-detail"
               capability: "core.text"
               text: "ExecutionSinkBuilder"
-              layout: { x: 438, y: 172, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 438, y: 162, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
+          id: "s3-c1"
+          capability: "core.rect"
+          layout: { x: 70, y: 250, width: 200, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s3-c1-t"
+              capability: "core.text"
+              text: "Hyper/Tonic never built"
+              layout: { x: 76, y: 258, width: 188, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s3-c2"
+          capability: "core.rect"
+          layout: { x: 430, y: 250, width: 200, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s3-c2-t"
+              capability: "core.text"
+              text: "EngineHost + DynosimSink"
+              layout: { x: 436, y: 258, width: 188, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
           id: "s3-note"
           capability: "core.text"
           text: "transport ID routes before Hyper/Tonic clients build"
-          layout: { x: 120, y: 280, width: 460, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary }
+          layout: { x: 100, y: 310, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s3-motion"
+          capability: "core.path"
+          d: "M170 165 H530"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.45 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s3-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s3-hdr"
           action: "enter"
         },
         {
           id: "s3-enter-http"
           at: 200
-          duration: 250
+          duration: 280
           target: "s3-http"
           action: "enter"
         },
         {
           id: "s3-enter-dyno"
-          at: 400
-          duration: 250
+          at: 320
+          duration: 280
           target: "s3-dyno"
           action: "enter"
         },
         {
+          id: "s3-enter-c1"
+          at: 440
+          duration: 280
+          target: "s3-c1"
+          action: "enter"
+        },
+        {
+          id: "s3-enter-c2"
+          at: 560
+          duration: 280
+          target: "s3-c2"
+          action: "enter"
+        },
+        {
           id: "s3-enter-note"
-          at: 600
-          duration: 250
+          at: 680
+          duration: 280
           target: "s3-note"
           action: "enter"
+        },
+        {
+          id: "s3-draw-motion"
+          at: 700
+          duration: 900
+          target: "s3-motion"
+          action: "draw"
+        },
+        {
+          id: "s3-emph"
+          at: 1750
+          duration: 400
+          target: "s3-dyno"
+          action: "emphasis"
         }
       ]
     }
@@ -654,7 +1004,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s4-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -664,141 +1014,243 @@ explainer "Dynosim" {
               id: "s4-hdr-label"
               capability: "core.text"
               text: "HOST + SINK"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s4-hdr-caption"
               capability: "core.text"
-              text: "Same observer seam; different request driver."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              text: "Same observation vocabulary, different dispatch backend."
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
+{
           id: "s4-host"
           capability: "core.rect"
-          layout: { x: 70, y: 130, width: 150, height: 96 }
+          layout: { x: 55, y: 110, width: 155, height: 96 }
           style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s4-host-title"
               capability: "core.text"
               text: "EngineHost"
-              layout: { x: 78, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 63, y: 138, width: 139, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s4-host-detail"
               capability: "core.text"
               text: "SteppableReplay"
-              layout: { x: 78, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 63, y: 162, width: 139, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s4-a1"
           capability: "core.line"
-          from: { x: 220, y: 178 }
-          to: { x: 270, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 210, y: 158 }
+          to: { x: 260, y: 158 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s4-sink"
           capability: "core.rect"
-          layout: { x: 270, y: 130, width: 150, height: 96 }
+          layout: { x: 260, y: 110, width: 155, height: 96 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s4-sink-title"
               capability: "core.text"
               text: "DynosimSink"
-              layout: { x: 278, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 268, y: 138, width: 139, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s4-sink-detail"
               capability: "core.text"
               text: "RequestSink"
-              layout: { x: 278, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 268, y: 162, width: 139, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s4-a2"
           capability: "core.line"
-          from: { x: 420, y: 178 }
-          to: { x: 470, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 415, y: 158 }
+          to: { x: 460, y: 158 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s4-obs"
           capability: "core.rect"
-          layout: { x: 470, y: 130, width: 160, height: 96 }
+          layout: { x: 460, y: 110, width: 170, height: 96 }
           style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s4-obs-title"
               capability: "core.text"
               text: "RequestObserver"
-              layout: { x: 478, y: 158, width: 144, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 468, y: 138, width: 154, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s4-obs-detail"
               capability: "core.text"
               text: "metrics"
-              layout: { x: 478, y: 182, width: 144, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 468, y: 162, width: 154, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
+        },
+{
+          id: "s4-c1"
+          capability: "core.rect"
+          layout: { x: 55, y: 240, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s4-c1-t"
+              capability: "core.text"
+              text: "TTFT = first token"
+              layout: { x: 61, y: 248, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s4-c2"
+          capability: "core.rect"
+          layout: { x: 255, y: 240, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s4-c2-t"
+              capability: "core.text"
+              text: "same observer contract"
+              layout: { x: 261, y: 248, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s4-c3"
+          capability: "core.rect"
+          layout: { x: 455, y: 240, width: 175, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s4-c3-t"
+              capability: "core.text"
+              text: "terminal coalescing"
+              layout: { x: 461, y: 248, width: 163, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s4-note"
+          capability: "core.text"
+          text: "Same observation vocabulary, different dispatch backend."
+          layout: { x: 100, y: 300, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s4-motion"
+          capability: "core.path"
+          d: "M132 158 H545"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s4-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s4-hdr"
           action: "enter"
         },
         {
           id: "s4-enter-host"
           at: 200
-          duration: 250
+          duration: 280
           target: "s4-host"
           action: "enter"
         },
         {
           id: "s4-draw-a1"
-          at: 400
-          duration: 250
+          at: 320
+          duration: 320
           target: "s4-a1"
           action: "draw"
         },
         {
           id: "s4-enter-sink"
-          at: 600
-          duration: 250
+          at: 460
+          duration: 280
           target: "s4-sink"
           action: "enter"
         },
         {
           id: "s4-draw-a2"
-          at: 800
-          duration: 250
+          at: 580
+          duration: 320
           target: "s4-a2"
           action: "draw"
         },
         {
           id: "s4-enter-obs"
-          at: 1000
-          duration: 250
+          at: 720
+          duration: 280
           target: "s4-obs"
           action: "enter"
+        },
+        {
+          id: "s4-enter-c1"
+          at: 840
+          duration: 280
+          target: "s4-c1"
+          action: "enter"
+        },
+        {
+          id: "s4-enter-c2"
+          at: 960
+          duration: 280
+          target: "s4-c2"
+          action: "enter"
+        },
+        {
+          id: "s4-enter-c3"
+          at: 1080
+          duration: 280
+          target: "s4-c3"
+          action: "enter"
+        },
+        {
+          id: "s4-enter-note"
+          at: 1200
+          duration: 280
+          target: "s4-note"
+          action: "enter"
+        },
+        {
+          id: "s4-draw-motion"
+          at: 700
+          duration: 900
+          target: "s4-motion"
+          action: "draw"
+        },
+        {
+          id: "s4-emph"
+          at: 1950
+          duration: 400
+          target: "s4-sink"
+          action: "emphasis"
         }
       ]
     }
@@ -826,7 +1278,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s5-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -836,98 +1288,178 @@ explainer "Dynosim" {
               id: "s5-hdr-label"
               capability: "core.text"
               text: "OFFLINE · SIMCLOCK"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s5-hdr-caption"
               capability: "core.text"
-              text: "Virtual nanoseconds; no wall sleep on the hot path."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              text: "Deterministic virtual time drives offline replay."
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
-          id: "s5-off"
+{
+          id: "s5-offline"
           capability: "core.rect"
-          layout: { x: 250, y: 100, width: 200, height: 110 }
+          layout: { x: 250, y: 100, width: 200, height: 100 }
           style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s5-off-title"
+              id: "s5-offline-title"
               capability: "core.text"
               text: "dynosim_offline"
               layout: { x: 258, y: 128, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s5-off-detail"
+              id: "s5-offline-detail"
               capability: "core.text"
               text: "SimClock"
               layout: { x: 258, y: 152, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s5-a1"
           capability: "core.line"
-          from: { x: 350, y: 210 }
+          from: { x: 350, y: 200 }
           to: { x: 350, y: 250 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
-          id: "s5-drive"
+{
+          id: "s5-pump"
           capability: "core.rect"
           layout: { x: 250, y: 250, width: 200, height: 70 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s5-drive-title"
+              id: "s5-pump-title"
               capability: "core.text"
               text: "drive_sim_with_source"
               layout: { x: 258, y: 278, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s5-drive-detail"
+              id: "s5-pump-detail"
               capability: "core.text"
               text: "virtual pump"
               layout: { x: 258, y: 302, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
+        },
+{
+          id: "s5-c1"
+          capability: "core.rect"
+          layout: { x: 60, y: 160, width: 160, height: 40 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s5-c1-t"
+              capability: "core.text"
+              text: "arrivals · phases"
+              layout: { x: 66, y: 168, width: 148, height: 28 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s5-c2"
+          capability: "core.rect"
+          layout: { x: 480, y: 160, width: 160, height: 40 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s5-c2-t"
+              capability: "core.text"
+              text: "engine steps"
+              layout: { x: 486, y: 168, width: 148, height: 28 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s5-note"
+          capability: "core.text"
+          text: "Reproducible when inputs and seeds are fixed."
+          layout: { x: 100, y: 340, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s5-motion"
+          capability: "core.path"
+          d: "M350 150 V285"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s5-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s5-hdr"
           action: "enter"
         },
         {
-          id: "s5-enter-off"
+          id: "s5-enter-offline"
           at: 200
-          duration: 250
-          target: "s5-off"
+          duration: 280
+          target: "s5-offline"
+          action: "enter"
+        },
+        {
+          id: "s5-enter-c1"
+          at: 320
+          duration: 280
+          target: "s5-c1"
+          action: "enter"
+        },
+        {
+          id: "s5-enter-c2"
+          at: 440
+          duration: 280
+          target: "s5-c2"
           action: "enter"
         },
         {
           id: "s5-draw-a1"
-          at: 400
-          duration: 250
+          at: 560
+          duration: 320
           target: "s5-a1"
           action: "draw"
         },
         {
-          id: "s5-enter-drive"
-          at: 600
-          duration: 250
-          target: "s5-drive"
+          id: "s5-enter-pump"
+          at: 700
+          duration: 280
+          target: "s5-pump"
           action: "enter"
+        },
+        {
+          id: "s5-enter-note"
+          at: 820
+          duration: 280
+          target: "s5-note"
+          action: "enter"
+        },
+        {
+          id: "s5-draw-motion"
+          at: 700
+          duration: 900
+          target: "s5-motion"
+          action: "draw"
+        },
+        {
+          id: "s5-emph"
+          at: 1750
+          duration: 400
+          target: "s5-pump"
+          action: "emphasis"
         }
       ]
     }
@@ -955,7 +1487,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s6-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -965,98 +1497,178 @@ explainer "Dynosim" {
               id: "s6-hdr-label"
               capability: "core.text"
               text: "ONLINE · REALCLOCK"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s6-hdr-caption"
               capability: "core.text"
-              text: "Wall clock; engine events still step through SteppableReplay."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              text: "Same engine contract; clock switches to wall time."
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
-          id: "s6-on"
+{
+          id: "s6-online"
           capability: "core.rect"
-          layout: { x: 250, y: 100, width: 200, height: 110 }
+          layout: { x: 250, y: 100, width: 200, height: 100 }
           style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s6-on-title"
+              id: "s6-online-title"
               capability: "core.text"
               text: "dynosim_online"
               layout: { x: 258, y: 128, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s6-on-detail"
+              id: "s6-online-detail"
               capability: "core.text"
               text: "RealClock"
               layout: { x: 258, y: 152, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s6-a1"
           capability: "core.line"
-          from: { x: 350, y: 210 }
+          from: { x: 350, y: 200 }
           to: { x: 350, y: 250 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
-          id: "s6-drive"
+{
+          id: "s6-pump"
           capability: "core.rect"
           layout: { x: 250, y: 250, width: 200, height: 70 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s6-drive-title"
+              id: "s6-pump-title"
               capability: "core.text"
               text: "drive_real_with_source"
               layout: { x: 258, y: 278, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s6-drive-detail"
+              id: "s6-pump-detail"
               capability: "core.text"
               text: "wall pump"
               layout: { x: 258, y: 302, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
+        },
+{
+          id: "s6-c1"
+          capability: "core.rect"
+          layout: { x: 60, y: 160, width: 160, height: 40 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s6-c1-t"
+              capability: "core.text"
+              text: "wall-clock pacing"
+              layout: { x: 66, y: 168, width: 148, height: 28 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s6-c2"
+          capability: "core.rect"
+          layout: { x: 480, y: 160, width: 160, height: 40 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s6-c2-t"
+              capability: "core.text"
+              text: "same observer merge"
+              layout: { x: 486, y: 168, width: 148, height: 28 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s6-note"
+          capability: "core.text"
+          text: "Useful when timing must reflect scheduler latency."
+          layout: { x: 100, y: 340, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s6-motion"
+          capability: "core.path"
+          d: "M350 150 V285"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s6-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s6-hdr"
           action: "enter"
         },
         {
-          id: "s6-enter-on"
+          id: "s6-enter-online"
           at: 200
-          duration: 250
-          target: "s6-on"
+          duration: 280
+          target: "s6-online"
+          action: "enter"
+        },
+        {
+          id: "s6-enter-c1"
+          at: 320
+          duration: 280
+          target: "s6-c1"
+          action: "enter"
+        },
+        {
+          id: "s6-enter-c2"
+          at: 440
+          duration: 280
+          target: "s6-c2"
           action: "enter"
         },
         {
           id: "s6-draw-a1"
-          at: 400
-          duration: 250
+          at: 560
+          duration: 320
           target: "s6-a1"
           action: "draw"
         },
         {
-          id: "s6-enter-drive"
-          at: 600
-          duration: 250
-          target: "s6-drive"
+          id: "s6-enter-pump"
+          at: 700
+          duration: 280
+          target: "s6-pump"
           action: "enter"
+        },
+        {
+          id: "s6-enter-note"
+          at: 820
+          duration: 280
+          target: "s6-note"
+          action: "enter"
+        },
+        {
+          id: "s6-draw-motion"
+          at: 700
+          duration: 900
+          target: "s6-motion"
+          action: "draw"
+        },
+        {
+          id: "s6-emph"
+          at: 1750
+          duration: 400
+          target: "s6-online"
+          action: "emphasis"
         }
       ]
     }
@@ -1084,7 +1696,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s7-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -1094,98 +1706,178 @@ explainer "Dynosim" {
               id: "s7-hdr-label"
               capability: "core.text"
               text: "CLOCK COMPARE"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s7-hdr-caption"
               capability: "core.text"
               text: "One Clock trait; two time domains."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
+{
           id: "s7-real"
           capability: "core.rect"
-          layout: { x: 100, y: 130, width: 200, height: 96 }
+          layout: { x: 90, y: 120, width: 200, height: 96 }
           style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s7-real-title"
               capability: "core.text"
               text: "RealClock"
-              layout: { x: 108, y: 158, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 98, y: 148, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s7-real-detail"
               capability: "core.text"
               text: "wall nanoseconds"
-              layout: { x: 108, y: 182, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 98, y: 172, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s7-sim"
           capability: "core.rect"
-          layout: { x: 400, y: 130, width: 200, height: 96 }
+          layout: { x: 410, y: 120, width: 200, height: 96 }
           style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s7-sim-title"
               capability: "core.text"
               text: "SimClock"
-              layout: { x: 408, y: 158, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 418, y: 148, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s7-sim-detail"
               capability: "core.text"
               text: "virtual nanoseconds"
-              layout: { x: 408, y: 182, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 418, y: 172, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
+          id: "s7-c1"
+          capability: "core.rect"
+          layout: { x: 90, y: 250, width: 200, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s7-c1-t"
+              capability: "core.text"
+              text: "real-reactor driver"
+              layout: { x: 96, y: 258, width: 188, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s7-c2"
+          capability: "core.rect"
+          layout: { x: 410, y: 250, width: 200, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s7-c2-t"
+              capability: "core.text"
+              text: "simulation driver"
+              layout: { x: 416, y: 258, width: 188, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
           id: "s7-note"
           capability: "core.text"
           text: "Clock::is_virtual() selects reactor vs. simulation driver"
-          layout: { x: 100, y: 280, width: 500, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary }
+          layout: { x: 80, y: 310, width: 540, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s7-sub"
+          capability: "core.text"
+          text: "Never call Instant::now on request hot paths."
+          layout: { x: 80, y: 340, width: 540, height: 24 }
+          style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s7-motion"
+          capability: "core.path"
+          d: "M190 168 H510"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s7-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s7-hdr"
           action: "enter"
         },
         {
           id: "s7-enter-real"
           at: 200
-          duration: 250
+          duration: 280
           target: "s7-real"
           action: "enter"
         },
         {
           id: "s7-enter-sim"
-          at: 400
-          duration: 250
+          at: 320
+          duration: 280
           target: "s7-sim"
           action: "enter"
         },
         {
+          id: "s7-enter-c1"
+          at: 440
+          duration: 280
+          target: "s7-c1"
+          action: "enter"
+        },
+        {
+          id: "s7-enter-c2"
+          at: 560
+          duration: 280
+          target: "s7-c2"
+          action: "enter"
+        },
+        {
           id: "s7-enter-note"
-          at: 600
-          duration: 250
+          at: 680
+          duration: 280
           target: "s7-note"
           action: "enter"
+        },
+        {
+          id: "s7-enter-sub"
+          at: 800
+          duration: 280
+          target: "s7-sub"
+          action: "enter"
+        },
+        {
+          id: "s7-draw-motion"
+          at: 700
+          duration: 900
+          target: "s7-motion"
+          action: "draw"
+        },
+        {
+          id: "s7-emph"
+          at: 1800
+          duration: 400
+          target: "s7-sim"
+          action: "emphasis"
         }
       ]
     }
@@ -1213,7 +1905,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s8-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -1223,105 +1915,164 @@ explainer "Dynosim" {
               id: "s8-hdr-label"
               capability: "core.text"
               text: "DUAL QUEUES"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s8-hdr-caption"
               capability: "core.text"
-              text: "Two queues; one earliest-event rule."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              text: "Earliest event wins; clock wins ties at the same t."
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
-          id: "s8-cq"
+{
+          id: "s8-clockq"
           capability: "core.rect"
-          layout: { x: 80, y: 130, width: 220, height: 96 }
+          layout: { x: 70, y: 110, width: 220, height: 96 }
           style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s8-cq-title"
+              id: "s8-clockq-title"
               capability: "core.text"
               text: "SimClock queue"
-              layout: { x: 88, y: 158, width: 204, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 78, y: 138, width: 204, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s8-cq-detail"
+              id: "s8-clockq-detail"
               capability: "core.text"
               text: "arrivals · phases"
-              layout: { x: 88, y: 182, width: 204, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 78, y: 162, width: 204, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
-          id: "s8-sq"
+{
+          id: "s8-srcq"
           capability: "core.rect"
-          layout: { x: 400, y: 130, width: 220, height: 96 }
+          layout: { x: 410, y: 110, width: 220, height: 96 }
           style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s8-sq-title"
+              id: "s8-srcq-title"
               capability: "core.text"
               text: "SimEventSource"
-              layout: { x: 408, y: 158, width: 204, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 418, y: 138, width: 204, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s8-sq-detail"
+              id: "s8-srcq-detail"
               capability: "core.text"
               text: "engine events"
-              layout: { x: 408, y: 182, width: 204, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 418, y: 162, width: 204, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
-          id: "s8-note"
+{
+          id: "s8-c1"
+          capability: "core.rect"
+          layout: { x: 70, y: 240, width: 220, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s8-c1-t"
+              capability: "core.text"
+              text: "grace · backoff timers"
+              layout: { x: 76, y: 248, width: 208, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s8-c2"
+          capability: "core.rect"
+          layout: { x: 410, y: 240, width: 220, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s8-c2-t"
+              capability: "core.text"
+              text: "token timing · passes"
+              layout: { x: 416, y: 248, width: 208, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s8-rule"
           capability: "core.text"
           text: "min(clock, source) · clock wins ties"
-          layout: { x: 150, y: 280, width: 400, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary }
+          layout: { x: 100, y: 300, width: 500, height: 24 }
+          style: { fontSize: 13, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        },
+{
+          id: "s8-motion"
+          capability: "core.path"
+          d: "M180 158 H520"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s8-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s8-hdr"
           action: "enter"
         },
         {
-          id: "s8-enter-cq"
+          id: "s8-enter-clockq"
           at: 200
-          duration: 250
-          target: "s8-cq"
+          duration: 280
+          target: "s8-clockq"
           action: "enter"
         },
         {
-          id: "s8-enter-sq"
-          at: 400
-          duration: 250
-          target: "s8-sq"
+          id: "s8-enter-srcq"
+          at: 320
+          duration: 280
+          target: "s8-srcq"
           action: "enter"
         },
         {
-          id: "s8-enter-note"
-          at: 600
-          duration: 250
-          target: "s8-note"
+          id: "s8-enter-c1"
+          at: 440
+          duration: 280
+          target: "s8-c1"
           action: "enter"
         },
         {
-          id: "s8-emph-note"
-          at: 800
-          duration: 300
-          target: "s8-note"
-          action: "emphasize"
+          id: "s8-enter-c2"
+          at: 560
+          duration: 280
+          target: "s8-c2"
+          action: "enter"
+        },
+        {
+          id: "s8-enter-rule"
+          at: 680
+          duration: 280
+          target: "s8-rule"
+          action: "enter"
+        },
+        {
+          id: "s8-draw-motion"
+          at: 700
+          duration: 900
+          target: "s8-motion"
+          action: "draw"
+        },
+        {
+          id: "s8-emph"
+          at: 1750
+          duration: 400
+          target: "s8-rule"
+          action: "emphasis"
         }
       ]
     }
@@ -1349,7 +2100,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s9-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -1359,204 +2110,286 @@ explainer "Dynosim" {
               id: "s9-hdr-label"
               capability: "core.text"
               text: "SIM PUMP LOOP"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s9-hdr-caption"
               capability: "core.text"
-              text: "Poll · idle · advance · repeat until terminal."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              text: "Poll → idle → advance → poll again."
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
+{
           id: "s9-p0"
           capability: "core.rect"
-          layout: { x: 40, y: 130, width: 130, height: 96 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 40, y: 120, width: 130, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.5 }
           children: [
             {
               id: "s9-p0-title"
               capability: "core.text"
               text: "poll future"
-              layout: { x: 48, y: 158, width: 114, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 48, y: 148, width: 114, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s9-p0-detail"
               capability: "core.text"
               text: "sim pump"
-              layout: { x: 48, y: 182, width: 114, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 48, y: 172, width: 114, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s9-a0"
           capability: "core.line"
-          from: { x: 170, y: 178 }
-          to: { x: 200, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 170, y: 168 }
+          to: { x: 200, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s9-p1"
           capability: "core.rect"
-          layout: { x: 200, y: 130, width: 130, height: 96 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 200, y: 120, width: 130, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.5 }
           children: [
             {
               id: "s9-p1-title"
               capability: "core.text"
               text: "idle?"
-              layout: { x: 208, y: 158, width: 114, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 208, y: 148, width: 114, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s9-p1-detail"
               capability: "core.text"
               text: "sim pump"
-              layout: { x: 208, y: 182, width: 114, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 208, y: 172, width: 114, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s9-a1"
           capability: "core.line"
-          from: { x: 330, y: 178 }
-          to: { x: 360, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 330, y: 168 }
+          to: { x: 360, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s9-p2"
           capability: "core.rect"
-          layout: { x: 360, y: 130, width: 130, height: 96 }
+          layout: { x: 360, y: 120, width: 130, height: 96 }
           style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s9-p2-title"
               capability: "core.text"
               text: "advance t"
-              layout: { x: 368, y: 158, width: 114, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 368, y: 148, width: 114, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s9-p2-detail"
               capability: "core.text"
               text: "sim pump"
-              layout: { x: 368, y: 182, width: 114, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 368, y: 172, width: 114, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s9-a2"
           capability: "core.line"
-          from: { x: 490, y: 178 }
-          to: { x: 520, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 490, y: 168 }
+          to: { x: 520, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s9-p3"
           capability: "core.rect"
-          layout: { x: 520, y: 130, width: 130, height: 96 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 520, y: 120, width: 130, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.5 }
           children: [
             {
               id: "s9-p3-title"
               capability: "core.text"
               text: "repeat"
-              layout: { x: 528, y: 158, width: 114, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 528, y: 148, width: 114, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s9-p3-detail"
               capability: "core.text"
               text: "sim pump"
-              layout: { x: 528, y: 182, width: 114, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 528, y: 172, width: 114, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
-          id: "s9-pulse"
+{
+          id: "s9-c1"
           capability: "core.rect"
-          layout: { x: 105, y: 172, width: 12, height: 12 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          layout: { x: 40, y: 250, width: 200, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s9-c1-t"
+              capability: "core.text"
+              text: "wakes re-enter poll"
+              layout: { x: 46, y: 258, width: 188, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s9-c2"
+          capability: "core.rect"
+          layout: { x: 250, y: 250, width: 200, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s9-c2-t"
+              capability: "core.text"
+              text: "[at_ns, end_ns) steps"
+              layout: { x: 256, y: 258, width: 188, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s9-c3"
+          capability: "core.rect"
+          layout: { x: 460, y: 250, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s9-c3-t"
+              capability: "core.text"
+              text: "deadlock if empty"
+              layout: { x: 466, y: 258, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s9-note"
+          capability: "core.text"
+          text: "Poll → idle → advance → poll again."
+          layout: { x: 100, y: 310, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s9-motion"
+          capability: "core.path"
+          d: "M105 168 H585"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.6 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s9-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s9-hdr"
           action: "enter"
         },
         {
           id: "s9-enter-p0"
           at: 200
-          duration: 250
+          duration: 280
           target: "s9-p0"
           action: "enter"
         },
         {
           id: "s9-draw-a0"
-          at: 400
-          duration: 250
+          at: 320
+          duration: 280
           target: "s9-a0"
           action: "draw"
         },
         {
           id: "s9-enter-p1"
-          at: 600
-          duration: 250
+          at: 420
+          duration: 280
           target: "s9-p1"
           action: "enter"
         },
         {
           id: "s9-draw-a1"
-          at: 800
-          duration: 250
+          at: 540
+          duration: 280
           target: "s9-a1"
           action: "draw"
         },
         {
           id: "s9-enter-p2"
-          at: 1000
-          duration: 250
+          at: 640
+          duration: 280
           target: "s9-p2"
           action: "enter"
         },
         {
           id: "s9-draw-a2"
-          at: 1200
-          duration: 250
+          at: 760
+          duration: 280
           target: "s9-a2"
           action: "draw"
         },
         {
           id: "s9-enter-p3"
-          at: 1400
-          duration: 250
+          at: 860
+          duration: 280
           target: "s9-p3"
           action: "enter"
         },
         {
-          id: "s9-enter-pulse"
-          at: 1600
-          duration: 250
-          target: "s9-pulse"
+          id: "s9-enter-c1"
+          at: 980
+          duration: 280
+          target: "s9-c1"
           action: "enter"
         },
         {
-          id: "s9-emph-pulse"
-          at: 1800
-          duration: 300
-          target: "s9-pulse"
-          action: "emphasize"
+          id: "s9-enter-c2"
+          at: 1080
+          duration: 280
+          target: "s9-c2"
+          action: "enter"
+        },
+        {
+          id: "s9-enter-c3"
+          at: 1180
+          duration: 280
+          target: "s9-c3"
+          action: "enter"
+        },
+        {
+          id: "s9-enter-note"
+          at: 1280
+          duration: 280
+          target: "s9-note"
+          action: "enter"
+        },
+        {
+          id: "s9-draw-motion"
+          at: 800
+          duration: 1100
+          target: "s9-motion"
+          action: "draw"
+        },
+        {
+          id: "s9-emph"
+          at: 2000
+          duration: 400
+          target: "s9-p2"
+          action: "emphasis"
         }
       ]
     }
@@ -1584,7 +2417,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s10-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -1594,105 +2427,164 @@ explainer "Dynosim" {
               id: "s10-hdr-label"
               capability: "core.text"
               text: "CLOCK WINS TIES"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s10-hdr-caption"
               capability: "core.text"
-              text: "Equal timestamps: clock before source."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              text: "Clock-wins-ties keeps scheduling backend-independent."
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
-          id: "s10-arr"
+{
+          id: "s10-arrival"
           capability: "core.rect"
-          layout: { x: 120, y: 140, width: 180, height: 80 }
+          layout: { x: 110, y: 130, width: 180, height: 80 }
           style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s10-arr-title"
+              id: "s10-arrival-title"
               capability: "core.text"
               text: "arrival @ t"
-              layout: { x: 128, y: 168, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 118, y: 158, width: 164, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s10-arr-detail"
+              id: "s10-arrival-detail"
               capability: "core.text"
               text: "clock queue"
-              layout: { x: 128, y: 192, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 118, y: 182, width: 164, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
-          id: "s10-eng"
+{
+          id: "s10-pass"
           capability: "core.rect"
-          layout: { x: 400, y: 140, width: 180, height: 80 }
+          layout: { x: 410, y: 130, width: 180, height: 80 }
           style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s10-eng-title"
+              id: "s10-pass-title"
               capability: "core.text"
               text: "engine pass @ t"
-              layout: { x: 408, y: 168, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 418, y: 158, width: 164, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s10-eng-detail"
+              id: "s10-pass-detail"
               capability: "core.text"
               text: "source queue"
-              layout: { x: 408, y: 192, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 418, y: 182, width: 164, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
-          id: "s10-note"
+{
+          id: "s10-c1"
+          capability: "core.rect"
+          layout: { x: 110, y: 240, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s10-c1-t"
+              capability: "core.text"
+              text: "validate_event_time"
+              layout: { x: 116, y: 248, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s10-c2"
+          capability: "core.rect"
+          layout: { x: 410, y: 240, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s10-c2-t"
+              capability: "core.text"
+              text: "overshoot protection"
+              layout: { x: 416, y: 248, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s10-rule"
           capability: "core.text"
           text: "clock fires first at equal t"
-          layout: { x: 180, y: 260, width: 340, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary }
+          layout: { x: 100, y: 300, width: 500, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        },
+{
+          id: "s10-motion"
+          capability: "core.path"
+          d: "M200 170 H500"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s10-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s10-hdr"
           action: "enter"
         },
         {
-          id: "s10-enter-arr"
+          id: "s10-enter-arrival"
           at: 200
-          duration: 250
-          target: "s10-arr"
+          duration: 280
+          target: "s10-arrival"
           action: "enter"
         },
         {
-          id: "s10-enter-eng"
-          at: 400
-          duration: 250
-          target: "s10-eng"
+          id: "s10-enter-pass"
+          at: 320
+          duration: 280
+          target: "s10-pass"
           action: "enter"
         },
         {
-          id: "s10-enter-note"
-          at: 600
-          duration: 250
-          target: "s10-note"
+          id: "s10-enter-c1"
+          at: 440
+          duration: 280
+          target: "s10-c1"
           action: "enter"
         },
         {
-          id: "s10-emph-note"
-          at: 800
-          duration: 300
-          target: "s10-note"
-          action: "emphasize"
+          id: "s10-enter-c2"
+          at: 560
+          duration: 280
+          target: "s10-c2"
+          action: "enter"
+        },
+        {
+          id: "s10-enter-rule"
+          at: 680
+          duration: 280
+          target: "s10-rule"
+          action: "enter"
+        },
+        {
+          id: "s10-draw-motion"
+          at: 700
+          duration: 900
+          target: "s10-motion"
+          action: "draw"
+        },
+        {
+          id: "s10-emph"
+          at: 1700
+          duration: 400
+          target: "s10-arrival"
+          action: "emphasis"
         }
       ]
     }
@@ -1720,7 +2612,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s11-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -1730,141 +2622,243 @@ explainer "Dynosim" {
               id: "s11-hdr-label"
               capability: "core.text"
               text: "STEP BOUNDS"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s11-hdr-caption"
               capability: "core.text"
-              text: "Steps are half-open intervals with hard guards."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              text: "Monotonic virtual time with overshoot protection."
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
+{
           id: "s11-step"
           capability: "core.rect"
-          layout: { x: 80, y: 130, width: 170, height: 96 }
+          layout: { x: 60, y: 120, width: 170, height: 96 }
           style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s11-step-title"
               capability: "core.text"
               text: "source.step"
-              layout: { x: 88, y: 158, width: 154, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 68, y: 148, width: 154, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s11-step-detail"
               capability: "core.text"
               text: "[at, end_ns)"
-              layout: { x: 88, y: 182, width: 154, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 68, y: 172, width: 154, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s11-a1"
           capability: "core.line"
-          from: { x: 250, y: 178 }
-          to: { x: 300, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 230, y: 168 }
+          to: { x: 290, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
-          id: "s11-guard"
+{
+          id: "s11-guards"
           capability: "core.rect"
-          layout: { x: 300, y: 130, width: 170, height: 96 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 290, y: 120, width: 170, height: 96 }
+          style: { fill: @theme.accent.warning, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s11-guard-title"
+              id: "s11-guards-title"
               capability: "core.text"
               text: "guards"
-              layout: { x: 308, y: 158, width: 154, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 298, y: 148, width: 154, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s11-guard-detail"
+              id: "s11-guards-detail"
               capability: "core.text"
               text: "regression · overshoot"
-              layout: { x: 308, y: 182, width: 154, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 298, y: 172, width: 154, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s11-a2"
           capability: "core.line"
-          from: { x: 470, y: 178 }
-          to: { x: 520, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 460, y: 168 }
+          to: { x: 510, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s11-adv"
           capability: "core.rect"
-          layout: { x: 520, y: 130, width: 100, height: 96 }
+          layout: { x: 510, y: 120, width: 110, height: 96 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s11-adv-title"
               capability: "core.text"
               text: "advance"
-              layout: { x: 528, y: 158, width: 84, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 518, y: 148, width: 94, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s11-adv-detail"
               capability: "core.text"
               text: "SimClock"
-              layout: { x: 528, y: 182, width: 84, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 518, y: 172, width: 94, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
+        },
+{
+          id: "s11-c1"
+          capability: "core.rect"
+          layout: { x: 60, y: 250, width: 200, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s11-c1-t"
+              capability: "core.text"
+              text: "TimeRegression if end < now"
+              layout: { x: 66, y: 258, width: 188, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s11-c2"
+          capability: "core.rect"
+          layout: { x: 280, y: 250, width: 200, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s11-c2-t"
+              capability: "core.text"
+              text: "OvershotClockEvent"
+              layout: { x: 286, y: 258, width: 188, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s11-c3"
+          capability: "core.rect"
+          layout: { x: 500, y: 250, width: 120, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s11-c3-t"
+              capability: "core.text"
+              text: "MAX_NO_PROGRESS"
+              layout: { x: 506, y: 258, width: 108, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s11-note"
+          capability: "core.text"
+          text: "Monotonic virtual time with overshoot protection."
+          layout: { x: 100, y: 320, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s11-motion"
+          capability: "core.path"
+          d: "M145 168 H565"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s11-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s11-hdr"
           action: "enter"
         },
         {
           id: "s11-enter-step"
           at: 200
-          duration: 250
+          duration: 280
           target: "s11-step"
           action: "enter"
         },
         {
           id: "s11-draw-a1"
-          at: 400
-          duration: 250
+          at: 320
+          duration: 320
           target: "s11-a1"
           action: "draw"
         },
         {
-          id: "s11-enter-guard"
-          at: 600
-          duration: 250
-          target: "s11-guard"
+          id: "s11-enter-guards"
+          at: 460
+          duration: 280
+          target: "s11-guards"
           action: "enter"
         },
         {
           id: "s11-draw-a2"
-          at: 800
-          duration: 250
+          at: 580
+          duration: 320
           target: "s11-a2"
           action: "draw"
         },
         {
           id: "s11-enter-adv"
-          at: 1000
-          duration: 250
+          at: 720
+          duration: 280
           target: "s11-adv"
           action: "enter"
+        },
+        {
+          id: "s11-enter-c1"
+          at: 840
+          duration: 280
+          target: "s11-c1"
+          action: "enter"
+        },
+        {
+          id: "s11-enter-c2"
+          at: 960
+          duration: 280
+          target: "s11-c2"
+          action: "enter"
+        },
+        {
+          id: "s11-enter-c3"
+          at: 1080
+          duration: 280
+          target: "s11-c3"
+          action: "enter"
+        },
+        {
+          id: "s11-enter-note"
+          at: 1200
+          duration: 280
+          target: "s11-note"
+          action: "enter"
+        },
+        {
+          id: "s11-draw-motion"
+          at: 700
+          duration: 900
+          target: "s11-motion"
+          action: "draw"
+        },
+        {
+          id: "s11-emph"
+          at: 1950
+          duration: 400
+          target: "s11-guards"
+          action: "emphasis"
         }
       ]
     }
@@ -1892,7 +2886,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s12-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -1902,141 +2896,243 @@ explainer "Dynosim" {
               id: "s12-hdr-label"
               capability: "core.text"
               text: "DIRECT REQUEST"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s12-hdr-caption"
               capability: "core.text"
-              text: "DirectRequest in; completion via waiter mailbox."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              text: "In-process submission; mailbox completion."
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
+{
           id: "s12-turn"
           capability: "core.rect"
-          layout: { x: 70, y: 130, width: 150, height: 96 }
+          layout: { x: 55, y: 120, width: 155, height: 96 }
           style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s12-turn-title"
               capability: "core.text"
               text: "Turn dispatch"
-              layout: { x: 78, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 63, y: 148, width: 139, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s12-turn-detail"
               capability: "core.text"
               text: "workload"
-              layout: { x: 78, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 63, y: 172, width: 139, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s12-a1"
           capability: "core.line"
-          from: { x: 220, y: 178 }
-          to: { x: 270, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 210, y: 168 }
+          to: { x: 260, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s12-req"
           capability: "core.rect"
-          layout: { x: 270, y: 130, width: 150, height: 96 }
+          layout: { x: 260, y: 120, width: 155, height: 96 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s12-req-title"
               capability: "core.text"
               text: "DirectRequest"
-              layout: { x: 278, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 268, y: 148, width: 139, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s12-req-detail"
               capability: "core.text"
               text: "submit"
-              layout: { x: 278, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 268, y: 172, width: 139, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s12-a2"
           capability: "core.line"
-          from: { x: 420, y: 178 }
-          to: { x: 470, y: 178 }
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2 }
+          from: { x: 415, y: 168 }
+          to: { x: 460, y: 168 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s12-mail"
           capability: "core.rect"
-          layout: { x: 470, y: 130, width: 160, height: 96 }
+          layout: { x: 460, y: 120, width: 170, height: 96 }
           style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s12-mail-title"
               capability: "core.text"
               text: "waiter mailbox"
-              layout: { x: 478, y: 158, width: 144, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 468, y: 148, width: 154, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s12-mail-detail"
               capability: "core.text"
               text: "completion"
-              layout: { x: 478, y: 182, width: 144, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 468, y: 172, width: 154, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
+        },
+{
+          id: "s12-c1"
+          capability: "core.rect"
+          layout: { x: 55, y: 250, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s12-c1-t"
+              capability: "core.text"
+              text: "no HTTP encoding"
+              layout: { x: 61, y: 258, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s12-c2"
+          capability: "core.rect"
+          layout: { x: 255, y: 250, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s12-c2-t"
+              capability: "core.text"
+              text: "LocalSet-friendly"
+              layout: { x: 261, y: 258, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s12-c3"
+          capability: "core.rect"
+          layout: { x: 455, y: 250, width: 175, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s12-c3-t"
+              capability: "core.text"
+              text: "async bridge"
+              layout: { x: 461, y: 258, width: 163, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s12-note"
+          capability: "core.text"
+          text: "In-process submission; mailbox completion."
+          layout: { x: 100, y: 320, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s12-motion"
+          capability: "core.path"
+          d: "M132 168 H545"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s12-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s12-hdr"
           action: "enter"
         },
         {
           id: "s12-enter-turn"
           at: 200
-          duration: 250
+          duration: 280
           target: "s12-turn"
           action: "enter"
         },
         {
           id: "s12-draw-a1"
-          at: 400
-          duration: 250
+          at: 320
+          duration: 320
           target: "s12-a1"
           action: "draw"
         },
         {
           id: "s12-enter-req"
-          at: 600
-          duration: 250
+          at: 460
+          duration: 280
           target: "s12-req"
           action: "enter"
         },
         {
           id: "s12-draw-a2"
-          at: 800
-          duration: 250
+          at: 580
+          duration: 320
           target: "s12-a2"
           action: "draw"
         },
         {
           id: "s12-enter-mail"
-          at: 1000
-          duration: 250
+          at: 720
+          duration: 280
           target: "s12-mail"
           action: "enter"
+        },
+        {
+          id: "s12-enter-c1"
+          at: 840
+          duration: 280
+          target: "s12-c1"
+          action: "enter"
+        },
+        {
+          id: "s12-enter-c2"
+          at: 960
+          duration: 280
+          target: "s12-c2"
+          action: "enter"
+        },
+        {
+          id: "s12-enter-c3"
+          at: 1080
+          duration: 280
+          target: "s12-c3"
+          action: "enter"
+        },
+        {
+          id: "s12-enter-note"
+          at: 1200
+          duration: 280
+          target: "s12-note"
+          action: "enter"
+        },
+        {
+          id: "s12-draw-motion"
+          at: 700
+          duration: 900
+          target: "s12-motion"
+          action: "draw"
+        },
+        {
+          id: "s12-emph"
+          at: 1950
+          duration: 400
+          target: "s12-req"
+          action: "emphasis"
         }
       ]
     }
@@ -2064,7 +3160,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s13-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -2074,141 +3170,243 @@ explainer "Dynosim" {
               id: "s13-hdr-label"
               capability: "core.text"
               text: "OBSERVER PATH"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s13-hdr-caption"
               capability: "core.text"
-              text: "Engine events become observer callbacks."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              text: "Observer seam is transport-neutral."
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
-          id: "s13-ev"
+{
+          id: "s13-eng"
           capability: "core.rect"
-          layout: { x: 60, y: 130, width: 160, height: 96 }
+          layout: { x: 50, y: 120, width: 160, height: 96 }
           style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s13-ev-title"
+              id: "s13-eng-title"
               capability: "core.text"
               text: "EngineEvent"
-              layout: { x: 68, y: 158, width: 144, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 58, y: 148, width: 144, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s13-ev-detail"
+              id: "s13-eng-detail"
               capability: "core.text"
               text: "token · usage"
-              layout: { x: 68, y: 182, width: 144, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 58, y: 172, width: 144, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s13-a1"
           capability: "core.line"
-          from: { x: 220, y: 178 }
-          to: { x: 280, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 210, y: 168 }
+          to: { x: 270, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s13-sink"
           capability: "core.rect"
-          layout: { x: 280, y: 130, width: 160, height: 96 }
+          layout: { x: 270, y: 120, width: 160, height: 96 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s13-sink-title"
               capability: "core.text"
               text: "DynosimSink"
-              layout: { x: 288, y: 158, width: 144, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 278, y: 148, width: 144, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s13-sink-detail"
               capability: "core.text"
               text: "translate"
-              layout: { x: 288, y: 182, width: 144, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 278, y: 172, width: 144, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s13-a2"
           capability: "core.line"
-          from: { x: 440, y: 178 }
-          to: { x: 500, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 430, y: 168 }
+          to: { x: 490, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s13-obs"
           capability: "core.rect"
-          layout: { x: 500, y: 130, width: 140, height: 96 }
+          layout: { x: 490, y: 120, width: 140, height: 96 }
           style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s13-obs-title"
               capability: "core.text"
               text: "Observer"
-              layout: { x: 508, y: 158, width: 124, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 498, y: 148, width: 124, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s13-obs-detail"
               capability: "core.text"
               text: "TTFT · terminal"
-              layout: { x: 508, y: 182, width: 124, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 498, y: 172, width: 124, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
+        },
+{
+          id: "s13-c1"
+          capability: "core.rect"
+          layout: { x: 50, y: 250, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s13-c1-t"
+              capability: "core.text"
+              text: "first token → TTFT"
+              layout: { x: 56, y: 258, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s13-c2"
+          capability: "core.rect"
+          layout: { x: 250, y: 250, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s13-c2-t"
+              capability: "core.text"
+              text: "usage absent stays absent"
+              layout: { x: 256, y: 258, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s13-c3"
+          capability: "core.rect"
+          layout: { x: 450, y: 250, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s13-c3-t"
+              capability: "core.text"
+              text: "terminal closes sink"
+              layout: { x: 456, y: 258, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s13-note"
+          capability: "core.text"
+          text: "Observer seam is transport-neutral."
+          layout: { x: 100, y: 320, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s13-motion"
+          capability: "core.path"
+          d: "M130 168 H560"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s13-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s13-hdr"
           action: "enter"
         },
         {
-          id: "s13-enter-ev"
+          id: "s13-enter-eng"
           at: 200
-          duration: 250
-          target: "s13-ev"
+          duration: 280
+          target: "s13-eng"
           action: "enter"
         },
         {
           id: "s13-draw-a1"
-          at: 400
-          duration: 250
+          at: 320
+          duration: 320
           target: "s13-a1"
           action: "draw"
         },
         {
           id: "s13-enter-sink"
-          at: 600
-          duration: 250
+          at: 460
+          duration: 280
           target: "s13-sink"
           action: "enter"
         },
         {
           id: "s13-draw-a2"
-          at: 800
-          duration: 250
+          at: 580
+          duration: 320
           target: "s13-a2"
           action: "draw"
         },
         {
           id: "s13-enter-obs"
-          at: 1000
-          duration: 250
+          at: 720
+          duration: 280
           target: "s13-obs"
           action: "enter"
+        },
+        {
+          id: "s13-enter-c1"
+          at: 840
+          duration: 280
+          target: "s13-c1"
+          action: "enter"
+        },
+        {
+          id: "s13-enter-c2"
+          at: 960
+          duration: 280
+          target: "s13-c2"
+          action: "enter"
+        },
+        {
+          id: "s13-enter-c3"
+          at: 1080
+          duration: 280
+          target: "s13-c3"
+          action: "enter"
+        },
+        {
+          id: "s13-enter-note"
+          at: 1200
+          duration: 280
+          target: "s13-note"
+          action: "enter"
+        },
+        {
+          id: "s13-draw-motion"
+          at: 700
+          duration: 900
+          target: "s13-motion"
+          action: "draw"
+        },
+        {
+          id: "s13-emph"
+          at: 1950
+          duration: 400
+          target: "s13-sink"
+          action: "emphasis"
         }
       ]
     }
@@ -2236,7 +3434,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s14-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -2246,141 +3444,243 @@ explainer "Dynosim" {
               id: "s14-hdr-label"
               capability: "core.text"
               text: "METRICS MERGE"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s14-hdr-caption"
               capability: "core.text"
-              text: "Same metrics plane as HTTP runs."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              text: "Same metric plane; source is replay instead of wire."
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
-          id: "s14-obs"
+{
+          id: "s14-ev"
           capability: "core.rect"
-          layout: { x: 80, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 60, y: 120, width: 160, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.5 }
           children: [
             {
-              id: "s14-obs-title"
+              id: "s14-ev-title"
               capability: "core.text"
               text: "Observer events"
-              layout: { x: 88, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 68, y: 148, width: 144, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s14-obs-detail"
+              id: "s14-ev-detail"
               capability: "core.text"
               text: "per worker"
-              layout: { x: 88, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 68, y: 172, width: 144, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s14-a1"
           capability: "core.line"
-          from: { x: 230, y: 178 }
-          to: { x: 280, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 220, y: 168 }
+          to: { x: 270, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s14-core"
           capability: "core.rect"
-          layout: { x: 280, y: 130, width: 170, height: 96 }
+          layout: { x: 270, y: 120, width: 170, height: 96 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s14-core-title"
               capability: "core.text"
               text: "metrics_core"
-              layout: { x: 288, y: 158, width: 154, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 278, y: 148, width: 154, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s14-core-detail"
               capability: "core.text"
               text: "accumulate"
-              layout: { x: 288, y: 182, width: 154, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 278, y: 172, width: 154, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s14-a2"
           capability: "core.line"
-          from: { x: 450, y: 178 }
-          to: { x: 500, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 440, y: 168 }
+          to: { x: 490, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s14-rec"
           capability: "core.rect"
-          layout: { x: 500, y: 130, width: 120, height: 96 }
+          layout: { x: 490, y: 120, width: 130, height: 96 }
           style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s14-rec-title"
               capability: "core.text"
               text: "records"
-              layout: { x: 508, y: 158, width: 104, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 498, y: 148, width: 114, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s14-rec-detail"
               capability: "core.text"
               text: "exact / sketch"
-              layout: { x: 508, y: 182, width: 104, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 498, y: 172, width: 114, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
+        },
+{
+          id: "s14-c1"
+          capability: "core.rect"
+          layout: { x: 60, y: 250, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s14-c1-t"
+              capability: "core.text"
+              text: "ITL excludes terminal"
+              layout: { x: 66, y: 258, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s14-c2"
+          capability: "core.rect"
+          layout: { x: 260, y: 250, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s14-c2-t"
+              capability: "core.text"
+              text: "sketch digests merge"
+              layout: { x: 266, y: 258, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s14-c3"
+          capability: "core.rect"
+          layout: { x: 460, y: 250, width: 160, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s14-c3-t"
+              capability: "core.text"
+              text: "phase windows"
+              layout: { x: 466, y: 258, width: 148, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s14-note"
+          capability: "core.text"
+          text: "Same metric plane; source is replay instead of wire."
+          layout: { x: 100, y: 320, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s14-motion"
+          capability: "core.path"
+          d: "M140 168 H555"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s14-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s14-hdr"
           action: "enter"
         },
         {
-          id: "s14-enter-obs"
+          id: "s14-enter-ev"
           at: 200
-          duration: 250
-          target: "s14-obs"
+          duration: 280
+          target: "s14-ev"
           action: "enter"
         },
         {
           id: "s14-draw-a1"
-          at: 400
-          duration: 250
+          at: 320
+          duration: 320
           target: "s14-a1"
           action: "draw"
         },
         {
           id: "s14-enter-core"
-          at: 600
-          duration: 250
+          at: 460
+          duration: 280
           target: "s14-core"
           action: "enter"
         },
         {
           id: "s14-draw-a2"
-          at: 800
-          duration: 250
+          at: 580
+          duration: 320
           target: "s14-a2"
           action: "draw"
         },
         {
           id: "s14-enter-rec"
-          at: 1000
-          duration: 250
+          at: 720
+          duration: 280
           target: "s14-rec"
           action: "enter"
+        },
+        {
+          id: "s14-enter-c1"
+          at: 840
+          duration: 280
+          target: "s14-c1"
+          action: "enter"
+        },
+        {
+          id: "s14-enter-c2"
+          at: 960
+          duration: 280
+          target: "s14-c2"
+          action: "enter"
+        },
+        {
+          id: "s14-enter-c3"
+          at: 1080
+          duration: 280
+          target: "s14-c3"
+          action: "enter"
+        },
+        {
+          id: "s14-enter-note"
+          at: 1200
+          duration: 280
+          target: "s14-note"
+          action: "enter"
+        },
+        {
+          id: "s14-draw-motion"
+          at: 700
+          duration: 900
+          target: "s14-motion"
+          action: "draw"
+        },
+        {
+          id: "s14-emph"
+          at: 1950
+          duration: 400
+          target: "s14-core"
+          action: "emphasis"
         }
       ]
     }
@@ -2408,7 +3708,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s15-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -2418,84 +3718,164 @@ explainer "Dynosim" {
               id: "s15-hdr-label"
               capability: "core.text"
               text: "DELIVERY MODE"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s15-hdr-caption"
               capability: "core.text"
-              text: "Incremental vs coalesced delivery."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              text: "Delivery shape follows config, not transport family."
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
+{
           id: "s15-inc"
           capability: "core.rect"
-          layout: { x: 100, y: 130, width: 220, height: 96 }
+          layout: { x: 90, y: 120, width: 220, height: 100 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s15-inc-title"
               capability: "core.text"
               text: "Incremental"
-              layout: { x: 108, y: 158, width: 204, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 98, y: 148, width: 204, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s15-inc-detail"
               capability: "core.text"
               text: "token → token"
-              layout: { x: 108, y: 182, width: 204, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 98, y: 172, width: 204, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
-          id: "s15-coa"
+{
+          id: "s15-coal"
           capability: "core.rect"
-          layout: { x: 380, y: 130, width: 220, height: 96 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 390, y: 120, width: 220, height: 100 }
+          style: { fill: @theme.accent.warning, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s15-coa-title"
+              id: "s15-coal-title"
               capability: "core.text"
               text: "Coalesced"
-              layout: { x: 388, y: 158, width: 204, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 398, y: 148, width: 204, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s15-coa-detail"
+              id: "s15-coal-detail"
               capability: "core.text"
               text: "terminal batch"
-              layout: { x: 388, y: 182, width: 204, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 398, y: 172, width: 204, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
+        },
+{
+          id: "s15-c1"
+          capability: "core.rect"
+          layout: { x: 90, y: 250, width: 220, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s15-c1-t"
+              capability: "core.text"
+              text: "each engine token → observer"
+              layout: { x: 96, y: 258, width: 208, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s15-c2"
+          capability: "core.rect"
+          layout: { x: 390, y: 250, width: 220, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s15-c2-t"
+              capability: "core.text"
+              text: "batch until terminal reduce"
+              layout: { x: 396, y: 258, width: 208, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s15-note"
+          capability: "core.text"
+          text: "Policy is endpoint/streaming config, not dynosim-specific."
+          layout: { x: 100, y: 320, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s15-motion"
+          capability: "core.path"
+          d: "M200 170 H500"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s15-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s15-hdr"
           action: "enter"
         },
         {
           id: "s15-enter-inc"
           at: 200
-          duration: 250
+          duration: 280
           target: "s15-inc"
           action: "enter"
         },
         {
-          id: "s15-enter-coa"
-          at: 400
-          duration: 250
-          target: "s15-coa"
+          id: "s15-enter-coal"
+          at: 320
+          duration: 280
+          target: "s15-coal"
           action: "enter"
+        },
+        {
+          id: "s15-enter-c1"
+          at: 440
+          duration: 280
+          target: "s15-c1"
+          action: "enter"
+        },
+        {
+          id: "s15-enter-c2"
+          at: 560
+          duration: 280
+          target: "s15-c2"
+          action: "enter"
+        },
+        {
+          id: "s15-enter-note"
+          at: 680
+          duration: 280
+          target: "s15-note"
+          action: "enter"
+        },
+        {
+          id: "s15-draw-motion"
+          at: 700
+          duration: 900
+          target: "s15-motion"
+          action: "draw"
+        },
+        {
+          id: "s15-emph"
+          at: 1700
+          duration: 400
+          target: "s15-inc"
+          action: "emphasis"
         }
       ]
     }
@@ -2523,7 +3903,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s16-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -2533,84 +3913,164 @@ explainer "Dynosim" {
               id: "s16-hdr-label"
               capability: "core.text"
               text: "DRAIN + STALL"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s16-hdr-caption"
               capability: "core.text"
-              text: "Ready drain vs. no-progress stall."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              text: "Clean termination with explicit stall signals."
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
+{
           id: "s16-ready"
           capability: "core.rect"
-          layout: { x: 120, y: 120, width: 180, height: 110 }
+          layout: { x: 100, y: 110, width: 200, height: 110 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s16-ready-title"
               capability: "core.text"
               text: "Ready future"
-              layout: { x: 128, y: 148, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 108, y: 138, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s16-ready-detail"
               capability: "core.text"
               text: "drain source"
-              layout: { x: 128, y: 172, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 108, y: 162, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s16-stall"
           capability: "core.rect"
-          layout: { x: 400, y: 120, width: 180, height: 110 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 400, y: 110, width: 200, height: 110 }
+          style: { fill: @theme.accent.warning, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s16-stall-title"
               capability: "core.text"
               text: "No progress"
-              layout: { x: 408, y: 148, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 408, y: 138, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s16-stall-detail"
               capability: "core.text"
               text: "stall / deadlock"
-              layout: { x: 408, y: 172, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 408, y: 162, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
+        },
+{
+          id: "s16-c1"
+          capability: "core.rect"
+          layout: { x: 100, y: 250, width: 200, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s16-c1-t"
+              capability: "core.text"
+              text: "drain_source then exit"
+              layout: { x: 106, y: 258, width: 188, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s16-c2"
+          capability: "core.rect"
+          layout: { x: 400, y: 250, width: 200, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s16-c2-t"
+              capability: "core.text"
+              text: "RunOutcome.deadlocked"
+              layout: { x: 406, y: 258, width: 188, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s16-note"
+          capability: "core.text"
+          text: "Stall guard prevents infinite idle loops."
+          layout: { x: 100, y: 320, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s16-motion"
+          capability: "core.path"
+          d: "M200 165 H500"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.4, opacity: 0.45 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s16-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s16-hdr"
           action: "enter"
         },
         {
           id: "s16-enter-ready"
           at: 200
-          duration: 250
+          duration: 280
           target: "s16-ready"
           action: "enter"
         },
         {
           id: "s16-enter-stall"
-          at: 400
-          duration: 250
+          at: 320
+          duration: 280
           target: "s16-stall"
           action: "enter"
+        },
+        {
+          id: "s16-enter-c1"
+          at: 440
+          duration: 280
+          target: "s16-c1"
+          action: "enter"
+        },
+        {
+          id: "s16-enter-c2"
+          at: 560
+          duration: 280
+          target: "s16-c2"
+          action: "enter"
+        },
+        {
+          id: "s16-enter-note"
+          at: 680
+          duration: 280
+          target: "s16-note"
+          action: "enter"
+        },
+        {
+          id: "s16-draw-motion"
+          at: 700
+          duration: 900
+          target: "s16-motion"
+          action: "draw"
+        },
+        {
+          id: "s16-emph"
+          at: 1700
+          duration: 400
+          target: "s16-stall"
+          action: "emphasis"
         }
       ]
     }
@@ -2638,7 +4098,7 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-        {
+{
           id: "s17-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
@@ -2648,141 +4108,243 @@ explainer "Dynosim" {
               id: "s17-hdr-label"
               capability: "core.text"
               text: "MODE RECAP"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
             },
             {
               id: "s17-hdr-caption"
               capability: "core.text"
-              text: "Two clocks; one artifact contract."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              text: "Pick the clock; keep the rest of AIPerf unchanged."
+              layout: { x: 360, y: 28, width: 300, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
             }
           ]
         },
-        {
+{
           id: "s17-off"
           capability: "core.rect"
-          layout: { x: 60, y: 130, width: 150, height: 96 }
+          layout: { x: 50, y: 120, width: 150, height: 96 }
           style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s17-off-title"
               capability: "core.text"
               text: "Offline"
-              layout: { x: 68, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 58, y: 148, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s17-off-detail"
               capability: "core.text"
               text: "SimClock"
-              layout: { x: 68, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 58, y: 172, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s17-a1"
           capability: "core.line"
-          from: { x: 210, y: 178 }
-          to: { x: 275, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 200, y: 168 }
+          to: { x: 265, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
+{
           id: "s17-on"
           capability: "core.rect"
-          layout: { x: 275, y: 130, width: 150, height: 96 }
+          layout: { x: 265, y: 120, width: 150, height: 96 }
           style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
               id: "s17-on-title"
               capability: "core.text"
               text: "Online"
-              layout: { x: 283, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 273, y: 148, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s17-on-detail"
               capability: "core.text"
               text: "RealClock"
-              layout: { x: 283, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 273, y: 172, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
-        {
+{
           id: "s17-a2"
           capability: "core.line"
-          from: { x: 425, y: 178 }
-          to: { x: 490, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+          from: { x: 415, y: 168 }
+          to: { x: 480, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
-        {
-          id: "s17-art"
+{
+          id: "s17-json"
           capability: "core.rect"
-          layout: { x: 490, y: 130, width: 150, height: 96 }
+          layout: { x: 480, y: 120, width: 150, height: 96 }
           style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
           children: [
             {
-              id: "s17-art-title"
+              id: "s17-json-title"
               capability: "core.text"
               text: "native-v2.json"
-              layout: { x: 498, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+              layout: { x: 488, y: 148, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s17-art-detail"
+              id: "s17-json-detail"
               capability: "core.text"
               text: "same persist"
-              layout: { x: 498, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary }
+              layout: { x: 488, y: 172, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
+        },
+{
+          id: "s17-c1"
+          capability: "core.rect"
+          layout: { x: 50, y: 250, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s17-c1-t"
+              capability: "core.text"
+              text: "drive_sim_with_source"
+              layout: { x: 56, y: 258, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s17-c2"
+          capability: "core.rect"
+          layout: { x: 250, y: 250, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s17-c2-t"
+              capability: "core.text"
+              text: "drive_real_with_source"
+              layout: { x: 256, y: 258, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s17-c3"
+          capability: "core.rect"
+          layout: { x: 450, y: 250, width: 180, height: 36 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          children: [
+            {
+              id: "s17-c3-t"
+              capability: "core.text"
+              text: "exporters orthogonal"
+              layout: { x: 456, y: 258, width: 168, height: 24 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+{
+          id: "s17-note"
+          capability: "core.text"
+          text: "Pick the clock; keep the rest of AIPerf unchanged."
+          layout: { x: 100, y: 320, width: 500, height: 24 }
+          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+{
+          id: "s17-motion"
+          capability: "core.path"
+          d: "M125 168 H555"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         {
           id: "s17-enter-hdr"
           at: 0
-          duration: 250
+          duration: 280
           target: "s17-hdr"
           action: "enter"
         },
         {
           id: "s17-enter-off"
           at: 200
-          duration: 250
+          duration: 280
           target: "s17-off"
           action: "enter"
         },
         {
           id: "s17-draw-a1"
-          at: 400
-          duration: 250
+          at: 320
+          duration: 320
           target: "s17-a1"
           action: "draw"
         },
         {
           id: "s17-enter-on"
-          at: 600
-          duration: 250
+          at: 460
+          duration: 280
           target: "s17-on"
           action: "enter"
         },
         {
           id: "s17-draw-a2"
-          at: 800
-          duration: 250
+          at: 580
+          duration: 320
           target: "s17-a2"
           action: "draw"
         },
         {
-          id: "s17-enter-art"
-          at: 1000
-          duration: 250
-          target: "s17-art"
+          id: "s17-enter-json"
+          at: 720
+          duration: 280
+          target: "s17-json"
           action: "enter"
+        },
+        {
+          id: "s17-enter-c1"
+          at: 840
+          duration: 280
+          target: "s17-c1"
+          action: "enter"
+        },
+        {
+          id: "s17-enter-c2"
+          at: 960
+          duration: 280
+          target: "s17-c2"
+          action: "enter"
+        },
+        {
+          id: "s17-enter-c3"
+          at: 1080
+          duration: 280
+          target: "s17-c3"
+          action: "enter"
+        },
+        {
+          id: "s17-enter-note"
+          at: 1200
+          duration: 280
+          target: "s17-note"
+          action: "enter"
+        },
+        {
+          id: "s17-draw-motion"
+          at: 700
+          duration: 900
+          target: "s17-motion"
+          action: "draw"
+        },
+        {
+          id: "s17-emph"
+          at: 1950
+          duration: 400
+          target: "s17-json"
+          action: "emphasis"
         }
       ]
     }

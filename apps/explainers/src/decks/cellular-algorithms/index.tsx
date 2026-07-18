@@ -43,6 +43,7 @@ export const cellularAlgorithmsDeck: DeckDefinition = {
       "Sixteen-slide maintainer map of the cellular algorithm workbook: eight evidence chapters, representative built/partial/feature-gated algorithms, route composition, and the decisions that change ownership, fidelity, topology, and shipping.",
   },
   slides: SLIDES,
+  glossary: [],
   MentalModel: ({ slideIndex, slide }) => (
     <MentalModel slideIndex={slideIndex} slide={slide} />
   ),

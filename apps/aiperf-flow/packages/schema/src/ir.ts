@@ -82,9 +82,17 @@ export type TextNodeIr = RenderNodeBaseIr &
     text: string;
   }>;
 
+/**
+ * Connector / line endpoint.
+ *
+ * Explainer package scenes author either a node reference (`nodeId`) or
+ * absolute coordinates (`x`/`y`). SceneRenderer resolves coordinates first.
+ */
 export type ConnectorEndpointIr = Readonly<{
-  nodeId: string;
+  nodeId?: string | undefined;
   anchor?: string | undefined;
+  x?: number | undefined;
+  y?: number | undefined;
 }>;
 
 export type ConnectorNodeIr = RenderNodeBaseIr &
@@ -256,10 +264,25 @@ const renderNodeBaseShape = {
   path: z.string().optional(),
   points: z.array(pointIrSchema).optional(),
 };
-const connectorEndpointSchema = z.strictObject({
-  nodeId: z.string().min(1),
-  anchor: z.string().min(1).optional(),
-});
+const connectorEndpointSchema = z
+  .strictObject({
+    nodeId: z.string().min(1).optional(),
+    anchor: z.string().min(1).optional(),
+    x: z.number().finite().optional(),
+    y: z.number().finite().optional(),
+  })
+  .superRefine((endpoint, context) => {
+    const hasNode =
+      typeof endpoint.nodeId === "string" && endpoint.nodeId.length > 0;
+    const hasPoint =
+      typeof endpoint.x === "number" && typeof endpoint.y === "number";
+    if (!hasNode && !hasPoint) {
+      context.addIssue({
+        code: "custom",
+        message: "connector endpoint requires nodeId or x/y coordinates",
+      });
+    }
+  });
 /** Timeline cue actions accepted by SceneIr / DeckPackage scenes. */
 export const timelineCueActionSchema = z.union([
   z.literal("enter"),

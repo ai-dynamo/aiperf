@@ -1572,8 +1572,12 @@ function toExplainerAst(
       eyebrowLabel: compat.metadata.eyebrowLabel,
       startGateTitle: compat.metadata.startGateTitle,
       hub: compat.metadata.hub,
+      ...(compat.metadata.css === undefined
+        ? {}
+        : { css: compat.metadata.css }),
     },
     slides: compat.slides.map((slide) => toSlideAst(slide, sourceMap)),
+    ...(compat.finalCard === undefined ? {} : { finalCard: compat.finalCard }),
     sourceMap,
   };
 }

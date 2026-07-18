@@ -17,6 +17,7 @@ explainer "Cellular algorithm workbook" {
   }
 
   slide "algorithm-route" {
+
     eyebrow: "Workbook · 1 of 16"
     title: "Read the algorithm workbook as a route"
     lede: "The workbook is not a second architecture atlas. It is an evidence-indexed catalog of executable decisions, ordered from admission through terminal artifacts. This deck follows that route while selecting representative algorithms from the exhaustive catalog."
@@ -54,218 +55,436 @@ explainer "Cellular algorithm workbook" {
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
+    ,
+{
       id: "ch-eligibility"
       capability: "core.rect"
-      layout: { x: 25, y: 104, width: 145, height: 72 }
+      layout: { x: 25, y: 88, width: 145, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
       children: [
+        {
+          id: "ch-eligibility-n"
+          capability: "core.text"
+          text: "01"
+          layout: { x: 33, y: 96, width: 40, height: 14 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.secondary, textAnchor: "middle" }
+        },
         {
           id: "ch-eligibility-title"
           capability: "core.text"
           text: "eligibility"
-          layout: { x: 33, y: 122, width: 129, height: 22 }
+          layout: { x: 33, y: 116, width: 129, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "ch-eligibility-detail"
           capability: "core.text"
           text: "fail closed"
-          layout: { x: 33, y: 146, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 33, y: 138, width: 129, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "ch-eligibility-sub"
+          capability: "core.text"
+          text: "inputs admitted"
+          layout: { x: 33, y: 154, width: 129, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "ch-ownership"
       capability: "core.rect"
-      layout: { x: 193, y: 104, width: 145, height: 72 }
+      layout: { x: 193, y: 88, width: 145, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
       children: [
+        {
+          id: "ch-ownership-n"
+          capability: "core.text"
+          text: "02"
+          layout: { x: 201, y: 96, width: 40, height: 14 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.secondary, textAnchor: "middle" }
+        },
         {
           id: "ch-ownership-title"
           capability: "core.text"
           text: "ownership"
-          layout: { x: 201, y: 122, width: 129, height: 22 }
+          layout: { x: 201, y: 116, width: 129, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "ch-ownership-detail"
           capability: "core.text"
           text: "tile work"
-          layout: { x: 201, y: 146, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 201, y: 138, width: 129, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "ch-ownership-sub"
+          capability: "core.text"
+          text: "disjoint cover"
+          layout: { x: 201, y: 154, width: 129, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "ch-control"
       capability: "core.rect"
-      layout: { x: 361, y: 104, width: 145, height: 72 }
+      layout: { x: 361, y: 88, width: 145, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
       children: [
+        {
+          id: "ch-control-n"
+          capability: "core.text"
+          text: "03"
+          layout: { x: 369, y: 96, width: 40, height: 14 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.secondary, textAnchor: "middle" }
+        },
         {
           id: "ch-control-title"
           capability: "core.text"
           text: "control"
-          layout: { x: 369, y: 122, width: 129, height: 22 }
+          layout: { x: 369, y: 116, width: 129, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "ch-control-detail"
           capability: "core.text"
           text: "coordinate"
-          layout: { x: 369, y: 146, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 369, y: 138, width: 129, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "ch-control-sub"
+          capability: "core.text"
+          text: "replay + START"
+          layout: { x: 369, y: 154, width: 129, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "ch-distribution"
       capability: "core.rect"
-      layout: { x: 529, y: 104, width: 145, height: 72 }
+      layout: { x: 529, y: 88, width: 145, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
       children: [
+        {
+          id: "ch-distribution-n"
+          capability: "core.text"
+          text: "04"
+          layout: { x: 537, y: 96, width: 40, height: 14 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.secondary, textAnchor: "middle" }
+        },
         {
           id: "ch-distribution-title"
           capability: "core.text"
           text: "distribution"
-          layout: { x: 537, y: 122, width: 129, height: 22 }
+          layout: { x: 537, y: 116, width: 129, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "ch-distribution-detail"
           capability: "core.text"
           text: "deliver"
-          layout: { x: 537, y: 146, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 537, y: 138, width: 129, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "ch-distribution-sub"
+          capability: "core.text"
+          text: "owned indexes"
+          layout: { x: 537, y: 154, width: 129, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "ch-execution"
       capability: "core.rect"
-      layout: { x: 25, y: 232, width: 145, height: 72 }
+      layout: { x: 25, y: 206, width: 145, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
+        {
+          id: "ch-execution-n"
+          capability: "core.text"
+          text: "05"
+          layout: { x: 33, y: 214, width: 40, height: 14 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.tertiary, textAnchor: "middle" }
+        },
         {
           id: "ch-execution-title"
           capability: "core.text"
           text: "execution"
-          layout: { x: 33, y: 250, width: 129, height: 22 }
+          layout: { x: 33, y: 234, width: 129, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "ch-execution-detail"
           capability: "core.text"
           text: "run shards"
-          layout: { x: 33, y: 274, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 33, y: 256, width: 129, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "ch-execution-sub"
+          capability: "core.text"
+          text: "two-level sinks"
+          layout: { x: 33, y: 272, width: 129, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "ch-capture"
       capability: "core.rect"
-      layout: { x: 193, y: 232, width: 145, height: 72 }
+      layout: { x: 193, y: 206, width: 145, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
+        {
+          id: "ch-capture-n"
+          capability: "core.text"
+          text: "06"
+          layout: { x: 201, y: 214, width: 40, height: 14 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.tertiary, textAnchor: "middle" }
+        },
         {
           id: "ch-capture-title"
           capability: "core.text"
           text: "capture"
-          layout: { x: 201, y: 250, width: 129, height: 22 }
+          layout: { x: 201, y: 234, width: 129, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "ch-capture-detail"
           capability: "core.text"
           text: "store"
-          layout: { x: 201, y: 274, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 201, y: 256, width: 129, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "ch-capture-sub"
+          capability: "core.text"
+          text: "fidelity mode"
+          layout: { x: 201, y: 272, width: 129, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "ch-merge"
       capability: "core.rect"
-      layout: { x: 361, y: 232, width: 145, height: 72 }
+      layout: { x: 361, y: 206, width: 145, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
+        {
+          id: "ch-merge-n"
+          capability: "core.text"
+          text: "07"
+          layout: { x: 369, y: 214, width: 40, height: 14 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.tertiary, textAnchor: "middle" }
+        },
         {
           id: "ch-merge-title"
           capability: "core.text"
           text: "merge"
-          layout: { x: 369, y: 250, width: 129, height: 22 }
+          layout: { x: 369, y: 234, width: 129, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "ch-merge-detail"
           capability: "core.text"
           text: "reduce"
-          layout: { x: 369, y: 274, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 369, y: 256, width: 129, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "ch-merge-sub"
+          capability: "core.text"
+          text: "ordinal laws"
+          layout: { x: 369, y: 272, width: 129, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "ch-artifacts"
       capability: "core.rect"
-      layout: { x: 529, y: 232, width: 145, height: 72 }
+      layout: { x: 529, y: 206, width: 145, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
+        {
+          id: "ch-artifacts-n"
+          capability: "core.text"
+          text: "08"
+          layout: { x: 537, y: 214, width: 40, height: 14 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.tertiary, textAnchor: "middle" }
+        },
         {
           id: "ch-artifacts-title"
           capability: "core.text"
           text: "artifacts"
-          layout: { x: 537, y: 250, width: 129, height: 22 }
+          layout: { x: 537, y: 234, width: 129, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "ch-artifacts-detail"
           capability: "core.text"
           text: "publish"
-          layout: { x: 537, y: 274, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 537, y: 256, width: 129, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "ch-artifacts-sub"
+          capability: "core.text"
+          text: "authority path"
+          layout: { x: 537, y: 272, width: 129, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
+      id: "conn-r1-0"
+      capability: "core.path"
+      d: "M170 131 H193"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+    }
+    ,
+{
+      id: "conn-r1-1"
+      capability: "core.path"
+      d: "M338 131 H361"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+    }
+    ,
+{
+      id: "conn-r1-2"
+      capability: "core.path"
+      d: "M506 131 H529"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+    }
+    ,
+{
+      id: "conn-r2-0"
+      capability: "core.path"
+      d: "M170 249 H193"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+    }
+    ,
+{
+      id: "conn-r2-1"
+      capability: "core.path"
+      d: "M338 249 H361"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+    }
+    ,
+{
+      id: "conn-r2-2"
+      capability: "core.path"
+      d: "M506 249 H529"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+    }
+    ,
+{
+      id: "conn-turn"
+      capability: "core.path"
+      d: "M602 174 C640 174 640 206 602 206"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+    }
+    ,
+{
       id: "footer"
       capability: "core.text"
       text: "route order is evidence order"
-      layout: { x: 100, y: 318, width: 500, height: 24 }
-      style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
+      layout: { x: 100, y: 318, width: 500, height: 20 }
+      style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
     }
-    {
+    ,
+{
+      id: "chip-route"
+      capability: "core.rect"
+      layout: { x: 210, y: 348, width: 140, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-route-t"
+          capability: "core.text"
+          text: "8 chapters"
+          layout: { x: 210, y: 351, width: 140, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "chip-evidence"
+      capability: "core.rect"
+      layout: { x: 360, y: 348, width: 140, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-evidence-t"
+          capability: "core.text"
+          text: "evidence order"
+          layout: { x: 360, y: 351, width: 140, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
       id: "motion-sig"
       capability: "core.path"
       d: "M70 132 H630"
       layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-      accessibility: { label: "motion signal" }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-ch-eligibility", at: 350, duration: 320, target: "ch-eligibility", action: "enter" }
-    { id: "t-ch-ownership", at: 470, duration: 320, target: "ch-ownership", action: "enter" }
-    { id: "t-ch-control", at: 590, duration: 320, target: "ch-control", action: "enter" }
-    { id: "t-ch-distribution", at: 710, duration: 320, target: "ch-distribution", action: "enter" }
-    { id: "t-ch-execution", at: 830, duration: 320, target: "ch-execution", action: "enter" }
-    { id: "t-ch-capture", at: 950, duration: 320, target: "ch-capture", action: "enter" }
-    { id: "t-ch-merge", at: 1070, duration: 320, target: "ch-merge", action: "enter" }
-    { id: "t-ch-artifacts", at: 1190, duration: 320, target: "ch-artifacts", action: "enter" }
-    { id: "t-footer", at: 1400, duration: 300, target: "footer", action: "enter" }
-    { id: "t-emphasis", at: 1800, duration: 400, target: "ch-eligibility", action: "emphasis" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-ch-eligibility", at: 280, duration: 280, target: "ch-eligibility", action: "enter" }
+    { id: "t-ch-ownership", at: 370, duration: 280, target: "ch-ownership", action: "enter" }
+    { id: "t-ch-control", at: 460, duration: 280, target: "ch-control", action: "enter" }
+    { id: "t-ch-distribution", at: 550, duration: 280, target: "ch-distribution", action: "enter" }
+    { id: "t-ch-execution", at: 640, duration: 280, target: "ch-execution", action: "enter" }
+    { id: "t-ch-capture", at: 730, duration: 280, target: "ch-capture", action: "enter" }
+    { id: "t-ch-merge", at: 820, duration: 280, target: "ch-merge", action: "enter" }
+    { id: "t-ch-artifacts", at: 910, duration: 280, target: "ch-artifacts", action: "enter" }
+    { id: "t-conn-r1-0", at: 1000, duration: 200, target: "conn-r1-0", action: "draw" }
+    { id: "t-conn-r1-1", at: 1060, duration: 200, target: "conn-r1-1", action: "draw" }
+    { id: "t-conn-r1-2", at: 1120, duration: 200, target: "conn-r1-2", action: "draw" }
+    { id: "t-conn-r2-0", at: 1180, duration: 200, target: "conn-r2-0", action: "draw" }
+    { id: "t-conn-r2-1", at: 1240, duration: 200, target: "conn-r2-1", action: "draw" }
+    { id: "t-conn-r2-2", at: 1300, duration: 200, target: "conn-r2-2", action: "draw" }
+    { id: "t-conn-turn", at: 1360, duration: 280, target: "conn-turn", action: "draw" }
+    { id: "t-footer", at: 1440, duration: 280, target: "footer", action: "enter" }
+    { id: "t-chip-route", at: 1540, duration: 220, target: "chip-route", action: "enter" }
+    { id: "t-chip-evidence", at: 1610, duration: 220, target: "chip-evidence", action: "enter" }
+    { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  ]
     }
   }
 
   slide "evidence-vocabulary" {
+
     eyebrow: "Workbook · 2 of 16"
     title: "Status and evidence are part of the contract"
     lede: "A colored node is never enough to communicate implementation state. Built means the path exists on the ordinary route, feature-gated means code exists behind build or runtime admission, and partial means a known fidelity or lifecycle boundary remains. Every status stays visible as text."
@@ -288,7 +507,6 @@ explainer "Cellular algorithm workbook" {
       capability: "core.rect"
       layout: { x: 18, y: 16, width: 664, height: 44 }
       style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-      accessibility: { label: "WORKBOOK · STATUS & EVIDENCE" }
     }
     {
       id: "label"
@@ -304,157 +522,253 @@ explainer "Cellular algorithm workbook" {
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
+    ,
+{
       id: "algo-built"
       capability: "core.rect"
-      layout: { x: 35, y: 132, width: 190, height: 72 }
+      layout: { x: 35, y: 118, width: 190, height: 88 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "algo-built-title"
           capability: "core.text"
           text: "modulo-cell-ownership"
-          layout: { x: 43, y: 150, width: 174, height: 22 }
+          layout: { x: 43, y: 136, width: 174, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "algo-built-detail"
           capability: "core.text"
           text: "ordinary route"
-          layout: { x: 43, y: 174, width: 174, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 43, y: 158, width: 174, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "algo-built-sub"
+          capability: "core.text"
+          text: "i % N == k"
+          layout: { x: 43, y: 178, width: 174, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-built"
+    ,
+{
+      id: "st-algo-built"
       capability: "core.rect"
-      layout: { x: 155, y: 120, width: 70, height: 22 }
+      layout: { x: 155, y: 106, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-built-text"
+          id: "st-algo-built-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 155, y: 124, width: 70, height: 16 }
+          layout: { x: 155, y: 109, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "algo-partial"
       capability: "core.rect"
-      layout: { x: 255, y: 132, width: 190, height: 72 }
+      layout: { x: 255, y: 118, width: 190, height: 88 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
       children: [
         {
           id: "algo-partial-title"
           capability: "core.text"
           text: "final-report-assembly"
-          layout: { x: 263, y: 150, width: 174, height: 22 }
+          layout: { x: 263, y: 136, width: 174, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "algo-partial-detail"
           capability: "core.text"
           text: "named boundary"
-          layout: { x: 263, y: 174, width: 174, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 263, y: 158, width: 174, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "algo-partial-sub"
+          capability: "core.text"
+          text: "publish seam"
+          layout: { x: 263, y: 178, width: 174, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-partial"
+    ,
+{
+      id: "st-algo-partial"
       capability: "core.rect"
-      layout: { x: 375, y: 120, width: 70, height: 22 }
+      layout: { x: 375, y: 106, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-partial-text"
+          id: "st-algo-partial-t"
           capability: "core.text"
           text: "PARTIAL"
-          layout: { x: 375, y: 124, width: 70, height: 16 }
+          layout: { x: 375, y: 109, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "algo-gated"
       capability: "core.rect"
-      layout: { x: 475, y: 132, width: 190, height: 72 }
+      layout: { x: 475, y: 118, width: 190, height: 88 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
       children: [
         {
           id: "algo-gated-title"
           capability: "core.text"
           text: "phaser-start"
-          layout: { x: 483, y: 150, width: 174, height: 22 }
+          layout: { x: 483, y: 136, width: 174, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "algo-gated-detail"
           capability: "core.text"
           text: "explicit admission"
-          layout: { x: 483, y: 174, width: 174, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 483, y: 158, width: 174, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "algo-gated-sub"
+          capability: "core.text"
+          text: "opt-in START"
+          layout: { x: 483, y: 178, width: 174, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-gated"
+    ,
+{
+      id: "st-algo-gated"
       capability: "core.rect"
-      layout: { x: 549, y: 120, width: 116, height: 22 }
+      layout: { x: 549, y: 106, width: 116, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-gated-text"
+          id: "st-algo-gated-t"
           capability: "core.text"
           text: "FEATURE-GATED"
-          layout: { x: 549, y: 124, width: 116, height: 16 }
+          layout: { x: 549, y: 109, width: 116, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "evidence"
       capability: "core.rect"
-      layout: { x: 110, y: 275, width: 480, height: 54 }
+      layout: { x: 70, y: 240, width: 560, height: 70 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
       children: [
         {
           id: "evidence-title"
           capability: "core.text"
-          text: "Evidence"
-          layout: { x: 118, y: 293, width: 464, height: 22 }
+          text: "Evidence vocabulary"
+          layout: { x: 78, y: 252, width: 544, height: 18 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "evidence-detail"
           capability: "core.text"
-          text: "boundary · unit · integration · end-to-end"
-          layout: { x: 118, y: 317, width: 464, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          text: "every algorithm carries source-backed references"
+          layout: { x: 78, y: 274, width: 544, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "ev-boundary"
+      capability: "core.rect"
+      layout: { x: 100, y: 322, width: 118, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "ev-boundary-t"
+          capability: "core.text"
+          text: "boundary"
+          layout: { x: 100, y: 325, width: 118, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "ev-unit"
+      capability: "core.rect"
+      layout: { x: 230, y: 322, width: 118, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "ev-unit-t"
+          capability: "core.text"
+          text: "unit"
+          layout: { x: 230, y: 325, width: 118, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "ev-integration"
+      capability: "core.rect"
+      layout: { x: 360, y: 322, width: 118, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "ev-integration-t"
+          capability: "core.text"
+          text: "integration"
+          layout: { x: 360, y: 325, width: 118, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.tertiary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "ev-end-to-end"
+      capability: "core.rect"
+      layout: { x: 490, y: 322, width: 118, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "ev-end-to-end-t"
+          capability: "core.text"
+          text: "end-to-end"
+          layout: { x: 490, y: 325, width: 118, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
         }
       ]
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-built", at: 400, duration: 360, target: "algo-built", action: "enter" }
-    { id: "t-st-built", at: 450, duration: 280, target: "st-built", action: "enter" }
-    { id: "t-partial", at: 700, duration: 360, target: "algo-partial", action: "enter" }
-    { id: "t-st-partial", at: 750, duration: 280, target: "st-partial", action: "enter" }
-    { id: "t-gated", at: 1000, duration: 360, target: "algo-gated", action: "enter" }
-    { id: "t-st-gated", at: 1050, duration: 280, target: "st-gated", action: "enter" }
-    { id: "t-evidence", at: 1400, duration: 400, target: "evidence", action: "enter" }
-  { id: "t-emphasis-final", at: 2100, duration: 420, target: "algo-built", action: "emphasis" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-algo-built", at: 280, duration: 320, target: "algo-built", action: "enter" }
+    { id: "t-st-algo-built", at: 380, duration: 240, target: "st-algo-built", action: "enter" }
+    { id: "t-algo-partial", at: 460, duration: 320, target: "algo-partial", action: "enter" }
+    { id: "t-st-algo-partial", at: 560, duration: 240, target: "st-algo-partial", action: "enter" }
+    { id: "t-algo-gated", at: 640, duration: 320, target: "algo-gated", action: "enter" }
+    { id: "t-st-algo-gated", at: 740, duration: 240, target: "st-algo-gated", action: "enter" }
+    { id: "t-evidence", at: 820, duration: 320, target: "evidence", action: "enter" }
+    { id: "t-ev-boundary", at: 920, duration: 200, target: "ev-boundary", action: "enter" }
+    { id: "t-ev-unit", at: 990, duration: 200, target: "ev-unit", action: "enter" }
+    { id: "t-ev-integration", at: 1060, duration: 200, target: "ev-integration", action: "enter" }
+    { id: "t-ev-end-to-end", at: 1130, duration: 200, target: "ev-end-to-end", action: "enter" }
+  ]
     }
   }
 
   slide "fail-closed-eligibility" {
+
     eyebrow: "Eligibility · 3 of 16"
     title: "Fail closed before cells launch"
     lede: "Eligibility begins at execution-mode-dispatch, promotes a multi-cell request with controller-promotion, then validates run kind, budgets, storage, and artifacts. velo-feature-admission is explicitly feature-gated: a lean binary reports an unsupported role instead of silently running direct."
@@ -492,206 +806,271 @@ explainer "Cellular algorithm workbook" {
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
+    ,
+{
       id: "dispatch"
       capability: "core.rect"
-      layout: { x: 22, y: 150, width: 150, height: 72 }
+      layout: { x: 22, y: 150, width: 150, height: 88 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "dispatch-title"
           capability: "core.text"
           text: "execution-mode-dispatch"
-          layout: { x: 30, y: 168, width: 134, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 28, y: 168, width: 138, height: 20 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "dispatch-detail"
           capability: "core.text"
           text: "private protocol"
-          layout: { x: 30, y: 192, width: 134, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 28, y: 192, width: 138, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "dispatch-sub"
+          capability: "core.text"
+          text: "admit or refuse"
+          layout: { x: 28, y: 212, width: 138, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-d"
+    ,
+{
+      id: "st-dispatch"
       capability: "core.rect"
       layout: { x: 102, y: 138, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-d-text"
+          id: "st-dispatch-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 102, y: 142, width: 70, height: 16 }
+          layout: { x: 102, y: 141, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "a1"
-      capability: "core.line"
-      from: { x: 172, y: 186 }
-      to: { x: 205, y: 186 }
-      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+    ,
+{
+      id: "a0"
+      capability: "core.path"
+      d: "M172 194 H207"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "promote"
       capability: "core.rect"
-      layout: { x: 205, y: 150, width: 150, height: 72 }
+      layout: { x: 205, y: 150, width: 150, height: 88 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "promote-title"
           capability: "core.text"
           text: "controller-promotion"
-          layout: { x: 213, y: 168, width: 134, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 211, y: 168, width: 138, height: 20 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "promote-detail"
           capability: "core.text"
           text: "cells > 1"
-          layout: { x: 213, y: 192, width: 134, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 211, y: 192, width: 138, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "promote-sub"
+          capability: "core.text"
+          text: "admit or refuse"
+          layout: { x: 211, y: 212, width: 138, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-p"
+    ,
+{
+      id: "st-promote"
       capability: "core.rect"
       layout: { x: 285, y: 138, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-p-text"
+          id: "st-promote-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 285, y: 142, width: 70, height: 16 }
+          layout: { x: 285, y: 141, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "a2"
-      capability: "core.line"
-      from: { x: 355, y: 186 }
-      to: { x: 388, y: 186 }
-      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+    ,
+{
+      id: "a1"
+      capability: "core.path"
+      d: "M355 194 H390"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "validate"
       capability: "core.rect"
-      layout: { x: 388, y: 150, width: 150, height: 72 }
+      layout: { x: 388, y: 150, width: 150, height: 88 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "validate-title"
           capability: "core.text"
           text: "run-shape-validation"
-          layout: { x: 396, y: 168, width: 134, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 394, y: 168, width: 138, height: 20 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "validate-detail"
           capability: "core.text"
           text: "fail closed"
-          layout: { x: 396, y: 192, width: 134, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 394, y: 192, width: 138, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "validate-sub"
+          capability: "core.text"
+          text: "admit or refuse"
+          layout: { x: 394, y: 212, width: 138, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-v"
+    ,
+{
+      id: "st-validate"
       capability: "core.rect"
       layout: { x: 468, y: 138, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-v-text"
+          id: "st-validate-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 468, y: 142, width: 70, height: 16 }
+          layout: { x: 468, y: 141, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "a3"
-      capability: "core.line"
-      from: { x: 538, y: 186 }
-      to: { x: 570, y: 186 }
-      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+    ,
+{
+      id: "a2"
+      capability: "core.path"
+      d: "M538 194 H573"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "velo"
       capability: "core.rect"
-      layout: { x: 570, y: 150, width: 108, height: 72 }
+      layout: { x: 570, y: 150, width: 108, height: 88 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
       children: [
         {
           id: "velo-title"
           capability: "core.text"
           text: "Velo roles"
-          layout: { x: 578, y: 168, width: 92, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 576, y: 168, width: 96, height: 20 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "velo-detail"
           capability: "core.text"
           text: "admit"
-          layout: { x: 578, y: 192, width: 92, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 576, y: 192, width: 96, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "velo-sub"
+          capability: "core.text"
+          text: "lean → error"
+          layout: { x: 576, y: 212, width: 96, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "st-velo"
       capability: "core.rect"
-      layout: { x: 562, y: 138, width: 116, height: 22 }
+      layout: { x: 574, y: 138, width: 104, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-velo-text"
+          id: "st-velo-t"
           capability: "core.text"
-          text: "FEATURE-GATED"
-          layout: { x: 562, y: 142, width: 116, height: 16 }
+          text: "GATED"
+          layout: { x: 574, y: 141, width: 104, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
+      id: "foot"
+      capability: "core.text"
+      text: "fail closed before any cell launches"
+      layout: { x: 80, y: 280, width: 540, height: 18 }
+      style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+    }
+    ,
+{
+      id: "chip-backstop"
+      capability: "core.rect"
+      layout: { x: 200, y: 318, width: 300, height: 24 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-backstop-t"
+          capability: "core.text"
+          text: "execution-merge-backstops revalidates"
+          layout: { x: 200, y: 321, width: 300, height: 20 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
       id: "motion-sig"
       capability: "core.path"
       d: "M85 188 H610"
       layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-      accessibility: { label: "motion signal" }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-dispatch", at: 400, duration: 340, target: "dispatch", action: "enter" }
-    { id: "t-st-d", at: 450, duration: 260, target: "st-d", action: "enter" }
-    { id: "t-a1", at: 700, duration: 300, target: "a1", action: "draw" }
-    { id: "t-promote", at: 900, duration: 340, target: "promote", action: "enter" }
-    { id: "t-st-p", at: 950, duration: 260, target: "st-p", action: "enter" }
-    { id: "t-a2", at: 1200, duration: 300, target: "a2", action: "draw" }
-    { id: "t-validate", at: 1400, duration: 340, target: "validate", action: "enter" }
-    { id: "t-st-v", at: 1450, duration: 260, target: "st-v", action: "enter" }
-    { id: "t-a3", at: 1700, duration: 300, target: "a3", action: "draw" }
-    { id: "t-velo", at: 1900, duration: 340, target: "velo", action: "enter" }
-    { id: "t-st-velo", at: 1950, duration: 260, target: "st-velo", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    { id: "t-emphasis-final", at: 2100, duration: 420, target: "dispatch", action: "emphasis" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-dispatch", at: 280, duration: 280, target: "dispatch", action: "enter" }
+    { id: "t-st-dispatch", at: 370, duration: 200, target: "st-dispatch", action: "enter" }
+    { id: "t-a0", at: 420, duration: 220, target: "a0", action: "draw" }
+    { id: "t-promote", at: 490, duration: 280, target: "promote", action: "enter" }
+    { id: "t-st-promote", at: 580, duration: 200, target: "st-promote", action: "enter" }
+    { id: "t-a1", at: 630, duration: 220, target: "a1", action: "draw" }
+    { id: "t-validate", at: 700, duration: 280, target: "validate", action: "enter" }
+    { id: "t-st-validate", at: 790, duration: 200, target: "st-validate", action: "enter" }
+    { id: "t-a2", at: 840, duration: 220, target: "a2", action: "draw" }
+    { id: "t-velo", at: 910, duration: 280, target: "velo", action: "enter" }
+    { id: "t-st-velo", at: 1000, duration: 200, target: "st-velo", action: "enter" }
+    { id: "t-foot", at: 1050, duration: 260, target: "foot", action: "enter" }
+    { id: "t-chip-backstop", at: 1130, duration: 240, target: "chip-backstop", action: "enter" }
+    { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  ]
     }
   }
 
   slide "disjoint-ownership" {
+
     eyebrow: "Ownership · 4 of 16"
     title: "Tile work without gaps or collisions"
     lede: "modulo-cell-ownership assigns each global position to exactly one cell, while owned-positions-tiling proves the uneven slices still cover the whole budget. conversation-ownership advances a shared deterministic draw sequence and yields only the positions owned by that cell."
@@ -729,189 +1108,229 @@ explainer "Cellular algorithm workbook" {
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
-      id: "modulo"
+    ,
+{
+      id: "mod"
       capability: "core.rect"
-      layout: { x: 30, y: 145, width: 210, height: 72 }
+      layout: { x: 30, y: 120, width: 210, height: 100 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
-          id: "modulo-title"
+          id: "mod-title"
           capability: "core.text"
           text: "modulo-cell-ownership"
-          layout: { x: 38, y: 163, width: 194, height: 22 }
+          layout: { x: 38, y: 140, width: 194, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
-          id: "modulo-detail"
+          id: "mod-detail"
           capability: "core.text"
           text: "i % N == k"
-          layout: { x: 38, y: 187, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 38, y: 164, width: 194, height: 16 }
+          style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "mod-sub"
+          capability: "core.text"
+          text: "request · graph · conversation"
+          layout: { x: 38, y: 186, width: 194, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "st-mod"
       capability: "core.rect"
-      layout: { x: 170, y: 133, width: 70, height: 22 }
+      layout: { x: 170, y: 108, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-mod-text"
+          id: "st-mod-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 170, y: 137, width: 70, height: 16 }
+          layout: { x: 170, y: 111, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "o1"
-      capability: "core.line"
-      from: { x: 240, y: 181 }
-      to: { x: 290, y: 181 }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a0"
+      capability: "core.path"
+      d: "M240 170 H290"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
-    {
-      id: "c0"
+    ,
+{
+      id: "cell-0"
       capability: "core.rect"
       layout: { x: 290, y: 105, width: 170, height: 58 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
-          id: "c0-title"
+          id: "cell-0-t"
           capability: "core.text"
           text: "cell 0"
-          layout: { x: 298, y: 123, width: 154, height: 22 }
+          layout: { x: 298, y: 117, width: 154, height: 18 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
-          id: "c0-detail"
+          id: "cell-0-d"
           capability: "core.text"
           text: "0, 3, 6, …"
-          layout: { x: 298, y: 147, width: 154, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 298, y: 139, width: 154, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "c1"
+    ,
+{
+      id: "cell-1"
       capability: "core.rect"
       layout: { x: 290, y: 181, width: 170, height: 58 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
-          id: "c1-title"
+          id: "cell-1-t"
           capability: "core.text"
           text: "cell 1"
-          layout: { x: 298, y: 199, width: 154, height: 22 }
+          layout: { x: 298, y: 193, width: 154, height: 18 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
-          id: "c1-detail"
+          id: "cell-1-d"
           capability: "core.text"
           text: "1, 4, 7, …"
-          layout: { x: 298, y: 223, width: 154, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 298, y: 215, width: 154, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "c2"
+    ,
+{
+      id: "cell-2"
       capability: "core.rect"
       layout: { x: 290, y: 257, width: 170, height: 58 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
-          id: "c2-title"
+          id: "cell-2-t"
           capability: "core.text"
           text: "cell 2"
-          layout: { x: 298, y: 275, width: 154, height: 22 }
+          layout: { x: 298, y: 269, width: 154, height: 18 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
-          id: "c2-detail"
+          id: "cell-2-d"
           capability: "core.text"
           text: "2, 5, 8, …"
-          layout: { x: 298, y: 299, width: 154, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 298, y: 291, width: 154, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "conv"
       capability: "core.rect"
-      layout: { x: 500, y: 145, width: 170, height: 72 }
+      layout: { x: 500, y: 120, width: 170, height: 100 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "conv-title"
           capability: "core.text"
           text: "conversation-ownership"
-          layout: { x: 508, y: 163, width: 154, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 508, y: 140, width: 154, height: 20 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "conv-detail"
           capability: "core.text"
           text: "whole sessions"
-          layout: { x: 508, y: 187, width: 154, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 508, y: 164, width: 154, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "conv-sub"
+          capability: "core.text"
+          text: "turns never split"
+          layout: { x: 508, y: 186, width: 154, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "st-conv"
       capability: "core.rect"
-      layout: { x: 554, y: 133, width: 70, height: 22 }
+      layout: { x: 600, y: 108, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-conv-text"
+          id: "st-conv-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 554, y: 137, width: 70, height: 16 }
+          layout: { x: 600, y: 111, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "inv"
+    ,
+{
+      id: "foot"
       capability: "core.text"
-      text: "disjoint + complete"
-      layout: { x: 100, y: 340, width: 500, height: 20 }
-      style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
+      text: "disjoint + complete · issuance stamps ordinals"
+      layout: { x: 80, y: 340, width: 540, height: 18 }
+      style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
     }
-    {
+    ,
+{
+      id: "chip-tile"
+      capability: "core.rect"
+      layout: { x: 240, y: 365, width: 220, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-tile-t"
+          capability: "core.text"
+          text: "owned-positions-tiling"
+          layout: { x: 240, y: 368, width: 220, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
       id: "motion-sig"
       capability: "core.path"
       d: "M115 190 H585"
       layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-      accessibility: { label: "motion signal" }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-modulo", at: 400, duration: 360, target: "modulo", action: "enter" }
-    { id: "t-st-mod", at: 450, duration: 260, target: "st-mod", action: "enter" }
-    { id: "t-o1", at: 700, duration: 300, target: "o1", action: "draw" }
-    { id: "t-c0", at: 900, duration: 300, target: "c0", action: "enter" }
-    { id: "t-c1", at: 1050, duration: 300, target: "c1", action: "enter" }
-    { id: "t-c2", at: 1200, duration: 300, target: "c2", action: "enter" }
-    { id: "t-conv", at: 1450, duration: 360, target: "conv", action: "enter" }
-    { id: "t-st-conv", at: 1500, duration: 260, target: "st-conv", action: "enter" }
-    { id: "t-inv", at: 1800, duration: 300, target: "inv", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    { id: "t-emphasis-final", at: 2100, duration: 420, target: "modulo", action: "emphasis" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-mod", at: 280, duration: 300, target: "mod", action: "enter" }
+    { id: "t-st-mod", at: 370, duration: 200, target: "st-mod", action: "enter" }
+    { id: "t-a0", at: 430, duration: 240, target: "a0", action: "draw" }
+    { id: "t-cell-0", at: 510, duration: 240, target: "cell-0", action: "enter" }
+    { id: "t-cell-1", at: 580, duration: 240, target: "cell-1", action: "enter" }
+    { id: "t-cell-2", at: 650, duration: 240, target: "cell-2", action: "enter" }
+    { id: "t-conv", at: 720, duration: 300, target: "conv", action: "enter" }
+    { id: "t-st-conv", at: 810, duration: 200, target: "st-conv", action: "enter" }
+    { id: "t-foot", at: 870, duration: 280, target: "foot", action: "enter" }
+    { id: "t-chip-tile", at: 950, duration: 220, target: "chip-tile", action: "enter" }
+    { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  ]
     }
   }
 
   slide "control-plane" {
+
     eyebrow: "Control · 5 of 16"
     title: "Coordinate generations and process state"
     lede: "broadcast-attach-replay closes the replay-plus-live race, and phaser-generation-advance makes progress monotonic. synchronized-start is the default Velo-gated rendezvous; phaser-start is an opt-in feature-gated path. The gate changes coordination, never ownership."
@@ -949,167 +1368,231 @@ explainer "Cellular algorithm workbook" {
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
+    ,
+{
       id: "replay"
       capability: "core.rect"
-      layout: { x: 22, y: 150, width: 185, height: 72 }
+      layout: { x: 22, y: 132, width: 185, height: 96 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "replay-title"
           capability: "core.text"
           text: "broadcast-attach-replay"
-          layout: { x: 30, y: 168, width: 169, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 30, y: 150, width: 169, height: 20 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "replay-detail"
           capability: "core.text"
           text: "close seam race"
-          layout: { x: 30, y: 192, width: 169, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 30, y: 174, width: 169, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "replay-sub"
+          capability: "core.text"
+          text: "replay ∪ live"
+          layout: { x: 30, y: 196, width: 169, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-r"
+    ,
+{
+      id: "st-replay"
       capability: "core.rect"
-      layout: { x: 137, y: 138, width: 70, height: 22 }
+      layout: { x: 137, y: 120, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-r-text"
+          id: "st-replay-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 137, y: 142, width: 70, height: 16 }
+          layout: { x: 137, y: 123, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "c1"
-      capability: "core.line"
-      from: { x: 207, y: 186 }
-      to: { x: 250, y: 186 }
-      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+    ,
+{
+      id: "a0"
+      capability: "core.path"
+      d: "M207 180 H250"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.2 }
     }
-    {
-      id: "gen"
+    ,
+{
+      id: "phaser"
       capability: "core.rect"
-      layout: { x: 250, y: 150, width: 195, height: 72 }
+      layout: { x: 250, y: 132, width: 195, height: 96 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
-          id: "gen-title"
+          id: "phaser-title"
           capability: "core.text"
           text: "phaser-generation-advance"
-          layout: { x: 258, y: 168, width: 179, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 258, y: 150, width: 179, height: 20 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "gen-detail"
+          id: "phaser-detail"
           capability: "core.text"
           text: "monotonic"
-          layout: { x: 258, y: 192, width: 179, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 258, y: 174, width: 179, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "phaser-sub"
+          capability: "core.text"
+          text: "≥ generation"
+          layout: { x: 258, y: 196, width: 179, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-g"
+    ,
+{
+      id: "st-phaser"
       capability: "core.rect"
-      layout: { x: 375, y: 138, width: 70, height: 22 }
+      layout: { x: 375, y: 120, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-g-text"
+          id: "st-phaser-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 375, y: 142, width: 70, height: 16 }
+          layout: { x: 375, y: 123, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "c2"
-      capability: "core.line"
-      from: { x: 445, y: 186 }
-      to: { x: 488, y: 186 }
-      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+    ,
+{
+      id: "a1"
+      capability: "core.path"
+      d: "M445 180 H488"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "start"
       capability: "core.rect"
-      layout: { x: 488, y: 150, width: 190, height: 72 }
+      layout: { x: 488, y: 132, width: 190, height: 96 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
       children: [
         {
           id: "start-title"
           capability: "core.text"
           text: "phaser-start"
-          layout: { x: 496, y: 168, width: 174, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 496, y: 150, width: 174, height: 20 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "start-detail"
           capability: "core.text"
           text: "opt-in START"
-          layout: { x: 496, y: 192, width: 174, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 496, y: 174, width: 174, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "start-sub"
+          capability: "core.text"
+          text: "Velo rendezvous"
+          layout: { x: 496, y: 196, width: 174, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-s"
+    ,
+{
+      id: "st-start"
       capability: "core.rect"
-      layout: { x: 562, y: 138, width: 116, height: 22 }
+      layout: { x: 562, y: 120, width: 116, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-s-text"
+          id: "st-start-t"
           capability: "core.text"
           text: "FEATURE-GATED"
-          layout: { x: 562, y: 142, width: 116, height: 16 }
+          layout: { x: 562, y: 123, width: 116, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "ctrl-note"
+    ,
+{
+      id: "foot"
       capability: "core.text"
       text: "coordination changes · ownership does not"
-      layout: { x: 80, y: 292, width: 540, height: 24 }
-      style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
+      layout: { x: 80, y: 280, width: 540, height: 18 }
+      style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
     }
-    {
+    ,
+{
+      id: "chip-arb"
+      capability: "core.rect"
+      layout: { x: 160, y: 318, width: 180, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-arb-t"
+          capability: "core.text"
+          text: "child arbitration"
+          layout: { x: 160, y: 321, width: 180, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "chip-sync"
+      capability: "core.rect"
+      layout: { x: 360, y: 318, width: 180, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-sync-t"
+          capability: "core.text"
+          text: "synchronized-start"
+          layout: { x: 360, y: 321, width: 180, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
       id: "motion-sig"
       capability: "core.path"
       d: "M90 205 H610"
       layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-      accessibility: { label: "motion signal" }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-replay", at: 400, duration: 340, target: "replay", action: "enter" }
-    { id: "t-st-r", at: 450, duration: 260, target: "st-r", action: "enter" }
-    { id: "t-c1", at: 700, duration: 300, target: "c1", action: "draw" }
-    { id: "t-gen", at: 900, duration: 340, target: "gen", action: "enter" }
-    { id: "t-st-g", at: 950, duration: 260, target: "st-g", action: "enter" }
-    { id: "t-c2", at: 1200, duration: 300, target: "c2", action: "draw" }
-    { id: "t-start", at: 1400, duration: 340, target: "start", action: "enter" }
-    { id: "t-st-s", at: 1450, duration: 260, target: "st-s", action: "enter" }
-    { id: "t-ctrl-note", at: 1750, duration: 300, target: "ctrl-note", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    { id: "t-emphasis-final", at: 2100, duration: 420, target: "replay", action: "emphasis" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-replay", at: 280, duration: 300, target: "replay", action: "enter" }
+    { id: "t-st-replay", at: 370, duration: 200, target: "st-replay", action: "enter" }
+    { id: "t-a0", at: 420, duration: 220, target: "a0", action: "draw" }
+    { id: "t-phaser", at: 490, duration: 300, target: "phaser", action: "enter" }
+    { id: "t-st-phaser", at: 580, duration: 200, target: "st-phaser", action: "enter" }
+    { id: "t-a1", at: 630, duration: 220, target: "a1", action: "draw" }
+    { id: "t-start", at: 700, duration: 300, target: "start", action: "enter" }
+    { id: "t-st-start", at: 790, duration: 200, target: "st-start", action: "enter" }
+    { id: "t-foot", at: 840, duration: 260, target: "foot", action: "enter" }
+    { id: "t-chip-arb", at: 920, duration: 200, target: "chip-arb", action: "enter" }
+    { id: "t-chip-sync", at: 980, duration: 200, target: "chip-sync", action: "enter" }
+    { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  ]
     }
   }
 
   slide "distribution-path" {
+
     eyebrow: "Distribution · 6 of 16"
     title: "Deliver or regenerate only owned work"
     lede: "canonical-dataset-regeneration remains the measured path. controller-fanout-generation is a feature-gated verification overlay that publishes chunks and builds owned indexes; it never replaces canonical execution data. distribution-miss counts and surfaces an unindexed issue instead of skipping it."
@@ -1143,162 +1626,192 @@ explainer "Cellular algorithm workbook" {
     {
       id: "note"
       capability: "core.text"
-      text: "canonical path · optional verification overlay."
+      text: "canonical path · optional overlay."
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
+    ,
+{
       id: "canon"
       capability: "core.rect"
-      layout: { x: 35, y: 122, width: 220, height: 72 }
+      layout: { x: 35, y: 100, width: 220, height: 96 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "canon-title"
           capability: "core.text"
           text: "canonical-regeneration"
-          layout: { x: 43, y: 140, width: 204, height: 22 }
+          layout: { x: 43, y: 118, width: 204, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "canon-detail"
           capability: "core.text"
           text: "measured data"
-          layout: { x: 43, y: 164, width: 204, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 43, y: 142, width: 204, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "canon-sub"
+          capability: "core.text"
+          text: "never replaced by overlay"
+          layout: { x: 43, y: 164, width: 204, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "st-canon"
       capability: "core.rect"
-      layout: { x: 185, y: 110, width: 70, height: 22 }
+      layout: { x: 185, y: 88, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-canon-text"
+          id: "st-canon-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 185, y: 114, width: 70, height: 16 }
+          layout: { x: 185, y: 91, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "fanout"
       capability: "core.rect"
-      layout: { x: 35, y: 245, width: 220, height: 72 }
+      layout: { x: 35, y: 230, width: 220, height: 96 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
       children: [
         {
           id: "fanout-title"
           capability: "core.text"
           text: "controller-fanout-generation"
-          layout: { x: 43, y: 263, width: 204, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 43, y: 248, width: 204, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "fanout-detail"
           capability: "core.text"
           text: "verification overlay"
-          layout: { x: 43, y: 287, width: 204, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 43, y: 272, width: 204, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "fanout-sub"
+          capability: "core.text"
+          text: "chunks + owned indexes"
+          layout: { x: 43, y: 294, width: 204, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-fan"
+    ,
+{
+      id: "st-fanout"
       capability: "core.rect"
-      layout: { x: 139, y: 233, width: 116, height: 22 }
+      layout: { x: 139, y: 218, width: 116, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-fan-text"
+          id: "st-fanout-t"
           capability: "core.text"
           text: "FEATURE-GATED"
-          layout: { x: 139, y: 237, width: 116, height: 16 }
+          layout: { x: 139, y: 221, width: 116, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "d1"
-      capability: "core.line"
-      from: { x: 255, y: 158 }
-      to: { x: 440, y: 158 }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "d2"
+    ,
+{
+      id: "a0"
       capability: "core.path"
-      d: "M255 281 C340 275 375 230 440 210"
-      layout: { x: 255, y: 210, width: 185, height: 71 }
+      d: "M255 148 H440"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    ,
+{
+      id: "a1"
+      capability: "core.path"
+      d: "M255 278 C340 272 375 230 440 210"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "miss"
       capability: "core.rect"
-      layout: { x: 440, y: 174, width: 225, height: 72 }
+      layout: { x: 440, y: 158, width: 225, height: 110 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "miss-title"
           capability: "core.text"
           text: "distribution-miss"
-          layout: { x: 448, y: 192, width: 209, height: 22 }
+          layout: { x: 448, y: 178, width: 209, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "miss-detail"
           capability: "core.text"
           text: "count · surface · recover"
-          layout: { x: 448, y: 216, width: 209, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 448, y: 204, width: 209, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "miss-sub"
+          capability: "core.text"
+          text: "DispatchDecision::Miss"
+          layout: { x: 448, y: 228, width: 209, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "st-miss"
       capability: "core.rect"
-      layout: { x: 595, y: 162, width: 70, height: 22 }
+      layout: { x: 595, y: 146, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-miss-text"
+          id: "st-miss-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 595, y: 166, width: 70, height: 16 }
+          layout: { x: 595, y: 149, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "motion-sig"
       capability: "core.path"
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-      accessibility: { label: "motion signal" }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-canon", at: 400, duration: 340, target: "canon", action: "enter" }
-    { id: "t-st-canon", at: 450, duration: 260, target: "st-canon", action: "enter" }
-    { id: "t-fanout", at: 700, duration: 340, target: "fanout", action: "enter" }
-    { id: "t-st-fan", at: 750, duration: 260, target: "st-fan", action: "enter" }
-    { id: "t-d1", at: 1000, duration: 300, target: "d1", action: "draw" }
-    { id: "t-d2", at: 1100, duration: 300, target: "d2", action: "draw" }
-    { id: "t-miss", at: 1350, duration: 360, target: "miss", action: "enter" }
-    { id: "t-st-miss", at: 1400, duration: 260, target: "st-miss", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-canon", at: 280, duration: 300, target: "canon", action: "enter" }
+    { id: "t-st-canon", at: 370, duration: 200, target: "st-canon", action: "enter" }
+    { id: "t-fanout", at: 420, duration: 300, target: "fanout", action: "enter" }
+    { id: "t-st-fanout", at: 510, duration: 200, target: "st-fanout", action: "enter" }
+    { id: "t-a0", at: 560, duration: 280, target: "a0", action: "draw" }
+    { id: "t-a1", at: 640, duration: 320, target: "a1", action: "draw" }
+    { id: "t-miss", at: 730, duration: 320, target: "miss", action: "enter" }
+    { id: "t-st-miss", at: 820, duration: 200, target: "st-miss", action: "enter" }
+    { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  ]
     }
   }
 
   slide "two-level-execution" {
+
     eyebrow: "Execution · 7 of 16"
     title: "Nest cell and worker shards"
     lede: "two-level-partition first assigns work to cells and then to thread-per-core workers. scheduled-shard-runtime runs each worker-local sink, while issuance-dispatch-injection carries the global ordinal authority into capture. Graph and scheduled programs branch only after the owned envelope arrives."
@@ -1332,177 +1845,210 @@ explainer "Cellular algorithm workbook" {
     {
       id: "note"
       capability: "core.text"
-      text: "global run → cell slice → worker shard."
+      text: "cell ownership → worker sinks."
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
-      id: "tlp"
+    ,
+{
+      id: "part"
       capability: "core.rect"
-      layout: { x: 30, y: 150, width: 175, height: 72 }
+      layout: { x: 30, y: 132, width: 175, height: 100 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
-          id: "tlp-title"
+          id: "part-title"
           capability: "core.text"
           text: "two-level-partition"
-          layout: { x: 38, y: 168, width: 159, height: 22 }
+          layout: { x: 38, y: 152, width: 159, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
-          id: "tlp-detail"
+          id: "part-detail"
           capability: "core.text"
           text: "cell ownership"
-          layout: { x: 38, y: 192, width: 159, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 38, y: 176, width: 159, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "part-sub"
+          capability: "core.text"
+          text: "then worker shards"
+          layout: { x: 38, y: 198, width: 159, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-tlp"
+    ,
+{
+      id: "st-part"
       capability: "core.rect"
-      layout: { x: 135, y: 138, width: 70, height: 22 }
+      layout: { x: 135, y: 120, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-tlp-text"
+          id: "st-part-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 135, y: 142, width: 70, height: 16 }
+          layout: { x: 135, y: 123, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "e1"
-      capability: "core.line"
-      from: { x: 205, y: 186 }
-      to: { x: 260, y: 186 }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a0"
+      capability: "core.path"
+      d: "M205 182 H260"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "w0"
       capability: "core.rect"
-      layout: { x: 260, y: 108, width: 180, height: 64 }
+      layout: { x: 260, y: 92, width: 180, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
-          id: "w0-title"
+          id: "w0-t"
           capability: "core.text"
           text: "worker 0"
-          layout: { x: 268, y: 126, width: 164, height: 22 }
+          layout: { x: 268, y: 110, width: 164, height: 18 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
-          id: "w0-detail"
+          id: "w0-d"
           capability: "core.text"
           text: "!Send local sink"
-          layout: { x: 268, y: 150, width: 164, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 268, y: 134, width: 164, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "w1"
       capability: "core.rect"
-      layout: { x: 260, y: 225, width: 180, height: 64 }
+      layout: { x: 260, y: 220, width: 180, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
-          id: "w1-title"
+          id: "w1-t"
           capability: "core.text"
           text: "worker 1"
-          layout: { x: 268, y: 243, width: 164, height: 22 }
+          layout: { x: 268, y: 238, width: 164, height: 18 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
-          id: "w1-detail"
+          id: "w1-d"
           capability: "core.text"
           text: "!Send local sink"
-          layout: { x: 268, y: 267, width: 164, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 268, y: 262, width: 164, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "e2"
-      capability: "core.line"
-      from: { x: 440, y: 140 }
-      to: { x: 500, y: 140 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a1"
+      capability: "core.path"
+      d: "M440 128 H500"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
     }
-    {
-      id: "e3"
-      capability: "core.line"
-      from: { x: 440, y: 257 }
-      to: { x: 500, y: 257 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a2"
+      capability: "core.path"
+      d: "M440 256 H500"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "iss"
       capability: "core.rect"
-      layout: { x: 500, y: 150, width: 170, height: 72 }
+      layout: { x: 500, y: 132, width: 170, height: 100 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "iss-title"
           capability: "core.text"
-          text: "issuance-dispatch-injection"
-          layout: { x: 508, y: 168, width: 154, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          text: "issuance-dispatch"
+          layout: { x: 508, y: 152, width: 154, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "iss-detail"
           capability: "core.text"
           text: "global identity"
-          layout: { x: 508, y: 192, width: 154, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 508, y: 176, width: 154, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "iss-sub"
+          capability: "core.text"
+          text: "interleaved ordinals"
+          layout: { x: 508, y: 198, width: 154, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "st-iss"
       capability: "core.rect"
-      layout: { x: 554, y: 138, width: 70, height: 22 }
+      layout: { x: 600, y: 120, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-iss-text"
+          id: "st-iss-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 554, y: 142, width: 70, height: 16 }
+          layout: { x: 600, y: 123, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
+      id: "foot"
+      capability: "core.text"
+      text: "cell partitions · workers stay local"
+      layout: { x: 80, y: 340, width: 540, height: 18 }
+      style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+    }
+    ,
+{
       id: "motion-sig"
       capability: "core.path"
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-      accessibility: { label: "motion signal" }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-tlp", at: 400, duration: 340, target: "tlp", action: "enter" }
-    { id: "t-st-tlp", at: 450, duration: 260, target: "st-tlp", action: "enter" }
-    { id: "t-e1", at: 700, duration: 300, target: "e1", action: "draw" }
-    { id: "t-w0", at: 900, duration: 300, target: "w0", action: "enter" }
-    { id: "t-w1", at: 1050, duration: 300, target: "w1", action: "enter" }
-    { id: "t-e2", at: 1250, duration: 280, target: "e2", action: "draw" }
-    { id: "t-e3", at: 1350, duration: 280, target: "e3", action: "draw" }
-    { id: "t-iss", at: 1550, duration: 340, target: "iss", action: "enter" }
-    { id: "t-st-iss", at: 1600, duration: 260, target: "st-iss", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-part", at: 280, duration: 300, target: "part", action: "enter" }
+    { id: "t-st-part", at: 370, duration: 200, target: "st-part", action: "enter" }
+    { id: "t-a0", at: 420, duration: 240, target: "a0", action: "draw" }
+    { id: "t-w0", at: 490, duration: 260, target: "w0", action: "enter" }
+    { id: "t-w1", at: 560, duration: 260, target: "w1", action: "enter" }
+    { id: "t-a1", at: 630, duration: 240, target: "a1", action: "draw" }
+    { id: "t-a2", at: 700, duration: 240, target: "a2", action: "draw" }
+    { id: "t-iss", at: 770, duration: 300, target: "iss", action: "enter" }
+    { id: "t-st-iss", at: 860, duration: 200, target: "st-iss", action: "enter" }
+    { id: "t-foot", at: 910, duration: 260, target: "foot", action: "enter" }
+    { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  ]
     }
   }
 
   slide "capture-modes" {
+
     eyebrow: "Capture · 8 of 16"
     title: "Choose retain, exact fold, or sketch"
     lede: "terminal-record-finalization closes one observation stream. retain-record-capture keeps rows in dispatch order; streaming-exact-fold appends exact aggregates and drops rows; tagged-sketch-merge bounds distribution memory while retaining exact counts and moments. Storage choice determines later artifact authority."
@@ -1536,184 +2082,207 @@ explainer "Cellular algorithm workbook" {
     {
       id: "note"
       capability: "core.text"
-      text: "finalize once · select storage fidelity."
+      text: "finalization → storage mode."
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
+    ,
+{
       id: "term"
       capability: "core.rect"
-      layout: { x: 20, y: 150, width: 165, height: 72 }
+      layout: { x: 20, y: 132, width: 165, height: 100 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "term-title"
           capability: "core.text"
           text: "terminal-record-finalization"
-          layout: { x: 28, y: 168, width: 149, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 28, y: 150, width: 149, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "term-detail"
           capability: "core.text"
           text: "CapturedRecord"
-          layout: { x: 28, y: 192, width: 149, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 28, y: 174, width: 149, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "term-sub"
+          capability: "core.text"
+          text: "one terminal shape"
+          layout: { x: 28, y: 196, width: 149, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "st-term"
       capability: "core.rect"
-      layout: { x: 115, y: 138, width: 70, height: 22 }
+      layout: { x: 115, y: 120, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-term-text"
+          id: "st-term-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 115, y: 142, width: 70, height: 16 }
+          layout: { x: 115, y: 123, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "cap1"
-      capability: "core.line"
-      from: { x: 185, y: 186 }
-      to: { x: 225, y: 186 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a0"
+      capability: "core.path"
+      d: "M185 182 H225"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
     }
-    {
-      id: "retain"
+    ,
+{
+      id: "mode-0"
       capability: "core.rect"
       layout: { x: 225, y: 92, width: 210, height: 60 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
-          id: "retain-title"
+          id: "mode-0-t"
           capability: "core.text"
           text: "retain-record-capture"
-          layout: { x: 233, y: 110, width: 194, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 233, y: 104, width: 194, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "retain-detail"
+          id: "mode-0-d"
           capability: "core.text"
           text: "rows + raw artifacts"
-          layout: { x: 233, y: 134, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 233, y: 126, width: 194, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "fold"
+    ,
+{
+      id: "mode-1"
       capability: "core.rect"
       layout: { x: 225, y: 170, width: 210, height: 60 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
-          id: "fold-title"
+          id: "mode-1-t"
           capability: "core.text"
           text: "streaming-exact-fold"
-          layout: { x: 233, y: 188, width: 194, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 233, y: 182, width: 194, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "fold-detail"
+          id: "mode-1-d"
           capability: "core.text"
           text: "exact store · drop row"
-          layout: { x: 233, y: 212, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 233, y: 204, width: 194, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "sketch"
+    ,
+{
+      id: "mode-2"
       capability: "core.rect"
       layout: { x: 225, y: 248, width: 210, height: 60 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
       children: [
         {
-          id: "sketch-title"
+          id: "mode-2-t"
           capability: "core.text"
           text: "tagged-sketch-merge"
-          layout: { x: 233, y: 266, width: 194, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 233, y: 260, width: 194, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "sketch-detail"
+          id: "mode-2-d"
           capability: "core.text"
           text: "bounded percentiles"
-          layout: { x: 233, y: 290, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 233, y: 282, width: 194, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "compat"
       capability: "core.rect"
-      layout: { x: 485, y: 150, width: 190, height: 72 }
+      layout: { x: 485, y: 132, width: 190, height: 100 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "compat-title"
           capability: "core.text"
           text: "storage compatibility"
-          layout: { x: 493, y: 168, width: 174, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 493, y: 152, width: 174, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "compat-detail"
           capability: "core.text"
           text: "artifact authority"
-          layout: { x: 493, y: 192, width: 174, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 493, y: 176, width: 174, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "compat-sub"
+          capability: "core.text"
+          text: "mode ↔ export contract"
+          layout: { x: 493, y: 198, width: 174, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "st-compat"
       capability: "core.rect"
-      layout: { x: 605, y: 138, width: 70, height: 22 }
+      layout: { x: 605, y: 120, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-compat-text"
+          id: "st-compat-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 605, y: 142, width: 70, height: 16 }
+          layout: { x: 605, y: 123, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "motion-sig"
       capability: "core.path"
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-      accessibility: { label: "motion signal" }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-term", at: 400, duration: 340, target: "term", action: "enter" }
-    { id: "t-st-term", at: 450, duration: 260, target: "st-term", action: "enter" }
-    { id: "t-cap1", at: 700, duration: 300, target: "cap1", action: "draw" }
-    { id: "t-retain", at: 900, duration: 300, target: "retain", action: "enter" }
-    { id: "t-fold", at: 1050, duration: 300, target: "fold", action: "enter" }
-    { id: "t-sketch", at: 1200, duration: 300, target: "sketch", action: "enter" }
-    { id: "t-compat", at: 1450, duration: 340, target: "compat", action: "enter" }
-    { id: "t-st-compat", at: 1500, duration: 260, target: "st-compat", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-term", at: 280, duration: 300, target: "term", action: "enter" }
+    { id: "t-st-term", at: 370, duration: 200, target: "st-term", action: "enter" }
+    { id: "t-a0", at: 420, duration: 240, target: "a0", action: "draw" }
+    { id: "t-mode-0", at: 490, duration: 240, target: "mode-0", action: "enter" }
+    { id: "t-mode-1", at: 560, duration: 240, target: "mode-1", action: "enter" }
+    { id: "t-mode-2", at: 630, duration: 240, target: "mode-2", action: "enter" }
+    { id: "t-compat", at: 700, duration: 300, target: "compat", action: "enter" }
+    { id: "t-st-compat", at: 790, duration: 200, target: "st-compat", action: "enter" }
+    { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  ]
     }
   }
 
   slide "merge-laws" {
+
     eyebrow: "Merge · 9 of 16"
     title: "Reduce under an explicit merge law"
     lede: "scheduled-global-ordinal-merge validates a dense permutation and re-ingests retained rows in global order. Graph retain uses deterministic concatenation and renumbering. exact-fold-store-merge and sketch-tdigest-merge reduce bounded stores, while final-report-assembly remains partial because later artifact failure cannot roll back earlier exports."
@@ -1747,162 +2316,192 @@ explainer "Cellular algorithm workbook" {
     {
       id: "note"
       capability: "core.text"
-      text: "partition set → validated reduction → report."
+      text: "ordinal merge · fidelity boundary."
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
-      id: "sgom"
+    ,
+{
+      id: "ord"
       capability: "core.rect"
-      layout: { x: 25, y: 116, width: 220, height: 72 }
+      layout: { x: 25, y: 95, width: 220, height: 100 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
-          id: "sgom-title"
+          id: "ord-title"
           capability: "core.text"
           text: "scheduled-global-ordinal-merge"
-          layout: { x: 33, y: 134, width: 204, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 33, y: 115, width: 204, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "sgom-detail"
+          id: "ord-detail"
           capability: "core.text"
           text: "dense permutation"
-          layout: { x: 33, y: 158, width: 204, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 33, y: 140, width: 204, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "ord-sub"
+          capability: "core.text"
+          text: "stable global order"
+          layout: { x: 33, y: 164, width: 204, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-sgom"
+    ,
+{
+      id: "st-ord"
       capability: "core.rect"
-      layout: { x: 175, y: 104, width: 70, height: 22 }
+      layout: { x: 175, y: 83, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-sgom-text"
+          id: "st-ord-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 175, y: 108, width: 70, height: 16 }
+          layout: { x: 175, y: 86, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "fidelity"
+    ,
+{
+      id: "fid"
       capability: "core.rect"
-      layout: { x: 25, y: 246, width: 220, height: 72 }
+      layout: { x: 25, y: 230, width: 220, height: 100 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
       children: [
         {
-          id: "fidelity-title"
+          id: "fid-title"
           capability: "core.text"
           text: "merged-report-fidelity-boundary"
-          layout: { x: 33, y: 264, width: 204, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 33, y: 250, width: 204, height: 16 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "fidelity-detail"
+          id: "fid-detail"
           capability: "core.text"
           text: "graph · fold · sketch"
-          layout: { x: 33, y: 288, width: 204, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 33, y: 274, width: 204, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "fid-sub"
+          capability: "core.text"
+          text: "named limitation"
+          layout: { x: 33, y: 298, width: 204, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "st-fid"
       capability: "core.rect"
-      layout: { x: 175, y: 234, width: 70, height: 22 }
+      layout: { x: 175, y: 218, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-fid-text"
+          id: "st-fid-t"
           capability: "core.text"
           text: "PARTIAL"
-          layout: { x: 175, y: 238, width: 70, height: 16 }
+          layout: { x: 175, y: 221, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "m1"
+    ,
+{
+      id: "a0"
       capability: "core.path"
-      d: "M245 152 C350 155 385 182 445 195"
-      layout: { x: 245, y: 152, width: 200, height: 43 }
+      d: "M245 145 C350 148 385 175 445 188"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
     }
-    {
-      id: "m2"
+    ,
+{
+      id: "a1"
       capability: "core.path"
-      d: "M245 282 C350 275 385 228 445 210"
-      layout: { x: 245, y: 210, width: 200, height: 72 }
+      d: "M245 280 C350 273 385 226 445 210"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
     }
-    {
-      id: "report"
+    ,
+{
+      id: "asm"
       capability: "core.rect"
-      layout: { x: 445, y: 165, width: 225, height: 72 }
+      layout: { x: 445, y: 150, width: 225, height: 110 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
       children: [
         {
-          id: "report-title"
+          id: "asm-title"
           capability: "core.text"
           text: "final-report-assembly"
-          layout: { x: 453, y: 183, width: 209, height: 22 }
+          layout: { x: 453, y: 170, width: 209, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
-          id: "report-detail"
+          id: "asm-detail"
           capability: "core.text"
           text: "publish merged report"
-          layout: { x: 453, y: 207, width: 209, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 453, y: 196, width: 209, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "asm-sub"
+          capability: "core.text"
+          text: "one authoritative artifact"
+          layout: { x: 453, y: 220, width: 209, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-rep"
+    ,
+{
+      id: "st-asm"
       capability: "core.rect"
-      layout: { x: 600, y: 153, width: 70, height: 22 }
+      layout: { x: 600, y: 138, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-rep-text"
+          id: "st-asm-t"
           capability: "core.text"
           text: "PARTIAL"
-          layout: { x: 600, y: 157, width: 70, height: 16 }
+          layout: { x: 600, y: 141, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "motion-sig"
       capability: "core.path"
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-      accessibility: { label: "motion signal" }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-sgom", at: 400, duration: 340, target: "sgom", action: "enter" }
-    { id: "t-st-sgom", at: 450, duration: 260, target: "st-sgom", action: "enter" }
-    { id: "t-fidelity", at: 700, duration: 340, target: "fidelity", action: "enter" }
-    { id: "t-st-fid", at: 750, duration: 260, target: "st-fid", action: "enter" }
-    { id: "t-m1", at: 1000, duration: 300, target: "m1", action: "draw" }
-    { id: "t-m2", at: 1100, duration: 300, target: "m2", action: "draw" }
-    { id: "t-report", at: 1350, duration: 360, target: "report", action: "enter" }
-    { id: "t-st-rep", at: 1400, duration: 260, target: "st-rep", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-ord", at: 280, duration: 300, target: "ord", action: "enter" }
+    { id: "t-st-ord", at: 370, duration: 200, target: "st-ord", action: "enter" }
+    { id: "t-fid", at: 420, duration: 300, target: "fid", action: "enter" }
+    { id: "t-st-fid", at: 510, duration: 200, target: "st-fid", action: "enter" }
+    { id: "t-a0", at: 560, duration: 320, target: "a0", action: "draw" }
+    { id: "t-a1", at: 650, duration: 320, target: "a1", action: "draw" }
+    { id: "t-asm", at: 740, duration: 320, target: "asm", action: "enter" }
+    { id: "t-st-asm", at: 830, duration: 200, target: "st-asm", action: "enter" }
+    { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  ]
     }
   }
 
   slide "artifact-shipping" {
+
     eyebrow: "Artifacts · 10 of 16"
     title: "Move bytes safely and choose one outcome"
     lede: "artifact-authority-allowlist is feature-gated and admits only configured relative paths. artifact-http-zstd-upload streams Stage E files, partial-file-atomic-replace avoids publishing torn output, and artifact-completion-barrier waits for required uploads. telemetry-drop-warning and cancellation-propagation remain partial boundaries."
@@ -1936,209 +2535,275 @@ explainer "Cellular algorithm workbook" {
     {
       id: "note"
       capability: "core.text"
-      text: "allowlist → upload → atomic publish → barrier."
+      text: "allowlist → upload → publish → barrier."
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
+    ,
+{
       id: "allow"
       capability: "core.rect"
-      layout: { x: 20, y: 150, width: 160, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      layout: { x: 20, y: 140, width: 160, height: 96 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
           id: "allow-title"
           capability: "core.text"
           text: "artifact-authority-allowlist"
-          layout: { x: 28, y: 168, width: 144, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 26, y: 158, width: 148, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "allow-detail"
           capability: "core.text"
           text: "relative paths"
-          layout: { x: 28, y: 192, width: 144, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 26, y: 182, width: 148, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "allow-sub"
+          capability: "core.text"
+          text: "feature-gated path"
+          layout: { x: 26, y: 204, width: 148, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "st-allow"
       capability: "core.rect"
-      layout: { x: 64, y: 138, width: 116, height: 22 }
+      layout: { x: 64, y: 128, width: 116, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-allow-text"
+          id: "st-allow-t"
           capability: "core.text"
           text: "FEATURE-GATED"
-          layout: { x: 64, y: 142, width: 116, height: 16 }
+          layout: { x: 64, y: 131, width: 116, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "ar1"
-      capability: "core.line"
-      from: { x: 180, y: 186 }
-      to: { x: 215, y: 186 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a0"
+      capability: "core.path"
+      d: "M180 188 H215"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "upload"
       capability: "core.rect"
-      layout: { x: 215, y: 150, width: 150, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      layout: { x: 215, y: 140, width: 150, height: 96 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
           id: "upload-title"
           capability: "core.text"
           text: "HTTP zstd upload"
-          layout: { x: 223, y: 168, width: 134, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 221, y: 158, width: 138, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "upload-detail"
           capability: "core.text"
           text: ".partial file"
-          layout: { x: 223, y: 192, width: 134, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 221, y: 182, width: 138, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "upload-sub"
+          capability: "core.text"
+          text: "feature-gated path"
+          layout: { x: 221, y: 204, width: 138, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-up"
+    ,
+{
+      id: "st-upload"
       capability: "core.rect"
-      layout: { x: 249, y: 138, width: 116, height: 22 }
+      layout: { x: 249, y: 128, width: 116, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-up-text"
+          id: "st-upload-t"
           capability: "core.text"
           text: "FEATURE-GATED"
-          layout: { x: 249, y: 142, width: 116, height: 16 }
+          layout: { x: 249, y: 131, width: 116, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "ar2"
-      capability: "core.line"
-      from: { x: 365, y: 186 }
-      to: { x: 400, y: 186 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a1"
+      capability: "core.path"
+      d: "M365 188 H400"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "atomic"
       capability: "core.rect"
-      layout: { x: 400, y: 150, width: 130, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      layout: { x: 400, y: 140, width: 130, height: 96 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
           id: "atomic-title"
           capability: "core.text"
           text: "atomic replace"
-          layout: { x: 408, y: 168, width: 114, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 406, y: 158, width: 118, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "atomic-detail"
           capability: "core.text"
           text: "publish"
-          layout: { x: 408, y: 192, width: 114, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 406, y: 182, width: 118, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "atomic-sub"
+          capability: "core.text"
+          text: "feature-gated path"
+          layout: { x: 406, y: 204, width: 118, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-at"
+    ,
+{
+      id: "st-atomic"
       capability: "core.rect"
-      layout: { x: 414, y: 138, width: 116, height: 22 }
+      layout: { x: 414, y: 128, width: 116, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-at-text"
+          id: "st-atomic-t"
           capability: "core.text"
-          text: "FEATURE-GATED"
-          layout: { x: 414, y: 142, width: 116, height: 16 }
+          text: "GATED"
+          layout: { x: 414, y: 131, width: 116, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "ar3"
-      capability: "core.line"
-      from: { x: 530, y: 186 }
-      to: { x: 565, y: 186 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a2"
+      capability: "core.path"
+      d: "M530 188 H565"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "barrier"
       capability: "core.rect"
-      layout: { x: 565, y: 150, width: 115, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      layout: { x: 565, y: 140, width: 115, height: 96 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
           id: "barrier-title"
           capability: "core.text"
           text: "completion barrier"
-          layout: { x: 573, y: 168, width: 99, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 571, y: 158, width: 103, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "barrier-detail"
           capability: "core.text"
           text: "all files"
-          layout: { x: 573, y: 192, width: 99, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 571, y: 182, width: 103, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "barrier-sub"
+          capability: "core.text"
+          text: "feature-gated path"
+          layout: { x: 571, y: 204, width: 103, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-bar"
+    ,
+{
+      id: "st-barrier"
       capability: "core.rect"
-      layout: { x: 564, y: 138, width: 116, height: 22 }
+      layout: { x: 569, y: 128, width: 111, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-bar-text"
+          id: "st-barrier-t"
           capability: "core.text"
-          text: "FEATURE-GATED"
-          layout: { x: 564, y: 142, width: 116, height: 16 }
+          text: "GATED"
+          layout: { x: 569, y: 131, width: 111, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
+      id: "foot"
+      capability: "core.text"
+      text: "Stage E ships bytes · measurement meaning unchanged"
+      layout: { x: 60, y: 290, width: 580, height: 18 }
+      style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+    }
+    ,
+{
+      id: "chip-fail"
+      capability: "core.rect"
+      layout: { x: 200, y: 328, width: 300, height: 24 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-fail-t"
+          capability: "core.text"
+          text: "failure surfaces · no silent drop"
+          layout: { x: 200, y: 331, width: 300, height: 20 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
       id: "motion-sig"
       capability: "core.path"
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-      accessibility: { label: "motion signal" }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-allow", at: 400, duration: 320, target: "allow", action: "enter" }
-    { id: "t-st-allow", at: 450, duration: 240, target: "st-allow", action: "enter" }
-    { id: "t-ar1", at: 700, duration: 280, target: "ar1", action: "draw" }
-    { id: "t-upload", at: 900, duration: 320, target: "upload", action: "enter" }
-    { id: "t-st-up", at: 950, duration: 240, target: "st-up", action: "enter" }
-    { id: "t-ar2", at: 1150, duration: 280, target: "ar2", action: "draw" }
-    { id: "t-atomic", at: 1350, duration: 320, target: "atomic", action: "enter" }
-    { id: "t-st-at", at: 1400, duration: 240, target: "st-at", action: "enter" }
-    { id: "t-ar3", at: 1600, duration: 280, target: "ar3", action: "draw" }
-    { id: "t-barrier", at: 1800, duration: 320, target: "barrier", action: "enter" }
-    { id: "t-st-bar", at: 1850, duration: 240, target: "st-bar", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-allow", at: 280, duration: 280, target: "allow", action: "enter" }
+    { id: "t-st-allow", at: 360, duration: 180, target: "st-allow", action: "enter" }
+    { id: "t-a0", at: 405, duration: 200, target: "a0", action: "draw" }
+    { id: "t-upload", at: 460, duration: 280, target: "upload", action: "enter" }
+    { id: "t-st-upload", at: 540, duration: 180, target: "st-upload", action: "enter" }
+    { id: "t-a1", at: 585, duration: 200, target: "a1", action: "draw" }
+    { id: "t-atomic", at: 640, duration: 280, target: "atomic", action: "enter" }
+    { id: "t-st-atomic", at: 720, duration: 180, target: "st-atomic", action: "enter" }
+    { id: "t-a2", at: 765, duration: 200, target: "a2", action: "draw" }
+    { id: "t-barrier", at: 820, duration: 280, target: "barrier", action: "enter" }
+    { id: "t-st-barrier", at: 900, duration: 180, target: "st-barrier", action: "enter" }
+    { id: "t-foot", at: 945, duration: 280, target: "foot", action: "enter" }
+    { id: "t-chip-fail", at: 1025, duration: 240, target: "chip-fail", action: "enter" }
+    { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  ]
     }
   }
 
   slide "canonical-route" {
+
     eyebrow: "Composition · 11 of 16"
     title: "Compose the canonical scheduled route"
     lede: "A scheduled exact-fold route composes admission, modulo ownership, synchronized control, canonical data regeneration, nested execution, streaming exact fold, store merge, and final reporting. Route composition is ordered; selecting one policy can add or replace algorithms without changing unrelated invariants."
@@ -2172,278 +2837,354 @@ explainer "Cellular algorithm workbook" {
     {
       id: "note"
       capability: "core.text"
-      text: "selectors → ordered algorithms → artifacts."
+      text: "eligibility … artifacts in order."
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
-      id: "rt-eligibility"
+    ,
+{
+      id: "r-eligibility"
       capability: "core.rect"
-      layout: { x: 18, y: 160, width: 74, height: 64 }
+      layout: { x: 18, y: 140, width: 74, height: 80 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
       children: [
         {
-          id: "rt-eligibility-title"
+          id: "r-eligibility-t"
           capability: "core.text"
           text: "eligibility"
-          layout: { x: 26, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 20, y: 158, width: 70, height: 28 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "rt-eligibility-detail"
+          id: "r-eligibility-d"
           capability: "core.text"
           text: "gate"
-          layout: { x: 26, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 20, y: 194, width: 70, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "rt-a0"
-      capability: "core.line"
-      from: { x: 92, y: 192 }
-      to: { x: 103, y: 192 }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a0"
+      capability: "core.path"
+      d: "M92 180 H103"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.8 }
     }
-    {
-      id: "rt-ownership"
+    ,
+{
+      id: "r-ownership"
       capability: "core.rect"
-      layout: { x: 103, y: 160, width: 74, height: 64 }
+      layout: { x: 103, y: 140, width: 74, height: 80 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
       children: [
         {
-          id: "rt-ownership-title"
+          id: "r-ownership-t"
           capability: "core.text"
           text: "ownership"
-          layout: { x: 111, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 105, y: 158, width: 70, height: 28 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "rt-ownership-detail"
+          id: "r-ownership-d"
           capability: "core.text"
           text: "route"
-          layout: { x: 111, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 105, y: 194, width: 70, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "rt-a1"
-      capability: "core.line"
-      from: { x: 177, y: 192 }
-      to: { x: 188, y: 192 }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a1"
+      capability: "core.path"
+      d: "M177 180 H188"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.8 }
     }
-    {
-      id: "rt-control"
+    ,
+{
+      id: "r-control"
       capability: "core.rect"
-      layout: { x: 188, y: 160, width: 74, height: 64 }
+      layout: { x: 188, y: 140, width: 74, height: 80 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
       children: [
         {
-          id: "rt-control-title"
+          id: "r-control-t"
           capability: "core.text"
           text: "control"
-          layout: { x: 196, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 190, y: 158, width: 70, height: 28 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "rt-control-detail"
+          id: "r-control-d"
           capability: "core.text"
           text: "route"
-          layout: { x: 196, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 190, y: 194, width: 70, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "rt-a2"
-      capability: "core.line"
-      from: { x: 262, y: 192 }
-      to: { x: 273, y: 192 }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a2"
+      capability: "core.path"
+      d: "M262 180 H273"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.8 }
     }
-    {
-      id: "rt-distribution"
+    ,
+{
+      id: "r-distribution"
       capability: "core.rect"
-      layout: { x: 273, y: 160, width: 74, height: 64 }
+      layout: { x: 273, y: 140, width: 74, height: 80 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
       children: [
         {
-          id: "rt-distribution-title"
+          id: "r-distribution-t"
           capability: "core.text"
           text: "distribution"
-          layout: { x: 281, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 275, y: 158, width: 70, height: 28 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "rt-distribution-detail"
+          id: "r-distribution-d"
           capability: "core.text"
           text: "route"
-          layout: { x: 281, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 275, y: 194, width: 70, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "rt-a3"
-      capability: "core.line"
-      from: { x: 347, y: 192 }
-      to: { x: 358, y: 192 }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a3"
+      capability: "core.path"
+      d: "M347 180 H358"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.8 }
     }
-    {
-      id: "rt-execution"
+    ,
+{
+      id: "r-execution"
       capability: "core.rect"
-      layout: { x: 358, y: 160, width: 74, height: 64 }
+      layout: { x: 358, y: 140, width: 74, height: 80 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
-          id: "rt-execution-title"
+          id: "r-execution-t"
           capability: "core.text"
           text: "execution"
-          layout: { x: 366, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 360, y: 158, width: 70, height: 28 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "rt-execution-detail"
+          id: "r-execution-d"
           capability: "core.text"
           text: "route"
-          layout: { x: 366, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 360, y: 194, width: 70, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "rt-a4"
-      capability: "core.line"
-      from: { x: 432, y: 192 }
-      to: { x: 443, y: 192 }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a4"
+      capability: "core.path"
+      d: "M432 180 H443"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.8 }
     }
-    {
-      id: "rt-capture"
+    ,
+{
+      id: "r-capture"
       capability: "core.rect"
-      layout: { x: 443, y: 160, width: 74, height: 64 }
+      layout: { x: 443, y: 140, width: 74, height: 80 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
-          id: "rt-capture-title"
+          id: "r-capture-t"
           capability: "core.text"
           text: "capture"
-          layout: { x: 451, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 445, y: 158, width: 70, height: 28 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "rt-capture-detail"
+          id: "r-capture-d"
           capability: "core.text"
           text: "route"
-          layout: { x: 451, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 445, y: 194, width: 70, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "rt-a5"
-      capability: "core.line"
-      from: { x: 517, y: 192 }
-      to: { x: 528, y: 192 }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a5"
+      capability: "core.path"
+      d: "M517 180 H528"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.8 }
     }
-    {
-      id: "rt-merge"
+    ,
+{
+      id: "r-merge"
       capability: "core.rect"
-      layout: { x: 528, y: 160, width: 74, height: 64 }
+      layout: { x: 528, y: 140, width: 74, height: 80 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
-          id: "rt-merge-title"
+          id: "r-merge-t"
           capability: "core.text"
           text: "merge"
-          layout: { x: 536, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 530, y: 158, width: 70, height: 28 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "rt-merge-detail"
+          id: "r-merge-d"
           capability: "core.text"
           text: "route"
-          layout: { x: 536, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 530, y: 194, width: 70, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "rt-a6"
-      capability: "core.line"
-      from: { x: 602, y: 192 }
-      to: { x: 613, y: 192 }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    ,
+{
+      id: "a6"
+      capability: "core.path"
+      d: "M602 180 H613"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.8 }
     }
-    {
-      id: "rt-artifacts"
+    ,
+{
+      id: "r-artifacts"
       capability: "core.rect"
-      layout: { x: 613, y: 160, width: 74, height: 64 }
+      layout: { x: 613, y: 140, width: 74, height: 80 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
-          id: "rt-artifacts-title"
+          id: "r-artifacts-t"
           capability: "core.text"
           text: "artifacts"
-          layout: { x: 621, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 615, y: 158, width: 70, height: 28 }
+          style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
-          id: "rt-artifacts-detail"
+          id: "r-artifacts-d"
           capability: "core.text"
           text: "route"
-          layout: { x: 621, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 615, y: 194, width: 70, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "route-cap"
+    ,
+{
+      id: "foot"
       capability: "core.text"
       text: "canonical scheduled · exact fold · flat merge"
-      layout: { x: 80, y: 282, width: 540, height: 24 }
-      style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
+      layout: { x: 80, y: 260, width: 540, height: 18 }
+      style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
     }
-    {
+    ,
+{
+      id: "chip-a"
+      capability: "core.rect"
+      layout: { x: 70, y: 300, width: 160, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-a-t"
+          capability: "core.text"
+          text: "scheduled"
+          layout: { x: 70, y: 303, width: 160, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "chip-b"
+      capability: "core.rect"
+      layout: { x: 250, y: 300, width: 160, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-b-t"
+          capability: "core.text"
+          text: "exact fold"
+          layout: { x: 250, y: 303, width: 160, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "chip-c"
+      capability: "core.rect"
+      layout: { x: 430, y: 300, width: 160, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-c-t"
+          capability: "core.text"
+          text: "flat merge"
+          layout: { x: 430, y: 303, width: 160, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.tertiary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "sub"
+      capability: "core.text"
+      text: "representative route · not every branch"
+      layout: { x: 80, y: 345, width: 540, height: 16 }
+      style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+    }
+    ,
+{
       id: "motion-sig"
       capability: "core.path"
       d: "M55 195 H645"
       layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-      accessibility: { label: "motion signal" }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-rt-eligibility", at: 400, duration: 280, target: "rt-eligibility", action: "enter" }
-    { id: "t-rt-a0", at: 480, duration: 240, target: "rt-a0", action: "draw" }
-    { id: "t-rt-ownership", at: 540, duration: 280, target: "rt-ownership", action: "enter" }
-    { id: "t-rt-a1", at: 620, duration: 240, target: "rt-a1", action: "draw" }
-    { id: "t-rt-control", at: 680, duration: 280, target: "rt-control", action: "enter" }
-    { id: "t-rt-a2", at: 760, duration: 240, target: "rt-a2", action: "draw" }
-    { id: "t-rt-distribution", at: 820, duration: 280, target: "rt-distribution", action: "enter" }
-    { id: "t-rt-a3", at: 900, duration: 240, target: "rt-a3", action: "draw" }
-    { id: "t-rt-execution", at: 960, duration: 280, target: "rt-execution", action: "enter" }
-    { id: "t-rt-a4", at: 1040, duration: 240, target: "rt-a4", action: "draw" }
-    { id: "t-rt-capture", at: 1100, duration: 280, target: "rt-capture", action: "enter" }
-    { id: "t-rt-a5", at: 1180, duration: 240, target: "rt-a5", action: "draw" }
-    { id: "t-rt-merge", at: 1240, duration: 280, target: "rt-merge", action: "enter" }
-    { id: "t-rt-a6", at: 1320, duration: 240, target: "rt-a6", action: "draw" }
-    { id: "t-rt-artifacts", at: 1380, duration: 280, target: "rt-artifacts", action: "enter" }
-    { id: "t-route-cap", at: 1600, duration: 300, target: "route-cap", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    { id: "t-emphasis-final", at: 2100, duration: 420, target: "rt-eligibility", action: "emphasis" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-r-eligibility", at: 280, duration: 220, target: "r-eligibility", action: "enter" }
+    { id: "t-a0", at: 335, duration: 160, target: "a0", action: "draw" }
+    { id: "t-r-ownership", at: 375, duration: 220, target: "r-ownership", action: "enter" }
+    { id: "t-a1", at: 430, duration: 160, target: "a1", action: "draw" }
+    { id: "t-r-control", at: 470, duration: 220, target: "r-control", action: "enter" }
+    { id: "t-a2", at: 525, duration: 160, target: "a2", action: "draw" }
+    { id: "t-r-distribution", at: 565, duration: 220, target: "r-distribution", action: "enter" }
+    { id: "t-a3", at: 620, duration: 160, target: "a3", action: "draw" }
+    { id: "t-r-execution", at: 660, duration: 220, target: "r-execution", action: "enter" }
+    { id: "t-a4", at: 715, duration: 160, target: "a4", action: "draw" }
+    { id: "t-r-capture", at: 755, duration: 220, target: "r-capture", action: "enter" }
+    { id: "t-a5", at: 810, duration: 160, target: "a5", action: "draw" }
+    { id: "t-r-merge", at: 850, duration: 220, target: "r-merge", action: "enter" }
+    { id: "t-a6", at: 905, duration: 160, target: "a6", action: "draw" }
+    { id: "t-r-artifacts", at: 945, duration: 220, target: "r-artifacts", action: "enter" }
+    { id: "t-foot", at: 1000, duration: 280, target: "foot", action: "enter" }
+    { id: "t-chip-a", at: 1080, duration: 180, target: "chip-a", action: "enter" }
+    { id: "t-chip-b", at: 1130, duration: 180, target: "chip-b", action: "enter" }
+    { id: "t-chip-c", at: 1180, duration: 180, target: "chip-c", action: "enter" }
+    { id: "t-sub", at: 1230, duration: 220, target: "sub", action: "enter" }
+    { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  ]
     }
   }
 
   slide "route-branches" {
+
     eyebrow: "Composition · 12 of 16"
     title: "Gates add explicit route branches"
     lede: "Phaser START, dataset fan-out verification, external aggregation, and cross-host artifact shipping are feature-gated route branches. final-report-assembly and telemetry-drop-warning are partial boundaries, not hidden green paths. The status label travels with the algorithm wherever it appears."
@@ -2466,7 +3207,6 @@ explainer "Cellular algorithm workbook" {
       capability: "core.rect"
       layout: { x: 18, y: 16, width: 664, height: 44 }
       style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-      accessibility: { label: "COMPOSITION · STATUS BRANCHES" }
     }
     {
       id: "label"
@@ -2478,145 +3218,234 @@ explainer "Cellular algorithm workbook" {
     {
       id: "note"
       capability: "core.text"
-      text: "built · feature-gated · partial."
+      text: "BUILT · FEATURE-GATED · PARTIAL."
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
-      id: "canon-route"
+    ,
+{
+      id: "canon"
       capability: "core.rect"
-      layout: { x: 35, y: 118, width: 195, height: 72 }
+      layout: { x: 35, y: 100, width: 195, height: 100 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
-          id: "canon-route-title"
+          id: "canon-title"
           capability: "core.text"
           text: "canonical route"
-          layout: { x: 43, y: 136, width: 179, height: 22 }
+          layout: { x: 43, y: 118, width: 179, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
-          id: "canon-route-detail"
+          id: "canon-detail"
           capability: "core.text"
           text: "ownership + execution"
-          layout: { x: 43, y: 160, width: 179, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 43, y: 142, width: 179, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "canon-sub"
+          capability: "core.text"
+          text: "ordinary admitted path"
+          layout: { x: 43, y: 166, width: 179, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-cr"
+    ,
+{
+      id: "st-canon"
       capability: "core.rect"
-      layout: { x: 160, y: 106, width: 70, height: 22 }
+      layout: { x: 160, y: 88, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-cr-text"
+          id: "st-canon-t"
           capability: "core.text"
           text: "BUILT"
-          layout: { x: 160, y: 110, width: 70, height: 16 }
+          layout: { x: 160, y: 91, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "branches"
+    ,
+{
+      id: "gated"
       capability: "core.rect"
-      layout: { x: 252, y: 118, width: 195, height: 72 }
+      layout: { x: 252, y: 100, width: 195, height: 100 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
       children: [
         {
-          id: "branches-title"
+          id: "gated-title"
           capability: "core.text"
           text: "phaser / fan-out / Stage E"
-          layout: { x: 260, y: 136, width: 179, height: 22 }
+          layout: { x: 260, y: 118, width: 179, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
-          id: "branches-detail"
+          id: "gated-detail"
           capability: "core.text"
           text: "explicit branches"
-          layout: { x: 260, y: 160, width: 179, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 260, y: 142, width: 179, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "gated-sub"
+          capability: "core.text"
+          text: "opt-in composition"
+          layout: { x: 260, y: 166, width: 179, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-br"
+    ,
+{
+      id: "st-gated"
       capability: "core.rect"
-      layout: { x: 331, y: 106, width: 116, height: 22 }
+      layout: { x: 331, y: 88, width: 116, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-br-text"
+          id: "st-gated-t"
           capability: "core.text"
           text: "FEATURE-GATED"
-          layout: { x: 331, y: 110, width: 116, height: 16 }
+          layout: { x: 331, y: 91, width: 116, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "partials"
+    ,
+{
+      id: "partial"
       capability: "core.rect"
-      layout: { x: 469, y: 118, width: 195, height: 72 }
+      layout: { x: 469, y: 100, width: 195, height: 100 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
       children: [
         {
-          id: "partials-title"
+          id: "partial-title"
           capability: "core.text"
           text: "report / telemetry / cancel"
-          layout: { x: 477, y: 136, width: 179, height: 22 }
+          layout: { x: 477, y: 118, width: 179, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
-          id: "partials-detail"
+          id: "partial-detail"
           capability: "core.text"
           text: "named limitations"
-          layout: { x: 477, y: 160, width: 179, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 477, y: 142, width: 179, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "partial-sub"
+          capability: "core.text"
+          text: "fidelity boundaries"
+          layout: { x: 477, y: 166, width: 179, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
-      id: "st-pa"
+    ,
+{
+      id: "st-partial"
       capability: "core.rect"
-      layout: { x: 594, y: 106, width: 70, height: 22 }
+      layout: { x: 594, y: 88, width: 70, height: 22 }
       style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
       children: [
         {
-          id: "st-pa-text"
+          id: "st-partial-t"
           capability: "core.text"
           text: "PARTIAL"
-          layout: { x: 594, y: 110, width: 70, height: 16 }
+          layout: { x: 594, y: 91, width: 70, height: 18 }
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "status-msg"
       capability: "core.text"
       text: "status text travels with every selected algorithm"
-      layout: { x: 60, y: 280, width: 580, height: 28 }
+      layout: { x: 60, y: 250, width: 580, height: 22 }
       style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+    }
+    ,
+{
+      id: "chip-b"
+      capability: "core.rect"
+      layout: { x: 90, y: 300, width: 140, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-b-t"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 90, y: 303, width: 140, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "chip-g"
+      capability: "core.rect"
+      layout: { x: 260, y: 300, width: 160, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-g-t"
+          capability: "core.text"
+          text: "FEATURE-GATED"
+          layout: { x: 260, y: 303, width: 160, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "chip-p"
+      capability: "core.rect"
+      layout: { x: 450, y: 300, width: 140, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-p-t"
+          capability: "core.text"
+          text: "PARTIAL"
+          layout: { x: 450, y: 303, width: 140, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "sub"
+      capability: "core.text"
+      text: "color never replaces the written status contract"
+      layout: { x: 80, y: 345, width: 540, height: 16 }
+      style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-canon-route", at: 400, duration: 340, target: "canon-route", action: "enter" }
-    { id: "t-st-cr", at: 450, duration: 260, target: "st-cr", action: "enter" }
-    { id: "t-branches", at: 750, duration: 340, target: "branches", action: "enter" }
-    { id: "t-st-br", at: 800, duration: 260, target: "st-br", action: "enter" }
-    { id: "t-partials", at: 1100, duration: 340, target: "partials", action: "enter" }
-    { id: "t-st-pa", at: 1150, duration: 260, target: "st-pa", action: "enter" }
-    { id: "t-status-msg", at: 1500, duration: 360, target: "status-msg", action: "enter" }
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-canon", at: 280, duration: 300, target: "canon", action: "enter" }
+    { id: "t-st-canon", at: 370, duration: 200, target: "st-canon", action: "enter" }
+    { id: "t-gated", at: 425, duration: 300, target: "gated", action: "enter" }
+    { id: "t-st-gated", at: 515, duration: 200, target: "st-gated", action: "enter" }
+    { id: "t-partial", at: 570, duration: 300, target: "partial", action: "enter" }
+    { id: "t-st-partial", at: 660, duration: 200, target: "st-partial", action: "enter" }
+    { id: "t-status-msg", at: 715, duration: 320, target: "status-msg", action: "enter" }
+    { id: "t-chip-b", at: 805, duration: 180, target: "chip-b", action: "enter" }
+    { id: "t-chip-g", at: 855, duration: 180, target: "chip-g", action: "enter" }
+    { id: "t-chip-p", at: 905, duration: 180, target: "chip-p", action: "enter" }
+    { id: "t-sub", at: 955, duration: 220, target: "sub", action: "enter" }
   ]
     }
   }
 
   slide "run-kind-decision" {
+
     eyebrow: "Decisions · 13 of 16"
     title: "Dataset shape decides the run kind"
     lede: "The decision log compares routes while preserving their shared bands. A graph selector with a synthetic dataset still resolves to scheduled execution, while a WEKA or Dynamo trace resolves to graph execution. Dataset classification, not the authored selector alone, chooses the effective runtime branch."
@@ -2650,123 +3479,161 @@ explainer "Cellular algorithm workbook" {
     {
       id: "note"
       capability: "core.text"
-      text: "authored intent → dataset classification → runtime."
+      text: "dataset shape → run kind."
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
+    ,
+{
       id: "decision"
       capability: "core.rect"
-      layout: { x: 245, y: 92, width: 210, height: 64 }
+      layout: { x: 245, y: 78, width: 210, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
       children: [
         {
           id: "decision-title"
           capability: "core.text"
           text: "run-kind-classification"
-          layout: { x: 253, y: 110, width: 194, height: 22 }
+          layout: { x: 253, y: 96, width: 194, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "decision-detail"
           capability: "core.text"
           text: "route selector"
-          layout: { x: 253, y: 134, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 253, y: 120, width: 194, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
+      id: "chip-dec"
+      capability: "core.rect"
+      layout: { x: 295, y: 58, width: 110, height: 20 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-dec-t"
+          capability: "core.text"
+          text: "DECIDE"
+          layout: { x: 295, y: 61, width: 110, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
       id: "dl"
       capability: "core.path"
-      d: "M300 156 C230 195 190 215 165 245"
-      layout: { x: 165, y: 156, width: 135, height: 89 }
+      d: "M300 150 C230 190 190 210 165 240"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "dr"
       capability: "core.path"
-      d: "M400 156 C470 195 510 215 535 245"
-      layout: { x: 400, y: 156, width: 135, height: 89 }
+      d: "M400 150 C470 190 510 210 535 240"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "left"
       capability: "core.rect"
-      layout: { x: 45, y: 245, width: 240, height: 70 }
+      layout: { x: 45, y: 240, width: 240, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "left-title"
           capability: "core.text"
           text: "synthetic → scheduled"
-          layout: { x: 53, y: 263, width: 224, height: 22 }
+          layout: { x: 53, y: 258, width: 224, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "left-detail"
           capability: "core.text"
           text: "left route"
-          layout: { x: 53, y: 287, width: 224, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 53, y: 282, width: 224, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "left-sub"
+          capability: "core.text"
+          text: "kind A"
+          layout: { x: 53, y: 302, width: 224, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "right"
       capability: "core.rect"
-      layout: { x: 415, y: 245, width: 240, height: 70 }
+      layout: { x: 415, y: 240, width: 240, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
           id: "right-title"
           capability: "core.text"
           text: "WEKA → graph"
-          layout: { x: 423, y: 263, width: 224, height: 22 }
+          layout: { x: 423, y: 258, width: 224, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "right-detail"
           capability: "core.text"
           text: "right route"
-          layout: { x: 423, y: 287, width: 224, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 423, y: 282, width: 224, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "right-sub"
+          capability: "core.text"
+          text: "kind B"
+          layout: { x: 423, y: 302, width: 224, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "invariant"
       capability: "core.text"
       text: "dataset shape selects the effective run kind"
-      layout: { x: 80, y: 345, width: 540, height: 20 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+      layout: { x: 80, y: 350, width: 540, height: 18 }
+      style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
     }
-    {
+    ,
+{
       id: "motion-sig"
       capability: "core.path"
       d: "M350 125 V320"
       layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-      accessibility: { label: "motion signal" }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-decision", at: 400, duration: 360, target: "decision", action: "enter" }
-    { id: "t-dl", at: 700, duration: 320, target: "dl", action: "draw" }
-    { id: "t-dr", at: 800, duration: 320, target: "dr", action: "draw" }
-    { id: "t-left", at: 1100, duration: 340, target: "left", action: "enter" }
-    { id: "t-right", at: 1250, duration: 340, target: "right", action: "enter" }
-    { id: "t-invariant", at: 1550, duration: 300, target: "invariant", action: "enter" }
-    { id: "t-emphasis", at: 1850, duration: 400, target: "decision", action: "emphasis" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-decision", at: 280, duration: 320, target: "decision", action: "enter" }
+    { id: "t-chip-dec", at: 370, duration: 200, target: "chip-dec", action: "enter" }
+    { id: "t-dl", at: 420, duration: 300, target: "dl", action: "draw" }
+    { id: "t-dr", at: 500, duration: 300, target: "dr", action: "draw" }
+    { id: "t-left", at: 580, duration: 300, target: "left", action: "enter" }
+    { id: "t-right", at: 660, duration: 300, target: "right", action: "enter" }
+    { id: "t-invariant", at: 740, duration: 280, target: "invariant", action: "enter" }
+    { id: "t-emphasis", at: 860, duration: 400, target: "decision", action: "emphasis" }
+    { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  ]
     }
   }
 
   slide "fidelity-decision" {
+
     eyebrow: "Decisions · 14 of 16"
     title: "Storage and conversation choices change fidelity"
     lede: "Exact fold and sketch both drop completed rows, but sketch trades percentile interior fidelity for request-count-independent memory. Single-turn work owns requests; multi-turn work owns complete conversations. These choices alter capture and ownership algorithms while preserving the one-owner invariant."
@@ -2804,119 +3671,157 @@ explainer "Cellular algorithm workbook" {
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
+    ,
+{
       id: "decision"
       capability: "core.rect"
-      layout: { x: 245, y: 92, width: 210, height: 64 }
+      layout: { x: 245, y: 78, width: 210, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
       children: [
         {
           id: "decision-title"
           capability: "core.text"
           text: "storage + ownership"
-          layout: { x: 253, y: 110, width: 194, height: 22 }
+          layout: { x: 253, y: 96, width: 194, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "decision-detail"
           capability: "core.text"
           text: "route selector"
-          layout: { x: 253, y: 134, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 253, y: 120, width: 194, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
+      id: "chip-dec"
+      capability: "core.rect"
+      layout: { x: 295, y: 58, width: 110, height: 20 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-dec-t"
+          capability: "core.text"
+          text: "DECIDE"
+          layout: { x: 295, y: 61, width: 110, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
       id: "dl"
       capability: "core.path"
-      d: "M300 156 C230 195 190 215 165 245"
-      layout: { x: 165, y: 156, width: 135, height: 89 }
+      d: "M300 150 C230 190 190 210 165 240"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "dr"
       capability: "core.path"
-      d: "M400 156 C470 195 510 215 535 245"
-      layout: { x: 400, y: 156, width: 135, height: 89 }
+      d: "M400 150 C470 190 510 210 535 240"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "left"
       capability: "core.rect"
-      layout: { x: 45, y: 245, width: 240, height: 70 }
+      layout: { x: 45, y: 240, width: 240, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "left-title"
           capability: "core.text"
           text: "exact fold · requests"
-          layout: { x: 53, y: 263, width: 224, height: 22 }
+          layout: { x: 53, y: 258, width: 224, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "left-detail"
           capability: "core.text"
           text: "left route"
-          layout: { x: 53, y: 287, width: 224, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 53, y: 282, width: 224, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "left-sub"
+          capability: "core.text"
+          text: "exact"
+          layout: { x: 53, y: 302, width: 224, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "right"
       capability: "core.rect"
-      layout: { x: 415, y: 245, width: 240, height: 70 }
+      layout: { x: 415, y: 240, width: 240, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
           id: "right-title"
           capability: "core.text"
           text: "sketch · conversations"
-          layout: { x: 423, y: 263, width: 224, height: 22 }
+          layout: { x: 423, y: 258, width: 224, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "right-detail"
           capability: "core.text"
           text: "right route"
-          layout: { x: 423, y: 287, width: 224, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 423, y: 282, width: 224, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "right-sub"
+          capability: "core.text"
+          text: "sketch"
+          layout: { x: 423, y: 302, width: 224, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "invariant"
       capability: "core.text"
       text: "one owner remains invariant"
-      layout: { x: 80, y: 345, width: 540, height: 20 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+      layout: { x: 80, y: 350, width: 540, height: 18 }
+      style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
     }
-    {
+    ,
+{
       id: "motion-sig"
       capability: "core.path"
       d: "M350 125 V320"
       layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-      accessibility: { label: "motion signal" }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-decision", at: 400, duration: 360, target: "decision", action: "enter" }
-    { id: "t-dl", at: 700, duration: 320, target: "dl", action: "draw" }
-    { id: "t-dr", at: 800, duration: 320, target: "dr", action: "draw" }
-    { id: "t-left", at: 1100, duration: 340, target: "left", action: "enter" }
-    { id: "t-right", at: 1250, duration: 340, target: "right", action: "enter" }
-    { id: "t-invariant", at: 1550, duration: 300, target: "invariant", action: "enter" }
-    { id: "t-emphasis", at: 1850, duration: 400, target: "decision", action: "emphasis" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-decision", at: 280, duration: 320, target: "decision", action: "enter" }
+    { id: "t-chip-dec", at: 370, duration: 200, target: "chip-dec", action: "enter" }
+    { id: "t-dl", at: 420, duration: 300, target: "dl", action: "draw" }
+    { id: "t-dr", at: 500, duration: 300, target: "dr", action: "draw" }
+    { id: "t-left", at: 580, duration: 300, target: "left", action: "enter" }
+    { id: "t-right", at: 660, duration: 300, target: "right", action: "enter" }
+    { id: "t-invariant", at: 740, duration: 280, target: "invariant", action: "enter" }
+    { id: "t-emphasis", at: 860, duration: 400, target: "decision", action: "emphasis" }
+    { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  ]
     }
   }
 
   slide "placement-decision" {
+
     eyebrow: "Decisions · 15 of 16"
     title: "Placement decides topology and shipping"
     lede: "Same-host routes can concatenate local files directly. Cross-host placement adds Stage G input reconstruction and Stage E artifact upload around the same execution route. A local-tree intent falls back flat without operator wiring, while an external tree requires its DNS tier and explicit placement admission."
@@ -2954,119 +3859,157 @@ explainer "Cellular algorithm workbook" {
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
+    ,
+{
       id: "decision"
       capability: "core.rect"
-      layout: { x: 245, y: 92, width: 210, height: 64 }
+      layout: { x: 245, y: 78, width: 210, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
       children: [
         {
           id: "decision-title"
           capability: "core.text"
           text: "deployment placement"
-          layout: { x: 253, y: 110, width: 194, height: 22 }
+          layout: { x: 253, y: 96, width: 194, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "decision-detail"
           capability: "core.text"
           text: "route selector"
-          layout: { x: 253, y: 134, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 253, y: 120, width: 194, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
+      id: "chip-dec"
+      capability: "core.rect"
+      layout: { x: 295, y: 58, width: 110, height: 20 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-dec-t"
+          capability: "core.text"
+          text: "DECIDE"
+          layout: { x: 295, y: 61, width: 110, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
       id: "dl"
       capability: "core.path"
-      d: "M300 156 C230 195 190 215 165 245"
-      layout: { x: 165, y: 156, width: 135, height: 89 }
+      d: "M300 150 C230 190 190 210 165 240"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "dr"
       capability: "core.path"
-      d: "M400 156 C470 195 510 215 535 245"
-      layout: { x: 400, y: 156, width: 135, height: 89 }
+      d: "M400 150 C470 190 510 210 535 240"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "left"
       capability: "core.rect"
-      layout: { x: 45, y: 245, width: 240, height: 70 }
+      layout: { x: 45, y: 240, width: 240, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
       children: [
         {
           id: "left-title"
           capability: "core.text"
           text: "same host · flat/local"
-          layout: { x: 53, y: 263, width: 224, height: 22 }
+          layout: { x: 53, y: 258, width: 224, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "left-detail"
           capability: "core.text"
           text: "left route"
-          layout: { x: 53, y: 287, width: 224, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 53, y: 282, width: 224, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "left-sub"
+          capability: "core.text"
+          text: "local"
+          layout: { x: 53, y: 302, width: 224, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "right"
       capability: "core.rect"
-      layout: { x: 415, y: 245, width: 240, height: 70 }
+      layout: { x: 415, y: 240, width: 240, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
           id: "right-title"
           capability: "core.text"
           text: "cross host · Stage E/G"
-          layout: { x: 423, y: 263, width: 224, height: 22 }
+          layout: { x: 423, y: 258, width: 224, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "right-detail"
           capability: "core.text"
           text: "right route"
-          layout: { x: 423, y: 287, width: 224, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 423, y: 282, width: 224, height: 16 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "right-sub"
+          capability: "core.text"
+          text: "remote"
+          layout: { x: 423, y: 302, width: 224, height: 14 }
+          style: { fontSize: 9, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "invariant"
       capability: "core.text"
       text: "placement changes shipping, not measurement"
-      layout: { x: 80, y: 345, width: 540, height: 20 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+      layout: { x: 80, y: 350, width: 540, height: 18 }
+      style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
     }
-    {
+    ,
+{
       id: "motion-sig"
       capability: "core.path"
       d: "M350 125 V320"
       layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-      accessibility: { label: "motion signal" }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-decision", at: 400, duration: 360, target: "decision", action: "enter" }
-    { id: "t-dl", at: 700, duration: 320, target: "dl", action: "draw" }
-    { id: "t-dr", at: 800, duration: 320, target: "dr", action: "draw" }
-    { id: "t-left", at: 1100, duration: 340, target: "left", action: "enter" }
-    { id: "t-right", at: 1250, duration: 340, target: "right", action: "enter" }
-    { id: "t-invariant", at: 1550, duration: 300, target: "invariant", action: "enter" }
-    { id: "t-emphasis", at: 1850, duration: 400, target: "decision", action: "emphasis" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-decision", at: 280, duration: 320, target: "decision", action: "enter" }
+    { id: "t-chip-dec", at: 370, duration: 200, target: "chip-dec", action: "enter" }
+    { id: "t-dl", at: 420, duration: 300, target: "dl", action: "draw" }
+    { id: "t-dr", at: 500, duration: 300, target: "dr", action: "draw" }
+    { id: "t-left", at: 580, duration: 300, target: "left", action: "enter" }
+    { id: "t-right", at: 660, duration: 300, target: "right", action: "enter" }
+    { id: "t-invariant", at: 740, duration: 280, target: "invariant", action: "enter" }
+    { id: "t-emphasis", at: 860, duration: 400, target: "decision", action: "emphasis" }
+    { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  ]
     }
   }
 
   slide "exhaustive-reference" {
+
     eyebrow: "Reference · 16 of 16"
     title: "Use the source canvas for exhaustive lookup"
     lede: "This deck preserves the route grammar, representative algorithm names, status semantics, and key decisions. It intentionally does not reproduce the workbook's roughly one hundred algorithm pages, trace frames, recipes, validation fixtures, or selector interactions. Maintainers should use the source canvas for exhaustive evidence lookup."
@@ -3089,7 +4032,6 @@ explainer "Cellular algorithm workbook" {
       capability: "core.rect"
       layout: { x: 18, y: 16, width: 664, height: 44 }
       style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-      accessibility: { label: "REFERENCE · EXHAUSTIVE CATALOG" }
     }
     {
       id: "label"
@@ -3105,66 +4047,127 @@ explainer "Cellular algorithm workbook" {
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
-    {
+    ,
+{
       id: "pages"
       capability: "core.rect"
-      layout: { x: 70, y: 110, width: 560, height: 82 }
+      layout: { x: 50, y: 90, width: 600, height: 90 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
       children: [
         {
           id: "pages-title"
           capability: "core.text"
           text: "~100 algorithm pages"
-          layout: { x: 78, y: 128, width: 544, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+          layout: { x: 58, y: 110, width: 584, height: 22 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        },
         {
           id: "pages-detail"
           capability: "core.text"
           text: "pseudocode · frames · gates · failures · evidence"
-          layout: { x: 78, y: 152, width: 544, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 58, y: 138, width: 584, height: 18 }
+          style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "pages-sub"
+          capability: "core.text"
+          text: "search by id · chapter · status · actor · source path"
+          layout: { x: 58, y: 160, width: 584, height: 14 }
+          style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "middle" }
         }
       ]
     }
-    {
+    ,
+{
       id: "ref-a"
       capability: "core.path"
-      d: "M350 192 V245"
-      layout: { x: 350, y: 192, width: 1, height: 53 }
+      d: "M350 180 V230"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
     }
-    {
+    ,
+{
       id: "canvas"
       capability: "core.rect"
-      layout: { x: 70, y: 245, width: 560, height: 72 }
+      layout: { x: 50, y: 230, width: 600, height: 86 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
       children: [
         {
           id: "canvas-title"
           capability: "core.text"
           text: "docs/canvases/cellular-algorithm-workbook.canvas.tsx"
-          layout: { x: 78, y: 263, width: 544, height: 22 }
+          layout: { x: 58, y: 250, width: 584, height: 20 }
           style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
+        },
         {
           id: "canvas-detail"
           capability: "core.text"
           text: "exhaustive maintainer lookup"
-          layout: { x: 78, y: 287, width: 544, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 58, y: 276, width: 584, height: 16 }
+          style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "chip-search"
+      capability: "core.rect"
+      layout: { x: 80, y: 340, width: 140, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-search-t"
+          capability: "core.text"
+          text: "search ids"
+          layout: { x: 80, y: 343, width: 140, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "chip-trace"
+      capability: "core.rect"
+      layout: { x: 240, y: 340, width: 160, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-trace-t"
+          capability: "core.text"
+          text: "trace frames"
+          layout: { x: 240, y: 343, width: 160, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ,
+{
+      id: "chip-fix"
+      capability: "core.rect"
+      layout: { x: 420, y: 340, width: 180, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "chip-fix-t"
+          capability: "core.text"
+          text: "validation fixtures"
+          layout: { x: 420, y: 343, width: 180, height: 18 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.tertiary, textAnchor: "middle" }
         }
       ]
     }
     ]
   timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-pages", at: 400, duration: 400, target: "pages", action: "enter" }
-    { id: "t-ref-a", at: 800, duration: 320, target: "ref-a", action: "draw" }
-    { id: "t-canvas", at: 1100, duration: 400, target: "canvas", action: "enter" }
-    { id: "t-emphasis", at: 1550, duration: 450, target: "canvas", action: "emphasis" }
+    { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+    { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+    { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+    { id: "t-pages", at: 280, duration: 340, target: "pages", action: "enter" }
+    { id: "t-ref-a", at: 380, duration: 280, target: "ref-a", action: "draw" }
+    { id: "t-canvas", at: 460, duration: 340, target: "canvas", action: "enter" }
+    { id: "t-chip-search", at: 560, duration: 180, target: "chip-search", action: "enter" }
+    { id: "t-chip-trace", at: 610, duration: 180, target: "chip-trace", action: "enter" }
+    { id: "t-chip-fix", at: 660, duration: 180, target: "chip-fix", action: "enter" }
+    { id: "t-emphasis", at: 750, duration: 420, target: "canvas", action: "emphasis" }
   ]
     }
   }

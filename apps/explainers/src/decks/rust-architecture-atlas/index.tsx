@@ -36,6 +36,7 @@ export const rustArchitectureAtlasDeck: DeckDefinition = {
       "Eleven-slide companion to the overview deck: system landscape, crate graph, hot path, protocol v2, scheduled and graph execution, endpoints, metrics, cellular, features, and extension seams.",
   },
   slides: SLIDES,
+  glossary: [],
   MentalModel: ({ slideIndex, slide }) => (
     <MentalModel slideIndex={slideIndex} slide={slide} />
   ),

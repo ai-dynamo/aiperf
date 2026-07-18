@@ -8,7 +8,9 @@
 //!
 //! `compileExplainerSource` is the DeckPackage entry point parallel to
 //! `compileSource` for Flow IR. Stages short-circuit on the first failure so
-//! callers see the earliest actionable diagnostics.
+//! callers see the earliest actionable diagnostics. Empty `scene.roots` /
+//! `scene.timeline` fail closed with slide-id diagnostics from lowering or
+//! `validateExplainerTimelines`.
 
 import { parseDocument, type DocumentAst } from "@aiperf/flow-language";
 import {

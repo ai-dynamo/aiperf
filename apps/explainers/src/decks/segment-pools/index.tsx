@@ -35,6 +35,7 @@ export const segmentPoolsDeck: DeckDefinition = {
       "How dataset rows become content-addressed handles and wire Bytes: SegmentPool, six payload domains, BodyPlan materialization, prefix chains, and Turn.body dispatch precedence.",
   },
   slides: SLIDES,
+  glossary: [],
   MentalModel: ({ slideIndex, slide }) => (
     <MentalModel slideIndex={slideIndex} slide={slide} />
   ),

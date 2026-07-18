@@ -17,6 +17,8 @@ export type MotionSignalProps = Omit<SVGProps<SVGCircleElement>, "color"> & {
    * When set, positions the dot via path length instead of looping SMIL.
    */
   progress?: number;
+  /** When false, suppress SMIL / progress rendering (paused or inactive cue). */
+  active?: boolean;
   /** When true, hide the traveling dot (final-frame / a11y reduced motion). */
   reducedMotion?: boolean;
 };
@@ -41,6 +43,7 @@ export function MotionSignal({
   duration = "2.2s",
   delay = "0s",
   progress,
+  active = true,
   reducedMotion: reducedMotionProp,
   className,
   r = 5,
@@ -60,7 +63,7 @@ export function MotionSignal({
   const timelineMode = typeof progress === "number" && Number.isFinite(progress);
 
   useLayoutEffect(() => {
-    if (!timelineMode || reducedMotion) {
+    if (!timelineMode || reducedMotion || !active) {
       setPoint(null);
       return;
     }
@@ -75,9 +78,9 @@ export function MotionSignal({
     }
     const along = element.getPointAtLength(clamp01(progress) * length);
     setPoint({ x: along.x, y: along.y });
-  }, [timelineMode, progress, path, reducedMotion]);
+  }, [timelineMode, progress, path, reducedMotion, active]);
 
-  if (reducedMotion) {
+  if (reducedMotion || !active) {
     return null;
   }
 
