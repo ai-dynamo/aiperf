@@ -644,12 +644,14 @@ export function App() {
         />
 
         <div className="flow-main-section">
-          <Breadcrumb
-            workspace={workspace}
-            activeFlowId={activeFlowId}
-            activeSceneId={activeSceneId}
-            onSelectScene={selectScene}
-          />
+          {!selectedExplainerDeckId && (
+            <Breadcrumb
+              workspace={workspace}
+              activeFlowId={activeFlowId}
+              activeSceneId={activeSceneId}
+              onSelectScene={selectScene}
+            />
+          )}
 
           <main
             className="runtime-story"
@@ -695,12 +697,14 @@ export function App() {
             )}
           </main>
 
-          <BottomNav
-            workspace={workspace}
-            activeFlowId={activeFlowId}
-            activeSceneId={activeSceneId}
-            onSelectScene={selectScene}
-          />
+          {!selectedExplainerDeckId && (
+            <BottomNav
+              workspace={workspace}
+              activeFlowId={activeFlowId}
+              activeSceneId={activeSceneId}
+              onSelectScene={selectScene}
+            />
+          )}
         </div>
       </div>
 
