@@ -446,32 +446,35 @@ pub fn exec_binary() -> String {
             return explicit;
         }
     }
-    // CARGO_MANIFEST_DIR is rust/e2e; workspace root is two levels up.
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace = manifest
-        .parent()
-        .and_then(|p| p.parent())
-        .unwrap_or(&manifest);
     let suffix = std::env::consts::EXE_SUFFIX;
-    // Prefer the binary built the same way these tests were: a debug `cargo test`
-    // must not silently run a stale `target/release/aiperf` (or vice versa),
-    // which would exercise a binary that does not match the code under test. The
-    // opposite profile is only a fallback for when the matching one is absent.
-    let preferred = if cfg!(debug_assertions) {
-        ["debug", "release"]
-    } else {
-        ["release", "debug"]
-    };
-    for profile in preferred {
-        let candidate = workspace
-            .join("target")
-            .join(profile)
-            .join(format!("aiperf{suffix}"));
-        if candidate.exists() {
+    let name = format!("aiperf{suffix}");
+    // Locate the `aiperf` binary in the SAME target tree cargo built these tests
+    // into, derived from the test executable's own path rather than guessed from
+    // CARGO_MANIFEST_DIR (whose depth relative to the workspace, and thus to
+    // `target/`, is layout-dependent and was wrong here). The test binary lives
+    // at `<target>/<profile>/deps/<name>`, so `<target>` is an ancestor.
+    // `cargo test` does not rebuild `aiperf` (the e2e crate has no dependency
+    // edge to it), so among the candidates pick the most recently built one:
+    // whichever profile you last compiled is the binary under test, and a stale
+    // sibling profile never shadows it.
+    if let Ok(exe) = std::env::current_exe() {
+        let mut newest: Option<(PathBuf, std::time::SystemTime)> = None;
+        for dir in exe.ancestors() {
+            for profile in ["debug", "release"] {
+                let candidate = dir.join(profile).join(&name);
+                let Ok(mtime) = candidate.metadata().and_then(|m| m.modified()) else {
+                    continue;
+                };
+                if newest.as_ref().is_none_or(|(_, best)| mtime > *best) {
+                    newest = Some((candidate, mtime));
+                }
+            }
+        }
+        if let Some((candidate, _)) = newest {
             return candidate.display().to_string();
         }
     }
-    format!("aiperf{suffix}")
+    name
 }
 
 pub struct RunResult {
