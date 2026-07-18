@@ -12,6 +12,7 @@ import type { ResolvedTheme } from '../theme/types.js';
 import { ExplainerThemeContext, type SlideCss } from '../theme-context.js';
 import { SlideshowController } from '../controller.js';
 import { NarratorBinding } from '../narrator-binding.js';
+import { SubtitleRenderer } from './SubtitleRenderer.js';
 import { ImmersiveExplainerContext } from '../immersive-integration.js';
 
 /**
@@ -64,13 +65,31 @@ export function ExplainerLayout({
   const immersiveContext = useMemo(() => new ImmersiveExplainerContext(), []);
 
   // Slideshow and narrator binding
-  const controllerRef = useRef<SlideshowController | null>(null);
+  const [controller, setController] = useState<SlideshowController | null>(null);
   const bindingRef = useRef<NarratorBinding | null>(null);
+  // Refs let the once-created controller's completion hook read the latest
+  // navigation callback without being recreated on every render.
+  const navigateRef = useRef(onNavigate);
+  navigateRef.current = onNavigate;
+  const onNarrationCompleteRef = useRef(onNarrationComplete);
+  onNarrationCompleteRef.current = onNarrationComplete;
 
   // Initialize controller and binding on mount or when deck changes
   useEffect(() => {
-    controllerRef.current = new SlideshowController(deck, narrator);
-    bindingRef.current = new NarratorBinding(controllerRef.current, narrator);
+    const created = new SlideshowController(deck, narrator, {
+      onNarrationComplete: () => {
+        onNarrationCompleteRef.current?.();
+        const next = created.currentSlideIndex + 1;
+        if (next < deck.slides.length) {
+          navigateRef.current(next);
+        }
+      },
+    });
+    bindingRef.current = new NarratorBinding(created, narrator);
+    setController(created);
+    return () => {
+      created.stopNarration();
+    };
   }, [deck, narrator]);
 
   // Get current slide
@@ -84,30 +103,34 @@ export function ExplainerLayout({
     return themeContext.applyThemeToSlide(currentSlide, theme);
   }, [currentSlide, themeContext, theme]);
 
-  // Handle navigation
+  // Handle navigation. Cancel any in-flight narration before moving so audio
+  // and captions never bleed across the slide boundary.
   const handlePrevSlide = useCallback(async () => {
     if (slideIndex > 0) {
+      controller?.stopNarration();
       setIsPlaying(false);
       setNarrationPaused(false);
       onNavigate(slideIndex - 1);
     }
-  }, [slideIndex, onNavigate]);
+  }, [slideIndex, onNavigate, controller]);
 
   const handleNextSlide = useCallback(async () => {
     if (slideIndex < deck.slides.length - 1) {
+      controller?.stopNarration();
       setIsPlaying(false);
       setNarrationPaused(false);
       onNavigate(slideIndex + 1);
     }
-  }, [slideIndex, deck.slides.length, onNavigate]);
+  }, [slideIndex, deck.slides.length, onNavigate, controller]);
 
   const handleJumpToSlide = useCallback(
     (index: number) => {
+      controller?.stopNarration();
       setIsPlaying(false);
       setNarrationPaused(false);
       onNavigate(index);
     },
-    [onNavigate]
+    [onNavigate, controller]
   );
 
   // Handle play/pause
@@ -123,10 +146,10 @@ export function ExplainerLayout({
     } else {
       setIsPlaying(true);
       setNarrationPaused(false);
-      // Trigger narration for current slide
-      onNavigate(slideIndex);
+      // Start narration (and word-synced subtitles) for the current slide.
+      void controller?.jumpToSlide(slideIndex);
     }
-  }, [isPlaying, narrationPaused, slideIndex, onNavigate]);
+  }, [isPlaying, narrationPaused, slideIndex, controller]);
 
   const handleSkipNarration = useCallback(() => {
     bindingRef.current?.skipNarration();
@@ -221,6 +244,8 @@ export function ExplainerLayout({
               immersiveControls={immersiveControls}
             />
           )}
+          {/* Word-synchronized captions for the active narration. */}
+          <SubtitleRenderer controller={controller} />
         </main>
       </div>
 

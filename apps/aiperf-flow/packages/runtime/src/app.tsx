@@ -499,6 +499,10 @@ export type FlowAppProps = Readonly<{
    * "Play with audio" can unlock Web Audio from a user gesture.
    */
   requireAudioConsent?: boolean;
+  /** Called when user makes an audio consent choice in the dialog. */
+  onAudioConsentChange?: (hasConsented: boolean) => void;
+  /** When true, auto-play narrator on mount (requires prior consent). */
+  autoPlay?: boolean;
   /** Injectable Fullscreen API boundary for tests and hosts. */
   fullscreenAdapter?: FullscreenAdapter;
 }>;
@@ -511,6 +515,8 @@ export function FlowApp({
   reducedMotion = false,
   forceSvgFallback = false,
   requireAudioConsent = suppliedNarratorBackend === undefined && !forceSvgFallback,
+  onAudioConsentChange,
+  autoPlay = false,
   fullscreenAdapter: suppliedFullscreenAdapter,
 }: FlowAppProps): ReactNode {
   const registry = useMemo(
@@ -693,6 +699,19 @@ export function FlowApp({
     playing,
     reducedMotion,
   ]);
+
+  useEffect(() => {
+    if (!autoPlay || reducedMotion) {
+      return;
+    }
+    // Only auto-play if consent is not required or has been given
+    const consentGivenOrNotRequired =
+      !requireAudioConsent || audioConsent !== null;
+    if (!consentGivenOrNotRequired) {
+      return;
+    }
+    setPlaying(true);
+  }, [autoPlay, reducedMotion, requireAudioConsent, audioConsent]);
 
   const properties = scene === undefined ? {} : record(scene);
   const transcript = scene === undefined ? "" : sceneTranscript(scene);
@@ -971,6 +990,7 @@ export function FlowApp({
 
   function chooseAudioConsent(choice: AudioConsentChoice): void {
     setAudioConsent(choice);
+    onAudioConsentChange?.(choice === "with-audio");
     if (choice === "with-audio") {
       setMuted(false);
       narrator.setMuted(false);

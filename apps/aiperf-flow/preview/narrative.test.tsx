@@ -19,6 +19,7 @@ afterEach(() => {
 
 beforeEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
   Object.defineProperty(window, "matchMedia", {
     writable: true,
     configurable: true,
@@ -116,8 +117,23 @@ describe("preview App narration vertical slice", () => {
     });
   }
 
+  async function navigateToScene(): Promise<void> {
+    // Click on a scene card to navigate from home page to scene view
+    const sceneCard = await screen.findByRole("button", {
+      name: /Load.*What made this slow/i,
+    });
+    fireEvent.click(sceneCard);
+    // Wait for the scene to load (audio consent dialog or scene field should appear)
+    await vi.waitFor(() => {
+      const dialog = screen.queryByRole("dialog", { name: "Audio preference" });
+      const sceneField = screen.queryByRole("region", { name: "Scene field" });
+      expect(dialog || sceneField).toBeTruthy();
+    });
+  }
+
   test("asks for audio preference before playback starts", async () => {
     render(<App />);
+    await navigateToScene();
 
     expect(
       screen.getByRole("dialog", { name: "Audio preference" }),
@@ -137,6 +153,7 @@ describe("preview App narration vertical slice", () => {
 
   test("renders a visible subtitle overlay for the request investigation", async () => {
     render(<App />);
+    await navigateToScene();
     await chooseAudioAndWait("without-audio");
 
     expect(screen.getByRole("region", { name: "Subtitles" })).toBeTruthy();
@@ -150,6 +167,7 @@ describe("preview App narration vertical slice", () => {
 
   test("mutes and unmutes narration through shared commands", async () => {
     render(<App />);
+    await navigateToScene();
     await chooseAudioAndWait("with-audio");
 
     runCommand("Mute narration");
@@ -163,6 +181,7 @@ describe("preview App narration vertical slice", () => {
 
   test("pauses narration with exploration and resumes the exact beat", async () => {
     render(<App />);
+    await navigateToScene();
     await chooseAudioAndWait("with-audio");
 
     fireEvent.click(screen.getByRole("button", { name: "Explore" }));
@@ -181,6 +200,7 @@ describe("preview App narration vertical slice", () => {
     const cancel = window.speechSynthesis.cancel as ReturnType<typeof vi.fn>;
     cancel.mockClear();
     const { unmount } = render(<App />);
+    await navigateToScene();
     await chooseAudioAndWait("with-audio");
     unmount();
     expect(cancel.mock.calls.length).toBeGreaterThan(0);

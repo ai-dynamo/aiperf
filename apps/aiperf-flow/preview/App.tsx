@@ -353,9 +353,7 @@ export function App() {
   );
   const [theme, setTheme] = useState<Theme>(() => loadThemeFromStorage());
   const [showThemeMenu, setShowThemeMenu] = useState(false);
-  const [audioConsent, setAudioConsent] = useState<AudioConsent>(() =>
-    loadAudioConsentFromStorage(),
-  );
+  const [audioConsent, setAudioConsent] = useState<AudioConsent>("unset");
   const [hasLeftSite, setHasLeftSite] = useState(false);
   const flow = useMemo(() => {
     const base = workspace.flows[activeFlowId] ?? workspace.flow;
@@ -407,10 +405,6 @@ export function App() {
   useEffect(() => {
     saveThemeToStorage(theme);
   }, [theme]);
-
-  useEffect(() => {
-    saveAudioConsentToStorage(audioConsent);
-  }, [audioConsent]);
 
   useEffect(() => {
     const handleVisibilityChange = (): void => {

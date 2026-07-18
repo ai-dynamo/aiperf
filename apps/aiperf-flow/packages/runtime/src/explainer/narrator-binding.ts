@@ -1,3 +1,8 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Bridges narration lifecycle events to slideshow navigation.
+
 import type { SlideshowController } from './controller.js';
 import type { NarratorBackend } from '../narrative/narrator.js';
 
@@ -11,20 +16,22 @@ export class NarratorBinding {
   }
 
   onNarrationComplete(): void {
-    // Auto-advance to next slide
+    // Auto-advance to next slide once narration finishes.
     void this.controller.nextSlide();
   }
 
   pauseNarration(): void {
-    this.narrator.pause();
+    this.controller.pauseNarration();
   }
 
   resumeNarration(): void {
-    this.narrator.resume();
+    this.controller.resumeNarration();
   }
 
   skipNarration(): void {
-    this.narrator.stop();
+    // Cancel the current narration through the runtime interface (there is no
+    // `stop` on NarratorBackend), then advance.
+    this.narrator.cancel();
     void this.controller.nextSlide();
   }
 }
