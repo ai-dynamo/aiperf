@@ -157,7 +157,7 @@ cancelled children are tallied separately under `status.runStates.cancelled`.
 The full per-phase breakdown lives at `status.runStates`
 (`pending` / `running` / `completed` / `failed` / `cancelled`). If you previously
 relied on `failedRuns` as a "did anything not succeed" signal, see
-[Status field semantic change](../tutorials/migrating-k8s-resources.md#status-field-semantic-change-aiperfsweepstatusfailedruns)
+Status field semantic change
 in the migration tutorial for the consumer-side update.
 
 ## Schema invariants enforced at admission

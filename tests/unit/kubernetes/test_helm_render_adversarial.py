@@ -377,6 +377,11 @@ class TestValuesSchemaAdversarial:
 class TestGeneratedCrdConsistency:
     """Generated CRD templates stay in sync with the Python generator."""
 
+    @pytest.mark.skipif(
+        not (PROJECT_ROOT / "tools" / "generate_crd.py").exists(),
+        reason="tools/generate_crd.py not present on this branch (lives on the "
+        "parallel k8s CRD-generator branch, not integrated here)",
+    )
     def test_crd_templates_match_generator_check(self) -> None:
         # sys.executable (the pytest venv python) already has the project
         # installed; shelling through ``uv run`` risks a cold lock/sync.

@@ -269,4 +269,4 @@ all, use `--no-gpu-telemetry`.
 - [`docs/tutorials/gpu-telemetry.md`](../tutorials/gpu-telemetry.md) — general (local) GPU telemetry tutorial, console/dashboard output, CSV and JSON schemas, pynvml mode
 - [`docs/kubernetes/configuration.md`](configuration.md) — resource overrides and operator environment variables
 - [`docs/kubernetes/sidecars.md`](sidecars.md) — other sidecar containers in the controller pod
-- [`docs/dev/kubernetes-flow.md`](../dev/kubernetes-flow.md) — lifecycle hooks and CR state flow
+- `docs/dev/kubernetes-flow.md` — lifecycle hooks and CR state flow

@@ -18,7 +18,7 @@ resource:
    CR is rejected with a clear message before any pod is scheduled.
 
 The CRD that defines both layers is auto-generated from the AIPerfConfig
-Pydantic models — see [the dev flow doc](../dev/kubernetes-flow.md#crd-generator)
+Pydantic models — see the dev flow doc
 for how to add new rules.
 
 ## Shorthand acceptance
@@ -216,7 +216,7 @@ CEL constraints that aren't obvious from the Pydantic side:
 
 ## See also
 
-- [`docs/dev/kubernetes-flow.md`](../dev/kubernetes-flow.md) — operator/CR
+- `docs/dev/kubernetes-flow.md` — operator/CR
   lifecycle, including how the CRD generator decorator pattern is wired.
 - [`docs/kubernetes/validate.md`](validate.md) — `aiperf kube validate` runs
   the same schema check **client-side** so CI catches violations before

@@ -15,8 +15,6 @@ loaded from `src/aiperf/operator/ui/`.
 This page documents every page, interaction, and keyboard shortcut in the UI.
 For the HTTP endpoints that power it, see [`results-api.md`](results-api.md).
 
-![AIPerf web dashboard](../media/images/api-dashboard-v2.png)
-
 ---
 
 ## Accessing the Dashboard
