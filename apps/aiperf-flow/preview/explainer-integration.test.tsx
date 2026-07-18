@@ -21,17 +21,17 @@ describe("Explainer Deck Navigation Integration", () => {
     const mockSelect = vi.fn();
     render(<ExplainerDeckPicker decks={COMPILED_EXPLAINER_DECKS} onDeckSelect={mockSelect} />);
 
-    // All 4 decks should be displayed
-    expect(screen.getByText(/Rust Architecture/i)).toBeTruthy();
+    // All 8 decks should be displayed
+    expect(screen.getByRole("heading", { level: 3, name: /^Rust Architecture$/i })).toBeTruthy();
     expect(screen.getByText(/Slurm Velo/i)).toBeTruthy();
-    expect(screen.getByRole("heading", { level: 3, name: /Dynosim/i })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: /^Dynosim$/i })).toBeTruthy();
   });
 
   test("ExplainerDeckPicker calls onDeckSelect when deck clicked", () => {
     const mockSelect = vi.fn();
     render(<ExplainerDeckPicker decks={COMPILED_EXPLAINER_DECKS} onDeckSelect={mockSelect} />);
 
-    const deckButton = screen.getByRole("button", { name: /Load Rust Architecture/i });
+    const deckButton = screen.getByRole("button", { name: /^Load Rust Architecture explainer deck$/i });
     fireEvent.click(deckButton);
 
     expect(mockSelect).toHaveBeenCalledWith("rust-architecture");

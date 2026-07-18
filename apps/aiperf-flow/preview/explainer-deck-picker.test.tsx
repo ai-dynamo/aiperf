@@ -24,15 +24,15 @@ describe("ExplainerDeckPicker", () => {
     expect(screen.getByText(/Choose a walkthrough/i)).toBeTruthy();
   });
 
-  test("renders all 4 compiled explainer decks as cards", () => {
+  test("renders all 8 compiled explainer decks as cards", () => {
     const mockSelect = vi.fn();
     render(<ExplainerDeckPicker decks={COMPILED_EXPLAINER_DECKS} onDeckSelect={mockSelect} />);
 
-    // Should render 4 deck cards
+    // Should render 8 deck cards
     const buttons = screen.getAllByRole("button", {
       name: /Load .* explainer deck/i,
     });
-    expect(buttons.length).toBe(4);
+    expect(buttons.length).toBe(8);
   });
 
   test("displays correct deck titles", () => {
@@ -40,10 +40,14 @@ describe("ExplainerDeckPicker", () => {
     render(<ExplainerDeckPicker decks={COMPILED_EXPLAINER_DECKS} onDeckSelect={mockSelect} />);
 
     // Check for human-readable titles
-    expect(screen.getByText(/Rust Architecture/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: /^Rust Architecture$/i })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: /Rust Architecture Atlas/i })).toBeTruthy();
     expect(screen.getByText(/Slurm Velo/i)).toBeTruthy();
-    expect(screen.getByRole("heading", { level: 3, name: /Dynosim/i })).toBeTruthy();
-    expect(screen.getByText(/Aiperf Flow System/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: /^Dynosim$/i })).toBeTruthy();
+    expect(screen.getByText(/Cellular Algorithms/i)).toBeTruthy();
+    expect(screen.getByText(/Cellular Internals/i)).toBeTruthy();
+    expect(screen.getByText(/Segment Pools/i)).toBeTruthy();
+    expect(screen.getByText(/Velo Deep Dive/i)).toBeTruthy();
   });
 
   test("displays slide counts for each deck", () => {
@@ -52,7 +56,7 @@ describe("ExplainerDeckPicker", () => {
 
     // Each deck should have a slide count displayed
     const slideCountTexts = screen.getAllByText(/slides?/i);
-    expect(slideCountTexts.length).toBeGreaterThanOrEqual(4);
+    expect(slideCountTexts.length).toBeGreaterThanOrEqual(8);
   });
 
   test("displays first slide lede as deck description", () => {
@@ -72,7 +76,7 @@ describe("ExplainerDeckPicker", () => {
     render(<ExplainerDeckPicker decks={COMPILED_EXPLAINER_DECKS} onDeckSelect={mockSelect} />);
 
     const rustArchButton = screen.getByRole("button", {
-      name: /Load Rust Architecture/i,
+      name: /^Load Rust Architecture explainer deck$/i,
     });
     fireEvent.click(rustArchButton);
 
@@ -84,7 +88,16 @@ describe("ExplainerDeckPicker", () => {
     const mockSelect = vi.fn();
     render(<ExplainerDeckPicker decks={COMPILED_EXPLAINER_DECKS} onDeckSelect={mockSelect} />);
 
-    const expectedDecks = ["rust-architecture", "slurm-velo", "dynosim", "aiperf-flow-system"];
+    const expectedDecks = [
+      "cellular-algorithms",
+      "cellular-internals",
+      "dynosim",
+      "rust-architecture-atlas",
+      "rust-architecture",
+      "segment-pools",
+      "slurm-velo",
+      "velo-deep-dive",
+    ];
 
     expectedDecks.forEach((deckId) => {
       // Find the button matching this deck by its aria-label
@@ -137,7 +150,7 @@ describe("ExplainerDeckPicker", () => {
     render(<ExplainerDeckPicker decks={COMPILED_EXPLAINER_DECKS} onDeckSelect={mockSelect} />);
 
     const badges = screen.getAllByText(/View deck/i);
-    expect(badges.length).toBe(4);
+    expect(badges.length).toBe(8);
   });
 
   test("properly formats deck id to title", () => {
@@ -146,13 +159,15 @@ describe("ExplainerDeckPicker", () => {
 
     // Verify each ID is converted properly:
     // rust-architecture -> Rust Architecture
-    expect(screen.getByText(/Rust Architecture/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: /^Rust Architecture$/i })).toBeTruthy();
+    // rust-architecture-atlas -> Rust Architecture Atlas
+    expect(screen.getByRole("heading", { level: 3, name: /Rust Architecture Atlas/i })).toBeTruthy();
     // slurm-velo -> Slurm Velo
     expect(screen.getByText(/Slurm Velo/i)).toBeTruthy();
     // dynosim -> Dynosim
-    expect(screen.getByRole("heading", { level: 3, name: /Dynosim/i })).toBeTruthy();
-    // aiperf-flow-system -> Aiperf Flow System
-    expect(screen.getByText(/Aiperf Flow System/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: /^Dynosim$/i })).toBeTruthy();
+    // segment-pools -> Segment Pools
+    expect(screen.getByText(/Segment Pools/i)).toBeTruthy();
   });
 
   test("handles singular/plural slide count correctly", () => {
@@ -219,7 +234,7 @@ describe("ExplainerDeckPicker", () => {
     );
 
     const cards = container.querySelectorAll(".deck-card");
-    expect(cards.length).toBe(4);
+    expect(cards.length).toBe(8);
 
     cards.forEach((card) => {
       // Each card should have a header with title and slide count

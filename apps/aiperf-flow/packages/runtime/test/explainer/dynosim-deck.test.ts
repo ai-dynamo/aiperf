@@ -11,7 +11,7 @@ import type { DeckPackage } from "@aiperf/flow-schema";
 
 const packagePath = join(
   dirname(fileURLToPath(import.meta.url)),
-  "../../../../explainers/src/decks-generated/dynosim.package.json",
+  "../../../../../explainers/src/decks-generated/dynosim.package.json",
 );
 
 const DYNOSIM_PACKAGE = JSON.parse(
@@ -26,24 +26,24 @@ describe("dynosim.flow compiled deck", () => {
 
   it("covers every original topic in order", () => {
     const expectedTitles = [
-      "Why Dynosim",
-      "Feature gate",
-      "Config seam",
-      "Routing",
-      "Composition",
-      "Offline mode",
-      "Online mode",
-      "Clock compare",
-      "Event queues",
-      "Sim pump",
-      "Ordering rule",
-      "Step bounds",
-      "Submission",
-      "Token path",
-      "Metrics",
-      "Delivery modes",
-      "Completion",
-      "Recap",
+      "Co-simulation without a live inference server",
+      "Cargo feature dynosim pulls the native crates",
+      "One BenchmarkRun; transport selects the clock",
+      "Factory bypasses native HTTP execution",
+      "EngineHost + DynosimSink share one observer seam",
+      "dynosim_offline owns SimClock",
+      "dynosim_online keeps RealClock",
+      "RealClock vs SimClock semantics",
+      "Virtual timers and external engine events",
+      "Poll workload to quiescence, then advance time",
+      "Earliest event selection; clock wins ties",
+      "Engine steps respect virtual interval limits",
+      "DirectRequest and waiter mailboxes",
+      "Engine events become RequestObserver callbacks",
+      "TTFT, ITL batches, usage, terminal merge",
+      "Incremental tokens vs terminal coalescing",
+      "Drain, stall, and deadlock detection",
+      "Offline vs online parity and artifacts",
     ];
 
     expect(DYNOSIM_PACKAGE.slides.map((s) => s.title)).toEqual(expectedTitles);

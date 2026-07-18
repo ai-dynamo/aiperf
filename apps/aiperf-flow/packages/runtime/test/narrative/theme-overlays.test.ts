@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
 function stylesheet(name: string): string {
   return readFileSync(
-    fileURLToPath(new URL(`../../src/narrative/${name}`, import.meta.url)),
+    join(process.cwd(), "packages/runtime/src/narrative", name),
     "utf8",
   );
 }
