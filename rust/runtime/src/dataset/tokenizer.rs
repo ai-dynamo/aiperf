@@ -18,15 +18,15 @@ use dynamo_tokenizers::traits::{Decoder as _, Encoder as _};
 use minijinja::Value as JinjaValue;
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
-// tiktoken-rs 0.9's `CoreBPE::new` wants `rustc_hash` 1.x maps; alias the bridged
-// pin so the two maps handed to it match its hasher type (the workspace
-// `rustc_hash` is 2.x, a distinct `FxHashMap`).
-use tiktoken_rustc_hash::FxHashMap as TiktokenFxHashMap;
 use serde_json::Value;
 use tiktoken_rs::{
     CoreBPE, cl100k_base_singleton, o200k_base_singleton, o200k_harmony_singleton,
     p50k_base_singleton, p50k_edit_singleton, r50k_base_singleton,
 };
+// tiktoken-rs 0.9's `CoreBPE::new` wants `rustc_hash` 1.x maps; this bridged pin
+// (renamed `rustc-hash` 1.x) matches its hasher type, because the workspace
+// `rustc_hash` is 2.x whose `FxHashMap` is a distinct, incompatible type.
+use tiktoken_rustc_hash::FxHashMap as TiktokenFxHashMap;
 use tokenizers::Tokenizer as HfTokenizer;
 
 use crate::dataset::error::{DatasetError, Result};
@@ -371,7 +371,10 @@ impl NativeTiktokenTokenizer {
         })?;
 
         let mut encoder: TiktokenFxHashMap<Vec<u8>, u32> =
-            TiktokenFxHashMap::with_capacity_and_hasher(content.lines().count(), Default::default());
+            TiktokenFxHashMap::with_capacity_and_hasher(
+                content.lines().count(),
+                Default::default(),
+            );
         for line in content.lines() {
             let line = line.trim();
             if line.is_empty() {
@@ -457,10 +460,10 @@ impl NativeTiktokenTokenizer {
             .iter()
             .map(|(name, &id)| (name.as_str(), id))
             .collect();
-        let bos_token_id =
-            special_token_name(tokenizer_config.bos_token.as_ref()).and_then(|n| name_to_id.get(n.as_str()).copied());
-        let eos_token_id =
-            special_token_name(tokenizer_config.eos_token.as_ref()).and_then(|n| name_to_id.get(n.as_str()).copied());
+        let bos_token_id = special_token_name(tokenizer_config.bos_token.as_ref())
+            .and_then(|n| name_to_id.get(n.as_str()).copied());
+        let eos_token_id = special_token_name(tokenizer_config.eos_token.as_ref())
+            .and_then(|n| name_to_id.get(n.as_str()).copied());
 
         let pattern = match model_config.model_type.as_deref() {
             Some("kimi" | "kimi_k2" | "kimi_k25" | "deepseek_v3") => KIMI_PATTERN,
@@ -911,8 +914,16 @@ mod tests {
             tokenizer.count(repeated).unwrap(),
             tokenizer.encode(repeated).unwrap().len()
         );
-        assert_eq!(tokenizer.encode(repeated).unwrap(), tokenizer.encode(repeated).unwrap());
-        assert_eq!(tokenizer.decode(&tokenizer.encode(repeated).unwrap()).unwrap(), repeated);
+        assert_eq!(
+            tokenizer.encode(repeated).unwrap(),
+            tokenizer.encode(repeated).unwrap()
+        );
+        assert_eq!(
+            tokenizer
+                .decode(&tokenizer.encode(repeated).unwrap())
+                .unwrap(),
+            repeated
+        );
     }
 
     #[test]
@@ -924,9 +935,15 @@ mod tests {
         // num_base_tokens = 258 (max rank 257 + 1); + 256 reserved = 514.
         assert_eq!(tokenizer.vocab_size(), Some(514));
         assert_eq!(tokenizer.bos_token_id(), None);
-        assert_eq!(tokenizer.decode(&tokenizer.encode("hi").unwrap()).unwrap(), "hi");
+        assert_eq!(
+            tokenizer.decode(&tokenizer.encode("hi").unwrap()).unwrap(),
+            "hi"
+        );
         // An unnamed reserved slot decodes to its placeholder token.
-        assert_eq!(tokenizer.encode("<|reserved_token_300|>").unwrap(), vec![300]);
+        assert_eq!(
+            tokenizer.encode("<|reserved_token_300|>").unwrap(),
+            vec![300]
+        );
     }
 
     #[test]
