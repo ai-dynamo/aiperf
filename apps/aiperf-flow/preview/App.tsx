@@ -28,6 +28,36 @@ function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
+type Theme = "systems-chalk" | "legacy" | "core";
+
+const THEME_STORAGE_KEY = "aiperf-flow-theme";
+
+function loadThemeFromStorage(): Theme {
+  if (typeof localStorage === "undefined") {
+    return "systems-chalk";
+  }
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === "legacy" || stored === "core") {
+      return stored;
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return "systems-chalk";
+}
+
+function saveThemeToStorage(theme: Theme): void {
+  if (typeof localStorage === "undefined") {
+    return;
+  }
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export { unlockPreviewSpeech } from "./narrator-backend";
 
 /**
@@ -201,6 +231,8 @@ export function App() {
   const [kokoroState, setKokoroState] = useState<KokoroNarratorSnapshot | null>(
     null,
   );
+  const [theme, setTheme] = useState<Theme>(() => loadThemeFromStorage());
+  const [showThemeMenu, setShowThemeMenu] = useState(false);
   const flow = useMemo(() => {
     const base = workspace.flows[activeFlowId] ?? workspace.flow;
     const responsive = narrowLayout
@@ -248,9 +280,48 @@ export function App() {
     return () => media.removeEventListener("change", sync);
   }, []);
 
+  useEffect(() => {
+    saveThemeToStorage(theme);
+  }, [theme]);
+
+  useEffect(() => {
+    if (!showThemeMenu) {
+      return;
+    }
+    const handleClickOutside = (event: MouseEvent): void => {
+      const target = event.target as Node;
+      // Check if click is outside the theme menu area
+      if (!target || !(target instanceof Element)) {
+        return;
+      }
+      if (
+        !target.closest("[data-theme-menu]") &&
+        !target.closest("button[aria-label='Theme selector']")
+      ) {
+        setShowThemeMenu(false);
+      }
+    };
+    document.addEventListener("click", handleClickOutside);
+    return () => {
+      document.removeEventListener("click", handleClickOutside);
+    };
+  }, [showThemeMenu]);
+
   function selectScene(flowId: string, sceneId: string): void {
     setActiveFlowId(flowId);
     setActiveSceneId(sceneId);
+  }
+
+  function handleThemeChange(newTheme: Theme): void {
+    setTheme(newTheme);
+    setShowThemeMenu(false);
+  }
+
+  function cycleTheme(): void {
+    const themes: Theme[] = ["systems-chalk", "legacy", "core"];
+    const currentIndex = themes.indexOf(theme);
+    const nextIndex = (currentIndex + 1) % themes.length;
+    handleThemeChange(themes[nextIndex]!);
   }
 
   const voiceStatus =
@@ -259,6 +330,11 @@ export function App() {
       : kokoroState?.status === "needs-user-activation"
         ? "Press play for voice"
         : null;
+
+  const themeLabel = theme
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 
   return (
     <div
@@ -295,7 +371,95 @@ export function App() {
               {voiceStatus}
             </p>
           )}
-          <span className="preview-theme-mark">SYSTEMS CHALK</span>
+          <div style={{ position: "relative" }}>
+            <button
+              aria-label="Theme selector"
+              aria-expanded={showThemeMenu}
+              onClick={() => setShowThemeMenu((prev) => !prev)}
+              type="button"
+              style={{
+                minHeight: "2rem",
+                padding: "0.4rem 0.6rem",
+                border: "1px solid var(--preview-guide)",
+                borderRadius: "6px",
+                background: "var(--preview-control)",
+                color: "var(--preview-muted)",
+                cursor: "pointer",
+                fontSize: "0.7rem",
+                fontWeight: 600,
+                textTransform: "uppercase",
+              }}
+            >
+              {themeLabel}
+            </button>
+            {showThemeMenu && (
+              <div
+                data-theme-menu="true"
+                style={{
+                  position: "absolute",
+                  top: "100%",
+                  right: 0,
+                  marginTop: "0.5rem",
+                  background: "var(--preview-panel)",
+                  border: "1px solid var(--preview-guide)",
+                  borderRadius: "6px",
+                  minWidth: "120px",
+                  zIndex: 1000,
+                  boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+                }}
+              >
+                {(["systems-chalk", "legacy", "core"] as const).map(
+                  (themeOption) => (
+                    <button
+                      key={themeOption}
+                      onClick={() => handleThemeChange(themeOption)}
+                      type="button"
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        padding: "0.5rem 0.75rem",
+                        border: "none",
+                        background:
+                          theme === themeOption
+                            ? "var(--preview-signal)"
+                            : "transparent",
+                        color:
+                          theme === themeOption
+                            ? "var(--preview-board)"
+                            : "var(--preview-chalk)",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        fontSize: "0.7rem",
+                        fontWeight: 500,
+                        textTransform: "capitalize",
+                      }}
+                    >
+                      {themeOption.split("-").join(" ")}
+                    </button>
+                  ),
+                )}
+              </div>
+            )}
+          </div>
+          <button
+            aria-label="Toggle theme"
+            onClick={cycleTheme}
+            title="Click to cycle through themes"
+            type="button"
+            style={{
+              minHeight: "2rem",
+              padding: "0.4rem 0.6rem",
+              border: "1px solid var(--preview-guide)",
+              borderRadius: "6px",
+              background: "var(--preview-control)",
+              color: "var(--preview-muted)",
+              cursor: "pointer",
+              fontSize: "0.7rem",
+              fontWeight: 600,
+            }}
+          >
+            ⟳
+          </button>
         </div>
       </header>
 
@@ -313,7 +477,28 @@ export function App() {
           workspace={workspace}
         />
 
-        <main className="runtime-story">
+        <main
+          className="runtime-story"
+          data-theme={theme}
+          style={{
+            ...(theme === "legacy" && {
+              "--flow-board": "#1a1a1a",
+              "--flow-panel": "#222",
+              "--flow-raised": "#2a2a2a",
+              "--flow-control-surface": "#2a2a2a",
+              "--flow-chalk": "#e8e8e8",
+              "--flow-chalk-muted": "#999",
+            } as React.CSSProperties),
+            ...(theme === "core" && {
+              "--flow-board": "#0d1117",
+              "--flow-panel": "#161b22",
+              "--flow-raised": "#21262d",
+              "--flow-control-surface": "#21262d",
+              "--flow-chalk": "#f0f6fc",
+              "--flow-chalk-muted": "#8b949e",
+            } as React.CSSProperties),
+          }}
+        >
           <FlowApp
             key={`${activeFlowId}:${activeSceneId}`}
             flow={flow}
