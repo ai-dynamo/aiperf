@@ -14,7 +14,7 @@ describe('AIPerf Flow System Explainer Deck', () => {
   let deckSource: string;
   const deckPath = resolve(
     __dirname,
-    '../../src/explainer/decks/aiperf-flow-system.flow'
+    '../../../src/explainer/decks/aiperf-flow-system.flow'
   );
 
   beforeEach(() => {

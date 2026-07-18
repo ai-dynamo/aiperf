@@ -4,8 +4,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { ExplainerRegistry } from '../../src/explainer/registry.js';
-import { loadBuiltinDecks, AIPERF_FLOW_SYSTEM_DECK } from '../../src/explainer/decks/loader.js';
+import { ExplainerRegistry } from '../../../src/explainer/registry.js';
+import { loadBuiltinDecks, AIPERF_FLOW_SYSTEM_DECK } from '../../../src/explainer/decks/loader.js';
 
 describe('Explainer Decks Loader', () => {
   afterEach(() => {

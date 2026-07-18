@@ -279,6 +279,7 @@ a:focus-visible,
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  height: 100%;
 }
 
 .flow-browser-head {
@@ -536,7 +537,7 @@ a:focus-visible,
   width: 100%;
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .runtime-story > main {
@@ -633,9 +634,56 @@ a:focus-visible,
   --legend-dot: var(--preview-amber);
 }
 
+.preview-bottom-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  background: var(--preview-board);
+  border-top: 1px solid var(--preview-guide);
+  flex: 0 0 auto;
+}
+
+.nav-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1.5rem;
+  border: 1px solid var(--preview-guide);
+  border-radius: 8px;
+  background: var(--preview-control);
+  color: var(--preview-chalk);
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 160ms ease-out;
+}
+
+.nav-button:hover:not(:disabled) {
+  border-color: var(--preview-signal);
+  background: var(--preview-raised);
+  color: var(--preview-signal);
+}
+
+.nav-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: var(--preview-muted);
+}
+
+.nav-back {
+  flex: 0 0 auto;
+}
+
+.nav-next {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
 @media (width <= 860px) {
   :root {
-    --preview-drawer-width: calc(100vw - 1rem);
+    --preview-drawer-width: 15rem;
   }
 
   .preview-topbar {
@@ -663,9 +711,30 @@ a:focus-visible,
     gap: 0;
   }
 
+  .flow-browser {
+    width: var(--preview-drawer-width);
+  }
+
+  .preview-breadcrumb {
+    padding: 0.75rem 1rem;
+  }
+
+  .breadcrumb-step {
+    padding: 0.4rem 0.5rem;
+    font-size: 0.65rem;
+  }
+
+  .preview-bottom-nav {
+    padding: 0.75rem 1rem;
+    gap: 0.75rem;
+  }
+
+  .nav-button {
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+  }
+
   .preview-shell[data-preview-layout="hub-spoke"] .runtime-story {
-    height: 100%;
-    padding-block-start: 4.5rem;
     overflow: auto;
   }
 

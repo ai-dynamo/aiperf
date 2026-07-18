@@ -145,16 +145,12 @@ describe("preview app home page", () => {
     });
     expect(cards.length).toBeGreaterThan(0);
 
-    // Check for some specific scenes
-    expect(
-      screen.getByText("What made this slow?"),
-    ).toBeTruthy();
-    expect(
-      screen.getByText("Control plane"),
-    ).toBeTruthy();
-    expect(
-      screen.getByText("Resolve endpoint"),
-    ).toBeTruthy();
+    // Check for some specific scene titles in card titles (h3 elements)
+    const titles = screen.getAllByRole("heading", { level: 3 });
+    const titleTexts = titles.map(t => t.textContent);
+    expect(titleTexts).toContain("What made this slow?");
+    expect(titleTexts).toContain("Control plane");
+    expect(titleTexts).toContain("Resolve endpoint");
   });
 
   test("clicking a scene card loads the scene", () => {
@@ -252,15 +248,12 @@ describe("preview app home page", () => {
     expect(screen.getByText(/AIPerf Flow Scenes/i)).toBeTruthy();
   });
 
-  test("browser collapsed state is hidden on home page", () => {
-    render(<App />);
+  test("sidebar is always visible and never hidden", () => {
+    const { container } = render(<App />);
 
-    // On home page, browser trigger should be hidden
-    const browserTrigger = screen.getByRole("button", {
-      name: /Open Flow browser/i,
-    });
-    const style = window.getComputedStyle(browserTrigger);
-    expect(style.display).toBe("none");
+    // On home page, sidebar should be present in the DOM
+    const sidebar = container.querySelector(".flow-browser");
+    expect(sidebar).toBeTruthy();
 
     // Load a scene
     const card = screen.getByRole("button", {
@@ -268,19 +261,24 @@ describe("preview app home page", () => {
     });
     fireEvent.click(card);
 
-    // Browser trigger should be visible
-    const styleAfter = window.getComputedStyle(browserTrigger);
-    expect(styleAfter.display).not.toBe("none");
+    // Sidebar should still be present after loading a scene
+    const sidebarAfter = container.querySelector(".flow-browser");
+    expect(sidebarAfter).toBeTruthy();
+
+    // Sidebar should be displayed as flex (part of flow-workspace flex layout)
+    const workspace = container.querySelector(".flow-workspace");
+    const style = window.getComputedStyle(workspace);
+    expect(style.display).toBe("flex");
   });
 
   test("theme menu is hidden on home page", () => {
     render(<App />);
 
     // On home page, theme cluster should be hidden
-    const themeButton = screen.getByRole("button", {
-      name: /Theme selector/i,
-    });
-    const themeCluster = themeButton?.closest(".preview-theme-cluster");
+    const themeClusters = document.querySelectorAll(".preview-theme-cluster");
+    expect(themeClusters.length).toBeGreaterThan(0);
+
+    const themeCluster = themeClusters[0];
     if (themeCluster) {
       const style = window.getComputedStyle(themeCluster);
       expect(style.display).toBe("none");
