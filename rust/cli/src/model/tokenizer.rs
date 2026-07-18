@@ -18,4 +18,12 @@ pub struct Tokenizer {
     pub trust_remote_code: bool,
     /// Apply the chat template when tokenizing.
     pub apply_chat_template: bool,
+    /// Opt-in server-side tokenizer origin (e.g. `http://host:8000`).
+    ///
+    /// When set, token counting is offloaded to the inference server's
+    /// `/tokenize` and `/detokenize` endpoints and `name` is used only as the
+    /// model selector forwarded to the server. Absent by default, keeping the
+    /// local built-in / Hugging Face tokenizer in force.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_url: Option<String>,
 }

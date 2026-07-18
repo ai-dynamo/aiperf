@@ -311,6 +311,7 @@ mod tests {
             tokenizer: TokenizerSpec {
                 name: "builtin".into(),
                 apply_chat_template: false,
+                server_url: None,
             },
             phases: vec![phase],
             metrics: MetricsSpec::default(),
@@ -813,6 +814,7 @@ mod tests {
             tokenizer: TokenizerSpec {
                 name: "builtin".into(),
                 apply_chat_template: false,
+                server_url: None,
             },
             phases: vec![phase],
             metrics: MetricsSpec::default(),

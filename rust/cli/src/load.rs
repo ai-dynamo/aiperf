@@ -151,6 +151,7 @@ pub(crate) struct Inputs {
     pub tokenizer_name: Option<String>,
     pub tokenizer_revision: Option<String>,
     pub tokenizer_trust: bool,
+    pub server_tokenizer_url: Option<String>,
     pub isl: Distribution,
     pub osl: Option<Distribution>,
     /// Turns-per-session distribution (multi-turn).
@@ -511,6 +512,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         tokenizer_name: flags.tokenizer.clone(),
         tokenizer_revision: flags.tokenizer_revision.clone(),
         tokenizer_trust: flags.tokenizer_trust_remote_code,
+        server_tokenizer_url: flags.server_tokenizer_url.clone(),
         isl: match isl_mean {
             Some(mean) => Distribution {
                 mean: Some(mean),
@@ -688,6 +690,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             .unwrap_or_else(|| "main".to_string()),
         trust_remote_code: inputs.tokenizer_trust,
         apply_chat_template: inputs.apply_chat_template,
+        server_url: inputs.server_tokenizer_url.clone(),
     };
 
     let dataset = if let Some(name) = &inputs.public_dataset {
