@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const FLOW_SCHEMA_VERSION = 2 as const;
-
 export * from "./capability-id.js";
 export * from "./capability.js";
 export * from "./deck-package.js";

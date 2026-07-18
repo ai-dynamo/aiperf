@@ -4,11 +4,7 @@
  */
 
 import type { DeckDefinition } from "./types";
-import { packageToDeckDefinition } from "./package-adapter";
-import {
-  hasGeneratedDeckPackages,
-  loadDeckPackageById,
-} from "./load-deck-packages";
+import { loadDeckFlowById, loadDeckFlows } from "./load-deck-flows";
 
 /** Canonical registry ids and routes — must stay bookmark-stable. */
 export const EXPECTED_DECK_ROUTES = [
@@ -26,35 +22,35 @@ export const EXPECTED_DECK_ROUTES = [
 export type RegisteredDeckId = (typeof EXPECTED_DECK_ROUTES)[number][0];
 
 /**
- * Load a deck exclusively from `decks-generated` via `packageToDeckDefinition`.
- * Throws when the package is missing or id/route diverge from the bookmark map.
+ * Load a deck exclusively from its live Flow source.
+ * Throws when the source is missing or id/route diverge from the bookmark map.
  */
-export function deckFromPackage(
+export function deckFromFlow(
   id: RegisteredDeckId,
   expectedRoute: string,
 ): DeckDefinition {
-  const fromPackage = loadDeckPackageById(id, packageToDeckDefinition);
-  if (fromPackage === undefined) {
+  const fromFlow = loadDeckFlowById(id);
+  if (fromFlow === undefined) {
     throw new Error(
-      `Missing generated DeckPackage for "${id}" under decks-generated ` +
-        `(expected ${id}.package.json via packageToDeckDefinition)`,
+      `Missing live Flow source for "${id}" under decks-flow ` +
+        `(expected ${id}.flow compiled via compileExplainerSource)`,
     );
   }
-  if (fromPackage.id !== id) {
+  if (fromFlow.id !== id) {
     throw new Error(
-      `Generated package for "${id}" has mismatched id "${fromPackage.id}"`,
+      `Live Flow source for "${id}" has mismatched id "${fromFlow.id}"`,
     );
   }
-  if (fromPackage.route !== expectedRoute) {
+  if (fromFlow.route !== expectedRoute) {
     throw new Error(
-      `Generated package for "${id}" has route "${fromPackage.route}", expected "${expectedRoute}"`,
+      `Live Flow source for "${id}" has route "${fromFlow.route}", expected "${expectedRoute}"`,
     );
   }
-  return fromPackage;
+  return fromFlow;
 }
 
 export const DECK_REGISTRY: readonly DeckDefinition[] = EXPECTED_DECK_ROUTES.map(
-  ([id, route]) => deckFromPackage(id, route),
+  ([id, route]) => deckFromFlow(id, route),
 );
 
 export function deckByRoute(route: string): DeckDefinition | undefined {
@@ -65,9 +61,9 @@ export function deckById(id: string): DeckDefinition | undefined {
   return DECK_REGISTRY.find((deck) => deck.id === id);
 }
 
-/** Whether any generated DeckPackage is currently discoverable under decks-generated. */
-export function registryUsesGeneratedPackages(): boolean {
-  return hasGeneratedDeckPackages();
+/** Whether any raw Flow source is currently discoverable and compilable. */
+export function registryUsesLiveFlowSources(): boolean {
+  return loadDeckFlows().length > 0;
 }
 
 export function validateDeckRegistry(decks: readonly DeckDefinition[] = DECK_REGISTRY): string[] {
