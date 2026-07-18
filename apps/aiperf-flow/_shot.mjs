@@ -4,7 +4,11 @@ const out = process.argv[3] || "/tmp/flow.png";
 const b = await chromium.launch();
 const p = await b.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
 await p.goto(url, { waitUntil: "networkidle" });
-await p.waitForTimeout(1200);
+const btn = p.getByRole("button", { name: "Play without audio" });
+try { await btn.click({ timeout: 3000 }); } catch {}
+await p.waitForTimeout(500);
+// pause playback so HUD stays visible
+await p.waitForTimeout(300);
 await p.screenshot({ path: out });
 await b.close();
 console.log("shot", out);
