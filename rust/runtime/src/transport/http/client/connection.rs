@@ -402,27 +402,28 @@ pub async fn establish_with_resolver(
     trace: &mut TraceData,
     resolver: &dyn DnsResolver,
 ) -> Result<(Sender, SocketInfo), ErrorDetails> {
-    // Total attempts = 1 initial + `max_connect_retries` retries. Only
-    // `ErrorKind::Connect` failures (DNS/TCP/TLS/handshake, all pre-send) are
-    // retried, so a request that may have already reached the server is never
-    // re-issued. Connect timeouts and every other failure surface immediately.
-    let mut attempt: u32 = 0;
+    // One initial attempt plus up to `max_connect_retries` further tries. Only
+    // pre-send `ErrorKind::Connect` failures (DNS/TCP/TLS/handshake) are worth
+    // retrying, because the request bytes never left the client and the server
+    // cannot have observed a partial request. Connect timeouts and every
+    // post-send outcome are handed back to the caller unchanged.
+    let mut retries_taken: u32 = 0;
     loop {
-        let result = establish_once(url, cfg, &clock, trace, resolver).await;
-        match result {
+        match establish_once(url, cfg, &clock, trace, resolver).await {
             Ok(pair) => return Ok(pair),
             Err(err) => {
-                if err.kind != ErrorKind::Connect || attempt >= cfg.max_connect_retries {
+                if err.kind != ErrorKind::Connect || retries_taken >= cfg.max_connect_retries {
                     return Err(err);
                 }
-                attempt += 1;
-                // Linear backoff: attempt `n` waits `backoff * n`, slept through
-                // the injected Clock for virtual-time determinism.
-                let backoff_ns = cfg
+                retries_taken += 1;
+                // Each successive retry waits longer: the Nth retry pauses for
+                // N * connect_retry_backoff_ns. The pause always runs on the
+                // injected Clock so virtual-time replays stay deterministic.
+                let wait_ns = cfg
                     .connect_retry_backoff_ns
-                    .saturating_mul(i64::from(attempt));
-                if backoff_ns > 0 {
-                    clock.clone().sleep(backoff_ns).await;
+                    .saturating_mul(i64::from(retries_taken));
+                if wait_ns > 0 {
+                    clock.clone().sleep(wait_ns).await;
                 }
             }
         }
