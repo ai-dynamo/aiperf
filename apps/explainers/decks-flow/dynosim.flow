@@ -42,7 +42,7 @@ explainer "Dynosim" {
           id: "s0-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s0-hdr-label"
@@ -63,125 +63,78 @@ explainer "Dynosim" {
 {
           id: "s0-aiperf"
           capability: "core.rect"
-          layout: { x: 70, y: 100, width: 150, height: 90 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 80, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s0-aiperf-title"
               capability: "core.text"
               text: "AIPerf workload"
-              layout: { x: 78, y: 128, width: 134, height: 22 }
+              layout: { x: 88, y: 158, width: 144, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s0-aiperf-detail"
               capability: "core.text"
               text: "schedule + observe"
-              layout: { x: 78, y: 152, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s0-sink"
-          capability: "core.rect"
-          layout: { x: 275, y: 100, width: 150, height: 90 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
-          children: [
-            {
-              id: "s0-sink-title"
-              capability: "core.text"
-              text: "DynosimSink"
-              layout: { x: 283, y: 128, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s0-sink-detail"
-              capability: "core.text"
-              text: "in-process"
-              layout: { x: 283, y: 152, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s0-replay"
-          capability: "core.rect"
-          layout: { x: 480, y: 100, width: 140, height: 90 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
-          children: [
-            {
-              id: "s0-replay-title"
-              capability: "core.text"
-              text: "SteppableReplay"
-              layout: { x: 488, y: 128, width: 124, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s0-replay-detail"
-              capability: "core.text"
-              text: "Dynamo mocker"
-              layout: { x: 488, y: 152, width: 124, height: 20 }
+              layout: { x: 88, y: 182, width: 144, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s0-a1"
-          capability: "core.line"
-          from: { x: 220, y: 145 }
-          to: { x: 275, y: 145 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M240 178 H280"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+{
+          id: "s0-sink"
+          capability: "core.rect"
+          layout: { x: 280, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "s0-sink-title"
+              capability: "core.text"
+              text: "DynosimSink"
+              layout: { x: 288, y: 158, width: 144, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "s0-sink-detail"
+              capability: "core.text"
+              text: "in-process"
+              layout: { x: 288, y: 182, width: 144, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
         },
 {
           id: "s0-a2"
-          capability: "core.line"
-          from: { x: 425, y: 145 }
-          to: { x: 480, y: 145 }
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M440 178 H480"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         },
 {
-          id: "s0-c1"
+          id: "s0-replay"
           capability: "core.rect"
-          layout: { x: 70, y: 210, width: 150, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
+          layout: { x: 480, y: 130, width: 140, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
-              id: "s0-c1-t"
+              id: "s0-replay-title"
               capability: "core.text"
-              text: "Clock · Observer · merge"
-              layout: { x: 76, y: 218, width: 138, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s0-c2"
-          capability: "core.rect"
-          layout: { x: 275, y: 210, width: 150, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
+              text: "SteppableReplay"
+              layout: { x: 488, y: 158, width: 124, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
             {
-              id: "s0-c2-t"
+              id: "s0-replay-detail"
               capability: "core.text"
-              text: "RequestSink · no wire"
-              layout: { x: 281, y: 218, width: 138, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s0-c3"
-          capability: "core.rect"
-          layout: { x: 480, y: 210, width: 140, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s0-c3-t"
-              capability: "core.text"
-              text: "passive mock engine"
-              layout: { x: 486, y: 218, width: 128, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+              text: "Dynamo mocker"
+              layout: { x: 488, y: 182, width: 124, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
@@ -189,130 +142,27 @@ explainer "Dynosim" {
           id: "s0-note"
           capability: "core.text"
           text: "HTTP/gRPC socket omitted on the hot path"
-          layout: { x: 100, y: 270, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 80, y: 280, width: 540, height: 24 }
+          style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
-{
-          id: "s0-sub"
-          capability: "core.text"
-          text: "Same metric vocabulary as online runs when configured for parity."
-          layout: { x: 100, y: 300, width: 500, height: 24 }
-          style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s0-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
 {
           id: "s0-motion-sig"
           capability: "core.path"
-          d: "M145 145 H550"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.5 }
+          d: "M145 178 H550"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s0-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s0-hdr"
-          action: "enter"
-        },
-        {
-          id: "s0-enter-aiperf"
-          at: 200
-          duration: 280
-          target: "s0-aiperf"
-          action: "enter"
-        },
-        {
-          id: "s0-enter-sink"
-          at: 350
-          duration: 280
-          target: "s0-sink"
-          action: "enter"
-        },
-        {
-          id: "s0-enter-replay"
-          at: 500
-          duration: 280
-          target: "s0-replay"
-          action: "enter"
-        },
-        {
-          id: "s0-draw-a1"
-          at: 650
-          duration: 320
-          target: "s0-a1"
-          action: "draw"
-        },
-        {
-          id: "s0-draw-a2"
-          at: 800
-          duration: 320
-          target: "s0-a2"
-          action: "draw"
-        },
-        {
-          id: "s0-enter-c1"
-          at: 950
-          duration: 280
-          target: "s0-c1"
-          action: "enter"
-        },
-        {
-          id: "s0-enter-c2"
-          at: 1070
-          duration: 280
-          target: "s0-c2"
-          action: "enter"
-        },
-        {
-          id: "s0-enter-c3"
-          at: 1190
-          duration: 280
-          target: "s0-c3"
-          action: "enter"
-        },
-        {
-          id: "s0-enter-note"
-          at: 1310
-          duration: 280
-          target: "s0-note"
-          action: "enter"
-        },
-        {
-          id: "s0-enter-sub"
-          at: 1410
-          duration: 280
-          target: "s0-sub"
-          action: "enter"
-        },
-        {
-          id: "t-s0-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s0-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s0-draw-motion"
-          at: 700
-          duration: 900
-          target: "s0-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s0-emph"
-          at: 1900
-          duration: 400
-          target: "s0-sink"
-          action: "emphasis"
-        }
+        { id: "s0-enter-hdr", at: 0, duration: 260, target: "s0-hdr", action: "enter" },
+        { id: "s0-enter-aiperf", at: 180, duration: 280, target: "s0-aiperf", action: "enter" },
+        { id: "s0-draw-a1", at: 420, duration: 320, target: "s0-a1", action: "draw" },
+        { id: "s0-enter-sink", at: 560, duration: 280, target: "s0-sink", action: "enter" },
+        { id: "s0-draw-a2", at: 780, duration: 320, target: "s0-a2", action: "draw" },
+        { id: "s0-enter-replay", at: 920, duration: 280, target: "s0-replay", action: "enter" },
+        { id: "s0-enter-note", at: 1180, duration: 280, target: "s0-note", action: "enter" },
+        { id: "s0-draw-motion", at: 1400, duration: 900, target: "s0-motion-sig", action: "draw" },
+        { id: "s0-emph", at: 2200, duration: 400, target: "s0-sink", action: "emphasis" }
       ]
     }
   }
@@ -343,7 +193,7 @@ explainer "Dynosim" {
           id: "s1-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s1-hdr-label"
@@ -364,177 +214,68 @@ explainer "Dynosim" {
 {
           id: "s1-feat"
           capability: "core.rect"
-          layout: { x: 100, y: 110, width: 200, height: 110 }
-          style: { fill: @theme.accent.warning, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 120, y: 120, width: 200, height: 110 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s1-feat-title"
               capability: "core.text"
               text: "Cargo feature"
-              layout: { x: 108, y: 138, width: 184, height: 22 }
+              layout: { x: 128, y: 148, width: 184, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s1-feat-detail"
               capability: "core.text"
               text: "dynosim"
-              layout: { x: 108, y: 162, width: 184, height: 20 }
+              layout: { x: 128, y: 172, width: 184, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s1-a1"
-          capability: "core.line"
-          from: { x: 300, y: 165 }
-          to: { x: 380, y: 165 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M320 175 H380"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s1-ids"
           capability: "core.rect"
-          layout: { x: 380, y: 110, width: 200, height: 110 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 380, y: 120, width: 200, height: 110 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s1-ids-title"
               capability: "core.text"
               text: "Registry IDs"
-              layout: { x: 388, y: 138, width: 184, height: 22 }
+              layout: { x: 388, y: 148, width: 184, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s1-ids-detail"
               capability: "core.text"
               text: "offline · online"
-              layout: { x: 388, y: 162, width: 184, height: 20 }
+              layout: { x: 388, y: 172, width: 184, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
-          id: "s1-c1"
-          capability: "core.rect"
-          layout: { x: 100, y: 250, width: 200, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s1-c1-t"
-              capability: "core.text"
-              text: "cargo build --features dynosim"
-              layout: { x: 106, y: 258, width: 188, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s1-c2"
-          capability: "core.rect"
-          layout: { x: 380, y: 250, width: 200, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s1-c2-t"
-              capability: "core.text"
-              text: "unknown ID fails closed"
-              layout: { x: 386, y: 258, width: 188, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s1-note"
-          capability: "core.text"
-          text: "Lean HTTP builds omit dynosim entirely."
-          layout: { x: 120, y: 310, width: 460, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s1-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s1-motion-sig"
           capability: "core.path"
-          d: "M200 165 H480"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M200 175 H500"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s1-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s1-hdr"
-          action: "enter"
-        },
-        {
-          id: "s1-enter-feat"
-          at: 200
-          duration: 280
-          target: "s1-feat"
-          action: "enter"
-        },
-        {
-          id: "s1-draw-a1"
-          at: 320
-          duration: 320
-          target: "s1-a1"
-          action: "draw"
-        },
-        {
-          id: "s1-enter-ids"
-          at: 460
-          duration: 280
-          target: "s1-ids"
-          action: "enter"
-        },
-        {
-          id: "s1-enter-c1"
-          at: 580
-          duration: 280
-          target: "s1-c1"
-          action: "enter"
-        },
-        {
-          id: "s1-enter-c2"
-          at: 700
-          duration: 280
-          target: "s1-c2"
-          action: "enter"
-        },
-        {
-          id: "s1-enter-note"
-          at: 820
-          duration: 280
-          target: "s1-note"
-          action: "enter"
-        },
-        {
-          id: "t-s1-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s1-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s1-draw-motion"
-          at: 650
-          duration: 900
-          target: "s1-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s1-emph"
-          at: 1800
-          duration: 400
-          target: "s1-ids"
-          action: "emphasis"
-        }
+        { id: "s1-enter-hdr", at: 0, duration: 260, target: "s1-hdr", action: "enter" },
+        { id: "s1-enter-feat", at: 180, duration: 280, target: "s1-feat", action: "enter" },
+        { id: "s1-draw-a1", at: 420, duration: 320, target: "s1-a1", action: "draw" },
+        { id: "s1-enter-ids", at: 560, duration: 280, target: "s1-ids", action: "enter" },
+        { id: "s1-draw-motion", at: 900, duration: 900, target: "s1-motion-sig", action: "draw" },
+        { id: "s1-emph", at: 1700, duration: 400, target: "s1-ids", action: "emphasis" }
       ]
     }
   }
@@ -565,7 +306,7 @@ explainer "Dynosim" {
           id: "s2-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s2-hdr-label"
@@ -586,242 +327,98 @@ explainer "Dynosim" {
 {
           id: "s2-run"
           capability: "core.rect"
-          layout: { x: 50, y: 110, width: 150, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.5 }
+          layout: { x: 60, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
           children: [
             {
               id: "s2-run-title"
               capability: "core.text"
               text: "BenchmarkRun"
-              layout: { x: 58, y: 138, width: 134, height: 22 }
+              layout: { x: 68, y: 158, width: 134, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s2-run-detail"
               capability: "core.text"
               text: "Config v2"
-              layout: { x: 58, y: 162, width: 134, height: 20 }
+              layout: { x: 68, y: 182, width: 134, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s2-a1"
-          capability: "core.line"
-          from: { x: 200, y: 158 }
-          to: { x: 250, y: 158 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M210 178 H260"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
         },
 {
-          id: "s2-transport"
+          id: "s2-tr"
           capability: "core.rect"
-          layout: { x: 250, y: 110, width: 180, height: 96 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 260, y: 130, width: 180, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
-              id: "s2-transport-title"
+              id: "s2-tr-title"
               capability: "core.text"
               text: "transport.type"
-              layout: { x: 258, y: 138, width: 164, height: 22 }
+              layout: { x: 268, y: 158, width: 164, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s2-transport-detail"
+              id: "s2-tr-detail"
               capability: "core.text"
               text: "selects driver"
-              layout: { x: 258, y: 162, width: 164, height: 20 }
+              layout: { x: 268, y: 182, width: 164, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s2-a2"
-          capability: "core.line"
-          from: { x: 430, y: 158 }
-          to: { x: 480, y: 158 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M440 178 H490"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
-          id: "s2-clock"
+          id: "s2-clk"
           capability: "core.rect"
-          layout: { x: 480, y: 110, width: 150, height: 96 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 490, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
-              id: "s2-clock-title"
+              id: "s2-clk-title"
               capability: "core.text"
               text: "Clock"
-              layout: { x: 488, y: 138, width: 134, height: 22 }
+              layout: { x: 498, y: 158, width: 134, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s2-clock-detail"
+              id: "s2-clk-detail"
               capability: "core.text"
               text: "Sim or Real"
-              layout: { x: 488, y: 162, width: 134, height: 20 }
+              layout: { x: 498, y: 182, width: 134, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
-          id: "s2-c1"
-          capability: "core.rect"
-          layout: { x: 50, y: 240, width: 190, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s2-c1-t"
-              capability: "core.text"
-              text: "dynosim_offline → SimClock"
-              layout: { x: 56, y: 248, width: 178, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s2-c2"
-          capability: "core.rect"
-          layout: { x: 260, y: 240, width: 190, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s2-c2-t"
-              capability: "core.text"
-              text: "dynosim_online → RealClock"
-              layout: { x: 266, y: 248, width: 178, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s2-c3"
-          capability: "core.rect"
-          layout: { x: 470, y: 240, width: 160, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s2-c3-t"
-              capability: "core.text"
-              text: "shared workload plan"
-              layout: { x: 476, y: 248, width: 148, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s2-note"
-          capability: "core.text"
-          text: "Workload, phases, and artifacts stay shared."
-          layout: { x: 100, y: 300, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s2-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s2-motion-sig"
           capability: "core.path"
-          d: "M125 158 H555"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M120 178 H565"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s2-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s2-hdr"
-          action: "enter"
-        },
-        {
-          id: "s2-enter-run"
-          at: 200
-          duration: 280
-          target: "s2-run"
-          action: "enter"
-        },
-        {
-          id: "s2-draw-a1"
-          at: 320
-          duration: 320
-          target: "s2-a1"
-          action: "draw"
-        },
-        {
-          id: "s2-enter-transport"
-          at: 460
-          duration: 280
-          target: "s2-transport"
-          action: "enter"
-        },
-        {
-          id: "s2-draw-a2"
-          at: 580
-          duration: 320
-          target: "s2-a2"
-          action: "draw"
-        },
-        {
-          id: "s2-enter-clock"
-          at: 720
-          duration: 280
-          target: "s2-clock"
-          action: "enter"
-        },
-        {
-          id: "s2-enter-c1"
-          at: 840
-          duration: 280
-          target: "s2-c1"
-          action: "enter"
-        },
-        {
-          id: "s2-enter-c2"
-          at: 960
-          duration: 280
-          target: "s2-c2"
-          action: "enter"
-        },
-        {
-          id: "s2-enter-c3"
-          at: 1080
-          duration: 280
-          target: "s2-c3"
-          action: "enter"
-        },
-        {
-          id: "s2-enter-note"
-          at: 1200
-          duration: 280
-          target: "s2-note"
-          action: "enter"
-        },
-        {
-          id: "t-s2-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s2-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s2-draw-motion"
-          at: 700
-          duration: 900
-          target: "s2-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s2-emph"
-          at: 1900
-          duration: 400
-          target: "s2-transport"
-          action: "emphasis"
-        }
+        { id: "s2-enter-hdr", at: 0, duration: 260, target: "s2-hdr", action: "enter" },
+        { id: "s2-enter-run", at: 180, duration: 280, target: "s2-run", action: "enter" },
+        { id: "s2-draw-a1", at: 420, duration: 300, target: "s2-a1", action: "draw" },
+        { id: "s2-enter-tr", at: 560, duration: 280, target: "s2-tr", action: "enter" },
+        { id: "s2-draw-a2", at: 800, duration: 300, target: "s2-a2", action: "draw" },
+        { id: "s2-enter-clk", at: 940, duration: 280, target: "s2-clk", action: "enter" },
+        { id: "s2-draw-motion", at: 1200, duration: 900, target: "s2-motion-sig", action: "draw" },
+        { id: "s2-emph", at: 2000, duration: 400, target: "s2-tr", action: "emphasis" }
       ]
     }
   }
@@ -852,7 +449,7 @@ explainer "Dynosim" {
           id: "s3-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s3-hdr-label"
@@ -873,21 +470,21 @@ explainer "Dynosim" {
 {
           id: "s3-http"
           capability: "core.rect"
-          layout: { x: 70, y: 110, width: 200, height: 110 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.5 }
+          layout: { x: 90, y: 120, width: 180, height: 110 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
           children: [
             {
               id: "s3-http-title"
               capability: "core.text"
               text: "HTTP factory"
-              layout: { x: 78, y: 138, width: 184, height: 22 }
+              layout: { x: 98, y: 148, width: 164, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s3-http-detail"
               capability: "core.text"
               text: "not used"
-              layout: { x: 78, y: 162, width: 184, height: 20 }
+              layout: { x: 98, y: 172, width: 164, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
@@ -895,52 +492,22 @@ explainer "Dynosim" {
 {
           id: "s3-dyno"
           capability: "core.rect"
-          layout: { x: 430, y: 110, width: 200, height: 110 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 430, y: 120, width: 180, height: 110 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s3-dyno-title"
               capability: "core.text"
               text: "Dynosim factory"
-              layout: { x: 438, y: 138, width: 184, height: 22 }
+              layout: { x: 438, y: 148, width: 164, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s3-dyno-detail"
               capability: "core.text"
               text: "ExecutionSinkBuilder"
-              layout: { x: 438, y: 162, width: 184, height: 20 }
+              layout: { x: 438, y: 172, width: 164, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s3-c1"
-          capability: "core.rect"
-          layout: { x: 70, y: 250, width: 200, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s3-c1-t"
-              capability: "core.text"
-              text: "Hyper/Tonic never built"
-              layout: { x: 76, y: 258, width: 188, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s3-c2"
-          capability: "core.rect"
-          layout: { x: 430, y: 250, width: 200, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s3-c2-t"
-              capability: "core.text"
-              text: "EngineHost + DynosimSink"
-              layout: { x: 436, y: 258, width: 188, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
@@ -948,115 +515,24 @@ explainer "Dynosim" {
           id: "s3-note"
           capability: "core.text"
           text: "transport ID routes before Hyper/Tonic clients build"
-          layout: { x: 100, y: 310, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 80, y: 280, width: 540, height: 24 }
+          style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
-{
-          id: "s3-a1"
-          capability: "core.line"
-          from: { x: 270, y: 165 }
-          to: { x: 430, y: 165 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-{
-          id: "s3-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 165, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        },
-{
-          id: "s3-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
 {
           id: "s3-motion-sig"
           capability: "core.path"
-          d: "M170 165 H530"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.45 }
+          d: "M170 175 H530"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s3-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s3-hdr"
-          action: "enter"
-        },
-        {
-          id: "s3-enter-http"
-          at: 200
-          duration: 280
-          target: "s3-http"
-          action: "enter"
-        },
-        {
-          id: "s3-enter-dyno"
-          at: 320
-          duration: 280
-          target: "s3-dyno"
-          action: "enter"
-        },
-        {
-          id: "s3-enter-c1"
-          at: 440
-          duration: 280
-          target: "s3-c1"
-          action: "enter"
-        },
-        {
-          id: "s3-enter-c2"
-          at: 560
-          duration: 280
-          target: "s3-c2"
-          action: "enter"
-        },
-        {
-          id: "s3-enter-note"
-          at: 680
-          duration: 280
-          target: "s3-note"
-          action: "enter"
-        },
-                {
-          id: "s3-draw-a1"
-          at: 380
-          duration: 280
-          target: "s3-a1"
-          action: "draw"
-        },
-        {
-          id: "s3-enter-dot"
-          at: 520
-          duration: 220
-          target: "s3-dot"
-          action: "enter"
-        },
-{
-          id: "t-s3-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s3-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s3-draw-motion"
-          at: 700
-          duration: 900
-          target: "s3-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s3-emph"
-          at: 1750
-          duration: 400
-          target: "s3-dyno"
-          action: "emphasis"
-        }
+        { id: "s3-enter-hdr", at: 0, duration: 260, target: "s3-hdr", action: "enter" },
+        { id: "s3-enter-http", at: 180, duration: 280, target: "s3-http", action: "enter" },
+        { id: "s3-enter-dyno", at: 400, duration: 280, target: "s3-dyno", action: "enter" },
+        { id: "s3-enter-note", at: 700, duration: 280, target: "s3-note", action: "enter" },
+        { id: "s3-draw-motion", at: 1000, duration: 900, target: "s3-motion-sig", action: "draw" },
+        { id: "s3-emph", at: 1800, duration: 400, target: "s3-dyno", action: "emphasis" }
       ]
     }
   }
@@ -1087,7 +563,7 @@ explainer "Dynosim" {
           id: "s4-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s4-hdr-label"
@@ -1108,242 +584,98 @@ explainer "Dynosim" {
 {
           id: "s4-host"
           capability: "core.rect"
-          layout: { x: 55, y: 110, width: 155, height: 96 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 70, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s4-host-title"
               capability: "core.text"
               text: "EngineHost"
-              layout: { x: 63, y: 138, width: 139, height: 22 }
+              layout: { x: 78, y: 158, width: 134, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s4-host-detail"
               capability: "core.text"
               text: "SteppableReplay"
-              layout: { x: 63, y: 162, width: 139, height: 20 }
+              layout: { x: 78, y: 182, width: 134, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s4-a1"
-          capability: "core.line"
-          from: { x: 210, y: 158 }
-          to: { x: 260, y: 158 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M220 178 H270"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s4-sink"
           capability: "core.rect"
-          layout: { x: 260, y: 110, width: 155, height: 96 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 270, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s4-sink-title"
               capability: "core.text"
               text: "DynosimSink"
-              layout: { x: 268, y: 138, width: 139, height: 22 }
+              layout: { x: 278, y: 158, width: 134, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s4-sink-detail"
               capability: "core.text"
               text: "RequestSink"
-              layout: { x: 268, y: 162, width: 139, height: 20 }
+              layout: { x: 278, y: 182, width: 134, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s4-a2"
-          capability: "core.line"
-          from: { x: 415, y: 158 }
-          to: { x: 460, y: 158 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M420 178 H470"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s4-obs"
           capability: "core.rect"
-          layout: { x: 460, y: 110, width: 170, height: 96 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 470, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s4-obs-title"
               capability: "core.text"
               text: "RequestObserver"
-              layout: { x: 468, y: 138, width: 154, height: 22 }
+              layout: { x: 478, y: 158, width: 144, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s4-obs-detail"
               capability: "core.text"
               text: "metrics"
-              layout: { x: 468, y: 162, width: 154, height: 20 }
+              layout: { x: 478, y: 182, width: 144, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
-          id: "s4-c1"
-          capability: "core.rect"
-          layout: { x: 55, y: 240, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s4-c1-t"
-              capability: "core.text"
-              text: "TTFT = first token"
-              layout: { x: 61, y: 248, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s4-c2"
-          capability: "core.rect"
-          layout: { x: 255, y: 240, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s4-c2-t"
-              capability: "core.text"
-              text: "same observer contract"
-              layout: { x: 261, y: 248, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s4-c3"
-          capability: "core.rect"
-          layout: { x: 455, y: 240, width: 175, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s4-c3-t"
-              capability: "core.text"
-              text: "terminal coalescing"
-              layout: { x: 461, y: 248, width: 163, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s4-note"
-          capability: "core.text"
-          text: "Same observation vocabulary, different dispatch backend."
-          layout: { x: 100, y: 300, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s4-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s4-motion-sig"
           capability: "core.path"
-          d: "M132 158 H545"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M130 178 H550"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s4-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s4-hdr"
-          action: "enter"
-        },
-        {
-          id: "s4-enter-host"
-          at: 200
-          duration: 280
-          target: "s4-host"
-          action: "enter"
-        },
-        {
-          id: "s4-draw-a1"
-          at: 320
-          duration: 320
-          target: "s4-a1"
-          action: "draw"
-        },
-        {
-          id: "s4-enter-sink"
-          at: 460
-          duration: 280
-          target: "s4-sink"
-          action: "enter"
-        },
-        {
-          id: "s4-draw-a2"
-          at: 580
-          duration: 320
-          target: "s4-a2"
-          action: "draw"
-        },
-        {
-          id: "s4-enter-obs"
-          at: 720
-          duration: 280
-          target: "s4-obs"
-          action: "enter"
-        },
-        {
-          id: "s4-enter-c1"
-          at: 840
-          duration: 280
-          target: "s4-c1"
-          action: "enter"
-        },
-        {
-          id: "s4-enter-c2"
-          at: 960
-          duration: 280
-          target: "s4-c2"
-          action: "enter"
-        },
-        {
-          id: "s4-enter-c3"
-          at: 1080
-          duration: 280
-          target: "s4-c3"
-          action: "enter"
-        },
-        {
-          id: "s4-enter-note"
-          at: 1200
-          duration: 280
-          target: "s4-note"
-          action: "enter"
-        },
-        {
-          id: "t-s4-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s4-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s4-draw-motion"
-          at: 700
-          duration: 900
-          target: "s4-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s4-emph"
-          at: 1950
-          duration: 400
-          target: "s4-sink"
-          action: "emphasis"
-        }
+        { id: "s4-enter-hdr", at: 0, duration: 260, target: "s4-hdr", action: "enter" },
+        { id: "s4-enter-host", at: 180, duration: 280, target: "s4-host", action: "enter" },
+        { id: "s4-draw-a1", at: 420, duration: 300, target: "s4-a1", action: "draw" },
+        { id: "s4-enter-sink", at: 560, duration: 280, target: "s4-sink", action: "enter" },
+        { id: "s4-draw-a2", at: 800, duration: 300, target: "s4-a2", action: "draw" },
+        { id: "s4-enter-obs", at: 940, duration: 280, target: "s4-obs", action: "enter" },
+        { id: "s4-draw-motion", at: 1200, duration: 900, target: "s4-motion-sig", action: "draw" },
+        { id: "s4-emph", at: 2000, duration: 400, target: "s4-sink", action: "emphasis" }
       ]
     }
   }
@@ -1374,7 +706,7 @@ explainer "Dynosim" {
           id: "s5-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s5-hdr-label"
@@ -1393,20 +725,20 @@ explainer "Dynosim" {
           ]
         },
 {
-          id: "s5-offline"
+          id: "s5-off"
           capability: "core.rect"
-          layout: { x: 250, y: 100, width: 200, height: 100 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 250, y: 100, width: 200, height: 110 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
-              id: "s5-offline-title"
+              id: "s5-off-title"
               capability: "core.text"
               text: "dynosim_offline"
               layout: { x: 258, y: 128, width: 184, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s5-offline-detail"
+              id: "s5-off-detail"
               capability: "core.text"
               text: "SimClock"
               layout: { x: 258, y: 152, width: 184, height: 20 }
@@ -1416,26 +748,25 @@ explainer "Dynosim" {
         },
 {
           id: "s5-a1"
-          capability: "core.line"
-          from: { x: 350, y: 200 }
-          to: { x: 350, y: 250 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M350 210 V250"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
-          id: "s5-pump"
+          id: "s5-drive"
           capability: "core.rect"
           layout: { x: 250, y: 250, width: 200, height: 70 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
-              id: "s5-pump-title"
+              id: "s5-drive-title"
               capability: "core.text"
               text: "drive_sim_with_source"
               layout: { x: 258, y: 278, width: 184, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s5-pump-detail"
+              id: "s5-drive-detail"
               capability: "core.text"
               text: "virtual pump"
               layout: { x: 258, y: 302, width: 184, height: 20 }
@@ -1444,128 +775,20 @@ explainer "Dynosim" {
           ]
         },
 {
-          id: "s5-c1"
-          capability: "core.rect"
-          layout: { x: 60, y: 160, width: 160, height: 40 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s5-c1-t"
-              capability: "core.text"
-              text: "arrivals · phases"
-              layout: { x: 66, y: 168, width: 148, height: 28 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s5-c2"
-          capability: "core.rect"
-          layout: { x: 480, y: 160, width: 160, height: 40 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s5-c2-t"
-              capability: "core.text"
-              text: "engine steps"
-              layout: { x: 486, y: 168, width: 148, height: 28 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s5-note"
-          capability: "core.text"
-          text: "Reproducible when inputs and seeds are fixed."
-          layout: { x: 100, y: 340, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s5-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s5-motion-sig"
           capability: "core.path"
-          d: "M350 150 V285"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M350 140 V285"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s5-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s5-hdr"
-          action: "enter"
-        },
-        {
-          id: "s5-enter-offline"
-          at: 200
-          duration: 280
-          target: "s5-offline"
-          action: "enter"
-        },
-        {
-          id: "s5-enter-c1"
-          at: 320
-          duration: 280
-          target: "s5-c1"
-          action: "enter"
-        },
-        {
-          id: "s5-enter-c2"
-          at: 440
-          duration: 280
-          target: "s5-c2"
-          action: "enter"
-        },
-        {
-          id: "s5-draw-a1"
-          at: 560
-          duration: 320
-          target: "s5-a1"
-          action: "draw"
-        },
-        {
-          id: "s5-enter-pump"
-          at: 700
-          duration: 280
-          target: "s5-pump"
-          action: "enter"
-        },
-        {
-          id: "s5-enter-note"
-          at: 820
-          duration: 280
-          target: "s5-note"
-          action: "enter"
-        },
-        {
-          id: "t-s5-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s5-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s5-draw-motion"
-          at: 700
-          duration: 900
-          target: "s5-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s5-emph"
-          at: 1750
-          duration: 400
-          target: "s5-pump"
-          action: "emphasis"
-        }
+        { id: "s5-enter-hdr", at: 0, duration: 260, target: "s5-hdr", action: "enter" },
+        { id: "s5-enter-off", at: 180, duration: 280, target: "s5-off", action: "enter" },
+        { id: "s5-draw-a1", at: 420, duration: 320, target: "s5-a1", action: "draw" },
+        { id: "s5-enter-drive", at: 560, duration: 280, target: "s5-drive", action: "enter" },
+        { id: "s5-draw-motion", at: 900, duration: 900, target: "s5-motion-sig", action: "draw" },
+        { id: "s5-emph", at: 1700, duration: 400, target: "s5-off", action: "emphasis" }
       ]
     }
   }
@@ -1596,7 +819,7 @@ explainer "Dynosim" {
           id: "s6-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s6-hdr-label"
@@ -1615,20 +838,20 @@ explainer "Dynosim" {
           ]
         },
 {
-          id: "s6-online"
+          id: "s6-on"
           capability: "core.rect"
-          layout: { x: 250, y: 100, width: 200, height: 100 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 250, y: 100, width: 200, height: 110 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
-              id: "s6-online-title"
+              id: "s6-on-title"
               capability: "core.text"
               text: "dynosim_online"
               layout: { x: 258, y: 128, width: 184, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s6-online-detail"
+              id: "s6-on-detail"
               capability: "core.text"
               text: "RealClock"
               layout: { x: 258, y: 152, width: 184, height: 20 }
@@ -1638,26 +861,25 @@ explainer "Dynosim" {
         },
 {
           id: "s6-a1"
-          capability: "core.line"
-          from: { x: 350, y: 200 }
-          to: { x: 350, y: 250 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M350 210 V250"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
-          id: "s6-pump"
+          id: "s6-drive"
           capability: "core.rect"
           layout: { x: 250, y: 250, width: 200, height: 70 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
-              id: "s6-pump-title"
+              id: "s6-drive-title"
               capability: "core.text"
               text: "drive_real_with_source"
               layout: { x: 258, y: 278, width: 184, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s6-pump-detail"
+              id: "s6-drive-detail"
               capability: "core.text"
               text: "wall pump"
               layout: { x: 258, y: 302, width: 184, height: 20 }
@@ -1666,128 +888,20 @@ explainer "Dynosim" {
           ]
         },
 {
-          id: "s6-c1"
-          capability: "core.rect"
-          layout: { x: 60, y: 160, width: 160, height: 40 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s6-c1-t"
-              capability: "core.text"
-              text: "wall-clock pacing"
-              layout: { x: 66, y: 168, width: 148, height: 28 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s6-c2"
-          capability: "core.rect"
-          layout: { x: 480, y: 160, width: 160, height: 40 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s6-c2-t"
-              capability: "core.text"
-              text: "same observer merge"
-              layout: { x: 486, y: 168, width: 148, height: 28 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s6-note"
-          capability: "core.text"
-          text: "Useful when timing must reflect scheduler latency."
-          layout: { x: 100, y: 340, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s6-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s6-motion-sig"
           capability: "core.path"
-          d: "M350 150 V285"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M350 140 V285"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s6-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s6-hdr"
-          action: "enter"
-        },
-        {
-          id: "s6-enter-online"
-          at: 200
-          duration: 280
-          target: "s6-online"
-          action: "enter"
-        },
-        {
-          id: "s6-enter-c1"
-          at: 320
-          duration: 280
-          target: "s6-c1"
-          action: "enter"
-        },
-        {
-          id: "s6-enter-c2"
-          at: 440
-          duration: 280
-          target: "s6-c2"
-          action: "enter"
-        },
-        {
-          id: "s6-draw-a1"
-          at: 560
-          duration: 320
-          target: "s6-a1"
-          action: "draw"
-        },
-        {
-          id: "s6-enter-pump"
-          at: 700
-          duration: 280
-          target: "s6-pump"
-          action: "enter"
-        },
-        {
-          id: "s6-enter-note"
-          at: 820
-          duration: 280
-          target: "s6-note"
-          action: "enter"
-        },
-        {
-          id: "t-s6-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s6-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s6-draw-motion"
-          at: 700
-          duration: 900
-          target: "s6-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s6-emph"
-          at: 1750
-          duration: 400
-          target: "s6-online"
-          action: "emphasis"
-        }
+        { id: "s6-enter-hdr", at: 0, duration: 260, target: "s6-hdr", action: "enter" },
+        { id: "s6-enter-on", at: 180, duration: 280, target: "s6-on", action: "enter" },
+        { id: "s6-draw-a1", at: 420, duration: 320, target: "s6-a1", action: "draw" },
+        { id: "s6-enter-drive", at: 560, duration: 280, target: "s6-drive", action: "enter" },
+        { id: "s6-draw-motion", at: 900, duration: 900, target: "s6-motion-sig", action: "draw" },
+        { id: "s6-emph", at: 1700, duration: 400, target: "s6-on", action: "emphasis" }
       ]
     }
   }
@@ -1818,7 +932,7 @@ explainer "Dynosim" {
           id: "s7-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s7-hdr-label"
@@ -1839,21 +953,21 @@ explainer "Dynosim" {
 {
           id: "s7-real"
           capability: "core.rect"
-          layout: { x: 90, y: 120, width: 200, height: 96 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 100, y: 130, width: 200, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s7-real-title"
               capability: "core.text"
               text: "RealClock"
-              layout: { x: 98, y: 148, width: 184, height: 22 }
+              layout: { x: 108, y: 158, width: 184, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s7-real-detail"
               capability: "core.text"
               text: "wall nanoseconds"
-              layout: { x: 98, y: 172, width: 184, height: 20 }
+              layout: { x: 108, y: 182, width: 184, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
@@ -1861,52 +975,22 @@ explainer "Dynosim" {
 {
           id: "s7-sim"
           capability: "core.rect"
-          layout: { x: 410, y: 120, width: 200, height: 96 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 400, y: 130, width: 200, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s7-sim-title"
               capability: "core.text"
               text: "SimClock"
-              layout: { x: 418, y: 148, width: 184, height: 22 }
+              layout: { x: 408, y: 158, width: 184, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s7-sim-detail"
               capability: "core.text"
               text: "virtual nanoseconds"
-              layout: { x: 418, y: 172, width: 184, height: 20 }
+              layout: { x: 408, y: 182, width: 184, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s7-c1"
-          capability: "core.rect"
-          layout: { x: 90, y: 250, width: 200, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s7-c1-t"
-              capability: "core.text"
-              text: "real-reactor driver"
-              layout: { x: 96, y: 258, width: 188, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s7-c2"
-          capability: "core.rect"
-          layout: { x: 410, y: 250, width: 200, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s7-c2-t"
-              capability: "core.text"
-              text: "simulation driver"
-              layout: { x: 416, y: 258, width: 188, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
@@ -1914,129 +998,24 @@ explainer "Dynosim" {
           id: "s7-note"
           capability: "core.text"
           text: "Clock::is_virtual() selects reactor vs. simulation driver"
-          layout: { x: 80, y: 310, width: 540, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+          layout: { x: 80, y: 280, width: 540, height: 24 }
+          style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
-{
-          id: "s7-sub"
-          capability: "core.text"
-          text: "Never call Instant::now on request hot paths."
-          layout: { x: 80, y: 340, width: 540, height: 24 }
-          style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s7-a1"
-          capability: "core.line"
-          from: { x: 290, y: 168 }
-          to: { x: 410, y: 168 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-{
-          id: "s7-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 168, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        },
-{
-          id: "s7-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
 {
           id: "s7-motion-sig"
           capability: "core.path"
-          d: "M190 168 H510"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M180 178 H520"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s7-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s7-hdr"
-          action: "enter"
-        },
-        {
-          id: "s7-enter-real"
-          at: 200
-          duration: 280
-          target: "s7-real"
-          action: "enter"
-        },
-        {
-          id: "s7-enter-sim"
-          at: 320
-          duration: 280
-          target: "s7-sim"
-          action: "enter"
-        },
-        {
-          id: "s7-enter-c1"
-          at: 440
-          duration: 280
-          target: "s7-c1"
-          action: "enter"
-        },
-        {
-          id: "s7-enter-c2"
-          at: 560
-          duration: 280
-          target: "s7-c2"
-          action: "enter"
-        },
-        {
-          id: "s7-enter-note"
-          at: 680
-          duration: 280
-          target: "s7-note"
-          action: "enter"
-        },
-        {
-          id: "s7-enter-sub"
-          at: 800
-          duration: 280
-          target: "s7-sub"
-          action: "enter"
-        },
-                {
-          id: "s7-draw-a1"
-          at: 380
-          duration: 280
-          target: "s7-a1"
-          action: "draw"
-        },
-        {
-          id: "s7-enter-dot"
-          at: 520
-          duration: 220
-          target: "s7-dot"
-          action: "enter"
-        },
-{
-          id: "t-s7-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s7-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s7-draw-motion"
-          at: 700
-          duration: 900
-          target: "s7-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s7-emph"
-          at: 1800
-          duration: 400
-          target: "s7-sim"
-          action: "emphasis"
-        }
+        { id: "s7-enter-hdr", at: 0, duration: 260, target: "s7-hdr", action: "enter" },
+        { id: "s7-enter-real", at: 180, duration: 280, target: "s7-real", action: "enter" },
+        { id: "s7-enter-sim", at: 400, duration: 280, target: "s7-sim", action: "enter" },
+        { id: "s7-enter-note", at: 700, duration: 280, target: "s7-note", action: "enter" },
+        { id: "s7-draw-motion", at: 1000, duration: 900, target: "s7-motion-sig", action: "draw" },
+        { id: "s7-emph", at: 1800, duration: 400, target: "s7-sim", action: "emphasis" }
       ]
     }
   }
@@ -2067,7 +1046,7 @@ explainer "Dynosim" {
           id: "s8-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s8-hdr-label"
@@ -2086,23 +1065,23 @@ explainer "Dynosim" {
           ]
         },
 {
-          id: "s8-clockq"
+          id: "s8-clkq"
           capability: "core.rect"
-          layout: { x: 70, y: 110, width: 220, height: 96 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 80, y: 130, width: 220, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
-              id: "s8-clockq-title"
+              id: "s8-clkq-title"
               capability: "core.text"
               text: "SimClock queue"
-              layout: { x: 78, y: 138, width: 204, height: 22 }
+              layout: { x: 88, y: 158, width: 204, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s8-clockq-detail"
+              id: "s8-clkq-detail"
               capability: "core.text"
               text: "arrivals · phases"
-              layout: { x: 78, y: 162, width: 204, height: 20 }
+              layout: { x: 88, y: 182, width: 204, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
@@ -2110,52 +1089,22 @@ explainer "Dynosim" {
 {
           id: "s8-srcq"
           capability: "core.rect"
-          layout: { x: 410, y: 110, width: 220, height: 96 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 400, y: 130, width: 220, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s8-srcq-title"
               capability: "core.text"
               text: "SimEventSource"
-              layout: { x: 418, y: 138, width: 204, height: 22 }
+              layout: { x: 408, y: 158, width: 204, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s8-srcq-detail"
               capability: "core.text"
               text: "engine events"
-              layout: { x: 418, y: 162, width: 204, height: 20 }
+              layout: { x: 408, y: 182, width: 204, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s8-c1"
-          capability: "core.rect"
-          layout: { x: 70, y: 240, width: 220, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s8-c1-t"
-              capability: "core.text"
-              text: "grace · backoff timers"
-              layout: { x: 76, y: 248, width: 208, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s8-c2"
-          capability: "core.rect"
-          layout: { x: 410, y: 240, width: 220, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s8-c2-t"
-              capability: "core.text"
-              text: "token timing · passes"
-              layout: { x: 416, y: 248, width: 208, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
@@ -2163,115 +1112,24 @@ explainer "Dynosim" {
           id: "s8-rule"
           capability: "core.text"
           text: "min(clock, source) · clock wins ties"
-          layout: { x: 100, y: 300, width: 500, height: 24 }
+          layout: { x: 80, y: 280, width: 540, height: 24 }
           style: { fontSize: 13, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         },
 {
-          id: "s8-a1"
-          capability: "core.line"
-          from: { x: 290, y: 158 }
-          to: { x: 410, y: 158 }
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-        },
-{
-          id: "s8-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 158, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.tertiary }
-        },
-{
-          id: "s8-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s8-motion-sig"
           capability: "core.path"
-          d: "M180 158 H520"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M170 178 H530"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s8-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s8-hdr"
-          action: "enter"
-        },
-        {
-          id: "s8-enter-clockq"
-          at: 200
-          duration: 280
-          target: "s8-clockq"
-          action: "enter"
-        },
-        {
-          id: "s8-enter-srcq"
-          at: 320
-          duration: 280
-          target: "s8-srcq"
-          action: "enter"
-        },
-        {
-          id: "s8-enter-c1"
-          at: 440
-          duration: 280
-          target: "s8-c1"
-          action: "enter"
-        },
-        {
-          id: "s8-enter-c2"
-          at: 560
-          duration: 280
-          target: "s8-c2"
-          action: "enter"
-        },
-        {
-          id: "s8-enter-rule"
-          at: 680
-          duration: 280
-          target: "s8-rule"
-          action: "enter"
-        },
-                {
-          id: "s8-draw-a1"
-          at: 380
-          duration: 280
-          target: "s8-a1"
-          action: "draw"
-        },
-        {
-          id: "s8-enter-dot"
-          at: 520
-          duration: 220
-          target: "s8-dot"
-          action: "enter"
-        },
-{
-          id: "t-s8-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s8-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s8-draw-motion"
-          at: 700
-          duration: 900
-          target: "s8-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s8-emph"
-          at: 1750
-          duration: 400
-          target: "s8-rule"
-          action: "emphasis"
-        }
+        { id: "s8-enter-hdr", at: 0, duration: 260, target: "s8-hdr", action: "enter" },
+        { id: "s8-enter-clkq", at: 180, duration: 280, target: "s8-clkq", action: "enter" },
+        { id: "s8-enter-srcq", at: 400, duration: 280, target: "s8-srcq", action: "enter" },
+        { id: "s8-enter-rule", at: 700, duration: 280, target: "s8-rule", action: "enter" },
+        { id: "s8-draw-motion", at: 1000, duration: 900, target: "s8-motion-sig", action: "draw" },
+        { id: "s8-emph", at: 1800, duration: 400, target: "s8-rule", action: "emphasis" }
       ]
     }
   }
@@ -2302,7 +1160,7 @@ explainer "Dynosim" {
           id: "s9-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s9-hdr-label"
@@ -2323,285 +1181,128 @@ explainer "Dynosim" {
 {
           id: "s9-p0"
           capability: "core.rect"
-          layout: { x: 40, y: 120, width: 130, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.5 }
+          layout: { x: 40, y: 130, width: 130, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
           children: [
             {
               id: "s9-p0-title"
               capability: "core.text"
               text: "poll future"
-              layout: { x: 48, y: 148, width: 114, height: 22 }
+              layout: { x: 48, y: 158, width: 114, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s9-p0-detail"
               capability: "core.text"
               text: "sim pump"
-              layout: { x: 48, y: 172, width: 114, height: 20 }
+              layout: { x: 48, y: 182, width: 114, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s9-a0"
-          capability: "core.line"
-          from: { x: 170, y: 168 }
-          to: { x: 200, y: 168 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M170 178 H200"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s9-p1"
           capability: "core.rect"
-          layout: { x: 200, y: 120, width: 130, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.5 }
+          layout: { x: 200, y: 130, width: 130, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
           children: [
             {
               id: "s9-p1-title"
               capability: "core.text"
               text: "idle?"
-              layout: { x: 208, y: 148, width: 114, height: 22 }
+              layout: { x: 208, y: 158, width: 114, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s9-p1-detail"
               capability: "core.text"
               text: "sim pump"
-              layout: { x: 208, y: 172, width: 114, height: 20 }
+              layout: { x: 208, y: 182, width: 114, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s9-a1"
-          capability: "core.line"
-          from: { x: 330, y: 168 }
-          to: { x: 360, y: 168 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M330 178 H360"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s9-p2"
           capability: "core.rect"
-          layout: { x: 360, y: 120, width: 130, height: 96 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 360, y: 130, width: 130, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s9-p2-title"
               capability: "core.text"
               text: "advance t"
-              layout: { x: 368, y: 148, width: 114, height: 22 }
+              layout: { x: 368, y: 158, width: 114, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s9-p2-detail"
               capability: "core.text"
               text: "sim pump"
-              layout: { x: 368, y: 172, width: 114, height: 20 }
+              layout: { x: 368, y: 182, width: 114, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s9-a2"
-          capability: "core.line"
-          from: { x: 490, y: 168 }
-          to: { x: 520, y: 168 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M490 178 H520"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s9-p3"
           capability: "core.rect"
-          layout: { x: 520, y: 120, width: 130, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.5 }
+          layout: { x: 520, y: 130, width: 130, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
           children: [
             {
               id: "s9-p3-title"
               capability: "core.text"
               text: "repeat"
-              layout: { x: 528, y: 148, width: 114, height: 22 }
+              layout: { x: 528, y: 158, width: 114, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s9-p3-detail"
               capability: "core.text"
               text: "sim pump"
-              layout: { x: 528, y: 172, width: 114, height: 20 }
+              layout: { x: 528, y: 182, width: 114, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
-          id: "s9-c1"
-          capability: "core.rect"
-          layout: { x: 40, y: 250, width: 200, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s9-c1-t"
-              capability: "core.text"
-              text: "wakes re-enter poll"
-              layout: { x: 46, y: 258, width: 188, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s9-c2"
-          capability: "core.rect"
-          layout: { x: 250, y: 250, width: 200, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s9-c2-t"
-              capability: "core.text"
-              text: "[at_ns, end_ns) steps"
-              layout: { x: 256, y: 258, width: 188, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s9-c3"
-          capability: "core.rect"
-          layout: { x: 460, y: 250, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s9-c3-t"
-              capability: "core.text"
-              text: "deadlock if empty"
-              layout: { x: 466, y: 258, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s9-note"
-          capability: "core.text"
-          text: "Poll → idle → advance → poll again."
-          layout: { x: 100, y: 310, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s9-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s9-motion-sig"
           capability: "core.path"
-          d: "M105 168 H585"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.6 }
+          d: "M105 178 H585"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s9-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s9-hdr"
-          action: "enter"
-        },
-        {
-          id: "s9-enter-p0"
-          at: 200
-          duration: 280
-          target: "s9-p0"
-          action: "enter"
-        },
-        {
-          id: "s9-draw-a0"
-          at: 320
-          duration: 280
-          target: "s9-a0"
-          action: "draw"
-        },
-        {
-          id: "s9-enter-p1"
-          at: 420
-          duration: 280
-          target: "s9-p1"
-          action: "enter"
-        },
-        {
-          id: "s9-draw-a1"
-          at: 540
-          duration: 280
-          target: "s9-a1"
-          action: "draw"
-        },
-        {
-          id: "s9-enter-p2"
-          at: 640
-          duration: 280
-          target: "s9-p2"
-          action: "enter"
-        },
-        {
-          id: "s9-draw-a2"
-          at: 760
-          duration: 280
-          target: "s9-a2"
-          action: "draw"
-        },
-        {
-          id: "s9-enter-p3"
-          at: 860
-          duration: 280
-          target: "s9-p3"
-          action: "enter"
-        },
-        {
-          id: "s9-enter-c1"
-          at: 980
-          duration: 280
-          target: "s9-c1"
-          action: "enter"
-        },
-        {
-          id: "s9-enter-c2"
-          at: 1080
-          duration: 280
-          target: "s9-c2"
-          action: "enter"
-        },
-        {
-          id: "s9-enter-c3"
-          at: 1180
-          duration: 280
-          target: "s9-c3"
-          action: "enter"
-        },
-        {
-          id: "s9-enter-note"
-          at: 1280
-          duration: 280
-          target: "s9-note"
-          action: "enter"
-        },
-        {
-          id: "t-s9-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s9-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s9-draw-motion"
-          at: 800
-          duration: 1100
-          target: "s9-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s9-emph"
-          at: 2000
-          duration: 400
-          target: "s9-p2"
-          action: "emphasis"
-        }
+        { id: "s9-enter-hdr", at: 0, duration: 260, target: "s9-hdr", action: "enter" },
+        { id: "s9-enter-p0", at: 160, duration: 240, target: "s9-p0", action: "enter" },
+        { id: "s9-draw-a0", at: 360, duration: 260, target: "s9-a0", action: "draw" },
+        { id: "s9-enter-p1", at: 480, duration: 240, target: "s9-p1", action: "enter" },
+        { id: "s9-draw-a1", at: 680, duration: 260, target: "s9-a1", action: "draw" },
+        { id: "s9-enter-p2", at: 800, duration: 240, target: "s9-p2", action: "enter" },
+        { id: "s9-draw-a2", at: 1000, duration: 260, target: "s9-a2", action: "draw" },
+        { id: "s9-enter-p3", at: 1120, duration: 240, target: "s9-p3", action: "enter" },
+        { id: "s9-draw-motion", at: 1400, duration: 900, target: "s9-motion-sig", action: "draw" },
+        { id: "s9-emph", at: 2200, duration: 400, target: "s9-p2", action: "emphasis" }
       ]
     }
   }
@@ -2632,7 +1333,7 @@ explainer "Dynosim" {
           id: "s10-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s10-hdr-label"
@@ -2651,76 +1352,46 @@ explainer "Dynosim" {
           ]
         },
 {
-          id: "s10-arrival"
+          id: "s10-arr"
           capability: "core.rect"
-          layout: { x: 110, y: 130, width: 180, height: 80 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 120, y: 140, width: 180, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
-              id: "s10-arrival-title"
+              id: "s10-arr-title"
               capability: "core.text"
               text: "arrival @ t"
-              layout: { x: 118, y: 158, width: 164, height: 22 }
+              layout: { x: 128, y: 168, width: 164, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s10-arrival-detail"
+              id: "s10-arr-detail"
               capability: "core.text"
               text: "clock queue"
-              layout: { x: 118, y: 182, width: 164, height: 20 }
+              layout: { x: 128, y: 192, width: 164, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
-          id: "s10-pass"
+          id: "s10-eng"
           capability: "core.rect"
-          layout: { x: 410, y: 130, width: 180, height: 80 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 400, y: 140, width: 180, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
-              id: "s10-pass-title"
+              id: "s10-eng-title"
               capability: "core.text"
               text: "engine pass @ t"
-              layout: { x: 418, y: 158, width: 164, height: 22 }
+              layout: { x: 408, y: 168, width: 164, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s10-pass-detail"
+              id: "s10-eng-detail"
               capability: "core.text"
               text: "source queue"
-              layout: { x: 418, y: 182, width: 164, height: 20 }
+              layout: { x: 408, y: 192, width: 164, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s10-c1"
-          capability: "core.rect"
-          layout: { x: 110, y: 240, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s10-c1-t"
-              capability: "core.text"
-              text: "validate_event_time"
-              layout: { x: 116, y: 248, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s10-c2"
-          capability: "core.rect"
-          layout: { x: 410, y: 240, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s10-c2-t"
-              capability: "core.text"
-              text: "overshoot protection"
-              layout: { x: 416, y: 248, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
@@ -2728,115 +1399,24 @@ explainer "Dynosim" {
           id: "s10-rule"
           capability: "core.text"
           text: "clock fires first at equal t"
-          layout: { x: 100, y: 300, width: 500, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+          layout: { x: 80, y: 260, width: 540, height: 24 }
+          style: { fontSize: 13, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         },
-{
-          id: "s10-a1"
-          capability: "core.line"
-          from: { x: 290, y: 170 }
-          to: { x: 410, y: 170 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-{
-          id: "s10-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 170, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        },
-{
-          id: "s10-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
 {
           id: "s10-motion-sig"
           capability: "core.path"
-          d: "M200 170 H500"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M190 180 H510"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s10-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s10-hdr"
-          action: "enter"
-        },
-        {
-          id: "s10-enter-arrival"
-          at: 200
-          duration: 280
-          target: "s10-arrival"
-          action: "enter"
-        },
-        {
-          id: "s10-enter-pass"
-          at: 320
-          duration: 280
-          target: "s10-pass"
-          action: "enter"
-        },
-        {
-          id: "s10-enter-c1"
-          at: 440
-          duration: 280
-          target: "s10-c1"
-          action: "enter"
-        },
-        {
-          id: "s10-enter-c2"
-          at: 560
-          duration: 280
-          target: "s10-c2"
-          action: "enter"
-        },
-        {
-          id: "s10-enter-rule"
-          at: 680
-          duration: 280
-          target: "s10-rule"
-          action: "enter"
-        },
-                {
-          id: "s10-draw-a1"
-          at: 380
-          duration: 280
-          target: "s10-a1"
-          action: "draw"
-        },
-        {
-          id: "s10-enter-dot"
-          at: 520
-          duration: 220
-          target: "s10-dot"
-          action: "enter"
-        },
-{
-          id: "t-s10-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s10-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s10-draw-motion"
-          at: 700
-          duration: 900
-          target: "s10-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s10-emph"
-          at: 1700
-          duration: 400
-          target: "s10-arrival"
-          action: "emphasis"
-        }
+        { id: "s10-enter-hdr", at: 0, duration: 260, target: "s10-hdr", action: "enter" },
+        { id: "s10-enter-arr", at: 180, duration: 280, target: "s10-arr", action: "enter" },
+        { id: "s10-enter-eng", at: 400, duration: 280, target: "s10-eng", action: "enter" },
+        { id: "s10-enter-rule", at: 700, duration: 280, target: "s10-rule", action: "enter" },
+        { id: "s10-draw-motion", at: 1000, duration: 900, target: "s10-motion-sig", action: "draw" },
+        { id: "s10-emph", at: 1800, duration: 400, target: "s10-rule", action: "emphasis" }
       ]
     }
   }
@@ -2867,7 +1447,7 @@ explainer "Dynosim" {
           id: "s11-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s11-hdr-label"
@@ -2888,242 +1468,98 @@ explainer "Dynosim" {
 {
           id: "s11-step"
           capability: "core.rect"
-          layout: { x: 60, y: 120, width: 170, height: 96 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 80, y: 130, width: 170, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s11-step-title"
               capability: "core.text"
               text: "source.step"
-              layout: { x: 68, y: 148, width: 154, height: 22 }
+              layout: { x: 88, y: 158, width: 154, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s11-step-detail"
               capability: "core.text"
               text: "[at, end_ns)"
-              layout: { x: 68, y: 172, width: 154, height: 20 }
+              layout: { x: 88, y: 182, width: 154, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s11-a1"
-          capability: "core.line"
-          from: { x: 230, y: 168 }
-          to: { x: 290, y: 168 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M250 178 H300"
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s11-guards"
           capability: "core.rect"
-          layout: { x: 290, y: 120, width: 170, height: 96 }
-          style: { fill: @theme.accent.warning, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 300, y: 130, width: 170, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s11-guards-title"
               capability: "core.text"
               text: "guards"
-              layout: { x: 298, y: 148, width: 154, height: 22 }
+              layout: { x: 308, y: 158, width: 154, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s11-guards-detail"
               capability: "core.text"
               text: "regression · overshoot"
-              layout: { x: 298, y: 172, width: 154, height: 20 }
+              layout: { x: 308, y: 182, width: 154, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s11-a2"
-          capability: "core.line"
-          from: { x: 460, y: 168 }
-          to: { x: 510, y: 168 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M470 178 H520"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s11-adv"
           capability: "core.rect"
-          layout: { x: 510, y: 120, width: 110, height: 96 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 520, y: 130, width: 100, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s11-adv-title"
               capability: "core.text"
               text: "advance"
-              layout: { x: 518, y: 148, width: 94, height: 22 }
+              layout: { x: 528, y: 158, width: 84, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s11-adv-detail"
               capability: "core.text"
               text: "SimClock"
-              layout: { x: 518, y: 172, width: 94, height: 20 }
+              layout: { x: 528, y: 182, width: 84, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
-          id: "s11-c1"
-          capability: "core.rect"
-          layout: { x: 60, y: 250, width: 200, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s11-c1-t"
-              capability: "core.text"
-              text: "TimeRegression if end < now"
-              layout: { x: 66, y: 258, width: 188, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s11-c2"
-          capability: "core.rect"
-          layout: { x: 280, y: 250, width: 200, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s11-c2-t"
-              capability: "core.text"
-              text: "OvershotClockEvent"
-              layout: { x: 286, y: 258, width: 188, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s11-c3"
-          capability: "core.rect"
-          layout: { x: 500, y: 250, width: 120, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s11-c3-t"
-              capability: "core.text"
-              text: "MAX_NO_PROGRESS"
-              layout: { x: 506, y: 258, width: 108, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s11-note"
-          capability: "core.text"
-          text: "Monotonic virtual time with overshoot protection."
-          layout: { x: 100, y: 320, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s11-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s11-motion-sig"
           capability: "core.path"
-          d: "M145 168 H565"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M145 178 H570"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s11-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s11-hdr"
-          action: "enter"
-        },
-        {
-          id: "s11-enter-step"
-          at: 200
-          duration: 280
-          target: "s11-step"
-          action: "enter"
-        },
-        {
-          id: "s11-draw-a1"
-          at: 320
-          duration: 320
-          target: "s11-a1"
-          action: "draw"
-        },
-        {
-          id: "s11-enter-guards"
-          at: 460
-          duration: 280
-          target: "s11-guards"
-          action: "enter"
-        },
-        {
-          id: "s11-draw-a2"
-          at: 580
-          duration: 320
-          target: "s11-a2"
-          action: "draw"
-        },
-        {
-          id: "s11-enter-adv"
-          at: 720
-          duration: 280
-          target: "s11-adv"
-          action: "enter"
-        },
-        {
-          id: "s11-enter-c1"
-          at: 840
-          duration: 280
-          target: "s11-c1"
-          action: "enter"
-        },
-        {
-          id: "s11-enter-c2"
-          at: 960
-          duration: 280
-          target: "s11-c2"
-          action: "enter"
-        },
-        {
-          id: "s11-enter-c3"
-          at: 1080
-          duration: 280
-          target: "s11-c3"
-          action: "enter"
-        },
-        {
-          id: "s11-enter-note"
-          at: 1200
-          duration: 280
-          target: "s11-note"
-          action: "enter"
-        },
-        {
-          id: "t-s11-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s11-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s11-draw-motion"
-          at: 700
-          duration: 900
-          target: "s11-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s11-emph"
-          at: 1950
-          duration: 400
-          target: "s11-guards"
-          action: "emphasis"
-        }
+        { id: "s11-enter-hdr", at: 0, duration: 260, target: "s11-hdr", action: "enter" },
+        { id: "s11-enter-step", at: 180, duration: 280, target: "s11-step", action: "enter" },
+        { id: "s11-draw-a1", at: 420, duration: 300, target: "s11-a1", action: "draw" },
+        { id: "s11-enter-guards", at: 560, duration: 280, target: "s11-guards", action: "enter" },
+        { id: "s11-draw-a2", at: 800, duration: 300, target: "s11-a2", action: "draw" },
+        { id: "s11-enter-adv", at: 940, duration: 280, target: "s11-adv", action: "enter" },
+        { id: "s11-draw-motion", at: 1200, duration: 900, target: "s11-motion-sig", action: "draw" },
+        { id: "s11-emph", at: 2000, duration: 400, target: "s11-guards", action: "emphasis" }
       ]
     }
   }
@@ -3154,7 +1590,7 @@ explainer "Dynosim" {
           id: "s12-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s12-hdr-label"
@@ -3175,242 +1611,98 @@ explainer "Dynosim" {
 {
           id: "s12-turn"
           capability: "core.rect"
-          layout: { x: 55, y: 120, width: 155, height: 96 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 70, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s12-turn-title"
               capability: "core.text"
               text: "Turn dispatch"
-              layout: { x: 63, y: 148, width: 139, height: 22 }
+              layout: { x: 78, y: 158, width: 134, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s12-turn-detail"
               capability: "core.text"
               text: "workload"
-              layout: { x: 63, y: 172, width: 139, height: 20 }
+              layout: { x: 78, y: 182, width: 134, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s12-a1"
-          capability: "core.line"
-          from: { x: 210, y: 168 }
-          to: { x: 260, y: 168 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M220 178 H270"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s12-req"
           capability: "core.rect"
-          layout: { x: 260, y: 120, width: 155, height: 96 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 270, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s12-req-title"
               capability: "core.text"
               text: "DirectRequest"
-              layout: { x: 268, y: 148, width: 139, height: 22 }
+              layout: { x: 278, y: 158, width: 134, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s12-req-detail"
               capability: "core.text"
               text: "submit"
-              layout: { x: 268, y: 172, width: 139, height: 20 }
+              layout: { x: 278, y: 182, width: 134, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s12-a2"
-          capability: "core.line"
-          from: { x: 415, y: 168 }
-          to: { x: 460, y: 168 }
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M420 178 H470"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s12-mail"
           capability: "core.rect"
-          layout: { x: 460, y: 120, width: 170, height: 96 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 470, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s12-mail-title"
               capability: "core.text"
               text: "waiter mailbox"
-              layout: { x: 468, y: 148, width: 154, height: 22 }
+              layout: { x: 478, y: 158, width: 144, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s12-mail-detail"
               capability: "core.text"
               text: "completion"
-              layout: { x: 468, y: 172, width: 154, height: 20 }
+              layout: { x: 478, y: 182, width: 144, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
-          id: "s12-c1"
-          capability: "core.rect"
-          layout: { x: 55, y: 250, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s12-c1-t"
-              capability: "core.text"
-              text: "no HTTP encoding"
-              layout: { x: 61, y: 258, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s12-c2"
-          capability: "core.rect"
-          layout: { x: 255, y: 250, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s12-c2-t"
-              capability: "core.text"
-              text: "LocalSet-friendly"
-              layout: { x: 261, y: 258, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s12-c3"
-          capability: "core.rect"
-          layout: { x: 455, y: 250, width: 175, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s12-c3-t"
-              capability: "core.text"
-              text: "async bridge"
-              layout: { x: 461, y: 258, width: 163, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s12-note"
-          capability: "core.text"
-          text: "In-process submission; mailbox completion."
-          layout: { x: 100, y: 320, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s12-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s12-motion-sig"
           capability: "core.path"
-          d: "M132 168 H545"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M130 178 H550"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s12-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s12-hdr"
-          action: "enter"
-        },
-        {
-          id: "s12-enter-turn"
-          at: 200
-          duration: 280
-          target: "s12-turn"
-          action: "enter"
-        },
-        {
-          id: "s12-draw-a1"
-          at: 320
-          duration: 320
-          target: "s12-a1"
-          action: "draw"
-        },
-        {
-          id: "s12-enter-req"
-          at: 460
-          duration: 280
-          target: "s12-req"
-          action: "enter"
-        },
-        {
-          id: "s12-draw-a2"
-          at: 580
-          duration: 320
-          target: "s12-a2"
-          action: "draw"
-        },
-        {
-          id: "s12-enter-mail"
-          at: 720
-          duration: 280
-          target: "s12-mail"
-          action: "enter"
-        },
-        {
-          id: "s12-enter-c1"
-          at: 840
-          duration: 280
-          target: "s12-c1"
-          action: "enter"
-        },
-        {
-          id: "s12-enter-c2"
-          at: 960
-          duration: 280
-          target: "s12-c2"
-          action: "enter"
-        },
-        {
-          id: "s12-enter-c3"
-          at: 1080
-          duration: 280
-          target: "s12-c3"
-          action: "enter"
-        },
-        {
-          id: "s12-enter-note"
-          at: 1200
-          duration: 280
-          target: "s12-note"
-          action: "enter"
-        },
-        {
-          id: "t-s12-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s12-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s12-draw-motion"
-          at: 700
-          duration: 900
-          target: "s12-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s12-emph"
-          at: 1950
-          duration: 400
-          target: "s12-req"
-          action: "emphasis"
-        }
+        { id: "s12-enter-hdr", at: 0, duration: 260, target: "s12-hdr", action: "enter" },
+        { id: "s12-enter-turn", at: 180, duration: 280, target: "s12-turn", action: "enter" },
+        { id: "s12-draw-a1", at: 420, duration: 300, target: "s12-a1", action: "draw" },
+        { id: "s12-enter-req", at: 560, duration: 280, target: "s12-req", action: "enter" },
+        { id: "s12-draw-a2", at: 800, duration: 300, target: "s12-a2", action: "draw" },
+        { id: "s12-enter-mail", at: 940, duration: 280, target: "s12-mail", action: "enter" },
+        { id: "s12-draw-motion", at: 1200, duration: 900, target: "s12-motion-sig", action: "draw" },
+        { id: "s12-emph", at: 2000, duration: 400, target: "s12-req", action: "emphasis" }
       ]
     }
   }
@@ -3441,7 +1733,7 @@ explainer "Dynosim" {
           id: "s13-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s13-hdr-label"
@@ -3460,244 +1752,100 @@ explainer "Dynosim" {
           ]
         },
 {
-          id: "s13-eng"
+          id: "s13-evt"
           capability: "core.rect"
-          layout: { x: 50, y: 120, width: 160, height: 96 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 60, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
-              id: "s13-eng-title"
+              id: "s13-evt-title"
               capability: "core.text"
               text: "EngineEvent"
-              layout: { x: 58, y: 148, width: 144, height: 22 }
+              layout: { x: 68, y: 158, width: 144, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s13-eng-detail"
+              id: "s13-evt-detail"
               capability: "core.text"
               text: "token · usage"
-              layout: { x: 58, y: 172, width: 144, height: 20 }
+              layout: { x: 68, y: 182, width: 144, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s13-a1"
-          capability: "core.line"
-          from: { x: 210, y: 168 }
-          to: { x: 270, y: 168 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M220 178 H280"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s13-sink"
           capability: "core.rect"
-          layout: { x: 270, y: 120, width: 160, height: 96 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 280, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s13-sink-title"
               capability: "core.text"
               text: "DynosimSink"
-              layout: { x: 278, y: 148, width: 144, height: 22 }
+              layout: { x: 288, y: 158, width: 144, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s13-sink-detail"
               capability: "core.text"
               text: "translate"
-              layout: { x: 278, y: 172, width: 144, height: 20 }
+              layout: { x: 288, y: 182, width: 144, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s13-a2"
-          capability: "core.line"
-          from: { x: 430, y: 168 }
-          to: { x: 490, y: 168 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M440 178 H500"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s13-obs"
           capability: "core.rect"
-          layout: { x: 490, y: 120, width: 140, height: 96 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 500, y: 130, width: 140, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s13-obs-title"
               capability: "core.text"
               text: "Observer"
-              layout: { x: 498, y: 148, width: 124, height: 22 }
+              layout: { x: 508, y: 158, width: 124, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s13-obs-detail"
               capability: "core.text"
               text: "TTFT · terminal"
-              layout: { x: 498, y: 172, width: 124, height: 20 }
+              layout: { x: 508, y: 182, width: 124, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
-          id: "s13-c1"
-          capability: "core.rect"
-          layout: { x: 50, y: 250, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s13-c1-t"
-              capability: "core.text"
-              text: "first token → TTFT"
-              layout: { x: 56, y: 258, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s13-c2"
-          capability: "core.rect"
-          layout: { x: 250, y: 250, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s13-c2-t"
-              capability: "core.text"
-              text: "usage absent stays absent"
-              layout: { x: 256, y: 258, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s13-c3"
-          capability: "core.rect"
-          layout: { x: 450, y: 250, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s13-c3-t"
-              capability: "core.text"
-              text: "terminal closes sink"
-              layout: { x: 456, y: 258, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s13-note"
-          capability: "core.text"
-          text: "Observer seam is transport-neutral."
-          layout: { x: 100, y: 320, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s13-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s13-motion-sig"
           capability: "core.path"
-          d: "M130 168 H560"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M120 178 H570"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s13-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s13-hdr"
-          action: "enter"
-        },
-        {
-          id: "s13-enter-eng"
-          at: 200
-          duration: 280
-          target: "s13-eng"
-          action: "enter"
-        },
-        {
-          id: "s13-draw-a1"
-          at: 320
-          duration: 320
-          target: "s13-a1"
-          action: "draw"
-        },
-        {
-          id: "s13-enter-sink"
-          at: 460
-          duration: 280
-          target: "s13-sink"
-          action: "enter"
-        },
-        {
-          id: "s13-draw-a2"
-          at: 580
-          duration: 320
-          target: "s13-a2"
-          action: "draw"
-        },
-        {
-          id: "s13-enter-obs"
-          at: 720
-          duration: 280
-          target: "s13-obs"
-          action: "enter"
-        },
-        {
-          id: "s13-enter-c1"
-          at: 840
-          duration: 280
-          target: "s13-c1"
-          action: "enter"
-        },
-        {
-          id: "s13-enter-c2"
-          at: 960
-          duration: 280
-          target: "s13-c2"
-          action: "enter"
-        },
-        {
-          id: "s13-enter-c3"
-          at: 1080
-          duration: 280
-          target: "s13-c3"
-          action: "enter"
-        },
-        {
-          id: "s13-enter-note"
-          at: 1200
-          duration: 280
-          target: "s13-note"
-          action: "enter"
-        },
-        {
-          id: "t-s13-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s13-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s13-draw-motion"
-          at: 700
-          duration: 900
-          target: "s13-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s13-emph"
-          at: 1950
-          duration: 400
-          target: "s13-sink"
-          action: "emphasis"
-        }
+        { id: "s13-enter-hdr", at: 0, duration: 260, target: "s13-hdr", action: "enter" },
+        { id: "s13-enter-evt", at: 180, duration: 280, target: "s13-evt", action: "enter" },
+        { id: "s13-draw-a1", at: 420, duration: 300, target: "s13-a1", action: "draw" },
+        { id: "s13-enter-sink", at: 560, duration: 280, target: "s13-sink", action: "enter" },
+        { id: "s13-draw-a2", at: 800, duration: 300, target: "s13-a2", action: "draw" },
+        { id: "s13-enter-obs", at: 940, duration: 280, target: "s13-obs", action: "enter" },
+        { id: "s13-draw-motion", at: 1200, duration: 900, target: "s13-motion-sig", action: "draw" },
+        { id: "s13-emph", at: 2000, duration: 400, target: "s13-sink", action: "emphasis" }
       ]
     }
   }
@@ -3728,7 +1876,7 @@ explainer "Dynosim" {
           id: "s14-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s14-hdr-label"
@@ -3747,244 +1895,100 @@ explainer "Dynosim" {
           ]
         },
 {
-          id: "s14-ev"
+          id: "s14-obs"
           capability: "core.rect"
-          layout: { x: 60, y: 120, width: 160, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.5 }
+          layout: { x: 80, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
           children: [
             {
-              id: "s14-ev-title"
+              id: "s14-obs-title"
               capability: "core.text"
               text: "Observer events"
-              layout: { x: 68, y: 148, width: 144, height: 22 }
+              layout: { x: 88, y: 158, width: 134, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s14-ev-detail"
+              id: "s14-obs-detail"
               capability: "core.text"
               text: "per worker"
-              layout: { x: 68, y: 172, width: 144, height: 20 }
+              layout: { x: 88, y: 182, width: 134, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s14-a1"
-          capability: "core.line"
-          from: { x: 220, y: 168 }
-          to: { x: 270, y: 168 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M230 178 H280"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s14-core"
           capability: "core.rect"
-          layout: { x: 270, y: 120, width: 170, height: 96 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 280, y: 130, width: 170, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s14-core-title"
               capability: "core.text"
               text: "metrics_core"
-              layout: { x: 278, y: 148, width: 154, height: 22 }
+              layout: { x: 288, y: 158, width: 154, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s14-core-detail"
               capability: "core.text"
               text: "accumulate"
-              layout: { x: 278, y: 172, width: 154, height: 20 }
+              layout: { x: 288, y: 182, width: 154, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s14-a2"
-          capability: "core.line"
-          from: { x: 440, y: 168 }
-          to: { x: 490, y: 168 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M450 178 H500"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s14-rec"
           capability: "core.rect"
-          layout: { x: 490, y: 120, width: 130, height: 96 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 500, y: 130, width: 120, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s14-rec-title"
               capability: "core.text"
               text: "records"
-              layout: { x: 498, y: 148, width: 114, height: 22 }
+              layout: { x: 508, y: 158, width: 104, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s14-rec-detail"
               capability: "core.text"
               text: "exact / sketch"
-              layout: { x: 498, y: 172, width: 114, height: 20 }
+              layout: { x: 508, y: 182, width: 104, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
-          id: "s14-c1"
-          capability: "core.rect"
-          layout: { x: 60, y: 250, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s14-c1-t"
-              capability: "core.text"
-              text: "ITL excludes terminal"
-              layout: { x: 66, y: 258, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s14-c2"
-          capability: "core.rect"
-          layout: { x: 260, y: 250, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s14-c2-t"
-              capability: "core.text"
-              text: "sketch digests merge"
-              layout: { x: 266, y: 258, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s14-c3"
-          capability: "core.rect"
-          layout: { x: 460, y: 250, width: 160, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s14-c3-t"
-              capability: "core.text"
-              text: "phase windows"
-              layout: { x: 466, y: 258, width: 148, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s14-note"
-          capability: "core.text"
-          text: "Same metric plane; source is replay instead of wire."
-          layout: { x: 100, y: 320, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s14-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s14-motion-sig"
           capability: "core.path"
-          d: "M140 168 H555"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M140 178 H560"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s14-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s14-hdr"
-          action: "enter"
-        },
-        {
-          id: "s14-enter-ev"
-          at: 200
-          duration: 280
-          target: "s14-ev"
-          action: "enter"
-        },
-        {
-          id: "s14-draw-a1"
-          at: 320
-          duration: 320
-          target: "s14-a1"
-          action: "draw"
-        },
-        {
-          id: "s14-enter-core"
-          at: 460
-          duration: 280
-          target: "s14-core"
-          action: "enter"
-        },
-        {
-          id: "s14-draw-a2"
-          at: 580
-          duration: 320
-          target: "s14-a2"
-          action: "draw"
-        },
-        {
-          id: "s14-enter-rec"
-          at: 720
-          duration: 280
-          target: "s14-rec"
-          action: "enter"
-        },
-        {
-          id: "s14-enter-c1"
-          at: 840
-          duration: 280
-          target: "s14-c1"
-          action: "enter"
-        },
-        {
-          id: "s14-enter-c2"
-          at: 960
-          duration: 280
-          target: "s14-c2"
-          action: "enter"
-        },
-        {
-          id: "s14-enter-c3"
-          at: 1080
-          duration: 280
-          target: "s14-c3"
-          action: "enter"
-        },
-        {
-          id: "s14-enter-note"
-          at: 1200
-          duration: 280
-          target: "s14-note"
-          action: "enter"
-        },
-        {
-          id: "t-s14-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s14-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s14-draw-motion"
-          at: 700
-          duration: 900
-          target: "s14-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s14-emph"
-          at: 1950
-          duration: 400
-          target: "s14-core"
-          action: "emphasis"
-        }
+        { id: "s14-enter-hdr", at: 0, duration: 260, target: "s14-hdr", action: "enter" },
+        { id: "s14-enter-obs", at: 180, duration: 280, target: "s14-obs", action: "enter" },
+        { id: "s14-draw-a1", at: 420, duration: 300, target: "s14-a1", action: "draw" },
+        { id: "s14-enter-core", at: 560, duration: 280, target: "s14-core", action: "enter" },
+        { id: "s14-draw-a2", at: 800, duration: 300, target: "s14-a2", action: "draw" },
+        { id: "s14-enter-rec", at: 940, duration: 280, target: "s14-rec", action: "enter" },
+        { id: "s14-draw-motion", at: 1200, duration: 900, target: "s14-motion-sig", action: "draw" },
+        { id: "s14-emph", at: 2000, duration: 400, target: "s14-core", action: "emphasis" }
       ]
     }
   }
@@ -4015,7 +2019,7 @@ explainer "Dynosim" {
           id: "s15-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s15-hdr-label"
@@ -4036,190 +2040,61 @@ explainer "Dynosim" {
 {
           id: "s15-inc"
           capability: "core.rect"
-          layout: { x: 90, y: 120, width: 220, height: 100 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 100, y: 130, width: 220, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s15-inc-title"
               capability: "core.text"
               text: "Incremental"
-              layout: { x: 98, y: 148, width: 204, height: 22 }
+              layout: { x: 108, y: 158, width: 204, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s15-inc-detail"
               capability: "core.text"
               text: "token → token"
-              layout: { x: 98, y: 172, width: 204, height: 20 }
+              layout: { x: 108, y: 182, width: 204, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
-          id: "s15-coal"
+          id: "s15-coa"
           capability: "core.rect"
-          layout: { x: 390, y: 120, width: 220, height: 100 }
-          style: { fill: @theme.accent.warning, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 380, y: 130, width: 220, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           children: [
             {
-              id: "s15-coal-title"
+              id: "s15-coa-title"
               capability: "core.text"
               text: "Coalesced"
-              layout: { x: 398, y: 148, width: 204, height: 22 }
+              layout: { x: 388, y: 158, width: 204, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "s15-coal-detail"
+              id: "s15-coa-detail"
               capability: "core.text"
               text: "terminal batch"
-              layout: { x: 398, y: 172, width: 204, height: 20 }
+              layout: { x: 388, y: 182, width: 204, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
-          id: "s15-c1"
-          capability: "core.rect"
-          layout: { x: 90, y: 250, width: 220, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s15-c1-t"
-              capability: "core.text"
-              text: "each engine token → observer"
-              layout: { x: 96, y: 258, width: 208, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s15-c2"
-          capability: "core.rect"
-          layout: { x: 390, y: 250, width: 220, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s15-c2-t"
-              capability: "core.text"
-              text: "batch until terminal reduce"
-              layout: { x: 396, y: 258, width: 208, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s15-note"
-          capability: "core.text"
-          text: "Policy is endpoint/streaming config, not dynosim-specific."
-          layout: { x: 100, y: 320, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s15-a1"
-          capability: "core.line"
-          from: { x: 310, y: 170 }
-          to: { x: 390, y: 170 }
-          style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
-        },
-{
-          id: "s15-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 170, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.warning }
-        },
-{
-          id: "s15-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s15-motion-sig"
           capability: "core.path"
-          d: "M200 170 H500"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M190 178 H510"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s15-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s15-hdr"
-          action: "enter"
-        },
-        {
-          id: "s15-enter-inc"
-          at: 200
-          duration: 280
-          target: "s15-inc"
-          action: "enter"
-        },
-        {
-          id: "s15-enter-coal"
-          at: 320
-          duration: 280
-          target: "s15-coal"
-          action: "enter"
-        },
-        {
-          id: "s15-enter-c1"
-          at: 440
-          duration: 280
-          target: "s15-c1"
-          action: "enter"
-        },
-        {
-          id: "s15-enter-c2"
-          at: 560
-          duration: 280
-          target: "s15-c2"
-          action: "enter"
-        },
-        {
-          id: "s15-enter-note"
-          at: 680
-          duration: 280
-          target: "s15-note"
-          action: "enter"
-        },
-                {
-          id: "s15-draw-a1"
-          at: 380
-          duration: 280
-          target: "s15-a1"
-          action: "draw"
-        },
-        {
-          id: "s15-enter-dot"
-          at: 520
-          duration: 220
-          target: "s15-dot"
-          action: "enter"
-        },
-{
-          id: "t-s15-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s15-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s15-draw-motion"
-          at: 700
-          duration: 900
-          target: "s15-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s15-emph"
-          at: 1700
-          duration: 400
-          target: "s15-inc"
-          action: "emphasis"
-        }
+        { id: "s15-enter-hdr", at: 0, duration: 260, target: "s15-hdr", action: "enter" },
+        { id: "s15-enter-inc", at: 180, duration: 280, target: "s15-inc", action: "enter" },
+        { id: "s15-enter-coa", at: 400, duration: 280, target: "s15-coa", action: "enter" },
+        { id: "s15-draw-motion", at: 700, duration: 900, target: "s15-motion-sig", action: "draw" },
+        { id: "s15-emph", at: 1500, duration: 400, target: "s15-inc", action: "emphasis" }
       ]
     }
   }
@@ -4250,7 +2125,7 @@ explainer "Dynosim" {
           id: "s16-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s16-hdr-label"
@@ -4271,21 +2146,21 @@ explainer "Dynosim" {
 {
           id: "s16-ready"
           capability: "core.rect"
-          layout: { x: 100, y: 110, width: 200, height: 110 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 120, y: 120, width: 180, height: 110 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s16-ready-title"
               capability: "core.text"
               text: "Ready future"
-              layout: { x: 108, y: 138, width: 184, height: 22 }
+              layout: { x: 128, y: 148, width: 164, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s16-ready-detail"
               capability: "core.text"
               text: "drain source"
-              layout: { x: 108, y: 162, width: 184, height: 20 }
+              layout: { x: 128, y: 172, width: 164, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
@@ -4293,168 +2168,39 @@ explainer "Dynosim" {
 {
           id: "s16-stall"
           capability: "core.rect"
-          layout: { x: 400, y: 110, width: 200, height: 110 }
-          style: { fill: @theme.accent.warning, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 400, y: 120, width: 180, height: 110 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s16-stall-title"
               capability: "core.text"
               text: "No progress"
-              layout: { x: 408, y: 138, width: 184, height: 22 }
+              layout: { x: 408, y: 148, width: 164, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s16-stall-detail"
               capability: "core.text"
               text: "stall / deadlock"
-              layout: { x: 408, y: 162, width: 184, height: 20 }
+              layout: { x: 408, y: 172, width: 164, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
-          id: "s16-c1"
-          capability: "core.rect"
-          layout: { x: 100, y: 250, width: 200, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s16-c1-t"
-              capability: "core.text"
-              text: "drain_source then exit"
-              layout: { x: 106, y: 258, width: 188, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s16-c2"
-          capability: "core.rect"
-          layout: { x: 400, y: 250, width: 200, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s16-c2-t"
-              capability: "core.text"
-              text: "RunOutcome.deadlocked"
-              layout: { x: 406, y: 258, width: 188, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s16-note"
-          capability: "core.text"
-          text: "Stall guard prevents infinite idle loops."
-          layout: { x: 100, y: 320, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s16-a1"
-          capability: "core.line"
-          from: { x: 300, y: 165 }
-          to: { x: 400, y: 165 }
-          style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
-        },
-{
-          id: "s16-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 165, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.warning }
-        },
-{
-          id: "s16-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s16-motion-sig"
           capability: "core.path"
-          d: "M200 165 H500"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.4, opacity: 0.45 }
+          d: "M190 175 H510"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s16-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s16-hdr"
-          action: "enter"
-        },
-        {
-          id: "s16-enter-ready"
-          at: 200
-          duration: 280
-          target: "s16-ready"
-          action: "enter"
-        },
-        {
-          id: "s16-enter-stall"
-          at: 320
-          duration: 280
-          target: "s16-stall"
-          action: "enter"
-        },
-        {
-          id: "s16-enter-c1"
-          at: 440
-          duration: 280
-          target: "s16-c1"
-          action: "enter"
-        },
-        {
-          id: "s16-enter-c2"
-          at: 560
-          duration: 280
-          target: "s16-c2"
-          action: "enter"
-        },
-        {
-          id: "s16-enter-note"
-          at: 680
-          duration: 280
-          target: "s16-note"
-          action: "enter"
-        },
-                {
-          id: "s16-draw-a1"
-          at: 380
-          duration: 280
-          target: "s16-a1"
-          action: "draw"
-        },
-        {
-          id: "s16-enter-dot"
-          at: 520
-          duration: 220
-          target: "s16-dot"
-          action: "enter"
-        },
-{
-          id: "t-s16-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s16-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s16-draw-motion"
-          at: 700
-          duration: 900
-          target: "s16-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s16-emph"
-          at: 1700
-          duration: 400
-          target: "s16-stall"
-          action: "emphasis"
-        }
+        { id: "s16-enter-hdr", at: 0, duration: 260, target: "s16-hdr", action: "enter" },
+        { id: "s16-enter-ready", at: 180, duration: 280, target: "s16-ready", action: "enter" },
+        { id: "s16-enter-stall", at: 400, duration: 280, target: "s16-stall", action: "enter" },
+        { id: "s16-draw-motion", at: 700, duration: 900, target: "s16-motion-sig", action: "draw" },
+        { id: "s16-emph", at: 1500, duration: 400, target: "s16-ready", action: "emphasis" }
       ]
     }
   }
@@ -4485,7 +2231,7 @@ explainer "Dynosim" {
           id: "s17-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           children: [
             {
               id: "s17-hdr-label"
@@ -4506,242 +2252,98 @@ explainer "Dynosim" {
 {
           id: "s17-off"
           capability: "core.rect"
-          layout: { x: 50, y: 120, width: 150, height: 96 }
-          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 60, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s17-off-title"
               capability: "core.text"
               text: "Offline"
-              layout: { x: 58, y: 148, width: 134, height: 22 }
+              layout: { x: 68, y: 158, width: 134, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s17-off-detail"
               capability: "core.text"
               text: "SimClock"
-              layout: { x: 58, y: 172, width: 134, height: 20 }
+              layout: { x: 68, y: 182, width: 134, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s17-a1"
-          capability: "core.line"
-          from: { x: 200, y: 168 }
-          to: { x: 265, y: 168 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M210 178 H275"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s17-on"
           capability: "core.rect"
-          layout: { x: 265, y: 120, width: 150, height: 96 }
-          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 275, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s17-on-title"
               capability: "core.text"
               text: "Online"
-              layout: { x: 273, y: 148, width: 134, height: 22 }
+              layout: { x: 283, y: 158, width: 134, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s17-on-detail"
               capability: "core.text"
               text: "RealClock"
-              layout: { x: 273, y: 172, width: 134, height: 20 }
+              layout: { x: 283, y: 182, width: 134, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
           id: "s17-a2"
-          capability: "core.line"
-          from: { x: 415, y: 168 }
-          to: { x: 480, y: 168 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.path"
+          d: "M425 178 H490"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
 {
           id: "s17-json"
           capability: "core.rect"
-          layout: { x: 480, y: 120, width: 150, height: 96 }
-          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          layout: { x: 490, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
           children: [
             {
               id: "s17-json-title"
               capability: "core.text"
               text: "native-v2.json"
-              layout: { x: 488, y: 148, width: 134, height: 22 }
+              layout: { x: 498, y: 158, width: 134, height: 22 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
               id: "s17-json-detail"
               capability: "core.text"
               text: "same persist"
-              layout: { x: 488, y: 172, width: 134, height: 20 }
+              layout: { x: 498, y: 182, width: 134, height: 20 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             }
           ]
         },
 {
-          id: "s17-c1"
-          capability: "core.rect"
-          layout: { x: 50, y: 250, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s17-c1-t"
-              capability: "core.text"
-              text: "drive_sim_with_source"
-              layout: { x: 56, y: 258, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s17-c2"
-          capability: "core.rect"
-          layout: { x: 250, y: 250, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s17-c2-t"
-              capability: "core.text"
-              text: "drive_real_with_source"
-              layout: { x: 256, y: 258, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s17-c3"
-          capability: "core.rect"
-          layout: { x: 450, y: 250, width: 180, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.2 }
-          children: [
-            {
-              id: "s17-c3-t"
-              capability: "core.text"
-              text: "exporters orthogonal"
-              layout: { x: 456, y: 258, width: 168, height: 24 }
-              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-{
-          id: "s17-note"
-          capability: "core.text"
-          text: "Pick the clock; keep the rest of AIPerf unchanged."
-          layout: { x: 100, y: 320, width: 500, height: 24 }
-          style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-{
-          id: "s17-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.primary }
-        }
-{
           id: "s17-motion-sig"
           capability: "core.path"
-          d: "M125 168 H555"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          d: "M120 178 H565"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        {
-          id: "s17-enter-hdr"
-          at: 0
-          duration: 280
-          target: "s17-hdr"
-          action: "enter"
-        },
-        {
-          id: "s17-enter-off"
-          at: 200
-          duration: 280
-          target: "s17-off"
-          action: "enter"
-        },
-        {
-          id: "s17-draw-a1"
-          at: 320
-          duration: 320
-          target: "s17-a1"
-          action: "draw"
-        },
-        {
-          id: "s17-enter-on"
-          at: 460
-          duration: 280
-          target: "s17-on"
-          action: "enter"
-        },
-        {
-          id: "s17-draw-a2"
-          at: 580
-          duration: 320
-          target: "s17-a2"
-          action: "draw"
-        },
-        {
-          id: "s17-enter-json"
-          at: 720
-          duration: 280
-          target: "s17-json"
-          action: "enter"
-        },
-        {
-          id: "s17-enter-c1"
-          at: 840
-          duration: 280
-          target: "s17-c1"
-          action: "enter"
-        },
-        {
-          id: "s17-enter-c2"
-          at: 960
-          duration: 280
-          target: "s17-c2"
-          action: "enter"
-        },
-        {
-          id: "s17-enter-c3"
-          at: 1080
-          duration: 280
-          target: "s17-c3"
-          action: "enter"
-        },
-        {
-          id: "s17-enter-note"
-          at: 1200
-          duration: 280
-          target: "s17-note"
-          action: "enter"
-        },
-        {
-          id: "t-s17-motion-sig-dot"
-          at: 620
-          duration: 220
-          target: "s17-motion-sig-dot"
-          action: "enter"
-        },
-        {
-          id: "s17-draw-motion"
-          at: 700
-          duration: 900
-          target: "s17-motion-sig"
-          action: "draw"
-        },
-        {
-          id: "s17-emph"
-          at: 1950
-          duration: 400
-          target: "s17-json"
-          action: "emphasis"
-        }
+        { id: "s17-enter-hdr", at: 0, duration: 260, target: "s17-hdr", action: "enter" },
+        { id: "s17-enter-off", at: 180, duration: 280, target: "s17-off", action: "enter" },
+        { id: "s17-draw-a1", at: 420, duration: 300, target: "s17-a1", action: "draw" },
+        { id: "s17-enter-on", at: 560, duration: 280, target: "s17-on", action: "enter" },
+        { id: "s17-draw-a2", at: 800, duration: 300, target: "s17-a2", action: "draw" },
+        { id: "s17-enter-json", at: 940, duration: 280, target: "s17-json", action: "enter" },
+        { id: "s17-draw-motion", at: 1200, duration: 900, target: "s17-motion-sig", action: "draw" },
+        { id: "s17-emph", at: 2000, duration: 400, target: "s17-json", action: "emphasis" }
       ]
     }
   }
