@@ -171,6 +171,12 @@ export class KokoroNarratorBackend implements NarratorBackend {
   #modelReady = false;
   #activated = false;
   #fallbackOwnsCue = false;
+  /**
+   * True after any cue has been handed to browser speech. Used so a mount-time
+   * prewarm that finishes before the first cue still gets one immediate
+   * browser utterance instead of blocking on the first Kokoro synthesize.
+   */
+  #servedBrowserCue = false;
   #requestSequence = 0;
 
   constructor(options: KokoroNarratorOptions = {}) {
@@ -270,9 +276,10 @@ export class KokoroNarratorBackend implements NarratorBackend {
   }
 
   speak(utterance: NarratorUtterance, onComplete?: () => void): void {
-    if (!this.#modelReady && this.#fallback?.available === true) {
+    if (this.#shouldSpeakThroughFallback()) {
       this.#fallbackOwnsCue = true;
-      this.#fallback.speak(utterance, onComplete);
+      this.#servedBrowserCue = true;
+      this.#fallback!.speak(utterance, onComplete);
       void this.prewarm().catch(() => undefined);
       return;
     }
@@ -281,6 +288,21 @@ export class KokoroNarratorBackend implements NarratorBackend {
     void this.prewarm()
       .then(() => this.#pump())
       .catch(() => undefined);
+  }
+
+  /**
+   * Prefer browser speech while Kokoro is still loading, and for the first cue
+   * even when prewarm already completed, so audible start is not gated on the
+   * first local synthesize round-trip.
+   */
+  #shouldSpeakThroughFallback(): boolean {
+    if (this.#fallback?.available !== true) {
+      return false;
+    }
+    if (!this.#modelReady) {
+      return true;
+    }
+    return !this.#servedBrowserCue;
   }
 
   pause(): void {
@@ -475,6 +497,9 @@ export class KokoroNarratorBackend implements NarratorBackend {
 
     if (this.#fallback?.available === true) {
       this.#fallbackOwnsCue ||= pending.length > 0;
+      if (pending.length > 0) {
+        this.#servedBrowserCue = true;
+      }
       this.#update({
         status: "fallback",
         engine: "web-speech",
