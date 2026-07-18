@@ -384,10 +384,19 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
     def _collect_power(
         self, handle: Any, td: TelemetryMetrics, ExcType: type[Exception]
     ) -> None:
-        """Power in W. ``current_socket_power`` is already in W; no scaling."""
+        """Power in W. ``current_socket_power`` is already in W; no scaling.
+
+        Probe order:
+        - ``socket_power``: GPU-version-agnostic field added in ROCm 7.0.0;
+          works across all Instinct generations.
+        - ``current_socket_power``: MI300+ series (gfx942/MI300X, gfx950/MI355X).
+        - ``average_socket_power``: Navi / MI200 and older; N/A on MI300+.
+        """
         try:
             power = amdsmi.amdsmi_get_power_info(handle)
-            value = _numeric(power.get("current_socket_power"))
+            value = _numeric(power.get("socket_power"))
+            if value is None:
+                value = _numeric(power.get("current_socket_power"))
             if value is None:
                 value = _numeric(power.get("average_socket_power"))
             if value is not None:
@@ -396,7 +405,8 @@ class AMDSMITelemetryCollector(AIPerfLifecycleMixin):
                 self.debug(
                     lambda p=power: (
                         f"amdsmi_get_power_info returned no usable power value "
-                        f"(current_socket_power={p.get('current_socket_power')!r}, "
+                        f"(socket_power={p.get('socket_power')!r}, "
+                        f"current_socket_power={p.get('current_socket_power')!r}, "
                         f"average_socket_power={p.get('average_socket_power')!r})"
                     )
                 )
