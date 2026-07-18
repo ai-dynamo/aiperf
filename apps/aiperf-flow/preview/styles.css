@@ -514,20 +514,6 @@ a:focus-visible,
   filter: drop-shadow(0 18px 60px rgb(0 0 0 / 24%));
 }
 
-.preview-shell[data-preview-layout="hub-spoke"]
-  [data-draw-command-id^="request-to-"] {
-  stroke-dasharray: 3 7;
-}
-
-.preview-shell[data-preview-layout="hub-spoke"]
-  [data-draw-command-id="request-to-gateway"] {
-  stroke-dasharray: 320;
-  stroke-dashoffset: 320;
-  animation: preview-cause-draw 1.2s 0.7s cubic-bezier(0.3, 0.7, 0.2, 1)
-    forwards;
-  filter: drop-shadow(0 0 4px rgb(101 217 222 / 25%));
-}
-
 .preview-legend {
   position: fixed;
   z-index: 18;
@@ -570,13 +556,7 @@ a:focus-visible,
   --legend-dot: var(--preview-amber);
 }
 
-@keyframes preview-cause-draw {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-@media (width <= 680px) {
+@media (width <= 860px) {
   :root {
     --preview-drawer-width: calc(100vw - 1rem);
   }
@@ -646,12 +626,6 @@ a:focus-visible,
 @media (prefers-reduced-motion: reduce) {
   .flow-browser {
     transition: none;
-  }
-
-  .preview-shell[data-preview-layout="hub-spoke"]
-    [data-draw-command-id="request-to-gateway"] {
-    animation: none;
-    stroke-dashoffset: 0;
   }
 }
 
