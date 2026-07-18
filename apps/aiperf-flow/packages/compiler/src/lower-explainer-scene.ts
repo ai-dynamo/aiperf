@@ -534,23 +534,64 @@ function lowerPackageScene(
   if (timeline.length === 0) {
     return emptySceneField("timeline", options);
   }
-  const id = defaults.id ?? "embedded";
-  const title = defaults.title ?? "Embedded scene";
+  const id =
+    (typeof scene.id === "string" && scene.id.length > 0
+      ? scene.id
+      : undefined) ??
+    defaults.id ??
+    "embedded";
+  const title =
+    (typeof scene.title === "string" && scene.title.length > 0
+      ? scene.title
+      : undefined) ??
+    defaults.title ??
+    "Embedded scene";
+  const summary =
+    (typeof scene.summary === "string" && scene.summary.length > 0
+      ? scene.summary
+      : undefined) ??
+    defaults.summary ??
+    title;
+  const narration =
+    (typeof scene.narration === "string" ? scene.narration : undefined) ??
+    defaults.narration ??
+    "";
+  const fallback =
+    (typeof scene.fallback === "string" && scene.fallback.length > 0
+      ? scene.fallback
+      : undefined) ??
+    defaults.fallback ??
+    title;
+  const accessibilityRecord = asRecord(scene.accessibility) ?? {};
+  const accessibilityLabel =
+    typeof accessibilityRecord.label === "string" &&
+    accessibilityRecord.label.length > 0
+      ? accessibilityRecord.label
+      : title;
+  const viewportRecord = asRecord(scene.viewport);
+  const viewport =
+    viewportRecord !== undefined
+      ? {
+          width: Number(viewportRecord.width ?? 700),
+          height: Number(viewportRecord.height ?? 400),
+        }
+      : undefined;
   const sceneIr: SceneIr = {
     id,
     title,
-    summary: defaults.summary ?? title,
+    summary,
+    ...(viewport !== undefined ? { viewport } : {}),
     roots,
     camera: [],
     timeline,
-    narration: defaults.narration ?? "",
+    narration,
     interactions: [],
     responsive: [],
     accessibility: {
-      label: title,
+      label: accessibilityLabel,
       readingOrder: roots.map((node) => node.id),
     },
-    fallback: defaults.fallback ?? title,
+    fallback,
     sourceMap: unknownRange,
   };
   return validateSceneRender(sceneIr, unknownRange);

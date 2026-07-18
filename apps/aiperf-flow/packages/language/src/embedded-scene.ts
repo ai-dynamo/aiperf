@@ -42,6 +42,14 @@ export type PackageSceneAst = Readonly<{
   roots: readonly unknown[];
   timeline: readonly unknown[];
   camera: readonly unknown[];
+  /** Optional scene-level identity / a11y fields authored beside roots/timeline. */
+  id?: string;
+  title?: string;
+  summary?: string;
+  narration?: string;
+  fallback?: string;
+  viewport?: unknown;
+  accessibility?: unknown;
 }>;
 
 /** SceneAst plus preserved package IR fields for compiler shortcut lowering. */
@@ -50,6 +58,8 @@ export type PackageSceneIrAst = SceneAst &
     roots: readonly unknown[];
     timeline: readonly unknown[];
     camera: readonly unknown[];
+    viewport?: unknown;
+    accessibility?: unknown;
   }>;
 
 const unknownRange: SourceRange = {
@@ -161,14 +171,34 @@ export function packageSceneToSceneAst(
     .filter((id): id is string => typeof id === "string" && id.length > 0);
   const label =
     readingOrder[0] !== undefined ? readingOrder[0] : "embedded-scene";
+  const sceneId =
+    typeof packageScene.id === "string" && packageScene.id.length > 0
+      ? packageScene.id
+      : "embedded-scene";
+  const sceneTitle =
+    typeof packageScene.title === "string" && packageScene.title.length > 0
+      ? packageScene.title
+      : "Embedded scene";
+  const summaryText =
+    typeof packageScene.summary === "string" && packageScene.summary.length > 0
+      ? packageScene.summary
+      : "Embedded explainer scene";
+  const narrationText =
+    typeof packageScene.narration === "string"
+      ? packageScene.narration
+      : summaryText;
+  const fallbackText =
+    typeof packageScene.fallback === "string" && packageScene.fallback.length > 0
+      ? packageScene.fallback
+      : label;
 
   return {
     kind: "scene",
-    id: "embedded-scene",
-    title: "Embedded scene",
+    id: sceneId,
+    title: sceneTitle,
     summary: {
       kind: "summary",
-      text: "Embedded explainer scene",
+      text: summaryText,
       sourceMap,
     },
     renderDeclarations,
@@ -188,7 +218,7 @@ export function packageSceneToSceneAst(
     responsiveVariants: [],
     narration: {
       kind: "narration",
-      text: "Embedded explainer scene",
+      text: narrationText,
       sourceMap,
     },
     readingOrder: {
@@ -198,13 +228,19 @@ export function packageSceneToSceneAst(
     },
     fallback: {
       kind: "fallback",
-      text: label,
+      text: fallbackText,
       sourceMap,
     },
     sourceMap,
     roots: packageScene.roots,
     timeline: packageScene.timeline,
     camera: packageScene.camera,
+    ...(packageScene.viewport !== undefined
+      ? { viewport: packageScene.viewport }
+      : {}),
+    ...(packageScene.accessibility !== undefined
+      ? { accessibility: packageScene.accessibility }
+      : {}),
   };
 }
 
@@ -487,6 +523,13 @@ class PackageSceneParser {
     const roots: unknown[] = [];
     const timeline: unknown[] = [];
     const camera: unknown[] = [];
+    let id: string | undefined;
+    let title: string | undefined;
+    let summary: string | undefined;
+    let narration: string | undefined;
+    let fallback: string | undefined;
+    let viewport: unknown;
+    let accessibility: unknown;
 
     while (!this.done) {
       const key = this.expectIdentifier();
@@ -507,9 +550,23 @@ class PackageSceneParser {
           throw new Error('package @scene field "camera" must be an array');
         }
         camera.push(...value);
+      } else if (key === "id" && typeof value === "string") {
+        id = value;
+      } else if (key === "title" && typeof value === "string") {
+        title = value;
+      } else if (key === "summary" && typeof value === "string") {
+        summary = value;
+      } else if (key === "narration" && typeof value === "string") {
+        narration = value;
+      } else if (key === "fallback" && typeof value === "string") {
+        fallback = value;
+      } else if (key === "viewport") {
+        viewport = value;
+      } else if (key === "accessibility") {
+        accessibility = value;
       } else {
         throw new Error(
-          `Unknown package @scene field "${key}" (expected roots, timeline, or camera)`,
+          `Unknown package @scene field "${key}" (expected roots, timeline, camera, or scene metadata)`,
         );
       }
       if (this.match(",")) {
@@ -517,7 +574,19 @@ class PackageSceneParser {
       }
     }
 
-    return { kind: "package-scene", roots, timeline, camera };
+    return {
+      kind: "package-scene",
+      roots,
+      timeline,
+      camera,
+      ...(id !== undefined ? { id } : {}),
+      ...(title !== undefined ? { title } : {}),
+      ...(summary !== undefined ? { summary } : {}),
+      ...(narration !== undefined ? { narration } : {}),
+      ...(fallback !== undefined ? { fallback } : {}),
+      ...(viewport !== undefined ? { viewport } : {}),
+      ...(accessibility !== undefined ? { accessibility } : {}),
+    };
   }
 
   private get done(): boolean {
