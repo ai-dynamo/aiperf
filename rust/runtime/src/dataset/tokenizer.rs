@@ -849,6 +849,93 @@ impl TextTokenizer for NoDecodeTokenizer {
 mod tests {
     use super::*;
 
+    /// Write a minimal but format-faithful `tiktoken.model`: single-byte tokens
+    /// for bytes 0..=255 (ranks 0..=255) plus a couple of multi-byte merges, so
+    /// the base64-rank parser and BPE round-trip run without any pretrained asset.
+    fn write_synthetic_tiktoken_model(dir: &Path) -> PathBuf {
+        let engine = base64::engine::general_purpose::STANDARD;
+        let mut content = String::new();
+        for byte in 0u8..=255 {
+            content.push_str(&format!("{} {}\n", engine.encode([byte]), byte as u32));
+        }
+        // A couple of higher-rank merges so encode produces multi-byte tokens.
+        content.push_str(&format!("{} 256\n", engine.encode(b"hello")));
+        content.push_str(&format!("{} 257\n", engine.encode(b" world")));
+        let path = dir.join("tiktoken.model");
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn native_tiktoken_round_trips_and_maps_special_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        write_synthetic_tiktoken_model(dir.path());
+        // Kimi-shaped config: special tokens declared in the reserved range that
+        // follows the 258-token base vocab (max rank 257 -> num_base_tokens 258).
+        std::fs::write(
+            dir.path().join("tokenizer_config.json"),
+            r#"{
+  "bos_token": "[BOS]",
+  "eos_token": "[EOS]",
+  "added_tokens_decoder": {
+    "258": {"content": "[BOS]", "special": true},
+    "259": {"content": "[EOS]", "special": true}
+  }
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"model_type": "kimi_k2", "vocab_size": 512}"#,
+        )
+        .unwrap();
+
+        let tokenizer = NativeTiktokenTokenizer::from_directory(dir.path()).unwrap();
+
+        // Base-text round-trip through the parsed BPE.
+        let text = "hello world";
+        let ids = tokenizer.encode(text).unwrap();
+        assert!(!ids.is_empty());
+        assert_eq!(tokenizer.decode(&ids).unwrap(), text);
+
+        // Special tokens resolve to their reserved ids and BOS/EOS are wired.
+        assert_eq!(tokenizer.bos_token_id(), Some(258));
+        assert_eq!(tokenizer.eos_token_id(), Some(259));
+        assert_eq!(tokenizer.encode("[BOS]").unwrap(), vec![258]);
+        assert_eq!(tokenizer.encode("[EOS]").unwrap(), vec![259]);
+        // vocab_size honors config.json vocab_size (reserved upper bound).
+        assert_eq!(tokenizer.vocab_size(), Some(512));
+        // Stable token count for a fixed input (no network).
+        assert_eq!(tokenizer.count("hello world hello").unwrap(), ids.len() + 2);
+    }
+
+    #[test]
+    fn native_tiktoken_defaults_reserved_slots_without_config() {
+        let dir = tempfile::tempdir().unwrap();
+        write_synthetic_tiktoken_model(dir.path());
+        // No tokenizer_config.json / config.json: fall back to 256 reserved slots.
+        let tokenizer = NativeTiktokenTokenizer::from_directory(dir.path()).unwrap();
+        // num_base_tokens = 258 (max rank 257 + 1); + 256 reserved = 514.
+        assert_eq!(tokenizer.vocab_size(), Some(514));
+        assert_eq!(tokenizer.bos_token_id(), None);
+        assert_eq!(tokenizer.decode(&tokenizer.encode("hi").unwrap()).unwrap(), "hi");
+        // An unnamed reserved slot decodes to its placeholder token.
+        assert_eq!(tokenizer.encode("<|reserved_token_300|>").unwrap(), vec![300]);
+    }
+
+    #[test]
+    fn find_tiktoken_model_file_discovers_named_variants() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(find_tiktoken_model_file(dir.path()).is_none());
+        std::fs::write(dir.path().join("qwen.tiktoken"), "AAAA 0\n").unwrap();
+        assert!(
+            find_tiktoken_model_file(dir.path())
+                .unwrap()
+                .extension()
+                .is_some_and(|ext| ext == "tiktoken")
+        );
+    }
+
     #[test]
     fn builtin_is_exact_and_round_trips_unicode() {
         let tokenizer = TiktokenTokenizer::builtin();

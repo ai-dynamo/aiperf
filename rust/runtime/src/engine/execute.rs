@@ -6150,6 +6150,26 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn load_tokenizer_loads_tiktoken_model_dir_natively() {
+        // A resolved directory with a `tiktoken.model` (Kimi/Qwen-class) and no
+        // `tokenizer.json` must load through the native tiktoken loader, not fail.
+        use base64::Engine as _;
+        let dir = tempfile::tempdir().unwrap();
+        let engine = base64::engine::general_purpose::STANDARD;
+        let mut model = String::new();
+        for byte in 0u8..=255 {
+            model.push_str(&format!("{} {}\n", engine.encode([byte]), byte as u32));
+        }
+        std::fs::write(dir.path().join("tiktoken.model"), model).unwrap();
+
+        let tokenizer = load_tokenizer(dir.path().to_str()).expect("native tiktoken load");
+        let text = "hello world";
+        assert_eq!(tokenizer.decode(&tokenizer.encode(text).unwrap()).unwrap(), text);
+        // Deterministic, network-free token count.
+        assert_eq!(tokenizer.count("hi").unwrap(), 2);
+    }
+
     /// Streamable artifacts do not disqualify exact-fold. `inputs.json` still
     /// disqualifies ONLY when the dataset cannot be generated up front
     /// (`inputs_need_retain == true`). (Parquet only streams under the `parquet`

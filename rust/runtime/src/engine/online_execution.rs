@@ -1595,4 +1595,21 @@ mod tests {
         ensure_native_tokenizer_loadable("moonshotai/Kimi-K2", directory.path())
             .expect("a directory with tokenizer.json is natively loadable");
     }
+
+    #[test]
+    fn resolved_directory_with_tiktoken_model_is_natively_loadable() {
+        // A Kimi/Qwen-class repo ships a `tiktoken.model` BPE vocab instead of a
+        // `tokenizer.json`. The guard must accept it so the native tiktoken loader
+        // runs, rather than firing the actionable remote-code error.
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("tiktoken.model"), b"AAAA 0\n").unwrap();
+        ensure_native_tokenizer_loadable("moonshotai/Kimi-K2", directory.path())
+            .expect("a directory with tiktoken.model is natively loadable");
+
+        // `tokenizer.model` (Llama-3 / some Qwen) and `*.tiktoken` (older Qwen)
+        // are equally acceptable.
+        let alt = tempfile::tempdir().unwrap();
+        std::fs::write(alt.path().join("tokenizer.model"), b"AAAA 0\n").unwrap();
+        ensure_native_tokenizer_loadable("Qwen/Qwen", alt.path()).unwrap();
+    }
 }
