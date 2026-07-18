@@ -440,6 +440,12 @@ fn python_binary() -> String {
 ///    workspace root (derived from this file's `CARGO_MANIFEST_DIR` at compile time)
 /// 2. `aiperf` on PATH as last resort
 pub fn exec_binary() -> String {
+    // An explicit override wins, so CI can pin the exact binary under test.
+    if let Ok(explicit) = std::env::var("AIPERF_E2E_BIN") {
+        if !explicit.is_empty() {
+            return explicit;
+        }
+    }
     // CARGO_MANIFEST_DIR is rust/e2e; workspace root is two levels up.
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace = manifest
@@ -447,7 +453,16 @@ pub fn exec_binary() -> String {
         .and_then(|p| p.parent())
         .unwrap_or(&manifest);
     let suffix = std::env::consts::EXE_SUFFIX;
-    for profile in ["release", "debug"] {
+    // Prefer the binary built the same way these tests were: a debug `cargo test`
+    // must not silently run a stale `target/release/aiperf` (or vice versa),
+    // which would exercise a binary that does not match the code under test. The
+    // opposite profile is only a fallback for when the matching one is absent.
+    let preferred = if cfg!(debug_assertions) {
+        ["debug", "release"]
+    } else {
+        ["release", "debug"]
+    };
+    for profile in preferred {
         let candidate = workspace
             .join("target")
             .join(profile)
