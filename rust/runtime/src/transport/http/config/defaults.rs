@@ -173,7 +173,8 @@ pub struct ClientConfig {
     /// retries. Attempt `n` (1-based) waits `connect_retry_backoff_ns * n`
     /// before retrying, so successive waits grow linearly. The sleep is driven
     /// through the injected [`crate::clock::Clock`] so virtual-time replay
-    /// stays deterministic. Non-positive disables the wait.
+    /// stays deterministic. Non-positive (the default) disables the wait, so
+    /// with the default zero retries the whole feature reads as "off".
     pub connect_retry_backoff_ns: i64,
     /// Deadline for request send plus the complete response body.
     pub request_timeout_ns: Option<i64>,
@@ -219,7 +220,7 @@ impl Default for ClientConfig {
         Self {
             connect_timeout_ns: None,
             max_connect_retries: 0,
-            connect_retry_backoff_ns: 50_000_000,
+            connect_retry_backoff_ns: 0,
             request_timeout_ns: None,
             total_timeout_ns: None,
             max_response_body_bytes: None,
@@ -264,7 +265,7 @@ mod tests {
         assert_eq!(c.http_version, HttpVersion::Auto);
         assert_eq!(c.connect_timeout_ns, None);
         assert_eq!(c.max_connect_retries, 0);
-        assert_eq!(c.connect_retry_backoff_ns, 50_000_000);
+        assert_eq!(c.connect_retry_backoff_ns, 0);
         assert_eq!(c.request_timeout_ns, None);
         assert_eq!(c.total_timeout_ns, None);
         assert_eq!(c.max_response_body_bytes, None);
