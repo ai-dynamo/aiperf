@@ -583,10 +583,180 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::with_timeout;
+    use super::{establish_with_resolver, with_timeout};
     use crate::clock::{Clock, SimClock, drive_sim};
-    use crate::transport::core::{ErrorDetails, ErrorKind};
+    use crate::transport::core::{ErrorDetails, ErrorKind, TraceData};
+    use crate::transport::http::client::resolver::DnsResolver;
+    use crate::transport::http::config::ClientConfig;
+    use async_trait::async_trait;
+    use std::cell::Cell;
+    use std::net::SocketAddr;
     use std::rc::Rc;
+
+    /// A resolver that fails the connect phase for its first `fail_first`
+    /// invocations, then resolves. Used to exercise connect-retry policy
+    /// without a live socket: a resolver `Connect` error is a genuine
+    /// pre-send establishment failure, so it drives the same retry path as a
+    /// refused TCP handshake while remaining fully deterministic.
+    struct FlakyResolver {
+        calls: Cell<u32>,
+        fail_first: u32,
+        addr_port: u16,
+        kind: ErrorKind,
+    }
+
+    #[async_trait(?Send)]
+    impl DnsResolver for FlakyResolver {
+        async fn resolve(
+            &self,
+            _host: &str,
+            _port: u16,
+            _cfg: &ClientConfig,
+            _clock: &Rc<dyn Clock>,
+            _trace: &mut TraceData,
+        ) -> Result<SocketAddr, ErrorDetails> {
+            let n = self.calls.get() + 1;
+            self.calls.set(n);
+            if n <= self.fail_first {
+                return Err(ErrorDetails {
+                    kind: self.kind,
+                    code: None,
+                    message: format!("synthetic {:?} failure #{n}", self.kind),
+                });
+            }
+            Ok(SocketAddr::from(([127, 0, 0, 1], self.addr_port)))
+        }
+    }
+
+    #[test]
+    fn connect_retries_exhaust_then_surface_last_error() {
+        let clock = Rc::new(SimClock::new());
+        let clk: Rc<dyn Clock> = clock.clone();
+        let cfg = ClientConfig {
+            max_connect_retries: 2,
+            connect_retry_backoff_ns: 1_000,
+            ..ClientConfig::default()
+        };
+        let resolver = Rc::new(FlakyResolver {
+            calls: Cell::new(0),
+            fail_first: u32::MAX,
+            addr_port: 9,
+            kind: ErrorKind::Connect,
+        });
+        let probe = resolver.clone();
+        let url = url::Url::parse("http://example.test:80/").unwrap();
+        let out = drive_sim(clock.clone(), async move {
+            let mut trace = TraceData::default();
+            establish_with_resolver(&url, &cfg, clk, &mut trace, &*probe)
+                .await
+                .map(|_| ())
+        });
+        let err = out.expect_err("all attempts fail");
+        assert_eq!(err.kind, ErrorKind::Connect);
+        // 1 initial attempt + 2 retries.
+        assert_eq!(resolver.calls.get(), 3);
+        // Linear backoff between retries: 1000*1 + 1000*2 = 3000ns virtual.
+        assert_eq!(clock.now_ns(), 3_000);
+    }
+
+    #[test]
+    fn connect_retry_recovers_after_transient_failures() {
+        // A real cleartext HTTP/1 handshake succeeds as soon as the TCP
+        // connection is accepted (hyper's client handshake needs no server
+        // bytes), so a live listener lets us prove the *recovery* path: the
+        // resolver refuses twice, then points establishment at the listener,
+        // and the third attempt establishes a real sender.
+        use crate::clock::RealClock;
+        use tokio::net::TcpListener;
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+        local.block_on(&runtime, async move {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            tokio::task::spawn_local(async move {
+                // Accept and hold connections so handshakes complete.
+                loop {
+                    let _ = listener.accept().await;
+                }
+            });
+
+            let clock: Rc<dyn Clock> = RealClock::new();
+            let cfg = ClientConfig {
+                max_connect_retries: 3,
+                connect_retry_backoff_ns: 1_000,
+                http_version: crate::transport::http::models::HttpVersion::Http1Only,
+                ..ClientConfig::default()
+            };
+            let resolver = FlakyResolver {
+                calls: Cell::new(0),
+                fail_first: 2,
+                addr_port: port,
+                kind: ErrorKind::Connect,
+            };
+            let url = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+            let mut trace = TraceData::default();
+            let result = establish_with_resolver(&url, &cfg, clock, &mut trace, &resolver).await;
+            assert!(result.is_ok(), "recovered after transient connect failures");
+            assert_eq!(resolver.calls.get(), 3);
+        });
+    }
+
+    #[test]
+    fn non_connect_errors_are_not_retried() {
+        let clock = Rc::new(SimClock::new());
+        let clk: Rc<dyn Clock> = clock.clone();
+        let cfg = ClientConfig {
+            max_connect_retries: 5,
+            connect_retry_backoff_ns: 1_000,
+            ..ClientConfig::default()
+        };
+        let resolver = Rc::new(FlakyResolver {
+            calls: Cell::new(0),
+            fail_first: u32::MAX,
+            addr_port: 9,
+            kind: ErrorKind::Other,
+        });
+        let probe = resolver.clone();
+        let url = url::Url::parse("http://example.test:80/").unwrap();
+        let out = drive_sim(clock.clone(), async move {
+            let mut trace = TraceData::default();
+            establish_with_resolver(&url, &cfg, clk, &mut trace, &*probe)
+                .await
+                .map(|_| ())
+        });
+        let err = out.expect_err("non-connect failure");
+        assert_eq!(err.kind, ErrorKind::Other);
+        assert_eq!(resolver.calls.get(), 1);
+        assert_eq!(clock.now_ns(), 0);
+    }
+
+    #[test]
+    fn zero_retries_makes_a_single_attempt() {
+        let clock = Rc::new(SimClock::new());
+        let clk: Rc<dyn Clock> = clock.clone();
+        let cfg = ClientConfig::default(); // max_connect_retries == 0
+        let resolver = Rc::new(FlakyResolver {
+            calls: Cell::new(0),
+            fail_first: u32::MAX,
+            addr_port: 9,
+            kind: ErrorKind::Connect,
+        });
+        let probe = resolver.clone();
+        let url = url::Url::parse("http://example.test:80/").unwrap();
+        let out = drive_sim(clock.clone(), async move {
+            let mut trace = TraceData::default();
+            establish_with_resolver(&url, &cfg, clk, &mut trace, &*probe)
+                .await
+                .map(|_| ())
+        });
+        assert!(out.is_err());
+        assert_eq!(resolver.calls.get(), 1);
+        assert_eq!(clock.now_ns(), 0);
+    }
 
     fn timeout_err() -> ErrorDetails {
         ErrorDetails {
