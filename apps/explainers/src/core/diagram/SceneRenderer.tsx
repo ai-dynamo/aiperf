@@ -12,6 +12,15 @@ import {
   type ReactNode,
 } from "react";
 import { useHostTheme, type Theme } from "../ui";
+import { tokens } from "../tokens";
+import {
+  DEFAULT_MARKER_TIP,
+  isMarkerEndNone,
+  markerDomId,
+  markerGeometry,
+  resolveMarkerTip,
+  type ResolvedMarkerTip,
+} from "./arrow-tips";
 import { FlowArrow } from "./FlowArrow";
 import { MotionSignal } from "./MotionSignal";
 
@@ -25,7 +34,8 @@ export type SceneGeometryLike = Readonly<{
 
 /**
  * Point or connector endpoint.
- * Explicit `x`/`y` win; otherwise `nodeId` resolves to the target node center.
+ * Explicit `x`/`y` win; otherwise `nodeId` resolves to an anchored point on
+ * the target node (`anchor`: center|left|right|top|bottom, default center).
  */
 export type ScenePointLike = Readonly<{
   x?: number;
@@ -40,6 +50,13 @@ export type SceneNodeAccessibilityLike = Readonly<{
   description?: string;
 }>;
 
+/** Style values may be scalars or nested objects (e.g. `markerEnd: { kind }`). */
+export type SceneStyleValue =
+  | string
+  | number
+  | boolean
+  | Readonly<Record<string, string | number | boolean>>;
+
 /** Minimal render node supporting rect / text / path / line-like shapes. */
 export type SceneNodeLike = Readonly<{
   id: string;
@@ -48,7 +65,7 @@ export type SceneNodeLike = Readonly<{
   capability?: string;
   geometry?: SceneGeometryLike;
   layout?: SceneGeometryLike;
-  style?: Readonly<Record<string, string | number>>;
+  style?: Readonly<Record<string, SceneStyleValue>>;
   /** Glyph content for `core.text` / `kind: "text"` nodes. */
   text?: string;
   accessibility?: SceneNodeAccessibilityLike;
@@ -106,18 +123,27 @@ export type SceneRendererProps = Readonly<{
   playing: boolean;
   restartKey: number;
   reducedMotion?: boolean;
+  /** Wall-clock multiplier for timeline advance (1 = realtime). */
+  playbackRate?: number;
 }>;
 
 const VIEWPORT_WIDTH = 700;
 const VIEWPORT_HEIGHT = 400;
-const DEFAULT_ARROW_STROKE_WIDTH = 2.2;
+const DEFAULT_ARROW_STROKE_WIDTH: number = tokens.diagram.strokeWidth;
+const SVG_NS = "http://www.w3.org/2000/svg";
 const DEFAULT_DOT_RADIUS = 5;
 const PULSE_CYCLE_MS = 2200;
 const PULSE_DELAY_MS = 800;
-const MOTION_DOT_DURATION = "2.2s";
-const MOTION_DOT_DELAY = "0.8s";
-const DASHED_STROKE = "8 4";
+const MOTION_DOT_DURATION_S = 2.2;
+const MOTION_DOT_DELAY_S = 0.8;
+const DASHED_STROKE: string = tokens.diagram.dashed;
 const DOTTED_STROKE = "2 3";
+
+function smilSeconds(seconds: number, playbackRate: number): string {
+  const rate = playbackRate > 0 ? playbackRate : 1;
+  const scaled = seconds / rate;
+  return `${Number(scaled.toFixed(3))}s`;
+}
 
 const ARROW_CAPABILITIES = new Set([
   "core.line",
@@ -165,6 +191,7 @@ type PlaybackContext = Readonly<{
   playing: boolean;
   reducedMotion: boolean;
   restartKey: number;
+  playbackRate: number;
 }>;
 
 type LayoutOrigin = Readonly<{ x: number; y: number }>;
@@ -423,7 +450,7 @@ function indexSceneNodes(roots: readonly SceneNodeLike[]): SceneNodeIndex {
   return { nodesById, worldGeometryById };
 }
 
-/** Center point of world-space geometry (matches Flow runtime connectors). */
+/** Center point of world-space geometry. */
 function nodeCenter(
   worldGeom: SceneGeometryLike,
 ): Readonly<{ x: number; y: number }> {
@@ -434,8 +461,37 @@ function nodeCenter(
 }
 
 /**
+ * Anchored point on world-space geometry.
+ * Edge anchors land on mid-sides so connectors stop at box borders instead of
+ * driving center-to-center strokes through fills.
+ */
+function nodeAnchorPoint(
+  worldGeom: SceneGeometryLike,
+  anchor: string | undefined,
+): Readonly<{ x: number; y: number }> {
+  const center = nodeCenter(worldGeom);
+  switch ((anchor ?? "center").toLowerCase()) {
+    case "left":
+    case "west":
+      return { x: worldGeom.x, y: center.y };
+    case "right":
+    case "east":
+      return { x: worldGeom.x + worldGeom.width, y: center.y };
+    case "top":
+    case "north":
+      return { x: center.x, y: worldGeom.y };
+    case "bottom":
+    case "south":
+      return { x: center.x, y: worldGeom.y + worldGeom.height };
+    case "center":
+    default:
+      return center;
+  }
+}
+
+/**
  * Resolve an endpoint into the current drawing frame.
- * Explicit `x`/`y` are already in-frame; `nodeId` centers are world-space and
+ * Explicit `x`/`y` are already in-frame; `nodeId` anchors are world-space and
  * rebased by subtracting `layoutOrigin` (ancestor group/container translates).
  */
 function resolveEndpoint(
@@ -461,10 +517,10 @@ function resolveEndpoint(
         ? geometryOf(index.nodesById.get(endpoint.nodeId)!)
         : undefined);
     if (world !== undefined) {
-      const center = nodeCenter(world);
+      const point = nodeAnchorPoint(world, endpoint.anchor);
       return {
-        x: center.x - layoutOrigin.x,
-        y: center.y - layoutOrigin.y,
+        x: point.x - layoutOrigin.x,
+        y: point.y - layoutOrigin.y,
       };
     }
   }
@@ -506,7 +562,9 @@ function isEnterLikeAction(action: string): boolean {
 }
 
 function isDrawAction(action: string): boolean {
-  return action === "draw";
+  return (
+    action === "draw" || action === "trace" || action === "reveal-stroke"
+  );
 }
 
 function isEmphasizeAction(action: string): boolean {
@@ -589,8 +647,18 @@ function isPulseNode(node: SceneNodeLike, capability = ""): boolean {
 }
 
 function markerEndDisabled(style: SceneNodeLike["style"]): boolean {
-  const markerEnd = style?.markerEnd;
-  return markerEnd === "none" || markerEnd === "false" || markerEnd === 0;
+  return isMarkerEndNone(style?.markerEnd);
+}
+
+/** Resolve tip geometry when this node will show an arrowhead. */
+function tipForArrowNode(
+  node: SceneNodeLike,
+  capability: string,
+): ResolvedMarkerTip | null {
+  if (!shouldShowArrowhead(node, capability)) {
+    return null;
+  }
+  return resolveMarkerTip(node.style?.markerEnd, DEFAULT_MARKER_TIP);
 }
 
 /** Directed edges get arrowheads; motion guides and undirected lines do not. */
@@ -1016,7 +1084,10 @@ function styleToCss(
       key === "dashArray" ||
       key === "strokeStyle" ||
       key === "variant" ||
-      key === "r"
+      key === "r" ||
+      // Caps are owned by FlowArrow (butt under markers / draw reveal).
+      key === "strokeLinecap" ||
+      key === "stroke-linecap"
     ) {
       continue;
     }
@@ -1059,6 +1130,237 @@ function arrowPathData(
   return undefined;
 }
 
+function formatPathNumber(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+  const rounded = Math.round(value * 1000) / 1000;
+  return String(rounded);
+}
+
+/**
+ * Rewrite the final absolute H / V / L / C endpoint when the rest of the path
+ * can stay intact (avoids polyline-approximating whole curves).
+ */
+function rewriteLastEndpoint(
+  d: string,
+  x: number,
+  y: number,
+): string | undefined {
+  const trimmed = d.trim();
+  let match =
+    /^(.*)H\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/i.exec(trimmed);
+  if (match?.[1] !== undefined) {
+    return `${match[1]}H${formatPathNumber(x)}`;
+  }
+  match =
+    /^(.*)V\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/i.exec(trimmed);
+  if (match?.[1] !== undefined) {
+    return `${match[1]}V${formatPathNumber(y)}`;
+  }
+  match =
+    /^(.*)L\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?:\s+|,)\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/i.exec(
+      trimmed,
+    );
+  if (match?.[1] !== undefined) {
+    return `${match[1]}L${formatPathNumber(x)} ${formatPathNumber(y)}`;
+  }
+  // Absolute cubic: keep control points, pull only the terminal point back.
+  match =
+    /^(.*C(?:\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?:\s+|,)\s*){4})[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?:\s+|,)\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/i.exec(
+      trimmed,
+    );
+  if (match?.[1] !== undefined) {
+    return `${match[1]}${formatPathNumber(x)} ${formatPathNumber(y)}`;
+  }
+  return undefined;
+}
+
+function shortenPathEndWithDom(d: string, inset: number): string | undefined {
+  try {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", d);
+    if (typeof path.getTotalLength !== "function") {
+      return undefined;
+    }
+    const total = path.getTotalLength();
+    if (!(total > inset + 0.5)) {
+      return d;
+    }
+    const cutAt = total - inset;
+    const end = path.getPointAtLength(cutAt);
+    const rewritten = rewriteLastEndpoint(d, end.x, end.y);
+    if (rewritten !== undefined) {
+      return rewritten;
+    }
+    // Fallback for uncommon commands: polyline up to the cut.
+    const steps = Math.max(12, Math.min(64, Math.ceil(cutAt / 3)));
+    const parts: string[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const point = path.getPointAtLength((cutAt * i) / steps);
+      const x = formatPathNumber(point.x);
+      const y = formatPathNumber(point.y);
+      parts.push(i === 0 ? `M${x} ${y}` : `L${x} ${y}`);
+    }
+    return parts.join("");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Pure fallback when DOM path measurement is unavailable (or failed).
+ * Handles the straight H / V / L endings that dominate authored decks.
+ */
+function lastPointFromPrefix(
+  prefix: string,
+): Readonly<{ x: number; y: number }> | undefined {
+  const trimmed = prefix.trimEnd();
+  const lMatch =
+    /[Ll]\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+|,)\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/.exec(
+      trimmed,
+    );
+  if (lMatch?.[1] !== undefined && lMatch[2] !== undefined) {
+    return { x: Number(lMatch[1]), y: Number(lMatch[2]) };
+  }
+  const mMatch =
+    /[Mm]\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+|,)\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/.exec(
+      trimmed,
+    );
+  if (mMatch?.[1] !== undefined && mMatch[2] !== undefined) {
+    return { x: Number(mMatch[1]), y: Number(mMatch[2]) };
+  }
+  const hMatch =
+    /H\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/i.exec(trimmed);
+  const vMatch =
+    /V\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/i.exec(trimmed);
+  const base =
+    /[Mm]\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+|,)\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/.exec(
+      trimmed,
+    );
+  if (base?.[1] === undefined || base[2] === undefined) {
+    return undefined;
+  }
+  let x = Number(base[1]);
+  let y = Number(base[2]);
+  if (hMatch?.[1] !== undefined) {
+    x = Number(hMatch[1]);
+  }
+  if (vMatch?.[1] !== undefined) {
+    y = Number(vMatch[1]);
+  }
+  // Walk all absolute H/V after the move to recover the true last point.
+  const rest = trimmed.slice((base.index ?? 0) + base[0].length);
+  for (const token of rest.matchAll(
+    /([HhVv])\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/g,
+  )) {
+    if (token[1] === "H" || token[1] === "h") {
+      x = Number(token[2]);
+    } else {
+      y = Number(token[2]);
+    }
+  }
+  return { x, y };
+}
+
+function shortenPathEndParsed(d: string, inset: number): string {
+  const trimmed = d.trim();
+  const hMatch =
+    /^(.*)H\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/i.exec(trimmed);
+  if (hMatch?.[1] !== undefined && hMatch[2] !== undefined) {
+    const prev = lastPointFromPrefix(hMatch[1]);
+    const xEnd = Number(hMatch[2]);
+    if (prev !== undefined) {
+      const dx = xEnd - prev.x;
+      if (Math.abs(dx) > inset) {
+        return `${hMatch[1]}H${formatPathNumber(xEnd - Math.sign(dx) * inset)}`;
+      }
+    }
+  }
+  const vMatch =
+    /^(.*)V\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/i.exec(trimmed);
+  if (vMatch?.[1] !== undefined && vMatch[2] !== undefined) {
+    const prev = lastPointFromPrefix(vMatch[1]);
+    const yEnd = Number(vMatch[2]);
+    if (prev !== undefined) {
+      const dy = yEnd - prev.y;
+      if (Math.abs(dy) > inset) {
+        return `${vMatch[1]}V${formatPathNumber(yEnd - Math.sign(dy) * inset)}`;
+      }
+    }
+  }
+  const lMatch =
+    /^(.*)L\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+|,)\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/i.exec(
+      trimmed,
+    );
+  if (
+    lMatch?.[1] !== undefined &&
+    lMatch[2] !== undefined &&
+    lMatch[3] !== undefined
+  ) {
+    const prev = lastPointFromPrefix(lMatch[1]);
+    if (prev !== undefined) {
+      const xEnd = Number(lMatch[2]);
+      const yEnd = Number(lMatch[3]);
+      const dx = xEnd - prev.x;
+      const dy = yEnd - prev.y;
+      const length = Math.hypot(dx, dy);
+      if (length > inset) {
+        const scale = (length - inset) / length;
+        return `${lMatch[1]}L${formatPathNumber(prev.x + dx * scale)} ${formatPathNumber(prev.y + dy * scale)}`;
+      }
+    }
+  }
+  return d;
+}
+
+/**
+ * Pull the stroke end back by the arrowhead length so a `refX=0` tip lands on
+ * the authored endpoint instead of poking into the destination box.
+ */
+function shortenPathForArrowhead(
+  d: string,
+  strokeWidth: number,
+  tipInsetUnits: number,
+): string {
+  const inset = tipInsetUnits * strokeWidth;
+  if (!(inset > 0) || d.length === 0) {
+    return d;
+  }
+  if (typeof document !== "undefined") {
+    const shortened = shortenPathEndWithDom(d, inset);
+    if (shortened !== undefined) {
+      return shortened;
+    }
+  }
+  return shortenPathEndParsed(d, inset);
+}
+
+/** Collect unique tips used by arrow-like nodes in the scene tree. */
+function collectSceneTips(
+  roots: readonly SceneNodeLike[],
+): readonly ResolvedMarkerTip[] {
+  const byKey = new Map<string, ResolvedMarkerTip>();
+  const visit = (node: SceneNodeLike) => {
+    const tip = tipForArrowNode(node, capabilityOf(node));
+    if (tip !== null) {
+      byKey.set(tip.key, tip);
+    }
+    if (Array.isArray(node.children)) {
+      for (const child of node.children) {
+        visit(child);
+      }
+    }
+  };
+  for (const root of roots) {
+    visit(root);
+  }
+  if (byKey.size === 0) {
+    byKey.set(DEFAULT_MARKER_TIP.key, DEFAULT_MARKER_TIP);
+  }
+  return [...byKey.values()];
+}
+
 function strokeWidthFromStyle(
   style: SceneNodeLike["style"],
   fallback = DEFAULT_ARROW_STROKE_WIDTH,
@@ -1069,7 +1371,7 @@ function strokeWidthFromStyle(
 
 function cornerRadiusFromStyle(
   style: SceneNodeLike["style"],
-  fallback = 10,
+  fallback = 14,
 ): number {
   const radius = style?.radius ?? style?.rx ?? style?.borderRadius;
   return typeof radius === "number" && Number.isFinite(radius) ? radius : fallback;
@@ -1079,13 +1381,15 @@ function cornerRadiusFromStyle(
  * Recursively render nested `children` into sibling `<g>` wrappers.
  * When `layoutOffset` is set, children are parent-local and wrapped in
  * `translate(offset)` so group/container origins shift the subtree.
+ * Arrow-like siblings paint after non-arrows so tip heads (which extend
+ * past the stroke end) are not buried under destination box fills.
  */
 function renderChildren(
   children: readonly SceneNodeLike[] | undefined,
   timeline: readonly SceneTimelineCueLike[],
   playbackTimeMs: number,
   theme: Theme,
-  arrowMarkerId: string,
+  markerPrefix: string,
   index: SceneNodeIndex,
   parentLayoutOrigin: LayoutOrigin,
   layoutOffset: LayoutOrigin | undefined,
@@ -1101,13 +1405,13 @@ function renderChildren(
           x: parentLayoutOrigin.x + layoutOffset.x,
           y: parentLayoutOrigin.y + layoutOffset.y,
         };
-  const nested = children.map((child) =>
+  const nested = orderArrowSiblingsLast(children).map((child) =>
     renderNode(
       child,
       timeline,
       playbackTimeMs,
       theme,
-      arrowMarkerId,
+      markerPrefix,
       index,
       childOrigin,
       playback,
@@ -1129,12 +1433,31 @@ function renderChildren(
   );
 }
 
+/** Keep document order within each partition; arrows paint on top. */
+function orderArrowSiblingsLast(
+  nodes: readonly SceneNodeLike[],
+): readonly SceneNodeLike[] {
+  const background: SceneNodeLike[] = [];
+  const arrows: SceneNodeLike[] = [];
+  for (const node of nodes) {
+    if (isArrowLike(node, capabilityOf(node))) {
+      arrows.push(node);
+    } else {
+      background.push(node);
+    }
+  }
+  if (arrows.length === 0) {
+    return nodes;
+  }
+  return [...background, ...arrows];
+}
+
 function renderNode(
   node: SceneNodeLike,
   timeline: readonly SceneTimelineCueLike[],
   playbackTimeMs: number,
   theme: Theme,
-  arrowMarkerId: string,
+  markerPrefix: string,
   index: SceneNodeIndex,
   layoutOrigin: LayoutOrigin = ZERO_ORIGIN,
   playback: PlaybackContext,
@@ -1171,7 +1494,7 @@ function renderNode(
     timeline,
     playbackTimeMs,
     theme,
-    arrowMarkerId,
+    markerPrefix,
     index,
     layoutOrigin,
     localChildren ? { x: geom.x, y: geom.y } : undefined,
@@ -1228,9 +1551,16 @@ function renderNode(
   } else if (capability === "core.text" || node.kind === "text") {
     const fontSize =
       typeof node.style?.fontSize === "number" ? node.style.fontSize : 14;
-    const textAnchor =
+    const rawAnchor =
       typeof node.style?.textAnchor === "string"
         ? node.style.textAnchor
+        : undefined;
+    const textAnchor =
+      rawAnchor === "start" ||
+      rawAnchor === "middle" ||
+      rawAnchor === "end" ||
+      rawAnchor === "inherit"
+        ? rawAnchor
         : undefined;
     const textX =
       textAnchor === "middle" ? geom.x + geom.width / 2 : geom.x;
@@ -1309,8 +1639,8 @@ function renderNode(
               key={`motion-${playback.restartKey}-${node.id}`}
               path={d}
               color={stroke}
-              delay={MOTION_DOT_DELAY}
-              duration={MOTION_DOT_DURATION}
+              delay={smilSeconds(MOTION_DOT_DELAY_S, playback.playbackRate)}
+              duration={smilSeconds(MOTION_DOT_DURATION_S, playback.playbackRate)}
               reducedMotion={playback.reducedMotion}
               active={smilActive}
               r={DEFAULT_DOT_RADIUS}
@@ -1321,27 +1651,38 @@ function renderNode(
       );
     }
   } else if (isArrowLike(node, capability)) {
-    const d = arrowPathData(node, index, layoutOrigin);
-    if (d !== undefined) {
+    const dRaw = arrowPathData(node, index, layoutOrigin);
+    if (dRaw !== undefined) {
       const stroke = paintFromStyle(node.style, "stroke", theme, themeAccent);
-      const wantsMarker = shouldShowArrowhead(node, capability);
+      const tip = tipForArrowNode(node, capability);
+      const wantsMarker = tip !== null;
       const drawing = drawProgress !== undefined;
       // SVG marker-end sits at the path tip immediately; only attach it once
       // the stroke has fully revealed so tips never lead the line.
       const showMarker =
         wantsMarker &&
         (!drawing || drawProgress >= 1 || playback.reducedMotion);
+      const strokeWidth = strokeWidthFromStyle(node.style) * strokeScale;
+      // Keep tip length reserved on the path whenever a head will show, so
+      // draw-reveal and the final frame share the same endpoint (no jump).
+      const d =
+        tip !== null
+          ? shortenPathForArrowhead(dRaw, strokeWidth, tip.insetUnits)
+          : dRaw;
       const authoredDash = authoredStrokeDasharray(node.style);
       const dashed = isDashedStyle(node.style);
+      const markerId =
+        tip !== null ? markerDomId(markerPrefix, tip) : markerPrefix;
       body = (
         <>
           <FlowArrow
             d={d}
-            markerId={arrowMarkerId}
+            markerId={markerId}
             showMarker={showMarker}
             color={stroke}
             dashed={!drawing && dashed}
-            strokeWidth={strokeWidthFromStyle(node.style) * strokeScale}
+            strokeWidth={strokeWidth}
+            strokeLinecap="butt"
             pathLength={drawing ? 1 : undefined}
             strokeDasharray={
               drawing
@@ -1355,6 +1696,7 @@ function renderNode(
             aria-hidden="true"
             style={styleToCss(node.style, theme)}
             data-flow-arrowhead={showMarker ? "true" : "false"}
+            data-flow-tip={tip?.key}
           />
           {/* Tip dot rides the stroke head while a draw cue is in flight. */}
           {drawing &&
@@ -1451,14 +1793,16 @@ export function SceneRenderer({
   playing,
   restartKey,
   reducedMotion = false,
+  playbackRate = 1,
 }: SceneRendererProps): ReactNode {
   const theme = useHostTheme();
   const reactId = useId().replaceAll(":", "");
-  const arrowMarkerId = `scene-arrow-${reactId}`;
+  const markerPrefix = `scene-arrow-${reactId}`;
   const timeline = Array.isArray(scene.timeline) ? scene.timeline : [];
   const durationMs = timelineDurationMs(timeline);
   const [playbackTimeMs, setPlaybackTimeMs] = useState(0);
   const playbackTimeMsRef = useRef(0);
+  const rate = playbackRate > 0 ? playbackRate : 1;
 
   const commitTime = (nextMs: number) => {
     const clamped = Math.min(durationMs, Math.max(0, nextMs));
@@ -1486,7 +1830,7 @@ export function SceneRenderer({
     const syncFromWallClock = () => {
       const elapsed = Math.min(
         durationMs,
-        playOriginMs + Math.max(0, performance.now() - wallOriginMs),
+        playOriginMs + Math.max(0, performance.now() - wallOriginMs) * rate,
       );
       commitTime(elapsed);
       if (elapsed >= durationMs && intervalId !== 0) {
@@ -1503,7 +1847,7 @@ export function SceneRenderer({
         window.clearInterval(intervalId);
       }
     };
-  }, [playing, reducedMotion, durationMs, restartKey, scene]);
+  }, [playing, reducedMotion, durationMs, restartKey, scene, rate]);
 
   const effectiveTimeMs = reducedMotion ? durationMs : playbackTimeMs;
   const ariaLabel =
@@ -1514,6 +1858,7 @@ export function SceneRenderer({
       : undefined;
   const roots = scene.roots ?? [];
   const index = indexSceneNodes(roots);
+  const sceneTips = collectSceneTips(roots);
   const { width: viewportWidth, height: viewportHeight } = resolveViewportSize(
     scene.viewport,
   );
@@ -1523,8 +1868,8 @@ export function SceneRenderer({
     playing: playing && !reducedMotion,
     reducedMotion,
     restartKey,
+    playbackRate: rate,
   };
-  const arrowColor = theme.accent.primary;
 
   return (
     <svg
@@ -1540,30 +1885,35 @@ export function SceneRenderer({
       data-scene-restart-key={String(restartKey)}
     >
       <defs>
-        <marker
-          id={arrowMarkerId}
-          markerWidth={8}
-          markerHeight={8}
-          // Attach at the triangle base so the stroke stops before the tip,
-          // instead of continuing through the head (visible under the tip).
-          refX={0}
-          refY={3}
-          orient="auto"
-          markerUnits="strokeWidth"
-        >
-          <path d="M0,0 L6,3 L0,6 Z" fill={arrowColor} focusable={false} />
-        </marker>
+        {sceneTips.map((tip) => {
+          const geom = markerGeometry(tip);
+          return (
+            <marker
+              key={tip.key}
+              id={markerDomId(markerPrefix, tip)}
+              markerWidth={geom.markerWidth}
+              markerHeight={geom.markerHeight}
+              // Attach at the tip base so the stroke stops before the head.
+              refX={geom.refX}
+              refY={geom.refY}
+              orient="auto"
+              markerUnits="strokeWidth"
+            >
+              {geom.children}
+            </marker>
+          );
+        })}
       </defs>
       {summaryDescId !== undefined ? (
         <desc id={summaryDescId}>{scene.summary}</desc>
       ) : null}
-      {roots.map((node) =>
+      {orderArrowSiblingsLast(roots).map((node) =>
         renderNode(
           node,
           timeline,
           effectiveTimeMs,
           theme,
-          arrowMarkerId,
+          markerPrefix,
           index,
           ZERO_ORIGIN,
           playback,

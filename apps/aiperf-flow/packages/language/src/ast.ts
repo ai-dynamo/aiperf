@@ -96,6 +96,57 @@ export type ConnectorAst = AstNode<"connector"> &
     fallback: FallbackAst;
   }>;
 
+/**
+ * Native cinematic keyword for a core / layout / motion primitive.
+ * Maps 1:1 onto package `capability` ids (see `SCENE_PRIMITIVE_CAPABILITIES`).
+ */
+export type ScenePrimitiveKeyword =
+  | "panel"
+  | "header"
+  | "circle"
+  | "ellipse"
+  | "arrow"
+  | "elbow"
+  | "bracket"
+  | "callout"
+  | "stack"
+  | "grid"
+  | "pad"
+  | "signal";
+
+/** Capability ids emitted for native scene primitives (Task 1 schema vocabulary). */
+export const SCENE_PRIMITIVE_CAPABILITIES = {
+  panel: "core.panel",
+  header: "core.header",
+  circle: "core.circle",
+  ellipse: "core.ellipse",
+  arrow: "core.arrow",
+  elbow: "core.elbow",
+  bracket: "core.bracket",
+  callout: "core.callout",
+  stack: "layout.stack",
+  grid: "layout.grid",
+  pad: "layout.pad",
+  signal: "motion.signal",
+} as const satisfies Record<ScenePrimitiveKeyword, string>;
+
+/**
+ * Native geometry / layout / motion node. Props mirror package authoring
+ * field names (`title`/`detail`, `r`/`center`, `from`/`to`/`via`/`axis`,
+ * `direction`/`cols`/`gap`, `d`, …) so the compiler can lower both dialects.
+ */
+export type ScenePrimitiveAst = AstNode<"scene-primitive"> &
+  Readonly<{
+    id: string;
+    /** Native keyword used in source (`panel`, `stack`, `signal`, …). */
+    primitive: ScenePrimitiveKeyword;
+    /** Package-form capability id (`core.panel`, `layout.stack`, …). */
+    capability: string;
+    props: readonly PropAssignmentAst[];
+    children?: readonly RenderDeclarationAst[];
+    fallback?: FallbackAst;
+  }>;
+
 export type NamedTypeRefAst = AstNode<"type-ref"> &
   Readonly<{ name: string; array?: false }>;
 
@@ -179,7 +230,11 @@ export type SymbolDefinitionAst = AstNode<"symbol-definition"> &
     body: readonly SymbolBodyStatementAst[];
   }>;
 
-export type RenderDeclarationAst = RectAst | ConnectorAst | ComponentInvocationAst;
+export type RenderDeclarationAst =
+  | RectAst
+  | ConnectorAst
+  | ScenePrimitiveAst
+  | ComponentInvocationAst;
 
 export type CameraKeyframeAst = AstNode<"camera-keyframe"> &
   Readonly<{
@@ -191,14 +246,42 @@ export type CameraKeyframeAst = AstNode<"camera-keyframe"> &
 export type CameraAst = AstNode<"camera"> &
   Readonly<{ id: string; keyframes: readonly CameraKeyframeAst[] }>;
 
-export type TimelineAction = "reveal" | "trace";
+/**
+ * Timeline cue actions accepted by native cinematic scenes.
+ * Package decks also author `enter` (mapped to `reveal` when building SceneAst).
+ */
+export type TimelineAction =
+  | "reveal"
+  | "trace"
+  | "enter"
+  | "draw"
+  | "fade"
+  | "exit"
+  | "emphasis"
+  | "emphasize"
+  | "pulse"
+  | "stagger"
+  | "enter-children";
+
+/** Per-cue easing pass-through (mirrors schema `TimelineCueEasing`). */
+export type TimelineCueEasing =
+  | "linear"
+  | "ease-in"
+  | "ease-out"
+  | "ease-in-out";
 
 export type TimelineCueAst = AstNode<"timeline-cue"> &
   Readonly<{
     time: number;
     action: TimelineAction;
+    /** Primary / group id; may be `""` when `targets` identifies stagger members. */
     target: string;
     duration: number;
+    /** Stagger member node ids when `action` is `stagger` / `enter-children`. */
+    targets?: readonly string[];
+    /** Delay between successive stagger targets. */
+    step?: number;
+    easing?: TimelineCueEasing;
   }>;
 
 export type TimelineAst = AstNode<"timeline"> &

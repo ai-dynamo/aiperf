@@ -123,10 +123,10 @@ export function MentalModel({
         style={{ display: "block", width: "100%" }}
       >
         <defs>
-          <marker id="dyno-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <marker id="dyno-green" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
             <path d="M0,0 L6,3 L0,6 Z" fill={t.category.green} />
           </marker>
-          <marker id="dyno-purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <marker id="dyno-purple" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
             <path d="M0,0 L6,3 L0,6 Z" fill={t.category.purple} />
           </marker>
         </defs>

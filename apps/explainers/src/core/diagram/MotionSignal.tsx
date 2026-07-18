@@ -139,6 +139,9 @@ export function MotionSignal({
       {...circleProps}
       r={r}
       fill={color ?? theme.category.green}
+      // SMIL opacity animation begins at `delay`; stay invisible until then
+      // so the dot does not flash at the SVG origin (0,0).
+      opacity={0}
       className={motionClassName}
       aria-hidden={ariaHidden}
     >
@@ -149,12 +152,14 @@ export function MotionSignal({
         begin={delay}
         dur={duration}
         repeatCount="indefinite"
+        fill="freeze"
       />
       <animateMotion
         path={path}
         begin={delay}
         dur={duration}
         repeatCount="indefinite"
+        fill="freeze"
       />
       {children}
     </circle>

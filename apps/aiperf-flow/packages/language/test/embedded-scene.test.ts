@@ -67,10 +67,10 @@ describe("embedded scene dialects", () => {
         fallback "Box"
       }
       timeline primary {
-        at 0ms duration 400ms reveal box
+        at 0 reveal box duration 400
       }
       narrate "The diagram appears."
-      reading-order [box]
+      reading-order box
       fallback "Box appears."
     `);
 

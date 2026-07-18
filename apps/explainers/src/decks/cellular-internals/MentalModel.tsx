@@ -65,16 +65,16 @@ function Markers({
 }) {
   return (
     <defs>
-      <marker id="cell-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="cell-green" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={green} />
       </marker>
-      <marker id="cell-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="cell-blue" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={blue} />
       </marker>
-      <marker id="cell-purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="cell-purple" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={purple} />
       </marker>
-      <marker id="cell-yellow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="cell-yellow" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={yellow} />
       </marker>
     </defs>

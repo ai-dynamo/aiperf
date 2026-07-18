@@ -45,16 +45,16 @@ function Markers({
 }) {
   return (
     <defs>
-      <marker id="velo-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="velo-green" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={green} />
       </marker>
-      <marker id="velo-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="velo-blue" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={blue} />
       </marker>
-      <marker id="velo-purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="velo-purple" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={purple} />
       </marker>
-      <marker id="velo-yellow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="velo-yellow" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={yellow} />
       </marker>
     </defs>

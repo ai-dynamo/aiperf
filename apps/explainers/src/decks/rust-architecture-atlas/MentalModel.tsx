@@ -36,13 +36,13 @@ const MOTION: readonly (string | null)[] = [
 function Markers({ green, blue, purple }: { green: string; blue: string; purple: string }) {
   return (
     <defs>
-      <marker id="atlas-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="atlas-green" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={green} />
       </marker>
-      <marker id="atlas-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="atlas-blue" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={blue} />
       </marker>
-      <marker id="atlas-purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="atlas-purple" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={purple} />
       </marker>
     </defs>

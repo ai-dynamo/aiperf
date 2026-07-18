@@ -141,11 +141,12 @@ function PackageMentalModel({
   playing = false,
   restartKey = 0,
   reducedMotion = false,
+  playbackRate = 1,
 }: {
   pkg: DeckPackage;
 } & Pick<
   MentalModelProps,
-  "slideIndex" | "playing" | "restartKey" | "reducedMotion"
+  "slideIndex" | "playing" | "restartKey" | "reducedMotion" | "playbackRate"
 >): ReactNode {
   const scene = pkg.slides[slideIndex]?.render?.scene;
   if (scene === undefined) {
@@ -157,6 +158,7 @@ function PackageMentalModel({
       playing={playing}
       restartKey={restartKey}
       reducedMotion={reducedMotion}
+      playbackRate={playbackRate}
     />
   );
 }
@@ -164,7 +166,7 @@ function PackageMentalModel({
 /**
  * Maps a flow-backed DeckPackage onto the legacy DeckDefinition consumed by
  * ExplainerShell. MentalModel mounts SceneRenderer from each slide's scene IR,
- * forwarding playing/restartKey/reducedMotion from ExplainerShell so timelines
+ * forwarding playing/restartKey/reducedMotion/playbackRate from ExplainerShell so timelines
  * animate with the slideshow. FinalCard mounts SceneRenderer (and optional Card
  * chrome) only when `pkg.finalCard` is present — never a cloned last slide.
  */
@@ -182,13 +184,14 @@ export function packageToDeckDefinition(pkg: DeckPackage): DeckDefinition {
     slides,
     glossary: pkg.glossary ?? [],
     css: pkg.css ?? "",
-    MentalModel: ({ slideIndex, playing, restartKey, reducedMotion }) => (
+    MentalModel: ({ slideIndex, playing, restartKey, reducedMotion, playbackRate }) => (
       <PackageMentalModel
         pkg={pkg}
         slideIndex={slideIndex}
         playing={playing}
         restartKey={restartKey}
         reducedMotion={reducedMotion}
+        playbackRate={playbackRate}
       />
     ),
     ...(FinalCard !== undefined ? { FinalCard } : {}),

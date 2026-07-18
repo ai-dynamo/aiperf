@@ -6,7 +6,19 @@
  *
  * Two dialects are accepted:
  * - **package** — decks-flow JSON-ish `roots` / `timeline` / `camera` object form
- * - **native** — cinematic Flow scene statements (`rect` / `connector` / `timeline` / …)
+ * - **native** — cinematic Flow scene statements (`rect` / `connector` / `panel` /
+ *   `elbow` / `stack` / `signal` / `timeline` / …)
+ *
+ * Package objects accept arbitrary keys. Known geometry / animation fields that
+ * round-trip into SceneAst props (for compiler lowering) include:
+ * - panel: `title`, `detail`
+ * - header: `title`, `caption`
+ * - circle / ellipse: `r` / `rx` / `ry`, `center` `{ x, y }`
+ * - elbow / connector: `from`, `to`, `via`, `axis`
+ * - stack / grid: `direction`, `cols`, `gap` (also via `style`)
+ * - motion.signal: `d`, or `from` / `to`
+ * - stagger cues: `targets`, `step`, `easing`; actions `stagger` /
+ *   `enter-children` / `fade` / `exit` (plus existing `enter` / `draw` / …)
  *
  * Native bodies stay as source so the Chevrotain scene rules in `parseDocument`
  * can lower them without a circular import. Package bodies parse here into a
@@ -14,6 +26,7 @@
  */
 
 import type {
+  ArgumentValueAst,
   ComponentInvocationAst,
   PropAssignmentAst,
   RectAst,
@@ -21,6 +34,7 @@ import type {
   SceneAst,
   TimelineAction,
   TimelineCueAst,
+  TimelineCueEasing,
   ValueAst,
 } from "./ast.js";
 import type { TokenStream } from "./grammar/explainer.js";
@@ -383,11 +397,25 @@ function renderDeclarationFromPackage(
       sourceMap,
     });
   }
+
+  // Known geometry / layout / motion fields (scalars + one-level objects).
+  for (const key of KNOWN_PACKAGE_PROP_KEYS) {
+    if (!(key in node) || node[key] === undefined) {
+      continue;
+    }
+    props.push({
+      kind: "prop-assignment",
+      name: key,
+      value: argumentFromUnknown(node[key], sourceMap),
+      sourceMap,
+    });
+  }
+
   for (const [key, value] of Object.entries(style)) {
     props.push({
       kind: "prop-assignment",
       name: key,
-      value: valueFromUnknown(value, sourceMap),
+      value: argumentFromUnknown(value, sourceMap),
       sourceMap,
     });
   }
@@ -401,6 +429,27 @@ function renderDeclarationFromPackage(
   return invocation;
 }
 
+/** Top-level package node fields mirrored onto SceneAst prop assignments. */
+const KNOWN_PACKAGE_PROP_KEYS = [
+  "title",
+  "detail",
+  "caption",
+  "r",
+  "rx",
+  "ry",
+  "center",
+  "from",
+  "to",
+  "via",
+  "axis",
+  "direction",
+  "cols",
+  "gap",
+  "d",
+  "path",
+  "points",
+] as const;
+
 function timelineCueFromPackage(
   cue: unknown,
   sourceMap: SourceRange,
@@ -409,30 +458,79 @@ function timelineCueFromPackage(
     return undefined;
   }
   const record = cue as Record<string, unknown>;
-  const target = typeof record.target === "string" ? record.target : undefined;
-  const actionRaw = typeof record.action === "string" ? record.action : undefined;
-  if (target === undefined || actionRaw === undefined) {
+  const actionRaw =
+    typeof record.action === "string" ? record.action : undefined;
+  if (actionRaw === undefined) {
     return undefined;
   }
   const action = normalizeTimelineAction(actionRaw);
+  const targets = Array.isArray(record.targets)
+    ? record.targets.filter(
+        (entry): entry is string =>
+          typeof entry === "string" && entry.length > 0,
+      )
+    : undefined;
+  const target =
+    typeof record.target === "string"
+      ? record.target
+      : targets !== undefined && targets.length > 0
+        ? ""
+        : undefined;
+  if (target === undefined) {
+    return undefined;
+  }
   const at = finiteNumber(record.at ?? record.time, 0);
   const duration = finiteNumber(record.duration, 0);
+  const step =
+    typeof record.step === "number" && Number.isFinite(record.step)
+      ? record.step
+      : undefined;
+  const easing = normalizeTimelineEasing(record.easing);
   return {
     kind: "timeline-cue",
     time: at,
     duration,
     target,
     action,
+    ...(targets !== undefined && targets.length > 0 ? { targets } : {}),
+    ...(step !== undefined ? { step } : {}),
+    ...(easing !== undefined ? { easing } : {}),
     sourceMap,
   };
 }
 
 function normalizeTimelineAction(action: string): TimelineAction {
-  if (action === "trace") {
-    return "trace";
+  switch (action) {
+    case "trace":
+      return "trace";
+    case "enter":
+      // Package decks use "enter"; cinematic SceneAst vocabulary uses "reveal".
+      return "reveal";
+    case "reveal":
+    case "draw":
+    case "fade":
+    case "exit":
+    case "emphasis":
+    case "emphasize":
+    case "pulse":
+    case "stagger":
+    case "enter-children":
+      return action;
+    default:
+      return "reveal";
   }
-  // Package decks use "enter"; cinematic lowerer vocabulary uses "reveal".
-  return "reveal";
+}
+
+function normalizeTimelineEasing(value: unknown): TimelineCueEasing | undefined {
+  if (
+    value === "linear" ||
+    value === "ease-in" ||
+    value === "ease-out" ||
+    value === "ease-in-out"
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 function capabilityOf(node: Record<string, unknown>): string {
@@ -468,6 +566,46 @@ function geometryOf(node: Record<string, unknown>): {
     width: finiteNumber(box.width, 0),
     height: finiteNumber(box.height, 0),
   };
+}
+
+function argumentFromUnknown(
+  value: unknown,
+  sourceMap: SourceRange,
+): ArgumentValueAst {
+  if (typeof value === "string" && value.startsWith("@theme.")) {
+    return {
+      kind: "theme-role-reference",
+      role: value.slice("@theme.".length),
+      sourceMap,
+    };
+  }
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return { kind: "literal", value, sourceMap };
+  }
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const properties = Object.entries(value as Record<string, unknown>).map(
+      ([name, entry]) => ({
+        kind: "object-property" as const,
+        name,
+        value: valueFromUnknown(entry, sourceMap),
+        sourceMap,
+      }),
+    );
+    return {
+      kind: "object-literal",
+      properties,
+      sourceMap,
+    };
+  }
+  if (Array.isArray(value)) {
+    // Points / path arrays stay as JSON text for the compiler to re-parse.
+    return { kind: "literal", value: JSON.stringify(value), sourceMap };
+  }
+  return { kind: "literal", value: String(value ?? ""), sourceMap };
 }
 
 function valueFromUnknown(value: unknown, sourceMap: SourceRange): ValueAst {

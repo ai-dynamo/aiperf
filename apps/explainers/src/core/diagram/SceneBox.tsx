@@ -4,6 +4,7 @@
  */
 
 import type { SVGProps } from "react";
+import { tokens } from "../tokens";
 import { useHostTheme, type Theme } from "../ui";
 
 export type SceneBoxProps = Omit<SVGProps<SVGGElement>, "title"> & {
@@ -40,10 +41,10 @@ export function SceneBox({
         y={y}
         width={width}
         height={height}
-        rx={10}
+        rx={tokens.radius.box}
         fill={theme.bg.elevated}
         stroke={stroke}
-        strokeWidth={accent ? 1.8 : 1.3}
+        strokeWidth={accent ? 1.8 : 1.4}
         focusable={false}
         aria-hidden="true"
       />

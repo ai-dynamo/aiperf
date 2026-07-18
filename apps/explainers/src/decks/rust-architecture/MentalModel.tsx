@@ -134,10 +134,10 @@ export function MentalModel({ slideIndex }: { slideIndex: number; slide: unknown
     <div style={{ border: `1px solid ${t.stroke.secondary}`, borderRadius: 8, background: t.bg.editor }}>
       <svg className="rust-arch-live" viewBox="0 0 700 400" role="img" aria-label="Evolving Rust architecture diagram" style={{ display: "block", width: "100%" }}>
         <defs>
-          <marker id="rust-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <marker id="rust-green" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
             <path d="M0,0 L6,3 L0,6 Z" fill={t.category.green} />
           </marker>
-          <marker id="rust-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <marker id="rust-blue" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
             <path d="M0,0 L6,3 L0,6 Z" fill={t.category.blue} />
           </marker>
         </defs>

@@ -16,12 +16,14 @@ import type {
   RenderDeclarationAst,
   ResponsiveAst,
   SceneAst,
+  ScenePrimitiveAst,
   SlotBlockAst,
   SymbolDefinitionAst,
   SymbolBodyStatementAst,
   ThemeAssignmentAst,
   ThemeDeclarationAst,
   TimelineAst,
+  TimelineCueAst,
   TypeRefAst,
   ValueAst,
 } from "./ast.js";
@@ -210,11 +212,61 @@ function formatRenderDeclaration(declaration: RenderDeclarationAst): string {
       return formatRect(declaration);
     case "connector":
       return formatConnector(declaration);
+    case "scene-primitive":
+      return formatScenePrimitive(declaration);
     case "component-invocation":
       return formatComponentInvocation(declaration, 2);
     default:
       return assertNever(declaration);
   }
+}
+
+function formatScenePrimitive(node: ScenePrimitiveAst): string {
+  const line = indent(3);
+  const propLines = node.props.map(
+    (prop) => `${line}${prop.name} ${formatArgumentValue(prop.value)}`,
+  );
+  const childLines =
+    node.children === undefined || node.children.length === 0
+      ? []
+      : [
+          `${line}children {`,
+          ...node.children.map(
+            (child) => `${indent(1)}${formatRenderDeclaration(child).trimStart()}`,
+          ),
+          `${line}}`,
+        ];
+  const fallbackLines =
+    node.fallback === undefined
+      ? []
+      : [`${line}fallback ${quote(node.fallback.text)}`];
+  return block(
+    `${node.primitive} ${node.id}`,
+    [...propLines, ...childLines, ...fallbackLines],
+    2,
+  );
+}
+
+function formatTimelineCue(cue: TimelineCueAst): string {
+  const prefix = `${indent(3)}at ${cue.time} ${cue.action}`;
+  if (cue.action === "stagger" && cue.targets !== undefined) {
+    const parts = [
+      prefix,
+      `targets [${cue.targets.join(", ")}]`,
+      ...(cue.step === undefined ? [] : [`step ${cue.step}`]),
+      `duration ${cue.duration}`,
+      ...(cue.easing === undefined ? [] : [`easing ${cue.easing}`]),
+    ];
+    return parts.join(" ");
+  }
+  const parts = [
+    prefix,
+    cue.target,
+    `duration ${cue.duration}`,
+    ...(cue.step === undefined ? [] : [`step ${cue.step}`]),
+    ...(cue.easing === undefined ? [] : [`easing ${cue.easing}`]),
+  ];
+  return parts.join(" ");
 }
 
 function formatSymbol(symbol: SymbolDefinitionAst): string {
@@ -239,10 +291,7 @@ function formatCamera(camera: CameraAst): string {
 function formatTimeline(timeline: TimelineAst): string {
   return block(
     `timeline ${timeline.id}`,
-    timeline.cues.map(
-      (cue) =>
-        `${indent(3)}at ${cue.time} ${cue.action} ${cue.target} duration ${cue.duration}`,
-    ),
+    timeline.cues.map(formatTimelineCue),
     2,
   );
 }

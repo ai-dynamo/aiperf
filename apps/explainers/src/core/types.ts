@@ -23,7 +23,7 @@ export type DeckHubMeta = {
 
 /**
  * Props ExplainerShell passes into the deck diagram slot.
- * Package-backed decks forward playing/restartKey/reducedMotion to SceneRenderer.
+ * Package-backed decks forward playing/restartKey/reducedMotion/playbackRate to SceneRenderer.
  */
 export type MentalModelProps = {
   slideIndex: number;
@@ -31,6 +31,8 @@ export type MentalModelProps = {
   playing?: boolean;
   restartKey?: number;
   reducedMotion?: boolean;
+  /** Wall-clock multiplier for scene timelines (1 = realtime). */
+  playbackRate?: number;
 };
 
 export type DeckDefinition = {

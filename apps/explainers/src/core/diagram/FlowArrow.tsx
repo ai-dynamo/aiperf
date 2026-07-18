@@ -4,6 +4,7 @@
  */
 
 import type { SVGProps } from "react";
+import { tokens } from "../tokens";
 import { useHostTheme } from "../ui";
 
 export type FlowArrowProps = Omit<
@@ -19,7 +20,7 @@ export type FlowArrowProps = Omit<
   dashed?: boolean;
 };
 
-const DASHED_STROKE = "8 4";
+const DASHED_STROKE = tokens.diagram.dashed;
 
 /** Themed path with optional arrowhead marker and dashed stroke. */
 export function FlowArrow({
@@ -29,7 +30,7 @@ export function FlowArrow({
   showMarker = true,
   dashed = false,
   fill = "none",
-  strokeWidth = 2.2,
+  strokeWidth = tokens.diagram.strokeWidth,
   strokeDasharray,
   ...pathProps
 }: FlowArrowProps) {
@@ -42,6 +43,9 @@ export function FlowArrow({
       fill={fill}
       stroke={color ?? theme.category.green}
       strokeWidth={strokeWidth}
+      // Round caps poke past the geometric end into the tip; keep butt when
+      // a marker is attached so the stroke stops cleanly at the tip base.
+      strokeLinecap={showMarker ? "butt" : pathProps.strokeLinecap}
       strokeDasharray={
         strokeDasharray !== undefined
           ? strokeDasharray

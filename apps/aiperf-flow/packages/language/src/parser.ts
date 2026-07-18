@@ -39,11 +39,14 @@ import type {
   RectAst,
   ReadingOrderAst,
   ReferenceListAst,
+  RenderDeclarationAst,
   RequirementAst,
   ResponsiveAst,
   ResponsiveConditionAst,
   ResponsiveOverrideAst,
   SceneAst,
+  ScenePrimitiveAst,
+  ScenePrimitiveKeyword,
   SlideAst,
   SlotBlockAst,
   SummaryAst,
@@ -56,12 +59,14 @@ import type {
   TimelineAction,
   TimelineAst,
   TimelineCueAst,
+  TimelineCueEasing,
   TokenDeclarationAst,
   TokenReferenceAst,
   TypeRefAst,
   UseThemeAst,
   ValueAst,
 } from "./ast.js";
+import { SCENE_PRIMITIVE_CAPABILITIES } from "./ast.js";
 import {
   parseExplainerBlock,
   type ExplainerAstCompat,
@@ -69,24 +74,44 @@ import {
 } from "./grammar/explainer.js";
 import {
   allTokens,
+  Arrow,
   As,
   At,
+  Axis,
+  Bracket,
+  Callout,
   Camera,
+  Caption,
+  Center,
+  Children,
+  Circle,
   Colon,
   ColorKind,
+  Cols,
   Comma,
   ComponentIdentifier,
   Connector,
   Description,
+  Detail,
+  Direction,
   Do,
   Dot,
   Duration,
   DurationLiteral,
+  EaseIn,
+  EaseInOut,
+  EaseOut,
+  Easing,
+  Elbow,
+  Ellipse,
+  EnterChildren,
   EqualEqual,
   EnumKind,
   Equals,
+  Exit,
   Explainer,
   Extends,
+  Fade,
   False,
   Fallback,
   Fill,
@@ -95,8 +120,11 @@ import {
   For,
   Frame,
   From,
+  Gap,
   Greater,
   GreaterEqual,
+  Grid,
+  Header,
   Height,
   Identifier,
   Import,
@@ -109,12 +137,15 @@ import {
   LBracket,
   Less,
   LessEqual,
+  Linear,
   LParen,
   Narrate,
   NotEqual,
   NumberKind,
   NumberLiteral,
   On,
+  Pad,
+  Panel,
   QuotedString,
   ReadingOrder,
   Rect,
@@ -128,16 +159,23 @@ import {
   Scene,
   Select,
   Set,
+  Signal,
+  Stack,
+  Stagger,
+  Step,
   Stroke,
   Summary,
   SymbolKeyword,
+  Targets,
   Theme,
   Timeline,
+  Title,
   To,
   Token,
   Trace,
   True,
   Use,
+  Via,
   When,
   Width,
   X,
@@ -145,7 +183,6 @@ import {
   Zoom,
   flowLexer,
 } from "./tokens.js";
-
 function position(
   offset: number | undefined,
   line: number | undefined,
@@ -516,8 +553,7 @@ class FlowParser extends EmbeddedActionsParser {
     const id = this.CONSUME(Identifier);
     this.CONSUME(LBrace);
     let summary: SummaryAst | undefined;
-    const renderDeclarations: (RectAst | ConnectorAst | ComponentInvocationAst)[] =
-      [];
+    const renderDeclarations: RenderDeclarationAst[] = [];
     const cameras: CameraAst[] = [];
     const timelines: TimelineAst[] = [];
     const interactions: InteractionAst[] = [];
@@ -544,6 +580,12 @@ class FlowParser extends EmbeddedActionsParser {
         {
           ALT: () => {
             const node = this.SUBRULE(this.connector);
+            this.ACTION(() => renderDeclarations.push(node));
+          },
+        },
+        {
+          ALT: () => {
+            const node = this.SUBRULE(this.scenePrimitive);
             this.ACTION(() => renderDeclarations.push(node));
           },
         },
@@ -844,6 +886,425 @@ class FlowParser extends EmbeddedActionsParser {
       sourceMap: rangeBetween(this.sourceName, start, end),
     }));
   });
+
+  private readonly scenePrimitive = this.RULE(
+    "scenePrimitive",
+    (): ScenePrimitiveAst => {
+      const start = this.OR([
+        { ALT: () => this.CONSUME(Panel) },
+        { ALT: () => this.CONSUME(Header) },
+        { ALT: () => this.CONSUME(Circle) },
+        { ALT: () => this.CONSUME(Ellipse) },
+        { ALT: () => this.CONSUME(Arrow) },
+        { ALT: () => this.CONSUME(Elbow) },
+        { ALT: () => this.CONSUME(Bracket) },
+        { ALT: () => this.CONSUME(Callout) },
+        { ALT: () => this.CONSUME(Stack) },
+        { ALT: () => this.CONSUME(Grid) },
+        { ALT: () => this.CONSUME(Pad) },
+        { ALT: () => this.CONSUME(Signal) },
+      ]);
+      const id = this.CONSUME(Identifier);
+      this.CONSUME(LBrace);
+      const props: PropAssignmentAst[] = [];
+      let children: RenderDeclarationAst[] | undefined;
+      let fallback: FallbackAst | undefined;
+
+      const pushProp = (name: string, value: PropAssignmentAst["value"], rangeToken: IToken) => {
+        props.push({
+          kind: "prop-assignment",
+          name,
+          value,
+          sourceMap: {
+            source: this.sourceName,
+            start: tokenRange(this.sourceName, rangeToken).start,
+            end: value.sourceMap.end,
+          },
+        });
+      };
+
+      this.MANY(() =>
+        this.OR2([
+          {
+            ALT: () => {
+              const key = this.CONSUME(X);
+              const value = this.CONSUME(NumberLiteral);
+              this.ACTION(() =>
+                pushProp(
+                  "x",
+                  literal(this.sourceName, value, numberValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Y);
+              const value = this.CONSUME2(NumberLiteral);
+              this.ACTION(() =>
+                pushProp(
+                  "y",
+                  literal(this.sourceName, value, numberValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Width);
+              const value = this.CONSUME3(NumberLiteral);
+              this.ACTION(() =>
+                pushProp(
+                  "width",
+                  literal(this.sourceName, value, numberValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Height);
+              const value = this.CONSUME4(NumberLiteral);
+              this.ACTION(() =>
+                pushProp(
+                  "height",
+                  literal(this.sourceName, value, numberValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Cols);
+              const value = this.CONSUME5(NumberLiteral);
+              this.ACTION(() =>
+                pushProp(
+                  "cols",
+                  literal(this.sourceName, value, numberValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Gap);
+              const value = this.CONSUME6(NumberLiteral);
+              this.ACTION(() =>
+                pushProp(
+                  "gap",
+                  literal(this.sourceName, value, numberValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            // Circle radius (`r`) — bare Identifier to avoid lexing `/r/` keywords.
+            GATE: () =>
+              this.LA(1).tokenType === Identifier && this.LA(1).image === "r",
+            ALT: () => {
+              const key = this.CONSUME4(Identifier);
+              const value = this.CONSUME7(NumberLiteral);
+              this.ACTION(() =>
+                pushProp(
+                  "r",
+                  literal(this.sourceName, value, numberValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Title);
+              const value = this.CONSUME(QuotedString);
+              this.ACTION(() =>
+                pushProp(
+                  "title",
+                  literal(this.sourceName, value, stringValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Detail);
+              const value = this.CONSUME2(QuotedString);
+              this.ACTION(() =>
+                pushProp(
+                  "detail",
+                  literal(this.sourceName, value, stringValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Caption);
+              const value = this.CONSUME3(QuotedString);
+              this.ACTION(() =>
+                pushProp(
+                  "caption",
+                  literal(this.sourceName, value, stringValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Label);
+              const value = this.CONSUME4(QuotedString);
+              this.ACTION(() =>
+                pushProp(
+                  "label",
+                  literal(this.sourceName, value, stringValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Role);
+              const value = this.CONSUME5(QuotedString);
+              this.ACTION(() =>
+                pushProp(
+                  "role",
+                  literal(this.sourceName, value, stringValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Description);
+              const value = this.CONSUME6(QuotedString);
+              this.ACTION(() =>
+                pushProp(
+                  "description",
+                  literal(this.sourceName, value, stringValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Direction);
+              const value = this.OR3([
+                {
+                  ALT: () => this.CONSUME7(QuotedString),
+                },
+                {
+                  ALT: () => this.CONSUME2(Identifier),
+                },
+              ]);
+              this.ACTION(() => {
+                const propValue =
+                  value.tokenType === QuotedString
+                    ? literal(this.sourceName, value, stringValue(value))
+                    : ({
+                        kind: "identifier-reference",
+                        name: value.image,
+                        sourceMap: tokenRange(this.sourceName, value),
+                      } satisfies IdentifierReferenceAst);
+                pushProp("direction", propValue, key);
+              });
+            },
+          },
+          {
+            // SVG path data (`d`) — bare Identifier to avoid lexing `/d/` keywords.
+            GATE: () =>
+              this.LA(1).tokenType === Identifier && this.LA(1).image === "d",
+            ALT: () => {
+              const key = this.CONSUME5(Identifier);
+              const value = this.CONSUME8(QuotedString);
+              this.ACTION(() =>
+                pushProp(
+                  "d",
+                  literal(this.sourceName, value, stringValue(value)),
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Fill);
+              const value = this.SUBRULE(this.value);
+              this.ACTION(() => pushProp("fill", value, key));
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Stroke);
+              const value = this.SUBRULE2(this.value);
+              this.ACTION(() => pushProp("stroke", value, key));
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(From);
+              const value = this.SUBRULE(this.endpointValue);
+              this.ACTION(() => pushProp("from", value, key));
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(To);
+              const value = this.SUBRULE2(this.endpointValue);
+              this.ACTION(() => pushProp("to", value, key));
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Via);
+              const value = this.SUBRULE(this.pointValue);
+              this.ACTION(() => pushProp("via", value, key));
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Center);
+              const value = this.SUBRULE2(this.pointValue);
+              this.ACTION(() => pushProp("center", value, key));
+            },
+          },
+          {
+            ALT: () => {
+              const key = this.CONSUME(Axis);
+              const value = this.OR4([
+                { ALT: () => this.CONSUME2(X) },
+                { ALT: () => this.CONSUME2(Y) },
+              ]);
+              this.ACTION(() =>
+                pushProp(
+                  "axis",
+                  {
+                    kind: "identifier-reference",
+                    name: value.image,
+                    sourceMap: tokenRange(this.sourceName, value),
+                  },
+                  key,
+                ),
+              );
+            },
+          },
+          {
+            ALT: () => {
+              this.CONSUME(Children);
+              this.CONSUME2(LBrace);
+              const nested: RenderDeclarationAst[] = [];
+              this.MANY2(() => {
+                const child = this.SUBRULE(this.renderDeclaration);
+                this.ACTION(() => nested.push(child));
+              });
+              this.CONSUME2(RBrace);
+              this.ACTION(() => {
+                children = nested;
+              });
+            },
+          },
+          {
+            ALT: () => {
+              const value = this.SUBRULE(this.fallback);
+              this.ACTION(() => {
+                fallback = value;
+              });
+            },
+          },
+        ]),
+      );
+      const end = this.CONSUME(RBrace);
+      return this.ACTION(() => {
+        const primitive = start.image as ScenePrimitiveKeyword;
+        return {
+          kind: "scene-primitive",
+          id: id.image,
+          primitive,
+          capability: SCENE_PRIMITIVE_CAPABILITIES[primitive],
+          props,
+          ...(children === undefined ? {} : { children }),
+          ...(fallback === undefined ? {} : { fallback }),
+          sourceMap: rangeBetween(this.sourceName, start, end),
+        } satisfies ScenePrimitiveAst;
+      });
+    },
+  );
+
+  private readonly renderDeclaration = this.RULE(
+    "renderDeclaration",
+    (): RenderDeclarationAst =>
+      this.OR([
+        { ALT: () => this.SUBRULE(this.rect) },
+        { ALT: () => this.SUBRULE(this.connector) },
+        { ALT: () => this.SUBRULE(this.scenePrimitive) },
+        { ALT: () => this.SUBRULE(this.componentInvocation) },
+      ]),
+  );
+
+  private readonly endpointValue = this.RULE(
+    "endpointValue",
+    (): PropAssignmentAst["value"] =>
+      this.OR([
+        { ALT: () => this.SUBRULE(this.objectLiteral) },
+        {
+          ALT: () => {
+            const name = this.CONSUME(Identifier);
+            return this.ACTION(
+              (): IdentifierReferenceAst => ({
+                kind: "identifier-reference",
+                name: name.image,
+                sourceMap: tokenRange(this.sourceName, name),
+              }),
+            );
+          },
+        },
+      ]),
+  );
+
+  private readonly pointValue = this.RULE(
+    "pointValue",
+    (): PropAssignmentAst["value"] =>
+      this.OR([
+        { ALT: () => this.SUBRULE(this.objectLiteral) },
+        {
+          ALT: () => {
+            const x = this.CONSUME(NumberLiteral);
+            const y = this.CONSUME2(NumberLiteral);
+            return this.ACTION(
+              (): ObjectLiteralAst => ({
+                kind: "object-literal",
+                properties: [
+                  {
+                    kind: "object-property",
+                    name: "x",
+                    value: literal(this.sourceName, x, numberValue(x)),
+                    sourceMap: tokenRange(this.sourceName, x),
+                  },
+                  {
+                    kind: "object-property",
+                    name: "y",
+                    value: literal(this.sourceName, y, numberValue(y)),
+                    sourceMap: tokenRange(this.sourceName, y),
+                  },
+                ],
+                sourceMap: rangeBetween(this.sourceName, x, y),
+              }),
+            );
+          },
+        },
+      ]),
+  );
 
   private readonly value = this.RULE("value", (): ValueAst =>
     this.OR([
@@ -1297,22 +1758,108 @@ class FlowParser extends EmbeddedActionsParser {
     (): TimelineCueAst => {
       const start = this.CONSUME(At);
       const time = this.CONSUME(NumberLiteral);
-      const actionToken = this.OR([
-        { ALT: () => this.CONSUME(Reveal) },
-        { ALT: () => this.CONSUME(Trace) },
+      return this.OR([
+        {
+          ALT: () => {
+            this.CONSUME(Stagger);
+            this.CONSUME(Targets);
+            this.CONSUME(LBracket);
+            const targets: string[] = [];
+            this.AT_LEAST_ONE_SEP({
+              SEP: Comma,
+              DEF: () => {
+                const id = this.CONSUME(Identifier);
+                this.ACTION(() => targets.push(id.image));
+              },
+            });
+            this.CONSUME(RBracket);
+            let step: number | undefined;
+            this.OPTION(() => {
+              this.CONSUME(Step);
+              const stepToken = this.CONSUME2(NumberLiteral);
+              this.ACTION(() => {
+                step = numberValue(stepToken);
+              });
+            });
+            this.CONSUME(Duration);
+            const duration = this.CONSUME3(NumberLiteral);
+            let easing: TimelineCueEasing | undefined;
+            let endToken: IToken = duration;
+            this.OPTION2(() => {
+              this.CONSUME(Easing);
+              const easingToken = this.SUBRULE(this.easingValue);
+              this.ACTION(() => {
+                easing = easingToken.image as TimelineCueEasing;
+                endToken = easingToken;
+              });
+            });
+            return this.ACTION(() => ({
+              kind: "timeline-cue" as const,
+              time: numberValue(time),
+              action: "stagger" as const,
+              target: "",
+              duration: numberValue(duration),
+              targets,
+              ...(step === undefined ? {} : { step }),
+              ...(easing === undefined ? {} : { easing }),
+              sourceMap: rangeBetween(this.sourceName, start, endToken),
+            }));
+          },
+        },
+        {
+          ALT: () => {
+            const actionToken = this.OR2([
+              { ALT: () => this.CONSUME(Reveal) },
+              { ALT: () => this.CONSUME(Trace) },
+              { ALT: () => this.CONSUME(Fade) },
+              { ALT: () => this.CONSUME(Exit) },
+              { ALT: () => this.CONSUME(EnterChildren) },
+            ]);
+            const target = this.CONSUME2(Identifier);
+            this.CONSUME2(Duration);
+            const duration = this.CONSUME4(NumberLiteral);
+            let step: number | undefined;
+            let easing: TimelineCueEasing | undefined;
+            let endToken: IToken = duration;
+            this.OPTION3(() => {
+              this.CONSUME2(Step);
+              const stepToken = this.CONSUME5(NumberLiteral);
+              this.ACTION(() => {
+                step = numberValue(stepToken);
+                endToken = stepToken;
+              });
+            });
+            this.OPTION4(() => {
+              this.CONSUME2(Easing);
+              const easingToken = this.SUBRULE2(this.easingValue);
+              this.ACTION(() => {
+                easing = easingToken.image as TimelineCueEasing;
+                endToken = easingToken;
+              });
+            });
+            return this.ACTION(() => ({
+              kind: "timeline-cue" as const,
+              time: numberValue(time),
+              action: actionToken.image as TimelineAction,
+              target: target.image,
+              duration: numberValue(duration),
+              ...(step === undefined ? {} : { step }),
+              ...(easing === undefined ? {} : { easing }),
+              sourceMap: rangeBetween(this.sourceName, start, endToken),
+            }));
+          },
+        },
       ]);
-      const target = this.CONSUME(Identifier);
-      this.CONSUME(Duration);
-      const duration = this.CONSUME2(NumberLiteral);
-      return this.ACTION(() => ({
-        kind: "timeline-cue",
-        time: numberValue(time),
-        action: actionToken.image as TimelineAction,
-        target: target.image,
-        duration: numberValue(duration),
-        sourceMap: rangeBetween(this.sourceName, start, duration),
-      }));
     },
+  );
+
+  private readonly easingValue = this.RULE("easingValue", (): IToken =>
+    this.OR([
+      { ALT: () => this.CONSUME(Linear) },
+      { ALT: () => this.CONSUME(EaseInOut) },
+      { ALT: () => this.CONSUME(EaseIn) },
+      { ALT: () => this.CONSUME(EaseOut) },
+    ]),
   );
 
   private readonly interaction = this.RULE(

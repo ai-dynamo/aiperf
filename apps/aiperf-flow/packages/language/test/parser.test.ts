@@ -214,7 +214,7 @@ describe("parseDocument", () => {
 
   test("reports invalid characters from the lexer", () => {
     const result = parseDocument(
-      'flow "Broken" as broken { language 1 @ }',
+      'flow "Broken" as broken { language 1 ~ }',
       "invalid.flow",
     );
 

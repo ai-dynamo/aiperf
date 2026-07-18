@@ -2,6 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React from 'react';
+import {
+  DEFAULT_MARKER_TIP,
+  isMarkerEndNone,
+  markerDomId,
+  markerGeometry,
+  resolveMarkerTip,
+  tipInsetUserUnits,
+  type ResolvedMarkerTip,
+} from '../arrow-tips.js';
 
 interface ExplainerSlideViewerProps {
   deck: any;
@@ -22,6 +31,10 @@ interface NodeStyle {
   strokeWidth?: number;
   fontSize?: number;
   fontWeight?: string;
+  markerEnd?: unknown;
+  dashed?: unknown;
+  strokeStyle?: unknown;
+  strokeDasharray?: unknown;
 }
 
 const INK_FILLS = new Set(['#1f2937', '#4b5563']);
@@ -53,6 +66,10 @@ function getNodeStyle(node: any): NodeStyle {
     strokeWidth: style.strokeWidth,
     fontSize: style.fontSize,
     fontWeight: style.fontWeight,
+    markerEnd: style.markerEnd,
+    dashed: style.dashed,
+    strokeStyle: style.strokeStyle,
+    strokeDasharray: style.strokeDasharray ?? style.dashArray,
   };
 }
 
@@ -60,9 +77,52 @@ function textColorFor(depth: number): string {
   return depth === 0 ? '#aeb4b5' : '#f8fafc';
 }
 
+function lineIsDashed(style: NodeStyle): boolean {
+  if (style.dashed === true || style.dashed === 1 || style.dashed === 'true') {
+    return true;
+  }
+  if (style.strokeStyle === 'dashed' || style.strokeStyle === 'dotted') {
+    return true;
+  }
+  return typeof style.strokeDasharray === 'string' && style.strokeDasharray.length > 0;
+}
+
+function tipForLine(style: NodeStyle): ResolvedMarkerTip | null {
+  if (isMarkerEndNone(style.markerEnd as any)) {
+    return null;
+  }
+  return resolveMarkerTip(style.markerEnd as any, DEFAULT_MARKER_TIP);
+}
+
+function collectTips(roots: any[]): ResolvedMarkerTip[] {
+  const byKey = new Map<string, ResolvedMarkerTip>();
+  const visit = (node: any) => {
+    const capability = node.capability || '';
+    if (capability === 'core.line' || capability === 'core.path' || capability === 'core.arrow' || capability === 'core.connector') {
+      const tip = tipForLine(getNodeStyle(node));
+      if (tip !== null) {
+        byKey.set(tip.key, tip);
+      }
+    }
+    if (Array.isArray(node.children)) {
+      for (const child of node.children) visit(child);
+    }
+  };
+  for (const root of roots) visit(root);
+  if (byKey.size === 0) {
+    byKey.set(DEFAULT_MARKER_TIP.key, DEFAULT_MARKER_TIP);
+  }
+  return [...byKey.values()];
+}
+
 let markerSeq = 0;
 
-function renderNode(node: any, depth: number, keyPrefix: string, markerId: string): React.ReactNode[] {
+function renderNode(
+  node: any,
+  depth: number,
+  keyPrefix: string,
+  markerPrefix: string,
+): React.ReactNode[] {
   const geom = getNodeGeometry(node);
   const style = getNodeStyle(node);
   const capability = node.capability || '';
@@ -133,24 +193,53 @@ function renderNode(node: any, depth: number, keyPrefix: string, markerId: strin
   } else if (capability === 'core.line') {
     const from = node.from || {};
     const to = node.to || {};
+    const x1 = Number(from.x ?? 0);
+    const y1 = Number(from.y ?? 0);
+    let x2 = Number(to.x ?? 0);
+    let y2 = Number(to.y ?? 0);
+    const stroke =
+      style.stroke && !INK_FILLS.has((style.stroke || '').toLowerCase())
+        ? style.stroke
+        : '#8b9296';
+    const strokeWidth = Number(style.strokeWidth ?? 1.5);
+    const tip = tipForLine(style);
+    if (tip !== null) {
+      const tipInset = tipInsetUserUnits(
+        tip,
+        Number.isFinite(strokeWidth) ? strokeWidth : 1.5,
+      );
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const length = Math.hypot(dx, dy);
+      if (length > tipInset + 0.5) {
+        const scale = (length - tipInset) / length;
+        x2 = x1 + dx * scale;
+        y2 = y1 + dy * scale;
+      }
+    }
+    const dashed = lineIsDashed(style);
     out.push(
       <line
         key={key}
-        x1={from.x ?? 0}
-        y1={from.y ?? 0}
-        x2={to.x ?? 0}
-        y2={to.y ?? 0}
-        stroke={style.stroke && !INK_FILLS.has((style.stroke || '').toLowerCase()) ? style.stroke : '#8b9296'}
-        strokeWidth={style.strokeWidth ?? 1.5}
-        strokeLinecap="round"
-        markerEnd={`url(#${markerId})`}
+        x1={x1}
+        y1={y1}
+        x2={x2}
+        y2={y2}
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        strokeLinecap="butt"
+        strokeDasharray={dashed ? '8 4' : undefined}
+        markerEnd={
+          tip !== null ? `url(#${markerDomId(markerPrefix, tip)})` : undefined
+        }
+        data-flow-tip={tip?.key}
       />,
     );
   }
 
   if (Array.isArray(node.children)) {
     node.children.forEach((child: any, i: number) => {
-      out.push(...renderNode(child, depth + 1, `${key}-${i}`, markerId));
+      out.push(...renderNode(child, depth + 1, `${key}-${i}`, markerPrefix));
     });
   }
 
@@ -189,7 +278,11 @@ export function ExplainerSlideViewer({
   const margin = 40;
   const width = maxX + margin;
   const height = maxY + margin;
-  const markerId = React.useMemo(() => `explainer-arrow-${markerSeq++}`, [deck?.id, slideIndex]);
+  const markerPrefix = React.useMemo(
+    () => `explainer-arrow-${markerSeq++}`,
+    [deck?.id, slideIndex],
+  );
+  const tips = collectTips(roots);
 
   return (
     <div
@@ -260,21 +353,28 @@ export function ExplainerSlideViewer({
             <filter id="explainer-card-shadow" x="-20%" y="-20%" width="140%" height="140%">
               <feDropShadow dx="0" dy="3" stdDeviation="4" floodColor="#000000" floodOpacity="0.35" />
             </filter>
-            <marker
-              id={markerId}
-              viewBox="0 0 10 10"
-              // Attach at the triangle base so the stroke stops before the tip.
-              refX="0"
-              refY="5"
-              markerWidth="7"
-              markerHeight="7"
-              orient="auto-start-reverse"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b9296" />
-            </marker>
+            {tips.map((tip) => {
+              const geom = markerGeometry(tip);
+              return (
+                <marker
+                  key={tip.key}
+                  id={markerDomId(markerPrefix, tip)}
+                  markerWidth={geom.markerWidth}
+                  markerHeight={geom.markerHeight}
+                  refX={geom.refX}
+                  refY={geom.refY}
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  {geom.children}
+                </marker>
+              );
+            })}
           </defs>
           <rect x={0} y={0} width={width} height={height} fill="var(--flow-panel, #292c2d)" />
-          {roots.map((root: any, i: number) => renderNode(root, 0, `root-${i}`, markerId))}
+          {roots.map((root: any, i: number) =>
+            renderNode(root, 0, `root-${i}`, markerPrefix),
+          )}
         </svg>
 
         {slide.caption ? (

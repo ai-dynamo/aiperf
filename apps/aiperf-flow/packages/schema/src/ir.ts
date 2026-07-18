@@ -44,19 +44,46 @@ export type NodeAccessibilityIr = Readonly<{
   decorative?: boolean | undefined;
 }>;
 
-/** Authored foundation capabilities used by explainer DeckPackage scenes. */
+/**
+ * Authored foundation / layout / motion capabilities used by explainer
+ * DeckPackage scenes. Open strings remain valid via `capability` /
+ * `capabilityId` on nodes; this union documents the known vocabulary.
+ */
 export type FoundationCapabilityId =
   | "core.text"
   | "core.rect"
-  | "core.connector";
+  | "core.connector"
+  | "core.circle"
+  | "core.ellipse"
+  | "core.panel"
+  | "core.header"
+  | "core.arrow"
+  | "core.elbow"
+  | "core.bracket"
+  | "core.callout"
+  | "core.group"
+  | "layout.stack"
+  | "layout.grid"
+  | "layout.pad"
+  | "motion.signal"
+  | "motion.pulse";
 
 export type { JsonScalar, JsonValue } from "./json-value.js";
 
+/**
+ * Layout style keys for first-class `layout.stack` / `layout.grid` groups
+ * (and component-like groups carrying those capabilities):
+ *
+ * - `layout.stack`: `style.direction` = `"row"` | `"column"`, `style.gap` = number
+ * - `layout.grid`: `style.cols` = number, `style.gap` = number
+ *
+ * Values ride on the existing open `style` record for package compatibility.
+ */
 export type RenderNodeBaseIr = Readonly<{
   id: string;
   capabilityId?: string | undefined;
-  /** Authoring alias for `capabilityId` (e.g. core.text / core.rect / core.connector). */
-  capability?: string | undefined;
+  /** Authoring alias for `capabilityId` (e.g. core.text / layout.stack). */
+  capability?: FoundationCapabilityId | (string & {}) | undefined;
   geometry: GeometryIr;
   style: Readonly<Record<string, StyleValueIr>>;
   accessibility: NodeAccessibilityIr;
@@ -87,6 +114,10 @@ export type TextNodeIr = RenderNodeBaseIr &
  *
  * Explainer package scenes author either a node reference (`nodeId`) or
  * absolute coordinates (`x`/`y`). SceneRenderer resolves coordinates first.
+ *
+ * Allowed `anchor` values (when `nodeId` is set): `center`, `n` / `s` / `e` /
+ * `w`, `ne` / `nw` / `se` / `sw`, plus aliases `top` / `bottom` / `left` /
+ * `right`. Kept as `string` so packages may pass through unknown anchors.
  */
 export type ConnectorEndpointIr = Readonly<{
   nodeId?: string | undefined;
@@ -95,13 +126,19 @@ export type ConnectorEndpointIr = Readonly<{
   y?: number | undefined;
 }>;
 
+/** Orthogonal elbow routing axis for `core.elbow` / connector bends. */
+export type ConnectorAxisIr = "x" | "y";
+
 export type ConnectorNodeIr = RenderNodeBaseIr &
   Readonly<{
     kind: "connector";
     from: ConnectorEndpointIr;
     to: ConnectorEndpointIr;
+    /** Optional bend / waypoint for elbow routing. */
+    via?: PointIr | undefined;
+    /** Preferred first-segment axis for orthogonal elbows. */
+    axis?: ConnectorAxisIr | undefined;
   }>;
-
 export type ComponentNodeIr = RenderNodeBaseIr &
   Readonly<{
     kind: "component";
@@ -135,15 +172,48 @@ export type SceneViewportIr = Readonly<{
   height: number;
 }>;
 
-/** Well-known timeline cue actions used by explainer diagram playback. */
-export type TimelineCueAction = "enter" | "draw" | (string & {});
+/**
+ * Well-known timeline cue actions used by explainer diagram playback.
+ * Open strings remain accepted for forward compatibility.
+ */
+export type TimelineCueAction =
+  | "enter"
+  | "draw"
+  | "fade"
+  | "exit"
+  | "emphasis"
+  | "emphasize"
+  | "pulse"
+  | "reveal"
+  | "trace"
+  | "stagger"
+  | "enter-children"
+  | (string & {});
 
+/** Per-cue easing pass-through for SceneRenderer progress mapping. */
+export type TimelineCueEasing =
+  | "linear"
+  | "ease-in"
+  | "ease-out"
+  | "ease-in-out";
+
+/**
+ * Timed diagram cue. Compact stagger uses `action: "stagger"` (or sugar
+ * `"enter-children"`) with `targets` + `step`; `target` may be `""` when
+ * only `targets[]` identifies the staggered nodes.
+ */
 export type TimelineCueIr = Readonly<{
   id: string;
   at: number;
   duration: number;
+  /** Primary / group id; may be `""` when `targets` is used. */
   target: string;
   action: TimelineCueAction;
+  /** Stagger member node ids when `action` is `stagger` / `enter-children`. */
+  targets?: readonly string[] | undefined;
+  /** Delay between successive stagger targets (ms or scene time units). */
+  step?: number | undefined;
+  easing?: TimelineCueEasing | undefined;
   sourceMap: SourceRange;
 }>;
 
@@ -249,6 +319,20 @@ const foundationCapabilitySchema = z.union([
   z.literal("core.text"),
   z.literal("core.rect"),
   z.literal("core.connector"),
+  z.literal("core.circle"),
+  z.literal("core.ellipse"),
+  z.literal("core.panel"),
+  z.literal("core.header"),
+  z.literal("core.arrow"),
+  z.literal("core.elbow"),
+  z.literal("core.bracket"),
+  z.literal("core.callout"),
+  z.literal("core.group"),
+  z.literal("layout.stack"),
+  z.literal("layout.grid"),
+  z.literal("layout.pad"),
+  z.literal("motion.signal"),
+  z.literal("motion.pulse"),
   z.string().min(1),
 ]);
 
@@ -283,11 +367,30 @@ const connectorEndpointSchema = z
       });
     }
   });
+const connectorAxisSchema = z.union([z.literal("x"), z.literal("y")]);
+
 /** Timeline cue actions accepted by SceneIr / DeckPackage scenes. */
 export const timelineCueActionSchema = z.union([
   z.literal("enter"),
   z.literal("draw"),
+  z.literal("fade"),
+  z.literal("exit"),
+  z.literal("emphasis"),
+  z.literal("emphasize"),
+  z.literal("pulse"),
+  z.literal("reveal"),
+  z.literal("trace"),
+  z.literal("stagger"),
+  z.literal("enter-children"),
   z.string().min(1),
+]);
+
+/** Per-cue easing values accepted by SceneIr / DeckPackage scenes. */
+export const timelineCueEasingSchema = z.union([
+  z.literal("linear"),
+  z.literal("ease-in"),
+  z.literal("ease-out"),
+  z.literal("ease-in-out"),
 ]);
 
 const renderNodeSchema: z.ZodType<RenderNodeIr> = z.lazy(() =>
@@ -311,6 +414,8 @@ const renderNodeSchema: z.ZodType<RenderNodeIr> = z.lazy(() =>
       kind: z.literal("connector"),
       from: connectorEndpointSchema,
       to: connectorEndpointSchema,
+      via: pointIrSchema.optional(),
+      axis: connectorAxisSchema.optional(),
     }),
     z.strictObject({
       ...renderNodeBaseShape,
@@ -340,8 +445,12 @@ const timelineCueSchema = z.strictObject({
   id: z.string().min(1),
   at: z.number().finite().nonnegative(),
   duration: z.number().finite().nonnegative(),
-  target: z.string().min(1),
+  /** May be empty when stagger `targets` identifies the nodes. */
+  target: z.string(),
   action: timelineCueActionSchema,
+  targets: z.array(z.string().min(1)).optional(),
+  step: z.number().finite().nonnegative().optional(),
+  easing: timelineCueEasingSchema.optional(),
   sourceMap: sourceRangeSchema,
 });
 const timeMsSchema = z

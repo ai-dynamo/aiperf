@@ -26,13 +26,13 @@ const MOTION: readonly (string | null)[] = [
 function Markers({ green, purple, yellow }: { green: string; purple: string; yellow: string }) {
   return (
     <defs>
-      <marker id="seg-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="seg-green" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={green} />
       </marker>
-      <marker id="seg-purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="seg-purple" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={purple} />
       </marker>
-      <marker id="seg-yellow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <marker id="seg-yellow" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
         <path d="M0,0 L6,3 L0,6 Z" fill={yellow} />
       </marker>
     </defs>

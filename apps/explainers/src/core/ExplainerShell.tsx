@@ -6,7 +6,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { usePrefersReducedMotion } from "./diagram/usePrefersReducedMotion";
-import { narrationSupported, stopNarration, unlockSpeech } from "./narration";
+import {
+  DEFAULT_PLAYBACK_SPEED,
+  isPlaybackSpeed,
+  narrationSupported,
+  PLAYBACK_SPEEDS,
+  stopNarration,
+  unlockSpeech,
+  type PlaybackSpeed,
+} from "./narration";
 import type { DeckDefinition, MentalModelProps } from "./types";
 import { slideNarrations } from "./types";
 import {
@@ -26,8 +34,11 @@ import {
   Text,
   VoicePicker,
   useCanvasState,
-  useHostTheme,
 } from "./ui";
+
+function formatSpeedLabel(speed: PlaybackSpeed): string {
+  return `${speed}×`;
+}
 
 /**
  * Packages-only playback host: voice (useTimedSlideshow) and SceneRenderer timelines
@@ -35,7 +46,6 @@ import {
  * FinalCard mounts only when the DeckPackage authored one — never a last-slide clone.
  */
 export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
-  const t = useHostTheme();
   const location = useLocation();
   const { slides, storagePrefix, classPrefix, eyebrowLabel, startGateTitle } = deck;
   const narrations = useMemo(() => slideNarrations(slides), [slides]);
@@ -48,6 +58,14 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
     true,
   );
   const [voiceURI, setVoiceURI] = useCanvasState<string>(storagePrefix, "voice", "");
+  const [speedRaw, setSpeedRaw] = useCanvasState<number>(
+    storagePrefix,
+    "speed",
+    DEFAULT_PLAYBACK_SPEED,
+  );
+  const speed: PlaybackSpeed = isPlaybackSpeed(speedRaw)
+    ? speedRaw
+    : DEFAULT_PLAYBACK_SPEED;
   const [started, setStarted] = useState(false);
   const [restartKey, setRestartKey] = useState(0);
   const reducedMotion = usePrefersReducedMotion();
@@ -56,7 +74,7 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
   const slide = slides[index];
   const speechAvailable = narrationSupported();
   const FinalCard = deck.FinalCard;
-  // Package MentalModel forwards playing/restartKey/reducedMotion to SceneRenderer.
+  // Package MentalModel forwards playing/restartKey/reducedMotion/playbackRate to SceneRenderer.
   const MentalModel = deck.MentalModel as (props: MentalModelProps) => ReactNode;
 
   const bumpRestart = () => setRestartKey((key) => key + 1);
@@ -86,8 +104,13 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
     voiceURI,
     narrations,
     restartKey,
+    speed,
     onAdvance: advance,
   });
+
+  const setSpeed = (next: PlaybackSpeed) => {
+    setSpeedRaw(next);
+  };
 
   const goTo = (next: number) => {
     const nextIndex = Math.max(0, Math.min(slides.length - 1, next));
@@ -128,10 +151,9 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
 
   return (
     <div
-      className={`${classPrefix}-page`}
+      className={`ex-page ${classPrefix}-page`}
       tabIndex={0}
       onKeyDown={onKeyDown}
-      style={{ padding: 22, background: t.bg.editor }}
     >
       <style>{deck.css}</style>
       {!started ? (
@@ -149,46 +171,19 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
         <div className={`${classPrefix}-hero`}>
           <Stack gap={5}>
             <Row gap={10} align="center" wrap>
-              <Link
-                to="/"
-                style={{
-                  color: t.category.green,
-                  textDecoration: "none",
-                  fontSize: 14,
-                  fontWeight: 650,
-                }}
-              >
+              <Link to="/" className="ex-link">
                 ← Explainers home
               </Link>
               <Text tone="secondary">·</Text>
-              <div
-                style={{
-                  color: t.text.secondary,
-                  fontSize: 14,
-                  fontWeight: 650,
-                  letterSpacing: "0.04em",
-                }}
-              >
+              <div className="ex-meta">
                 AIPERF · {eyebrowLabel} · STEP {index + 1} OF {slides.length}
               </div>
             </Row>
             <div>
-              <div style={{ color: t.category.green, fontSize: 15, fontWeight: 700 }}>
-                {slide.eyebrow}
-              </div>
-              <div
-                style={{
-                  fontSize: 24,
-                  fontWeight: 700,
-                  lineHeight: 1.2,
-                  color: t.text.primary,
-                  marginTop: 2,
-                }}
-              >
-                {slide.title}
-              </div>
+              <div className="ex-eyebrow ex-eyebrow--accent">{slide.eyebrow}</div>
+              <div className="ex-slide-title">{slide.title}</div>
             </div>
-            <div className={`${classPrefix}-lede`} style={{ color: t.text.secondary }}>
+            <div className={`${classPrefix}-lede ex-lede`} style={{ fontSize: 16, margin: 0 }}>
               {slide.lede}
             </div>
           </Stack>
@@ -211,18 +206,13 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
           <Text tone="secondary">
             {index + 1} / {slides.length}
           </Text>
-          <Button
-            disabled={index === slides.length - 1}
-            style={{ background: t.category.green, color: t.text.onAccent }}
-            onClick={() => goTo(index + 1)}
-          >
+          <Button disabled={index === slides.length - 1} onClick={() => goTo(index + 1)}>
             Next
           </Button>
         </Row>
 
         <Row gap={10} align="center" wrap>
           <Button
-            style={{ background: t.category.green, color: t.text.onAccent }}
             onClick={() => {
               if (playing) {
                 stopNarration();
@@ -277,9 +267,25 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
                 ? "Mute narration"
                 : "Enable narration"}
           </Button>
+          <div className="ex-speed-group" role="group" aria-label="Playback speed">
+            <Text tone="secondary">Speed</Text>
+            <div className="ex-pill-group">
+              {PLAYBACK_SPEEDS.map((preset) => (
+                <Pill
+                  key={preset}
+                  size="sm"
+                  active={preset === speed}
+                  title={`Play at ${formatSpeedLabel(preset)}`}
+                  onClick={() => setSpeed(preset)}
+                >
+                  {formatSpeedLabel(preset)}
+                </Pill>
+              ))}
+            </div>
+          </div>
           <Text tone="secondary">
-            Slide ~{formatSlideDuration(slide.narration)} · total{" "}
-            {formatSlideshowDuration(narrations)}
+            Slide ~{formatSlideDuration(slide.narration, speed)} · total{" "}
+            {formatSlideshowDuration(narrations, speed)}
           </Text>
         </Row>
 
@@ -304,50 +310,42 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
 
         <Divider />
 
-        <div key={`slide-${index}-${restartKey}`} className={`${classPrefix}-stage ${classPrefix}-slide`}>
+        <div
+          key={`slide-${index}-${restartKey}`}
+          className={`ex-stage-panel ${classPrefix}-stage ${classPrefix}-slide`}
+          style={{ padding: 16 }}
+        >
           <MentalModel
             slideIndex={index}
             slide={slide}
             playing={started && playing}
             restartKey={restartKey}
             reducedMotion={reducedMotion}
+            playbackRate={speed}
           />
-          <div className={`${classPrefix}-details`}>
+          <div className={`${classPrefix}-details`} style={{ marginTop: 16 }}>
             {slide.term ? (
-              <div
-                style={{
-                  padding: 16,
-                  borderRadius: 8,
-                  background: t.fill.quaternary,
-                  border: `1px solid ${t.stroke.secondary}`,
-                }}
-              >
-                <div
-                  style={{
-                    color: t.category.green,
-                    fontSize: 15,
-                    fontWeight: 700,
-                    marginBottom: 7,
-                  }}
-                >
-                  {slide.term.word}
-                </div>
-                <div style={{ color: t.text.primary, fontSize: 16, lineHeight: 1.55 }}>
-                  {slide.term.meaning}
-                </div>
+              <div className="ex-term">
+                <div className="ex-term__word">{slide.term.word}</div>
+                <div className="ex-term__meaning">{slide.term.meaning}</div>
               </div>
             ) : null}
-            <div style={{ borderTop: `2px solid ${t.stroke.primary}`, paddingTop: 14 }}>
+            <div className="ex-section-rule" style={{ marginTop: slide.term ? 16 : 0 }}>
               <div
-                style={{ color: t.text.primary, fontSize: 16, fontWeight: 700, marginBottom: 12 }}
+                style={{
+                  color: "var(--ex-text-primary)",
+                  fontSize: 16,
+                  fontWeight: 700,
+                  marginBottom: 12,
+                }}
               >
                 What happens here
               </div>
               <div className={`${classPrefix}-points`}>
                 {slide.points.map((point) => (
                   <div key={point} className={`${classPrefix}-point`}>
-                    <span style={{ color: t.category.green, fontWeight: 700 }}>·</span>
-                    <span style={{ color: t.text.primary }}>{point}</span>
+                    <span style={{ color: "var(--ex-accent)", fontWeight: 700 }}>·</span>
+                    <span style={{ color: "var(--ex-text-primary)" }}>{point}</span>
                   </div>
                 ))}
               </div>
@@ -359,10 +357,7 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
 
         <Divider />
         <Row gap={10} align="center">
-          <Link
-            to="/"
-            style={{ color: t.text.secondary, textDecoration: "none", fontSize: 14, fontWeight: 600 }}
-          >
+          <Link to="/" className="ex-link ex-link--muted">
             Explainers home
           </Link>
           <Text tone="secondary">·</Text>

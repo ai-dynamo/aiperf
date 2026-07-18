@@ -9,15 +9,12 @@ import {
   EXPECTED_DECK_ROUTES,
   deckById,
 } from "../core/deck-registry";
-import { useHostTheme } from "../core/ui";
 
 /**
  * Home index: one card per canonical registry deck (bookmark-stable id/route),
  * titled from DeckPackage hub metadata.
  */
 export function Hub() {
-  const t = useHostTheme();
-
   const decks = EXPECTED_DECK_ROUTES.map(([id, route]) => {
     const deck = deckById(id) ?? DECK_REGISTRY.find((entry) => entry.route === route);
     return { id, route, deck };
@@ -26,45 +23,24 @@ export function Hub() {
   const missing = decks.filter((entry) => entry.deck === undefined);
 
   return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: "48px 24px" }}>
-      <div
-        style={{
-          color: t.text.secondary,
-          fontSize: 13,
-          fontWeight: 650,
-          letterSpacing: "0.06em",
-          textTransform: "uppercase",
-          marginBottom: 10,
-        }}
-      >
+    <main className="ex-page ex-hub">
+      <div className="ex-eyebrow" style={{ marginBottom: 10 }}>
         AIPerf · Explainers
       </div>
-      <h1 style={{ margin: "0 0 12px", fontSize: 32, lineHeight: 1.15, color: t.text.primary }}>
+      <h1 className="ex-title" style={{ marginBottom: 12 }}>
         Interactive walkthroughs
       </h1>
-      <p style={{ color: t.text.secondary, fontSize: 17, lineHeight: 1.55, margin: "0 0 28px" }}>
+      <p className="ex-lede" style={{ margin: "0 0 28px" }}>
         Short, narrated slideshows that explain how AIPerf pieces fit together. Pick a deck to start.
       </p>
       {missing.length > 0 ? (
-        <p
-          role="alert"
-          style={{
-            color: t.text.primary,
-            background: t.bg.elevated,
-            border: `1px solid ${t.stroke.secondary}`,
-            borderRadius: 10,
-            padding: "14px 16px",
-            margin: "0 0 16px",
-            fontSize: 15,
-            lineHeight: 1.5,
-          }}
-        >
+        <p role="alert" className="ex-alert">
           Hub cannot list {missing.length} registered deck
           {missing.length === 1 ? "" : "s"}:{" "}
           {missing.map((entry) => entry.id).join(", ")}.
         </p>
       ) : null}
-      <div style={{ display: "grid", gap: 12 }}>
+      <div className="ex-hub-grid">
         {decks.map(({ id, deck }) => {
           if (deck === undefined) {
             return null;
@@ -74,23 +50,13 @@ export function Hub() {
               key={id}
               to={deck.route}
               aria-label={`${deck.hub.highlight} ${deck.hub.title}`}
-              style={{
-                display: "block",
-                textDecoration: "none",
-                color: "inherit",
-                background: t.bg.elevated,
-                border: `1px solid ${t.stroke.secondary}`,
-                borderRadius: 10,
-                padding: "18px 18px 16px",
-              }}
+              className="ex-card"
             >
-              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>
-                <span style={{ color: t.category.green }}>{deck.hub.highlight}</span>{" "}
+              <div className="ex-card__title">
+                <span className="ex-card__highlight">{deck.hub.highlight}</span>{" "}
                 {deck.hub.title}
               </div>
-              <div style={{ color: t.text.secondary, fontSize: 15, lineHeight: 1.5 }}>
-                {deck.hub.description}
-              </div>
+              <div className="ex-card__description">{deck.hub.description}</div>
             </Link>
           );
         })}

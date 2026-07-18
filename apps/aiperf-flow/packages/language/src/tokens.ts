@@ -61,6 +61,30 @@ export const Scene = keyword("Scene", /scene/);
 export const Summary = keyword("Summary", /summary/);
 export const Rect = keyword("Rect", /rect/);
 export const Connector = keyword("Connector", /connector/);
+/** Native `panel` → `core.panel`. */
+export const Panel = keyword("Panel", /panel/);
+/** Native `header` → `core.header`. */
+export const Header = keyword("Header", /header/);
+/** Native `circle` → `core.circle`. */
+export const Circle = keyword("Circle", /circle/);
+/** Native `ellipse` → `core.ellipse`. */
+export const Ellipse = keyword("Ellipse", /ellipse/);
+/** Native `arrow` → `core.arrow`. */
+export const Arrow = keyword("Arrow", /arrow/);
+/** Native `elbow` → `core.elbow`. */
+export const Elbow = keyword("Elbow", /elbow/);
+/** Native `bracket` → `core.bracket`. */
+export const Bracket = keyword("Bracket", /bracket/);
+/** Native `callout` → `core.callout`. */
+export const Callout = keyword("Callout", /callout/);
+/** Native `stack` → `layout.stack`. */
+export const Stack = keyword("Stack", /stack/);
+/** Native `grid` → `layout.grid`. */
+export const Grid = keyword("Grid", /grid/);
+/** Native `pad` → `layout.pad`. */
+export const Pad = keyword("Pad", /pad/);
+/** Native `signal` → `motion.signal`. */
+export const Signal = keyword("Signal", /signal/);
 export const X = keyword("X", /x/);
 export const Y = keyword("Y", /y/);
 export const Width = keyword("Width", /width/);
@@ -73,6 +97,26 @@ export const Fallback = keyword("Fallback", /fallback/);
 export const From = keyword("From", /from/);
 export const To = keyword("To", /to/);
 export const Stroke = keyword("Stroke", /stroke/);
+/** Panel / header title text. */
+export const Title = keyword("Title", /title/);
+/** Panel detail / subtitle text. */
+export const Detail = keyword("Detail", /detail/);
+/** Header caption text. */
+export const Caption = keyword("Caption", /caption/);
+/** Circle / ellipse center point (`center`). */
+export const Center = keyword("Center", /center/);
+/** Elbow bend waypoint (`via`). */
+export const Via = keyword("Via", /via/);
+/** Elbow first-segment axis (`axis`). */
+export const Axis = keyword("Axis", /axis/);
+/** Stack direction (`direction`). */
+export const Direction = keyword("Direction", /direction/);
+/** Grid column count (`cols`). */
+export const Cols = keyword("Cols", /cols/);
+/** Stack / grid gap (`gap`). */
+export const Gap = keyword("Gap", /gap/);
+/** Nested child render declarations (`children { ... }`). */
+export const Children = keyword("Children", /children/);
 export const Camera = keyword("Camera", /camera/);
 export const At = keyword("At", /at/);
 export const Frame = keyword("Frame", /frame/);
@@ -80,6 +124,24 @@ export const Zoom = keyword("Zoom", /zoom/);
 export const Timeline = keyword("Timeline", /timeline/);
 export const Reveal = keyword("Reveal", /reveal/);
 export const Trace = keyword("Trace", /trace/);
+/** Timeline `fade` cue action. */
+export const Fade = keyword("Fade", /fade/);
+/** Timeline `exit` cue action. */
+export const Exit = keyword("Exit", /exit/);
+/** Timeline `stagger` cue action. */
+export const Stagger = keyword("Stagger", /stagger/);
+/** Timeline `enter-children` cue action (sugar for stagger-enter on group children). */
+export const EnterChildren = keyword("EnterChildren", /enter-children/);
+/** Stagger member id list (`targets [a, b]`). */
+export const Targets = keyword("Targets", /targets/);
+/** Stagger step delay (`step 80`). */
+export const Step = keyword("Step", /step/);
+/** Per-cue easing (`easing ease-out`). */
+export const Easing = keyword("Easing", /easing/);
+export const Linear = keyword("Linear", /linear/);
+export const EaseInOut = keyword("EaseInOut", /ease-in-out/);
+export const EaseIn = keyword("EaseIn", /ease-in/);
+export const EaseOut = keyword("EaseOut", /ease-out/);
 export const Duration = keyword("Duration", /duration/);
 export const Interaction = keyword("Interaction", /interaction/);
 export const On = keyword("On", /on/);
@@ -147,6 +209,18 @@ export const allTokens = [
   Summary,
   Rect,
   Connector,
+  Panel,
+  Header,
+  Circle,
+  Ellipse,
+  Arrow,
+  Elbow,
+  Bracket,
+  Callout,
+  Stack,
+  Grid,
+  Pad,
+  Signal,
   X,
   Y,
   Width,
@@ -159,6 +233,16 @@ export const allTokens = [
   From,
   To,
   Stroke,
+  Title,
+  Detail,
+  Caption,
+  Center,
+  Via,
+  Axis,
+  Direction,
+  Cols,
+  Gap,
+  Children,
   Camera,
   At,
   Frame,
@@ -166,6 +250,17 @@ export const allTokens = [
   Timeline,
   Reveal,
   Trace,
+  Fade,
+  Exit,
+  Stagger,
+  EnterChildren,
+  Targets,
+  Step,
+  Easing,
+  Linear,
+  EaseInOut,
+  EaseIn,
+  EaseOut,
   Duration,
   Interaction,
   On,
