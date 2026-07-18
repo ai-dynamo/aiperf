@@ -416,6 +416,13 @@ pub struct SyntheticPromptConfig {
     pub input_tokens: SamplingDistribution,
     /// Number of independently generated text values in each turn.
     pub batch_size: usize,
+    /// Fraction of generated prompts, in `[0, 1]`, that draw the shared reusable
+    /// prefix so a server KV cache observes real prefix hits. The default `0.0`
+    /// leaves every prompt fully unique and changes no existing behavior.
+    pub prefix_reuse_fraction: f64,
+    /// Fraction of each reusing prompt's input length, in `[0, 1]`, occupied by
+    /// the shared prefix; the remaining tokens stay unique to that prompt.
+    pub prefix_reuse_ratio: f64,
 }
 
 impl Default for SyntheticPromptConfig {
@@ -423,6 +430,8 @@ impl Default for SyntheticPromptConfig {
         Self {
             input_tokens: fixed(128.0),
             batch_size: 1,
+            prefix_reuse_fraction: 0.0,
+            prefix_reuse_ratio: 0.5,
         }
     }
 }

@@ -17,7 +17,7 @@ use smallvec::SmallVec;
 use crate::dataset::compose::{ComposeConfig, Composer, SessionIdGenerator};
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::generator::{
-    SyntheticDatasetConfig, SyntheticMediaGenerator, SyntheticPrefixConfig,
+    SyntheticDatasetConfig, SyntheticMediaGenerator, SyntheticPrefixConfig, SyntheticPromptConfig,
 };
 use crate::dataset::loader::{DatasetLoader, DatasetProbe, DatasetSource, LoadConfig, RawRow};
 use crate::dataset::model::{ContentGroup, Conversation, ConversationContextMode, MediaKind, Turn};
@@ -125,6 +125,10 @@ impl Composer for SyntheticComposer {
         } else {
             Vec::new()
         };
+        let mut prefix_reuse = shape
+            .prompts
+            .as_ref()
+            .and_then(|prompt| PrefixReuse::from_prompt(prompt, config.rng_root));
         let generated_system = if let Some(tokens) = shape.prefixes.shared_system_tokens {
             let generator = prompt_generator.as_mut().ok_or_else(|| {
                 DatasetError::Validation("synthetic context prompts require a tokenizer".into())
@@ -259,6 +263,33 @@ impl Composer for SyntheticComposer {
                         let handle = segments.intern_token_ids(parent, token_ids)?;
                         parent = Some(handle);
                         turn.body = Turn::dispatch_body(None, Some(handle), &[]);
+                    } else if let Some(reuse) = prefix_reuse.as_mut() {
+                        let mut handles = SmallVec::new();
+                        for _ in 0..prompt.batch_size {
+                            // Token-native reuse: the shared prefix and unique
+                            // suffix are assembled as exact ids, so `input_tokens`
+                            // is hit exactly and the decoded text carries a
+                            // byte-identical leading run across warm prompts.
+                            let tokens = reuse.prompt_tokens(generator, input_tokens)?;
+                            turn.input_tokens =
+                                turn.input_tokens.checked_add(tokens.len() as u64).ok_or_else(
+                                    || DatasetError::Validation("input token count overflow".into()),
+                                )?;
+                            let text = tokenizer.decode(&tokens)?;
+                            let handle = segments.intern_text(
+                                parent,
+                                "user",
+                                Bytes::from(text),
+                                tokens.into_boxed_slice(),
+                            )?;
+                            parent = Some(handle);
+                            handles.push(handle);
+                        }
+                        turn.content.push(ContentGroup {
+                            kind: MediaKind::Text,
+                            name: "text".into(),
+                            handles,
+                        });
                     } else {
                         let mut handles = SmallVec::new();
                         for _ in 0..prompt.batch_size {
@@ -488,6 +519,9 @@ fn validate_shape(shape: &SyntheticDatasetConfig) -> Result<()> {
             "synthetic prompt batch_size must be positive when prompts are enabled".into(),
         ));
     }
+    if let Some(prompt) = shape.prompts.as_ref() {
+        validate_prefix_reuse(prompt, &shape.prefixes)?;
+    }
     let enabled = shape.prompts.is_some()
         || shape
             .images
@@ -523,6 +557,11 @@ fn validate_raw_token_shape(config: &ComposeConfig, shape: &SyntheticDatasetConf
             "raw-token synthetic datasets require prompt batch_size=1".into(),
         ));
     }
+    if prompt.prefix_reuse_fraction > 0.0 {
+        return Err(DatasetError::Validation(
+            "raw-token synthetic datasets do not support prompt prefix reuse".into(),
+        ));
+    }
     if has_prefixes(&shape.prefixes)
         || config.shared_system_prompt.is_some()
         || !config.user_context_prompts.is_empty()
@@ -547,6 +586,30 @@ fn validate_raw_token_shape(config: &ComposeConfig, shape: &SyntheticDatasetConf
     {
         return Err(DatasetError::Validation(
             "raw-token synthetic datasets do not support image, audio, or video inputs".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_prefix_reuse(
+    prompt: &crate::dataset::generator::SyntheticPromptConfig,
+    prefixes: &SyntheticPrefixConfig,
+) -> Result<()> {
+    if !(prompt.prefix_reuse_fraction.is_finite() && (0.0..=1.0).contains(&prompt.prefix_reuse_fraction))
+    {
+        return Err(DatasetError::Validation(
+            "synthetic prompt prefix_reuse_fraction must be within [0, 1]".into(),
+        ));
+    }
+    if !(prompt.prefix_reuse_ratio.is_finite() && (0.0..=1.0).contains(&prompt.prefix_reuse_ratio)) {
+        return Err(DatasetError::Validation(
+            "synthetic prompt prefix_reuse_ratio must be within [0, 1]".into(),
+        ));
+    }
+    if prompt.prefix_reuse_fraction > 0.0 && prefixes.pool_size.is_some() {
+        return Err(DatasetError::Validation(
+            "synthetic prompt prefix reuse and the reusable prefix pool are mutually exclusive"
+                .into(),
         ));
     }
     Ok(())
@@ -602,6 +665,69 @@ fn build_prefix_pool(
             Ok(generator.generate(tokens, &[hash], tokens)?.text)
         })
         .collect()
+}
+
+/// Deterministic bimodal prefix reuse layered on the corpus block generator.
+///
+/// A configured fraction of prompts draw an identical leading token run — the
+/// shared prefix — so a server KV cache observes genuine prefix hits, while the
+/// remaining prompts stay fully unique. The shared prefix is grown on demand and
+/// never rewritten, so every reusing prompt shares a byte-identical leading token
+/// sequence regardless of its own sampled input length, and exact-length input
+/// targeting is preserved because the prompt is assembled from exact token ids.
+struct PrefixReuse {
+    /// Probability, in `[0, 1]`, that a prompt draws the shared prefix.
+    fraction: f64,
+    /// Fraction of a reusing prompt's input length occupied by the shared prefix.
+    ratio: f64,
+    /// Seeded warm/cold selector, independent of the corpus sampling stream.
+    decision: RandomGenerator,
+    /// The shared prefix token ids, frozen once grown so warm prompts match.
+    shared: Vec<u32>,
+}
+
+impl PrefixReuse {
+    /// Prepare reuse state when the prompt requests a non-zero reuse fraction.
+    fn from_prompt(prompt: &SyntheticPromptConfig, root: RngRoot) -> Option<Self> {
+        (prompt.prefix_reuse_fraction > 0.0).then(|| Self {
+            fraction: prompt.prefix_reuse_fraction,
+            ratio: prompt.prefix_reuse_ratio,
+            decision: RandomGenerator::from_seed(root.derive_seed("dataset.prompt.prefix.reuse")),
+            shared: Vec::new(),
+        })
+    }
+
+    /// Assemble one exact-length prompt, prepending the shared prefix for the
+    /// deterministically selected warm fraction of prompts.
+    fn prompt_tokens(
+        &mut self,
+        generator: &mut dyn PromptGenerator,
+        input_tokens: usize,
+    ) -> Result<Vec<u32>> {
+        if self.decision.random() >= self.fraction {
+            return Ok(generator.generate(input_tokens, &[], 1)?.tokens);
+        }
+        let prefix_len = ((input_tokens as f64) * self.ratio).round() as usize;
+        let prefix_len = prefix_len.min(input_tokens);
+        self.grow_shared(generator, prefix_len)?;
+        let mut tokens = self.shared[..prefix_len].to_vec();
+        let suffix = input_tokens - prefix_len;
+        if suffix > 0 {
+            tokens.extend_from_slice(&generator.generate(suffix, &[], 1)?.tokens);
+        }
+        Ok(tokens)
+    }
+
+    /// Extend the shared prefix to at least `needed` tokens without disturbing the
+    /// tokens already committed, keeping every warm prefix byte-identical.
+    fn grow_shared(&mut self, generator: &mut dyn PromptGenerator, needed: usize) -> Result<()> {
+        while self.shared.len() < needed {
+            let delta = needed - self.shared.len();
+            self.shared
+                .extend_from_slice(&generator.generate(delta, &[], 1)?.tokens);
+        }
+        Ok(())
+    }
 }
 
 fn generated_context(
@@ -778,6 +904,7 @@ mod tests {
             prompts: Some(crate::dataset::generator::SyntheticPromptConfig {
                 input_tokens: SamplingDistribution::fixed(6.0).unwrap(),
                 batch_size: 1,
+                ..crate::dataset::generator::SyntheticPromptConfig::default()
             }),
             prefixes: SyntheticPrefixConfig {
                 pool_size: Some(1),
@@ -833,6 +960,7 @@ mod tests {
             prompts: Some(crate::dataset::generator::SyntheticPromptConfig {
                 input_tokens: SamplingDistribution::fixed(8.0).unwrap(),
                 batch_size: 1,
+                ..crate::dataset::generator::SyntheticPromptConfig::default()
             }),
             ..SyntheticDatasetConfig::default()
         });
