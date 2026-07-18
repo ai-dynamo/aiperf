@@ -596,8 +596,7 @@ fn remote_code_tokenizer_error(name: &str) -> String {
 /// instead of surfacing a bare "No such file" at [`load_tokenizer`] time.
 fn ensure_native_tokenizer_loadable(name: &str, directory: &Path) -> Result<()> {
     ensure!(
-        directory.join("tokenizer.json").is_file()
-            || find_tiktoken_model_file(directory).is_some(),
+        directory.join("tokenizer.json").is_file() || find_tiktoken_model_file(directory).is_some(),
         "{}",
         remote_code_tokenizer_error(name)
     );

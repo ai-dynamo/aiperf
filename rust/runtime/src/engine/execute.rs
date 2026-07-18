@@ -33,14 +33,14 @@ use crate::content_server::{
 };
 use crate::dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, ModelId,
-    NativeTiktokenTokenizer, find_tiktoken_model_file,
-    ModelSelector, ModelSelectorFactory, RandomModelSelectorFactory,
+    ModelSelector, ModelSelectorFactory, NativeTiktokenTokenizer, RandomModelSelectorFactory,
     RoundRobinModelSelectorFactory, SourceImageSampling, SyntheticAudioConfig,
     SyntheticAudioFormat, SyntheticDatasetConfig, SyntheticImageConfig, SyntheticImageFormat,
     SyntheticImageSource, SyntheticMediaGeneratorFactory, SyntheticPrefixConfig,
     SyntheticPromptConfig, SyntheticRankingsConfig, SyntheticVideoAudioConfig,
     SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern, TextTokenizer,
     TiktokenEncoding, TiktokenTokenizer, TracePromptStoragePolicy, TraceSynthesisConfig,
+    find_tiktoken_model_file,
 };
 use crate::endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
 use crate::export::otel::OtelRecordAccumulator;
@@ -6165,7 +6165,10 @@ mod tests {
 
         let tokenizer = load_tokenizer(dir.path().to_str()).expect("native tiktoken load");
         let text = "hello world";
-        assert_eq!(tokenizer.decode(&tokenizer.encode(text).unwrap()).unwrap(), text);
+        assert_eq!(
+            tokenizer.decode(&tokenizer.encode(text).unwrap()).unwrap(),
+            text
+        );
         // Deterministic, network-free token count.
         assert_eq!(tokenizer.count("hi").unwrap(), 2);
     }
