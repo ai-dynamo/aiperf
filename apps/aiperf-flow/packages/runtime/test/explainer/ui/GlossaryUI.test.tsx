@@ -378,17 +378,21 @@ describe("GlossaryUI", () => {
 
       const searchInput = screen.getByPlaceholderText("Search terms...");
       await act(async () => {
-        fireEvent.change(searchInput, { target: { value: "t" } });
+        fireEvent.change(searchInput, { target: { value: "token" } });
       });
 
-      // Should match: Throughput, Token
-      expect(screen.getByText("Throughput")).toBeTruthy();
-      expect(screen.getByText("Token")).toBeTruthy();
-      expect(screen.queryByText("Latency")).toBeFalsy();
+      // Should match: Token only
+      let allButtons = screen.getAllByRole("button");
+      let termButtons = allButtons.filter(btn =>
+        mockTerms.some(term => btn.textContent === term.word)
+      );
+      expect(termButtons.length).toBe(1);
+      const buttonTexts = termButtons.map(b => b.textContent);
+      expect(buttonTexts).toContain("Token");
 
-      const tokenButton = screen.getByText("Token");
+      const tokenButton = termButtons.find(b => b.textContent === "Token");
       await act(async () => {
-        fireEvent.click(tokenButton);
+        fireEvent.click(tokenButton!);
       });
 
       expect(onSelectTerm).toHaveBeenCalledWith(2); // Token is at index 2
@@ -501,6 +505,8 @@ describe("GlossaryUI", () => {
       const specialTerms: GlossaryTerm[] = [
         { word: "Token (LLM)", meaning: "A unit with parens" },
         { word: "Rate [req/s]", meaning: "Speed with brackets" },
+        { word: "Query", meaning: "A simple term" },
+        { word: "Response", meaning: "Another simple term" },
       ];
 
       render(
@@ -515,7 +521,12 @@ describe("GlossaryUI", () => {
         fireEvent.change(searchInput, { target: { value: "(LLM)" } });
       });
 
-      expect(screen.getByText("Token (LLM)")).toBeTruthy();
+      const allButtons = screen.getAllByRole("button");
+      const termButtons = allButtons.filter(btn =>
+        specialTerms.some(term => btn.textContent === term.word)
+      );
+      expect(termButtons.length).toBe(1);
+      expect(termButtons[0].textContent).toBe("Token (LLM)");
     });
 
     it("handles very long term definitions", () => {
