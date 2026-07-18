@@ -16,6 +16,8 @@ describe('NarratorBinding', () => {
       nextSlide: vi.fn().mockResolvedValue(undefined),
       prevSlide: vi.fn(),
       jumpToSlide: vi.fn(),
+      pauseNarration: vi.fn(),
+      resumeNarration: vi.fn(),
       getCurrentSlide: () => ({
         eyebrow: 'S1',
         title: 'Test',
@@ -27,11 +29,13 @@ describe('NarratorBinding', () => {
     } as any;
 
     mockNarrator = {
-      speak: vi.fn().mockResolvedValue(undefined),
-      stop: vi.fn(),
+      available: true,
+      voices: () => [],
+      speak: vi.fn(),
       pause: vi.fn(),
       resume: vi.fn(),
-    } as any;
+      cancel: vi.fn(),
+    };
 
     binding = new NarratorBinding(mockController, mockNarrator);
   });
@@ -41,19 +45,19 @@ describe('NarratorBinding', () => {
     expect(mockController.nextSlide).toHaveBeenCalled();
   });
 
-  it('pauses narrator', () => {
+  it('pauses narration through the controller', () => {
     binding.pauseNarration();
-    expect(mockNarrator.pause).toHaveBeenCalled();
+    expect(mockController.pauseNarration).toHaveBeenCalled();
   });
 
-  it('resumes narrator', () => {
+  it('resumes narration through the controller', () => {
     binding.resumeNarration();
-    expect(mockNarrator.resume).toHaveBeenCalled();
+    expect(mockController.resumeNarration).toHaveBeenCalled();
   });
 
-  it('skips to next slide on skip command', async () => {
+  it('cancels the narrator and advances on skip', async () => {
     binding.skipNarration();
-    expect(mockNarrator.stop).toHaveBeenCalled();
+    expect(mockNarrator.cancel).toHaveBeenCalled();
     expect(mockController.nextSlide).toHaveBeenCalled();
   });
 });
