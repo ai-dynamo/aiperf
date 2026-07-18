@@ -537,8 +537,11 @@ fn special_token_id(tokenizer: &HfTokenizer, config: &Value, field: &str) -> Opt
 /// synchronous `encode`/`decode` hands one request to that worker and blocks on
 /// a reply channel: this cannot re-enter the ambient composition runtime or
 /// nested-`block_on`-panic, and the worker's own reactor drives the I/O while
-/// the caller waits the network round-trip. The worker shuts down cleanly when
-/// this handle drops (the request channel closes and the loop exits).
+/// the caller waits the network round-trip. Calls are serviced serially — the
+/// worker processes one request to completion before the next — so a stalled
+/// request delays any others queued behind it, each bounded by the per-round-trip
+/// deadline. The worker shuts down cleanly when this handle drops (the request
+/// channel closes and the loop exits).
 ///
 /// Only `http`/`https` origins are accepted; any other scheme is rejected at
 /// construction. BOS/EOS and vocabulary size are not exposed by the two
@@ -557,9 +560,9 @@ pub struct ServerTokenizer {
     name: String,
     /// Sender to the long-lived transport worker. `None` only transiently during
     /// [`Drop`], which closes the channel to signal shutdown.
-    requests: Option<tokio::sync::mpsc::UnboundedSender<TransportRequest>>,
+    request_tx: Option<tokio::sync::mpsc::UnboundedSender<TransportRequest>>,
     /// Join handle for the worker thread, taken and joined on [`Drop`].
-    worker: Option<std::thread::JoinHandle<()>>,
+    worker_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 /// One POST job handed to the transport worker with a channel for its reply.
@@ -601,14 +604,14 @@ impl ServerTokenizer {
         }
         let base = base_url.trim_end_matches('/');
         let timeout_ns = i64::try_from(Self::DEFAULT_TIMEOUT.as_nanos()).unwrap_or(i64::MAX);
-        let (requests, worker) = spawn_transport_worker(timeout_ns)?;
+        let (request_tx, worker_handle) = spawn_transport_worker(timeout_ns)?;
         Ok(Self {
             tokenize_url: format!("{base}/tokenize"),
             detokenize_url: format!("{base}/detokenize"),
             model,
             name: format!("server:{base_url}"),
-            requests: Some(requests),
-            worker: Some(worker),
+            request_tx: Some(request_tx),
+            worker_handle: Some(worker_handle),
         })
     }
 
@@ -635,10 +638,10 @@ impl ServerTokenizer {
     /// network round-trip.
     fn exchange(&self, url: &str, payload: Vec<u8>) -> Result<Vec<u8>> {
         let (reply, reply_rx) = std::sync::mpsc::channel();
-        let requests = self.requests.as_ref().ok_or_else(|| {
+        let request_tx = self.request_tx.as_ref().ok_or_else(|| {
             DatasetError::Tokenizer("server tokenizer worker is shutting down".to_string())
         })?;
-        requests
+        request_tx
             .send(TransportRequest {
                 url: url.to_string(),
                 payload,
@@ -659,9 +662,9 @@ impl Drop for ServerTokenizer {
     fn drop(&mut self) {
         // Close the request channel so the worker's `recv().await` yields `None`
         // and its runtime tears down, then join the now-exiting thread.
-        self.requests = None;
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+        self.request_tx = None;
+        if let Some(worker_handle) = self.worker_handle.take() {
+            let _ = worker_handle.join();
         }
     }
 }
@@ -679,7 +682,10 @@ fn spawn_transport_worker(
     tokio::sync::mpsc::UnboundedSender<TransportRequest>,
     std::thread::JoinHandle<()>,
 )> {
-    let (requests, mut request_rx) = tokio::sync::mpsc::unbounded_channel::<TransportRequest>();
+    // Unbounded is safe despite no backpressure: each caller blocks on its own
+    // reply channel before it can enqueue another job, so the queue depth is
+    // capped by the number of concurrent callers, not by producer speed.
+    let (request_tx, mut request_rx) = tokio::sync::mpsc::unbounded_channel::<TransportRequest>();
     let (ready, ready_rx) = std::sync::mpsc::channel::<std::result::Result<(), String>>();
     let worker = std::thread::Builder::new()
         .name("aiperf-server-tokenizer".to_string())
@@ -718,7 +724,7 @@ fn spawn_transport_worker(
         })
         .map_err(DatasetError::Io)?;
     match ready_rx.recv() {
-        Ok(Ok(())) => Ok((requests, worker)),
+        Ok(Ok(())) => Ok((request_tx, worker)),
         Ok(Err(message)) => Err(DatasetError::Tokenizer(format!(
             "server tokenizer worker failed to start: {message}"
         ))),
@@ -916,13 +922,17 @@ mod tests {
     ///
     /// Maps each Unicode scalar to its code point as a token id and back, so a
     /// round-trip is byte-exact and token counts come verifiably from the server,
-    /// not a local encoding. Accepts exactly ONE client connection and serves
-    /// `requests` keep-alive requests over it (responses omit `Connection: close`),
-    /// so a client that reuses one pooled connection is served entirely on that
-    /// single accepted socket. Returns a counter of accepted connections, letting
-    /// a test assert the transport was reused across calls. Binds `127.0.0.1`
-    /// explicitly (never `localhost`) so the client's direct connection cannot
-    /// resolve to an IPv6 loopback the listener does not own.
+    /// not a local encoding. Serves `requests` keep-alive requests total
+    /// (responses omit `Connection: close`), accepting connections in a loop until
+    /// every expected request has been served. A client that reuses one pooled
+    /// connection is accepted exactly once; a regression that opens a fresh socket
+    /// per call is accepted again, so the returned counter distinguishes the two
+    /// crisply. Each accepted socket carries a short read timeout, so a regressed
+    /// client whose first socket goes idle after one request trips a fast timeout
+    /// and re-enters `accept()` (incrementing the counter) instead of hanging until
+    /// the transport's 30s deadline. Binds `127.0.0.1` explicitly (never
+    /// `localhost`) so the client's direct connection cannot resolve to an IPv6
+    /// loopback the listener does not own.
     fn spawn_keepalive_tokenize_server(
         requests: usize,
     ) -> (String, Arc<AtomicUsize>, thread::JoinHandle<()>) {
@@ -932,60 +942,73 @@ mod tests {
         let connections = Arc::new(AtomicUsize::new(0));
         let counter = connections.clone();
         let handle = thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            counter.fetch_add(1, Ordering::SeqCst);
-            let mut writer = stream.try_clone().unwrap();
-            let mut reader = BufReader::new(stream);
+            let mut served = 0usize;
+            while served < requests {
+                let (stream, _) = listener.accept().unwrap();
+                counter.fetch_add(1, Ordering::SeqCst);
+                // Bound the idle wait so a client that fails to reuse this socket
+                // trips a fast timeout and falls back to accept() rather than
+                // stalling the join() until the 30s transport deadline.
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut writer = stream.try_clone().unwrap();
+                let mut reader = BufReader::new(stream);
 
-            for _ in 0..requests {
-                let mut request_line = String::new();
-                if reader.read_line(&mut request_line).unwrap() == 0 {
-                    break;
-                }
-                let path = request_line.split_whitespace().nth(1).unwrap().to_string();
-
-                let mut content_length = 0usize;
-                loop {
-                    let mut header = String::new();
-                    reader.read_line(&mut header).unwrap();
-                    if header == "\r\n" || header.is_empty() {
-                        break;
+                while served < requests {
+                    let mut request_line = String::new();
+                    match reader.read_line(&mut request_line) {
+                        Ok(0) => break, // client closed this socket
+                        Ok(_) => {}
+                        Err(_) => break, // idle read timeout: re-enter accept()
                     }
-                    if let Some(value) = header.to_ascii_lowercase().strip_prefix("content-length:")
-                    {
-                        content_length = value.trim().parse().unwrap();
+                    let path = request_line.split_whitespace().nth(1).unwrap().to_string();
+
+                    let mut content_length = 0usize;
+                    loop {
+                        let mut header = String::new();
+                        reader.read_line(&mut header).unwrap();
+                        if header == "\r\n" || header.is_empty() {
+                            break;
+                        }
+                        if let Some(value) =
+                            header.to_ascii_lowercase().strip_prefix("content-length:")
+                        {
+                            content_length = value.trim().parse().unwrap();
+                        }
                     }
+                    let mut body = vec![0u8; content_length];
+                    reader.read_exact(&mut body).unwrap();
+                    let request: Value = serde_json::from_slice(&body).unwrap();
+
+                    let reply = if path == "/tokenize" {
+                        let prompt = request["prompt"].as_str().unwrap();
+                        let tokens: Vec<u32> = prompt.chars().map(|c| c as u32).collect();
+                        serde_json::json!({ "count": tokens.len(), "tokens": tokens })
+                    } else if path == "/detokenize" {
+                        let text: String = request["tokens"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|id| char::from_u32(id.as_u64().unwrap() as u32).unwrap())
+                            .collect();
+                        serde_json::json!({ "prompt": text })
+                    } else {
+                        serde_json::json!({ "error": "unknown path" })
+                    };
+
+                    let payload = serde_json::to_vec(&reply).unwrap();
+                    // No `Connection: close`: the connection stays keep-alive so a
+                    // pooling client reuses it for every subsequent request.
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                        payload.len()
+                    );
+                    writer.write_all(response.as_bytes()).unwrap();
+                    writer.write_all(&payload).unwrap();
+                    writer.flush().unwrap();
+                    served += 1;
                 }
-                let mut body = vec![0u8; content_length];
-                reader.read_exact(&mut body).unwrap();
-                let request: Value = serde_json::from_slice(&body).unwrap();
-
-                let reply = if path == "/tokenize" {
-                    let prompt = request["prompt"].as_str().unwrap();
-                    let tokens: Vec<u32> = prompt.chars().map(|c| c as u32).collect();
-                    serde_json::json!({ "count": tokens.len(), "tokens": tokens })
-                } else if path == "/detokenize" {
-                    let text: String = request["tokens"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|id| char::from_u32(id.as_u64().unwrap() as u32).unwrap())
-                        .collect();
-                    serde_json::json!({ "prompt": text })
-                } else {
-                    serde_json::json!({ "error": "unknown path" })
-                };
-
-                let payload = serde_json::to_vec(&reply).unwrap();
-                // No `Connection: close`: the connection stays keep-alive so a
-                // pooling client reuses it for every subsequent request.
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
-                    payload.len()
-                );
-                writer.write_all(response.as_bytes()).unwrap();
-                writer.write_all(&payload).unwrap();
-                writer.flush().unwrap();
             }
         });
         (base_url, connections, handle)
