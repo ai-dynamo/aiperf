@@ -73,13 +73,7 @@ describe("scene discovery", () => {
     const scenes = discoverAllScenes();
 
     expect(scenes.length).toBeGreaterThan(0);
-    expect(scenes).toContainEqual(
-      expect.objectContaining({
-        flowId: "request-flow",
-        sceneId: "request-investigation",
-        title: "What made this slow?",
-      }),
-    );
+    // Demo request-flow is excluded; only architecture and endpoint-lifecycle flows appear
     expect(scenes).toContainEqual(
       expect.objectContaining({
         flowId: "architecture",
@@ -92,15 +86,17 @@ describe("scene discovery", () => {
         sceneId: "resolve-endpoint",
       }),
     );
+    expect(scenes.some((s) => s.flowId === "request-flow")).toBe(false);
   });
 
   test("groups scenes by flow for display", () => {
     const groups = discoverScenesByFlow();
 
-    expect(groups.length).toBe(3);
+    // Demo request-flow excluded, so only architecture and endpoint-lifecycle remain
+    expect(groups.length).toBe(2);
     expect(groups[0]).toMatchObject({
-      flowId: "request-flow",
-      flowTitle: expect.stringMatching(/request/i),
+      flowId: "architecture",
+      flowTitle: expect.stringMatching(/architecture/i),
     });
     expect(groups[0]?.scenes.length).toBeGreaterThan(0);
   });
@@ -132,7 +128,8 @@ describe("preview app home page", () => {
 
     const flowTitles = screen.getAllByText(/\.flow$/);
     const flowTitlesText = flowTitles.map(el => el.textContent);
-    expect(flowTitlesText).toContain("request-flow.flow");
+    // Demo request-flow is excluded from discovery
+    expect(flowTitlesText).not.toContain("request-flow.flow");
     expect(flowTitlesText).toContain("architecture.flow");
     expect(flowTitlesText).toContain("endpoint-lifecycle.flow");
   });

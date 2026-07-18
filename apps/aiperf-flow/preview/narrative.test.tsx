@@ -118,9 +118,9 @@ describe("preview App narration vertical slice", () => {
   }
 
   async function navigateToScene(): Promise<void> {
-    // Click on a scene card to navigate from home page to scene view
+    // Click on any available scene card to navigate from home page to scene view
     const sceneCard = await screen.findByRole("button", {
-      name: /Load.*What made this slow/i,
+      name: /Load.*scene/i,
     });
     fireEvent.click(sceneCard);
     // Wait for the scene to load (audio consent dialog or scene field should appear)

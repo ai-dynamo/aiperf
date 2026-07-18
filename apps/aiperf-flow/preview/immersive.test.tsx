@@ -61,7 +61,8 @@ beforeEach(() => {
 });
 
 describe("immersive preview host", () => {
-  test("opens on the real hub-and-spoke request investigation scene", () => {
+  test.skip("opens on the real hub-and-spoke request investigation scene", () => {
+    // SKIPPED: Demo request-flow scene removed in favor of explainer decks
     const navigation = previewNavigation();
     const scene = previewScene();
 

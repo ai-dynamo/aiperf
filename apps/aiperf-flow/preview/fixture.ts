@@ -1484,9 +1484,9 @@ export function previewWorkspace(): PreviewWorkspace {
     manifestFor(endpointFlow, ENDPOINT_SOURCE),
   ] as const;
   const navigation = previewBrowserNavigation(manifests, {
-    flowId: requestFlow.id,
-    chapterId: "runtime-path",
-    sceneId: "request-investigation",
+    flowId: architectureFlow.id,
+    chapterId: "architectural-concepts",
+    sceneId: "control-plane",
   });
   return {
     flow: requestFlow,
@@ -1566,6 +1566,9 @@ export function discoverAllScenes(): readonly SceneCardInfo[] {
   const scenes: SceneCardInfo[] = [];
 
   workspace.navigation.files.forEach((file) => {
+    // Skip demo request flow - use actual explainer decks instead
+    if (file.id === "request-flow") return;
+
     const flow = workspace.flows[file.id];
     if (!flow) return;
 
@@ -1602,6 +1605,9 @@ export function discoverScenesByFlow(): readonly Readonly<{
   }>[] = [];
 
   workspace.navigation.files.forEach((file) => {
+    // Skip demo request flow - use actual explainer decks instead
+    if (file.id === "request-flow") return;
+
     const flow = workspace.flows[file.id];
     if (!flow) return;
 
