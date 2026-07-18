@@ -547,16 +547,15 @@ export function App() {
               onClick={() => setShowThemeMenu((prev) => !prev)}
               type="button"
               style={{
-                minHeight: "2rem",
-                padding: "0.4rem 0.6rem",
+                padding: "0.5rem 1rem",
                 border: "1px solid var(--preview-guide)",
-                borderRadius: "6px",
+                borderRadius: "4px",
                 background: "var(--preview-control)",
-                color: "var(--preview-muted)",
+                color: "var(--preview-chalk)",
                 cursor: "pointer",
-                fontSize: "0.7rem",
-                fontWeight: 600,
-                textTransform: "uppercase",
+                fontSize: "0.9rem",
+                fontWeight: 500,
+                textTransform: "none",
               }}
             >
               {themeLabel}
@@ -571,8 +570,8 @@ export function App() {
                   marginTop: "0.5rem",
                   background: "var(--preview-panel)",
                   border: "1px solid var(--preview-guide)",
-                  borderRadius: "6px",
-                  minWidth: "120px",
+                  borderRadius: "4px",
+                  minWidth: "140px",
                   zIndex: 1000,
                   boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
                 }}
@@ -586,7 +585,7 @@ export function App() {
                       style={{
                         display: "block",
                         width: "100%",
-                        padding: "0.5rem 0.75rem",
+                        padding: "0.5rem 1rem",
                         border: "none",
                         background:
                           theme === themeOption
@@ -598,7 +597,7 @@ export function App() {
                             : "var(--preview-chalk)",
                         textAlign: "left",
                         cursor: "pointer",
-                        fontSize: "0.7rem",
+                        fontSize: "0.9rem",
                         fontWeight: 500,
                         textTransform: "capitalize",
                       }}
@@ -616,15 +615,14 @@ export function App() {
             title="Click to cycle through themes"
             type="button"
             style={{
-              minHeight: "2rem",
-              padding: "0.4rem 0.6rem",
+              padding: "0.5rem 1rem",
               border: "1px solid var(--preview-guide)",
-              borderRadius: "6px",
+              borderRadius: "4px",
               background: "var(--preview-control)",
-              color: "var(--preview-muted)",
+              color: "var(--preview-chalk)",
               cursor: "pointer",
-              fontSize: "0.7rem",
-              fontWeight: 600,
+              fontSize: "0.9rem",
+              fontWeight: 500,
             }}
           >
             ⟳

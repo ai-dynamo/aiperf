@@ -79,14 +79,14 @@ a:focus-visible,
   position: fixed;
   z-index: 20;
   inset: 0 0 auto;
-  height: var(--preview-bar-height);
+  height: auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  padding: 1.25rem 1.875rem 0;
-  border-block-end: 0;
-  background: transparent;
+  gap: 1.5rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--preview-guide);
+  background: var(--preview-board);
   pointer-events: none;
 }
 
@@ -99,7 +99,7 @@ a:focus-visible,
 
 .preview-brand-cluster {
   min-width: 0;
-  gap: 0.65rem;
+  gap: 0;
 }
 
 .preview-brand-cluster > *,
@@ -115,24 +115,27 @@ a:focus-visible,
 
 .preview-study small {
   display: block;
-  color: var(--preview-signal);
-  font: 700 0.625rem/1.2 var(--preview-font-data);
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
+  color: var(--preview-muted);
+  font: 400 0.75rem/1.3 var(--preview-font-body);
+  letter-spacing: 0;
+  text-transform: none;
+  margin-bottom: 0.25rem;
 }
 
 .preview-study h1 {
-  margin: 0.3rem 0 0;
-  font-size: clamp(1.125rem, 2vw, 1.6875rem);
-  font-weight: 560;
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 600;
   letter-spacing: -0.025em;
-  line-height: 1.1;
+  line-height: 1.2;
+  color: var(--preview-chalk);
 }
 
 .preview-theme-cluster {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.75rem;
+  pointer-events: auto;
 }
 
 .preview-theme-mark {
@@ -257,10 +260,10 @@ a:focus-visible,
   display: flex;
   position: relative;
   width: 100%;
-  height: calc(100% - var(--preview-bar-height));
+  height: calc(100% - 3.5rem);
   min-width: 0;
   overflow: hidden;
-  margin-top: var(--preview-bar-height);
+  margin-top: 3.5rem;
 }
 
 .flow-browser {
@@ -692,9 +695,9 @@ a:focus-visible,
   }
 
   .preview-topbar {
-    height: 4.5rem;
-    padding: 0.75rem 0.65rem 0;
-    border-block-end: 1px solid var(--preview-guide);
+    height: auto;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--preview-guide);
     background: var(--preview-board);
   }
 
@@ -706,7 +709,7 @@ a:focus-visible,
   .preview-study h1 {
     max-width: 13rem;
     margin: 0;
-    font-size: 1rem;
+    font-size: 1.1rem;
   }
 
   .preview-theme-mark {
