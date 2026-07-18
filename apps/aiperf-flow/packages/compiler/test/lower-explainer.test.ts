@@ -3,7 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { parseDocument } from "@aiperf/flow-language";
 import type { SourceRange } from "@aiperf/flow-schema";
+import {
+  FOUNDATION_CAPABILITIES,
+  safeParseDeckPackage,
+  type CapabilityRegistryManifest,
+  type DeckPackage,
+  type Result,
+} from "@aiperf/flow-schema";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -131,9 +143,9 @@ describe("lowerExplainerToDeckPackage", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.diagnostics.some((d) => d.code === "EXPLAINER_FIELD_REQUIRED")).toBe(
-        true,
-      );
+      expect(
+        result.diagnostics.some((d) => d.code === "EXPLAINER_FIELD_REQUIRED"),
+      ).toBe(true);
     }
   });
 
@@ -163,5 +175,102 @@ describe("lowerExplainerToDeckPackage", () => {
         { word: "cell", meaning: "Worker process" },
       ]);
     }
+  });
+});
+
+const sourceName = "minimal-explainer.flow";
+const source = readFileSync(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "fixtures",
+    sourceName,
+  ),
+  "utf8",
+);
+
+/** Prefer compileExplainerSource when present; else parse + lowerExplainerDocument. */
+async function produceDeckPackage(): Promise<Result<DeckPackage>> {
+  const index = await import("../src/index.js");
+  const compileExplainerSource = (
+    index as {
+      compileExplainerSource?: (request: {
+        source: string;
+        sourceName: string;
+        capabilities: CapabilityRegistryManifest;
+      }) => Result<DeckPackage>;
+    }
+  ).compileExplainerSource;
+
+  if (typeof compileExplainerSource === "function") {
+    return compileExplainerSource({
+      source,
+      sourceName,
+      capabilities: FOUNDATION_CAPABILITIES,
+    });
+  }
+
+  const lowerMod = await import("../src/lower-explainer.js");
+  const lowerExplainerDocument = (
+    lowerMod as {
+      lowerExplainerDocument?: (
+        doc: unknown,
+        capabilities: CapabilityRegistryManifest,
+      ) => Result<DeckPackage>;
+    }
+  ).lowerExplainerDocument;
+
+  if (typeof lowerExplainerDocument !== "function") {
+    return {
+      ok: false,
+      diagnostics: [
+        {
+          severity: "error",
+          code: "EXPLAINER_LOWER_MISSING",
+          message:
+            "lowerExplainerDocument / compileExplainerSource not available yet",
+          range: {
+            source: sourceName,
+            start: { offset: 0, line: 1, column: 1 },
+            end: { offset: 0, line: 1, column: 1 },
+          },
+        },
+      ],
+    };
+  }
+
+  const parsed = parseDocument(source, sourceName);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  return lowerExplainerDocument(parsed.value, FOUNDATION_CAPABILITIES);
+}
+
+describe("explainer DeckPackage pipeline", () => {
+  test("minimal-explainer.flow produces a valid DeckPackage with scene enter cue", async () => {
+    const result = await produceDeckPackage();
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const validated = safeParseDeckPackage(result.value);
+    expect(validated.ok, JSON.stringify(validated.diagnostics)).toBe(true);
+    if (!validated.ok) {
+      return;
+    }
+
+    expect(validated.value.schemaVersion).toBe(1);
+    expect(validated.value.id).toBe("minimal-explainer");
+    expect(validated.value.route).toBe("/minimal-explainer");
+    expect(validated.value.slides).toHaveLength(1);
+
+    const slide = validated.value.slides[0]!;
+    expect(slide.narration.trim().length).toBeGreaterThan(0);
+    expect(slide.render?.kind).toBe("scene");
+
+    const timeline = slide.render?.scene.timeline ?? [];
+    expect(timeline.length).toBeGreaterThan(0);
+    expect(timeline.some((cue) => cue.action === "enter")).toBe(true);
   });
 });
