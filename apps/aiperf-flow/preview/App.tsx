@@ -13,7 +13,7 @@ import React, {
 
 import { FlowApp } from "../packages/runtime/src/app";
 import type { KokoroNarratorSnapshot } from "../packages/runtime/src/narrative/kokoro-narrator";
-import { FLOW_EXPLAINER_DECKS } from "../packages/runtime/src/explainer/flow-loader";
+import { COMPILED_EXPLAINER_DECKS } from "../packages/runtime/src/explainer/compiled-decks";
 
 import {
   previewWorkspace,
