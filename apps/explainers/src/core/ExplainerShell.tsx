@@ -294,20 +294,12 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
           }}
         />
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            width: "100%",
-          }}
-        >
-          <div style={{ width: "100%", maxWidth: 720 }}>
-            <Subtitles
-              text={slide.narration}
-              activeWordIndex={activeWordIndex}
-              visible={started}
-            />
-          </div>
+        <div style={{ width: "100%" }}>
+          <Subtitles
+            text={slide.narration}
+            activeWordIndex={activeWordIndex}
+            visible={started}
+          />
         </div>
 
         <Divider />
