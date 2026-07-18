@@ -37,170 +37,92 @@ explainer "Velo deep dive" {
     ]
     caption: "endpoint → _hello → register_peer(controller)."
 
-        render: @scene {
+    render: @scene {
       roots: [
         {
-          id: "hdr0"
+          id: "s0-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "CONNECTION RESOLVE" }
           children: [
-            { id: "hdr0-text" capability: "core.text" text: "CONNECTION RESOLVE" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr0-cap" capability: "core.text" text: "endpoint → _hello → register_peer(controller)." layout: { x: 300, y: 34, width: 370, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s0-hdr-l" capability: "core.text" text: "CONNECTION RESOLVE" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
+            { id: "s0-hdr-c" capability: "core.text" text: "endpoint → _hello → register_peer(controller)." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
           ]
-        },
-        { id: "ph0a" capability: "core.text" text: "1 · COORDINATE" layout: { x: 40, y: 78, width: 140, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph0b" capability: "core.text" text: "2 · HELLO" layout: { x: 250, y: 78, width: 100, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph0c" capability: "core.text" text: "3 · REGISTER" layout: { x: 520, y: 78, width: 120, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
+        }
         {
-          id: "cell0"
+          id: "s0-cell"
           capability: "core.rect"
-          layout: { x: 40, y: 110, width: 150, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          layout: { x: 40, y: 140, width: 160, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Cell k: known coordinate" }
           children: [
-            { id: "cell0-title" capability: "core.text" text: "Cell k" layout: { x: 48, y: 135, width: 134, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "cell0-detail" capability: "core.text" text: "known coordinate" layout: { x: 48, y: 155, width: 134, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s0-cell-t" capability: "core.text" text: "Cell k" layout: { x: 40, y: 160, width: 160, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s0-cell-d" capability: "core.text" text: "known coordinate" layout: { x: 40, y: 184, width: 160, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a0a" capability: "core.path" d: "M190 145 H250" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } },
-        { id: "hello0" capability: "core.text" text: "_hello" layout: { x: 200, y: 128, width: 50, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.secondary } },
+        }
+        { id: "s0-a1" capability: "core.path" d: "M200 180 H300" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s0-hello" capability: "core.text" text: "_hello" layout: { x: 225, y: 152, width: 50, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.tertiary, textAnchor: "middle" } }
         {
-          id: "velo0"
+          id: "s0-velo"
           capability: "core.rect"
-          layout: { x: 250, y: 110, width: 160, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          layout: { x: 300, y: 140, width: 170, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Velo transport: resolve PeerInfo" }
           children: [
-            { id: "velo0-title" capability: "core.text" text: "Velo transport" layout: { x: 258, y: 135, width: 144, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "velo0-detail" capability: "core.text" text: "resolve PeerInfo" layout: { x: 258, y: 155, width: 144, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s0-velo-t" capability: "core.text" text: "Velo transport" layout: { x: 300, y: 160, width: 170, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s0-velo-d" capability: "core.text" text: "resolve PeerInfo" layout: { x: 300, y: 184, width: 170, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a0b" capability: "core.path" d: "M410 145 H480" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
-        { id: "peer0" capability: "core.text" text: "PeerInfo" layout: { x: 420, y: 128, width: 60, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.warning } },
+        }
+        { id: "s0-a2" capability: "core.path" d: "M470 180 H540" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "ctrl0"
+          id: "s0-ctrl"
           capability: "core.rect"
-          layout: { x: 480, y: 110, width: 180, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          layout: { x: 540, y: 140, width: 140, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Controller: register_peer" }
           children: [
-            { id: "ctrl0-title" capability: "core.text" text: "Controller" layout: { x: 488, y: 135, width: 164, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ctrl0-detail" capability: "core.text" text: "register_peer" layout: { x: 488, y: 155, width: 164, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s0-ctrl-t" capability: "core.text" text: "Controller" layout: { x: 540, y: 160, width: 140, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s0-ctrl-d" capability: "core.text" text: "register_peer" layout: { x: 540, y: 184, width: 140, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "src0-label" capability: "core.text" text: "coordinate sources" layout: { x: 40, y: 210, width: 160, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.secondary } },
+        }
         {
-          id: "src-tcp"
+          id: "s0-src"
           capability: "core.rect"
-          layout: { x: 40, y: 230, width: 100, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
+          layout: { x: 210, y: 280, width: 280, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "tcp:// · uds:// · SLURM_* · k8s: coordinate sources" }
           children: [
-            { id: "src-tcp-t" capability: "core.text" text: "tcp://" layout: { x: 44, y: 252, width: 92, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
+            { id: "s0-src-t" capability: "core.text" text: "tcp:// · uds:// · SLURM_* · k8s" layout: { x: 210, y: 290, width: 280, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s0-src-d" capability: "core.text" text: "coordinate sources" layout: { x: 210, y: 314, width: 280, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "src-uds"
-          capability: "core.rect"
-          layout: { x: 150, y: 230, width: 100, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
-          children: [
-            { id: "src-uds-t" capability: "core.text" text: "uds://" layout: { x: 154, y: 252, width: 92, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
+          id: "s0-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.secondary }
+        }
         {
-          id: "src-slurm"
-          capability: "core.rect"
-          layout: { x: 260, y: 230, width: 120, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
-          children: [
-            { id: "src-slurm-t" capability: "core.text" text: "SLURM_*" layout: { x: 264, y: 252, width: 112, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "src-k8s"
-          capability: "core.rect"
-          layout: { x: 390, y: 230, width: 100, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
-          children: [
-            { id: "src-k8s-t" capability: "core.text" text: "k8s op" layout: { x: 394, y: 252, width: 92, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        { id: "a0src" capability: "core.path" d: "M115 230 V180" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } },
-        {
-          id: "ann0a"
-          capability: "core.rect"
-          layout: { x: 40, y: 290, width: 200, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          children: [
-            { id: "ann0a-title" capability: "core.text" text: "return route" layout: { x: 48, y: 305, width: 184, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann0a-detail" capability: "core.text" text: "before protocol traffic" layout: { x: 48, y: 325, width: 184, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        {
-          id: "ann0b"
-          capability: "core.rect"
-          layout: { x: 260, y: 290, width: 220, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            { id: "ann0b-title" capability: "core.text" text: "connect.rs" layout: { x: 268, y: 305, width: 204, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann0b-detail" capability: "core.text" text: "velo_transport.rs" layout: { x: 268, y: 325, width: 204, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        {
-          id: "ann0c"
-          capability: "core.rect"
-          layout: { x: 500, y: 290, width: 160, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            { id: "ann0c-title" capability: "core.text" text: "no early traffic" layout: { x: 508, y: 305, width: 144, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann0c-detail" capability: "core.text" text: "until peer registered" layout: { x: 508, y: 325, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        { id: "motion0" capability: "core.path" d: "M110 145 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
+          id: "s0-motion-sig"
+          capability: "core.path"
+          d: "M110 175 H560"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
       ]
       timeline: [
-        { id: "s0-hdr0" at: 0 duration: 260 target: "hdr0" action: "enter" },
-        { id: "s0-ph0a" at: 80 duration: 180 target: "ph0a" action: "enter" },
-        { id: "s0-ph0b" at: 140 duration: 180 target: "ph0b" action: "enter" },
-        { id: "s0-ph0c" at: 200 duration: 180 target: "ph0c" action: "enter" },
-        { id: "s0-cell0" at: 320 duration: 280 target: "cell0" action: "enter" },
-        { id: "s0-a0a" at: 520 duration: 360 target: "a0a" action: "draw" },
-        { id: "s0-hello0" at: 560 duration: 200 target: "hello0" action: "enter" },
-        { id: "s0-velo0" at: 700 duration: 280 target: "velo0" action: "enter" },
-        { id: "s0-a0b" at: 900 duration: 360 target: "a0b" action: "draw" },
-        { id: "s0-peer0" at: 940 duration: 180 target: "peer0" action: "enter" },
-        { id: "s0-ctrl0" at: 1100 duration: 280 target: "ctrl0" action: "enter" },
-        { id: "s0-src0-label" at: 1280 duration: 200 target: "src0-label" action: "enter" },
-        { id: "s0-src-tcp" at: 1380 duration: 220 target: "src-tcp" action: "enter" },
-        { id: "s0-src-uds" at: 1480 duration: 220 target: "src-uds" action: "enter" },
-        { id: "s0-src-slurm" at: 1580 duration: 220 target: "src-slurm" action: "enter" },
-        { id: "s0-src-k8s" at: 1680 duration: 220 target: "src-k8s" action: "enter" },
-        { id: "s0-a0src" at: 1780 duration: 320 target: "a0src" action: "draw" },
-        { id: "s0-ann0a" at: 1960 duration: 240 target: "ann0a" action: "enter" },
-        { id: "s0-ann0b" at: 2080 duration: 240 target: "ann0b" action: "enter" },
-        { id: "s0-ann0c" at: 2200 duration: 240 target: "ann0c" action: "enter" },
-        { id: "s0-motion0" at: 2380 duration: 520 target: "motion0" action: "draw" },
-        { id: "s0-emph" at: 2860 duration: 400 target: "ctrl0" action: "emphasis" },
-        { id: "s0-auto-hdr0-text" at: 2940 duration: 200 target: "hdr0-text" action: "enter" },
-        { id: "s0-auto-hdr0-cap" at: 2995 duration: 200 target: "hdr0-cap" action: "enter" },
-        { id: "s0-auto-cell0-title" at: 3050 duration: 200 target: "cell0-title" action: "enter" },
-        { id: "s0-auto-cell0-detail" at: 3105 duration: 200 target: "cell0-detail" action: "enter" },
-        { id: "s0-auto-velo0-title" at: 3160 duration: 200 target: "velo0-title" action: "enter" },
-        { id: "s0-auto-velo0-detail" at: 3215 duration: 200 target: "velo0-detail" action: "enter" },
-        { id: "s0-auto-ctrl0-title" at: 3270 duration: 200 target: "ctrl0-title" action: "enter" },
-        { id: "s0-auto-ctrl0-detail" at: 3325 duration: 200 target: "ctrl0-detail" action: "enter" },
-        { id: "s0-auto-src-tcp-t" at: 3380 duration: 200 target: "src-tcp-t" action: "enter" },
-        { id: "s0-auto-src-uds-t" at: 3435 duration: 200 target: "src-uds-t" action: "enter" },
-        { id: "s0-auto-src-slurm-t" at: 3490 duration: 200 target: "src-slurm-t" action: "enter" },
-        { id: "s0-auto-src-k8s-t" at: 3545 duration: 200 target: "src-k8s-t" action: "enter" },
-        { id: "s0-auto-ann0a-title" at: 3600 duration: 200 target: "ann0a-title" action: "enter" },
-        { id: "s0-auto-ann0a-detail" at: 3655 duration: 200 target: "ann0a-detail" action: "enter" },
-        { id: "s0-auto-ann0b-title" at: 3710 duration: 200 target: "ann0b-title" action: "enter" },
-        { id: "s0-auto-ann0b-detail" at: 3765 duration: 200 target: "ann0b-detail" action: "enter" },
-        { id: "s0-auto-ann0c-title" at: 3820 duration: 200 target: "ann0c-title" action: "enter" },
-        { id: "s0-auto-ann0c-detail" at: 3875 duration: 200 target: "ann0c-detail" action: "enter" },
+        { id: "s0-enter-hdr" at: 0 duration: 260 target: "s0-hdr" action: "enter" }
+        { id: "s0-enter-cell" at: 200 duration: 280 target: "s0-cell" action: "enter" }
+        { id: "s0-draw-a1" at: 420 duration: 360 target: "s0-a1" action: "draw" }
+        { id: "s0-enter-hello" at: 480 duration: 180 target: "s0-hello" action: "enter" }
+        { id: "s0-enter-velo" at: 620 duration: 280 target: "s0-velo" action: "enter" }
+        { id: "s0-draw-a2" at: 840 duration: 360 target: "s0-a2" action: "draw" }
+        { id: "s0-enter-ctrl" at: 1040 duration: 280 target: "s0-ctrl" action: "enter" }
+        { id: "s0-enter-src" at: 1280 duration: 260 target: "s0-src" action: "enter" }
+        { id: "s0-enter-mdot" at: 1480 duration: 200 target: "s0-motion-sig-dot" action: "enter" }
+        { id: "s0-draw-motion" at: 1600 duration: 700 target: "s0-motion-sig" action: "draw" }
+        { id: "s0-emph" at: 2300 duration: 400 target: "s0-ctrl" action: "emphasis" }
       ]
     }
   }
@@ -221,173 +143,94 @@ explainer "Velo deep dive" {
     ]
     caption: "decode CellRegister → spec_for(cell_id) → RegisterReply."
 
-        render: @scene {
+    render: @scene {
       roots: [
         {
-          id: "hdr1"
+          id: "s1-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "REGISTRATION REPLY" }
           children: [
-            { id: "hdr1-text" capability: "core.text" text: "REGISTRATION REPLY" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr1-cap" capability: "core.text" text: "decode CellRegister → spec_for(cell_id) → RegisterReply." layout: { x: 300, y: 34, width: 370, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s1-hdr-l" capability: "core.text" text: "REGISTRATION REPLY" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
+            { id: "s1-hdr-c" capability: "core.text" text: "decode CellRegister → spec_for(cell_id) → RegisterReply." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
           ]
-        },
-        { id: "ph1a" capability: "core.text" text: "DECODE" layout: { x: 50, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph1b" capability: "core.text" text: "ROUTE" layout: { x: 240, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph1c" capability: "core.text" text: "LOOKUP" layout: { x: 430, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph1d" capability: "core.text" text: "REPLY" layout: { x: 560, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
+        }
         {
-          id: "reg1"
+          id: "s1-reg"
           capability: "core.rect"
-          layout: { x: 30, y: 110, width: 140, height: 64 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "CellRegister: cell_id u32" }
+          layout: { x: 30, y: 150, width: 150, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "CellRegister: cell_id: u32" }
           children: [
-            { id: "reg1-title" capability: "core.text" text: "CellRegister" layout: { x: 38, y: 132, width: 124, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "reg1-detail" capability: "core.text" text: "cell_id: u32" layout: { x: 38, y: 152, width: 124, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s1-reg-t" capability: "core.text" text: "CellRegister" layout: { x: 30, y: 165, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s1-reg-d" capability: "core.text" text: "cell_id: u32" layout: { x: 30, y: 189, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a1a" capability: "core.path" d: "M170 142 H210" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s1-a1" capability: "core.path" d: "M180 185 H225" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "peer1"
+          id: "s1-peer"
           capability: "core.rect"
-          layout: { x: 210, y: 110, width: 140, height: 64 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          layout: { x: 225, y: 150, width: 150, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "register_peer: return route" }
           children: [
-            { id: "peer1-title" capability: "core.text" text: "register_peer" layout: { x: 218, y: 132, width: 124, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "peer1-detail" capability: "core.text" text: "return route" layout: { x: 218, y: 152, width: 124, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s1-peer-t" capability: "core.text" text: "register_peer" layout: { x: 225, y: 165, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s1-peer-d" capability: "core.text" text: "return route" layout: { x: 225, y: 189, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a1b" capability: "core.path" d: "M350 142 H390" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s1-a2" capability: "core.path" d: "M375 185 H420" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "spec1"
+          id: "s1-spec"
           capability: "core.rect"
-          layout: { x: 390, y: 110, width: 140, height: 64 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "spec_for: pure lookup" }
+          layout: { x: 420, y: 150, width: 150, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "spec_for(id): pure lookup" }
           children: [
-            { id: "spec1-title" capability: "core.text" text: "spec_for(id)" layout: { x: 398, y: 132, width: 124, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "spec1-detail" capability: "core.text" text: "pure lookup" layout: { x: 398, y: 152, width: 124, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s1-spec-t" capability: "core.text" text: "spec_for(id)" layout: { x: 420, y: 165, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s1-spec-d" capability: "core.text" text: "pure lookup" layout: { x: 420, y: 189, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a1c" capability: "core.path" d: "M530 142 H570" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
-        { id: "a1d" capability: "core.path" d: "M460 174 V240" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s1-a3" capability: "core.path" d: "M570 185 H610" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s1-a4" capability: "core.path" d: "M495 220 V280" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "reply1"
+          id: "s1-reply"
           capability: "core.rect"
-          layout: { x: 450, y: 240, width: 210, height: 64 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          layout: { x: 470, y: 280, width: 200, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "RegisterReply: envelope + start_event" }
           children: [
-            { id: "reply1-title" capability: "core.text" text: "RegisterReply" layout: { x: 458, y: 262, width: 194, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "reply1-detail" capability: "core.text" text: "envelope + start_event" layout: { x: 458, y: 282, width: 194, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s1-reply-t" capability: "core.text" text: "RegisterReply" layout: { x: 470, y: 295, width: 200, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s1-reply-d" capability: "core.text" text: "envelope + start_event" layout: { x: 470, y: 319, width: 200, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "dec1"
-          capability: "core.rect"
-          layout: { x: 30, y: 210, width: 140, height: 54 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            { id: "dec1-title" capability: "core.text" text: "decode identity" layout: { x: 38, y: 227, width: 124, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "dec1-detail" capability: "core.text" text: "unary ingress" layout: { x: 38, y: 247, width: 124, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
+          id: "s1-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.secondary }
+        }
         {
-          id: "env1"
-          capability: "core.rect"
-          layout: { x: 190, y: 220, width: 100, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-          children: [
-            { id: "env1-t" capability: "core.text" text: "envelope" layout: { x: 194, y: 242, width: 92, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "start1"
-          capability: "core.rect"
-          layout: { x: 300, y: 220, width: 110, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-          children: [
-            { id: "start1-t" capability: "core.text" text: "start_event" layout: { x: 304, y: 242, width: 102, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "ann1a"
-          capability: "core.rect"
-          layout: { x: 30, y: 300, width: 200, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            { id: "ann1a-title" capability: "core.text" text: "controller→cell" layout: { x: 38, y: 315, width: 184, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann1a-detail" capability: "core.text" text: "return route fixed" layout: { x: 38, y: 335, width: 184, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        {
-          id: "ann1b"
-          capability: "core.rect"
-          layout: { x: 250, y: 300, width: 200, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            { id: "ann1b-title" capability: "core.text" text: "pre-sliced v2" layout: { x: 258, y: 315, width: 184, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann1b-detail" capability: "core.text" text: "spec_for(cell_id)" layout: { x: 258, y: 335, width: 184, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        {
-          id: "ann1c"
-          capability: "core.rect"
-          layout: { x: 470, y: 320, width: 190, height: 40 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          children: [
-            { id: "ann1c-title" capability: "core.text" text: "EventHandle shared" layout: { x: 478, y: 330, width: 174, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann1c-detail" capability: "core.text" text: "run-wide START" layout: { x: 478, y: 350, width: 174, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        { id: "motion1" capability: "core.path" d: "M110 142 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
+          id: "s1-motion-sig"
+          capability: "core.path"
+          d: "M110 170 H560"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
       ]
       timeline: [
-        { id: "s1-hdr1" at: 0 duration: 260 target: "hdr1" action: "enter" },
-        { id: "s1-ph1a" at: 80 duration: 160 target: "ph1a" action: "enter" },
-        { id: "s1-ph1b" at: 140 duration: 160 target: "ph1b" action: "enter" },
-        { id: "s1-ph1c" at: 200 duration: 160 target: "ph1c" action: "enter" },
-        { id: "s1-ph1d" at: 260 duration: 160 target: "ph1d" action: "enter" },
-        { id: "s1-reg1" at: 360 duration: 260 target: "reg1" action: "enter" },
-        { id: "s1-a1a" at: 540 duration: 340 target: "a1a" action: "draw" },
-        { id: "s1-peer1" at: 700 duration: 260 target: "peer1" action: "enter" },
-        { id: "s1-a1b" at: 880 duration: 340 target: "a1b" action: "draw" },
-        { id: "s1-spec1" at: 1040 duration: 260 target: "spec1" action: "enter" },
-        { id: "s1-a1c" at: 1220 duration: 340 target: "a1c" action: "draw" },
-        { id: "s1-a1d" at: 1320 duration: 340 target: "a1d" action: "draw" },
-        { id: "s1-reply1" at: 1500 duration: 280 target: "reply1" action: "enter" },
-        { id: "s1-dec1" at: 1680 duration: 240 target: "dec1" action: "enter" },
-        { id: "s1-env1" at: 1800 duration: 200 target: "env1" action: "enter" },
-        { id: "s1-start1" at: 1900 duration: 200 target: "start1" action: "enter" },
-        { id: "s1-ann1a" at: 2040 duration: 220 target: "ann1a" action: "enter" },
-        { id: "s1-ann1b" at: 2160 duration: 220 target: "ann1b" action: "enter" },
-        { id: "s1-ann1c" at: 2280 duration: 220 target: "ann1c" action: "enter" },
-        { id: "s1-motion1" at: 2440 duration: 500 target: "motion1" action: "draw" },
-        { id: "s1-emph" at: 2900 duration: 400 target: "reply1" action: "emphasis" },
-        { id: "s1-auto-hdr1-text" at: 2980 duration: 200 target: "hdr1-text" action: "enter" },
-        { id: "s1-auto-hdr1-cap" at: 3035 duration: 200 target: "hdr1-cap" action: "enter" },
-        { id: "s1-auto-reg1-title" at: 3090 duration: 200 target: "reg1-title" action: "enter" },
-        { id: "s1-auto-reg1-detail" at: 3145 duration: 200 target: "reg1-detail" action: "enter" },
-        { id: "s1-auto-peer1-title" at: 3200 duration: 200 target: "peer1-title" action: "enter" },
-        { id: "s1-auto-peer1-detail" at: 3255 duration: 200 target: "peer1-detail" action: "enter" },
-        { id: "s1-auto-spec1-title" at: 3310 duration: 200 target: "spec1-title" action: "enter" },
-        { id: "s1-auto-spec1-detail" at: 3365 duration: 200 target: "spec1-detail" action: "enter" },
-        { id: "s1-auto-reply1-title" at: 3420 duration: 200 target: "reply1-title" action: "enter" },
-        { id: "s1-auto-reply1-detail" at: 3475 duration: 200 target: "reply1-detail" action: "enter" },
-        { id: "s1-auto-dec1-title" at: 3530 duration: 200 target: "dec1-title" action: "enter" },
-        { id: "s1-auto-dec1-detail" at: 3585 duration: 200 target: "dec1-detail" action: "enter" },
-        { id: "s1-auto-env1-t" at: 3640 duration: 200 target: "env1-t" action: "enter" },
-        { id: "s1-auto-start1-t" at: 3695 duration: 200 target: "start1-t" action: "enter" },
-        { id: "s1-auto-ann1a-title" at: 3750 duration: 200 target: "ann1a-title" action: "enter" },
-        { id: "s1-auto-ann1a-detail" at: 3805 duration: 200 target: "ann1a-detail" action: "enter" },
-        { id: "s1-auto-ann1b-title" at: 3860 duration: 200 target: "ann1b-title" action: "enter" },
-        { id: "s1-auto-ann1b-detail" at: 3915 duration: 200 target: "ann1b-detail" action: "enter" },
-        { id: "s1-auto-ann1c-title" at: 3970 duration: 200 target: "ann1c-title" action: "enter" },
-        { id: "s1-auto-ann1c-detail" at: 4025 duration: 200 target: "ann1c-detail" action: "enter" },
+        { id: "s1-enter-hdr" at: 0 duration: 260 target: "s1-hdr" action: "enter" }
+        { id: "s1-enter-reg" at: 200 duration: 260 target: "s1-reg" action: "enter" }
+        { id: "s1-draw-a1" at: 400 duration: 300 target: "s1-a1" action: "draw" }
+        { id: "s1-enter-peer" at: 560 duration: 260 target: "s1-peer" action: "enter" }
+        { id: "s1-draw-a2" at: 760 duration: 300 target: "s1-a2" action: "draw" }
+        { id: "s1-enter-spec" at: 920 duration: 260 target: "s1-spec" action: "enter" }
+        { id: "s1-draw-a3" at: 1120 duration: 280 target: "s1-a3" action: "draw" }
+        { id: "s1-draw-a4" at: 1240 duration: 300 target: "s1-a4" action: "draw" }
+        { id: "s1-enter-reply" at: 1400 duration: 280 target: "s1-reply" action: "enter" }
+        { id: "s1-enter-mdot" at: 1600 duration: 180 target: "s1-motion-sig-dot" action: "enter" }
+        { id: "s1-draw-motion" at: 1720 duration: 700 target: "s1-motion-sig" action: "draw" }
+        { id: "s1-emph" at: 2420 duration: 400 target: "s1-reply" action: "emphasis" }
       ]
     }
   }
@@ -408,184 +251,120 @@ explainer "Velo deep dive" {
     ]
     caption: "N registrations → trigger → all awaiters go Ready."
 
-        render: @scene {
+    render: @scene {
       roots: [
         {
-          id: "hdr2"
+          id: "s2-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "SYNCHRONIZED START" }
           children: [
-            { id: "hdr2-text" capability: "core.text" text: "SYNCHRONIZED START" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr2-cap" capability: "core.text" text: "N registrations → trigger → all awaiters go Ready." layout: { x: 300, y: 34, width: 370, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s2-hdr-l" capability: "core.text" text: "SYNCHRONIZED START" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
+            { id: "s2-hdr-c" capability: "core.text" text: "N registrations → trigger → all awaiters go Ready." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
           ]
-        },
-        { id: "ph2a" capability: "core.text" text: "ASYNC ARRIVE" layout: { x: 40, y: 78, width: 120, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph2b" capability: "core.text" text: "BARRIER" layout: { x: 300, y: 78, width: 100, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph2c" capability: "core.text" text: "RELEASE" layout: { x: 520, y: 78, width: 100, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
+        }
         {
-          id: "c20"
+          id: "s2-c0"
           capability: "core.rect"
-          layout: { x: 30, y: 280, width: 80, height: 56 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 30, y: 280, width: 80, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "c0: register" }
           children: [
-            { id: "c20-title" capability: "core.text" text: "c0" layout: { x: 38, y: 298, width: 64, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "c20-detail" capability: "core.text" text: "register" layout: { x: 38, y: 318, width: 64, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s2-c0-t" capability: "core.text" text: "c0" layout: { x: 30, y: 290, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s2-c0-d" capability: "core.text" text: "register" layout: { x: 30, y: 314, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a20" capability: "core.path" d: "M70 280 C70 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        }
         {
-          id: "c21"
+          id: "s2-c1"
           capability: "core.rect"
-          layout: { x: 130, y: 280, width: 80, height: 56 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 130, y: 280, width: 80, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "c1: register" }
           children: [
-            { id: "c21-title" capability: "core.text" text: "c1" layout: { x: 138, y: 298, width: 64, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "c21-detail" capability: "core.text" text: "register" layout: { x: 138, y: 318, width: 64, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s2-c1-t" capability: "core.text" text: "c1" layout: { x: 130, y: 290, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s2-c1-d" capability: "core.text" text: "register" layout: { x: 130, y: 314, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a21" capability: "core.path" d: "M170 280 C170 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        }
         {
-          id: "c22"
+          id: "s2-c2"
           capability: "core.rect"
-          layout: { x: 230, y: 280, width: 80, height: 56 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 230, y: 280, width: 80, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "c2: register" }
           children: [
-            { id: "c22-title" capability: "core.text" text: "c2" layout: { x: 238, y: 298, width: 64, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "c22-detail" capability: "core.text" text: "register" layout: { x: 238, y: 318, width: 64, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s2-c2-t" capability: "core.text" text: "c2" layout: { x: 230, y: 290, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s2-c2-d" capability: "core.text" text: "register" layout: { x: 230, y: 314, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a22" capability: "core.path" d: "M270 280 C270 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        }
         {
-          id: "c23"
+          id: "s2-c3"
           capability: "core.rect"
-          layout: { x: 330, y: 280, width: 80, height: 56 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 330, y: 280, width: 80, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "c3: register" }
           children: [
-            { id: "c23-title" capability: "core.text" text: "c3" layout: { x: 338, y: 298, width: 64, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "c23-detail" capability: "core.text" text: "register" layout: { x: 338, y: 318, width: 64, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s2-c3-t" capability: "core.text" text: "c3" layout: { x: 330, y: 290, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s2-c3-d" capability: "core.text" text: "register" layout: { x: 330, y: 314, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a23" capability: "core.path" d: "M370 280 C370 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s2-a0" capability: "core.path" d: "M70 280 C70 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
+        { id: "s2-a1" capability: "core.path" d: "M170 280 C170 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
+        { id: "s2-a2" capability: "core.path" d: "M270 280 C270 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
+        { id: "s2-a3" capability: "core.path" d: "M370 280 C370 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "barrier2"
+          id: "s2-barrier"
           capability: "core.rect"
-          layout: { x: 460, y: 150, width: 180, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          layout: { x: 460, y: 150, width: 180, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Barrier: all_registered → trigger" }
           children: [
-            { id: "barrier2-title" capability: "core.text" text: "Barrier" layout: { x: 468, y: 175, width: 164, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "barrier2-detail" capability: "core.text" text: "all_registered → trigger" layout: { x: 468, y: 195, width: 164, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s2-barrier-t" capability: "core.text" text: "Barrier" layout: { x: 460, y: 170, width: 180, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s2-barrier-d" capability: "core.text" text: "all_registered → trigger" layout: { x: 460, y: 194, width: 180, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "start2"
+          id: "s2-start"
           capability: "core.rect"
-          layout: { x: 210, y: 100, width: 220, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          layout: { x: 210, y: 110, width: 220, height: 54 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "START event: wake all awaiters" }
           children: [
-            { id: "start2-title" capability: "core.text" text: "START event" layout: { x: 218, y: 115, width: 204, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "start2-detail" capability: "core.text" text: "wake all awaiters" layout: { x: 218, y: 135, width: 204, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s2-start-t" capability: "core.text" text: "START event" layout: { x: 210, y: 117, width: 220, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s2-start-d" capability: "core.text" text: "wake all awaiters" layout: { x: 210, y: 141, width: 220, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a2b" capability: "core.path" d: "M550 150 C520 120 470 125 430 125" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s2-aw" capability: "core.path" d: "M550 150 C520 120 470 130 430 137" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "pol-sync"
-          capability: "core.rect"
-          layout: { x: 40, y: 200, width: 110, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-          children: [
-            { id: "pol-sync-t" capability: "core.text" text: "synchronized" layout: { x: 44, y: 220, width: 102, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
+          id: "s2-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.secondary }
+        }
         {
-          id: "pol-free"
-          capability: "core.rect"
-          layout: { x: 160, y: 200, width: 110, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.4 }
-          children: [
-            { id: "pol-free-t" capability: "core.text" text: "barrier-free" layout: { x: 164, y: 220, width: 102, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "pol-phas"
-          capability: "core.rect"
-          layout: { x: 280, y: 200, width: 90, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.4 }
-          children: [
-            { id: "pol-phas-t" capability: "core.text" text: "phaser" layout: { x: 284, y: 220, width: 82, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        { id: "pol-note" capability: "core.text" text: "default · opt-in · opt-in" layout: { x: 40, y: 244, width: 220, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } },
-        {
-          id: "ann2a"
-          capability: "core.rect"
-          layout: { x: 500, y: 280, width: 160, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            { id: "ann2a-title" capability: "core.text" text: "no shared clock" layout: { x: 508, y: 295, width: 144, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann2a-detail" capability: "core.text" text: "bounds start skew" layout: { x: 508, y: 315, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        {
-          id: "ann2b"
-          capability: "core.rect"
-          layout: { x: 500, y: 340, width: 160, height: 40 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            { id: "ann2b-title" capability: "core.text" text: "Nth unlocks all" layout: { x: 508, y: 350, width: 144, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann2b-detail" capability: "core.text" text: "cellular_controller" layout: { x: 508, y: 370, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        { id: "motion2" capability: "core.path" d: "M350 300 V150" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
+          id: "s2-motion-sig"
+          capability: "core.path"
+          d: "M350 300 V150"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
       ]
       timeline: [
-        { id: "s2-hdr2" at: 0 duration: 260 target: "hdr2" action: "enter" },
-        { id: "s2-ph2a" at: 80 duration: 160 target: "ph2a" action: "enter" },
-        { id: "s2-ph2b" at: 140 duration: 160 target: "ph2b" action: "enter" },
-        { id: "s2-ph2c" at: 200 duration: 160 target: "ph2c" action: "enter" },
-        { id: "s2-c20" at: 300 duration: 220 target: "c20" action: "enter" },
-        { id: "s2-c21" at: 400 duration: 220 target: "c21" action: "enter" },
-        { id: "s2-c22" at: 500 duration: 220 target: "c22" action: "enter" },
-        { id: "s2-c23" at: 600 duration: 220 target: "c23" action: "enter" },
-        { id: "s2-a20" at: 720 duration: 360 target: "a20" action: "draw" },
-        { id: "s2-a21" at: 820 duration: 360 target: "a21" action: "draw" },
-        { id: "s2-a22" at: 920 duration: 360 target: "a22" action: "draw" },
-        { id: "s2-a23" at: 1020 duration: 360 target: "a23" action: "draw" },
-        { id: "s2-barrier2" at: 1160 duration: 280 target: "barrier2" action: "enter" },
-        { id: "s2-a2b" at: 1360 duration: 360 target: "a2b" action: "draw" },
-        { id: "s2-start2" at: 1560 duration: 280 target: "start2" action: "enter" },
-        { id: "s2-pol-sync" at: 1740 duration: 200 target: "pol-sync" action: "enter" },
-        { id: "s2-pol-free" at: 1840 duration: 200 target: "pol-free" action: "enter" },
-        { id: "s2-pol-phas" at: 1940 duration: 200 target: "pol-phas" action: "enter" },
-        { id: "s2-pol-note" at: 2040 duration: 180 target: "pol-note" action: "enter" },
-        { id: "s2-ann2a" at: 2160 duration: 220 target: "ann2a" action: "enter" },
-        { id: "s2-ann2b" at: 2280 duration: 220 target: "ann2b" action: "enter" },
-        { id: "s2-motion2" at: 2440 duration: 480 target: "motion2" action: "draw" },
-        { id: "s2-emph" at: 2880 duration: 400 target: "start2" action: "emphasis" },
-        { id: "s2-auto-hdr2-text" at: 2960 duration: 200 target: "hdr2-text" action: "enter" },
-        { id: "s2-auto-hdr2-cap" at: 3015 duration: 200 target: "hdr2-cap" action: "enter" },
-        { id: "s2-auto-c20-title" at: 3070 duration: 200 target: "c20-title" action: "enter" },
-        { id: "s2-auto-c20-detail" at: 3125 duration: 200 target: "c20-detail" action: "enter" },
-        { id: "s2-auto-c21-title" at: 3180 duration: 200 target: "c21-title" action: "enter" },
-        { id: "s2-auto-c21-detail" at: 3235 duration: 200 target: "c21-detail" action: "enter" },
-        { id: "s2-auto-c22-title" at: 3290 duration: 200 target: "c22-title" action: "enter" },
-        { id: "s2-auto-c22-detail" at: 3345 duration: 200 target: "c22-detail" action: "enter" },
-        { id: "s2-auto-c23-title" at: 3400 duration: 200 target: "c23-title" action: "enter" },
-        { id: "s2-auto-c23-detail" at: 3455 duration: 200 target: "c23-detail" action: "enter" },
-        { id: "s2-auto-barrier2-title" at: 3510 duration: 200 target: "barrier2-title" action: "enter" },
-        { id: "s2-auto-barrier2-detail" at: 3565 duration: 200 target: "barrier2-detail" action: "enter" },
-        { id: "s2-auto-start2-title" at: 3620 duration: 200 target: "start2-title" action: "enter" },
-        { id: "s2-auto-start2-detail" at: 3675 duration: 200 target: "start2-detail" action: "enter" },
-        { id: "s2-auto-pol-sync-t" at: 3730 duration: 200 target: "pol-sync-t" action: "enter" },
-        { id: "s2-auto-pol-free-t" at: 3785 duration: 200 target: "pol-free-t" action: "enter" },
-        { id: "s2-auto-pol-phas-t" at: 3840 duration: 200 target: "pol-phas-t" action: "enter" },
-        { id: "s2-auto-ann2a-title" at: 3895 duration: 200 target: "ann2a-title" action: "enter" },
-        { id: "s2-auto-ann2a-detail" at: 3950 duration: 200 target: "ann2a-detail" action: "enter" },
-        { id: "s2-auto-ann2b-title" at: 4005 duration: 200 target: "ann2b-title" action: "enter" },
-        { id: "s2-auto-ann2b-detail" at: 4060 duration: 200 target: "ann2b-detail" action: "enter" },
+        { id: "s2-enter-hdr" at: 0 duration: 260 target: "s2-hdr" action: "enter" }
+        { id: "s2-enter-c0" at: 200 duration: 220 target: "s2-c0" action: "enter" }
+        { id: "s2-enter-c1" at: 300 duration: 220 target: "s2-c1" action: "enter" }
+        { id: "s2-enter-c2" at: 400 duration: 220 target: "s2-c2" action: "enter" }
+        { id: "s2-enter-c3" at: 500 duration: 220 target: "s2-c3" action: "enter" }
+        { id: "s2-draw-a0" at: 620 duration: 360 target: "s2-a0" action: "draw" }
+        { id: "s2-draw-a1" at: 740 duration: 360 target: "s2-a1" action: "draw" }
+        { id: "s2-draw-a2" at: 860 duration: 360 target: "s2-a2" action: "draw" }
+        { id: "s2-draw-a3" at: 980 duration: 360 target: "s2-a3" action: "draw" }
+        { id: "s2-enter-barrier" at: 1100 duration: 280 target: "s2-barrier" action: "enter" }
+        { id: "s2-draw-aw" at: 1320 duration: 320 target: "s2-aw" action: "draw" }
+        { id: "s2-enter-start" at: 1480 duration: 260 target: "s2-start" action: "enter" }
+        { id: "s2-enter-mdot" at: 1680 duration: 180 target: "s2-motion-sig-dot" action: "enter" }
+        { id: "s2-draw-motion" at: 1800 duration: 700 target: "s2-motion-sig" action: "draw" }
+        { id: "s2-emph" at: 2500 duration: 400 target: "s2-barrier" action: "emphasis" }
       ]
     }
   }
@@ -606,171 +385,94 @@ explainer "Velo deep dive" {
     ]
     caption: "to_vec → raw payload → from_slice → typed value."
 
-        render: @scene {
+    render: @scene {
       roots: [
         {
-          id: "hdr3"
+          id: "s3-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "MESSAGEPACK CODEC" }
           children: [
-            { id: "hdr3-text" capability: "core.text" text: "MESSAGEPACK CODEC" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr3-cap" capability: "core.text" text: "to_vec → raw payload → from_slice → typed value." layout: { x: 300, y: 34, width: 370, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s3-hdr-l" capability: "core.text" text: "MESSAGEPACK CODEC" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
+            { id: "s3-hdr-c" capability: "core.text" text: "to_vec → raw payload → from_slice → typed value." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
           ]
-        },
-        { id: "ph3a" capability: "core.text" text: "TYPED" layout: { x: 60, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph3b" capability: "core.text" text: "ENCODE" layout: { x: 230, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph3c" capability: "core.text" text: "BYTES" layout: { x: 400, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph3d" capability: "core.text" text: "DECODE" layout: { x: 560, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
+        }
         {
-          id: "msg3"
+          id: "s3-msg"
           capability: "core.rect"
-          layout: { x: 30, y: 120, width: 140, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "CellMessage: ttft NaN · max +∞" }
+          layout: { x: 30, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "CellMessage: ttft: NaN · max +∞" }
           children: [
-            { id: "msg3-title" capability: "core.text" text: "CellMessage" layout: { x: 38, y: 145, width: 124, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "msg3-detail" capability: "core.text" text: "ttft: NaN · max +∞" layout: { x: 38, y: 165, width: 124, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s3-msg-t" capability: "core.text" text: "CellMessage" layout: { x: 30, y: 170, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s3-msg-d" capability: "core.text" text: "ttft: NaN · max +∞" layout: { x: 30, y: 194, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a3a" capability: "core.path" d: "M170 155 H210" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s3-a1" capability: "core.path" d: "M180 190 H225" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "tovec3"
+          id: "s3-vec"
           capability: "core.rect"
-          layout: { x: 210, y: 120, width: 120, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          layout: { x: 225, y: 150, width: 130, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "to_vec: rmp_serde" }
           children: [
-            { id: "tovec3-title" capability: "core.text" text: "to_vec" layout: { x: 218, y: 145, width: 104, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "tovec3-detail" capability: "core.text" text: "rmp_serde" layout: { x: 218, y: 165, width: 104, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s3-vec-t" capability: "core.text" text: "to_vec" layout: { x: 225, y: 170, width: 130, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s3-vec-d" capability: "core.text" text: "rmp_serde" layout: { x: 225, y: 194, width: 130, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a3b" capability: "core.path" d: "M330 155 H370" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s3-a2" capability: "core.path" d: "M355 190 H400" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "raw3"
+          id: "s3-raw"
           capability: "core.rect"
-          layout: { x: 370, y: 120, width: 120, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 400, y: 150, width: 130, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "raw bytes: Velo payload" }
           children: [
-            { id: "raw3-title" capability: "core.text" text: "raw bytes" layout: { x: 378, y: 145, width: 104, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "raw3-detail" capability: "core.text" text: "Velo payload" layout: { x: 378, y: 165, width: 104, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s3-raw-t" capability: "core.text" text: "raw bytes" layout: { x: 400, y: 170, width: 130, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s3-raw-d" capability: "core.text" text: "Velo payload" layout: { x: 400, y: 194, width: 130, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a3c" capability: "core.path" d: "M490 155 H540" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } },
-        { id: "a3d" capability: "core.path" d: "M580 190 V250" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s3-a3" capability: "core.path" d: "M530 190 H575" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s3-a4" capability: "core.path" d: "M600 230 V280" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "from3"
+          id: "s3-from"
           capability: "core.rect"
-          layout: { x: 520, y: 250, width: 140, height: 64 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          layout: { x: 555, y: 280, width: 130, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "from_slice: typed again" }
           children: [
-            { id: "from3-title" capability: "core.text" text: "from_slice" layout: { x: 528, y: 272, width: 124, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "from3-detail" capability: "core.text" text: "typed again" layout: { x: 528, y: 292, width: 124, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s3-from-t" capability: "core.text" text: "from_slice" layout: { x: 555, y: 295, width: 130, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s3-from-d" capability: "core.text" text: "typed again" layout: { x: 555, y: 319, width: 130, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "nan3"
-          capability: "core.rect"
-          layout: { x: 30, y: 220, width: 90, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
-          children: [
-            { id: "nan3-t" capability: "core.text" text: "NaN ok" layout: { x: 34, y: 240, width: 82, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
+          id: "s3-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.secondary }
+        }
         {
-          id: "inf3"
-          capability: "core.rect"
-          layout: { x: 130, y: 220, width: 90, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
-          children: [
-            { id: "inf3-t" capability: "core.text" text: "±∞ ok" layout: { x: 134, y: 240, width: 82, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "hb3"
-          capability: "core.rect"
-          layout: { x: 30, y: 270, width: 110, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-          children: [
-            { id: "hb3-t" capability: "core.text" text: "heartbeats" layout: { x: 34, y: 290, width: 102, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "part3"
-          capability: "core.rect"
-          layout: { x: 150, y: 270, width: 110, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-          children: [
-            { id: "part3-t" capability: "core.text" text: "partitions" layout: { x: 154, y: 290, width: 102, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        { id: "codec3" capability: "core.text" text: "same encode/decode seam" layout: { x: 30, y: 318, width: 220, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } },
-        {
-          id: "ann3a"
-          capability: "core.rect"
-          layout: { x: 280, y: 250, width: 200, height: 64 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          children: [
-            { id: "ann3a-title" capability: "core.text" text: "opaque Velo" layout: { x: 288, y: 272, width: 184, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann3a-detail" capability: "core.text" text: "MessagePack round-trip" layout: { x: 288, y: 292, width: 184, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        {
-          id: "ann3b"
-          capability: "core.rect"
-          layout: { x: 280, y: 330, width: 200, height: 40 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            { id: "ann3b-title" capability: "core.text" text: "extrema anchors" layout: { x: 288, y: 340, width: 184, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann3b-detail" capability: "core.text" text: "survive codec" layout: { x: 288, y: 360, width: 184, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        { id: "motion3" capability: "core.path" d: "M90 155 H600" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
+          id: "s3-motion-sig"
+          capability: "core.path"
+          d: "M90 180 H600"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
       ]
       timeline: [
-        { id: "s3-hdr3" at: 0 duration: 260 target: "hdr3" action: "enter" },
-        { id: "s3-ph3a" at: 80 duration: 160 target: "ph3a" action: "enter" },
-        { id: "s3-ph3b" at: 140 duration: 160 target: "ph3b" action: "enter" },
-        { id: "s3-ph3c" at: 200 duration: 160 target: "ph3c" action: "enter" },
-        { id: "s3-ph3d" at: 260 duration: 160 target: "ph3d" action: "enter" },
-        { id: "s3-msg3" at: 360 duration: 260 target: "msg3" action: "enter" },
-        { id: "s3-a3a" at: 540 duration: 340 target: "a3a" action: "draw" },
-        { id: "s3-tovec3" at: 700 duration: 260 target: "tovec3" action: "enter" },
-        { id: "s3-a3b" at: 880 duration: 340 target: "a3b" action: "draw" },
-        { id: "s3-raw3" at: 1040 duration: 260 target: "raw3" action: "enter" },
-        { id: "s3-a3c" at: 1220 duration: 340 target: "a3c" action: "draw" },
-        { id: "s3-a3d" at: 1340 duration: 340 target: "a3d" action: "draw" },
-        { id: "s3-from3" at: 1520 duration: 280 target: "from3" action: "enter" },
-        { id: "s3-nan3" at: 1700 duration: 180 target: "nan3" action: "enter" },
-        { id: "s3-inf3" at: 1800 duration: 180 target: "inf3" action: "enter" },
-        { id: "s3-hb3" at: 1900 duration: 180 target: "hb3" action: "enter" },
-        { id: "s3-part3" at: 2000 duration: 180 target: "part3" action: "enter" },
-        { id: "s3-codec3" at: 2100 duration: 180 target: "codec3" action: "enter" },
-        { id: "s3-ann3a" at: 2220 duration: 220 target: "ann3a" action: "enter" },
-        { id: "s3-ann3b" at: 2340 duration: 220 target: "ann3b" action: "enter" },
-        { id: "s3-motion3" at: 2500 duration: 500 target: "motion3" action: "draw" },
-        { id: "s3-emph" at: 2960 duration: 400 target: "raw3" action: "emphasis" },
-        { id: "s3-auto-hdr3-text" at: 3040 duration: 200 target: "hdr3-text" action: "enter" },
-        { id: "s3-auto-hdr3-cap" at: 3095 duration: 200 target: "hdr3-cap" action: "enter" },
-        { id: "s3-auto-msg3-title" at: 3150 duration: 200 target: "msg3-title" action: "enter" },
-        { id: "s3-auto-msg3-detail" at: 3205 duration: 200 target: "msg3-detail" action: "enter" },
-        { id: "s3-auto-tovec3-title" at: 3260 duration: 200 target: "tovec3-title" action: "enter" },
-        { id: "s3-auto-tovec3-detail" at: 3315 duration: 200 target: "tovec3-detail" action: "enter" },
-        { id: "s3-auto-raw3-title" at: 3370 duration: 200 target: "raw3-title" action: "enter" },
-        { id: "s3-auto-raw3-detail" at: 3425 duration: 200 target: "raw3-detail" action: "enter" },
-        { id: "s3-auto-from3-title" at: 3480 duration: 200 target: "from3-title" action: "enter" },
-        { id: "s3-auto-from3-detail" at: 3535 duration: 200 target: "from3-detail" action: "enter" },
-        { id: "s3-auto-nan3-t" at: 3590 duration: 200 target: "nan3-t" action: "enter" },
-        { id: "s3-auto-inf3-t" at: 3645 duration: 200 target: "inf3-t" action: "enter" },
-        { id: "s3-auto-hb3-t" at: 3700 duration: 200 target: "hb3-t" action: "enter" },
-        { id: "s3-auto-part3-t" at: 3755 duration: 200 target: "part3-t" action: "enter" },
-        { id: "s3-auto-ann3a-title" at: 3810 duration: 200 target: "ann3a-title" action: "enter" },
-        { id: "s3-auto-ann3a-detail" at: 3865 duration: 200 target: "ann3a-detail" action: "enter" },
-        { id: "s3-auto-ann3b-title" at: 3920 duration: 200 target: "ann3b-title" action: "enter" },
-        { id: "s3-auto-ann3b-detail" at: 3975 duration: 200 target: "ann3b-detail" action: "enter" },
+        { id: "s3-enter-hdr" at: 0 duration: 260 target: "s3-hdr" action: "enter" }
+        { id: "s3-enter-msg" at: 200 duration: 260 target: "s3-msg" action: "enter" }
+        { id: "s3-draw-a1" at: 400 duration: 300 target: "s3-a1" action: "draw" }
+        { id: "s3-enter-vec" at: 560 duration: 260 target: "s3-vec" action: "enter" }
+        { id: "s3-draw-a2" at: 760 duration: 300 target: "s3-a2" action: "draw" }
+        { id: "s3-enter-raw" at: 920 duration: 260 target: "s3-raw" action: "enter" }
+        { id: "s3-draw-a3" at: 1120 duration: 300 target: "s3-a3" action: "draw" }
+        { id: "s3-draw-a4" at: 1280 duration: 300 target: "s3-a4" action: "draw" }
+        { id: "s3-enter-from" at: 1440 duration: 260 target: "s3-from" action: "enter" }
+        { id: "s3-enter-mdot" at: 1640 duration: 180 target: "s3-motion-sig-dot" action: "enter" }
+        { id: "s3-draw-motion" at: 1760 duration: 700 target: "s3-motion-sig" action: "draw" }
+        { id: "s3-emph" at: 2460 duration: 400 target: "s3-raw" action: "emphasis" }
       ]
     }
   }
@@ -791,153 +493,94 @@ explainer "Velo deep dive" {
     ]
     caption: "snapshot counters + sketches → live aggregate · lag visible."
 
-        render: @scene {
+    render: @scene {
       roots: [
         {
-          id: "hdr4"
+          id: "s4-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "HEARTBEAT LANE" }
           children: [
-            { id: "hdr4-text" capability: "core.text" text: "HEARTBEAT LANE" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr4-cap" capability: "core.text" text: "snapshot counters + sketches → live aggregate · lag visible." layout: { x: 300, y: 34, width: 370, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s4-hdr-l" capability: "core.text" text: "HEARTBEAT LANE" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
+            { id: "s4-hdr-c" capability: "core.text" text: "snapshot counters + sketches → live aggregate · lag visible." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
           ]
-        },
-        { id: "ph4a" capability: "core.text" text: "PUSH" layout: { x: 70, y: 78, width: 60, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph4b" capability: "core.text" text: "FAN-IN" layout: { x: 280, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph4c" capability: "core.text" text: "AGGREGATE" layout: { x: 500, y: 78, width: 100, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
+        }
         {
-          id: "hb40"
+          id: "s4-c0"
           capability: "core.rect"
-          layout: { x: 40, y: 100, width: 130, height: 56 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 40, y: 100, width: 140, height: 64 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "cell 0: snapshot" }
           children: [
-            { id: "hb40-title" capability: "core.text" text: "cell 0" layout: { x: 48, y: 118, width: 114, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hb40-detail" capability: "core.text" text: "snapshot" layout: { x: 48, y: 138, width: 114, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s4-c0-t" capability: "core.text" text: "cell 0" layout: { x: 40, y: 112, width: 140, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s4-c0-d" capability: "core.text" text: "snapshot" layout: { x: 40, y: 136, width: 140, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a40" capability: "core.path" d: "M170 128 C280 128 340 190 420 190" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        }
         {
-          id: "hb41"
+          id: "s4-c1"
           capability: "core.rect"
-          layout: { x: 40, y: 180, width: 130, height: 56 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 40, y: 190, width: 140, height: 64 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "cell 1: snapshot" }
           children: [
-            { id: "hb41-title" capability: "core.text" text: "cell 1" layout: { x: 48, y: 198, width: 114, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hb41-detail" capability: "core.text" text: "snapshot" layout: { x: 48, y: 218, width: 114, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s4-c1-t" capability: "core.text" text: "cell 1" layout: { x: 40, y: 202, width: 140, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s4-c1-d" capability: "core.text" text: "snapshot" layout: { x: 40, y: 226, width: 140, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a41" capability: "core.path" d: "M170 208 C280 208 340 190 420 190" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        }
         {
-          id: "hb42"
+          id: "s4-c2"
           capability: "core.rect"
-          layout: { x: 40, y: 260, width: 130, height: 56 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.danger, strokeWidth: 1.8 }
+          layout: { x: 40, y: 280, width: 140, height: 64 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "cell 2: pulse missing" }
           children: [
-            { id: "hb42-title" capability: "core.text" text: "cell 2" layout: { x: 48, y: 278, width: 114, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hb42-detail" capability: "core.text" text: "pulse missing" layout: { x: 48, y: 298, width: 114, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s4-c2-t" capability: "core.text" text: "cell 2" layout: { x: 40, y: 292, width: 140, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s4-c2-d" capability: "core.text" text: "pulse missing" layout: { x: 40, y: 316, width: 140, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a42" capability: "core.path" d: "M170 288 C280 288 340 190 420 190" style: { stroke: @theme.accent.danger, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s4-a0" capability: "core.path" d: "M180 132 C300 132 360 200 440 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s4-a1" capability: "core.path" d: "M180 222 C300 222 360 200 440 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s4-a2" capability: "core.path" d: "M180 312 C300 312 360 200 440 200" style: { stroke: @theme.accent.orange, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "agg4"
+          id: "s4-agg"
           capability: "core.rect"
-          layout: { x: 420, y: 150, width: 220, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "Controller aggregate" }
+          layout: { x: 440, y: 160, width: 220, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "Controller aggregate: counters + sketches · lag" }
           children: [
-            { id: "agg4-title" capability: "core.text" text: "Controller aggregate" layout: { x: 428, y: 175, width: 204, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "agg4-detail" capability: "core.text" text: "counters + sketches · lag" layout: { x: 428, y: 195, width: 204, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s4-agg-t" capability: "core.text" text: "Controller aggregate" layout: { x: 440, y: 180, width: 220, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s4-agg-d" capability: "core.text" text: "counters + sketches · lag" layout: { x: 440, y: 204, width: 220, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
+        { id: "s4-note" capability: "core.text" text: "fire-and-forget · never blocks dispatch" layout: { x: 110, y: 348, width: 400, height: 16 } style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "start" } }
         {
-          id: "m-cnt"
-          capability: "core.rect"
-          layout: { x: 420, y: 100, width: 90, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
-          children: [
-            { id: "m-cnt-t" capability: "core.text" text: "counters" layout: { x: 424, y: 120, width: 82, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
+          id: "s4-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.secondary }
+        }
         {
-          id: "m-sk"
-          capability: "core.rect"
-          layout: { x: 520, y: 100, width: 90, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
-          children: [
-            { id: "m-sk-t" capability: "core.text" text: "sketches" layout: { x: 524, y: 120, width: 82, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "m-lag"
-          capability: "core.rect"
-          layout: { x: 620, y: 100, width: 60, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.danger, strokeWidth: 1.4 }
-          children: [
-            { id: "m-lag-t" capability: "core.text" text: "lag" layout: { x: 624, y: 120, width: 52, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        { id: "note4" capability: "core.text" text: "fire-and-forget · never blocks dispatch" layout: { x: 40, y: 350, width: 360, height: 16 } style: { fontSize: 12, fill: @theme.ink.secondary } },
-        {
-          id: "ann4a"
-          capability: "core.rect"
-          layout: { x: 420, y: 250, width: 220, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            { id: "ann4a-title" capability: "core.text" text: "forces retain" layout: { x: 428, y: 265, width: 204, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann4a-detail" capability: "core.text" text: "MetricsHeartbeat lane" layout: { x: 428, y: 285, width: 204, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        {
-          id: "ann4b"
-          capability: "core.rect"
-          layout: { x: 420, y: 315, width: 220, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.danger, strokeWidth: 1.8 }
-          children: [
-            { id: "ann4b-title" capability: "core.text" text: "stalled channel" layout: { x: 428, y: 330, width: 204, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann4b-detail" capability: "core.text" text: "rising lag + drop" layout: { x: 428, y: 350, width: 204, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        { id: "motion4" capability: "core.path" d: "M120 128 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
+          id: "s4-motion-sig"
+          capability: "core.path"
+          d: "M120 130 H560"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
       ]
       timeline: [
-        { id: "s4-hdr4" at: 0 duration: 260 target: "hdr4" action: "enter" },
-        { id: "s4-ph4a" at: 80 duration: 160 target: "ph4a" action: "enter" },
-        { id: "s4-ph4b" at: 140 duration: 160 target: "ph4b" action: "enter" },
-        { id: "s4-ph4c" at: 200 duration: 160 target: "ph4c" action: "enter" },
-        { id: "s4-hb40" at: 300 duration: 220 target: "hb40" action: "enter" },
-        { id: "s4-hb41" at: 400 duration: 220 target: "hb41" action: "enter" },
-        { id: "s4-hb42" at: 500 duration: 220 target: "hb42" action: "enter" },
-        { id: "s4-a40" at: 620 duration: 360 target: "a40" action: "draw" },
-        { id: "s4-a41" at: 740 duration: 360 target: "a41" action: "draw" },
-        { id: "s4-a42" at: 860 duration: 360 target: "a42" action: "draw" },
-        { id: "s4-m-cnt" at: 1000 duration: 180 target: "m-cnt" action: "enter" },
-        { id: "s4-m-sk" at: 1100 duration: 180 target: "m-sk" action: "enter" },
-        { id: "s4-m-lag" at: 1200 duration: 180 target: "m-lag" action: "enter" },
-        { id: "s4-agg4" at: 1320 duration: 280 target: "agg4" action: "enter" },
-        { id: "s4-note4" at: 1540 duration: 220 target: "note4" action: "enter" },
-        { id: "s4-ann4a" at: 1680 duration: 220 target: "ann4a" action: "enter" },
-        { id: "s4-ann4b" at: 1800 duration: 220 target: "ann4b" action: "enter" },
-        { id: "s4-motion4" at: 1960 duration: 500 target: "motion4" action: "draw" },
-        { id: "s4-emph" at: 2420 duration: 400 target: "hb42" action: "emphasis" },
-        { id: "s4-auto-hdr4-text" at: 2500 duration: 200 target: "hdr4-text" action: "enter" },
-        { id: "s4-auto-hdr4-cap" at: 2555 duration: 200 target: "hdr4-cap" action: "enter" },
-        { id: "s4-auto-hb40-title" at: 2610 duration: 200 target: "hb40-title" action: "enter" },
-        { id: "s4-auto-hb40-detail" at: 2665 duration: 200 target: "hb40-detail" action: "enter" },
-        { id: "s4-auto-hb41-title" at: 2720 duration: 200 target: "hb41-title" action: "enter" },
-        { id: "s4-auto-hb41-detail" at: 2775 duration: 200 target: "hb41-detail" action: "enter" },
-        { id: "s4-auto-hb42-title" at: 2830 duration: 200 target: "hb42-title" action: "enter" },
-        { id: "s4-auto-hb42-detail" at: 2885 duration: 200 target: "hb42-detail" action: "enter" },
-        { id: "s4-auto-agg4-title" at: 2940 duration: 200 target: "agg4-title" action: "enter" },
-        { id: "s4-auto-agg4-detail" at: 2995 duration: 200 target: "agg4-detail" action: "enter" },
-        { id: "s4-auto-m-cnt-t" at: 3050 duration: 200 target: "m-cnt-t" action: "enter" },
-        { id: "s4-auto-m-sk-t" at: 3105 duration: 200 target: "m-sk-t" action: "enter" },
-        { id: "s4-auto-m-lag-t" at: 3160 duration: 200 target: "m-lag-t" action: "enter" },
-        { id: "s4-auto-ann4a-title" at: 3215 duration: 200 target: "ann4a-title" action: "enter" },
-        { id: "s4-auto-ann4a-detail" at: 3270 duration: 200 target: "ann4a-detail" action: "enter" },
-        { id: "s4-auto-ann4b-title" at: 3325 duration: 200 target: "ann4b-title" action: "enter" },
-        { id: "s4-auto-ann4b-detail" at: 3380 duration: 200 target: "ann4b-detail" action: "enter" },
+        { id: "s4-enter-hdr" at: 0 duration: 260 target: "s4-hdr" action: "enter" }
+        { id: "s4-enter-c0" at: 200 duration: 240 target: "s4-c0" action: "enter" }
+        { id: "s4-enter-c1" at: 320 duration: 240 target: "s4-c1" action: "enter" }
+        { id: "s4-enter-c2" at: 440 duration: 240 target: "s4-c2" action: "enter" }
+        { id: "s4-draw-a0" at: 620 duration: 360 target: "s4-a0" action: "draw" }
+        { id: "s4-draw-a1" at: 760 duration: 360 target: "s4-a1" action: "draw" }
+        { id: "s4-draw-a2" at: 900 duration: 360 target: "s4-a2" action: "draw" }
+        { id: "s4-enter-agg" at: 1100 duration: 280 target: "s4-agg" action: "enter" }
+        { id: "s4-enter-note" at: 1320 duration: 200 target: "s4-note" action: "enter" }
+        { id: "s4-enter-mdot" at: 1480 duration: 180 target: "s4-motion-sig-dot" action: "enter" }
+        { id: "s4-draw-motion" at: 1600 duration: 700 target: "s4-motion-sig" action: "draw" }
+        { id: "s4-emph" at: 2300 duration: 400 target: "s4-agg" action: "emphasis" }
       ]
     }
   }
@@ -958,145 +601,92 @@ explainer "Velo deep dive" {
     ]
     caption: "ship peer + partition → register_peer(shipper) → CellAck."
 
-        render: @scene {
+    render: @scene {
       roots: [
         {
-          id: "hdr5"
+          id: "s5-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "PARTITION SHIP" }
           children: [
-            { id: "hdr5-text" capability: "core.text" text: "PARTITION SHIP" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr5-cap" capability: "core.text" text: "ship peer + partition → register_peer(shipper) → CellAck." layout: { x: 300, y: 34, width: 370, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s5-hdr-l" capability: "core.text" text: "PARTITION SHIP" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
+            { id: "s5-hdr-c" capability: "core.text" text: "ship peer + partition → register_peer(shipper) → CellAck." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
           ]
-        },
-        { id: "ph5a" capability: "core.text" text: "FINISH" layout: { x: 60, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph5b" capability: "core.text" text: "UNARY" layout: { x: 260, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph5c" capability: "core.text" text: "REGISTER" layout: { x: 460, y: 78, width: 90, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph5d" capability: "core.text" text: "ACK" layout: { x: 600, y: 78, width: 60, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
+        }
         {
-          id: "fin5"
+          id: "s5-fin"
           capability: "core.rect"
-          layout: { x: 30, y: 120, width: 150, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "Finished cell" }
+          layout: { x: 30, y: 150, width: 160, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "Finished cell: ship peer + partition" }
           children: [
-            { id: "fin5-title" capability: "core.text" text: "Finished cell" layout: { x: 38, y: 145, width: 134, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "fin5-detail" capability: "core.text" text: "ship peer + partition" layout: { x: 38, y: 165, width: 134, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s5-fin-t" capability: "core.text" text: "Finished cell" layout: { x: 30, y: 170, width: 160, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s5-fin-d" capability: "core.text" text: "ship peer + partition" layout: { x: 30, y: 194, width: 160, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a5a" capability: "core.path" d: "M180 155 H230" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s5-a1" capability: "core.path" d: "M190 190 H250" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "unary5"
+          id: "s5-pay"
           capability: "core.rect"
-          layout: { x: 230, y: 120, width: 140, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "unary payload" }
+          layout: { x: 250, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "unary payload: fresh PeerInfo" }
           children: [
-            { id: "unary5-title" capability: "core.text" text: "unary payload" layout: { x: 238, y: 145, width: 124, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "unary5-detail" capability: "core.text" text: "fresh PeerInfo" layout: { x: 238, y: 165, width: 124, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s5-pay-t" capability: "core.text" text: "unary payload" layout: { x: 250, y: 170, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s5-pay-d" capability: "core.text" text: "fresh PeerInfo" layout: { x: 250, y: 194, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a5b" capability: "core.path" d: "M370 155 H430" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s5-a2" capability: "core.path" d: "M400 190 H460" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "ctrl5"
+          id: "s5-ctrl"
           capability: "core.rect"
-          layout: { x: 430, y: 120, width: 200, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "Controller" }
+          layout: { x: 460, y: 150, width: 200, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "Controller: register_peer(shipper)" }
           children: [
-            { id: "ctrl5-title" capability: "core.text" text: "Controller" layout: { x: 438, y: 145, width: 184, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ctrl5-detail" capability: "core.text" text: "register_peer(shipper)" layout: { x: 438, y: 165, width: 184, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s5-ctrl-t" capability: "core.text" text: "Controller" layout: { x: 460, y: 170, width: 200, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s5-ctrl-d" capability: "core.text" text: "register_peer(shipper)" layout: { x: 460, y: 194, width: 200, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a5c" capability: "core.path" d: "M530 190 C530 260 280 280 180 270" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s5-a3" capability: "core.path" d: "M560 230 C560 290 300 300 190 290" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "ack5"
+          id: "s5-ack"
           capability: "core.rect"
-          layout: { x: 180, y: 280, width: 120, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 210, y: 280, width: 130, height: 54 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "CellAck: delivered" }
           children: [
-            { id: "ack5-title" capability: "core.text" text: "CellAck" layout: { x: 188, y: 295, width: 104, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ack5-detail" capability: "core.text" text: "delivered" layout: { x: 188, y: 315, width: 104, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s5-ack-t" capability: "core.text" text: "CellAck" layout: { x: 210, y: 287, width: 130, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s5-ack-d" capability: "core.text" text: "delivered" layout: { x: 210, y: 311, width: 130, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "mode-ret"
-          capability: "core.rect"
-          layout: { x: 320, y: 240, width: 110, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
-          children: [
-            { id: "mode-ret-t" capability: "core.text" text: "retain rows" layout: { x: 324, y: 260, width: 102, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
+          id: "s5-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.secondary }
+        }
         {
-          id: "mode-fold"
-          capability: "core.rect"
-          layout: { x: 440, y: 240, width: 120, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
-          children: [
-            { id: "mode-fold-t" capability: "core.text" text: "fold store" layout: { x: 444, y: 260, width: 112, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "ann5a"
-          capability: "core.rect"
-          layout: { x: 320, y: 290, width: 180, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            { id: "ann5a-title" capability: "core.text" text: "fresh return route" layout: { x: 328, y: 305, width: 164, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann5a-detail" capability: "core.text" text: "before acknowledgement" layout: { x: 328, y: 325, width: 164, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        {
-          id: "ann5b"
-          capability: "core.rect"
-          layout: { x: 520, y: 290, width: 150, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            { id: "ann5b-title" capability: "core.text" text: "CellPartitionShip" layout: { x: 528, y: 305, width: 134, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann5b-detail" capability: "core.text" text: "terminal payload" layout: { x: 528, y: 325, width: 134, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        { id: "motion5" capability: "core.path" d: "M110 155 H590" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
+          id: "s5-motion-sig"
+          capability: "core.path"
+          d: "M110 180 H590"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
       ]
       timeline: [
-        { id: "s5-hdr5" at: 0 duration: 260 target: "hdr5" action: "enter" },
-        { id: "s5-ph5a" at: 80 duration: 160 target: "ph5a" action: "enter" },
-        { id: "s5-ph5b" at: 140 duration: 160 target: "ph5b" action: "enter" },
-        { id: "s5-ph5c" at: 200 duration: 160 target: "ph5c" action: "enter" },
-        { id: "s5-ph5d" at: 260 duration: 160 target: "ph5d" action: "enter" },
-        { id: "s5-fin5" at: 360 duration: 260 target: "fin5" action: "enter" },
-        { id: "s5-a5a" at: 540 duration: 340 target: "a5a" action: "draw" },
-        { id: "s5-unary5" at: 700 duration: 260 target: "unary5" action: "enter" },
-        { id: "s5-a5b" at: 880 duration: 340 target: "a5b" action: "draw" },
-        { id: "s5-ctrl5" at: 1040 duration: 260 target: "ctrl5" action: "enter" },
-        { id: "s5-a5c" at: 1240 duration: 400 target: "a5c" action: "draw" },
-        { id: "s5-ack5" at: 1480 duration: 260 target: "ack5" action: "enter" },
-        { id: "s5-mode-ret" at: 1660 duration: 180 target: "mode-ret" action: "enter" },
-        { id: "s5-mode-fold" at: 1760 duration: 180 target: "mode-fold" action: "enter" },
-        { id: "s5-ann5a" at: 1880 duration: 220 target: "ann5a" action: "enter" },
-        { id: "s5-ann5b" at: 2000 duration: 220 target: "ann5b" action: "enter" },
-        { id: "s5-motion5" at: 2160 duration: 500 target: "motion5" action: "draw" },
-        { id: "s5-emph" at: 2620 duration: 400 target: "ack5" action: "emphasis" },
-        { id: "s5-auto-hdr5-text" at: 2700 duration: 200 target: "hdr5-text" action: "enter" },
-        { id: "s5-auto-hdr5-cap" at: 2755 duration: 200 target: "hdr5-cap" action: "enter" },
-        { id: "s5-auto-fin5-title" at: 2810 duration: 200 target: "fin5-title" action: "enter" },
-        { id: "s5-auto-fin5-detail" at: 2865 duration: 200 target: "fin5-detail" action: "enter" },
-        { id: "s5-auto-unary5-title" at: 2920 duration: 200 target: "unary5-title" action: "enter" },
-        { id: "s5-auto-unary5-detail" at: 2975 duration: 200 target: "unary5-detail" action: "enter" },
-        { id: "s5-auto-ctrl5-title" at: 3030 duration: 200 target: "ctrl5-title" action: "enter" },
-        { id: "s5-auto-ctrl5-detail" at: 3085 duration: 200 target: "ctrl5-detail" action: "enter" },
-        { id: "s5-auto-ack5-title" at: 3140 duration: 200 target: "ack5-title" action: "enter" },
-        { id: "s5-auto-ack5-detail" at: 3195 duration: 200 target: "ack5-detail" action: "enter" },
-        { id: "s5-auto-mode-ret-t" at: 3250 duration: 200 target: "mode-ret-t" action: "enter" },
-        { id: "s5-auto-mode-fold-t" at: 3305 duration: 200 target: "mode-fold-t" action: "enter" },
-        { id: "s5-auto-ann5a-title" at: 3360 duration: 200 target: "ann5a-title" action: "enter" },
-        { id: "s5-auto-ann5a-detail" at: 3415 duration: 200 target: "ann5a-detail" action: "enter" },
-        { id: "s5-auto-ann5b-title" at: 3470 duration: 200 target: "ann5b-title" action: "enter" },
-        { id: "s5-auto-ann5b-detail" at: 3525 duration: 200 target: "ann5b-detail" action: "enter" },
+        { id: "s5-enter-hdr" at: 0 duration: 260 target: "s5-hdr" action: "enter" }
+        { id: "s5-enter-fin" at: 200 duration: 260 target: "s5-fin" action: "enter" }
+        { id: "s5-draw-a1" at: 400 duration: 320 target: "s5-a1" action: "draw" }
+        { id: "s5-enter-pay" at: 580 duration: 260 target: "s5-pay" action: "enter" }
+        { id: "s5-draw-a2" at: 780 duration: 320 target: "s5-a2" action: "draw" }
+        { id: "s5-enter-ctrl" at: 960 duration: 280 target: "s5-ctrl" action: "enter" }
+        { id: "s5-draw-a3" at: 1180 duration: 420 target: "s5-a3" action: "draw" }
+        { id: "s5-enter-ack" at: 1460 duration: 260 target: "s5-ack" action: "enter" }
+        { id: "s5-enter-mdot" at: 1660 duration: 180 target: "s5-motion-sig-dot" action: "enter" }
+        { id: "s5-draw-motion" at: 1780 duration: 700 target: "s5-motion-sig" action: "draw" }
+        { id: "s5-emph" at: 2480 duration: 400 target: "s5-ack" action: "emphasis" }
       ]
     }
   }
@@ -1117,171 +707,122 @@ explainer "Velo deep dive" {
     ]
     caption: "records → global-order sort · stores → append + merge."
 
-        render: @scene {
+    render: @scene {
       roots: [
         {
-          id: "hdr6"
+          id: "s6-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "MERGE CENTER" }
           children: [
-            { id: "hdr6-text" capability: "core.text" text: "MERGE CENTER" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr6-cap" capability: "core.text" text: "records → global-order sort · stores → append + merge." layout: { x: 300, y: 34, width: 370, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s6-hdr-l" capability: "core.text" text: "MERGE CENTER" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
+            { id: "s6-hdr-c" capability: "core.text" text: "records → global-order sort · stores → append + merge." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
           ]
-        },
-        { id: "ph6a" capability: "core.text" text: "PARTITIONS" layout: { x: 40, y: 78, width: 100, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph6b" capability: "core.text" text: "FOLD" layout: { x: 420, y: 78, width: 60, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph6c" capability: "core.text" text: "RESULT" layout: { x: 560, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
+        }
         {
-          id: "p60"
+          id: "s6-p0"
           capability: "core.rect"
-          layout: { x: 30, y: 100, width: 120, height: 46 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          layout: { x: 30, y: 90, width: 130, height: 52 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "partition 0: records" }
           children: [
-            { id: "p60-title" capability: "core.text" text: "partition 0" layout: { x: 38, y: 113, width: 104, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "p60-detail" capability: "core.text" text: "records" layout: { x: 38, y: 133, width: 104, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s6-p0-t" capability: "core.text" text: "partition 0" layout: { x: 30, y: 96, width: 130, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s6-p0-d" capability: "core.text" text: "records" layout: { x: 30, y: 120, width: 130, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a60" capability: "core.path" d: "M150 123 C260 123 320 190 400 190" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        }
         {
-          id: "p61"
+          id: "s6-p1"
           capability: "core.rect"
-          layout: { x: 30, y: 158, width: 120, height: 46 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          layout: { x: 30, y: 158, width: 130, height: 52 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "partition 1: store" }
           children: [
-            { id: "p61-title" capability: "core.text" text: "partition 1" layout: { x: 38, y: 171, width: 104, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "p61-detail" capability: "core.text" text: "store" layout: { x: 38, y: 191, width: 104, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s6-p1-t" capability: "core.text" text: "partition 1" layout: { x: 30, y: 164, width: 130, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s6-p1-d" capability: "core.text" text: "store" layout: { x: 30, y: 188, width: 130, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a61" capability: "core.path" d: "M150 181 C260 181 320 190 400 190" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        }
         {
-          id: "p62"
+          id: "s6-p2"
           capability: "core.rect"
-          layout: { x: 30, y: 216, width: 120, height: 46 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          layout: { x: 30, y: 226, width: 130, height: 52 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "partition 2: records" }
           children: [
-            { id: "p62-title" capability: "core.text" text: "partition 2" layout: { x: 38, y: 229, width: 104, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "p62-detail" capability: "core.text" text: "records" layout: { x: 38, y: 249, width: 104, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s6-p2-t" capability: "core.text" text: "partition 2" layout: { x: 30, y: 232, width: 130, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s6-p2-d" capability: "core.text" text: "records" layout: { x: 30, y: 256, width: 130, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a62" capability: "core.path" d: "M150 239 C260 239 320 190 400 190" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        }
         {
-          id: "p63"
+          id: "s6-p3"
           capability: "core.rect"
-          layout: { x: 30, y: 274, width: 120, height: 46 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          layout: { x: 30, y: 294, width: 130, height: 52 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "partition 3: store" }
           children: [
-            { id: "p63-title" capability: "core.text" text: "partition 3" layout: { x: 38, y: 287, width: 104, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "p63-detail" capability: "core.text" text: "store" layout: { x: 38, y: 307, width: 104, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s6-p3-t" capability: "core.text" text: "partition 3" layout: { x: 30, y: 300, width: 130, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s6-p3-d" capability: "core.text" text: "store" layout: { x: 30, y: 324, width: 130, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a63" capability: "core.path" d: "M150 297 C260 297 320 190 400 190" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s6-a0" capability: "core.path" d: "M160 116 C280 116 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s6-a1" capability: "core.path" d: "M160 184 C280 184 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s6-a2" capability: "core.path" d: "M160 252 C280 252 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s6-a3" capability: "core.path" d: "M160 320 C280 320 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "merge6"
+          id: "s6-merge"
           capability: "core.rect"
-          layout: { x: 400, y: 150, width: 140, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "Merge center" }
+          layout: { x: 420, y: 160, width: 150, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "Merge center: associative fold" }
           children: [
-            { id: "merge6-title" capability: "core.text" text: "Merge center" layout: { x: 408, y: 175, width: 124, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "merge6-detail" capability: "core.text" text: "associative fold" layout: { x: 408, y: 195, width: 124, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s6-merge-t" capability: "core.text" text: "Merge center" layout: { x: 420, y: 180, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s6-merge-d" capability: "core.text" text: "associative fold" layout: { x: 420, y: 204, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a6b" capability: "core.path" d: "M540 185 H580" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
-        { id: "a6c" capability: "core.path" d: "M580 220 V270" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s6-a4" capability: "core.path" d: "M570 200 H620" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
+        { id: "s6-a5" capability: "core.path" d: "M600 240 V290" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "one6"
+          id: "s6-one"
           capability: "core.rect"
-          layout: { x: 500, y: 270, width: 160, height: 54 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "one result" }
+          layout: { x: 520, y: 290, width: 160, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "one result: order · append · merge" }
           children: [
-            { id: "one6-title" capability: "core.text" text: "one result" layout: { x: 508, y: 287, width: 144, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "one6-detail" capability: "core.text" text: "order · append · merge" layout: { x: 508, y: 307, width: 144, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s6-one-t" capability: "core.text" text: "one result" layout: { x: 520, y: 300, width: 160, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s6-one-d" capability: "core.text" text: "order · append · merge" layout: { x: 520, y: 324, width: 160, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "rec-sort"
-          capability: "core.rect"
-          layout: { x: 180, y: 100, width: 130, height: 28 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
-          children: [
-            { id: "rec-sort-t" capability: "core.text" text: "ordinal sort" layout: { x: 184, y: 118, width: 122, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
+          id: "s6-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.secondary }
+        }
         {
-          id: "sto-app"
-          capability: "core.rect"
-          layout: { x: 180, y: 140, width: 130, height: 28 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
-          children: [
-            { id: "sto-app-t" capability: "core.text" text: "exact append" layout: { x: 184, y: 158, width: 122, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "sto-td"
-          capability: "core.rect"
-          layout: { x: 180, y: 180, width: 130, height: 28 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
-          children: [
-            { id: "sto-td-t" capability: "core.text" text: "t-digest merge" layout: { x: 184, y: 198, width: 122, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "ann6a"
-          capability: "core.rect"
-          layout: { x: 180, y: 320, width: 200, height: 40 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            { id: "ann6a-title" capability: "core.text" text: "shard.rs" layout: { x: 188, y: 330, width: 184, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann6a-detail" capability: "core.text" text: "merge_store_partitions" layout: { x: 188, y: 350, width: 184, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        { id: "motion6" capability: "core.path" d: "M110 185 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
+          id: "s6-motion-sig"
+          capability: "core.path"
+          d: "M110 175 H560"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
       ]
       timeline: [
-        { id: "s6-hdr6" at: 0 duration: 260 target: "hdr6" action: "enter" },
-        { id: "s6-ph6a" at: 80 duration: 160 target: "ph6a" action: "enter" },
-        { id: "s6-ph6b" at: 140 duration: 160 target: "ph6b" action: "enter" },
-        { id: "s6-ph6c" at: 200 duration: 160 target: "ph6c" action: "enter" },
-        { id: "s6-p60" at: 300 duration: 200 target: "p60" action: "enter" },
-        { id: "s6-p61" at: 390 duration: 200 target: "p61" action: "enter" },
-        { id: "s6-p62" at: 480 duration: 200 target: "p62" action: "enter" },
-        { id: "s6-p63" at: 570 duration: 200 target: "p63" action: "enter" },
-        { id: "s6-a60" at: 680 duration: 340 target: "a60" action: "draw" },
-        { id: "s6-a61" at: 770 duration: 340 target: "a61" action: "draw" },
-        { id: "s6-a62" at: 860 duration: 340 target: "a62" action: "draw" },
-        { id: "s6-a63" at: 950 duration: 340 target: "a63" action: "draw" },
-        { id: "s6-merge6" at: 1080 duration: 280 target: "merge6" action: "enter" },
-        { id: "s6-rec-sort" at: 1260 duration: 180 target: "rec-sort" action: "enter" },
-        { id: "s6-sto-app" at: 1360 duration: 180 target: "sto-app" action: "enter" },
-        { id: "s6-sto-td" at: 1460 duration: 180 target: "sto-td" action: "enter" },
-        { id: "s6-a6b" at: 1580 duration: 320 target: "a6b" action: "draw" },
-        { id: "s6-a6c" at: 1700 duration: 320 target: "a6c" action: "draw" },
-        { id: "s6-one6" at: 1860 duration: 260 target: "one6" action: "enter" },
-        { id: "s6-ann6a" at: 2060 duration: 220 target: "ann6a" action: "enter" },
-        { id: "s6-motion6" at: 2220 duration: 500 target: "motion6" action: "draw" },
-        { id: "s6-emph" at: 2680 duration: 400 target: "merge6" action: "emphasis" },
-        { id: "s6-auto-hdr6-text" at: 2760 duration: 200 target: "hdr6-text" action: "enter" },
-        { id: "s6-auto-hdr6-cap" at: 2815 duration: 200 target: "hdr6-cap" action: "enter" },
-        { id: "s6-auto-p60-title" at: 2870 duration: 200 target: "p60-title" action: "enter" },
-        { id: "s6-auto-p60-detail" at: 2925 duration: 200 target: "p60-detail" action: "enter" },
-        { id: "s6-auto-p61-title" at: 2980 duration: 200 target: "p61-title" action: "enter" },
-        { id: "s6-auto-p61-detail" at: 3035 duration: 200 target: "p61-detail" action: "enter" },
-        { id: "s6-auto-p62-title" at: 3090 duration: 200 target: "p62-title" action: "enter" },
-        { id: "s6-auto-p62-detail" at: 3145 duration: 200 target: "p62-detail" action: "enter" },
-        { id: "s6-auto-p63-title" at: 3200 duration: 200 target: "p63-title" action: "enter" },
-        { id: "s6-auto-p63-detail" at: 3255 duration: 200 target: "p63-detail" action: "enter" },
-        { id: "s6-auto-merge6-title" at: 3310 duration: 200 target: "merge6-title" action: "enter" },
-        { id: "s6-auto-merge6-detail" at: 3365 duration: 200 target: "merge6-detail" action: "enter" },
-        { id: "s6-auto-one6-title" at: 3420 duration: 200 target: "one6-title" action: "enter" },
-        { id: "s6-auto-one6-detail" at: 3475 duration: 200 target: "one6-detail" action: "enter" },
-        { id: "s6-auto-rec-sort-t" at: 3530 duration: 200 target: "rec-sort-t" action: "enter" },
-        { id: "s6-auto-sto-app-t" at: 3585 duration: 200 target: "sto-app-t" action: "enter" },
-        { id: "s6-auto-sto-td-t" at: 3640 duration: 200 target: "sto-td-t" action: "enter" },
-        { id: "s6-auto-ann6a-title" at: 3695 duration: 200 target: "ann6a-title" action: "enter" },
-        { id: "s6-auto-ann6a-detail" at: 3750 duration: 200 target: "ann6a-detail" action: "enter" },
+        { id: "s6-enter-hdr" at: 0 duration: 260 target: "s6-hdr" action: "enter" }
+        { id: "s6-enter-p0" at: 180 duration: 220 target: "s6-p0" action: "enter" }
+        { id: "s6-enter-p1" at: 280 duration: 220 target: "s6-p1" action: "enter" }
+        { id: "s6-enter-p2" at: 380 duration: 220 target: "s6-p2" action: "enter" }
+        { id: "s6-enter-p3" at: 480 duration: 220 target: "s6-p3" action: "enter" }
+        { id: "s6-draw-a0" at: 620 duration: 340 target: "s6-a0" action: "draw" }
+        { id: "s6-draw-a1" at: 740 duration: 340 target: "s6-a1" action: "draw" }
+        { id: "s6-draw-a2" at: 860 duration: 340 target: "s6-a2" action: "draw" }
+        { id: "s6-draw-a3" at: 980 duration: 340 target: "s6-a3" action: "draw" }
+        { id: "s6-enter-merge" at: 1120 duration: 280 target: "s6-merge" action: "enter" }
+        { id: "s6-draw-a4" at: 1340 duration: 280 target: "s6-a4" action: "draw" }
+        { id: "s6-draw-a5" at: 1480 duration: 280 target: "s6-a5" action: "draw" }
+        { id: "s6-enter-one" at: 1640 duration: 260 target: "s6-one" action: "enter" }
+        { id: "s6-enter-mdot" at: 1840 duration: 180 target: "s6-motion-sig-dot" action: "enter" }
+        { id: "s6-draw-motion" at: 1960 duration: 700 target: "s6-motion-sig" action: "draw" }
+        { id: "s6-emph" at: 2660 duration: 400 target: "s6-merge" action: "emphasis" }
       ]
     }
   }
@@ -1302,166 +843,116 @@ explainer "Velo deep dive" {
     ]
     caption: "attach → reply replay ≤ g · live push > g."
 
-        render: @scene {
+    render: @scene {
       roots: [
         {
-          id: "hdr7"
+          id: "s7-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "PHASER REPLAY" }
           children: [
-            { id: "hdr7-text" capability: "core.text" text: "PHASER REPLAY" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr7-cap" capability: "core.text" text: "attach → reply replay ≤ g · live push > g." layout: { x: 300, y: 34, width: 370, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s7-hdr-l" capability: "core.text" text: "PHASER REPLAY" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
+            { id: "s7-hdr-c" capability: "core.text" text: "attach → reply replay ≤ g · live push > g." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
           ]
-        },
-        { id: "ph7a" capability: "core.text" text: "GENERATIONS" layout: { x: 40, y: 78, width: 120, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph7b" capability: "core.text" text: "ATTACH" layout: { x: 280, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph7c" capability: "core.text" text: "REPLAY / LIVE" layout: { x: 500, y: 78, width: 120, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
+        }
         {
-          id: "g71"
+          id: "s7-g1"
           capability: "core.rect"
-          layout: { x: 30, y: 110, width: 80, height: 52 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          layout: { x: 30, y: 110, width: 80, height: 56 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "g1: replay" }
           children: [
-            { id: "g71-title" capability: "core.text" text: "g1" layout: { x: 38, y: 126, width: 64, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "g71-detail" capability: "core.text" text: "replay" layout: { x: 38, y: 146, width: 64, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s7-g1-t" capability: "core.text" text: "g1" layout: { x: 30, y: 118, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s7-g1-d" capability: "core.text" text: "replay" layout: { x: 30, y: 142, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "g72"
+          id: "s7-g2"
           capability: "core.rect"
-          layout: { x: 125, y: 110, width: 80, height: 52 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          layout: { x: 125, y: 110, width: 80, height: 56 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "g2: replay" }
           children: [
-            { id: "g72-title" capability: "core.text" text: "g2" layout: { x: 133, y: 126, width: 64, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "g72-detail" capability: "core.text" text: "replay" layout: { x: 133, y: 146, width: 64, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s7-g2-t" capability: "core.text" text: "g2" layout: { x: 125, y: 118, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s7-g2-d" capability: "core.text" text: "replay" layout: { x: 125, y: 142, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "g73"
+          id: "s7-g3"
           capability: "core.rect"
-          layout: { x: 220, y: 110, width: 80, height: 52 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          layout: { x: 220, y: 110, width: 80, height: 56 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "g3: replay" }
           children: [
-            { id: "g73-title" capability: "core.text" text: "g3" layout: { x: 228, y: 126, width: 64, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "g73-detail" capability: "core.text" text: "replay" layout: { x: 228, y: 146, width: 64, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s7-g3-t" capability: "core.text" text: "g3" layout: { x: 220, y: 118, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s7-g3-d" capability: "core.text" text: "replay" layout: { x: 220, y: 142, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "g74"
+          id: "s7-g4"
           capability: "core.rect"
-          layout: { x: 315, y: 110, width: 80, height: 52 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 315, y: 110, width: 80, height: 56 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "g4: live" }
           children: [
-            { id: "g74-title" capability: "core.text" text: "g4" layout: { x: 323, y: 126, width: 64, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "g74-detail" capability: "core.text" text: "live" layout: { x: 323, y: 146, width: 64, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s7-g4-t" capability: "core.text" text: "g4" layout: { x: 315, y: 118, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s7-g4-d" capability: "core.text" text: "live" layout: { x: 315, y: 142, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "g75"
+          id: "s7-g5"
           capability: "core.rect"
-          layout: { x: 410, y: 110, width: 80, height: 52 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 410, y: 110, width: 80, height: 56 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "g5: live" }
           children: [
-            { id: "g75-title" capability: "core.text" text: "g5" layout: { x: 418, y: 126, width: 64, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "g75-detail" capability: "core.text" text: "live" layout: { x: 418, y: 146, width: 64, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s7-g5-t" capability: "core.text" text: "g5" layout: { x: 410, y: 118, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s7-g5-d" capability: "core.text" text: "live" layout: { x: 410, y: 142, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "attach7"
+          id: "s7-attach"
           capability: "core.rect"
-          layout: { x: 220, y: 230, width: 180, height: 60 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "attach @ g3" }
+          layout: { x: 220, y: 250, width: 180, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "attach @ g3: capture boundary" }
           children: [
-            { id: "attach7-title" capability: "core.text" text: "attach @ g3" layout: { x: 228, y: 250, width: 164, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "attach7-detail" capability: "core.text" text: "capture boundary" layout: { x: 228, y: 270, width: 164, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s7-attach-t" capability: "core.text" text: "attach @ g3" layout: { x: 220, y: 265, width: 180, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s7-attach-d" capability: "core.text" text: "capture boundary" layout: { x: 220, y: 289, width: 180, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a7a" capability: "core.path" d: "M310 230 C310 200 250 180 200 162" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
-        { id: "a7b" capability: "core.path" d: "M400 260 C480 240 500 200 510 162" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
-        { id: "note7" capability: "core.text" text: "reply replays ≤ g3 · active-message pushes > g3" layout: { x: 120, y: 360, width: 460, height: 16 } style: { fontSize: 12, fill: @theme.ink.secondary } },
+        }
+        { id: "s7-a1" capability: "core.path" d: "M310 250 C310 210 250 190 200 168" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
+        { id: "s7-a2" capability: "core.path" d: "M400 260 C480 240 500 200 510 168" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
+        { id: "s7-note" capability: "core.text" text: "reply replays ≤ g3 · active-message pushes > g3" layout: { x: 150, y: 340, width: 420, height: 16 } style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "start" } }
         {
-          id: "srv7"
-          capability: "core.rect"
-          layout: { x: 40, y: 250, width: 140, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-          children: [
-            { id: "srv7-t" capability: "core.text" text: "PhaserServer" layout: { x: 44, y: 272, width: 132, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
+          id: "s7-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.secondary }
+        }
         {
-          id: "cli7"
-          capability: "core.rect"
-          layout: { x: 40, y: 300, width: 140, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-          children: [
-            { id: "cli7-t" capability: "core.text" text: "PhaserClient" layout: { x: 44, y: 322, width: 132, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "ann7a"
-          capability: "core.rect"
-          layout: { x: 440, y: 250, width: 200, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            { id: "ann7a-title" capability: "core.text" text: "monotonic gens" layout: { x: 448, y: 265, width: 184, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann7a-detail" capability: "core.text" text: "deterministic order" layout: { x: 448, y: 285, width: 184, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        {
-          id: "ann7b"
-          capability: "core.rect"
-          layout: { x: 440, y: 315, width: 200, height: 40 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            { id: "ann7b-title" capability: "core.text" text: "no miss / dup" layout: { x: 448, y: 325, width: 184, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann7b-detail" capability: "core.text" text: "prefix + live tail" layout: { x: 448, y: 345, width: 184, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        { id: "motion7" capability: "core.path" d: "M110 130 H590" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
+          id: "s7-motion-sig"
+          capability: "core.path"
+          d: "M110 130 H590"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
       ]
       timeline: [
-        { id: "s7-hdr7" at: 0 duration: 260 target: "hdr7" action: "enter" },
-        { id: "s7-ph7a" at: 80 duration: 160 target: "ph7a" action: "enter" },
-        { id: "s7-ph7b" at: 140 duration: 160 target: "ph7b" action: "enter" },
-        { id: "s7-ph7c" at: 200 duration: 160 target: "ph7c" action: "enter" },
-        { id: "s7-g71" at: 300 duration: 200 target: "g71" action: "enter" },
-        { id: "s7-g72" at: 390 duration: 200 target: "g72" action: "enter" },
-        { id: "s7-g73" at: 480 duration: 200 target: "g73" action: "enter" },
-        { id: "s7-g74" at: 570 duration: 200 target: "g74" action: "enter" },
-        { id: "s7-g75" at: 660 duration: 200 target: "g75" action: "enter" },
-        { id: "s7-attach7" at: 800 duration: 260 target: "attach7" action: "enter" },
-        { id: "s7-a7a" at: 1000 duration: 360 target: "a7a" action: "draw" },
-        { id: "s7-a7b" at: 1160 duration: 360 target: "a7b" action: "draw" },
-        { id: "s7-srv7" at: 1360 duration: 180 target: "srv7" action: "enter" },
-        { id: "s7-cli7" at: 1460 duration: 180 target: "cli7" action: "enter" },
-        { id: "s7-ann7a" at: 1580 duration: 220 target: "ann7a" action: "enter" },
-        { id: "s7-ann7b" at: 1700 duration: 220 target: "ann7b" action: "enter" },
-        { id: "s7-note7" at: 1840 duration: 220 target: "note7" action: "enter" },
-        { id: "s7-motion7" at: 2000 duration: 500 target: "motion7" action: "draw" },
-        { id: "s7-emph" at: 2460 duration: 400 target: "attach7" action: "emphasis" },
-        { id: "s7-auto-hdr7-text" at: 2540 duration: 200 target: "hdr7-text" action: "enter" },
-        { id: "s7-auto-hdr7-cap" at: 2595 duration: 200 target: "hdr7-cap" action: "enter" },
-        { id: "s7-auto-g71-title" at: 2650 duration: 200 target: "g71-title" action: "enter" },
-        { id: "s7-auto-g71-detail" at: 2705 duration: 200 target: "g71-detail" action: "enter" },
-        { id: "s7-auto-g72-title" at: 2760 duration: 200 target: "g72-title" action: "enter" },
-        { id: "s7-auto-g72-detail" at: 2815 duration: 200 target: "g72-detail" action: "enter" },
-        { id: "s7-auto-g73-title" at: 2870 duration: 200 target: "g73-title" action: "enter" },
-        { id: "s7-auto-g73-detail" at: 2925 duration: 200 target: "g73-detail" action: "enter" },
-        { id: "s7-auto-g74-title" at: 2980 duration: 200 target: "g74-title" action: "enter" },
-        { id: "s7-auto-g74-detail" at: 3035 duration: 200 target: "g74-detail" action: "enter" },
-        { id: "s7-auto-g75-title" at: 3090 duration: 200 target: "g75-title" action: "enter" },
-        { id: "s7-auto-g75-detail" at: 3145 duration: 200 target: "g75-detail" action: "enter" },
-        { id: "s7-auto-attach7-title" at: 3200 duration: 200 target: "attach7-title" action: "enter" },
-        { id: "s7-auto-attach7-detail" at: 3255 duration: 200 target: "attach7-detail" action: "enter" },
-        { id: "s7-auto-srv7-t" at: 3310 duration: 200 target: "srv7-t" action: "enter" },
-        { id: "s7-auto-cli7-t" at: 3365 duration: 200 target: "cli7-t" action: "enter" },
-        { id: "s7-auto-ann7a-title" at: 3420 duration: 200 target: "ann7a-title" action: "enter" },
-        { id: "s7-auto-ann7a-detail" at: 3475 duration: 200 target: "ann7a-detail" action: "enter" },
-        { id: "s7-auto-ann7b-title" at: 3530 duration: 200 target: "ann7b-title" action: "enter" },
-        { id: "s7-auto-ann7b-detail" at: 3585 duration: 200 target: "ann7b-detail" action: "enter" },
+        { id: "s7-enter-hdr" at: 0 duration: 260 target: "s7-hdr" action: "enter" }
+        { id: "s7-enter-g1" at: 180 duration: 220 target: "s7-g1" action: "enter" }
+        { id: "s7-enter-g2" at: 280 duration: 220 target: "s7-g2" action: "enter" }
+        { id: "s7-enter-g3" at: 380 duration: 220 target: "s7-g3" action: "enter" }
+        { id: "s7-enter-g4" at: 480 duration: 220 target: "s7-g4" action: "enter" }
+        { id: "s7-enter-g5" at: 580 duration: 220 target: "s7-g5" action: "enter" }
+        { id: "s7-enter-attach" at: 760 duration: 280 target: "s7-attach" action: "enter" }
+        { id: "s7-draw-a1" at: 980 duration: 360 target: "s7-a1" action: "draw" }
+        { id: "s7-draw-a2" at: 1140 duration: 360 target: "s7-a2" action: "draw" }
+        { id: "s7-enter-note" at: 1400 duration: 200 target: "s7-note" action: "enter" }
+        { id: "s7-enter-mdot" at: 1560 duration: 180 target: "s7-motion-sig-dot" action: "enter" }
+        { id: "s7-draw-motion" at: 1680 duration: 700 target: "s7-motion-sig" action: "draw" }
+        { id: "s7-emph" at: 2380 duration: 400 target: "s7-attach" action: "emphasis" }
       ]
     }
   }
@@ -1482,156 +973,106 @@ explainer "Velo deep dive" {
     ]
     caption: "publish chunk → replay + live · keep id % cells == cell_id."
 
-        render: @scene {
+    render: @scene {
       roots: [
         {
-          id: "hdr8"
+          id: "s8-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "DATASET FLOODGATE" }
           children: [
-            { id: "hdr8-text" capability: "core.text" text: "DATASET FLOODGATE" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr8-cap" capability: "core.text" text: "publish chunk → replay + live · keep id % cells == cell_id." layout: { x: 300, y: 34, width: 370, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s8-hdr-l" capability: "core.text" text: "DATASET FLOODGATE" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
+            { id: "s8-hdr-c" capability: "core.text" text: "publish chunk → replay + live · keep id % cells == cell_id." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
           ]
-        },
-        { id: "ph8a" capability: "core.text" text: "PUBLISH" layout: { x: 50, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph8b" capability: "core.text" text: "BROADCAST" layout: { x: 230, y: 78, width: 100, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph8c" capability: "core.text" text: "FILTER" layout: { x: 500, y: 78, width: 80, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
+        }
         {
-          id: "chunk8"
+          id: "s8-chunk"
           capability: "core.rect"
-          layout: { x: 30, y: 120, width: 130, height: 80 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "chunk stream" }
+          layout: { x: 30, y: 140, width: 140, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "chunk stream: MessagePack + zstd" }
           children: [
-            { id: "chunk8-title" capability: "core.text" text: "chunk stream" layout: { x: 38, y: 150, width: 114, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "chunk8-detail" capability: "core.text" text: "MessagePack + zstd" layout: { x: 38, y: 170, width: 114, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s8-chunk-t" capability: "core.text" text: "chunk stream" layout: { x: 30, y: 165, width: 140, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s8-chunk-d" capability: "core.text" text: "MessagePack + zstd" layout: { x: 30, y: 189, width: 140, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a8a" capability: "core.path" d: "M160 160 H210" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s8-a0" capability: "core.path" d: "M170 185 H230" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "bcast8"
+          id: "s8-bcast"
           capability: "core.rect"
-          layout: { x: 210, y: 130, width: 110, height: 60 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "broadcast" }
+          layout: { x: 230, y: 150, width: 120, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "broadcast: publish once" }
           children: [
-            { id: "bcast8-title" capability: "core.text" text: "broadcast" layout: { x: 218, y: 150, width: 94, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "bcast8-detail" capability: "core.text" text: "publish once" layout: { x: 218, y: 170, width: 94, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s8-bcast-t" capability: "core.text" text: "broadcast" layout: { x: 230, y: 165, width: 120, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s8-bcast-d" capability: "core.text" text: "publish once" layout: { x: 230, y: 189, width: 120, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "cell80"
+          id: "s8-c0"
           capability: "core.rect"
-          layout: { x: 430, y: 90, width: 220, height: 56 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 430, y: 90, width: 230, height: 64 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "cell 0: keep id % 3 == 0" }
           children: [
-            { id: "cell80-title" capability: "core.text" text: "cell 0" layout: { x: 438, y: 108, width: 204, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "cell80-detail" capability: "core.text" text: "keep id % 3 == 0" layout: { x: 438, y: 128, width: 204, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s8-c0-t" capability: "core.text" text: "cell 0" layout: { x: 430, y: 102, width: 230, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s8-c0-d" capability: "core.text" text: "keep id % 3 == 0" layout: { x: 430, y: 126, width: 230, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a80" capability: "core.path" d: "M320 160 C370 118 400 118 430 118" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s8-a1" capability: "core.path" d: "M350 185 C390 122 400 122 430 122" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "cell81"
+          id: "s8-c1"
           capability: "core.rect"
-          layout: { x: 430, y: 170, width: 220, height: 56 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 430, y: 180, width: 230, height: 64 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "cell 1: keep id % 3 == 1" }
           children: [
-            { id: "cell81-title" capability: "core.text" text: "cell 1" layout: { x: 438, y: 188, width: 204, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "cell81-detail" capability: "core.text" text: "keep id % 3 == 1" layout: { x: 438, y: 208, width: 204, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s8-c1-t" capability: "core.text" text: "cell 1" layout: { x: 430, y: 192, width: 230, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s8-c1-d" capability: "core.text" text: "keep id % 3 == 1" layout: { x: 430, y: 216, width: 230, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a81" capability: "core.path" d: "M320 160 C370 198 400 198 430 198" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s8-a2" capability: "core.path" d: "M350 185 C390 212 400 212 430 212" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "cell82"
+          id: "s8-c2"
           capability: "core.rect"
-          layout: { x: 430, y: 250, width: 220, height: 56 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 430, y: 270, width: 230, height: 64 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "cell 2: keep id % 3 == 2" }
           children: [
-            { id: "cell82-title" capability: "core.text" text: "cell 2" layout: { x: 438, y: 268, width: 204, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "cell82-detail" capability: "core.text" text: "keep id % 3 == 2" layout: { x: 438, y: 288, width: 204, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+            { id: "s8-c2-t" capability: "core.text" text: "cell 2" layout: { x: 430, y: 282, width: 230, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s8-c2-d" capability: "core.text" text: "keep id % 3 == 2" layout: { x: 430, y: 306, width: 230, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a82" capability: "core.path" d: "M320 160 C370 278 400 278 430 278" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s8-a3" capability: "core.path" d: "M350 185 C390 302 400 302 430 302" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "rep8"
-          capability: "core.rect"
-          layout: { x: 30, y: 230, width: 100, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
-          children: [
-            { id: "rep8-t" capability: "core.text" text: "replay" layout: { x: 34, y: 250, width: 92, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
+          id: "s8-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.secondary }
+        }
         {
-          id: "live8"
-          capability: "core.rect"
-          layout: { x: 140, y: 230, width: 100, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
-          children: [
-            { id: "live8-t" capability: "core.text" text: "live tail" layout: { x: 144, y: 250, width: 92, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "idx8"
-          capability: "core.rect"
-          layout: { x: 30, y: 280, width: 210, height: 50 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            { id: "idx8-title" capability: "core.text" text: "DatasetIndex" layout: { x: 38, y: 295, width: 194, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "idx8-detail" capability: "core.text" text: "owned identities only" layout: { x: 38, y: 315, width: 194, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        {
-          id: "ann8a"
-          capability: "core.rect"
-          layout: { x: 30, y: 345, width: 210, height: 36 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            { id: "ann8a-title" capability: "core.text" text: "one broadcast" layout: { x: 38, y: 353, width: 194, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ann8a-detail" capability: "core.text" text: "ownership on receipt" layout: { x: 38, y: 373, width: 194, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
-          ]
-        },
-        { id: "motion8" capability: "core.path" d: "M120 160 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
+          id: "s8-motion-sig"
+          capability: "core.path"
+          d: "M120 175 H560"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
       ]
       timeline: [
-        { id: "s8-hdr8" at: 0 duration: 260 target: "hdr8" action: "enter" },
-        { id: "s8-ph8a" at: 80 duration: 160 target: "ph8a" action: "enter" },
-        { id: "s8-ph8b" at: 140 duration: 160 target: "ph8b" action: "enter" },
-        { id: "s8-ph8c" at: 200 duration: 160 target: "ph8c" action: "enter" },
-        { id: "s8-chunk8" at: 320 duration: 260 target: "chunk8" action: "enter" },
-        { id: "s8-a8a" at: 500 duration: 340 target: "a8a" action: "draw" },
-        { id: "s8-bcast8" at: 660 duration: 260 target: "bcast8" action: "enter" },
-        { id: "s8-a80" at: 860 duration: 340 target: "a80" action: "draw" },
-        { id: "s8-cell80" at: 1000 duration: 220 target: "cell80" action: "enter" },
-        { id: "s8-a81" at: 980 duration: 340 target: "a81" action: "draw" },
-        { id: "s8-cell81" at: 1120 duration: 220 target: "cell81" action: "enter" },
-        { id: "s8-a82" at: 1100 duration: 340 target: "a82" action: "draw" },
-        { id: "s8-cell82" at: 1240 duration: 220 target: "cell82" action: "enter" },
-        { id: "s8-rep8" at: 1400 duration: 180 target: "rep8" action: "enter" },
-        { id: "s8-live8" at: 1500 duration: 180 target: "live8" action: "enter" },
-        { id: "s8-idx8" at: 1620 duration: 220 target: "idx8" action: "enter" },
-        { id: "s8-ann8a" at: 1780 duration: 220 target: "ann8a" action: "enter" },
-        { id: "s8-motion8" at: 1940 duration: 500 target: "motion8" action: "draw" },
-        { id: "s8-emph" at: 2400 duration: 400 target: "bcast8" action: "emphasis" },
-        { id: "s8-auto-hdr8-text" at: 2480 duration: 200 target: "hdr8-text" action: "enter" },
-        { id: "s8-auto-hdr8-cap" at: 2535 duration: 200 target: "hdr8-cap" action: "enter" },
-        { id: "s8-auto-chunk8-title" at: 2590 duration: 200 target: "chunk8-title" action: "enter" },
-        { id: "s8-auto-chunk8-detail" at: 2645 duration: 200 target: "chunk8-detail" action: "enter" },
-        { id: "s8-auto-bcast8-title" at: 2700 duration: 200 target: "bcast8-title" action: "enter" },
-        { id: "s8-auto-bcast8-detail" at: 2755 duration: 200 target: "bcast8-detail" action: "enter" },
-        { id: "s8-auto-cell80-title" at: 2810 duration: 200 target: "cell80-title" action: "enter" },
-        { id: "s8-auto-cell80-detail" at: 2865 duration: 200 target: "cell80-detail" action: "enter" },
-        { id: "s8-auto-cell81-title" at: 2920 duration: 200 target: "cell81-title" action: "enter" },
-        { id: "s8-auto-cell81-detail" at: 2975 duration: 200 target: "cell81-detail" action: "enter" },
-        { id: "s8-auto-cell82-title" at: 3030 duration: 200 target: "cell82-title" action: "enter" },
-        { id: "s8-auto-cell82-detail" at: 3085 duration: 200 target: "cell82-detail" action: "enter" },
-        { id: "s8-auto-rep8-t" at: 3140 duration: 200 target: "rep8-t" action: "enter" },
-        { id: "s8-auto-live8-t" at: 3195 duration: 200 target: "live8-t" action: "enter" },
-        { id: "s8-auto-idx8-title" at: 3250 duration: 200 target: "idx8-title" action: "enter" },
-        { id: "s8-auto-idx8-detail" at: 3305 duration: 200 target: "idx8-detail" action: "enter" },
-        { id: "s8-auto-ann8a-title" at: 3360 duration: 200 target: "ann8a-title" action: "enter" },
-        { id: "s8-auto-ann8a-detail" at: 3415 duration: 200 target: "ann8a-detail" action: "enter" },
+        { id: "s8-enter-hdr" at: 0 duration: 260 target: "s8-hdr" action: "enter" }
+        { id: "s8-enter-chunk" at: 200 duration: 260 target: "s8-chunk" action: "enter" }
+        { id: "s8-draw-a0" at: 400 duration: 300 target: "s8-a0" action: "draw" }
+        { id: "s8-enter-bcast" at: 560 duration: 260 target: "s8-bcast" action: "enter" }
+        { id: "s8-draw-a1" at: 760 duration: 340 target: "s8-a1" action: "draw" }
+        { id: "s8-enter-c0" at: 920 duration: 240 target: "s8-c0" action: "enter" }
+        { id: "s8-draw-a2" at: 920 duration: 340 target: "s8-a2" action: "draw" }
+        { id: "s8-enter-c1" at: 1080 duration: 240 target: "s8-c1" action: "enter" }
+        { id: "s8-draw-a3" at: 1080 duration: 340 target: "s8-a3" action: "draw" }
+        { id: "s8-enter-c2" at: 1240 duration: 240 target: "s8-c2" action: "enter" }
+        { id: "s8-enter-mdot" at: 1400 duration: 180 target: "s8-motion-sig-dot" action: "enter" }
+        { id: "s8-draw-motion" at: 1520 duration: 700 target: "s8-motion-sig" action: "draw" }
+        { id: "s8-emph" at: 2220 duration: 400 target: "s8-bcast" action: "emphasis" }
       ]
     }
   }
@@ -1652,324 +1093,217 @@ explainer "Velo deep dive" {
     ]
     caption: "fold: cells → aggregators → controller · retain stays flat."
 
-        render: @scene {
+    render: @scene {
       roots: [
         {
-          id: "hdr9"
+          id: "s9-hdr"
           capability: "core.rect"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "AGGREGATOR TREE" }
           children: [
-            { id: "hdr9-text" capability: "core.text" text: "AGGREGATOR TREE" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr9-cap" capability: "core.text" text: "fold: cells → aggregators → controller · retain stays flat." layout: { x: 300, y: 34, width: 370, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s9-hdr-l" capability: "core.text" text: "AGGREGATOR TREE" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
+            { id: "s9-hdr-c" capability: "core.text" text: "fold: cells → aggregators → controller · retain stays flat." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
           ]
-        },
-        { id: "ph9a" capability: "core.text" text: "CELLS" layout: { x: 80, y: 78, width: 60, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph9b" capability: "core.text" text: "AGGREGATORS" layout: { x: 280, y: 78, width: 120, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "ph9c" capability: "core.text" text: "CONTROLLER" layout: { x: 520, y: 78, width: 100, height: 16 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.tertiary } },
+        }
         {
-          id: "ctrl9"
+          id: "s9-ctrl"
           capability: "core.rect"
-          layout: { x: 270, y: 100, width: 160, height: 56 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          layout: { x: 270, y: 90, width: 160, height: 64 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Controller: one report" }
           children: [
-            { id: "ctrl9-title" capability: "core.text" text: "Controller" layout: { x: 278, y: 118, width: 144, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "ctrl9-detail" capability: "core.text" text: "one report" layout: { x: 278, y: 138, width: 144, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s9-ctrl-t" capability: "core.text" text: "Controller" layout: { x: 270, y: 102, width: 160, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s9-ctrl-d" capability: "core.text" text: "one report" layout: { x: 270, y: 126, width: 160, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "agg90"
+          id: "s9-agg0"
           capability: "core.rect"
-          layout: { x: 80, y: 200, width: 150, height: 54 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "aggregator 0" }
+          layout: { x: 120, y: 210, width: 150, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "aggregator 0: cells 0–3" }
           children: [
-            { id: "agg90-title" capability: "core.text" text: "aggregator 0" layout: { x: 88, y: 217, width: 134, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "agg90-detail" capability: "core.text" text: "cells 0–3" layout: { x: 88, y: 237, width: 134, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s9-agg0-t" capability: "core.text" text: "aggregator 0" layout: { x: 120, y: 220, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s9-agg0-d" capability: "core.text" text: "cells 0–3" layout: { x: 120, y: 244, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
+        }
         {
-          id: "agg91"
+          id: "s9-agg1"
           capability: "core.rect"
-          layout: { x: 470, y: 200, width: 150, height: 54 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "aggregator 1" }
+          layout: { x: 430, y: 210, width: 150, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "aggregator 1: cells 4–7" }
           children: [
-            { id: "agg91-title" capability: "core.text" text: "aggregator 1" layout: { x: 478, y: 217, width: 134, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "agg91-detail" capability: "core.text" text: "cells 4–7" layout: { x: 478, y: 237, width: 134, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+            { id: "s9-agg1-t" capability: "core.text" text: "aggregator 1" layout: { x: 430, y: 220, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s9-agg1-d" capability: "core.text" text: "cells 4–7" layout: { x: 430, y: 244, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a9a" capability: "core.path" d: "M155 200 C180 170 280 150 320 156" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
-        { id: "a9b" capability: "core.path" d: "M545 200 C520 170 420 150 380 156" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s9-a0" capability: "core.path" d: "M195 210 C220 180 300 160 330 154" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s9-a1" capability: "core.path" d: "M505 210 C480 180 400 160 370 154" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "c90"
+          id: "s9-c0"
           capability: "core.rect"
-          layout: { x: 20, y: 300, width: 64, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 30, y: 320, width: 70, height: 50 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "c0: store" }
           children: [
-            { id: "c90-title" capability: "core.text" text: "c0" layout: { x: 28, y: 312, width: 48, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "c90-detail" capability: "core.text" text: "store" layout: { x: 28, y: 332, width: 48, height: 16 } style: { fontSize: 9, fill: @theme.ink.secondary } }
+            { id: "s9-c0-t" capability: "core.text" text: "c0" layout: { x: 30, y: 325, width: 70, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s9-c0-d" capability: "core.text" text: "store" layout: { x: 30, y: 349, width: 70, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a90" capability: "core.path" d: "M52 300 C52 280 130 270 155 254" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s9-ac0" capability: "core.path" d: "M65 320 C65 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "c91"
+          id: "s9-c1"
           capability: "core.rect"
-          layout: { x: 92, y: 300, width: 64, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 120, y: 320, width: 70, height: 50 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "c1: store" }
           children: [
-            { id: "c91-title" capability: "core.text" text: "c1" layout: { x: 100, y: 312, width: 48, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "c91-detail" capability: "core.text" text: "store" layout: { x: 100, y: 332, width: 48, height: 16 } style: { fontSize: 9, fill: @theme.ink.secondary } }
+            { id: "s9-c1-t" capability: "core.text" text: "c1" layout: { x: 120, y: 325, width: 70, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s9-c1-d" capability: "core.text" text: "store" layout: { x: 120, y: 349, width: 70, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a91" capability: "core.path" d: "M124 300 C124 280 130 270 155 254" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s9-ac1" capability: "core.path" d: "M155 320 C155 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "c92"
+          id: "s9-c2"
           capability: "core.rect"
-          layout: { x: 164, y: 300, width: 64, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 210, y: 320, width: 70, height: 50 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "c2: store" }
           children: [
-            { id: "c92-title" capability: "core.text" text: "c2" layout: { x: 172, y: 312, width: 48, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "c92-detail" capability: "core.text" text: "store" layout: { x: 172, y: 332, width: 48, height: 16 } style: { fontSize: 9, fill: @theme.ink.secondary } }
+            { id: "s9-c2-t" capability: "core.text" text: "c2" layout: { x: 210, y: 325, width: 70, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s9-c2-d" capability: "core.text" text: "store" layout: { x: 210, y: 349, width: 70, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a92" capability: "core.path" d: "M196 300 C196 280 130 270 155 254" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s9-ac2" capability: "core.path" d: "M245 320 C245 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
-          id: "c93"
+          id: "s9-c3"
           capability: "core.rect"
-          layout: { x: 236, y: 300, width: 64, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          layout: { x: 300, y: 320, width: 70, height: 50 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+          accessibility: { label: "c3: store" }
           children: [
-            { id: "c93-title" capability: "core.text" text: "c3" layout: { x: 244, y: 312, width: 48, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "c93-detail" capability: "core.text" text: "store" layout: { x: 244, y: 332, width: 48, height: 16 } style: { fontSize: 9, fill: @theme.ink.secondary } }
+            { id: "s9-c3-t" capability: "core.text" text: "c3" layout: { x: 300, y: 325, width: 70, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
+            { id: "s9-c3-d" capability: "core.text" text: "store" layout: { x: 300, y: 349, width: 70, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
           ]
-        },
-        { id: "a93" capability: "core.path" d: "M268 300 C268 280 130 270 155 254" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        }
+        { id: "s9-ac3" capability: "core.path" d: "M335 320 C335 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s9-note" capability: "core.text" text: "fold only · retain stays flat" layout: { x: 430, y: 340, width: 240, height: 16 } style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "start" } }
         {
-          id: "c94"
-          capability: "core.rect"
-          layout: { x: 410, y: 300, width: 64, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            { id: "c94-title" capability: "core.text" text: "c4" layout: { x: 418, y: 312, width: 48, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "c94-detail" capability: "core.text" text: "store" layout: { x: 418, y: 332, width: 48, height: 16 } style: { fontSize: 9, fill: @theme.ink.secondary } }
-          ]
-        },
-        { id: "a94" capability: "core.path" d: "M442 300 C442 280 520 270 545 254" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+          id: "s9-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.secondary }
+        }
         {
-          id: "c95"
-          capability: "core.rect"
-          layout: { x: 482, y: 300, width: 64, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            { id: "c95-title" capability: "core.text" text: "c5" layout: { x: 490, y: 312, width: 48, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "c95-detail" capability: "core.text" text: "store" layout: { x: 490, y: 332, width: 48, height: 16 } style: { fontSize: 9, fill: @theme.ink.secondary } }
-          ]
-        },
-        { id: "a95" capability: "core.path" d: "M514 300 C514 280 520 270 545 254" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
-        {
-          id: "c96"
-          capability: "core.rect"
-          layout: { x: 554, y: 300, width: 64, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            { id: "c96-title" capability: "core.text" text: "c6" layout: { x: 562, y: 312, width: 48, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "c96-detail" capability: "core.text" text: "store" layout: { x: 562, y: 332, width: 48, height: 16 } style: { fontSize: 9, fill: @theme.ink.secondary } }
-          ]
-        },
-        { id: "a96" capability: "core.path" d: "M586 300 C586 280 520 270 545 254" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
-        {
-          id: "c97"
-          capability: "core.rect"
-          layout: { x: 626, y: 300, width: 64, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            { id: "c97-title" capability: "core.text" text: "c7" layout: { x: 634, y: 312, width: 48, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "c97-detail" capability: "core.text" text: "store" layout: { x: 634, y: 332, width: 48, height: 16 } style: { fontSize: 9, fill: @theme.ink.secondary } }
-          ]
-        },
-        { id: "a97" capability: "core.path" d: "M658 300 C658 280 520 270 545 254" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
-        { id: "note9" capability: "core.text" text: "fold only · retain stays flat" layout: { x: 240, y: 370, width: 280, height: 16 } style: { fontSize: 12, fill: @theme.ink.secondary } },
-        {
-          id: "flat9"
-          capability: "core.rect"
-          layout: { x: 20, y: 360, width: 100, height: 28 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.4 }
-          children: [
-            { id: "flat9-t" capability: "core.text" text: "star fan-in" layout: { x: 24, y: 378, width: 92, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "tree9"
-          capability: "core.rect"
-          layout: { x: 130, y: 360, width: 90, height: 28 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-          children: [
-            { id: "tree9-t" capability: "core.text" text: "tree fold" layout: { x: 134, y: 378, width: 82, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        { id: "motion9" capability: "core.path" d: "M350 320 V156" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
+          id: "s9-motion-sig"
+          capability: "core.path"
+          d: "M350 320 V150"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
       ]
       timeline: [
-        { id: "s9-hdr9" at: 0 duration: 260 target: "hdr9" action: "enter" },
-        { id: "s9-ph9a" at: 80 duration: 160 target: "ph9a" action: "enter" },
-        { id: "s9-ph9b" at: 140 duration: 160 target: "ph9b" action: "enter" },
-        { id: "s9-ph9c" at: 200 duration: 160 target: "ph9c" action: "enter" },
-        { id: "s9-ctrl9" at: 320 duration: 260 target: "ctrl9" action: "enter" },
-        { id: "s9-agg90" at: 500 duration: 240 target: "agg90" action: "enter" },
-        { id: "s9-agg91" at: 600 duration: 240 target: "agg91" action: "enter" },
-        { id: "s9-a9a" at: 780 duration: 360 target: "a9a" action: "draw" },
-        { id: "s9-a9b" at: 900 duration: 360 target: "a9b" action: "draw" },
-        { id: "s9-c90" at: 1060 duration: 180 target: "c90" action: "enter" },
-        { id: "s9-c91" at: 1130 duration: 180 target: "c91" action: "enter" },
-        { id: "s9-c92" at: 1200 duration: 180 target: "c92" action: "enter" },
-        { id: "s9-c93" at: 1270 duration: 180 target: "c93" action: "enter" },
-        { id: "s9-c94" at: 1340 duration: 180 target: "c94" action: "enter" },
-        { id: "s9-c95" at: 1410 duration: 180 target: "c95" action: "enter" },
-        { id: "s9-c96" at: 1480 duration: 180 target: "c96" action: "enter" },
-        { id: "s9-c97" at: 1550 duration: 180 target: "c97" action: "enter" },
-        { id: "s9-a90" at: 1640 duration: 280 target: "a90" action: "draw" },
-        { id: "s9-a91" at: 1700 duration: 280 target: "a91" action: "draw" },
-        { id: "s9-a92" at: 1760 duration: 280 target: "a92" action: "draw" },
-        { id: "s9-a93" at: 1820 duration: 280 target: "a93" action: "draw" },
-        { id: "s9-a94" at: 1880 duration: 280 target: "a94" action: "draw" },
-        { id: "s9-a95" at: 1940 duration: 280 target: "a95" action: "draw" },
-        { id: "s9-a96" at: 2000 duration: 280 target: "a96" action: "draw" },
-        { id: "s9-a97" at: 2060 duration: 280 target: "a97" action: "draw" },
-        { id: "s9-flat9" at: 2160 duration: 180 target: "flat9" action: "enter" },
-        { id: "s9-tree9" at: 2260 duration: 180 target: "tree9" action: "enter" },
-        { id: "s9-note9" at: 2380 duration: 200 target: "note9" action: "enter" },
-        { id: "s9-motion9" at: 2520 duration: 500 target: "motion9" action: "draw" },
-        { id: "s9-emph" at: 2980 duration: 400 target: "ctrl9" action: "emphasis" },
-        { id: "s9-auto-hdr9-text" at: 3060 duration: 200 target: "hdr9-text" action: "enter" },
-        { id: "s9-auto-hdr9-cap" at: 3115 duration: 200 target: "hdr9-cap" action: "enter" },
-        { id: "s9-auto-ctrl9-title" at: 3170 duration: 200 target: "ctrl9-title" action: "enter" },
-        { id: "s9-auto-ctrl9-detail" at: 3225 duration: 200 target: "ctrl9-detail" action: "enter" },
-        { id: "s9-auto-agg90-title" at: 3280 duration: 200 target: "agg90-title" action: "enter" },
-        { id: "s9-auto-agg90-detail" at: 3335 duration: 200 target: "agg90-detail" action: "enter" },
-        { id: "s9-auto-agg91-title" at: 3390 duration: 200 target: "agg91-title" action: "enter" },
-        { id: "s9-auto-agg91-detail" at: 3445 duration: 200 target: "agg91-detail" action: "enter" },
-        { id: "s9-auto-c90-title" at: 3500 duration: 200 target: "c90-title" action: "enter" },
-        { id: "s9-auto-c90-detail" at: 3555 duration: 200 target: "c90-detail" action: "enter" },
-        { id: "s9-auto-c91-title" at: 3610 duration: 200 target: "c91-title" action: "enter" },
-        { id: "s9-auto-c91-detail" at: 3665 duration: 200 target: "c91-detail" action: "enter" },
-        { id: "s9-auto-c92-title" at: 3720 duration: 200 target: "c92-title" action: "enter" },
-        { id: "s9-auto-c92-detail" at: 3775 duration: 200 target: "c92-detail" action: "enter" },
-        { id: "s9-auto-c93-title" at: 3830 duration: 200 target: "c93-title" action: "enter" },
-        { id: "s9-auto-c93-detail" at: 3885 duration: 200 target: "c93-detail" action: "enter" },
-        { id: "s9-auto-c94-title" at: 3940 duration: 200 target: "c94-title" action: "enter" },
-        { id: "s9-auto-c94-detail" at: 3995 duration: 200 target: "c94-detail" action: "enter" },
-        { id: "s9-auto-c95-title" at: 4050 duration: 200 target: "c95-title" action: "enter" },
-        { id: "s9-auto-c95-detail" at: 4105 duration: 200 target: "c95-detail" action: "enter" },
-        { id: "s9-auto-c96-title" at: 4160 duration: 200 target: "c96-title" action: "enter" },
-        { id: "s9-auto-c96-detail" at: 4215 duration: 200 target: "c96-detail" action: "enter" },
-        { id: "s9-auto-c97-title" at: 4270 duration: 200 target: "c97-title" action: "enter" },
-        { id: "s9-auto-c97-detail" at: 4325 duration: 200 target: "c97-detail" action: "enter" },
-        { id: "s9-auto-flat9-t" at: 4380 duration: 200 target: "flat9-t" action: "enter" },
-        { id: "s9-auto-tree9-t" at: 4435 duration: 200 target: "tree9-t" action: "enter" },
+        { id: "s9-enter-hdr" at: 0 duration: 260 target: "s9-hdr" action: "enter" }
+        { id: "s9-enter-ctrl" at: 200 duration: 260 target: "s9-ctrl" action: "enter" }
+        { id: "s9-enter-agg0" at: 400 duration: 240 target: "s9-agg0" action: "enter" }
+        { id: "s9-enter-agg1" at: 500 duration: 240 target: "s9-agg1" action: "enter" }
+        { id: "s9-draw-a0" at: 680 duration: 340 target: "s9-a0" action: "draw" }
+        { id: "s9-draw-a1" at: 800 duration: 340 target: "s9-a1" action: "draw" }
+        { id: "s9-enter-c0" at: 1000 duration: 200 target: "s9-c0" action: "enter" }
+        { id: "s9-enter-c1" at: 1080 duration: 200 target: "s9-c1" action: "enter" }
+        { id: "s9-enter-c2" at: 1160 duration: 200 target: "s9-c2" action: "enter" }
+        { id: "s9-enter-c3" at: 1240 duration: 200 target: "s9-c3" action: "enter" }
+        { id: "s9-draw-ac0" at: 1360 duration: 300 target: "s9-ac0" action: "draw" }
+        { id: "s9-draw-ac1" at: 1460 duration: 300 target: "s9-ac1" action: "draw" }
+        { id: "s9-draw-ac2" at: 1560 duration: 300 target: "s9-ac2" action: "draw" }
+        { id: "s9-draw-ac3" at: 1660 duration: 300 target: "s9-ac3" action: "draw" }
+        { id: "s9-enter-note" at: 1800 duration: 200 target: "s9-note" action: "enter" }
+        { id: "s9-enter-mdot" at: 1960 duration: 180 target: "s9-motion-sig-dot" action: "enter" }
+        { id: "s9-draw-motion" at: 2080 duration: 700 target: "s9-motion-sig" action: "draw" }
+        { id: "s9-emph" at: 2780 duration: 400 target: "s9-ctrl" action: "emphasis" }
       ]
     }
   }
 
   finalCard: @scene {
-      roots: [
-        {
-          id: "final-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-          accessibility: { label: "Live evidence files" }
-          children: [
-            { id: "final-hdr-text" capability: "core.text" text: "Live evidence files" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "final-hdr-cap" capability: "core.text" text: "velo transport" layout: { x: 300, y: 34, width: 370, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
-          ]
-        },
-        {
-          id: "f1"
-          capability: "core.rect"
-          layout: { x: 40, y: 72, width: 620, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-          children: [
-            { id: "f1-title" capability: "core.text" text: "rust/runtime/src/cellular/transport/mod.rs" layout: { x: 50, y: 92, width: 600, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "f2"
-          capability: "core.rect"
-          layout: { x: 40, y: 110, width: 620, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-          children: [
-            { id: "f2-title" capability: "core.text" text: "rust/runtime/src/cellular/transport/velo_transport.rs" layout: { x: 50, y: 130, width: 600, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "f3"
-          capability: "core.rect"
-          layout: { x: 40, y: 148, width: 620, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
-          children: [
-            { id: "f3-title" capability: "core.text" text: "rust/runtime/src/cellular/transport/phaser_velo.rs" layout: { x: 50, y: 168, width: 600, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "f4"
-          capability: "core.rect"
-          layout: { x: 40, y: 186, width: 620, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
-          children: [
-            { id: "f4-title" capability: "core.text" text: "rust/runtime/src/cellular/transport/dataset_velo.rs" layout: { x: 50, y: 206, width: 600, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "f5"
-          capability: "core.rect"
-          layout: { x: 40, y: 224, width: 620, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
-          children: [
-            { id: "f5-title" capability: "core.text" text: "rust/runtime/src/cellular/heartbeat.rs" layout: { x: 50, y: 244, width: 600, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "f6"
-          capability: "core.rect"
-          layout: { x: 40, y: 262, width: 620, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
-          children: [
-            { id: "f6-title" capability: "core.text" text: "rust/runtime/src/cellular/shard.rs" layout: { x: 50, y: 282, width: 600, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "f7"
-          capability: "core.rect"
-          layout: { x: 40, y: 300, width: 620, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-          children: [
-            { id: "f7-title" capability: "core.text" text: "rust/runtime/src/cellular/transport/connect.rs" layout: { x: 50, y: 320, width: 600, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        },
-        {
-          id: "f8"
-          capability: "core.rect"
-          layout: { x: 40, y: 338, width: 620, height: 32 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-          children: [
-            { id: "f8-title" capability: "core.text" text: "rust/runtime/src/engine/cellular_controller.rs" layout: { x: 50, y: 358, width: 600, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary } }
-          ]
-        }
-      ]
-      timeline: [
-        { id: "enter-f0" at: 0 duration: 260 target: "final-hdr" action: "enter" },
-        { id: "enter-f1" at: 100 duration: 220 target: "f1" action: "enter" },
-        { id: "enter-f2" at: 200 duration: 220 target: "f2" action: "enter" },
-        { id: "enter-f3" at: 300 duration: 220 target: "f3" action: "enter" },
-        { id: "enter-f4" at: 400 duration: 220 target: "f4" action: "enter" },
-        { id: "enter-f5" at: 500 duration: 220 target: "f5" action: "enter" },
-        { id: "enter-f6" at: 600 duration: 220 target: "f6" action: "enter" },
-        { id: "enter-f7" at: 700 duration: 220 target: "f7" action: "enter" },
-        { id: "enter-f8" at: 800 duration: 220 target: "f8" action: "enter" },
-        { id: "emph-f" at: 1000 duration: 360 target: "f1" action: "emphasis" },
-      ]
-    }
+    roots: [
+      {
+        id: "final-hdr"
+        capability: "core.rect"
+        layout: { x: 18, y: 16, width: 664, height: 44 }
+        style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        accessibility: { label: "Live evidence files" }
+        children: [
+          { id: "final-hdr-t" capability: "core.text" text: "Live evidence files" layout: { x: 38, y: 28, width: 360, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary } },
+          { id: "final-hdr-p" capability: "core.text" text: "velo transport" layout: { x: 420, y: 28, width: 240, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
+        ]
+      },
+      {
+        id: "f1"
+        capability: "core.rect"
+        layout: { x: 40, y: 72, width: 620, height: 40 }
+        style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.4, radius: 8 }
+        children: [
+          { id: "f1-t" capability: "core.text" text: "rust/runtime/src/cellular/transport/mod.rs" layout: { x: 52, y: 82, width: 596, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
+        ]
+      },
+      {
+        id: "f2"
+        capability: "core.rect"
+        layout: { x: 40, y: 120, width: 620, height: 40 }
+        style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.4, radius: 8 }
+        children: [
+          { id: "f2-t" capability: "core.text" text: "rust/runtime/src/cellular/transport/velo_transport.rs" layout: { x: 52, y: 130, width: 596, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
+        ]
+      },
+      {
+        id: "f3"
+        capability: "core.rect"
+        layout: { x: 40, y: 168, width: 620, height: 40 }
+        style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.4, radius: 8 }
+        children: [
+          { id: "f3-t" capability: "core.text" text: "rust/runtime/src/cellular/transport/phaser_velo.rs" layout: { x: 52, y: 178, width: 596, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
+        ]
+      },
+      {
+        id: "f4"
+        capability: "core.rect"
+        layout: { x: 40, y: 216, width: 620, height: 40 }
+        style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.4, radius: 8 }
+        children: [
+          { id: "f4-t" capability: "core.text" text: "rust/runtime/src/cellular/transport/dataset_velo.rs" layout: { x: 52, y: 226, width: 596, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
+        ]
+      },
+      {
+        id: "f5"
+        capability: "core.rect"
+        layout: { x: 40, y: 264, width: 620, height: 40 }
+        style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.4, radius: 8 }
+        children: [
+          { id: "f5-t" capability: "core.text" text: "rust/runtime/src/cellular/heartbeat.rs" layout: { x: 52, y: 274, width: 596, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
+        ]
+      },
+      {
+        id: "f6"
+        capability: "core.rect"
+        layout: { x: 40, y: 312, width: 620, height: 40 }
+        style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.4, radius: 8 }
+        children: [
+          { id: "f6-t" capability: "core.text" text: "rust/runtime/src/cellular/shard.rs" layout: { x: 52, y: 322, width: 596, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
+        ]
+      },
+    ]
+    timeline: [
+      { id: "enter-fh" at: 0 duration: 260 target: "final-hdr" action: "enter" },
+      { id: "enter-f1" at: 120 duration: 220 target: "f1" action: "enter" },
+      { id: "enter-f2" at: 220 duration: 220 target: "f2" action: "enter" },
+      { id: "enter-f3" at: 320 duration: 220 target: "f3" action: "enter" },
+      { id: "enter-f4" at: 420 duration: 220 target: "f4" action: "enter" },
+      { id: "enter-f5" at: 520 duration: 220 target: "f5" action: "enter" },
+      { id: "enter-f6" at: 620 duration: 220 target: "f6" action: "enter" },
+      { id: "emph-f" at: 900 duration: 360 target: "f1" action: "emphasis" }
+    ]
+  }
 }
