@@ -8,12 +8,12 @@
 //! tokenizes again.
 
 use std::fmt::{self, Display};
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::str::FromStr;
 use std::time::Duration;
 
+use bytes::Bytes;
 use dynamo_renderer::{ChatTemplate, ContextMixins, OAIChatLikeRequest, PromptFormatter};
 use dynamo_tokenizers::HuggingFaceTokenizer as DynamoHuggingFaceTokenizer;
 use dynamo_tokenizers::traits::{Decoder as _, Encoder as _};
@@ -26,7 +26,12 @@ use tiktoken_rs::{
 };
 use tokenizers::Tokenizer as HfTokenizer;
 
+use crate::clock::{Clock, RealClock};
 use crate::dataset::error::{DatasetError, Result};
+use crate::transport::core::Response;
+use crate::transport::http::config::ClientConfig;
+use crate::transport::http::models::RequestConfig;
+use crate::transport::http::transport::http_transport::HttpTransport;
 
 /// Tokenization contract used by composers and input accounting.
 pub trait TextTokenizer: Send + Sync {
@@ -515,154 +520,174 @@ fn special_token_id(tokenizer: &HfTokenizer, config: &Value, field: &str) -> Opt
 /// This variant lets a run be tokenized by the exact vocabulary the server uses
 /// even when that tokenizer is not available locally: composition asks the
 /// server for the token ids of each segment and, where a decode is required,
-/// asks it to reconstruct text from ids. Every call is a single blocking
-/// round-trip over a fresh direct connection, so no ambient proxy is consulted
-/// (loopback benchmarking must never route through one) and no async runtime is
-/// borrowed on the tokenizing path.
+/// asks it to reconstruct text from ids.
 ///
-/// Only `http` origins are supported; an `https` base URL is rejected at
-/// construction rather than silently downgraded. BOS/EOS and vocabulary size are
-/// not exposed by the two endpoints, so they resolve to `None` and raw prompt
-/// generation falls back to a corpus token.
+/// Every call goes through AIPerf's shared native [`HttpTransport`] — the same
+/// Clock-injected client the dataset/hub loader and server-metrics scraper use
+/// for control-plane HTTP — so it inherits that stack's direct, proxy-free
+/// connections (loopback benchmarking must never route through an ambient
+/// proxy) and its Clock-enforced connect/request deadlines. The transport is
+/// `!Send` and drives on a current-thread `LocalSet`, so each call is bridged
+/// from this synchronous seam onto a dedicated one-shot runtime thread, mirroring
+/// [`crate::dataset::fetch`]'s `fetch_on_local_runtime` idiom.
+///
+/// Only `http`/`https` origins are accepted; any other scheme is rejected at
+/// construction. BOS/EOS and vocabulary size are not exposed by the two
+/// endpoints, so they resolve to `None` and raw prompt generation falls back to
+/// a corpus token.
 pub struct ServerTokenizer {
-    /// Direct-connect coordinates parsed once from the base URL.
-    origin: ServerOrigin,
-    /// Absolute path of the tokenize endpoint (default `/tokenize`).
-    tokenize_path: String,
-    /// Absolute path of the detokenize endpoint (default `/detokenize`).
-    detokenize_path: String,
+    /// Absolute URL of the tokenize endpoint (default `<base>/tokenize`).
+    tokenize_url: String,
+    /// Absolute URL of the detokenize endpoint (default `<base>/detokenize`).
+    detokenize_url: String,
     /// Model identity forwarded so the server selects the matching tokenizer.
     ///
     /// Absent when the server hosts a single tokenizer and needs no selector.
     model: Option<String>,
-    /// Per-call socket timeout for connect, write, and read.
+    /// Clock-enforced connect/request/total deadline for each round-trip.
     timeout: Duration,
     /// Stable diagnostic name (`server:<base-url>`).
     name: String,
 }
 
-/// Direct-connection coordinates for the tokenize endpoints.
-///
-/// Held pre-parsed so each call opens a plain `TcpStream` to `host:port` without
-/// consulting `HTTP_PROXY`/`ALL_PROXY`, matching the project rule that loopback
-/// traffic is never proxied.
-struct ServerOrigin {
-    /// Host used both for the TCP connection and the `Host` header.
-    host: String,
-    /// Resolved TCP port (explicit, or 80 for `http`).
-    port: u16,
-}
-
 impl ServerTokenizer {
-    /// Default per-call socket timeout.
+    /// Default per-call transport deadline.
     const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
     /// Build a server tokenizer targeting `base_url` (e.g. `http://host:8000`).
     ///
     /// `model` is forwarded verbatim in every request body when present. The
-    /// tokenize and detokenize paths default to `/tokenize` and `/detokenize`
-    /// under the base URL's origin; a base URL path is ignored so a bare
-    /// endpoint origin resolves correctly.
+    /// tokenize and detokenize endpoints default to `<base>/tokenize` and
+    /// `<base>/detokenize`.
     pub fn new(base_url: &str, model: Option<String>) -> Result<Self> {
         let parsed = url::Url::parse(base_url).map_err(|error| {
             DatasetError::Tokenizer(format!(
                 "invalid server tokenizer URL {base_url:?}: {error}"
             ))
         })?;
-        if parsed.scheme() != "http" {
+        if !matches!(parsed.scheme(), "http" | "https") {
             return Err(DatasetError::Tokenizer(format!(
-                "server tokenizer supports only http origins, got {:?} in {base_url:?}",
+                "server tokenizer supports only http/https origins, got {:?} in {base_url:?}",
                 parsed.scheme()
             )));
         }
-        let host = parsed
-            .host_str()
-            .ok_or_else(|| {
-                DatasetError::Tokenizer(format!("server tokenizer URL {base_url:?} has no host"))
-            })?
-            .to_string();
-        let port = parsed.port().unwrap_or(80);
+        if parsed.host_str().is_none() {
+            return Err(DatasetError::Tokenizer(format!(
+                "server tokenizer URL {base_url:?} has no host"
+            )));
+        }
+        let base = base_url.trim_end_matches('/');
         Ok(Self {
-            origin: ServerOrigin { host, port },
-            tokenize_path: "/tokenize".to_string(),
-            detokenize_path: "/detokenize".to_string(),
+            tokenize_url: format!("{base}/tokenize"),
+            detokenize_url: format!("{base}/detokenize"),
             model,
             timeout: Self::DEFAULT_TIMEOUT,
             name: format!("server:{base_url}"),
         })
     }
 
-    /// Override the tokenize and detokenize paths (defaults `/tokenize`,
-    /// `/detokenize`).
-    pub fn with_paths(mut self, tokenize_path: &str, detokenize_path: &str) -> Self {
-        self.tokenize_path = tokenize_path.to_string();
-        self.detokenize_path = detokenize_path.to_string();
-        self
-    }
-
-    /// Override the per-call socket timeout.
-    pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
-        self
-    }
-
-    /// POST a JSON body to `path` on the endpoint origin and decode the reply.
-    ///
-    /// Uses a one-shot `Connection: close` exchange over a direct socket so the
-    /// blocking hot path stays trivial and proxy-free.
+    /// POST a JSON body to `url` and decode the reply.
     fn post_json<B: Serialize, R: for<'de> Deserialize<'de>>(
         &self,
-        path: &str,
+        url: &str,
         body: &B,
     ) -> Result<R> {
         let payload = serde_json::to_vec(body)?;
-        let raw = self.exchange(path, &payload)?;
+        let raw = self.exchange(url, payload)?;
         serde_json::from_slice(&raw).map_err(|error| {
             DatasetError::Tokenizer(format!(
-                "server tokenizer {path} returned undecodable JSON: {error}"
+                "server tokenizer {url} returned undecodable JSON: {error}"
             ))
         })
     }
 
-    /// Perform one blocking HTTP/1.1 request/response and return the body bytes.
-    fn exchange(&self, path: &str, payload: &[u8]) -> Result<Vec<u8>> {
-        let address = (self.origin.host.as_str(), self.origin.port);
-        let mut stream = TcpStream::connect(address).map_err(|error| {
-            DatasetError::Tokenizer(format!(
-                "server tokenizer could not connect to {}:{}: {error}",
-                self.origin.host, self.origin.port
-            ))
-        })?;
-        stream.set_read_timeout(Some(self.timeout))?;
-        stream.set_write_timeout(Some(self.timeout))?;
-        stream.set_nodelay(true).ok();
-
-        let request = format!(
-            "POST {path} HTTP/1.1\r\n\
-             Host: {host}:{port}\r\n\
-             Content-Type: application/json\r\n\
-             Content-Length: {len}\r\n\
-             Connection: close\r\n\
-             Accept: application/json\r\n\
-             \r\n",
-            host = self.origin.host,
-            port = self.origin.port,
-            len = payload.len(),
-        );
-        stream.write_all(request.as_bytes())?;
-        stream.write_all(payload)?;
-        stream.flush()?;
-
-        let mut response = Vec::new();
-        stream.read_to_end(&mut response)?;
-        parse_http_response(&response)
+    /// Perform one POST round-trip through the shared native HTTP transport and
+    /// return the response body bytes.
+    ///
+    /// The transport is `!Send` and must run on a current-thread `LocalSet`;
+    /// this seam is synchronous and may itself be invoked from within the
+    /// composition runtime, so the round-trip is bridged onto a dedicated
+    /// one-shot runtime thread where `block_on` cannot re-enter an ambient
+    /// runtime.
+    fn exchange(&self, url: &str, payload: Vec<u8>) -> Result<Vec<u8>> {
+        let url = url.to_string();
+        let timeout_ns = i64::try_from(self.timeout.as_nanos()).unwrap_or(i64::MAX);
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| request_on_local_runtime(url, payload, timeout_ns))
+                .join()
+                .map_err(|_| {
+                    DatasetError::Tokenizer("server tokenizer request thread panicked".to_string())
+                })?
+        })
     }
+}
+
+/// Run one server-tokenizer POST on a fresh current-thread runtime + `LocalSet`.
+///
+/// Builds a [`RealClock`] and the shared [`HttpTransport`] with Clock-enforced
+/// connect/request/total deadlines, dispatches the JSON body, and classifies the
+/// terminal record: a non-2xx status is surfaced with a bounded body snippet, a
+/// missing status (connect failure or deadline) as a transport error.
+fn request_on_local_runtime(url: String, payload: Vec<u8>, timeout_ns: i64) -> Result<Vec<u8>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(DatasetError::Io)?;
+    let local = tokio::task::LocalSet::new();
+    runtime.block_on(local.run_until(async move {
+        let clock: Rc<dyn Clock> = RealClock::new();
+        let client = ClientConfig {
+            connect_timeout_ns: Some(timeout_ns),
+            request_timeout_ns: Some(timeout_ns),
+            total_timeout_ns: Some(timeout_ns),
+            ..ClientConfig::default()
+        };
+        let transport = HttpTransport::new(clock, client).with_user_agent("aiperf-tokenizer/0");
+        let record = transport
+            .send_request_bytes(
+                &RequestConfig::new(url.clone()),
+                Bytes::from(payload),
+                false,
+                |_| {},
+            )
+            .await;
+
+        let body = record
+            .responses
+            .into_iter()
+            .find_map(|response| match response {
+                Response::Text(text) => Some(text.text),
+                Response::Sse(_) => None,
+            });
+
+        match record.status {
+            Some(status) if (200..300).contains(&status) => {
+                Ok(body.unwrap_or_default().into_bytes())
+            }
+            Some(status) => {
+                let snippet: String = body.unwrap_or_default().chars().take(200).collect();
+                Err(DatasetError::Tokenizer(format!(
+                    "server tokenizer {url} returned HTTP {status}: {snippet}"
+                )))
+            }
+            None => {
+                let detail = record
+                    .error
+                    .map(|error| error.message)
+                    .unwrap_or_else(|| "no response".to_string());
+                Err(DatasetError::Tokenizer(format!(
+                    "server tokenizer request to {url} failed: {detail}"
+                )))
+            }
+        }
+    }))
 }
 
 impl TextTokenizer for ServerTokenizer {
     fn encode(&self, text: &str) -> Result<Vec<u32>> {
         let reply: EncodeReply = self.post_json(
-            &self.tokenize_path,
+            &self.tokenize_url,
             &EncodeQuery {
                 model: self.model.as_deref(),
                 prompt: text,
@@ -684,7 +709,7 @@ impl TextTokenizer for ServerTokenizer {
 
     fn decode(&self, token_ids: &[u32]) -> Result<String> {
         let reply: DecodeReply = self.post_json(
-            &self.detokenize_path,
+            &self.detokenize_url,
             &DecodeQuery {
                 model: self.model.as_deref(),
                 tokens: token_ids,
@@ -755,89 +780,6 @@ impl DecodeReply {
     }
 }
 
-/// Split a raw HTTP/1.1 response into status validation and body bytes.
-///
-/// Handles both `Content-Length`-framed and `Transfer-Encoding: chunked`
-/// bodies; a `Connection: close` request means the body otherwise runs to EOF.
-/// A non-2xx status is surfaced with a bounded snippet of the body for context.
-fn parse_http_response(response: &[u8]) -> Result<Vec<u8>> {
-    let separator = b"\r\n\r\n";
-    let header_end = response
-        .windows(separator.len())
-        .position(|window| window == separator)
-        .ok_or_else(|| {
-            DatasetError::Tokenizer(
-                "server tokenizer response had no header terminator".to_string(),
-            )
-        })?;
-    let head = &response[..header_end];
-    let body = &response[header_end + separator.len()..];
-
-    let head_text = String::from_utf8_lossy(head);
-    let mut lines = head_text.split("\r\n");
-    let status_line = lines.next().unwrap_or_default();
-    let status = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|code| code.parse::<u16>().ok())
-        .ok_or_else(|| {
-            DatasetError::Tokenizer(format!(
-                "server tokenizer returned an unparsable status line {status_line:?}"
-            ))
-        })?;
-
-    let chunked = lines.any(|line| {
-        let lower = line.to_ascii_lowercase();
-        lower.starts_with("transfer-encoding:") && lower.contains("chunked")
-    });
-    let decoded = if chunked {
-        dechunk_body(body)?
-    } else {
-        body.to_vec()
-    };
-
-    if !(200..300).contains(&status) {
-        let snippet = String::from_utf8_lossy(&decoded);
-        let snippet = snippet.chars().take(200).collect::<String>();
-        return Err(DatasetError::Tokenizer(format!(
-            "server tokenizer returned HTTP {status}: {snippet}"
-        )));
-    }
-    Ok(decoded)
-}
-
-/// Decode a `Transfer-Encoding: chunked` body into its contiguous payload.
-fn dechunk_body(mut body: &[u8]) -> Result<Vec<u8>> {
-    let mut decoded = Vec::with_capacity(body.len());
-    loop {
-        let line_end = body
-            .windows(2)
-            .position(|window| window == b"\r\n")
-            .ok_or_else(|| {
-                DatasetError::Tokenizer("truncated chunk size in server response".to_string())
-            })?;
-        let size_text = String::from_utf8_lossy(&body[..line_end]);
-        let size = usize::from_str_radix(size_text.trim(), 16).map_err(|_| {
-            DatasetError::Tokenizer(format!(
-                "invalid chunk size {size_text:?} in server response"
-            ))
-        })?;
-        body = &body[line_end + 2..];
-        if size == 0 {
-            break;
-        }
-        if body.len() < size {
-            return Err(DatasetError::Tokenizer(
-                "truncated chunk payload in server response".to_string(),
-            ));
-        }
-        decoded.extend_from_slice(&body[..size]);
-        // Skip the payload and its trailing CRLF.
-        body = &body[(size + 2).min(body.len())..];
-    }
-    Ok(decoded)
-}
-
 /// Test tokenizer that encodes to a fixed token run and refuses to decode.
 ///
 /// Shared by the raw-token composition/generation tests (in `dataset::prompt`
@@ -875,7 +817,7 @@ impl TextTokenizer for NoDecodeTokenizer {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufRead, BufReader};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::thread;
 
@@ -966,14 +908,14 @@ mod tests {
         handle.join().unwrap();
     }
 
-    // A non-http origin is rejected at construction with a clear message.
+    // An unsupported scheme is rejected at construction with a clear message.
     #[test]
-    fn server_tokenizer_rejects_non_http_scheme() {
-        let error = match ServerTokenizer::new("https://host:8443", None) {
-            Ok(_) => panic!("https origin must be rejected"),
+    fn server_tokenizer_rejects_unsupported_scheme() {
+        let error = match ServerTokenizer::new("ftp://host:21", None) {
+            Ok(_) => panic!("non-http/https origin must be rejected"),
             Err(error) => error,
         };
-        assert!(error.to_string().contains("only http origins"));
+        assert!(error.to_string().contains("only http/https origins"));
     }
 
     #[test]
