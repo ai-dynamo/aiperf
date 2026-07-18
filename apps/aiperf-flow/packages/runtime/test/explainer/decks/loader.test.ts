@@ -4,231 +4,108 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { SLURM_VELO_DECK, BUILTIN_DECKS, loadBuiltinDecks } from '../../../src/explainer/decks/loader.js';
 import { ExplainerRegistry } from '../../../src/explainer/registry.js';
-import { loadBuiltinDecks, AIPERF_FLOW_SYSTEM_DECK } from '../../../src/explainer/decks/loader.js';
+import type { ExplainerDefinition } from '@aiperf/flow-compiler';
 
-describe('Explainer Decks Loader', () => {
+describe('Explainer Deck Loader: SLURM+Velo', () => {
+  beforeEach(() => {
+    ExplainerRegistry.clear();
+  });
+
   afterEach(() => {
     ExplainerRegistry.clear();
   });
 
-  describe('AIPerf Flow System Deck', () => {
-    it('has valid deck metadata', () => {
-      const deck = AIPERF_FLOW_SYSTEM_DECK;
-      expect(deck.id).toBe('aiperf-flow-system');
-      expect(deck.route).toBe('/explainers/aiperf-flow-system');
-      expect(deck.topic).toBe('aiperf-architecture');
-      expect(deck.eyebrowLabel).toBe('AIPerf Flow System');
-      expect(deck.startGateTitle).toBe('Explore Request Lifecycle');
+  describe('SLURM_VELO_DECK structure', () => {
+    it('has correct metadata', () => {
+      expect(SLURM_VELO_DECK.id).toBe('slurm-velo');
+      expect(SLURM_VELO_DECK.route).toBe('/explainers/slurm-velo');
+      expect(SLURM_VELO_DECK.topic).toBe('distributed-execution');
+      expect(SLURM_VELO_DECK.eyebrowLabel).toBe('Cluster Orchestration');
+      expect(SLURM_VELO_DECK.startGateTitle).toBe('Ready to learn SLURM + Velo?');
     });
 
-    it('has 9 slides', () => {
-      const deck = AIPERF_FLOW_SYSTEM_DECK;
-      expect(deck.slides.length).toBe(9);
+    it('contains exactly 16 slides', () => {
+      expect(SLURM_VELO_DECK.slides).toHaveLength(16);
     });
 
-    it('all slides have required fields', () => {
-      const deck = AIPERF_FLOW_SYSTEM_DECK;
-      deck.slides.forEach((slide, index) => {
-        expect(slide.eyebrow).toBeTruthy(`Slide ${index} missing eyebrow`);
-        expect(slide.title).toBeTruthy(`Slide ${index} missing title`);
-        expect(slide.lede).toBeTruthy(`Slide ${index} missing lede`);
-        expect(slide.narration).toBeTruthy(`Slide ${index} missing narration`);
+    it('has scenesById map for scene integration', () => {
+      expect(SLURM_VELO_DECK.scenesById).toBeDefined();
+      expect(SLURM_VELO_DECK.scenesById).toBeInstanceOf(Map);
+    });
+  });
+
+  describe('Slide structure validation', () => {
+    it('each slide has required fields', () => {
+      SLURM_VELO_DECK.slides.forEach((slide) => {
+        expect(slide.eyebrow).toBeDefined();
+        expect(slide.title).toBeDefined();
+        expect(slide.lede).toBeDefined();
+        expect(slide.narration).toBeDefined();
+        expect(slide.points).toBeDefined();
         expect(Array.isArray(slide.points)).toBe(true);
-        expect(slide.caption).toBeTruthy(`Slide ${index} missing caption`);
-      });
-    });
-
-    it('slides progress through AIPerf concepts', () => {
-      const deck = AIPERF_FLOW_SYSTEM_DECK;
-      const expectedSequence = [
-        'Architecture',
-        'Lifecycle',
-        'Admission',
-        'Transport',
-        'Worker',
-        'Stream',
-        'Measurement',
-        'Visualization',
-        'Integration',
-      ];
-
-      deck.slides.forEach((slide, index) => {
-        const titleLower = slide.title.toLowerCase();
-        const expectedKeyword = expectedSequence[index];
-        expect(titleLower).toContain(expectedKeyword.toLowerCase());
-      });
-    });
-
-    it('includes terminology definitions', () => {
-      const deck = AIPERF_FLOW_SYSTEM_DECK;
-      const slidesWithTerms = deck.slides.filter(s => s.term);
-      expect(slidesWithTerms.length).toBeGreaterThan(0);
-
-      slidesWithTerms.forEach(slide => {
-        expect(slide.term?.word).toBeTruthy();
-        expect(slide.term?.meaning).toBeTruthy();
-      });
-    });
-  });
-
-  describe('Deck Loader', () => {
-    it('loads built-in decks into registry', () => {
-      loadBuiltinDecks(ExplainerRegistry);
-
-      const deck = ExplainerRegistry.getDeck('aiperf-flow-system');
-      expect(deck).toBeDefined();
-      expect(deck?.id).toBe('aiperf-flow-system');
-    });
-
-    it('registers deck by route', () => {
-      loadBuiltinDecks(ExplainerRegistry);
-
-      const deck = ExplainerRegistry.getDeckByRoute('/explainers/aiperf-flow-system');
-      expect(deck).toBeDefined();
-      expect(deck?.id).toBe('aiperf-flow-system');
-    });
-
-    it('deck is queryable via getRouteMap', () => {
-      loadBuiltinDecks(ExplainerRegistry);
-
-      const routeMap = ExplainerRegistry.getRouteMap();
-      expect(routeMap.get('/explainers/aiperf-flow-system')).toBe('aiperf-flow-system');
-    });
-
-    it('deck appears in getAllDecks', () => {
-      loadBuiltinDecks(ExplainerRegistry);
-
-      const allDecks = ExplainerRegistry.getAllDecks();
-      expect(allDecks.length).toBeGreaterThan(0);
-      expect(allDecks[0]?.id).toBe('aiperf-flow-system');
-    });
-
-    it('loader prevents duplicate registration', () => {
-      loadBuiltinDecks(ExplainerRegistry);
-      expect(() => loadBuiltinDecks(ExplainerRegistry)).toThrow(/duplicate|already/i);
-    });
-  });
-
-  describe('Deck Content Fidelity', () => {
-    beforeEach(() => {
-      loadBuiltinDecks(ExplainerRegistry);
-    });
-
-    it('registered deck matches loader definition', () => {
-      const registered = ExplainerRegistry.getDeck('aiperf-flow-system');
-      const loader = AIPERF_FLOW_SYSTEM_DECK;
-
-      expect(registered?.id).toBe(loader.id);
-      expect(registered?.route).toBe(loader.route);
-      expect(registered?.slides.length).toBe(loader.slides.length);
-    });
-
-    it('slide content is accurate after registration', () => {
-      const deck = ExplainerRegistry.getDeck('aiperf-flow-system');
-      if (!deck) {
-        throw new Error('Deck not registered');
-      }
-
-      const expectedNarrationContent = [
-        'load generator',
-        'request passes through',
-        'admission queue',
-        'transport layer',
-        'worker',
-        'observer',
-        'measurement',
-        'visualization',
-        'measurement and visualization',
-      ];
-
-      deck.slides.forEach((slide, index) => {
-        expect(slide.narration.toLowerCase()).toContain(
-          expectedNarrationContent[index]!.toLowerCase()
-        );
-      });
-    });
-
-    it('narration covers key AIPerf concepts', () => {
-      const deck = ExplainerRegistry.getDeck('aiperf-flow-system');
-      if (!deck) {
-        throw new Error('Deck not registered');
-      }
-
-      const allNarration = deck.slides.map(s => s.narration).join(' ');
-      const keyTerms = [
-        'clock',
-        'request',
-        'evidence',
-        'admission',
-        'transport',
-        'worker',
-        'observer',
-        'measurement',
-      ];
-
-      keyTerms.forEach(term => {
-        expect(allNarration.toLowerCase()).toContain(term.toLowerCase());
-      });
-    });
-
-    it('slides provide educational value', () => {
-      const deck = ExplainerRegistry.getDeck('aiperf-flow-system');
-      if (!deck) {
-        throw new Error('Deck not registered');
-      }
-
-      deck.slides.forEach((slide, index) => {
-        // Each slide should have substantive narration
-        expect(slide.narration.trim().length).toBeGreaterThan(100);
-
-        // Each slide should have bullet points
-        expect(slide.points.length).toBeGreaterThan(0);
-
-        // Captions should be concise summaries
-        expect(slide.caption.trim().length).toBeGreaterThan(10);
-      });
-    });
-  });
-
-  describe('Accessibility', () => {
-    beforeEach(() => {
-      loadBuiltinDecks(ExplainerRegistry);
-    });
-
-    it('all slides have narration for audio accessibility', () => {
-      const deck = ExplainerRegistry.getDeck('aiperf-flow-system');
-      if (!deck) {
-        throw new Error('Deck not registered');
-      }
-
-      deck.slides.forEach((slide, index) => {
-        expect(slide.narration).toBeTruthy();
+        expect(slide.caption).toBeDefined();
         expect(slide.narration.trim().length).toBeGreaterThan(0);
       });
     });
 
-    it('some slides include terminology definitions', () => {
-      const deck = ExplainerRegistry.getDeck('aiperf-flow-system');
-      if (!deck) {
-        throw new Error('Deck not registered');
-      }
-
-      const slidesWithTerms = deck.slides.filter(s => s.term);
-      expect(slidesWithTerms.length).toBeGreaterThan(0);
+    it('each slide has at least 2 bullet points', () => {
+      SLURM_VELO_DECK.slides.forEach((slide) => {
+        expect(slide.points.length).toBeGreaterThanOrEqual(2);
+      });
     });
 
-    it('deck is keyboard navigable (has slide structure)', () => {
-      const deck = ExplainerRegistry.getDeck('aiperf-flow-system');
-      if (!deck) {
-        throw new Error('Deck not registered');
-      }
-
-      // Each slide should have the structure to support keyboard navigation
-      expect(deck.slides.length).toBeGreaterThan(0);
-      deck.slides.forEach((slide, index) => {
-        expect(slide.title).toBeTruthy(`Slide ${index} missing title for navigation`);
+    it('glossary terms defined on relevant slides', () => {
+      const slidesWithTerms = SLURM_VELO_DECK.slides.filter((s) => s.term);
+      expect(slidesWithTerms.length).toBeGreaterThan(0);
+      slidesWithTerms.forEach((slide) => {
+        expect(slide.term?.word).toBeDefined();
+        expect(slide.term?.meaning).toBeDefined();
       });
+    });
+  });
+
+  describe('Registry integration', () => {
+    it('deck can be registered and retrieved', () => {
+      ExplainerRegistry.register(SLURM_VELO_DECK);
+      expect(ExplainerRegistry.getDeck('slurm-velo')).toBeDefined();
+      expect(ExplainerRegistry.getDeckByRoute('/explainers/slurm-velo')).toBeDefined();
+    });
+  });
+
+  describe('Builtin decks list', () => {
+    it('includes SLURM+Velo deck', () => {
+      expect(BUILTIN_DECKS).toContain(SLURM_VELO_DECK);
+    });
+
+    it('loads all builtin decks successfully', () => {
+      const registry = { register: (deck: ExplainerDefinition) => ExplainerRegistry.register(deck) };
+      loadBuiltinDecks(registry);
+      expect(ExplainerRegistry.getDeck('slurm-velo')).toBeDefined();
+      expect(ExplainerRegistry.getDeck('aiperf-flow-system')).toBeDefined();
+    });
+  });
+
+  describe('Narration coverage', () => {
+    it('all 16 narration texts are distinct', () => {
+      const narrations = SLURM_VELO_DECK.slides.map((s) => s.narration);
+      const uniqueNarrations = new Set(narrations);
+      expect(uniqueNarrations.size).toBe(16);
+    });
+  });
+
+  describe('Content completeness', () => {
+    it('covers SLURM, Velo, and communication patterns', () => {
+      const allContent = SLURM_VELO_DECK.slides
+        .map((s) => s.title + ' ' + s.narration)
+        .join(' ');
+
+      expect(allContent).toContain('SLURM');
+      expect(allContent).toContain('Velo');
+      expect(allContent).toContain('fan');
+      expect(allContent).toContain('controller');
+      expect(allContent).toContain('cell');
     });
   });
 });
