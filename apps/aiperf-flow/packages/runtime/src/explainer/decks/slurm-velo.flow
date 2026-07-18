@@ -6,7 +6,10 @@
 //! SLURM + Velo Explainer Deck
 //! Distributed execution: cluster orchestration, cross-host communication, topology, rank mapping, message flow.
 
-explainer "slurm-velo" {
+flow "SLURM and Velo: Distributed AI Load Testing" as slurm-velo-explainer {
+  language 1
+
+  explainer "slurm-velo" {
   route: "/explainers/slurm-velo"
   topic: "distributed-execution"
   eyebrowLabel: "Cluster Orchestration"
@@ -278,5 +281,6 @@ explainer "slurm-velo" {
       "Rank assignment, Velo wiring, and merging all happen automatically."
     ]
     caption: "You describe the benchmark; AIPerf handles the cluster choreography."
+  }
   }
 }

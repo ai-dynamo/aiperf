@@ -94,6 +94,105 @@ function flowWithNarrowScene(flow: FlowIr, sceneId: string): FlowIr {
   };
 }
 
+type BreadcrumbProps = Readonly<{
+  workspace: PreviewWorkspace;
+  activeFlowId: string;
+  activeSceneId: string;
+  onSelectScene(flowId: string, sceneId: string): void;
+}>;
+
+function Breadcrumb({
+  workspace,
+  activeFlowId,
+  activeSceneId,
+  onSelectScene,
+}: BreadcrumbProps): ReactNode {
+  const activeFlow = workspace.flows[activeFlowId] ?? workspace.flow;
+  const sceneIndex = activeFlow.scenes.findIndex((s) => s.id === activeSceneId);
+  const stepNumber = sceneIndex >= 0 ? sceneIndex + 1 : 1;
+
+  return (
+    <nav className="preview-breadcrumb" aria-label="Scene progression">
+      <div className="breadcrumb-steps">
+        {activeFlow.scenes.map((scene, index) => {
+          const stepNum = index + 1;
+          const isActive = scene.id === activeSceneId;
+          return (
+            <button
+              key={scene.id}
+              className={`breadcrumb-step ${isActive ? "is-active" : ""}`}
+              onClick={() => onSelectScene(activeFlowId, scene.id)}
+              type="button"
+              aria-current={isActive ? "step" : undefined}
+            >
+              <span className="breadcrumb-number">{stepNum}</span>
+              <span className="breadcrumb-title">{scene.title}</span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+type BottomNavProps = Readonly<{
+  workspace: PreviewWorkspace;
+  activeFlowId: string;
+  activeSceneId: string;
+  onSelectScene(flowId: string, sceneId: string): void;
+}>;
+
+function BottomNav({
+  workspace,
+  activeFlowId,
+  activeSceneId,
+  onSelectScene,
+}: BottomNavProps): ReactNode {
+  const activeFlow = workspace.flows[activeFlowId] ?? workspace.flow;
+  const sceneIndex = activeFlow.scenes.findIndex((s) => s.id === activeSceneId);
+  const canGoPrev = sceneIndex > 0;
+  const canGoNext = sceneIndex < activeFlow.scenes.length - 1;
+
+  function goToPrev(): void {
+    if (canGoPrev) {
+      const prevScene = activeFlow.scenes[sceneIndex - 1];
+      if (prevScene !== undefined) {
+        onSelectScene(activeFlowId, prevScene.id);
+      }
+    }
+  }
+
+  function goToNext(): void {
+    if (canGoNext) {
+      const nextScene = activeFlow.scenes[sceneIndex + 1];
+      if (nextScene !== undefined) {
+        onSelectScene(activeFlowId, nextScene.id);
+      }
+    }
+  }
+
+  return (
+    <nav className="preview-bottom-nav" aria-label="Scene navigation">
+      <button
+        onClick={goToPrev}
+        disabled={!canGoPrev}
+        type="button"
+        className="nav-button nav-back"
+      >
+        ← Back
+      </button>
+      <button
+        onClick={goToNext}
+        disabled={!canGoNext}
+        type="button"
+        className="nav-button nav-next"
+      >
+        Next →
+      </button>
+    </nav>
+  );
+}
+
 type DocumentBrowserProps = Readonly<{
   workspace: PreviewWorkspace;
   activeFlowId: string;
@@ -125,24 +224,14 @@ function DocumentBrowser({
 
   return (
     <aside
-      aria-hidden={collapsed}
       aria-label="Flow browser"
       className="flow-browser"
-      data-overlay="true"
-      inert={collapsed || undefined}
     >
       <div className="flow-browser-head">
         <div>
           <span className="flow-browser-kicker">Workspace</span>
           <strong>Flows</strong>
         </div>
-        <button
-          aria-label="Collapse Flow browser"
-          onClick={onCollapse}
-          type="button"
-        >
-          ‹
-        </button>
       </div>
 
       <label className="flow-browser-search">
@@ -223,7 +312,6 @@ export function App() {
   const scenesByFlow = useMemo(() => discoverScenesByFlow(), []);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const [showHome, setShowHome] = useState(true);
-  const [browserCollapsed, setBrowserCollapsed] = useState(true);
   const [activeFlowId, setActiveFlowId] = useState(
     workspace.navigation.active.flowId,
   );
@@ -355,20 +443,6 @@ export function App() {
       <header className="preview-topbar">
         <div className="preview-brand-cluster">
           <button
-            aria-expanded={!browserCollapsed}
-            aria-label={
-              browserCollapsed ? "Open Flow browser" : "Close Flow browser"
-            }
-            className="flow-browser-trigger"
-            onClick={() => setBrowserCollapsed((value) => !value)}
-            type="button"
-            style={{ display: showHome ? "none" : "flex" }}
-          >
-            <span />
-            <span />
-            <span />
-          </button>
-          <button
             className="preview-study"
             aria-label="AIPerf Flow home"
             onClick={goHome}
@@ -490,49 +564,62 @@ export function App() {
 
       <div
         className="flow-workspace"
-        data-browser-collapsed={browserCollapsed ? "true" : "false"}
         style={{ display: showHome ? "none" : "flex" }}
       >
         <DocumentBrowser
           activeFlowId={activeFlowId}
           activeSceneId={activeSceneId}
-          collapsed={browserCollapsed}
-          onCollapse={() => setBrowserCollapsed(true)}
           onSelectScene={selectScene}
           searchRef={searchRef}
           workspace={workspace}
         />
 
-        <main
-          className="runtime-story"
-          data-theme={theme}
-          style={{
-            ...(theme === "legacy" && {
-              "--flow-board": "#1a1a1a",
-              "--flow-panel": "#222",
-              "--flow-raised": "#2a2a2a",
-              "--flow-control-surface": "#2a2a2a",
-              "--flow-chalk": "#e8e8e8",
-              "--flow-chalk-muted": "#999",
-            } as React.CSSProperties),
-            ...(theme === "core" && {
-              "--flow-board": "#0d1117",
-              "--flow-panel": "#161b22",
-              "--flow-raised": "#21262d",
-              "--flow-control-surface": "#21262d",
-              "--flow-chalk": "#f0f6fc",
-              "--flow-chalk-muted": "#8b949e",
-            } as React.CSSProperties),
-          }}
-        >
-          <FlowApp
-            key={`${activeFlowId}:${activeSceneId}`}
-            flow={flow}
-            narratorBackend={narratorBackend}
-            reducedMotion={reducedMotion}
-            requireAudioConsent
+        <div className="flow-main-section">
+          <Breadcrumb
+            workspace={workspace}
+            activeFlowId={activeFlowId}
+            activeSceneId={activeSceneId}
+            onSelectScene={selectScene}
           />
-        </main>
+
+          <main
+            className="runtime-story"
+            data-theme={theme}
+            style={{
+              ...(theme === "legacy" && {
+                "--flow-board": "#1a1a1a",
+                "--flow-panel": "#222",
+                "--flow-raised": "#2a2a2a",
+                "--flow-control-surface": "#2a2a2a",
+                "--flow-chalk": "#e8e8e8",
+                "--flow-chalk-muted": "#999",
+              } as React.CSSProperties),
+              ...(theme === "core" && {
+                "--flow-board": "#0d1117",
+                "--flow-panel": "#161b22",
+                "--flow-raised": "#21262d",
+                "--flow-control-surface": "#21262d",
+                "--flow-chalk": "#f0f6fc",
+                "--flow-chalk-muted": "#8b949e",
+              } as React.CSSProperties),
+            }}
+          >
+            <FlowApp
+              key={`${activeFlowId}:${activeSceneId}`}
+              flow={flow}
+              narratorBackend={narratorBackend}
+              reducedMotion={reducedMotion}
+              requireAudioConsent
+            />
+          </main>
+
+          <BottomNav
+            workspace={workspace}
+            activeFlowId={activeFlowId}
+            activeSceneId={activeSceneId}
+            onSelectScene={selectScene}
+          />
+        </div>
       </div>
 
       {showHome && (
