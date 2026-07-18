@@ -1329,6 +1329,8 @@ mod tests {
                 .extension()
                 .is_some_and(|ext| ext == "tiktoken")
         );
+    }
+
     /// Deterministic in-process keep-alive `/tokenize` + `/detokenize` server for
     /// the [`ServerTokenizer`] tests.
     ///
