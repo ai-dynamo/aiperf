@@ -463,9 +463,11 @@ export function App() {
   }
 
   function selectExplainerDeck(deckId: string): void {
+    console.log('[DEBUG] selectExplainerDeck called with deckId:', deckId);
     setSelectedExplainerDeckId(deckId);
     setExplainerSlideIndex(0);
     setShowExplainerPicker(false);
+    console.log('[DEBUG] State updated - selectedExplainerDeckId set to:', deckId);
   }
 
   function closeExplainerDeck(): void {
@@ -676,24 +678,30 @@ export function App() {
             }}
           >
             {selectedExplainerDeckId ? (
-              <ExplainerDeckNavigator
-                deckId={selectedExplainerDeckId}
-                slideIndex={explainerSlideIndex}
-                onSlideChange={handleExplainerSlideChange}
-                onBackClick={closeExplainerDeck}
-              />
+              <>
+                {console.log('[DEBUG] Rendering ExplainerDeckNavigator with deckId:', selectedExplainerDeckId)}
+                <ExplainerDeckNavigator
+                  deckId={selectedExplainerDeckId}
+                  slideIndex={explainerSlideIndex}
+                  onSlideChange={handleExplainerSlideChange}
+                  onBackClick={closeExplainerDeck}
+                />
+              </>
             ) : (
-              <FlowApp
-                key={`${activeFlowId}:${activeSceneId}`}
-                flow={flow}
-                narratorBackend={narratorBackend}
-                reducedMotion={reducedMotion}
-                requireAudioConsent={audioConsent === "unset"}
-                onAudioConsentChange={(hasConsented) => {
-                  setAudioConsent(hasConsented ? "yes" : "no");
-                }}
-                autoPlay={audioConsent === "yes"}
-              />
+              <>
+                {console.log('[DEBUG] Rendering FlowApp')}
+                <FlowApp
+                  key={`${activeFlowId}:${activeSceneId}`}
+                  flow={flow}
+                  narratorBackend={narratorBackend}
+                  reducedMotion={reducedMotion}
+                  requireAudioConsent={audioConsent === "unset"}
+                  onAudioConsentChange={(hasConsented) => {
+                    setAudioConsent(hasConsented ? "yes" : "no");
+                  }}
+                  autoPlay={audioConsent === "yes"}
+                />
+              </>
             )}
           </main>
 
@@ -715,7 +723,7 @@ export function App() {
           onOpenExplainers={openExplainerPicker}
         />
       )}
-      {showExplainerPicker && !selectedExplainerDeckId && (
+      {showExplainerPicker && selectedExplainerDeckId === null && (
         <ExplainerDeckPicker
           decks={COMPILED_EXPLAINER_DECKS}
           onDeckSelect={selectExplainerDeck}

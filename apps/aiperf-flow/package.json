@@ -17,6 +17,10 @@
   "devDependencies": {
     "@playwright/test": "^1.61.1",
     "@vitejs/plugin-react": "^4.7.0",
+    "pixelmatch": "^7.2.0",
     "vite": "^6.3.5"
+  },
+  "dependencies": {
+    "sharp": "^0.35.3"
   }
 }
