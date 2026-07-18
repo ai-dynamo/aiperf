@@ -16,7 +16,7 @@ use crate::content_server::ContentServerMediaPublisher;
 use crate::dataset::{
     DatasetFetcher, HttpDatasetFetcher, MaterializedTracePromptStorage,
     NativeSyntheticMediaGeneratorFactory, SyntheticMediaGeneratorFactory, TiktokenEncoding,
-    download_hugging_face_tokenizer,
+    download_hugging_face_tokenizer, find_tiktoken_model_file,
 };
 use crate::endpoints::Modality;
 use crate::failure::OnFailure;
@@ -568,31 +568,36 @@ fn default_revision() -> String {
 
 /// Actionable diagnostic for a tokenizer repository AIPerf cannot load natively.
 ///
-/// The native tokenizer accepts only `tokenizer.json` (or a built-in tiktoken
-/// encoding) and never executes repository Python. A repository that ships only
-/// a custom Python tokenizer over a tiktoken/`*.model` vocab (e.g. Moonshot Kimi
-/// K2's `tokenization_kimi.py`) therefore cannot be loaded. Substituting a
-/// different tokenizer would silently report wrong token counts — the worst
-/// failure for a benchmark tool — so this fails closed with guidance instead.
+/// The native tokenizer accepts `tokenizer.json` (HuggingFace fast), a native
+/// `tiktoken.model` / `tokenizer.model` / `*.tiktoken` BPE vocab (Kimi/Qwen/
+/// DeepSeek-class), or a built-in tiktoken encoding, and never executes
+/// repository Python. A repository that ships none of these — only a custom
+/// Python tokenizer with no vocab file AIPerf can parse — cannot be loaded.
+/// Substituting a different tokenizer would silently report wrong token counts —
+/// the worst failure for a benchmark tool — so this fails closed with guidance.
 fn remote_code_tokenizer_error(name: &str) -> String {
     format!(
         "tokenizer {name:?} cannot be loaded by AIPerf's native tokenizer: the repository \
-         provides no `tokenizer.json` and requires executing custom repository code \
-         (`trust_remote_code`), which the native tokenizer never does. Loading a substitute \
-         tokenizer would report incorrect token counts, so AIPerf refuses rather than guess. \
-         Point the tokenizer at a repository or local directory that contains a `tokenizer.json`, \
-         or run with `--use-server-token-count` so the endpoint's reported `usage` supplies \
-         authoritative token counts."
+         provides neither a `tokenizer.json` nor a native tiktoken vocab file \
+         (`tiktoken.model`, `tokenizer.model`, or `*.tiktoken`) and requires executing custom \
+         repository code (`trust_remote_code`), which the native tokenizer never does. Loading \
+         a substitute tokenizer would report incorrect token counts, so AIPerf refuses rather \
+         than guess. Point the tokenizer at a repository or local directory that contains a \
+         `tokenizer.json` or a tiktoken vocab file, or run with `--use-server-token-count` so \
+         the endpoint's reported `usage` supplies authoritative token counts."
     )
 }
 
-/// Reject a resolved tokenizer directory that has no native-loadable
-/// `tokenizer.json`, naming the model in an actionable error. Shared by every
-/// resolver so a Kimi-class custom-code-only repository fails identically instead
-/// of surfacing a bare "No such file" at [`load_tokenizer`] time.
+/// Reject a resolved tokenizer directory that has no native-loadable tokenizer,
+/// naming the model in an actionable error. A directory is native-loadable when
+/// it holds either a `tokenizer.json` (HuggingFace fast path) or a native
+/// tiktoken vocab file (`tiktoken.model` / `tokenizer.model` / `*.tiktoken`).
+/// Shared by every resolver so a custom-code-only repository fails identically
+/// instead of surfacing a bare "No such file" at [`load_tokenizer`] time.
 fn ensure_native_tokenizer_loadable(name: &str, directory: &Path) -> Result<()> {
     ensure!(
-        directory.join("tokenizer.json").is_file(),
+        directory.join("tokenizer.json").is_file()
+            || find_tiktoken_model_file(directory).is_some(),
         "{}",
         remote_code_tokenizer_error(name)
     );
@@ -688,46 +693,66 @@ impl NativeOnlineTokenizerSourceResolver {
             return Ok(resolved_directory);
         }
 
-        let tokenizer_url =
-            hugging_face_model_url(&self.hugging_face_endpoint, name, Some(("resolve", commit)))?
-                + "/tokenizer.json";
-        let tokenizer = self
-            .fetcher
-            .fetch(
-                &tokenizer_url,
-                &format!("hf-tokenizer-file:{name}:{commit}:tokenizer.json"),
-                token.as_deref(),
-            )
-            .await
-            // A repository can resolve (commit sha present) yet have no
-            // `tokenizer.json` because it ships a custom Python tokenizer; that
-            // fetch failure must surface the actionable remote-code guidance, not
-            // a bare transport error.
-            .with_context(|| remote_code_tokenizer_error(name))?;
-        persist_tokenizer_file(&tokenizer_path, tokenizer.as_ref())?;
-
-        // `tokenizer_config.json` enriches BOS/EOS and chat-template policy but
-        // is not universal. A missing optional file must not invalidate a
-        // complete tokenizer.json; malformed present files are rejected later
-        // by `HuggingFaceTokenizer::from_directory`.
-        let config_url =
-            hugging_face_model_url(&self.hugging_face_endpoint, name, Some(("resolve", commit)))?
-                + "/tokenizer_config.json";
-        if let Ok(config) = self
-            .fetcher
-            .fetch(
-                &config_url,
-                &format!("hf-tokenizer-file:{name}:{commit}:tokenizer_config.json"),
-                token.as_deref(),
-            )
+        // Fetch `tokenizer.json` (HuggingFace fast path) best-effort. A repository
+        // can resolve (commit sha present) yet ship no `tokenizer.json` because it
+        // uses a tiktoken vocab (Kimi/Qwen/DeepSeek) or a custom Python tokenizer,
+        // so its absence is not fatal here — the tiktoken fallback and the final
+        // `ensure_native_tokenizer_loadable` guard decide loadability.
+        if let Some(bytes) = self
+            .fetch_optional_file(name, commit, "tokenizer.json", token.as_deref())
             .await
         {
-            persist_tokenizer_file(
-                &resolved_directory.join("tokenizer_config.json"),
-                config.as_ref(),
-            )?;
+            persist_tokenizer_file(&tokenizer_path, bytes.as_ref())?;
+        } else {
+            // No `tokenizer.json`: pull a native tiktoken vocab file if present,
+            // so the loader can tokenize Kimi/Qwen-class models client-side.
+            for vocab_name in ["tiktoken.model", "tokenizer.model"] {
+                if let Some(bytes) = self
+                    .fetch_optional_file(name, commit, vocab_name, token.as_deref())
+                    .await
+                {
+                    persist_tokenizer_file(&resolved_directory.join(vocab_name), bytes.as_ref())?;
+                    break;
+                }
+            }
+        }
+
+        // `tokenizer_config.json` (special tokens, BOS/EOS, chat template) and
+        // `config.json` (`vocab_size`, `model_type` for the tiktoken regex) enrich
+        // loading but are not universal; a missing optional file must not
+        // invalidate an otherwise-complete tokenizer.
+        for optional in ["tokenizer_config.json", "config.json"] {
+            if let Some(bytes) = self
+                .fetch_optional_file(name, commit, optional, token.as_deref())
+                .await
+            {
+                persist_tokenizer_file(&resolved_directory.join(optional), bytes.as_ref())?;
+            }
         }
         Ok(resolved_directory)
+    }
+
+    /// Fetch one repository file at `commit`, returning `None` when it is absent
+    /// (any fetch error) rather than failing the whole resolution.
+    async fn fetch_optional_file(
+        &self,
+        name: &str,
+        commit: &str,
+        filename: &str,
+        token: Option<&str>,
+    ) -> Option<bytes::Bytes> {
+        let url =
+            hugging_face_model_url(&self.hugging_face_endpoint, name, Some(("resolve", commit)))
+                .ok()?
+                + &format!("/{filename}");
+        self.fetcher
+            .fetch(
+                &url,
+                &format!("hf-tokenizer-file:{name}:{commit}:{filename}"),
+                token,
+            )
+            .await
+            .ok()
     }
 }
 

@@ -33,6 +33,7 @@ use crate::content_server::{
 };
 use crate::dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, ModelId,
+    NativeTiktokenTokenizer, find_tiktoken_model_file,
     ModelSelector, ModelSelectorFactory, RandomModelSelectorFactory,
     RoundRobinModelSelectorFactory, SourceImageSampling, SyntheticAudioConfig,
     SyntheticAudioFormat, SyntheticDatasetConfig, SyntheticImageConfig, SyntheticImageFormat,
@@ -4977,6 +4978,17 @@ pub(crate) fn load_tokenizer(spec: Option<&str>) -> Result<Arc<dyn TextTokenizer
     let spec = spec.unwrap_or("builtin");
     let path = Path::new(spec);
     if path.is_dir() {
+        // Resolution order mirrors vLLM's Rust frontend: the HuggingFace fast
+        // tokenizer (`tokenizer.json`) first, then a native `tiktoken.model` /
+        // `tokenizer.model` / `*.tiktoken` BPE vocab for Kimi/Qwen/DeepSeek-class
+        // repositories that ship no `tokenizer.json`. Only when neither is
+        // present do we fall through to the actionable error at the resolver.
+        if path.join("tokenizer.json").is_file() {
+            return Ok(Arc::new(HuggingFaceTokenizer::from_directory(path)?));
+        }
+        if find_tiktoken_model_file(path).is_some() {
+            return Ok(Arc::new(NativeTiktokenTokenizer::from_directory(path)?));
+        }
         return Ok(Arc::new(HuggingFaceTokenizer::from_directory(path)?));
     }
     if path.is_file() {
