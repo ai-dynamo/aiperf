@@ -566,6 +566,39 @@ fn default_revision() -> String {
     "main".into()
 }
 
+/// Actionable diagnostic for a tokenizer repository AIPerf cannot load natively.
+///
+/// The native tokenizer accepts only `tokenizer.json` (or a built-in tiktoken
+/// encoding) and never executes repository Python. A repository that ships only
+/// a custom Python tokenizer over a tiktoken/`*.model` vocab (e.g. Moonshot Kimi
+/// K2's `tokenization_kimi.py`) therefore cannot be loaded. Substituting a
+/// different tokenizer would silently report wrong token counts — the worst
+/// failure for a benchmark tool — so this fails closed with guidance instead.
+fn remote_code_tokenizer_error(name: &str) -> String {
+    format!(
+        "tokenizer {name:?} cannot be loaded by AIPerf's native tokenizer: the repository \
+         provides no `tokenizer.json` and requires executing custom repository code \
+         (`trust_remote_code`), which the native tokenizer never does. Loading a substitute \
+         tokenizer would report incorrect token counts, so AIPerf refuses rather than guess. \
+         Point the tokenizer at a repository or local directory that contains a `tokenizer.json`, \
+         or run with `--use-server-token-count` so the endpoint's reported `usage` supplies \
+         authoritative token counts."
+    )
+}
+
+/// Reject a resolved tokenizer directory that has no native-loadable
+/// `tokenizer.json`, naming the model in an actionable error. Shared by every
+/// resolver so a Kimi-class custom-code-only repository fails identically instead
+/// of surfacing a bare "No such file" at [`load_tokenizer`] time.
+fn ensure_native_tokenizer_loadable(name: &str, directory: &Path) -> Result<()> {
+    ensure!(
+        directory.join("tokenizer.json").is_file(),
+        "{}",
+        remote_code_tokenizer_error(name)
+    );
+    Ok(())
+}
+
 /// Preparation-time tokenizer acquisition for protocol-v2 online workloads.
 ///
 /// The native implementation accepts built-in encodings and local paths
@@ -666,7 +699,11 @@ impl NativeOnlineTokenizerSourceResolver {
                 token.as_deref(),
             )
             .await
-            .with_context(|| format!("downloading tokenizer.json for {name:?}@{commit}"))?;
+            // A repository can resolve (commit sha present) yet have no
+            // `tokenizer.json` because it ships a custom Python tokenizer; that
+            // fetch failure must surface the actionable remote-code guidance, not
+            // a bare transport error.
+            .with_context(|| remote_code_tokenizer_error(name))?;
         persist_tokenizer_file(&tokenizer_path, tokenizer.as_ref())?;
 
         // `tokenizer_config.json` enriches BOS/EOS and chat-template policy but
@@ -705,6 +742,7 @@ impl OnlineTokenizerSourceResolver for NativeOnlineTokenizerSourceResolver {
             .context("creating tokenizer preparation runtime")?;
         let local = tokio::task::LocalSet::new();
         let resolved = local.block_on(&runtime, self.resolve_remote(name, revision))?;
+        ensure_native_tokenizer_loadable(name, &resolved)?;
         tokenizer_directory_to_string(&resolved)
     }
 }
@@ -774,6 +812,12 @@ impl OnlineTokenizerSourceResolver for HfHubOnlineTokenizerSourceResolver {
         let directory = runtime
             .block_on(download_hugging_face_tokenizer(name))
             .with_context(|| format!("resolving tokenizer repository {name:?}"))?;
+        // `download_hugging_face_tokenizer` accepts a repository whose only
+        // tokenizer artifact is `tokenizer_config.json` (a Kimi-class custom-code
+        // repo), returning a directory with no native-loadable `tokenizer.json`.
+        // Fail here with actionable guidance rather than a bare "No such file"
+        // from `from_directory`, and never substitute a wrong tokenizer.
+        ensure_native_tokenizer_loadable(name, &directory)?;
         tokenizer_directory_to_string(&directory)
     }
 }
@@ -1447,5 +1491,83 @@ mod tests {
             "/fixture/model/resolve/{}/tokenizer.json",
             "a".repeat(40)
         ))));
+    }
+
+    /// A repository whose only tokenizer artifact is a custom Python tokenizer
+    /// (no `tokenizer.json`). The metadata request resolves a commit, but the
+    /// `tokenizer.json` fetch fails, mirroring a Kimi-K2-class remote-code repo.
+    #[derive(Default)]
+    struct RemoteCodeOnlyFetcher {
+        urls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl DatasetFetcher for RemoteCodeOnlyFetcher {
+        async fn fetch(
+            &self,
+            url: &str,
+            _cache_key: &str,
+            _bearer_token: Option<&str>,
+        ) -> crate::dataset::Result<Bytes> {
+            self.urls.lock().unwrap().push(url.to_owned());
+            if url.contains("/api/models/") {
+                return Ok(Bytes::from(
+                    serde_json::json!({"sha": "b".repeat(40)}).to_string(),
+                ));
+            }
+            // No `tokenizer.json` in the repository: the native tokenizer cannot
+            // load a custom-code tokenizer, so this download 404s upstream.
+            Err(crate::dataset::DatasetError::Validation(
+                "tokenizer.json is absent (custom-code-only repository)".into(),
+            ))
+        }
+    }
+
+    #[test]
+    fn remote_code_only_tokenizer_fails_with_actionable_error_not_silent_substitution() {
+        // Invariant: a Kimi-class repository that ships only a custom Python
+        // tokenizer must NOT silently resolve to a substitute (builtin/gpt2/
+        // cl100k) tokenizer. It must fail loudly with guidance that names the
+        // `--use-server-token-count` escape hatch. Wrong token counts are the
+        // worst failure mode for a benchmark tool.
+        let fetcher = Arc::new(RemoteCodeOnlyFetcher::default());
+        let cache = tempfile::tempdir().unwrap();
+        let resolver =
+            NativeOnlineTokenizerSourceResolver::new(fetcher.clone(), cache.path().to_path_buf());
+        let error = resolver
+            .resolve("moonshotai/Kimi-K2", "locked-revision", true)
+            .expect_err("a custom-code-only tokenizer must not resolve to a substitute");
+        let message = format!("{error:#}");
+        // Names the model, explains why, and points to the honest escape hatch.
+        assert!(message.contains("Kimi-K2"), "message: {message}");
+        assert!(
+            message.contains("--use-server-token-count"),
+            "message: {message}"
+        );
+        assert!(
+            message.contains("native tokenizer") && message.contains("tokenizer.json"),
+            "message: {message}"
+        );
+        // Never leaked a substitute encoding name as a resolved source.
+        assert!(!message.contains("cl100k") && !message.contains("gpt2"));
+    }
+
+    #[test]
+    fn resolved_directory_without_tokenizer_json_is_rejected() {
+        // The shared guard both online resolvers call: a resolved directory that
+        // has no `tokenizer.json` (a custom-code repo whose config-only files
+        // downloaded successfully) is rejected before it reaches `load_tokenizer`,
+        // where it would otherwise surface a bare "No such file" error.
+        let directory = tempfile::tempdir().unwrap();
+        let error = ensure_native_tokenizer_loadable("moonshotai/Kimi-K2", directory.path())
+            .expect_err("a directory without tokenizer.json must be rejected");
+        let message = format!("{error:#}");
+        assert!(message.contains("Kimi-K2"));
+        assert!(message.contains("--use-server-token-count"));
+
+        // A directory that DOES contain tokenizer.json passes the guard.
+        std::fs::write(directory.path().join("tokenizer.json"), b"{}").unwrap();
+        ensure_native_tokenizer_loadable("moonshotai/Kimi-K2", directory.path())
+            .expect("a directory with tokenizer.json is natively loadable");
     }
 }
