@@ -350,7 +350,8 @@ const responsiveVariantSchema = z.strictObject({
   roots: z.array(renderNodeSchema),
   sourceMap: sourceRangeSchema,
 });
-const sceneSchema = z.strictObject({
+/** Strict Zod schema for a single scene IR document. */
+export const sceneIrSchema: z.ZodType<SceneIr> = z.strictObject({
   id: z.string().min(1),
   title: z.string().min(1),
   summary: z.string().min(1),
@@ -382,7 +383,7 @@ const flowIrSchema = z.strictObject({
   tokens: z.record(z.string(), scalarSchema).default({}),
   themes: z.array(flowThemeIrSchema),
   defaultTheme: z.string().min(1).optional(),
-  scenes: z.array(sceneSchema),
+  scenes: z.array(sceneIrSchema),
   sourceMap: sourceRangeSchema,
 });
 
@@ -427,7 +428,7 @@ export function upgradeFlowIrV1ToV2(input: unknown): unknown {
 
 /** Parses and validates a single scene against the canonical schema. */
 export function parseSceneIr(input: unknown): SceneIr {
-  return sceneSchema.parse(input);
+  return sceneIrSchema.parse(input);
 }
 
 /** Parses and validates a standalone timed narrative track. */

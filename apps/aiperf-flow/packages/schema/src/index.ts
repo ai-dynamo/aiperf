@@ -5,6 +5,7 @@ export const FLOW_SCHEMA_VERSION = 2 as const;
 
 export * from "./capability-id.js";
 export * from "./capability.js";
+export * from "./deck-package.js";
 export * from "./diagnostic.js";
 export * from "./ir.js";
 export * from "./json-value.js";
