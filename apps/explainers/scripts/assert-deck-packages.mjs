@@ -6,12 +6,19 @@
 
 /**
  * Assert that `src/decks-generated/*.package.json` holds all eight explainer
- * decks, each with slides that carry non-empty narration, and that any slide
- * with `render` present has a non-empty `scene.timeline`.
+ * decks (packages-only registry inputs), each with slides that carry non-empty
+ * narration, and that any slide with `render` present has a non-empty
+ * `scene.timeline` (SceneRenderer animation contract).
+ *
+ * Part of the flow-backed explainers gate:
+ *   one `.flow` per deck → DeckPackage → packages-only registry (no MentalModel).
  *
  * Usage:
  *   node scripts/assert-deck-packages.mjs
  *   npm run assert:deck-packages
+ *   (from apps/aiperf-flow) npm run assert:deck-packages
+ *   make assert-deck-packages
+ *   make assert-explainer-packages
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";

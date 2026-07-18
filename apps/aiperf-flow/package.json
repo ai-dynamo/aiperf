@@ -15,6 +15,7 @@
     "build:explainer-packages": "node scripts/build-explainer-packages.mjs",
     "assert:no-mentalmodel-registry": "npm --prefix ../explainers run assert:no-mentalmodel-registry",
     "assert:deck-packages": "npm --prefix ../explainers run assert:deck-packages",
+    "assert:explainer-packages": "npm run build:explainer-packages && npm run assert:deck-packages && npm run assert:no-mentalmodel-registry",
     "preview:test": "vitest run preview/*.test.tsx --environment jsdom"
   },
   "devDependencies": {

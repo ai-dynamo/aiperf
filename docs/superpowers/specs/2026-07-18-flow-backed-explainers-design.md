@@ -342,6 +342,21 @@ Order (suggested): `rust-architecture` → `slurm-velo` → `dynosim` → `segme
 - [ ] Routes/ids unchanged
 - [ ] Visual parity gates green (or accepted diffs documented)
 
+## Tooling (build + gates)
+
+Authoring and runtime stay packages-only: **one** `apps/explainers/decks-flow/<deck-id>.flow` per deck → real compiler (embedded `@scene` parse → `lowerExplainerScene` / `compileExplainerSource`) → `apps/explainers/src/decks-generated/*.package.json` → `packageToDeckDefinition` → `SceneRenderer`. There is **no** MentalModel registry path and **no** dual-load fallback.
+
+| Command | What it does |
+|---|---|
+| `make build-explainer-packages` | Compiles every `decks-flow/*.flow` via `apps/aiperf-flow` → `npm run build:explainer-packages` (`scripts/build-explainer-packages.mjs`) |
+| `make assert-deck-packages` | Requires all eight generated packages; non-empty slide narration; non-empty `scene.timeline` when `render` is present (`apps/explainers/scripts/assert-deck-packages.mjs`) |
+| `make assert-no-mentalmodel-registry` | Hard-fails if `deck-registry.ts` transitively imports any `MentalModel.tsx` (`apps/explainers/scripts/assert-no-mentalmodel-registry.mjs`) |
+| `make assert-explainer-packages` | Runs build + both asserts |
+
+npm equivalents (from `apps/aiperf-flow`): `build:explainer-packages`, `assert:deck-packages`, `assert:no-mentalmodel-registry`, `assert:explainer-packages`. Explainers package mirrors the two assert scripts under `apps/explainers`.
+
+Agent instruction files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/python.mdc`) keep one shared body from `# AIPerf` (preambles may differ). Design record: this spec + `docs/superpowers/plans/2026-07-18-flow-backed-explainers.md`.
+
 ## Out of scope
 
 - Replacing `ExplainerShell` with aiperf-flow preview chrome

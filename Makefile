@@ -28,7 +28,8 @@
 		generate-all-docs test-stress stress-tests test-fern-docs fern-preview fern-release-dryrun internal-help help \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
-		check-agent-files-sync
+		check-agent-files-sync build-explainer-packages \
+		assert-deck-packages assert-no-mentalmodel-registry assert-explainer-packages
 
 
 # Include user-defined environment variables
@@ -427,6 +428,17 @@ generate-all-plugin-files: #? generate all plugin files (enums, overloads, schem
 generate-all-docs: #? generate all documentation files.
 	$(activate_venv) && ./tools/generate_cli_docs.py
 	$(activate_venv) && ./tools/generate_env_vars_docs.py
+
+build-explainer-packages: #? compile apps/explainers/decks-flow/*.flow into decks-generated packages
+	cd apps/aiperf-flow && npm run build:explainer-packages
+
+assert-deck-packages: #? require eight decks-generated packages with narration + scene timelines
+	cd apps/aiperf-flow && npm run assert:deck-packages
+
+assert-no-mentalmodel-registry: #? fail if deck-registry imports any MentalModel.tsx
+	cd apps/aiperf-flow && npm run assert:no-mentalmodel-registry
+
+assert-explainer-packages: build-explainer-packages assert-deck-packages assert-no-mentalmodel-registry #? build + gate flow-backed explainer packages
 
 add-copyright: #? add the copyright header to the files.
 	$(activate_venv) && ./tools/add_copyright.py

@@ -36,7 +36,7 @@ SPDX-License-Identifier: Apache-2.0
 | 2 | Task 3 (compiler lowering), Task 4 (adapter + registry hook) | Needs Task 1 types |
 | 3 | Task 5 (build script + golden rust-architecture compile) | Needs 1–4 |
 | 4 | Tasks 6–13 (port eight decks) | Parallel after Task 5; one agent per deck |
-| 5 | Task 14 (cleanup + CI gates) | After all ports |
+| 5 | Task 14 (cleanup + CI gates), Task 15 (docs + tooling gates) | After all ports |
 
 ---
 
@@ -105,12 +105,13 @@ SPDX-License-Identifier: Apache-2.0
 - Consumes: DeckPackage schema from Task 1; existing scene lowering for `@scene`
 - Produces: `lowerExplainerDocument(ast, caps) -> Result<DeckPackage>` (or pack into FlowIr extension — prefer **emitting DeckPackage** as compiler product for explainers builds)
 - Reject empty narration/title; reject diagram slides without timeline when render present
+- Language: `parseSceneBlock` in `grammar/explainer.ts` (+ `embedded-scene.ts`) parses `render: @scene { … }` into package Scene IR / native capture source
 
 - [x] **Step 1:** Failing test compiling `minimal-explainer.flow` to a DeckPackage with one slide + scene + timeline.
 
 - [x] **Step 2:** Run compiler package vitest — FAIL
 
-- [x] **Step 3:** Wire parser + lowerer; use real scene lowering, not regex/`Function()`.
+- [x] **Step 3:** Wire parser + lowerer; use real scene lowering, not regex/`Function()`. `parseSceneBlock` handles embedded `@scene` on explainer slides.
 
 - [x] **Step 4:** Tests PASS; reject mental_model-shaped render if it appears in AST.
 
@@ -118,25 +119,25 @@ SPDX-License-Identifier: Apache-2.0
 
 ---
 
-### Task 4: Adapter — packageToDeckDefinition + dual-load path — DONE
+### Task 4: Adapter — packageToDeckDefinition + packages-only registry — DONE
 
 **Files:**
-- Create: `apps/explainers/src/core/package-adapter.ts`
+- Create: `apps/explainers/src/core/package-adapter.tsx` (was `.ts`; SceneRenderer JSX)
 - Create: `apps/explainers/src/test/package-adapter.test.ts`
-- Modify: `apps/explainers/src/core/ExplainerShell.tsx` only if SceneRenderer needs `playing`/`restartKey` props threaded (prefer wrapping MentalModel call site)
-- Related: `load-deck-packages.ts`, dual-load `deck-registry.ts`
+- Modify: `apps/explainers/src/core/ExplainerShell.tsx` only if SceneRenderer needs `playing`/`restartKey` props threaded
+- Related: `load-deck-packages.ts`, packages-only `deck-registry.ts` (`deckFromPackage` — dual-load removed)
 
 **Interfaces:**
 - Consumes: `DeckPackage`, `SceneRenderer`
 - Produces: `packageToDeckDefinition(pkg: DeckPackage): DeckDefinition`
-- `MentalModel` wrapper reads `pkg.slides[slideIndex].render?.scene` and mounts `SceneRenderer`
+- Adapter mounts `SceneRenderer` from `pkg.slides[slideIndex].render?.scene`
 - Preserve `storagePrefix`, `classPrefix`, routes, hub fields
 
-- [x] **Step 1:** Failing test: adapter maps a fixture DeckPackage to DeckDefinition with correct id/route/slide count and renders MentalModel without throwing.
+- [x] **Step 1:** Failing test: adapter maps a fixture DeckPackage to DeckDefinition with correct id/route/slide count and renders scene without throwing.
 
 - [x] **Step 2:** Vitest FAIL
 
-- [x] **Step 3:** Implement adapter; do **not** remove legacy decks yet — only add the adapter API.
+- [x] **Step 3:** Implement adapter API (legacy dual-load later removed in Task 14).
 
 - [x] **Step 4:** PASS
 
@@ -144,29 +145,29 @@ SPDX-License-Identifier: Apache-2.0
 
 ---
 
-### Task 5: Build — compile explainers decks + golden rust-architecture — MOSTLY DONE
+### Task 5: Build — compile explainers decks + golden rust-architecture — DONE (visual baselines open)
 
 **Files:**
-- Create: `apps/explainers/decks-flow/rust-architecture.flow` (port text from `apps/explainers/src/decks/rust-architecture/content.ts`; rebuild diagrams as `@scene`+timeline from MentalModel — start with slide 0 complete, remaining slides may use simplified but animated scenes that compile)
-- Create: `apps/aiperf-flow/scripts/build-explainer-packages.mjs` (or package bin) invoking real `compileSource` / explainer lowerer — **not** the old regex script
-- Create: `apps/explainers/src/decks-generated/rust-architecture.package.ts` (generated; checked in initially or generated in build — prefer generate-on-build + commit golden for CI stability)
-- Modify: `apps/explainers/src/core/deck-registry.ts` to load rust-architecture from package via adapter **while leaving other seven on legacy modules**
+- Create: `apps/explainers/decks-flow/rust-architecture.flow` (and the other seven under `decks-flow/`)
+- Create: `apps/aiperf-flow/scripts/build-explainer-packages.mjs` invoking real `compileSource` / explainer lowerer — **not** the old regex script
+- Create: `apps/explainers/src/decks-generated/*.package.json` (all eight decks; generate-on-build)
+- Modify: `apps/explainers/src/core/deck-registry.ts` — packages-only via `deckFromPackage` for all eight
 
 **Interfaces:**
 - Produces: CLI/script `node scripts/build-explainer-packages.mjs` exits 0 and writes packages for every `decks-flow/*.flow`
-- Registry: rust-architecture package-backed when a generated package is present; otherwise legacy fallback
+- Registry: all eight decks package-backed only (no legacy fallback)
 
-**Status note:** Build script, all eight `decks-flow/*.flow` sources, packages-only registry, package loader, and generated `decks-generated/*.package.json` for all eight decks exist. Visual baselines remain open (Step 4 + Task 14).
+**Status note:** Build script, all eight `decks-flow/*.flow` sources, packages-only registry, package loader, and generated `decks-generated/*.package.json` for all eight decks exist. Visual baselines remain open (Step 4).
 
 - [x] **Step 1:** Failing registry/visual smoke: package-backed rust-architecture has same slide count as legacy content.ts
 
-- [x] **Step 2:** Implement `.flow` + build script + registry swap for that one deck
+- [x] **Step 2:** Implement `.flow` + build script + registry swap (now all eight packages-only)
 
 - [x] **Step 3:** Run explainers vitest + build script — PASS; all eight packages generated under `decks-generated/`
 
-- [ ] **Step 4:** Manual/Playwright screenshot of slide 0 vs legacy baseline (save under `apps/explainers/test/baselines/` if harness exists) — still open if baselines not checked in
+- [ ] **Step 4:** Manual/Playwright screenshot of slide 0 vs legacy baseline (save under `apps/explainers/test/baselines/` if harness exists) — still open; no baselines checked in
 
-- [x] **Step 5:** Commit: `feat(explainers): package-backed rust-architecture deck from .flow` (authored as `.flow` source; package path via dual-load)
+- [x] **Step 5:** Commit: `feat(explainers): package-backed rust-architecture deck from .flow`
 
 ---
 
@@ -198,7 +199,7 @@ Per deck:
 
 ---
 
-### Task 14: Cleanup and CI gates — PARTIAL (regex gone)
+### Task 14: Cleanup and CI gates — MOSTLY DONE (commit open)
 
 **Files:**
 - Delete: `apps/aiperf-flow/scripts/compile-explainer-flows.mjs` (regex path) if unused
@@ -207,9 +208,33 @@ Per deck:
 - Modify: CI/package scripts to run `build-explainer-packages.mjs` before explainers build
 
 - [x] Obsolete regex `compile-explainer-flows.mjs` removed (gone from tree)
-- [x] Registry is packages-only (`deckFromPackage` → `packageToDeckDefinition`; no legacy MentalModel module imports)
+- [x] Registry is packages-only (`deckFromPackage` → `packageToDeckDefinition`; no legacy MentalModel module imports; all 8 `.flow` + packages)
 - [x] `validateDeckRegistry` green; unique routes/ids (registry tests present)
 - [ ] Commit: `chore(explainers): remove React MentalModel registry path; gate flow packages`
+
+---
+
+### Task 15: Docs + tooling gates — DONE
+
+**Locked architecture (docs must state):**
+- **Packages-only** registry: `decks-generated` → `packageToDeckDefinition` → ExplainerShell; no dual-load / no MentalModel on the registry path
+- **One `.flow` per deck** at `apps/explainers/decks-flow/<deck-id>.flow` (no `decks-flow/scenes/`, no `.flowfrag`)
+- **Embedded scene parse** via `@aiperf/flow-language` (`embedded-scene.ts` / `parseNativeEmbeddedScene` / `parsePackageSceneBody`) + compiler `lowerExplainerScene` / `compileExplainerSource`
+- **SceneRenderer** mounts Scene IR + timeline for every diagram slide / scene final card
+- **No MentalModel registry path** — assert script hard-fails on transitive `MentalModel.tsx` imports from `deck-registry.ts`
+
+**Files:**
+- Restore/keep four agent instruction files with identical bodies from `# AIPerf`: `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/python.mdc`
+- Spec: `docs/superpowers/specs/2026-07-18-flow-backed-explainers-design.md` (Tooling section)
+- Plan: this file
+- Makefile targets: `build-explainer-packages`, `assert-deck-packages`, `assert-no-mentalmodel-registry`, `assert-explainer-packages`
+- `apps/aiperf-flow/package.json` scripts: `build:explainer-packages`, `assert:deck-packages`, `assert:no-mentalmodel-registry`, `assert:explainer-packages`
+- Assert scripts (documented headers): `apps/explainers/scripts/assert-deck-packages.mjs`, `apps/explainers/scripts/assert-no-mentalmodel-registry.mjs`
+
+- [x] Agent files present with shared `# AIPerf` body
+- [x] Spec + plan reflect packages-only / one-file / embedded scene / SceneRenderer / no MentalModel registry
+- [x] Makefile + npm scripts wired; assert script headers document `make` / `npm run` entry points
+- [x] Commit: `docs(explainers): sync flow-backed tooling gates and agent files`
 
 ---
 
@@ -219,10 +244,12 @@ Per deck:
 |---|---|
 | DeckPackage schema | 1 |
 | Real compiler lowering | 3, 5 |
+| Embedded `@scene` parse | 3, 15 |
 | SceneRenderer + animation/restart/reduced-motion | 2, 4 |
 | Adapter into ExplainerShell | 4 |
 | Voice via legacy shell | 4–5 (preserved) |
-| All 8 decks | 5–13 |
-| No escape hatch | 1, 3, 14 |
+| All 8 decks (one `.flow` each) | 5–13 |
+| Packages-only registry / no escape hatch | 1, 3, 14, 15 |
 | Delete regex compiler | 14 |
+| Build + assert Makefile/npm gates | 15 |
 | Visual/voice done bar | 5, 13, 14 |

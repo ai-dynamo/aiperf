@@ -1,14 +1,24 @@
 #!/usr/bin/env node
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 /**
  * Assert that `apps/explainers/src/core/deck-registry.ts` does not reach any
  * deck `MentalModel.tsx` via static relative imports (transitive module graph).
  *
- * Registry is packages-only: MentalModel.tsx files may remain on disk but must
- * not be reachable from the registry import graph. Always hard-fails on hits.
+ * Registry is packages-only: one `.flow` per deck compiles to DeckPackage under
+ * `decks-generated/`; `packageToDeckDefinition` mounts `SceneRenderer`. MentalModel
+ * `.tsx` files may remain on disk but must not be reachable from the registry
+ * import graph. Always hard-fails on hits.
  *
  * Usage:
  *   node scripts/assert-no-mentalmodel-registry.mjs
  *   npm run assert:no-mentalmodel-registry
+ *   (from apps/aiperf-flow) npm run assert:no-mentalmodel-registry
+ *   make assert-no-mentalmodel-registry
+ *   make assert-explainer-packages
  */
 
 import { readFileSync, existsSync, statSync } from "node:fs";
