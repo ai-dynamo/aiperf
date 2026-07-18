@@ -85,8 +85,31 @@ function pathStyle(
   };
 }
 
-function rectanglePath({ x, y, width, height }: Bounds): string {
-  return `M ${x} ${y} H ${x + width} V ${y + height} H ${x} Z`;
+function rectanglePath(
+  { x, y, width, height }: Bounds,
+  radius = 0,
+): string {
+  const r = Math.max(0, Math.min(radius, width / 2, height / 2));
+  if (r === 0) {
+    return `M ${x} ${y} H ${x + width} V ${y + height} H ${x} Z`;
+  }
+  // Rounded rectangle with quadratic corners, drawn clockwise from the top-left
+  // arc end. Quadratic control points sit at the true corner for a circular feel.
+  const right = x + width;
+  const bottom = y + height;
+  return (
+    `M ${x + r} ${y} ` +
+    `H ${right - r} Q ${right} ${y} ${right} ${y + r} ` +
+    `V ${bottom - r} Q ${right} ${bottom} ${right - r} ${bottom} ` +
+    `H ${x + r} Q ${x} ${bottom} ${x} ${bottom - r} ` +
+    `V ${y + r} Q ${x} ${y} ${x + r} ${y} Z`
+  );
+}
+
+/** Reads an optional numeric corner radius authored in a rect node's style. */
+function nodeRadius(node: RenderNodeIr): number {
+  const radius = node.style.radius;
+  return typeof radius === "number" && Number.isFinite(radius) ? radius : 0;
 }
 
 type EvaluationIndex = Readonly<{
@@ -238,7 +261,7 @@ function drawCommand(
       return {
         ...base,
         kind: "path",
-        path: rectanglePath(bounds),
+        path: rectanglePath(bounds, nodeRadius(node)),
         ...pathStyle(node.style),
       };
     case "text":

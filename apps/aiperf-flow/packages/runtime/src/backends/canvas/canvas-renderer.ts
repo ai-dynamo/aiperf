@@ -54,6 +54,7 @@ export function measureRuntimePhase<T>(
 
 type CanvasMethod =
   | "beginPath"
+  | "bezierCurveTo"
   | "clip"
   | "closePath"
   | "fill"
@@ -62,6 +63,7 @@ type CanvasMethod =
   | "lineTo"
   | "measureText"
   | "moveTo"
+  | "quadraticCurveTo"
   | "restore"
   | "save"
   | "scale"
@@ -147,7 +149,7 @@ function applyPaint(
 }
 
 function drawPath(context: CanvasRenderContext, path: string): void {
-  const tokens = path.match(/[MLHVZ]|-?(?:\d+\.?\d*|\.\d+)/gi) ?? [];
+  const tokens = path.match(/[MLHVQCZ]|-?(?:\d+\.?\d*|\.\d+)/gi) ?? [];
   let cursor = { x: 0, y: 0 };
   let index = 0;
 
@@ -170,6 +172,18 @@ function drawPath(context: CanvasRenderContext, path: string): void {
     } else if (operation === "V") {
       cursor = { x: cursor.x, y: Number(tokens[index++]) };
       context.lineTo(cursor.x, cursor.y);
+    } else if (operation === "Q") {
+      const controlX = Number(tokens[index++]);
+      const controlY = Number(tokens[index++]);
+      cursor = { x: Number(tokens[index++]), y: Number(tokens[index++]) };
+      context.quadraticCurveTo(controlX, controlY, cursor.x, cursor.y);
+    } else if (operation === "C") {
+      const c1x = Number(tokens[index++]);
+      const c1y = Number(tokens[index++]);
+      const c2x = Number(tokens[index++]);
+      const c2y = Number(tokens[index++]);
+      cursor = { x: Number(tokens[index++]), y: Number(tokens[index++]) };
+      context.bezierCurveTo(c1x, c1y, c2x, c2y, cursor.x, cursor.y);
     } else if (operation === "Z") {
       context.closePath();
     } else {
