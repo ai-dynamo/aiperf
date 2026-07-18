@@ -92,7 +92,7 @@ impl SteadyWindow {
 }
 
 /// The steady-state window, its summary, and the short-window warning state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SteadyStateOutcome {
     /// The detected steady window.
     pub window: SteadyWindow,
@@ -185,9 +185,10 @@ pub fn detect_steady_window(
         } else {
             let before = active;
             active = active.saturating_sub(1);
-            // Down-crossing: dropping from the threshold to below it. Keep the
-            // latest one so the window closes at the *last* sustained descent.
-            if before == threshold && active < threshold && window_start.is_some() {
+            // Down-crossing: dropping from exactly the threshold necessarily
+            // lands below it. Keep the latest so the window closes at the *last*
+            // sustained descent.
+            if before == threshold && window_start.is_some() {
                 window_end = Some(ends[j]);
             }
             j += 1;
@@ -266,8 +267,16 @@ pub fn steady_state_summary(
         run_end_ns,
         short_window,
     };
-    if let Some(message) = outcome.warning() {
-        tracing::warn!(target: "aiperf::metrics::steady_state", "{message}");
+    if outcome.short_window {
+        // Structured fields avoid allocating a message string on the warn path.
+        tracing::warn!(
+            target: "aiperf::metrics::steady_state",
+            window_s = outcome.window.duration_ns() as f64 / 1e9,
+            run_s = (run_end_ns - run_start_ns).max(0) as f64 / 1e9,
+            threshold_concurrency = outcome.window.threshold,
+            "steady-state window is below the max(10s, 10% of run) floor; \
+             steady-state summary may be unreliable"
+        );
     }
     Some(outcome)
 }
