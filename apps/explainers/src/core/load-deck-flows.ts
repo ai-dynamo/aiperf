@@ -3,12 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { compileExplainerSource } from "../flow/compiler/compile-explainer.js";
+import { validateExplainerSet } from "../flow/compiler/validate-explainer-set.js";
+import { formatDiagnostic } from "../flow/diagnostics.js";
 import {
-  compileExplainerSource,
   FOUNDATION_CAPABILITIES,
   hasErrors,
+  type DeckPackage,
   type Diagnostic,
-} from "../flow";
+} from "../flow/schema/index.js";
 import { packageToDeckDefinition } from "./package-adapter";
 import type { DeckDefinition } from "./types";
 
@@ -20,14 +23,10 @@ const flowSources = import.meta.glob("../../decks-flow/*.flow", {
 
 const FLOW_PATH_RE = /(?:^|\/)([^/]+)\.flow$/;
 
-function formatDiagnostic(diagnostic: Diagnostic): string {
-  const { source, start } = diagnostic.range;
-  const repair =
-    diagnostic.repair === undefined ? "" : ` (${diagnostic.repair})`;
-  return `${source}:${start.line}:${start.column}: ${diagnostic.severity} ${diagnostic.code}: ${diagnostic.message}${repair}`;
-}
-
-function compilationError(path: string, diagnostics: readonly Diagnostic[]): Error {
+function compilationError(
+  path: string,
+  diagnostics: readonly Diagnostic[],
+): Error {
   const details = diagnostics.map(formatDiagnostic).join("\n");
   return new Error(
     `Failed to compile live Flow source "${path}":${details ? `\n${details}` : " compiler returned no diagnostics"}`,
@@ -44,10 +43,16 @@ function flowIdFromPath(path: string): string {
   return id;
 }
 
-/** Eagerly compile all raw Flow sources and adapt them into deck definitions. */
-export function loadDeckFlows(): DeckDefinition[] {
-  const decks: DeckDefinition[] = [];
-  const sourceById = new Map<string, string>();
+let cachedDeckPackages: readonly DeckPackage[] | undefined;
+
+/** Compiles and cross-validates the live Flow package set once per module. */
+export function loadDeckPackages(): readonly DeckPackage[] {
+  if (cachedDeckPackages !== undefined) {
+    return cachedDeckPackages;
+  }
+
+  const packages: DeckPackage[] = [];
+  const sourcePaths: string[] = [];
 
   for (const path of Object.keys(flowSources).sort()) {
     const source = flowSources[path];
@@ -69,20 +74,36 @@ export function loadDeckFlows(): DeckDefinition[] {
       );
     }
 
-    const duplicatePath = sourceById.get(result.value.id);
-    if (duplicatePath !== undefined) {
-      throw new Error(
-        `Duplicate live Flow deck id "${result.value.id}" in "${duplicatePath}" and "${path}"`,
-      );
-    }
-    sourceById.set(result.value.id, path);
-    decks.push(packageToDeckDefinition(result.value));
+    packages.push(result.value);
+    sourcePaths.push(path);
   }
 
-  return decks;
+  const validated = validateExplainerSet(packages, { sourcePaths });
+  if (!validated.ok || hasErrors(validated.diagnostics)) {
+    throw compilationError("<live Flow package set>", validated.diagnostics);
+  }
+
+  cachedDeckPackages = validated.value;
+  return cachedDeckPackages;
 }
 
-/** Compile and resolve one live Flow deck by id. */
+/** Returns the compiled package cache without compiling Flow sources. */
+export function compiledDeckPackages(): readonly DeckPackage[] {
+  if (cachedDeckPackages === undefined) {
+    throw new Error(
+      "Live Flow packages must be loaded before accessing the compiled package cache",
+    );
+  }
+  return cachedDeckPackages;
+}
+
+/** Adapts the cached live Flow package set into deck definitions. */
+export function loadDeckFlows(): DeckDefinition[] {
+  return loadDeckPackages().map(packageToDeckDefinition);
+}
+
+/** Resolve one deck from the cached, validated live Flow package set. */
 export function loadDeckFlowById(id: string): DeckDefinition | undefined {
-  return loadDeckFlows().find((deck) => deck.id === id);
+  const pkg = loadDeckPackages().find((entry) => entry.id === id);
+  return pkg === undefined ? undefined : packageToDeckDefinition(pkg);
 }

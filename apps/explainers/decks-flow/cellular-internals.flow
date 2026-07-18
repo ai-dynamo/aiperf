@@ -117,8 +117,9 @@ explainer "Cellular internals" {
         },
         {
           id: "a0a"
-          capability: "core.path"
-          d: "M200 185 H280"
+          capability: "core.connector"
+          from: { nodeId: "authored", anchor: "e" }
+          to: { nodeId: "cell-k", anchor: "w" }
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
         },
         {
@@ -154,8 +155,9 @@ explainer "Cellular internals" {
         },
         {
           id: "a0b"
-          capability: "core.path"
-          d: "M430 185 H510"
+          capability: "core.connector"
+          from: { nodeId: "cell-k", anchor: "e" }
+          to: { nodeId: "report", anchor: "w" }
           style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         },
         {
@@ -206,7 +208,8 @@ explainer "Cellular internals" {
         {
           id: "motion-sig-0"
           capability: "motion.signal"
-          d: "M180 175 H560"
+          from: { nodeId: "authored", anchor: "e" }
+          to: { nodeId: "report", anchor: "w" }
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
 }
@@ -340,12 +343,6 @@ explainer "Cellular internals" {
           ]
         },
         {
-          id: "a10"
-          capability: "core.path"
-          d: "M350 206 C180 236 105 246 105 270"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
-        },
-        {
           id: "cell1"
           capability: "core.rect"
           layout: { x: 200, y: 270, width: 130, height: 70 }
@@ -375,12 +372,6 @@ explainer "Cellular internals" {
               style: { fontSize: 10, fill: @theme.ink.tertiary, textAnchor: "middle" }
             }
           ]
-        },
-        {
-          id: "a11"
-          capability: "core.path"
-          d: "M350 206 C300 236 265 246 265 270"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
         {
           id: "cell2"
@@ -414,12 +405,6 @@ explainer "Cellular internals" {
           ]
         },
         {
-          id: "a12"
-          capability: "core.path"
-          d: "M350 206 C420 236 425 246 425 270"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
-        },
-        {
           id: "cell3"
           capability: "core.rect"
           layout: { x: 520, y: 270, width: 130, height: 70 }
@@ -451,9 +436,17 @@ explainer "Cellular internals" {
           ]
         },
         {
-          id: "a13"
-          capability: "core.path"
-          d: "M350 206 C540 236 585 246 585 270"
+          id: "config-fan"
+          capability: "core.fan-out"
+          from: { nodeId: "cfg", anchor: "s" }
+          to: [
+            { nodeId: "cell0", anchor: "n" },
+            { nodeId: "cell1", anchor: "n" },
+            { nodeId: "cell2", anchor: "n" },
+            { nodeId: "cell3", anchor: "n" }
+          ]
+          axis: "y"
+          junction: { x: 350, y: 238 }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
         {
@@ -468,13 +461,11 @@ explainer "Cellular internals" {
         { id: "s1-hdr1", at: 0, duration: 260, target: "hdr1", action: "enter" },
         { id: "s1-phase1", at: 150, duration: 260, target: "phase1", action: "enter" },
         { id: "s1-cfg", at: 300, duration: 260, target: "cfg", action: "enter" },
-        { id: "s1-a10", at: 450, duration: 420, target: "a10", action: "draw" },
+        { id: "s1-config-fan", at: 450, duration: 900, target: "config-fan", action: "draw" },
         { id: "s1-cell0", at: 630, duration: 260, target: "cell0", action: "enter" },
-        { id: "s1-a11", at: 780, duration: 420, target: "a11", action: "draw" },
         { id: "s1-cell1", at: 960, duration: 260, target: "cell1", action: "enter" },
-        { id: "s1-a12", at: 1110, duration: 420, target: "a12", action: "draw" },
         { id: "s1-cell2", at: 1290, duration: 260, target: "cell2", action: "enter" },
-        { id: "s1-a13", at: 1440, duration: 420, target: "a13", action: "draw" },
+        { id: "s1-config-trace", at: 1440, duration: 900, target: "config-fan", action: "trace" },
         { id: "s1-cell3", at: 1620, duration: 260, target: "cell3", action: "enter" },
         { id: "s1-ev1", at: 1770, duration: 260, target: "ev1", action: "enter" },
         { id: "s1-cfg-emph", at: 1960, duration: 280, target: "cfg", action: "emphasis" },
@@ -580,8 +571,9 @@ explainer "Cellular internals" {
         },
         {
           id: "a2a"
-          capability: "core.path"
-          d: "M170 185 H220"
+          capability: "core.connector"
+          from: { nodeId: "profile", anchor: "e" }
+          to: { nodeId: "execbin", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
         {
@@ -617,8 +609,9 @@ explainer "Cellular internals" {
         },
         {
           id: "a2b"
-          capability: "core.path"
-          d: "M360 185 H410"
+          capability: "core.connector"
+          from: { nodeId: "execbin", anchor: "e" }
+          to: { nodeId: "execute", anchor: "w" }
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
         },
         {
@@ -685,14 +678,16 @@ explainer "Cellular internals" {
         },
         {
           id: "a2c"
-          capability: "core.path"
-          d: "M485 230 V280 H450"
+          capability: "core.route"
+          from: { nodeId: "execute", anchor: "s" }
+          to: { nodeId: "stdio", anchor: "n" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
         {
           id: "motion-sig-2"
           capability: "motion.signal"
-          d: "M110 175 H600"
+          from: { nodeId: "profile", anchor: "e" }
+          to: { nodeId: "execute", anchor: "w" }
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
 }
@@ -795,8 +790,9 @@ explainer "Cellular internals" {
         },
         {
           id: "a3a"
-          capability: "core.path"
-          d: "M180 185 H240"
+          capability: "core.connector"
+          from: { nodeId: "exec3", anchor: "e" }
+          to: { nodeId: "ctrl", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
         {
@@ -832,8 +828,9 @@ explainer "Cellular internals" {
         },
         {
           id: "a3b"
-          capability: "core.path"
-          d: "M420 170 C480 115 560 115 610 135"
+          capability: "core.route"
+          from: { nodeId: "ctrl", anchor: "e" }
+          to: { nodeId: "roles", anchor: "n" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
         {
@@ -901,7 +898,8 @@ explainer "Cellular internals" {
         {
           id: "motion-sig-3"
           capability: "motion.signal"
-          d: "M180 160 H560"
+          from: { nodeId: "exec3", anchor: "e" }
+          to: { nodeId: "roles", anchor: "n" }
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
 }
@@ -4382,39 +4380,36 @@ explainer "Cellular internals" {
           ]
         },
         {
-          id: "a18t0"
-          capability: "core.path"
-          d: "M150 126 H210"
+          id: "cells-to-agg0"
+          capability: "core.fan-in"
+          from: [
+            { nodeId: "cell180", anchor: "e" },
+            { nodeId: "cell181", anchor: "e" }
+          ]
+          to: { nodeId: "agg0", anchor: "w" }
+          axis: "x"
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
         {
-          id: "a18t1"
-          capability: "core.path"
-          d: "M150 188 H210"
+          id: "cells-to-agg1"
+          capability: "core.fan-in"
+          from: [
+            { nodeId: "cell182", anchor: "e" },
+            { nodeId: "cell183", anchor: "e" }
+          ]
+          to: { nodeId: "agg1", anchor: "w" }
+          axis: "x"
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
         {
-          id: "a18t2"
-          capability: "core.path"
-          d: "M150 250 C180 250 190 285 210 285"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
-        },
-        {
-          id: "a18t3"
-          capability: "core.path"
-          d: "M150 312 C180 312 190 285 210 285"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
-        },
-        {
-          id: "a18m0"
-          capability: "core.path"
-          d: "M360 155 C420 170 430 185 460 190"
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
-        },
-        {
-          id: "a18m1"
-          capability: "core.path"
-          d: "M360 285 C420 260 430 230 460 210"
+          id: "aggs-to-merge"
+          capability: "core.fan-in"
+          from: [
+            { nodeId: "agg0", anchor: "e" },
+            { nodeId: "agg1", anchor: "e" }
+          ]
+          to: { nodeId: "merge", anchor: "w" }
+          axis: "x"
           style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         },
         {
@@ -4456,13 +4451,6 @@ explainer "Cellular internals" {
           layout: { x: 430, y: 310, width: 210, height: 48 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.8, radius: 8 }
         },
-        {
-          id: "motion-sig-18"
-          capability: "motion.signal"
-          d: "M110 175 H580"
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
-          accessibility: { label: "motion signal" }
-}
       ]
       timeline: [
         { id: "s18-hdr18", at: 0, duration: 260, target: "hdr18", action: "enter" },
@@ -4473,15 +4461,14 @@ explainer "Cellular internals" {
         { id: "s18-cell183", at: 750, duration: 260, target: "cell183", action: "enter" },
         { id: "s18-agg0", at: 900, duration: 260, target: "agg0", action: "enter" },
         { id: "s18-agg1", at: 1050, duration: 260, target: "agg1", action: "enter" },
-        { id: "s18-a18t0", at: 1200, duration: 420, target: "a18t0", action: "draw" },
-        { id: "s18-a18t1", at: 1380, duration: 420, target: "a18t1", action: "draw" },
-        { id: "s18-a18t2", at: 1560, duration: 420, target: "a18t2", action: "draw" },
-        { id: "s18-a18t3", at: 1740, duration: 420, target: "a18t3", action: "draw" },
-        { id: "s18-a18m0", at: 1920, duration: 420, target: "a18m0", action: "draw" },
-        { id: "s18-a18m1", at: 2100, duration: 420, target: "a18m1", action: "draw" },
+        { id: "s18-cells-agg0", at: 1200, duration: 620, target: "cells-to-agg0", action: "draw" },
+        { id: "s18-cells-agg1", at: 1380, duration: 620, target: "cells-to-agg1", action: "draw" },
+        { id: "s18-cells-agg0-trace", at: 1560, duration: 900, target: "cells-to-agg0", action: "trace" },
+        { id: "s18-cells-agg1-trace", at: 1740, duration: 900, target: "cells-to-agg1", action: "trace" },
+        { id: "s18-aggs-merge", at: 1920, duration: 620, target: "aggs-to-merge", action: "draw" },
         { id: "s18-merge", at: 2280, duration: 260, target: "merge", action: "enter" },
         { id: "s18-sink", at: 2430, duration: 260, target: "sink", action: "enter" },
-        { id: "s18-motion18", at: 2580, duration: 900, target: "motion-sig-18", action: "draw" },
+        { id: "s18-motion18", at: 2580, duration: 900, target: "aggs-to-merge", action: "trace" },
         { id: "s18-merge-emph", at: 2800, duration: 280, target: "merge", action: "emphasis" },
         { id: "s18-auto-hdr18-text", at: 40, duration: 200, target: "hdr18-title", action: "enter" },
         { id: "s18-auto-hdr18-cap", at: 50, duration: 200, target: "hdr18-caption", action: "enter" },

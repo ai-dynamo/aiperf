@@ -14,12 +14,20 @@ import {
   type DeckHub,
   type DeckPackage,
   type Diagnostic,
+  type CapabilityRegistryManifest,
+  type JsonValue,
   type Result,
+  type SceneRender,
   type SlidePackage,
   type SourceRange,
 } from "../schema/index.js";
+import { createSdkRegistry, type SdkRegistry } from "../sdk/index.js";
 
-import { lowerExplainerScene } from "./lower-explainer-scene.js";
+import { expandSdkInvocations } from "./expand-sdk.js";
+import {
+  lowerExplainerScene,
+  type LowerExplainerSceneOptions,
+} from "./lower-explainer-scene.js";
 
 /** Deck packaging fields required by DeckPackage beyond today's ExplainerAst. */
 export type ExplainerDeckMetadata = Readonly<{
@@ -46,6 +54,16 @@ export type ExplainerLowerInput = Omit<ExplainerAst, "metadata"> &
     glossary?: readonly DeckGlossaryEntry[] | undefined;
   }>;
 
+/** Validation policy forwarded to every embedded explainer scene. */
+export type ExplainerLowerOptions = Readonly<{
+  capabilities: CapabilityRegistryManifest;
+  strict: boolean;
+  /** Owning `.flow` source name used for embedded `@scene` diagnostics. */
+  sourceName?: string;
+  /** Document-level token bindings for SDK prop resolution. */
+  tokens?: ReadonlyMap<string, JsonValue>;
+}>;
+
 function unknownRange(): SourceRange {
   return {
     source: "<unknown>",
@@ -56,6 +74,28 @@ function unknownRange(): SourceRange {
 
 function rangeOf(ast: { sourceMap?: SourceRange }): SourceRange {
   return ast.sourceMap ?? unknownRange();
+}
+
+function sourceRangeForScene(
+  ast: { sourceMap?: SourceRange },
+  options: ExplainerLowerOptions,
+): SourceRange {
+  const local = ast.sourceMap;
+  if (
+    local !== undefined &&
+    local.source !== "<unknown>" &&
+    local.source !== "<embedded-scene>"
+  ) {
+    return local;
+  }
+  if (options.sourceName !== undefined && options.sourceName.length > 0) {
+    return {
+      source: options.sourceName,
+      start: { offset: 0, line: 1, column: 1 },
+      end: { offset: 0, line: 1, column: 1 },
+    };
+  }
+  return local ?? unknownRange();
 }
 
 function requireNonEmpty(
@@ -89,9 +129,52 @@ export function slideIdFromTitle(title: string, index: number): string {
   return slug.length > 0 ? slug : `slide-${index}`;
 }
 
+/**
+ * Lowers an embedded `@scene`, expanding SDK component invocations first.
+ *
+ * When the scene invokes registered `sdk.*` / `aiperf.*` components, it is
+ * expanded to ordinary Scene IR here (parse → symbols → SDK → SceneRender).
+ * Scenes that invoke no SDK component fall back to the existing package /
+ * native lowering path, so package-form decks compile unchanged until they
+ * migrate to SDK authoring.
+ */
+function lowerSceneMaybeSdk(
+  rawScene: unknown,
+  registry: SdkRegistry,
+  sceneOptions: LowerExplainerSceneOptions,
+  tokens?: ReadonlyMap<string, JsonValue>,
+): Result<SceneRender> {
+  const outcome = expandSdkInvocations(rawScene, {
+    registry,
+    ...(tokens !== undefined ? { tokens } : {}),
+    ...(sceneOptions.defaults !== undefined
+      ? { defaults: sceneOptions.defaults }
+      : {}),
+    ...(sceneOptions.slideId !== undefined
+      ? { slideId: sceneOptions.slideId }
+      : {}),
+    ...(sceneOptions.sourceRange !== undefined
+      ? { sourceRange: sceneOptions.sourceRange }
+      : {}),
+  });
+  if (outcome.status === "ok") {
+    return {
+      ok: true,
+      value: outcome.value.render,
+      diagnostics: outcome.diagnostics,
+    };
+  }
+  if (outcome.status === "error") {
+    return { ok: false, diagnostics: outcome.diagnostics };
+  }
+  return lowerExplainerScene(rawScene, sceneOptions);
+}
+
 function lowerSlide(
   slide: SlideAst,
   index: number,
+  options: ExplainerLowerOptions,
+  registry: SdkRegistry,
   diagnostics: Diagnostic[],
 ): SlidePackage {
   const range = rangeOf(slide);
@@ -122,7 +205,7 @@ function lowerSlide(
   }
 
   if (slide.sceneIr !== undefined) {
-    const sceneResult = lowerExplainerScene(slide.sceneIr, {
+    const sceneResult = lowerSceneMaybeSdk(slide.sceneIr, registry, {
       slideId: id,
       defaults: {
         id: `scene-${id}`,
@@ -131,7 +214,10 @@ function lowerSlide(
         narration,
         fallback: slide.caption || title || id,
       },
-    });
+      capabilities: options.capabilities,
+      strict: options.strict,
+      sourceRange: sourceRangeForScene(slide, options),
+    }, options.tokens);
     if (!sceneResult.ok) {
       diagnostics.push(...sceneResult.diagnostics);
     } else {
@@ -175,10 +261,12 @@ function collectGlossary(
  */
 export function lowerExplainerToDeckPackage(
   ast: ExplainerLowerInput,
+  options: ExplainerLowerOptions,
 ): Result<DeckPackage> {
   const diagnostics: Diagnostic[] = [];
   const range = rangeOf(ast);
   const meta = ast.metadata;
+  const registry = createSdkRegistry();
 
   const id = requireNonEmpty(ast.id, "id", range, diagnostics);
   const route = requireNonEmpty(meta?.route, "metadata.route", range, diagnostics);
@@ -228,12 +316,12 @@ export function lowerExplainerToDeckPackage(
   );
 
   const slides = (ast.slides ?? []).map((slide, index) =>
-    lowerSlide(slide, index, diagnostics),
+    lowerSlide(slide, index, options, registry, diagnostics),
   );
 
   let finalCard: DeckPackage["finalCard"];
   if (ast.finalCard !== undefined) {
-    const finalResult = lowerExplainerScene(ast.finalCard, {
+    const finalResult = lowerSceneMaybeSdk(ast.finalCard, registry, {
       slideId: "finalCard",
       defaults: {
         id: `scene-${id || "deck"}-final`,
@@ -242,7 +330,10 @@ export function lowerExplainerToDeckPackage(
         narration: hubDescription || "",
         fallback: hubTitle || id || "Final card",
       },
-    });
+      capabilities: options.capabilities,
+      strict: options.strict,
+      sourceRange: sourceRangeForScene(ast, options),
+    }, options.tokens);
     if (!finalResult.ok) {
       diagnostics.push(...finalResult.diagnostics);
     } else {

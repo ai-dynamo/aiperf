@@ -75,13 +75,15 @@ export type SceneNodeLike = Readonly<{
   path?: string;
   /** Polyline waypoints for path / connector-like nodes. */
   points?: readonly ScenePointLike[];
-  /** Endpoint coordinates or node refs for core.line / core.connector. */
-  from?: ScenePointLike;
-  to?: ScenePointLike;
+  /** Endpoint coordinates or node refs; fans use an array on their many side. */
+  from?: ScenePointLike | readonly ScenePointLike[];
+  to?: ScenePointLike | readonly ScenePointLike[];
   /** Optional elbow bend / waypoint (`core.elbow`). */
   via?: ScenePointLike;
   /** Preferred first-segment axis for orthogonal elbows (`"x"` | `"y"`). */
   axis?: "x" | "y" | string;
+  /** Optional stable split / merge point for `core.fan-*`. */
+  junction?: ScenePointLike;
 }>;
 
 /** Minimal timeline cue (enter/reveal/draw/emphasize/pulse/fade/exit/stagger). */
@@ -165,9 +167,18 @@ const ARROW_CAPABILITIES = new Set([
   "core.elbow",
   "core.route",
   "core.bracket",
+  "core.fan-out",
+  "core.fan-in",
 ]);
 
-const ARROW_KINDS = new Set(["line", "path", "arrow", "connector", "elbow"]);
+const ARROW_KINDS = new Set([
+  "line",
+  "path",
+  "arrow",
+  "connector",
+  "elbow",
+  "fan",
+]);
 
 /** Small filled dots only — circles/ellipses render as shapes. */
 const DOT_CAPABILITIES = new Set(["core.dot"]);
@@ -237,6 +248,29 @@ const ZERO_ORIGIN: LayoutOrigin = { x: 0, y: 0 };
 type SceneNodeIndex = Readonly<{
   nodesById: ReadonlyMap<string, SceneNodeLike>;
   worldGeometryById: ReadonlyMap<string, SceneGeometryLike>;
+}>;
+
+type ScenePoint = Readonly<{ x: number; y: number }>;
+
+export type FanSegment = Readonly<{
+  id: string;
+  d: string;
+  directed: true;
+  showMarker: boolean;
+  role: "trunk" | "branch" | "merge-trunk";
+}>;
+
+export type FanTrajectory = Readonly<{
+  id: string;
+  d: string;
+  role: "trunk" | "branch" | "merge-trunk";
+}>;
+
+export type ResolvedFanGeometry = Readonly<{
+  capability: "core.fan-out" | "core.fan-in";
+  segments: readonly FanSegment[];
+  junction: ScenePoint;
+  trajectories: readonly FanTrajectory[];
 }>;
 
 function finiteNumber(value: unknown, fallback = 0): number {
@@ -938,24 +972,124 @@ function resolveMotionEndpoint(
  * gaps between boxes so balls only travel on line boundaries — never across
  * the top of the diagram and never through panel fills.
  */
+function endpointsMatch(
+  left: ScenePointLike | undefined,
+  right: ScenePointLike | undefined,
+): boolean {
+  if (left === undefined || right === undefined) {
+    return false;
+  }
+  if (
+    typeof left.nodeId === "string" &&
+    left.nodeId.length > 0 &&
+    typeof right.nodeId === "string" &&
+    right.nodeId.length > 0
+  ) {
+    return left.nodeId === right.nodeId;
+  }
+  return (
+    typeof left.x === "number" &&
+    typeof left.y === "number" &&
+    typeof right.x === "number" &&
+    typeof right.y === "number" &&
+    Math.abs(left.x - right.x) <= 0.001 &&
+    Math.abs(left.y - right.y) <= 0.001
+  );
+}
+
+function visiblePathForMotion(
+  motionNode: SceneNodeLike,
+  index: SceneNodeIndex,
+  layoutOrigin: LayoutOrigin,
+): string | undefined {
+  const motionFrom = singleScenePoint(motionNode.from);
+  const motionTo = singleScenePoint(motionNode.to);
+  if (motionFrom === undefined || motionTo === undefined) {
+    return undefined;
+  }
+  for (const candidate of index.nodesById.values()) {
+    if (candidate.id === motionNode.id) {
+      continue;
+    }
+    const capability = capabilityOf(candidate);
+    if (capability === "core.fan-out" || capability === "core.fan-in") {
+      const fanOut = capability === "core.fan-out";
+      const singleton = singleScenePoint(fanOut ? candidate.from : candidate.to);
+      const many = scenePoints(fanOut ? candidate.to : candidate.from);
+      const branchIndex = many.findIndex((endpoint) =>
+        fanOut
+          ? endpointsMatch(singleton, motionFrom) &&
+            endpointsMatch(endpoint, motionTo)
+          : endpointsMatch(endpoint, motionFrom) &&
+            endpointsMatch(singleton, motionTo),
+      );
+      if (branchIndex >= 0) {
+        return resolveFanGeometry(candidate, index, layoutOrigin).trajectories[
+          branchIndex
+        ]?.d;
+      }
+      continue;
+    }
+    if (
+      isMotionSignalNode(candidate, capability) ||
+      !isArrowLike(candidate, capability)
+    ) {
+      continue;
+    }
+    const candidateFrom = singleScenePoint(candidate.from);
+    const candidateTo = singleScenePoint(candidate.to);
+    if (
+      !endpointsMatch(candidateFrom, motionFrom) ||
+      !endpointsMatch(candidateTo, motionTo)
+    ) {
+      continue;
+    }
+    const raw = arrowPathData(candidate, index, layoutOrigin);
+    if (raw === undefined) {
+      continue;
+    }
+    const tip = tipForArrowNode(candidate, capability);
+    return tip === null
+      ? raw
+      : shortenPathForArrowhead(
+          raw,
+          strokeWidthFromStyle(candidate.style),
+          tip.insetUnits,
+        );
+  }
+  return undefined;
+}
+
 function motionSignalPathData(
   node: SceneNodeLike,
   index: SceneNodeIndex,
   layoutOrigin: LayoutOrigin,
 ): string | undefined {
-  const from = node.from;
-  const to = node.to;
+  const from = singleScenePoint(node.from);
+  const to = singleScenePoint(node.to);
   const hasNodeEndpoint =
     (typeof from?.nodeId === "string" && from.nodeId.length > 0) ||
     (typeof to?.nodeId === "string" && to.nodeId.length > 0);
 
   let raw: string | undefined;
+  const visible = visiblePathForMotion(node, index, layoutOrigin);
+  if (visible !== undefined) {
+    return visible;
+  }
   if (hasNodeEndpoint) {
     const start = resolveMotionEndpoint(from, to, index, layoutOrigin, "from");
     const end = resolveMotionEndpoint(to, from, index, layoutOrigin, "to");
-    // Always straight then clip to inter-box gaps — elbow routes still pierce
-    // middle panels and are not "line boundary" travel.
-    raw = `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} L${formatPathNumber(end.x)} ${formatPathNumber(end.y)}`;
+    raw =
+      node.via !== undefined || connectorAxisOf(node) !== undefined
+        ? elbowPathData(
+            start,
+            end,
+            node.via === undefined
+              ? undefined
+              : resolveEndpoint(node.via, index, layoutOrigin),
+            connectorAxisOf(node),
+          )
+        : `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} L${formatPathNumber(end.x)} ${formatPathNumber(end.y)}`;
   } else {
     const authored =
       typeof node.d === "string" && node.d.length > 0
@@ -1338,6 +1472,554 @@ function resolveEndpoint(
   return { x: 0, y: 0 };
 }
 
+function isScenePointArray(
+  value: ScenePointLike | readonly ScenePointLike[] | undefined,
+): value is readonly ScenePointLike[] {
+  return Array.isArray(value);
+}
+
+function singleScenePoint(
+  value: ScenePointLike | readonly ScenePointLike[] | undefined,
+): ScenePointLike | undefined {
+  return isScenePointArray(value) ? undefined : value;
+}
+
+function scenePoints(
+  value: ScenePointLike | readonly ScenePointLike[] | undefined,
+): readonly ScenePointLike[] {
+  if (value === undefined) {
+    return [];
+  }
+  return isScenePointArray(value) ? value : [value];
+}
+
+function pointCentroid(points: readonly ScenePoint[]): ScenePoint {
+  if (points.length === 0) {
+    return { x: 0, y: 0 };
+  }
+  const sum = points.reduce(
+    (total, point) => ({ x: total.x + point.x, y: total.y + point.y }),
+    { x: 0, y: 0 },
+  );
+  return { x: sum.x / points.length, y: sum.y / points.length };
+}
+
+function facingAnchorToPoint(
+  geometry: SceneGeometryLike,
+  peer: ScenePoint,
+): "e" | "w" | "n" | "s" {
+  const center = nodeCenter(geometry);
+  const dx = peer.x - center.x;
+  const dy = peer.y - center.y;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? "e" : "w";
+  }
+  return dy >= 0 ? "s" : "n";
+}
+
+/** Resolve a fan endpoint in world space, upgrading soft anchors to facing edges. */
+function resolveFanEndpointWorld(
+  endpoint: ScenePointLike,
+  peer: ScenePoint,
+  index: SceneNodeIndex,
+  layoutOrigin: LayoutOrigin,
+): ScenePoint {
+  const hasX = typeof endpoint.x === "number" && Number.isFinite(endpoint.x);
+  const hasY = typeof endpoint.y === "number" && Number.isFinite(endpoint.y);
+  if (hasX && hasY) {
+    return {
+      x: (endpoint.x as number) + layoutOrigin.x,
+      y: (endpoint.y as number) + layoutOrigin.y,
+    };
+  }
+  if (typeof endpoint.nodeId !== "string" || endpoint.nodeId.length === 0) {
+    return { x: layoutOrigin.x, y: layoutOrigin.y };
+  }
+  const world =
+    index.worldGeometryById.get(endpoint.nodeId) ??
+    (index.nodesById.has(endpoint.nodeId)
+      ? geometryOf(index.nodesById.get(endpoint.nodeId)!)
+      : undefined);
+  if (world === undefined) {
+    return { x: layoutOrigin.x, y: layoutOrigin.y };
+  }
+  const anchor = isSoftMotionAnchor(endpoint.anchor)
+    ? facingAnchorToPoint(world, peer)
+    : endpoint.anchor;
+  return nodeAnchorPoint(world, anchor);
+}
+
+function fanPath(points: readonly ScenePoint[]): string {
+  const compact: ScenePoint[] = [];
+  for (const point of points) {
+    const previous = compact.at(-1);
+    if (
+      previous === undefined ||
+      Math.abs(previous.x - point.x) > 0.001 ||
+      Math.abs(previous.y - point.y) > 0.001
+    ) {
+      compact.push(point);
+    }
+  }
+  const first = compact[0] ?? { x: 0, y: 0 };
+  return compact
+    .slice(1)
+    .reduce(
+      (d, point) =>
+        `${d} L${formatPathNumber(point.x)} ${formatPathNumber(point.y)}`,
+      `M${formatPathNumber(first.x)} ${formatPathNumber(first.y)}`,
+    );
+}
+
+function fanBranchPoints(
+  start: ScenePoint,
+  junction: ScenePoint,
+  axis: "x" | "y",
+  incoming: boolean,
+): readonly ScenePoint[] {
+  if (axis === "x") {
+    return incoming
+      ? [start, { x: junction.x, y: start.y }, junction]
+      : [junction, { x: junction.x, y: start.y }, start];
+  }
+  return incoming
+    ? [start, { x: start.x, y: junction.y }, junction]
+    : [junction, { x: start.x, y: junction.y }, start];
+}
+
+function orthogonalFanPoints(
+  start: ScenePoint,
+  end: ScenePoint,
+  axis: "x" | "y",
+): readonly ScenePoint[] {
+  return axis === "x"
+    ? [start, { x: end.x, y: start.y }, end]
+    : [start, { x: start.x, y: end.y }, end];
+}
+
+function automaticFanJunction(
+  singleton: ScenePoint,
+  many: readonly ScenePoint[],
+  axis: "x" | "y",
+): ScenePoint {
+  const centroid = pointCentroid(many);
+  if (axis === "x") {
+    const towardPositive = centroid.x >= singleton.x;
+    const corridorEdge = towardPositive
+      ? Math.min(...many.map((point) => point.x))
+      : Math.max(...many.map((point) => point.x));
+    return { x: (singleton.x + corridorEdge) / 2, y: singleton.y };
+  }
+  const towardPositive = centroid.y >= singleton.y;
+  const corridorEdge = towardPositive
+    ? Math.min(...many.map((point) => point.y))
+    : Math.max(...many.map((point) => point.y));
+  return { x: singleton.x, y: (singleton.y + corridorEdge) / 2 };
+}
+
+function pointsNear(a: ScenePoint, b: ScenePoint, eps = 0.001): boolean {
+  return Math.abs(a.x - b.x) <= eps && Math.abs(a.y - b.y) <= eps;
+}
+
+/** Collapse a polyline into atomic horizontal / vertical spans. */
+function atomicOrthogonalSpans(
+  points: readonly ScenePoint[],
+): readonly Readonly<{ start: ScenePoint; end: ScenePoint }>[] {
+  const compact: ScenePoint[] = [];
+  for (const point of points) {
+    const previous = compact.at(-1);
+    if (previous === undefined || !pointsNear(previous, point)) {
+      compact.push(point);
+    }
+  }
+  const spans: Array<Readonly<{ start: ScenePoint; end: ScenePoint }>> = [];
+  for (let i = 0; i < compact.length - 1; i++) {
+    const start = compact[i]!;
+    const end = compact[i + 1]!;
+    const horizontal = Math.abs(start.y - end.y) <= 0.001;
+    const vertical = Math.abs(start.x - end.x) <= 0.001;
+    if (!horizontal && !vertical) {
+      // Keep authored orthogonal intent: reject diagonals from paint.
+      continue;
+    }
+    if (pointsNear(start, end)) {
+      continue;
+    }
+    spans.push({ start, end });
+  }
+  return spans;
+}
+
+type FanAtomicSpan = Readonly<{
+  axis: "h" | "v";
+  fixed: number;
+  from: number;
+  to: number;
+  role: "trunk" | "branch" | "merge-trunk";
+  destination?: ScenePoint;
+}>;
+
+function toFanAtomicSpan(
+  start: ScenePoint,
+  end: ScenePoint,
+  role: "trunk" | "branch" | "merge-trunk",
+  destination: ScenePoint | undefined,
+): FanAtomicSpan | undefined {
+  const horizontal = Math.abs(start.y - end.y) <= 0.001;
+  const vertical = Math.abs(start.x - end.x) <= 0.001;
+  if (horizontal === vertical) {
+    return undefined;
+  }
+  if (horizontal) {
+    return {
+      axis: "h",
+      fixed: start.y,
+      from: Math.min(start.x, end.x),
+      to: Math.max(start.x, end.x),
+      role,
+      ...(destination !== undefined ? { destination } : {}),
+    };
+  }
+  return {
+    axis: "v",
+    fixed: start.x,
+    from: Math.min(start.y, end.y),
+    to: Math.max(start.y, end.y),
+    role,
+    ...(destination !== undefined ? { destination } : {}),
+  };
+}
+
+function mergeCollinearFanSpans(
+  spans: readonly FanAtomicSpan[],
+): readonly FanAtomicSpan[] {
+  type Bucket = {
+    axis: "h" | "v";
+    fixed: number;
+    role: "trunk" | "branch" | "merge-trunk";
+    intervals: Array<{ from: number; to: number }>;
+  };
+  const buckets = new Map<string, Bucket>();
+  for (const span of spans) {
+    const key = `${span.axis}:${formatPathNumber(span.fixed)}`;
+    const existing = buckets.get(key);
+    if (existing === undefined) {
+      buckets.set(key, {
+        axis: span.axis,
+        fixed: span.fixed,
+        role: span.role,
+        intervals: [{ from: span.from, to: span.to }],
+      });
+      continue;
+    }
+    existing.intervals.push({ from: span.from, to: span.to });
+    if (span.role === "trunk" || span.role === "merge-trunk") {
+      existing.role = span.role;
+    }
+  }
+
+  const merged: FanAtomicSpan[] = [];
+  for (const bucket of buckets.values()) {
+    const sorted = bucket.intervals
+      .slice()
+      .sort((left, right) => left.from - right.from || left.to - right.to);
+    const collapsed: Array<{ from: number; to: number }> = [];
+    for (const interval of sorted) {
+      const last = collapsed.at(-1);
+      if (last === undefined || interval.from > last.to + 0.001) {
+        collapsed.push({ from: interval.from, to: interval.to });
+      } else {
+        last.to = Math.max(last.to, interval.to);
+      }
+    }
+    for (const interval of collapsed) {
+      if (interval.to - interval.from <= 0.001) {
+        continue;
+      }
+      merged.push({
+        axis: bucket.axis,
+        fixed: bucket.fixed,
+        from: interval.from,
+        to: interval.to,
+        role: bucket.role,
+      });
+    }
+  }
+  return merged;
+}
+
+function subtractInterval(
+  host: Readonly<{ from: number; to: number }>,
+  cut: Readonly<{ from: number; to: number }>,
+): readonly Readonly<{ from: number; to: number }>[] {
+  if (cut.to <= host.from + 0.001 || cut.from >= host.to - 0.001) {
+    return [host];
+  }
+  const parts: Array<{ from: number; to: number }> = [];
+  if (cut.from > host.from + 0.001) {
+    parts.push({ from: host.from, to: Math.min(host.to, cut.from) });
+  }
+  if (cut.to < host.to - 0.001) {
+    parts.push({ from: Math.max(host.from, cut.to), to: host.to });
+  }
+  return parts.filter((part) => part.to - part.from > 0.001);
+}
+
+function fanSegmentFromAtomic(
+  id: string,
+  span: FanAtomicSpan,
+): FanSegment {
+  const start =
+    span.axis === "h"
+      ? { x: span.from, y: span.fixed }
+      : { x: span.fixed, y: span.from };
+  const end =
+    span.axis === "h"
+      ? { x: span.to, y: span.fixed }
+      : { x: span.fixed, y: span.to };
+  const destination = span.destination;
+  const directed =
+    destination === undefined
+      ? { start, end }
+      : pointsNear(end, destination)
+        ? { start, end }
+        : pointsNear(start, destination)
+          ? { start: end, end: start }
+          : { start, end };
+  return {
+    id,
+    d: fanPath([directed.start, directed.end]),
+    directed: true,
+    showMarker: destination !== undefined,
+    role: span.role,
+  };
+}
+
+/**
+ * Paint spans are normalized atomic H/V segments with collinear overlaps
+ * merged so shared corridors stroke once. Destination markers stay only on
+ * terminal segments that end at a semantic destination.
+ */
+function paintFanSegments(
+  nodeId: string,
+  trunkPoints: readonly ScenePoint[],
+  trunkRole: "trunk" | "merge-trunk",
+  branchPointSets: readonly (readonly ScenePoint[])[],
+  destinations: readonly ScenePoint[],
+): readonly FanSegment[] {
+  const corridors: FanAtomicSpan[] = [];
+  const terminals: FanAtomicSpan[] = [];
+  const pushPoints = (
+    points: readonly ScenePoint[],
+    role: "trunk" | "branch" | "merge-trunk",
+    destination: ScenePoint | undefined,
+  ) => {
+    const spans = atomicOrthogonalSpans(points);
+    spans.forEach((span, index) => {
+      const isLast = index === spans.length - 1;
+      const atomic = toFanAtomicSpan(
+        span.start,
+        span.end,
+        role,
+        isLast ? destination : undefined,
+      );
+      if (atomic === undefined) {
+        return;
+      }
+      if (atomic.destination !== undefined) {
+        terminals.push(atomic);
+      } else {
+        corridors.push(atomic);
+      }
+    });
+  };
+
+  pushPoints(
+    trunkPoints,
+    trunkRole,
+    trunkRole === "merge-trunk" ? destinations[0] : undefined,
+  );
+  branchPointSets.forEach((points, branchIndex) => {
+    pushPoints(
+      points,
+      "branch",
+      trunkRole === "trunk" ? destinations[branchIndex] : undefined,
+    );
+  });
+
+  // Merge shared corridors, then subtract terminal stubs so destinations
+  // keep a dedicated marked segment and are never double-stroked.
+  let mergedCorridors = mergeCollinearFanSpans(corridors);
+  const uniqueTerminals: FanAtomicSpan[] = [];
+  const terminalKeys = new Set<string>();
+  for (const terminal of terminals) {
+    const key = `${terminal.axis}:${formatPathNumber(terminal.fixed)}:${formatPathNumber(terminal.from)}:${formatPathNumber(terminal.to)}`;
+    if (terminalKeys.has(key)) {
+      continue;
+    }
+    terminalKeys.add(key);
+    uniqueTerminals.push(terminal);
+  }
+  for (const terminal of uniqueTerminals) {
+    mergedCorridors = mergedCorridors.flatMap((corridor) => {
+      if (
+        corridor.axis !== terminal.axis ||
+        Math.abs(corridor.fixed - terminal.fixed) > 0.001
+      ) {
+        return [corridor];
+      }
+      return subtractInterval(corridor, terminal).map((part) => ({
+        ...corridor,
+        from: part.from,
+        to: part.to,
+      }));
+    });
+  }
+
+  const painted = [...mergedCorridors, ...uniqueTerminals];
+  return painted.map((span, index) =>
+    fanSegmentFromAtomic(`${nodeId}-span-${index}`, span),
+  );
+}
+
+function fanPathPoints(d: string): ScenePoint[] {
+  const points: ScenePoint[] = [];
+  const token =
+    /[ML]\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s+([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/gi;
+  for (const match of d.matchAll(token)) {
+    points.push({ x: Number(match[1]), y: Number(match[2]) });
+  }
+  return points;
+}
+
+/** Split a fan trajectory at the junction into trunk and branch ball paths. */
+function splitFanTrajectoryAtJunction(
+  d: string,
+  junction: ScenePoint,
+): Readonly<{ head: string; tail: string }> | undefined {
+  const points = fanPathPoints(d);
+  if (points.length < 2) {
+    return undefined;
+  }
+  let junctionIndex = points.findIndex((point) => pointsNear(point, junction));
+  if (junctionIndex < 0) {
+      // Authored bend: pick the orthogonal corner closest to the junction.
+    let best = 0;
+    let bestDist = Number.POSITIVE_INFINITY;
+    points.forEach((point, index) => {
+      const dist =
+        Math.abs(point.x - junction.x) + Math.abs(point.y - junction.y);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = index;
+      }
+    });
+    junctionIndex = best;
+  }
+  if (junctionIndex <= 0 || junctionIndex >= points.length - 1) {
+    return undefined;
+  }
+  return {
+    head: fanPath(points.slice(0, junctionIndex + 1)),
+    tail: fanPath(points.slice(junctionIndex)),
+  };
+}
+
+/**
+ * Resolve fan topology in world space, then rebase it to the current layout.
+ * Paint uses merged atomic spans; trajectories stay complete source→destination.
+ */
+export function resolveFanGeometry(
+  node: SceneNodeLike,
+  index: SceneNodeIndex,
+  layoutOrigin: LayoutOrigin = ZERO_ORIGIN,
+): ResolvedFanGeometry {
+  const capability =
+    capabilityOf(node) === "core.fan-in" ? "core.fan-in" : "core.fan-out";
+  const fanOut = capability === "core.fan-out";
+  const from = scenePoints(node.from);
+  const to = scenePoints(node.to);
+  const singletonEndpoint = (fanOut ? from[0] : to[0]) ?? {};
+  const manyEndpoints = fanOut ? to : from;
+
+  const roughSingleton = resolveFanEndpointWorld(
+    singletonEndpoint,
+    { x: layoutOrigin.x, y: layoutOrigin.y },
+    index,
+    layoutOrigin,
+  );
+  const roughMany = manyEndpoints.map((endpoint) =>
+    resolveFanEndpointWorld(endpoint, roughSingleton, index, layoutOrigin),
+  );
+  const roughManyCentroid = pointCentroid(roughMany);
+  const singleton = resolveFanEndpointWorld(
+    singletonEndpoint,
+    roughManyCentroid,
+    index,
+    layoutOrigin,
+  );
+  const many = manyEndpoints.map((endpoint) =>
+    resolveFanEndpointWorld(endpoint, singleton, index, layoutOrigin),
+  );
+  const manyCentroid = pointCentroid(many);
+  const axis =
+    connectorAxisOf(node) ??
+    (Math.abs(manyCentroid.x - singleton.x) >=
+    Math.abs(manyCentroid.y - singleton.y)
+      ? "x"
+      : "y");
+  const authoredJunction = singleScenePoint(node.junction);
+  const junctionWorld =
+    authoredJunction === undefined
+      ? automaticFanJunction(singleton, many, axis)
+      : resolveFanEndpointWorld(
+          authoredJunction,
+          fanOut ? manyCentroid : singleton,
+          index,
+          layoutOrigin,
+        );
+  const local = (point: ScenePoint): ScenePoint => ({
+    x: point.x - layoutOrigin.x,
+    y: point.y - layoutOrigin.y,
+  });
+  const singletonLocal = local(singleton);
+  const manyLocal = many.map(local);
+  const junction = local(junctionWorld);
+
+  const trunkPoints = fanOut
+    ? orthogonalFanPoints(singletonLocal, junction, axis)
+    : orthogonalFanPoints(junction, singletonLocal, axis);
+  const trunkRole = fanOut ? "trunk" : "merge-trunk";
+  const branchPointSets = manyLocal.map((endpoint) =>
+    fanBranchPoints(endpoint, junction, axis, !fanOut),
+  );
+  const destinations = fanOut ? manyLocal : [singletonLocal];
+  const trajectories = manyLocal.map((_endpoint, branchIndex): FanTrajectory => {
+    const branchPoints = branchPointSets[branchIndex]!;
+    // Fan-in must keep the orthogonal merge-trunk (not a diagonal jump).
+    const points = fanOut
+      ? [...trunkPoints, ...branchPoints.slice(1)]
+      : [...branchPoints, ...trunkPoints.slice(1)];
+    return {
+      id: `${node.id}-trajectory-${branchIndex}`,
+      d: fanPath(points),
+      role: fanOut ? "branch" : "merge-trunk",
+    };
+  });
+  return {
+    capability,
+    segments: paintFanSegments(
+      node.id,
+      trunkPoints,
+      trunkRole,
+      branchPointSets,
+      destinations,
+    ),
+    junction,
+    trajectories,
+  };
+}
+
 function polylinePathData(
   points: readonly ScenePointLike[],
   index: SceneNodeIndex,
@@ -1461,6 +2143,14 @@ function isArrowLike(node: SceneNodeLike, capability: string): boolean {
     return true;
   }
   return typeof node.kind === "string" && ARROW_KINDS.has(node.kind);
+}
+
+function isFanNode(node: SceneNodeLike, capability: string): boolean {
+  return (
+    capability === "core.fan-out" ||
+    capability === "core.fan-in" ||
+    node.kind === "fan"
+  );
 }
 
 function isDotLike(node: SceneNodeLike, capability: string): boolean {
@@ -1732,11 +2422,14 @@ function shouldShowArrowhead(node: SceneNodeLike, capability: string): boolean {
     capability === "core.connector" ||
     capability === "core.elbow" ||
     capability === "core.route" ||
+    capability === "core.fan-out" ||
+    capability === "core.fan-in" ||
     capability === "core.path" ||
     capability === "core.line" ||
     node.kind === "arrow" ||
     node.kind === "connector" ||
     node.kind === "elbow" ||
+    node.kind === "fan" ||
     node.kind === "path" ||
     node.kind === "line"
   ) {
@@ -1896,11 +2589,14 @@ function drawProgressForNode(
   nodeId: string,
   timeline: readonly SceneTimelineCueLike[],
   playbackTimeMs: number,
+  includeTrace = true,
 ): number | undefined {
   const cue = timeline
     .filter(
       (candidate) =>
-        candidate.target === nodeId && isDrawAction(candidate.action),
+        candidate.target === nodeId &&
+        isDrawAction(candidate.action) &&
+        (includeTrace || candidate.action !== "trace"),
     )
     .at(-1);
   if (cue === undefined) {
@@ -1909,6 +2605,23 @@ function drawProgressForNode(
   const atMs = finiteNumber(cue.at);
   if (playbackTimeMs <= atMs) {
     return 0;
+  }
+  return cueProgress(cue, playbackTimeMs);
+}
+
+function traceProgressForNode(
+  nodeId: string,
+  timeline: readonly SceneTimelineCueLike[],
+  playbackTimeMs: number,
+): number | undefined {
+  const cue = timeline
+    .filter(
+      (candidate) =>
+        candidate.target === nodeId && candidate.action === "trace",
+    )
+    .at(-1);
+  if (cue === undefined || playbackTimeMs < finiteNumber(cue.at)) {
+    return undefined;
   }
   return cueProgress(cue, playbackTimeMs);
 }
@@ -2270,9 +2983,11 @@ function arrowPathData(
   if (Array.isArray(node.points) && node.points.length > 0) {
     return polylinePathData(node.points, index, layoutOrigin);
   }
-  if (node.from !== undefined || node.to !== undefined) {
-    const start = resolveEndpoint(node.from, index, layoutOrigin);
-    const end = resolveEndpoint(node.to, index, layoutOrigin);
+  const from = singleScenePoint(node.from);
+  const to = singleScenePoint(node.to);
+  if (from !== undefined || to !== undefined) {
+    const start = resolveEndpoint(from, index, layoutOrigin);
+    const end = resolveEndpoint(to, index, layoutOrigin);
     if (isElbowConnector(node, capabilityOf(node))) {
       const via =
         node.via !== undefined
@@ -2696,7 +3411,16 @@ function renderNode(
     kids,
   );
   const appearance = appearanceForNode(node.id, timeline, playbackTimeMs);
-  const drawProgress = drawProgressForNode(node.id, timeline, playbackTimeMs);
+  const fanNode = isFanNode(node, capability);
+  const drawProgress = drawProgressForNode(
+    node.id,
+    timeline,
+    playbackTimeMs,
+    !fanNode,
+  );
+  const traceProgress = fanNode
+    ? traceProgressForNode(node.id, timeline, playbackTimeMs)
+    : undefined;
   const themeAccent = theme.accent.primary;
   const emphasis = emphasisForNode(
     node.id,
@@ -2960,6 +3684,165 @@ function renderNode(
         {node.text ?? ""}
       </text>
     );
+  } else if (fanNode) {
+    const geometry = resolveFanGeometry(node, index, layoutOrigin);
+    const stroke = paintFromStyle(node.style, "stroke", theme, themeAccent);
+    const tip = tipForArrowNode(node, capability);
+    const markerId =
+      tip !== null ? markerDomId(markerPrefix, tip) : markerPrefix;
+    const drawing = drawProgress !== undefined;
+    const strokeWidth = strokeWidthFromStyle(node.style) * strokeScale;
+    const authoredDash = authoredStrokeDasharray(node.style);
+    const dashed = isDashedStyle(node.style);
+    const resolvedSegments = geometry.segments.map((segment) => {
+      const semanticTip = segment.showMarker ? tip : null;
+      return {
+        ...segment,
+        d:
+          semanticTip === null
+            ? segment.d
+            : shortenPathForArrowhead(
+                segment.d,
+                strokeWidth,
+                semanticTip.insetUnits,
+              ),
+        showMarker:
+          segment.showMarker &&
+          semanticTip !== null &&
+          (!drawing || drawProgress >= 1 || playback.reducedMotion),
+      };
+    });
+    const firstHalf =
+      traceProgress === undefined ? undefined : clamp01(traceProgress * 2);
+    const secondHalf =
+      traceProgress === undefined
+        ? undefined
+        : traceProgress === 0.5
+          ? 0.001
+          : clamp01((traceProgress - 0.5) * 2);
+    const trajectorySplits = geometry.trajectories.map((trajectory) => ({
+      trajectory,
+      split: splitFanTrajectoryAtJunction(trajectory.d, geometry.junction),
+    }));
+    const trunkBallPath =
+      geometry.capability === "core.fan-out"
+        ? trajectorySplits[0]?.split?.head
+        : trajectorySplits[0]?.split?.tail;
+    const branchBallPaths =
+      geometry.capability === "core.fan-out"
+        ? trajectorySplits.map(({ trajectory, split }) => ({
+            id: trajectory.id,
+            d: split?.tail,
+          }))
+        : trajectorySplits.map(({ trajectory, split }) => ({
+            id: trajectory.id,
+            d: split?.head,
+          }));
+    const traceSignals =
+      traceProgress === undefined || playback.reducedMotion
+        ? null
+        : geometry.capability === "core.fan-out"
+          ? (
+              <>
+                {traceProgress < 0.5
+                  ? trunkBallPath !== undefined
+                    ? (
+                        <MotionSignal
+                          key={`${playback.restartKey}-${node.id}-trunk-trace`}
+                          path={trunkBallPath}
+                          color={stroke}
+                          progress={firstHalf}
+                          active
+                          reducedMotion={playback.reducedMotion}
+                          r={DEFAULT_DOT_RADIUS}
+                          data-flow-fan-ball="trunk"
+                        />
+                      )
+                    : null
+                  : branchBallPaths.map((branch) =>
+                      branch.d === undefined ? null : (
+                        <MotionSignal
+                          key={`${playback.restartKey}-${branch.id}-trace`}
+                          path={branch.d}
+                          color={stroke}
+                          progress={secondHalf}
+                          active
+                          reducedMotion={playback.reducedMotion}
+                          r={DEFAULT_DOT_RADIUS}
+                          data-flow-fan-ball="branch"
+                          data-flow-fan-branch={branch.id}
+                        />
+                      ),
+                    )}
+              </>
+            )
+          : (
+              <>
+                {traceProgress < 0.5
+                  ? branchBallPaths.map((branch) =>
+                      branch.d === undefined ? null : (
+                        <MotionSignal
+                          key={`${playback.restartKey}-${branch.id}-trace`}
+                          path={branch.d}
+                          color={stroke}
+                          progress={firstHalf}
+                          active
+                          reducedMotion={playback.reducedMotion}
+                          r={DEFAULT_DOT_RADIUS}
+                          data-flow-fan-ball="branch"
+                          data-flow-fan-branch={branch.id}
+                        />
+                      ),
+                    )
+                  : trunkBallPath !== undefined
+                    ? (
+                        <MotionSignal
+                          key={`${playback.restartKey}-${node.id}-trunk-trace`}
+                          path={trunkBallPath}
+                          color={stroke}
+                          progress={secondHalf}
+                          active
+                          reducedMotion={playback.reducedMotion}
+                          r={DEFAULT_DOT_RADIUS}
+                          data-flow-fan-ball="trunk"
+                        />
+                      )
+                    : null}
+              </>
+            );
+    body = (
+      <>
+        {resolvedSegments.map((segment) => (
+          <FlowArrow
+            key={segment.id}
+            d={segment.d}
+            markerId={markerId}
+            showMarker={segment.showMarker}
+            color={stroke}
+            dashed={!drawing && dashed}
+            strokeWidth={strokeWidth}
+            strokeLinecap="butt"
+            pathLength={drawing ? 1 : undefined}
+            strokeDasharray={
+              drawing
+                ? 1
+                : authoredDash !== undefined
+                  ? authoredDash
+                  : undefined
+            }
+            strokeDashoffset={drawing ? 1 - drawProgress : undefined}
+            focusable={false}
+            aria-hidden="true"
+            style={styleToCss(node.style, theme)}
+            data-flow-segment-id={segment.id}
+            data-flow-fan-role={segment.role}
+            data-flow-arrowhead={segment.showMarker ? "true" : "false"}
+            data-flow-tip={segment.showMarker ? tip?.key : undefined}
+          />
+        ))}
+        {traceSignals}
+      </>
+    );
   } else if (isMotionSignalNode(node, capability)) {
     const d = motionSignalPathData(node, index, layoutOrigin);
     if (d !== undefined) {
@@ -3173,7 +4056,8 @@ function renderNode(
  * restarts on `restartKey`, and collapses to the final frame under reduced motion.
  *
  * Supports `core.rect` / `core.text` / `core.circle|ellipse` / `core.dot` /
- * `core.line|path|arrow|connector|elbow`, `core.panel` / `core.header`,
+ * `core.line|path|arrow|connector|elbow|fan-out|fan-in`, `core.panel` /
+ * `core.header`,
  * `layout.stack` / `layout.grid`, nested local children, enter/draw/emphasize/pulse
  * /fade/exit/stagger cues (with easing), camera viewBox, theme paints, motion
  * signals, dashed strokes, and arrowheads.

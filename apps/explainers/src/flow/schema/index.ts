@@ -3,6 +3,7 @@
 
 export * from "./capability-id.js";
 export * from "./capability.js";
+export * from "./component-descriptor.js";
 export * from "./deck-package.js";
 export * from "./diagnostic.js";
 export * from "./ir.js";

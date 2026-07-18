@@ -4,7 +4,10 @@
  */
 
 import type { DeckDefinition } from "./types";
-import { loadDeckFlowById, loadDeckFlows } from "./load-deck-flows";
+import {
+  loadDeckFlowById,
+  loadDeckPackages,
+} from "./load-deck-flows";
 
 /** Canonical registry ids and routes — must stay bookmark-stable. */
 export const EXPECTED_DECK_ROUTES = [
@@ -63,7 +66,7 @@ export function deckById(id: string): DeckDefinition | undefined {
 
 /** Whether any raw Flow source is currently discoverable and compilable. */
 export function registryUsesLiveFlowSources(): boolean {
-  return loadDeckFlows().length > 0;
+  return loadDeckPackages().length > 0;
 }
 
 export function validateDeckRegistry(decks: readonly DeckDefinition[] = DECK_REGISTRY): string[] {

@@ -66,6 +66,8 @@ export type PackageSceneAst = Readonly<{
   fallback?: string;
   viewport?: unknown;
   accessibility?: unknown;
+  /** Owning source range when available (slide / document provenance). */
+  sourceMap?: SourceRange;
 }>;
 
 /** SceneAst plus preserved package IR fields for compiler shortcut lowering. */

@@ -180,6 +180,10 @@ export const ReadingOrder = keyword("ReadingOrder", /reading-order/);
 export const SymbolKeyword = keyword("Symbol", /symbol/);
 export const For = keyword("For", /for/);
 export const In = keyword("In", /in/);
+/** Semantic component-port reference (`ref("instance.port")`). */
+export const Ref = keyword("Ref", /ref/);
+/** Explicit unique-illustration block boundary (`freeform { … }`). */
+export const Freeform = keyword("Freeform", /freeform/);
 export const True = keyword("True", /true/);
 export const False = keyword("False", /false/);
 export const Theme = keyword("Theme", /theme/);
@@ -311,6 +315,8 @@ export const allTokens = [
   SymbolKeyword,
   For,
   In,
+  Ref,
+  Freeform,
   True,
   False,
   Theme,

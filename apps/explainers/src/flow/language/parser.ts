@@ -15,6 +15,7 @@ import {
 } from "chevrotain";
 
 import type {
+  ArrayLiteralAst,
   CameraAst,
   CameraKeyframeAst,
   ComparisonOperator,
@@ -24,6 +25,7 @@ import type {
   ExplainerAst,
   FallbackAst,
   ForLoopAst,
+  FreeformBlockAst,
   IdentifierReferenceAst,
   ImportDeclarationAst,
   InteractionActionAst,
@@ -37,6 +39,7 @@ import type {
   ParamDeclarationAst,
   PropAssignmentAst,
   RectAst,
+  RefAst,
   ReadingOrderAst,
   ReferenceListAst,
   RenderDeclarationAst,
@@ -123,6 +126,7 @@ import {
   FontKind,
   Flow,
   For,
+  Freeform,
   Frame,
   From,
   Gap,
@@ -158,6 +162,7 @@ import {
   Rail,
   ReadingOrder,
   Rect,
+  Ref,
   Require,
   Responsive,
   Reveal,
@@ -265,6 +270,10 @@ function argumentValueToPlain(value: PropAssignmentAst["value"]): unknown {
           argumentValueToPlain(property.value),
         ]),
       );
+    case "array-literal":
+      return value.items.map((item) => argumentValueToPlain(item));
+    case "ref":
+      return `ref(${value.target})`;
   }
 }
 
@@ -586,6 +595,8 @@ class FlowParser extends EmbeddedActionsParser {
     this.CONSUME(LBrace);
     let summary: SummaryAst | undefined;
     const renderDeclarations: RenderDeclarationAst[] = [];
+    const loops: ForLoopAst[] = [];
+    const freeforms: FreeformBlockAst[] = [];
     const cameras: CameraAst[] = [];
     const timelines: TimelineAst[] = [];
     const interactions: InteractionAst[] = [];
@@ -625,6 +636,18 @@ class FlowParser extends EmbeddedActionsParser {
           ALT: () => {
             const node = this.SUBRULE(this.componentInvocation);
             this.ACTION(() => renderDeclarations.push(node));
+          },
+        },
+        {
+          ALT: () => {
+            const node = this.SUBRULE(this.forLoop);
+            this.ACTION(() => loops.push(node));
+          },
+        },
+        {
+          ALT: () => {
+            const node = this.SUBRULE(this.freeform);
+            this.ACTION(() => freeforms.push(node));
           },
         },
         {
@@ -693,6 +716,8 @@ class FlowParser extends EmbeddedActionsParser {
       id: id.image,
       ...(summary === undefined ? {} : { summary }),
       renderDeclarations,
+      ...(loops.length === 0 ? {} : { loops }),
+      ...(freeforms.length === 0 ? {} : { freeforms }),
       cameras,
       timelines,
       interactions,
@@ -1577,8 +1602,10 @@ class FlowParser extends EmbeddedActionsParser {
     "argumentValue",
     (): PropAssignmentAst["value"] =>
       this.OR([
+        { ALT: () => this.SUBRULE(this.ref) },
         { ALT: () => this.SUBRULE(this.value) },
         { ALT: () => this.SUBRULE(this.objectLiteral) },
+        { ALT: () => this.SUBRULE(this.arrayLiteral) },
         {
           GATE: () => this.LA(1).tokenType === Identifier,
           ALT: () => {
@@ -1594,6 +1621,49 @@ class FlowParser extends EmbeddedActionsParser {
         },
       ]),
   );
+
+  /** JSON-style array literal of compile-time-constant argument values. */
+  private readonly arrayLiteral = this.RULE(
+    "arrayLiteral",
+    (): ArrayLiteralAst => {
+      const start = this.CONSUME(LBracket);
+      const items: PropAssignmentAst["value"][] = [];
+      this.MANY_SEP({
+        SEP: Comma,
+        DEF: () => {
+          const item = this.SUBRULE(this.argumentValue);
+          this.ACTION(() => items.push(item));
+        },
+      });
+      const end = this.CONSUME(RBracket);
+      return this.ACTION(() => ({
+        kind: "array-literal",
+        items,
+        sourceMap: rangeBetween(this.sourceName, start, end),
+      }));
+    },
+  );
+
+  /** Semantic component-port reference: `ref("instance.port")`. */
+  private readonly ref = this.RULE("ref", (): RefAst => {
+    const start = this.CONSUME(Ref);
+    this.CONSUME(LParen);
+    const targetToken = this.CONSUME(QuotedString);
+    const end = this.CONSUME(RParen);
+    return this.ACTION(() => {
+      const target = stringValue(targetToken);
+      const dot = target.indexOf(".");
+      const instance = dot === -1 ? target : target.slice(0, dot);
+      const port = dot === -1 ? "" : target.slice(dot + 1);
+      return {
+        kind: "ref",
+        target,
+        instance,
+        port,
+        sourceMap: rangeBetween(this.sourceName, start, end),
+      };
+    });
+  });
 
   private readonly objectLiteral = this.RULE(
     "objectLiteral",
@@ -1621,22 +1691,7 @@ class FlowParser extends EmbeddedActionsParser {
     (): ObjectPropertyAst => {
       const name = this.CONSUME(Identifier);
       this.CONSUME(Colon);
-      const value = this.OR([
-        { ALT: () => this.SUBRULE(this.value) },
-        {
-          GATE: () => this.LA(1).tokenType === Identifier,
-          ALT: () => {
-            const reference = this.CONSUME2(Identifier);
-            return this.ACTION(
-              (): IdentifierReferenceAst => ({
-                kind: "identifier-reference",
-                name: reference.image,
-                sourceMap: tokenRange(this.sourceName, reference),
-              }),
-            );
-          },
-        },
-      ]);
+      const value = this.SUBRULE(this.argumentValue);
       return this.ACTION(() => ({
         kind: "object-property",
         name: name.image,
@@ -1699,7 +1754,21 @@ class FlowParser extends EmbeddedActionsParser {
     const start = this.CONSUME(For);
     const item = this.CONSUME(Identifier);
     this.CONSUME(In);
-    const collection = this.CONSUME2(Identifier);
+    const collection = this.OR([
+      { ALT: () => this.SUBRULE(this.arrayLiteral) },
+      {
+        ALT: () => {
+          const reference = this.CONSUME2(Identifier);
+          return this.ACTION(
+            (): IdentifierReferenceAst => ({
+              kind: "identifier-reference",
+              name: reference.image,
+              sourceMap: tokenRange(this.sourceName, reference),
+            }),
+          );
+        },
+      },
+    ]);
     this.CONSUME(LBrace);
     const body: ComponentInvocationAst[] = [];
     this.MANY(() => {
@@ -1710,11 +1779,38 @@ class FlowParser extends EmbeddedActionsParser {
     return this.ACTION(() => ({
       kind: "for-loop",
       item: item.image,
-      collection: collection.image,
+      collection,
       body,
       sourceMap: rangeBetween(this.sourceName, start, end),
     }));
   });
+
+  private readonly freeform = this.RULE(
+    "freeform",
+    (): FreeformBlockAst => {
+      const start = this.CONSUME(Freeform);
+      let id: string | undefined;
+      this.OPTION(() => {
+        const idToken = this.CONSUME(Identifier);
+        this.ACTION(() => {
+          id = idToken.image;
+        });
+      });
+      this.CONSUME(LBrace);
+      const body: RenderDeclarationAst[] = [];
+      this.MANY(() => {
+        const declaration = this.SUBRULE(this.renderDeclaration);
+        this.ACTION(() => body.push(declaration));
+      });
+      const end = this.CONSUME(RBrace);
+      return this.ACTION(() => ({
+        kind: "freeform",
+        ...(id === undefined ? {} : { id }),
+        body,
+        sourceMap: rangeBetween(this.sourceName, start, end),
+      }));
+    },
+  );
 
   private readonly tokenReference = this.RULE(
     "tokenReference",

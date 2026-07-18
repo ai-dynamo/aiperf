@@ -134,30 +134,70 @@ export function capabilityKind(capability: string): RenderNodeIr["kind"] {
   }
 }
 
+/**
+ * Package capabilities with dedicated cases in `desugarPackageNode`.
+ *
+ * Keep this beside the desugar switch: every selector here must have a
+ * corresponding lowering case below.
+ */
+const DESUGAR_PACKAGE_CAPABILITIES = new Set<string>([
+  "core.circle",
+  "core.ellipse",
+  "core.panel",
+  "core.header",
+  "core.bracket",
+  "core.callout",
+  "core.chip",
+  "core.note",
+  "core.divider",
+  "core.lane",
+  "core.band",
+  "core.swimlane",
+  "core.stepper",
+  "layout.pad",
+]);
+
+/**
+ * Package capabilities represented directly by `lowerFirstClassPackageNode`.
+ *
+ * This deliberately enumerates accepted selectors rather than treating every
+ * `core.*` / `layout.*` string as valid. It is the strict-mode companion to
+ * the first-class lowering branch below.
+ */
+const FIRST_CLASS_PACKAGE_CAPABILITIES = new Set<string>([
+  "core.rect",
+  "core.text",
+  "core.connector",
+  "core.group",
+  "core.path",
+  "core.line",
+  "core.arrow",
+  "core.elbow",
+  "core.route",
+  "core.fan-out",
+  "core.fan-in",
+  "layout.stack",
+  "layout.grid",
+  "layout.rail",
+  "motion.signal",
+  "motion.pulse",
+]);
+
 /** True when the capability is a compiler macro that expands before IR emit. */
 export function isDesugarCapability(capability: string): boolean {
-  switch (capability) {
-    case "core.circle":
-    case "core.ellipse":
-    case "core.panel":
-    case "core.header":
-    case "core.bracket":
-    case "core.callout":
-    case "core.chip":
-    case "core.note":
-    case "core.divider":
-    case "core.lane":
-    case "core.band":
-    case "core.swimlane":
-    case "core.stepper":
-    case "layout.pad":
-      return true;
-    case "core.arrow":
-      // Absolute geometry desugars; node-anchored arrows stay first-class.
-      return false;
-    default:
-      return false;
-  }
+  return DESUGAR_PACKAGE_CAPABILITIES.has(capability);
+}
+
+/**
+ * Whether package-scene lowering recognizes this capability without a
+ * manifest entry. This is authoritative for `desugarPackageNode` macros and
+ * `lowerFirstClassPackageNode` selectors.
+ */
+export function isSupportedPackageCapability(capability: string): boolean {
+  return (
+    DESUGAR_PACKAGE_CAPABILITIES.has(capability) ||
+    FIRST_CLASS_PACKAGE_CAPABILITIES.has(capability)
+  );
 }
 
 export function pathOf(node: Record<string, unknown>): string | undefined {
@@ -243,19 +283,138 @@ export function connectorEndpointOf(
   return { x: 0, y: 0 };
 }
 
-function fanEndpointSideOf(
+function fanLabel(node: Record<string, unknown>, id: string): string {
+  const sourceMap = asRecord(node.sourceMap);
+  const start = sourceMap !== undefined ? asRecord(sourceMap.start) : undefined;
+  const source =
+    sourceMap !== undefined && typeof sourceMap.source === "string"
+      ? sourceMap.source
+      : undefined;
+  const line = start !== undefined ? finiteOrUndefined(start.line) : undefined;
+  if (source !== undefined && line !== undefined) {
+    return `Fan "${id}" (${source}:${line})`;
+  }
+  return `Fan "${id}"`;
+}
+
+/**
+ * Resolve one fan endpoint without the connector `{x:0,y:0}` fallback.
+ * Bare strings are treated as node ids (native identifier authoring).
+ */
+function requireFanEndpoint(
   value: unknown,
-): ConnectorEndpointIr | readonly ConnectorEndpointIr[] {
+  label: string,
+  side: string,
+): ConnectorEndpointIr {
   if (typeof value === "string") {
-    try {
-      return fanEndpointSideOf(JSON.parse(value) as unknown);
-    } catch {
-      return connectorEndpointOf(value);
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      throw new Error(`${label} ${side} endpoint is empty`);
+    }
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        return requireFanEndpoint(JSON.parse(trimmed) as unknown, label, side);
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("Fan ")) {
+          throw error;
+        }
+        throw new Error(`${label} ${side} endpoint is not resolvable`);
+      }
+    }
+    return { nodeId: trimmed };
+  }
+
+  const record = asRecord(value);
+  if (record === undefined) {
+    throw new Error(`${label} ${side} endpoint is missing or unresolvable`);
+  }
+
+  const x = finiteOrUndefined(record.x);
+  const y = finiteOrUndefined(record.y);
+  const nodeId =
+    typeof record.nodeId === "string" && record.nodeId.length > 0
+      ? record.nodeId
+      : typeof record.id === "string" && record.id.length > 0
+        ? record.id
+        : undefined;
+  const anchor =
+    typeof record.anchor === "string" && record.anchor.length > 0
+      ? record.anchor
+      : undefined;
+
+  if (x !== undefined && y !== undefined) {
+    return {
+      x,
+      y,
+      ...(nodeId !== undefined ? { nodeId } : {}),
+      ...(anchor !== undefined ? { anchor } : {}),
+    };
+  }
+  if (x !== undefined || y !== undefined) {
+    throw new Error(
+      `${label} ${side} endpoint requires both x and y coordinates`,
+    );
+  }
+  if (nodeId !== undefined) {
+    return {
+      nodeId,
+      ...(anchor !== undefined ? { anchor } : {}),
+    };
+  }
+  throw new Error(
+    `${label} ${side} endpoint requires nodeId or x/y coordinates`,
+  );
+}
+
+function requireFanEndpointSide(
+  value: unknown,
+  label: string,
+  side: "from" | "to",
+): ConnectorEndpointIr | readonly ConnectorEndpointIr[] {
+  if (value === undefined) {
+    throw new Error(`${label} ${side} is required`);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("[")) {
+      try {
+        return requireFanEndpointSide(
+          JSON.parse(trimmed) as unknown,
+          label,
+          side,
+        );
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("Fan ")) {
+          throw error;
+        }
+        throw new Error(`${label} ${side} endpoints are not resolvable`);
+      }
     }
   }
-  return Array.isArray(value)
-    ? value.map((endpoint) => connectorEndpointOf(endpoint))
-    : connectorEndpointOf(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      throw new Error(`${label} ${side} requires at least one endpoint`);
+    }
+    return value.map((endpoint, index) =>
+      requireFanEndpoint(endpoint, label, `${side}[${index}]`),
+    );
+  }
+  return requireFanEndpoint(value, label, side);
+}
+
+function requireFanAxis(
+  node: Record<string, unknown>,
+  style: Record<string, string | number | boolean>,
+  label: string,
+): ConnectorAxisIr | undefined {
+  const raw = node.axis !== undefined ? node.axis : style.axis;
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw === "x" || raw === "y") {
+    return raw;
+  }
+  throw new Error(`${label} axis must be "x" or "y"`);
 }
 
 export function pointOf(value: unknown): PointIr | undefined {
@@ -1311,14 +1470,20 @@ export function lowerFirstClassPackageNode(
     };
   }
   if (kind === "fan") {
-    const from = fanEndpointSideOf(node.from);
-    const to = fanEndpointSideOf(node.to);
-    const axis = axisOf(node.axis) ?? axisOf(style.axis);
+    const label = fanLabel(node, id);
+    if (capability !== "core.fan-out" && capability !== "core.fan-in") {
+      throw new Error(
+        `${label} capability must be "core.fan-out" or "core.fan-in"`,
+      );
+    }
+    const from = requireFanEndpointSide(node.from, label, "from");
+    const to = requireFanEndpointSide(node.to, label, "to");
+    const axis = requireFanAxis(node, style, label);
     const junction = pointOf(node.junction);
     return {
       ...base,
       kind: "fan",
-      capability: capability as "core.fan-out" | "core.fan-in",
+      capability,
       from,
       to,
       ...(axis !== undefined ? { axis } : {}),

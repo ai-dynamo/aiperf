@@ -155,8 +155,8 @@ explainer "Segment Pools" {
         {
           id: "motion-sig"
           capability: "motion.signal"
-          d: "M120 200 H580"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          from: { nodeId: "composer", anchor: "e" }
+          to: { nodeId: "dataset", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
@@ -272,8 +272,8 @@ explainer "Segment Pools" {
         {
           id: "motion-sig"
           capability: "motion.signal"
-          d: "M200 180 H500"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          from: { nodeId: "intern", anchor: "e" }
+          to: { nodeId: "dedup", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
@@ -377,8 +377,8 @@ explainer "Segment Pools" {
         {
           id: "motion-sig"
           capability: "motion.signal"
-          d: "M100 200 H600"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          from: { nodeId: "domain-message", anchor: "s" }
+          to: { nodeId: "hash-recipe", anchor: "n" }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
@@ -484,8 +484,8 @@ explainer "Segment Pools" {
         {
           id: "motion-sig"
           capability: "motion.signal"
-          d: "M350 120 V280"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          from: { nodeId: "plan", anchor: "e" }
+          to: { nodeId: "bytes", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
@@ -554,15 +554,14 @@ explainer "Segment Pools" {
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
         },
         {
-          id: "arrow-h1-h2"
-          capability: "core.path"
-          d: "M360 155 C400 120 420 100 460 100"
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 2.2 }
-        },
-        {
-          id: "arrow-h1-h3"
-          capability: "core.path"
-          d: "M360 195 C400 230 420 250 460 250"
+          id: "arrow-h1-branches"
+          capability: "core.fan-out"
+          from: { nodeId: "h1", anchor: "e" }
+          to: [
+            { nodeId: "h2", anchor: "w" },
+            { nodeId: "h3", anchor: "w" }
+          ]
+          axis: "x"
           style: { fill: "none", stroke: @theme.accent.green, strokeWidth: 2.2 }
         },
         {
@@ -588,26 +587,17 @@ explainer "Segment Pools" {
           layout: { x: 150, y: 330, width: 400, height: 20 }
           style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
         },
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          d: "M190 167 H470"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
-          accessibility: { label: "motion signal" }
-        }
       ]
       timeline: [
         { id: "t-header", at: 0, duration: 220, target: "header", action: "enter" },
         { id: "t-h0", at: 200, duration: 260, target: "h0", action: "enter" },
         { id: "t-arrow1", at: 420, duration: 200, target: "arrow-h0-h1", action: "draw" },
         { id: "t-h1", at: 560, duration: 260, target: "h1", action: "enter" },
-        { id: "t-arrow2", at: 780, duration: 260, target: "arrow-h1-h2", action: "draw" },
-        { id: "t-arrow3", at: 900, duration: 260, target: "arrow-h1-h3", action: "draw" },
+        { id: "t-arrow2", at: 780, duration: 380, target: "arrow-h1-branches", action: "draw" },
         { id: "t-h2", at: 1080, duration: 240, target: "h2", action: "enter" },
         { id: "t-h3", at: 1240, duration: 240, target: "h3", action: "enter" },
         { id: "t-footnote", at: 1460, duration: 200, target: "footnote", action: "enter" },
-        { id: "t-motion", at: 700, duration: 900, target: "motion-sig", action: "draw" },
+        { id: "t-motion", at: 1100, duration: 900, target: "arrow-h1-branches", action: "trace" },
         { id: "t-emphasis", at: 1700, duration: 420, target: "h1", action: "emphasize" }
       ]
     }
@@ -648,23 +638,16 @@ explainer "Segment Pools" {
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
         },
         {
-          id: "arrow-raw"
-          capability: "core.path"
-          d: "M180 160 C220 120 240 100 280 100"
-          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-        },
-        {
-          id: "arrow-token"
-          capability: "core.route"
+          id: "arrow-precedence"
+          capability: "core.fan-out"
           from: { nodeId: "turn-body", anchor: "e" }
-          to: { nodeId: "token", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.green, strokeWidth: 2.2 }
-        },
-        {
-          id: "arrow-msg"
-          capability: "core.path"
-          d: "M180 200 C220 240 240 260 280 260"
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+          to: [
+            { nodeId: "raw", anchor: "w" },
+            { nodeId: "token", anchor: "w" },
+            { nodeId: "messages", anchor: "w" }
+          ]
+          axis: "x"
+          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
         },
         {
           id: "raw"
@@ -708,8 +691,8 @@ explainer "Segment Pools" {
         {
           id: "motion-sig"
           capability: "motion.signal"
-          d: "M210 180 H590"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          from: { nodeId: "token", anchor: "e" }
+          to: { nodeId: "out", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
@@ -717,15 +700,13 @@ explainer "Segment Pools" {
       timeline: [
         { id: "t-header", at: 0, duration: 220, target: "header", action: "enter" },
         { id: "t-turn", at: 200, duration: 280, target: "turn-body", action: "enter" },
-        { id: "t-arrow-raw", at: 440, duration: 240, target: "arrow-raw", action: "draw" },
+        { id: "t-arrow-raw", at: 440, duration: 440, target: "arrow-precedence", action: "draw" },
         { id: "t-raw", at: 600, duration: 220, target: "raw", action: "enter" },
-        { id: "t-arrow-token", at: 780, duration: 200, target: "arrow-token", action: "draw" },
         { id: "t-token", at: 920, duration: 220, target: "token", action: "enter" },
-        { id: "t-arrow-msg", at: 1100, duration: 200, target: "arrow-msg", action: "draw" },
         { id: "t-messages", at: 1240, duration: 220, target: "messages", action: "enter" },
         { id: "t-arrow-out", at: 1420, duration: 200, target: "arrow-out", action: "draw" },
         { id: "t-out", at: 1560, duration: 260, target: "out", action: "enter" },
-        { id: "t-motion", at: 700, duration: 900, target: "motion-sig", action: "draw" },
+        { id: "t-motion", at: 700, duration: 900, target: "arrow-precedence", action: "trace" },
         { id: "t-emphasis", at: 1860, duration: 420, target: "turn-body", action: "emphasize" }
       ]
     }

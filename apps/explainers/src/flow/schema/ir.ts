@@ -62,6 +62,19 @@ export type NodeAccessibilityIr = Readonly<{
 }>;
 
 /**
+ * Compiler-only SDK expansion provenance.
+ *
+ * Present while the browser compiler assembles and validates scenes; stripped
+ * before DeckPackage serialization via `stripSdkOriginsFromScene`.
+ */
+export type SdkOriginIr = Readonly<{
+  componentId: string;
+  instanceId: string;
+  sourceMap: SourceRange;
+  generatedRole: string;
+}>;
+
+/**
  * Authored foundation / layout / motion capabilities used by explainer
  * DeckPackage scenes. Open strings remain valid via `capability` /
  * `capabilityId` on nodes; this union documents the known vocabulary.
@@ -117,6 +130,8 @@ export type RenderNodeBaseIr = Readonly<{
   accessibility: NodeAccessibilityIr;
   fallback: string;
   sourceMap: SourceRange;
+  /** Compiler-only SDK provenance; omitted from serialized DeckPackage scenes. */
+  sdkOrigin?: SdkOriginIr | undefined;
   /** SVG path data for connector / arrow / path nodes. */
   path?: string | undefined;
   /** Polyline or control points for path / connector nodes. */
@@ -361,6 +376,12 @@ const nodeAccessibilitySchema = z.strictObject({
   description: z.string().min(1).optional(),
   decorative: z.boolean().optional(),
 });
+const sdkOriginSchema = z.strictObject({
+  componentId: z.string().min(1),
+  instanceId: z.string().min(1),
+  sourceMap: sourceRangeSchema,
+  generatedRole: z.string().min(1),
+});
 const foundationCapabilitySchema = z.union([
   z.literal("core.text"),
   z.literal("core.rect"),
@@ -402,6 +423,7 @@ const renderNodeBaseShape = {
   accessibility: nodeAccessibilitySchema,
   fallback: z.string().min(1),
   sourceMap: sourceRangeSchema,
+  sdkOrigin: sdkOriginSchema.optional(),
   path: z.string().optional(),
   points: z.array(polylinePointSchema).optional(),
 };

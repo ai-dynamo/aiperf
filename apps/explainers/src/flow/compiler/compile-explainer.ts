@@ -16,25 +16,28 @@ import { parseDocument, type DocumentAst } from "../language/index.js";
 import {
   diagnostic,
   safeParseDeckPackage,
-  type CapabilityRegistryManifest,
   type DeckPackage,
   type Result,
   type SourceRange,
+  type JsonValue,
 } from "../schema/index.js";
 
 import {
   lowerExplainerToDeckPackage,
   type ExplainerLowerInput,
+  type ExplainerLowerOptions,
 } from "./lower-explainer.js";
 import { validateExplainerTimelines } from "./validate-explainer-timelines.js";
 
+/** Canonical validation policy for explainer compile / lower (re-export). */
+export type ExplainerCompileOptions = ExplainerLowerOptions;
+
 /** A single request to compile explainer `.flow` source into a DeckPackage. */
-export type CompileExplainerRequest = Readonly<{
-  source: string;
-  sourceName: string;
-  capabilities: CapabilityRegistryManifest;
-  strict: boolean;
-}>;
+export type CompileExplainerRequest = ExplainerCompileOptions &
+  Readonly<{
+    source: string;
+    sourceName: string;
+  }>;
 
 function unknownRange(sourceName: string): SourceRange {
   return {
@@ -92,15 +95,11 @@ function extractExplainer(
  * embedded `@scene` → SceneIr) → validateExplainerTimelines →
  * safeParseDeckPackage.
  *
- * `capabilities` and `strict` mirror `compileSource` for future capability
- * gating on diagram nodes.
+ * `capabilities` and `strict` are applied to every embedded scene.
  */
 export function compileExplainerSource(
   request: CompileExplainerRequest,
 ): Result<DeckPackage> {
-  void request.capabilities;
-  void request.strict;
-
   const parsed = parseDocument(request.source, request.sourceName);
   if (!parsed.ok) {
     return parsed;
@@ -111,7 +110,16 @@ export function compileExplainerSource(
     return explainer;
   }
 
-  const lowered = lowerExplainerToDeckPackage(explainer.value);
+  const tokens = new Map<string, JsonValue>(
+    parsed.value.tokens.map((token) => [token.id, token.value.value]),
+  );
+
+  const lowered = lowerExplainerToDeckPackage(explainer.value, {
+    capabilities: request.capabilities,
+    strict: request.strict,
+    sourceName: request.sourceName,
+    tokens,
+  });
   if (!lowered.ok) {
     return lowered;
   }

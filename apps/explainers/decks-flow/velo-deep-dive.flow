@@ -174,7 +174,6 @@ explainer "Velo deep dive" {
           title: "spec_for(id)"
           detail: "pure lookup"
         }
-        { id: "s1-a3" capability: "core.path" d: "M570 185 H610" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         { id: "s1-a4" capability: "core.connector" from: { nodeId: "s1-spec", anchor: "s" } to: { nodeId: "s1-reply", anchor: "n" } style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s1-reply"
@@ -201,7 +200,6 @@ explainer "Velo deep dive" {
         { id: "s1-enter-peer" at: 560 duration: 260 target: "s1-peer" action: "enter" }
         { id: "s1-draw-a2" at: 760 duration: 300 target: "s1-a2" action: "draw" }
         { id: "s1-enter-spec" at: 920 duration: 260 target: "s1-spec" action: "enter" }
-        { id: "s1-draw-a3" at: 1120 duration: 280 target: "s1-a3" action: "draw" }
         { id: "s1-draw-a4" at: 1240 duration: 300 target: "s1-a4" action: "draw" }
         { id: "s1-enter-reply" at: 1400 duration: 280 target: "s1-reply" action: "enter" }
         { id: "s1-draw-motion" at: 1720 duration: 700 target: "s1-motion-sig" action: "draw" }
@@ -377,7 +375,6 @@ explainer "Velo deep dive" {
           title: "raw bytes"
           detail: "Velo payload"
         }
-        { id: "s3-a3" capability: "core.path" d: "M530 190 H575" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
         { id: "s3-a4" capability: "core.connector" from: { nodeId: "s3-raw", anchor: "s" } to: { nodeId: "s3-from", anchor: "n" } style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s3-from"
@@ -404,7 +401,6 @@ explainer "Velo deep dive" {
         { id: "s3-enter-vec" at: 560 duration: 260 target: "s3-vec" action: "enter" }
         { id: "s3-draw-a2" at: 760 duration: 300 target: "s3-a2" action: "draw" }
         { id: "s3-enter-raw" at: 920 duration: 260 target: "s3-raw" action: "enter" }
-        { id: "s3-draw-a3" at: 1120 duration: 300 target: "s3-a3" action: "draw" }
         { id: "s3-draw-a4" at: 1280 duration: 300 target: "s3-a4" action: "draw" }
         { id: "s3-enter-from" at: 1440 duration: 260 target: "s3-from" action: "enter" }
         { id: "s3-draw-motion" at: 1760 duration: 700 target: "s3-motion-sig" action: "draw" }
@@ -669,7 +665,6 @@ explainer "Velo deep dive" {
           title: "Merge center"
           detail: "associative fold"
         }
-        { id: "s6-a4" capability: "core.path" d: "M570 200 H620" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         { id: "s6-a5" capability: "core.route" from: { nodeId: "s6-merge", anchor: "s" } to: { nodeId: "s6-one", anchor: "n" } style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s6-one"
@@ -697,7 +692,6 @@ explainer "Velo deep dive" {
         { id: "s6-draw-a2" at: 860 duration: 340 target: "s6-a2" action: "draw" }
         { id: "s6-draw-a3" at: 980 duration: 340 target: "s6-a3" action: "draw" }
         { id: "s6-enter-merge" at: 1120 duration: 280 target: "s6-merge" action: "enter" }
-        { id: "s6-draw-a4" at: 1340 duration: 280 target: "s6-a4" action: "draw" }
         { id: "s6-draw-a5" at: 1480 duration: 280 target: "s6-a5" action: "draw" }
         { id: "s6-enter-one" at: 1640 duration: 260 target: "s6-one" action: "enter" }
         { id: "s6-draw-motion" at: 1960 duration: 700 target: "s6-motion-sig" action: "draw" }
@@ -968,8 +962,18 @@ explainer "Velo deep dive" {
           title: "aggregator 1"
           detail: "cells 4–7"
         }
-        { id: "s9-a0" capability: "core.path" d: "M195 210 C220 180 300 160 330 154" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
-        { id: "s9-a1" capability: "core.path" d: "M505 210 C480 180 400 160 370 154" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
+        {
+          id: "s9-agg-fan"
+          capability: "core.fan-in"
+          from: [
+            { nodeId: "s9-agg0", anchor: "n" },
+            { nodeId: "s9-agg1", anchor: "n" }
+          ]
+          to: { nodeId: "s9-ctrl", anchor: "s" }
+          axis: "y"
+          junction: { x: 350, y: 180 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        }
         {
           id: "s9-c0"
           capability: "core.panel"
@@ -979,7 +983,6 @@ explainer "Velo deep dive" {
           title: "c0"
           detail: "store"
         }
-        { id: "s9-ac0" capability: "core.path" d: "M65 320 C65 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s9-c1"
           capability: "core.panel"
@@ -989,7 +992,6 @@ explainer "Velo deep dive" {
           title: "c1"
           detail: "store"
         }
-        { id: "s9-ac1" capability: "core.path" d: "M155 320 C155 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s9-c2"
           capability: "core.panel"
@@ -999,7 +1001,6 @@ explainer "Velo deep dive" {
           title: "c2"
           detail: "store"
         }
-        { id: "s9-ac2" capability: "core.path" d: "M245 320 C245 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s9-c3"
           capability: "core.panel"
@@ -1009,30 +1010,32 @@ explainer "Velo deep dive" {
           title: "c3"
           detail: "store"
         }
-        { id: "s9-ac3" capability: "core.path" d: "M335 320 C335 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
-        { id: "s9-note" capability: "core.text" text: "fold only · retain stays flat" layout: { x: 430, y: 340, width: 240, height: 16 } style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "start" } }
-
         {
-          id: "s9-motion-sig"
-          capability: "motion.signal"
-          d: "M350 320 V150"
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
-          accessibility: { label: "motion signal" }
+          id: "s9-cell-fan"
+          capability: "core.fan-in"
+          from: [
+            { nodeId: "s9-c0", anchor: "n" },
+            { nodeId: "s9-c1", anchor: "n" },
+            { nodeId: "s9-c2", anchor: "n" },
+            { nodeId: "s9-c3", anchor: "n" }
+          ]
+          to: { nodeId: "s9-agg0", anchor: "s" }
+          axis: "y"
+          junction: { x: 195, y: 290 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         }
+        { id: "s9-note" capability: "core.text" text: "fold only · retain stays flat" layout: { x: 430, y: 340, width: 240, height: 16 } style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "start" } }
       ]
       timeline: [
         { id: "s9-enter-hdr" at: 0 duration: 260 target: "s9-hdr" action: "enter" }
         { id: "s9-enter-ctrl" at: 200 duration: 260 target: "s9-ctrl" action: "enter" }
         { id: "s9-enter-agg0" at: 400 duration: 240 target: "s9-agg0" action: "stagger" targets: ["s9-agg0", "s9-agg1"] step: 100 }
-        { id: "s9-draw-a0" at: 680 duration: 340 target: "s9-a0" action: "draw" }
-        { id: "s9-draw-a1" at: 800 duration: 340 target: "s9-a1" action: "draw" }
+        { id: "s9-draw-agg-fan" at: 680 duration: 460 target: "s9-agg-fan" action: "draw" }
         { id: "s9-enter-c0" at: 1000 duration: 200 target: "s9-c0" action: "stagger" targets: ["s9-c0", "s9-c1", "s9-c2", "s9-c3"] step: 80 }
-        { id: "s9-draw-ac0" at: 1360 duration: 300 target: "s9-ac0" action: "draw" }
-        { id: "s9-draw-ac1" at: 1460 duration: 300 target: "s9-ac1" action: "draw" }
-        { id: "s9-draw-ac2" at: 1560 duration: 300 target: "s9-ac2" action: "draw" }
-        { id: "s9-draw-ac3" at: 1660 duration: 300 target: "s9-ac3" action: "draw" }
+        { id: "s9-draw-cell-fan" at: 1360 duration: 600 target: "s9-cell-fan" action: "draw" }
         { id: "s9-enter-note" at: 1800 duration: 200 target: "s9-note" action: "enter" }
-        { id: "s9-draw-motion" at: 2080 duration: 700 target: "s9-motion-sig" action: "draw" }
+        { id: "s9-trace-cell-fan" at: 1960 duration: 820 target: "s9-cell-fan" action: "trace" }
+        { id: "s9-trace-agg-fan" at: 2220 duration: 560 target: "s9-agg-fan" action: "trace" }
         { id: "s9-emph" at: 2780 duration: 400 target: "s9-ctrl" action: "emphasis" }
       ]
     }

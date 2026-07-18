@@ -94,8 +94,8 @@ explainer "t* Warmup" {
         {
           id: "s1-motion"
           capability: "motion.signal"
-          from: { nodeId: "s1-cold", anchor: "center" }
-          to: { nodeId: "s1-resume", anchor: "center" }
+          from: { nodeId: "s1-cold", anchor: "e" }
+          to: { nodeId: "s1-resume", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "cold to resume" }
         }
@@ -305,10 +305,10 @@ explainer "t* Warmup" {
         },
         {
           id: "s3-cut"
-          capability: "core.path"
-          d: "M340 80 V300"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 3 }
+          capability: "core.divider"
+          layout: { x: 340, y: 80, width: 2, height: 220 }
+          axis: "y"
+          style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 3, markerEnd: "none" }
         },
         {
           id: "s3-cut-l"
@@ -357,8 +357,8 @@ explainer "t* Warmup" {
         {
           id: "s3-motion"
           capability: "motion.signal"
-          from: { nodeId: "s3-n0", anchor: "center" }
-          to: { nodeId: "s3-n3", anchor: "center" }
+          from: { nodeId: "s3-n0", anchor: "e" }
+          to: { nodeId: "s3-n3", anchor: "w" }
           style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none", opacity: 0.45 }
           accessibility: { label: "timeline motion" }
         }
@@ -736,8 +736,8 @@ explainer "t* Warmup" {
         {
           id: "s6-motion"
           capability: "motion.signal"
-          from: { nodeId: "s6-n0", anchor: "center" }
-          to: { nodeId: "s6-dur", anchor: "center" }
+          from: { nodeId: "s6-n0", anchor: "e" }
+          to: { nodeId: "s6-dur", anchor: "w" }
           style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none", opacity: 0.45 }
           accessibility: { label: "arrivals to duration" }
         }
@@ -1045,10 +1045,10 @@ explainer "t* Warmup" {
         },
         {
           id: "s9-cut"
-          capability: "core.path"
-          d: "M280 80 V300"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 3 }
+          capability: "core.divider"
+          layout: { x: 280, y: 80, width: 2, height: 220 }
+          axis: "y"
+          style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 3, markerEnd: "none" }
         },
         {
           id: "s9-cut-l"

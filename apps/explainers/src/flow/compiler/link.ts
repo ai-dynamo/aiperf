@@ -21,6 +21,7 @@ import type {
   LiteralAst,
   RectAst,
   RenderDeclarationAst,
+  SceneAst,
   SymbolBodyStatementAst,
   ThemeDeclarationAst,
   UseThemeAst,
@@ -138,6 +139,71 @@ function checkReference(
     range,
     `Declare a node named "${targetId}" in this scene or fix the reference.`,
   );
+}
+
+/**
+ * Reference check that also accepts component-instance ids. Timeline cues,
+ * cameras, interactions, responsive overrides, and reading-order entries may
+ * target a native component instance (before SDK expansion) as well as a raw
+ * render node.
+ */
+function checkReferenceId(
+  targetId: string,
+  ids: ReadonlySet<string>,
+  range: SourceRange,
+  what: string,
+): Diagnostic | undefined {
+  if (ids.has(targetId)) {
+    return undefined;
+  }
+  return diagnostic(
+    "LINK_UNKNOWN_REFERENCE",
+    "error",
+    `Unknown ${what} "${targetId}".`,
+    range,
+    `Declare a node or component instance named "${targetId}" in this scene or fix the reference.`,
+  );
+}
+
+/** Reads the literal `id` prop of a component invocation, if present. */
+function componentInstanceId(
+  invocation: ComponentInvocationAst,
+): string | undefined {
+  const idProp = invocation.props.find((prop) => prop.name === "id");
+  if (idProp === undefined) {
+    return undefined;
+  }
+  const { value } = idProp;
+  return value.kind === "literal" && typeof value.value === "string"
+    ? value.value
+    : undefined;
+}
+
+/**
+ * Collects component-instance ids that a scene exposes as reference targets:
+ * top-level component invocations and top-level invocations inside `freeform`
+ * blocks. `for`-loop bodies are excluded because their per-iteration instance
+ * ids are produced during SDK expansion, not authored directly.
+ */
+function collectComponentInstanceIds(scene: SceneAst): readonly string[] {
+  const ids: string[] = [];
+  const fromDeclarations = (
+    declarations: readonly RenderDeclarationAst[],
+  ): void => {
+    for (const declaration of declarations) {
+      if (declaration.kind === "component-invocation") {
+        const id = componentInstanceId(declaration);
+        if (id !== undefined) {
+          ids.push(id);
+        }
+      }
+    }
+  };
+  fromDeclarations(scene.renderDeclarations);
+  for (const freeform of scene.freeforms ?? []) {
+    fromDeclarations(freeform.body);
+  }
+  return ids;
 }
 
 function checkValueReference(
@@ -299,6 +365,19 @@ function qualifiedNameDiagnostics(
         }
       }
     }
+    for (const loop of scene.loops ?? []) {
+      collectComponentInvocations(loop.body, invocations);
+    }
+    for (const freeform of scene.freeforms ?? []) {
+      for (const declaration of freeform.body) {
+        if (declaration.kind === "component-invocation") {
+          invocations.push(declaration);
+          for (const slot of declaration.slots ?? []) {
+            collectComponentInvocations(slot.body, invocations);
+          }
+        }
+      }
+    }
   }
   invocations.sort(
     (left, right) =>
@@ -448,6 +527,10 @@ export function link(
 
   for (const scene of document.scenes) {
     const nodes = scenes.get(scene.id)?.nodes ?? new Map<string, RectAst | ConnectorAst>();
+    const referenceableIds = new Set<string>([
+      ...nodes.keys(),
+      ...collectComponentInstanceIds(scene),
+    ]);
 
     for (const node of scene.renderDeclarations) {
       if (node.kind === "component-invocation") {
@@ -474,9 +557,9 @@ export function link(
     for (const camera of scene.cameras) {
       for (const keyframe of camera.keyframes) {
         for (const target of keyframe.targets.references) {
-          const targetDiagnostic = checkReference(
+          const targetDiagnostic = checkReferenceId(
             target,
-            nodes,
+            referenceableIds,
             keyframe.sourceMap,
             "camera target",
           );
@@ -489,9 +572,9 @@ export function link(
 
     for (const timeline of scene.timelines) {
       for (const cue of timeline.cues) {
-        const targetDiagnostic = checkReference(
+        const targetDiagnostic = checkReferenceId(
           cue.target,
-          nodes,
+          referenceableIds,
           cue.sourceMap,
           "timeline target",
         );
@@ -504,15 +587,15 @@ export function link(
     for (const interaction of scene.interactions) {
       diagnostics.push(
         ...[
-          checkReference(
+          checkReferenceId(
             interaction.event.target,
-            nodes,
+            referenceableIds,
             interaction.sourceMap,
             "interaction event target",
           ),
-          checkReference(
+          checkReferenceId(
             interaction.action.target,
-            nodes,
+            referenceableIds,
             interaction.sourceMap,
             "interaction action target",
           ),
@@ -522,9 +605,9 @@ export function link(
 
     for (const responsive of scene.responsiveVariants) {
       for (const override of responsive.overrides) {
-        const targetDiagnostic = checkReference(
+        const targetDiagnostic = checkReferenceId(
           override.target,
-          nodes,
+          referenceableIds,
           override.sourceMap,
           "responsive override target",
         );
@@ -536,9 +619,9 @@ export function link(
 
     if (scene.readingOrder !== undefined) {
       for (const reference of scene.readingOrder.references) {
-        const referenceDiagnostic = checkReference(
+        const referenceDiagnostic = checkReferenceId(
           reference,
-          nodes,
+          referenceableIds,
           scene.readingOrder.sourceMap,
           "reading-order reference",
         );

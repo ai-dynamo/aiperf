@@ -330,89 +330,28 @@ explainer "SLURM + Velo from scratch" {
           ]
         },
 {
-          id: "s2-trunk"
-          capability: "core.path"
-          d: "M350 136 V168"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.5 , markerEnd: "none" }
-        },
-{
-          id: "s2-bar"
-          capability: "core.path"
-          d: "M150 168 H550"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.5 , markerEnd: "none" }
-        },
-{
-          id: "s2-d0"
-          capability: "core.path"
-          d: "M150 168 V198"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          id: "s2-fan"
+          capability: "core.fan-out"
+          from: { nodeId: "s2-cmd", anchor: "s" }
+          to: [
+            { nodeId: "s2-task-0", anchor: "n" },
+            { nodeId: "s2-task-1", anchor: "n" },
+            { nodeId: "s2-task-2", anchor: "n" }
+          ]
+          axis: "y"
+          junction: { x: 350, y: 168 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.5 }
-        },
-{
-          id: "s2-d1"
-          capability: "core.path"
-          d: "M350 168 V198"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.5 }
-        },
-{
-          id: "s2-d2"
-          capability: "core.path"
-          d: "M550 168 V198"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.5 }
-        },
-{
-          id: "s2-motion-trunk"
-          capability: "motion.signal"
-          d: "M350 136 V168"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        },
-{
-          id: "s2-motion-b0"
-          capability: "motion.signal"
-          d: "M350 168 H150 V198"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        },
-{
-          id: "s2-motion-b1"
-          capability: "motion.signal"
-          d: "M350 168 V198"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        },
-{
-          id: "s2-motion-b2"
-          capability: "motion.signal"
-          d: "M350 168 H550 V198"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         { id: "s2-enter-s2-hdr", at: 0, duration: 260, target: "s2-hdr", action: "enter" }
         { id: "s2-enter-s2-cmd", at: 180, duration: 260, target: "s2-cmd", action: "enter" }
-        { id: "s2-draw-s2-trunk", at: 380, duration: 360, target: "s2-trunk", action: "draw" }
-        { id: "s2-draw-s2-bar", at: 480, duration: 360, target: "s2-bar", action: "draw" }
-        { id: "s2-draw-s2-d0", at: 560, duration: 360, target: "s2-d0", action: "draw" }
+        { id: "s2-draw-s2-fan", at: 380, duration: 820, target: "s2-fan", action: "draw" }
         { id: "s2-enter-s2-task-0", at: 620, duration: 260, target: "s2-task-0", action: "enter" }
-        { id: "s2-draw-s2-d1", at: 700, duration: 360, target: "s2-d1", action: "draw" }
         { id: "s2-enter-s2-task-1", at: 760, duration: 260, target: "s2-task-1", action: "enter" }
-        { id: "s2-draw-s2-d2", at: 840, duration: 360, target: "s2-d2", action: "draw" }
         { id: "s2-enter-s2-task-2", at: 900, duration: 260, target: "s2-task-2", action: "enter" }
         { id: "s2-emphasis-s2-cmd", at: 1100, duration: 340, target: "s2-cmd", action: "emphasis" }
-        { id: "s2-motion-0", at: 1087, duration: 1100, target: "s2-motion-trunk", action: "draw" }
-        { id: "s2-motion-1", at: 1207, duration: 1100, target: "s2-motion-b0", action: "draw" }
-        { id: "s2-motion-2", at: 1327, duration: 1100, target: "s2-motion-b1", action: "draw" }
-        { id: "s2-motion-3", at: 1447, duration: 1100, target: "s2-motion-b2", action: "draw" }
+        { id: "s2-trace-s2-fan", at: 1087, duration: 1460, target: "s2-fan", action: "trace" }
       ]
     }
   }
@@ -1770,13 +1709,6 @@ explainer "SLURM + Velo from scratch" {
           ]
         },
 {
-          id: "s13-to-velo"
-          capability: "core.path"
-          d: "M210 178 H292"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-        },
-{
           id: "s13-velo"
           capability: "core.rect"
           layout: { x: 292, y: 160, width: 36, height: 36 }
@@ -1790,13 +1722,6 @@ explainer "SLURM + Velo from scratch" {
               style: { fontSize: 11, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
             }
           ]
-        },
-{
-          id: "s13-br-0"
-          capability: "core.path"
-          d: "M328 178 H382 V118 H410"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
 {
           id: "s13-cell-0"
@@ -1828,13 +1753,6 @@ explainer "SLURM + Velo from scratch" {
           ]
         },
 {
-          id: "s13-br-1"
-          capability: "core.path"
-          d: "M328 178 H410"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-{
           id: "s13-cell-1"
           capability: "core.rect"
           layout: { x: 410, y: 153, width: 186, height: 50 }
@@ -1862,13 +1780,6 @@ explainer "SLURM + Velo from scratch" {
               style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
             }
           ]
-        },
-{
-          id: "s13-br-2"
-          capability: "core.path"
-          d: "M328 178 H382 V238 H410"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
 {
           id: "s13-cell-2"
@@ -1907,55 +1818,30 @@ explainer "SLURM + Velo from scratch" {
               style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
             },
 {
-          id: "s13-motion-trunk"
-          capability: "motion.signal"
-          d: "M210 178 H310"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        },
-{
-          id: "s13-motion-b0"
-          capability: "motion.signal"
-          d: "M310 178 H382 V118 H410"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        },
-{
-          id: "s13-motion-b1"
-          capability: "motion.signal"
-          d: "M310 178 H410"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        },
-{
-          id: "s13-motion-b2"
-          capability: "motion.signal"
-          d: "M310 178 H382 V238 H410"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
+          id: "s13-fan"
+          capability: "core.fan-out"
+          from: { nodeId: "s13-r0", anchor: "e" }
+          to: [
+            { nodeId: "s13-cell-0", anchor: "w" },
+            { nodeId: "s13-cell-1", anchor: "w" },
+            { nodeId: "s13-cell-2", anchor: "w" }
+          ]
+          axis: "x"
+          junction: { x: 382, y: 178 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
         }
       ]
       timeline: [
         { id: "s13-enter-s13-hdr", at: 0, duration: 260, target: "s13-hdr", action: "enter" }
         { id: "s13-enter-s13-r0", at: 180, duration: 260, target: "s13-r0", action: "enter" }
-        { id: "s13-draw-s13-to-velo", at: 360, duration: 360, target: "s13-to-velo", action: "draw" }
+        { id: "s13-draw-s13-fan", at: 360, duration: 860, target: "s13-fan", action: "draw" }
         { id: "s13-enter-s13-velo", at: 440, duration: 260, target: "s13-velo", action: "enter" }
-        { id: "s13-draw-s13-br-0", at: 540, duration: 360, target: "s13-br-0", action: "draw" }
         { id: "s13-enter-s13-cell-0", at: 600, duration: 260, target: "s13-cell-0", action: "enter" }
-        { id: "s13-draw-s13-br-1", at: 700, duration: 360, target: "s13-br-1", action: "draw" }
         { id: "s13-enter-s13-cell-1", at: 760, duration: 260, target: "s13-cell-1", action: "enter" }
-        { id: "s13-draw-s13-br-2", at: 860, duration: 360, target: "s13-br-2", action: "draw" }
         { id: "s13-enter-s13-cell-2", at: 920, duration: 260, target: "s13-cell-2", action: "enter" }
         { id: "s13-enter-s13-note", at: 1050, duration: 260, target: "s13-note", action: "enter" }
         { id: "s13-emphasis-s13-r0", at: 1180, duration: 340, target: "s13-r0", action: "emphasis" }
-        { id: "s13-motion-0", at: 1167, duration: 1100, target: "s13-motion-trunk", action: "draw" }
-        { id: "s13-motion-1", at: 1287, duration: 1100, target: "s13-motion-b0", action: "draw" }
-        { id: "s13-motion-2", at: 1407, duration: 1100, target: "s13-motion-b1", action: "draw" }
-        { id: "s13-motion-3", at: 1527, duration: 1100, target: "s13-motion-b2", action: "draw" }
+        { id: "s13-trace-s13-fan", at: 1167, duration: 1460, target: "s13-fan", action: "trace" }
       ]
     }
   }
@@ -2016,13 +1902,6 @@ explainer "SLURM + Velo from scratch" {
           ]
         },
 {
-          id: "s14-br-0"
-          capability: "core.path"
-          d: "M290 118 H318 V178 H372"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-{
           id: "s14-cell-1"
           capability: "core.rect"
           layout: { x: 104, y: 153, width: 186, height: 50 }
@@ -2050,13 +1929,6 @@ explainer "SLURM + Velo from scratch" {
               style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
             }
           ]
-        },
-{
-          id: "s14-br-1"
-          capability: "core.path"
-          d: "M290 178 H372"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
 {
           id: "s14-cell-2"
@@ -2088,13 +1960,6 @@ explainer "SLURM + Velo from scratch" {
           ]
         },
 {
-          id: "s14-br-2"
-          capability: "core.path"
-          d: "M290 238 H318 V178 H372"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-{
           id: "s14-velo"
           capability: "core.rect"
           layout: { x: 372, y: 160, width: 36, height: 36 }
@@ -2108,13 +1973,6 @@ explainer "SLURM + Velo from scratch" {
               style: { fontSize: 11, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
             }
           ]
-        },
-{
-          id: "s14-to-r0"
-          capability: "core.path"
-          d: "M408 178 H454"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
         },
 {
           id: "s14-r0"
@@ -2153,36 +2011,17 @@ explainer "SLURM + Velo from scratch" {
               style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
             },
 {
-          id: "s14-motion-b0"
-          capability: "motion.signal"
-          d: "M290 118 H318 V178 H390"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        },
-{
-          id: "s14-motion-b1"
-          capability: "motion.signal"
-          d: "M290 178 H390"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        },
-{
-          id: "s14-motion-b2"
-          capability: "motion.signal"
-          d: "M290 238 H318 V178 H390"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        },
-{
-          id: "s14-motion-out"
-          capability: "motion.signal"
-          d: "M390 178 H454"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
+          id: "s14-fan"
+          capability: "core.fan-in"
+          from: [
+            { nodeId: "s14-cell-0", anchor: "e" },
+            { nodeId: "s14-cell-1", anchor: "e" },
+            { nodeId: "s14-cell-2", anchor: "e" }
+          ]
+          to: { nodeId: "s14-r0", anchor: "w" }
+          axis: "x"
+          junction: { x: 318, y: 178 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
         }
       ]
       timeline: [
@@ -2190,18 +2029,12 @@ explainer "SLURM + Velo from scratch" {
         { id: "s14-enter-s14-cell-0", at: 160, duration: 260, target: "s14-cell-0", action: "enter" }
         { id: "s14-enter-s14-cell-1", at: 240, duration: 260, target: "s14-cell-1", action: "enter" }
         { id: "s14-enter-s14-cell-2", at: 320, duration: 260, target: "s14-cell-2", action: "enter" }
-        { id: "s14-draw-s14-br-0", at: 420, duration: 360, target: "s14-br-0", action: "draw" }
-        { id: "s14-draw-s14-br-1", at: 500, duration: 360, target: "s14-br-1", action: "draw" }
-        { id: "s14-draw-s14-br-2", at: 580, duration: 360, target: "s14-br-2", action: "draw" }
+        { id: "s14-draw-s14-fan", at: 420, duration: 680, target: "s14-fan", action: "draw" }
         { id: "s14-enter-s14-velo", at: 660, duration: 260, target: "s14-velo", action: "enter" }
-        { id: "s14-draw-s14-to-r0", at: 740, duration: 360, target: "s14-to-r0", action: "draw" }
         { id: "s14-enter-s14-r0", at: 820, duration: 260, target: "s14-r0", action: "enter" }
         { id: "s14-enter-s14-note", at: 980, duration: 260, target: "s14-note", action: "enter" }
         { id: "s14-emphasis-s14-r0", at: 1120, duration: 340, target: "s14-r0", action: "emphasis" }
-        { id: "s14-motion-0", at: 1107, duration: 1100, target: "s14-motion-b0", action: "draw" }
-        { id: "s14-motion-1", at: 1227, duration: 1100, target: "s14-motion-b1", action: "draw" }
-        { id: "s14-motion-2", at: 1347, duration: 1100, target: "s14-motion-b2", action: "draw" }
-        { id: "s14-motion-3", at: 1467, duration: 1100, target: "s14-motion-out", action: "draw" }
+        { id: "s14-trace-s14-fan", at: 1107, duration: 1460, target: "s14-fan", action: "trace" }
       ]
     }
   }

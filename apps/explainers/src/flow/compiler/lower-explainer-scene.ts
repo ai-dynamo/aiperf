@@ -22,18 +22,19 @@ import {
   type EmbeddedSceneSource,
   type PackageSceneAst,
   type SceneAst,
-  type ConnectorAst,
   type DocumentAst,
   type LiteralAst,
   type PropAssignmentAst,
-  type RectAst,
   type RenderDeclarationAst,
   type ScenePrimitiveAst,
   type TimelineCueEasing,
 } from "../language/index.js";
 import {
   diagnostic,
+  hasErrors,
   sceneIrSchema,
+  type CapabilityRegistryManifest,
+  type Diagnostic,
   type RenderNodeIr,
   type Result,
   type SceneIr,
@@ -46,13 +47,26 @@ import {
   asRecord,
   capabilityKind,
   desugarPackageNode,
+  isSupportedPackageCapability,
   lowerFirstClassPackageNode,
 } from "./desugar-scene-primitives.js";
-import type { LinkedDocument, SceneSymbolTable } from "./link.js";
+import { expandSymbolInvocations } from "./expand-symbols.js";
+import { link, type LinkedDocument } from "./link.js";
 import { lower } from "./lower.js";
+import { collectSymbols } from "./symbols.js";
+import { validate } from "./validate.js";
 
 export type LowerExplainerSceneOptions = Readonly<{
   tokens?: ReadonlyMap<string, LiteralAst["value"]>;
+  /** Registry used to validate effective SceneIr capability ids. */
+  capabilities?: CapabilityRegistryManifest;
+  /** Enables strict capability fail-closed and native narration checks. */
+  strict?: boolean;
+  /**
+   * Owning slide / document source range. Used so embedded `@scene`
+   * diagnostics identify the original `.flow` file instead of placeholders.
+   */
+  sourceRange?: SourceRange;
   /**
    * Owning slide id for fail-closed empty roots/timeline diagnostics.
    * When set, messages name the slide so authors can locate the bad `@scene`.
@@ -127,44 +141,146 @@ function isPackageSceneAst(value: unknown): value is PackageSceneAst {
   );
 }
 
-function sceneSymbolTable(scene: SceneAst): SceneSymbolTable {
-  const nodes = new Map<string, RectAst | ConnectorAst>();
-  for (const node of scene.renderDeclarations) {
-    if (
-      (node.kind === "rect" || node.kind === "connector") &&
-      !nodes.has(node.id)
-    ) {
-      nodes.set(node.id, node);
-    }
-  }
-  return { nodes };
-}
-
 function wrapSceneDocument(
   scene: SceneAst,
-  tokens: ReadonlyMap<string, LiteralAst["value"]>,
-): LinkedDocument {
-  const document: DocumentAst = {
+  options: LowerExplainerSceneOptions = {},
+): DocumentAst {
+  const sourceMap = options.sourceRange ?? scene.sourceMap;
+  return {
     kind: "document",
     id: `explainer-scene-${scene.id}`,
     title: scene.title,
-    language: { kind: "language", version: 1, sourceMap: scene.sourceMap },
+    language: { kind: "language", version: 1, sourceMap },
     requirements: [],
     tokens: [],
     themes: [],
     symbols: [],
-    scenes: [scene],
-    sourceMap: scene.sourceMap,
+    scenes: [
+      sourceMap === scene.sourceMap ? scene : { ...scene, sourceMap },
+    ],
+    sourceMap,
   };
+}
 
-  return {
-    document,
-    tokens,
-    scenes: new Map([[scene.id, sceneSymbolTable(scene)]]),
-    imports: new Map(),
-    qualifiedNames: new Map(),
-    themes: [],
+function validateNativeScene(
+  scene: SceneAst,
+  options: LowerExplainerSceneOptions,
+): Result<LinkedDocument> {
+  const document = wrapSceneDocument(scene, options);
+  const symbols = collectSymbols(document);
+  if (!symbols.ok) {
+    return symbols;
+  }
+
+  const expanded = expandSymbolInvocations(document, symbols.value);
+  if (!expanded.ok) {
+    return expanded;
+  }
+
+  const linked = link(expanded.value);
+  if (!linked.ok) {
+    return linked;
+  }
+
+  if (options.capabilities === undefined) {
+    return linked;
+  }
+  return validate(linked.value, options.capabilities, options.strict ?? false);
+}
+
+function sceneRange(
+  scene: PackageSceneAst,
+  options: LowerExplainerSceneOptions = {},
+): SourceRange {
+  const fromScene = scene.sourceMap;
+  if (
+    fromScene !== undefined &&
+    fromScene.source !== "<unknown>" &&
+    fromScene.source !== "<embedded-scene>"
+  ) {
+    return fromScene;
+  }
+  if (options.sourceRange !== undefined) {
+    return options.sourceRange;
+  }
+  return fromScene ?? unknownRange;
+}
+
+function nodeCapabilityId(node: RenderNodeIr): string | undefined {
+  if (typeof node.capabilityId === "string" && node.capabilityId.length > 0) {
+    return node.capabilityId;
+  }
+  if (typeof node.capability === "string" && node.capability.length > 0) {
+    return node.capability;
+  }
+  return undefined;
+}
+
+function collectSceneIrCapabilityIds(
+  nodes: readonly RenderNodeIr[],
+): readonly string[] {
+  const out: string[] = [];
+  const visit = (node: RenderNodeIr): void => {
+    const capability = nodeCapabilityId(node);
+    if (capability !== undefined) {
+      out.push(capability);
+    }
+    if (node.kind === "group" || node.kind === "component") {
+      node.children.forEach(visit);
+    }
   };
+  nodes.forEach(visit);
+  return out;
+}
+
+/**
+ * Fail-closed check over effective lowered SceneIr capability ids.
+ *
+ * Macros and first-class package selectors recognized by the lowering
+ * implementation are authoring vocabulary and are not required in the
+ * supplied manifest. Unknown / unlowerable ids fail when `strict` is true.
+ */
+function validateEffectiveSceneCapabilities(
+  sceneIr: SceneIr,
+  options: LowerExplainerSceneOptions,
+  range: SourceRange,
+): readonly Diagnostic[] {
+  if (options.capabilities === undefined) {
+    return [];
+  }
+
+  const available = new Set(
+    options.capabilities.capabilities.map(({ id }) => id),
+  );
+  const strict = options.strict ?? false;
+  const diagnostics: Diagnostic[] = [];
+  const seen = new Set<string>();
+
+  for (const capability of collectSceneIrCapabilityIds(sceneIr.roots)) {
+    if (seen.has(capability)) {
+      continue;
+    }
+    seen.add(capability);
+    if (
+      available.has(capability) ||
+      isSupportedPackageCapability(capability)
+    ) {
+      continue;
+    }
+    if (!strict) {
+      continue;
+    }
+    diagnostics.push(
+      diagnostic(
+        "CAPABILITY_MISSING",
+        "error",
+        `${slideLabel(options)} uses unknown or unlowerable capability "${capability}".`,
+        range,
+        `Register "${capability}" in the capability manifest, or use a supported scene primitive / package macro.`,
+      ),
+    );
+  }
+  return diagnostics;
 }
 
 function invalidScene(
@@ -399,61 +515,112 @@ function lowerNativeSceneAst(
   scene: SceneAst,
   options: LowerExplainerSceneOptions,
 ): Result<SceneRender> {
-  if (nativeSceneNeedsPackageLower(scene)) {
-    return lowerPackageScene(nativeSceneToPackageScene(scene), options);
+  const validated = validateNativeScene(scene, options);
+  if (!validated.ok) {
+    return validated;
+  }
+
+  const expandedScene = validated.value.document.scenes[0];
+  if (expandedScene === undefined) {
+    return invalidScene(
+      `Scene "${scene.id}" was lost during symbol expansion.`,
+      options.sourceRange ?? scene.sourceMap,
+    );
+  }
+  if (nativeSceneNeedsPackageLower(expandedScene)) {
+    const loweredPackage = lowerPackageScene(
+      {
+        ...nativeSceneToPackageScene(expandedScene),
+        sourceMap: options.sourceRange ?? expandedScene.sourceMap,
+      },
+      options,
+    );
+    return {
+      ...loweredPackage,
+      diagnostics: [...validated.diagnostics, ...loweredPackage.diagnostics],
+    };
   }
 
   let lowered;
   try {
-    lowered = lower(wrapSceneDocument(scene, options.tokens ?? new Map()));
+    lowered = lower(validated.value);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Scene lowering failed.";
-    return invalidScene(message, scene.sourceMap);
+    return invalidScene(message, options.sourceRange ?? scene.sourceMap);
   }
 
   const sceneIr = lowered.scenes[0];
   if (sceneIr === undefined) {
     return invalidScene(
       `Scene "${scene.id}" produced no SceneIr after lowering.`,
-      scene.sourceMap,
+      options.sourceRange ?? scene.sourceMap,
     );
   }
 
   if (sceneIr.roots.length === 0) {
-    return emptySceneField("roots", options, scene.sourceMap, scene.id);
+    return emptySceneField(
+      "roots",
+      options,
+      options.sourceRange ?? scene.sourceMap,
+      scene.id,
+    );
   }
   if (sceneIr.timeline.length === 0) {
-    return emptySceneField("timeline", options, scene.sourceMap, scene.id);
+    return emptySceneField(
+      "timeline",
+      options,
+      options.sourceRange ?? scene.sourceMap,
+      scene.id,
+    );
   }
 
-  return validateSceneRender(sceneIr, scene.sourceMap);
+  const range = options.sourceRange ?? expandedScene.sourceMap;
+  const rendered = validateSceneRender(sceneIr, options, range);
+  return {
+    ...rendered,
+    diagnostics: [...validated.diagnostics, ...rendered.diagnostics],
+  };
 }
 
 function validateSceneRender(
-  sceneIr: unknown,
+  sceneIr: SceneIr,
+  options: LowerExplainerSceneOptions,
   range: SourceRange,
 ): Result<SceneRender> {
+  const capabilityDiagnostics = validateEffectiveSceneCapabilities(
+    sceneIr,
+    options,
+    range,
+  );
+  if (hasErrors(capabilityDiagnostics)) {
+    return { ok: false, diagnostics: capabilityDiagnostics };
+  }
+
   const parsed = sceneIrSchema.safeParse(sceneIr);
   if (!parsed.success) {
     return {
       ok: false,
-      diagnostics: parsed.error.issues.map((issue) => {
-        const path = issue.path.length === 0 ? "<root>" : issue.path.join(".");
-        return diagnostic(
-          "EXPLAINER_SCENE_INVALID",
-          "error",
-          `${path}: ${issue.message}`,
-          range,
-        );
-      }),
+      diagnostics: [
+        ...capabilityDiagnostics,
+        ...parsed.error.issues.map((issue) => {
+          const path =
+            issue.path.length === 0 ? "<root>" : issue.path.join(".");
+          return diagnostic(
+            "EXPLAINER_SCENE_INVALID",
+            "error",
+            `${path}: ${issue.message}`,
+            range,
+          );
+        }),
+      ],
     };
   }
 
   return {
     ok: true,
     value: { kind: "scene", scene: parsed.data },
-    diagnostics: [],
+    diagnostics: capabilityDiagnostics,
   };
 }
 
@@ -595,16 +762,18 @@ function lowerPackageScene(
   scene: PackageSceneAst,
   options: LowerExplainerSceneOptions,
 ): Result<SceneRender> {
+  const range = sceneRange(scene, options);
+
   const defaults = options.defaults ?? {};
   const roots = scene.roots.map(normalizePackageNode);
   const timeline = (scene.timeline ?? []).map((cue, index) =>
     normalizePackageTimeline(cue, index, roots),
   );
   if (roots.length === 0) {
-    return emptySceneField("roots", options);
+    return emptySceneField("roots", options, range);
   }
   if (timeline.length === 0) {
-    return emptySceneField("timeline", options);
+    return emptySceneField("timeline", options, range);
   }
   const id =
     (typeof scene.id === "string" && scene.id.length > 0
@@ -670,9 +839,9 @@ function lowerPackageScene(
         readingOrder.length > 0 ? readingOrder : roots.map((node) => node.id),
     },
     fallback,
-    sourceMap: unknownRange,
+    sourceMap: range,
   };
-  return validateSceneRender(sceneIr, unknownRange);
+  return validateSceneRender(sceneIr, options, range);
 }
 
 /**
@@ -692,7 +861,7 @@ export function lowerExplainerScene(
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Package scene lowering failed.";
-      return invalidScene(message);
+      return invalidScene(message, options.sourceRange ?? sceneRange(scene, options));
     }
   }
 
@@ -700,9 +869,15 @@ export function lowerExplainerScene(
     if (scene.form !== "native") {
       return invalidScene(
         'Expected native embedded-scene-source; package form should be parsed first.',
+        options.sourceRange,
       );
     }
-    const parsed = parseNativeEmbeddedScene(scene.body);
+    const sourceName =
+      options.sourceRange?.source !== undefined &&
+      options.sourceRange.source.length > 0
+        ? options.sourceRange.source
+        : "<embedded-scene>";
+    const parsed = parseNativeEmbeddedScene(scene.body, sourceName);
     if (!parsed.ok) {
       return {
         ok: false,
@@ -711,21 +886,32 @@ export function lowerExplainerScene(
             "EXPLAINER_SCENE_INVALID",
             item.severity,
             item.message,
-            item.range,
+            options.sourceRange ?? item.range,
           ),
         ),
       };
     }
-    return lowerNativeSceneAst(parsed.value, options);
+    const nativeScene =
+      options.sourceRange !== undefined &&
+      (parsed.value.sourceMap.source === "<embedded-scene>" ||
+        parsed.value.sourceMap.source === sourceName)
+        ? { ...parsed.value, sourceMap: options.sourceRange }
+        : parsed.value;
+    return lowerNativeSceneAst(nativeScene, options);
   }
 
   if (!isSceneAst(scene)) {
     if (isPackageSceneAst(scene)) {
       // Package-scene with empty roots never enters lowerPackageScene above.
-      return emptySceneField("roots", options);
+      return emptySceneField(
+        "roots",
+        options,
+        options.sourceRange ?? unknownRange,
+      );
     }
     return invalidScene(
       `${slideLabel(options)}: expected an embedded @scene AST (native SceneAst, package-scene, or native source).`,
+      options.sourceRange,
     );
   }
 

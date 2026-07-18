@@ -358,9 +358,9 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "a1"
-      capability: "core.line"
-      from: { x: 172, y: 186 }
-      to: { x: 205, y: 186 }
+      capability: "core.connector"
+      from: { nodeId: "dispatch", anchor: "e" }
+      to: { nodeId: "promote", anchor: "w" }
       style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
     }
     {
@@ -388,9 +388,9 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "a2"
-      capability: "core.line"
-      from: { x: 355, y: 186 }
-      to: { x: 388, y: 186 }
+      capability: "core.connector"
+      from: { nodeId: "promote", anchor: "e" }
+      to: { nodeId: "validate", anchor: "w" }
       style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
     }
     {
@@ -418,9 +418,9 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "a3"
-      capability: "core.line"
-      from: { x: 538, y: 186 }
-      to: { x: 570, y: 186 }
+      capability: "core.connector"
+      from: { nodeId: "validate", anchor: "e" }
+      to: { nodeId: "velo", anchor: "w" }
       style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
     }
     {
@@ -449,8 +449,8 @@ explainer "Cellular algorithm workbook" {
     {
       id: "motion-sig"
       capability: "motion.signal"
-      d: "M85 188 H610"
-      layout: { x: 0, y: 0, width: 700, height: 400 }
+      from: { nodeId: "dispatch", anchor: "e" }
+      to: { nodeId: "velo", anchor: "w" }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
       accessibility: { label: "motion signal" }
     }
@@ -539,9 +539,14 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "o1"
-      capability: "core.line"
-      from: { x: 240, y: 181 }
-      to: { x: 290, y: 181 }
+      capability: "core.fan-out"
+      from: { nodeId: "modulo", anchor: "e" }
+      to: [
+        { nodeId: "c0", anchor: "w" },
+        { nodeId: "c1", anchor: "w" },
+        { nodeId: "c2", anchor: "w" }
+      ]
+      axis: "x"
       style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
     {
@@ -592,19 +597,23 @@ explainer "Cellular algorithm workbook" {
       ]
     }
     {
+      id: "ownership-merge"
+      capability: "core.fan-in"
+      from: [
+        { nodeId: "c0", anchor: "e" },
+        { nodeId: "c1", anchor: "e" },
+        { nodeId: "c2", anchor: "e" }
+      ]
+      to: { nodeId: "conv", anchor: "w" }
+      axis: "x"
+      style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+    }
+    {
       id: "inv"
       capability: "core.text"
       text: "disjoint + complete"
       layout: { x: 100, y: 340, width: 500, height: 20 }
       style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
-    }
-    {
-      id: "motion-sig"
-      capability: "motion.signal"
-      d: "M115 190 H585"
-      layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
-      accessibility: { label: "motion signal" }
     }
     ]
   timeline: [
@@ -617,10 +626,12 @@ explainer "Cellular algorithm workbook" {
     { id: "t-c0", at: 900, duration: 300, target: "c0", action: "enter" }
     { id: "t-c1", at: 1050, duration: 300, target: "c1", action: "enter" }
     { id: "t-c2", at: 1200, duration: 300, target: "c2", action: "enter" }
+    { id: "t-ownership-merge", at: 1320, duration: 520, target: "ownership-merge", action: "draw" }
+    { id: "t-ownership-merge-trace", at: 1500, duration: 900, target: "ownership-merge", action: "trace" }
     { id: "t-conv", at: 1450, duration: 360, target: "conv", action: "enter" }
     { id: "t-st-conv", at: 1500, duration: 260, target: "st-conv", action: "enter" }
     { id: "t-inv", at: 1800, duration: 300, target: "inv", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "o1", action: "trace" }
     { id: "t-emphasis-final", at: 2100, duration: 420, target: "modulo", action: "emphasis" }
     ]
     }
@@ -1593,9 +1604,9 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-a0"
-      capability: "core.line"
-      from: { x: 92, y: 192 }
-      to: { x: 103, y: 192 }
+      capability: "core.connector"
+      from: { nodeId: "rt-eligibility", anchor: "e" }
+      to: { nodeId: "rt-ownership", anchor: "w" }
       style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
     {
@@ -1608,9 +1619,9 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-a1"
-      capability: "core.line"
-      from: { x: 177, y: 192 }
-      to: { x: 188, y: 192 }
+      capability: "core.connector"
+      from: { nodeId: "rt-ownership", anchor: "e" }
+      to: { nodeId: "rt-control", anchor: "w" }
       style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
     {
@@ -1623,9 +1634,9 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-a2"
-      capability: "core.line"
-      from: { x: 262, y: 192 }
-      to: { x: 273, y: 192 }
+      capability: "core.connector"
+      from: { nodeId: "rt-control", anchor: "e" }
+      to: { nodeId: "rt-distribution", anchor: "w" }
       style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
     {
@@ -1638,9 +1649,9 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-a3"
-      capability: "core.line"
-      from: { x: 347, y: 192 }
-      to: { x: 358, y: 192 }
+      capability: "core.connector"
+      from: { nodeId: "rt-distribution", anchor: "e" }
+      to: { nodeId: "rt-execution", anchor: "w" }
       style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
     {
@@ -1653,9 +1664,9 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-a4"
-      capability: "core.line"
-      from: { x: 432, y: 192 }
-      to: { x: 443, y: 192 }
+      capability: "core.connector"
+      from: { nodeId: "rt-execution", anchor: "e" }
+      to: { nodeId: "rt-capture", anchor: "w" }
       style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
     {
@@ -1668,9 +1679,9 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-a5"
-      capability: "core.line"
-      from: { x: 517, y: 192 }
-      to: { x: 528, y: 192 }
+      capability: "core.connector"
+      from: { nodeId: "rt-capture", anchor: "e" }
+      to: { nodeId: "rt-merge", anchor: "w" }
       style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
     {
@@ -1683,9 +1694,9 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-a6"
-      capability: "core.line"
-      from: { x: 602, y: 192 }
-      to: { x: 613, y: 192 }
+      capability: "core.connector"
+      from: { nodeId: "rt-merge", anchor: "e" }
+      to: { nodeId: "rt-artifacts", anchor: "w" }
       style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
     {
@@ -1706,8 +1717,8 @@ explainer "Cellular algorithm workbook" {
     {
       id: "motion-sig"
       capability: "motion.signal"
-      d: "M55 195 H645"
-      layout: { x: 0, y: 0, width: 700, height: 400 }
+      from: { nodeId: "rt-eligibility", anchor: "e" }
+      to: { nodeId: "rt-artifacts", anchor: "w" }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
       accessibility: { label: "motion signal" }
     }

@@ -18,8 +18,19 @@ const ARROW_CAPS = new Set([
   "core.path",
   "core.arrow",
   "core.connector",
+  "core.elbow",
+  "core.route",
+  "core.fan-out",
+  "core.fan-in",
 ]);
-const ARROW_KINDS = new Set(["line", "path", "arrow", "connector"]);
+const ARROW_KINDS = new Set([
+  "line",
+  "path",
+  "arrow",
+  "connector",
+  "elbow",
+  "fan",
+]);
 const DOT_CAPS = new Set(["core.dot", "core.circle"]);
 const DOT_KINDS = new Set(["dot", "circle"]);
 const BOX_CAPS = new Set(["core.rect", "core.text"]);
@@ -42,6 +53,11 @@ export function isArrowLike(node) {
   const cap = capabilityOf(node);
   const kind = kindOf(node);
   return ARROW_CAPS.has(cap) || ARROW_KINDS.has(kind);
+}
+
+export function isFanNode(node) {
+  const cap = capabilityOf(node);
+  return cap === "core.fan-out" || cap === "core.fan-in" || kindOf(node) === "fan";
 }
 
 /**
@@ -253,6 +269,177 @@ export function resolveEndpoint(endpoint, nodesById) {
   return null;
 }
 
+function isSoftAnchor(anchor) {
+  if (anchor === undefined || anchor === null || String(anchor).length === 0) {
+    return true;
+  }
+  const token = String(anchor).toLowerCase();
+  return token === "center" || token === "middle" || token === "c";
+}
+
+function facingAnchor(geom, peer) {
+  const center = boxCenter(geom);
+  const dx = peer.x - center.x;
+  const dy = peer.y - center.y;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "e" : "w";
+  return dy >= 0 ? "s" : "n";
+}
+
+function resolveFanEndpoint(endpoint, peer, nodesById) {
+  if (!endpoint || typeof endpoint !== "object") return null;
+  if (Number.isFinite(endpoint.x) && Number.isFinite(endpoint.y)) {
+    return { x: endpoint.x, y: endpoint.y };
+  }
+  if (typeof endpoint.nodeId !== "string" || endpoint.nodeId.length === 0) {
+    return null;
+  }
+  const target = nodesById?.get(endpoint.nodeId);
+  const geom = target ? geomOf(target) : null;
+  if (!geom) return null;
+  const anchor = isSoftAnchor(endpoint.anchor)
+    ? facingAnchor(geom, peer)
+    : endpoint.anchor;
+  return nodeAnchorPoint(geom, anchor);
+}
+
+function centroid(points) {
+  if (points.length === 0) return null;
+  const sum = points.reduce(
+    (total, point) => ({ x: total.x + point.x, y: total.y + point.y }),
+    { x: 0, y: 0 },
+  );
+  return { x: sum.x / points.length, y: sum.y / points.length };
+}
+
+function compactPoints(points) {
+  return points.filter((point, index) => {
+    const previous = points[index - 1];
+    return (
+      previous === undefined ||
+      Math.abs(previous.x - point.x) > 0.001 ||
+      Math.abs(previous.y - point.y) > 0.001
+    );
+  });
+}
+
+function fanBranchPoints(endpoint, junction, axis, incoming) {
+  if (axis === "x") {
+    return incoming
+      ? [endpoint, { x: junction.x, y: endpoint.y }, junction]
+      : [junction, { x: junction.x, y: endpoint.y }, endpoint];
+  }
+  return incoming
+    ? [endpoint, { x: endpoint.x, y: junction.y }, junction]
+    : [junction, { x: endpoint.x, y: junction.y }, endpoint];
+}
+
+function orthogonalFanPoints(start, end, axis) {
+  return axis === "x"
+    ? [start, { x: end.x, y: start.y }, end]
+    : [start, { x: start.x, y: end.y }, end];
+}
+
+function automaticFanJunction(singleton, many, axis) {
+  const manyCentroid = centroid(many);
+  if (!manyCentroid) return null;
+  if (axis === "x") {
+    const towardPositive = manyCentroid.x >= singleton.x;
+    const corridorEdge = towardPositive
+      ? Math.min(...many.map((point) => point.x))
+      : Math.max(...many.map((point) => point.x));
+    return { x: (singleton.x + corridorEdge) / 2, y: singleton.y };
+  }
+  const towardPositive = manyCentroid.y >= singleton.y;
+  const corridorEdge = towardPositive
+    ? Math.min(...many.map((point) => point.y))
+    : Math.max(...many.map((point) => point.y));
+  return { x: singleton.x, y: (singleton.y + corridorEdge) / 2 };
+}
+
+/**
+ * Mirror SceneRenderer's endpoint, junction, and trajectory resolution.
+ * Returns null when malformed endpoints cannot produce finite connected paths.
+ */
+export function resolveFanGeometry(node, nodesById) {
+  const fanOut = capabilityOf(node) !== "core.fan-in";
+  const from = Array.isArray(node?.from) ? node.from : [node?.from];
+  const to = Array.isArray(node?.to) ? node.to : [node?.to];
+  const singletonEndpoint = (fanOut ? from : to)[0];
+  const manyEndpoints = fanOut ? to : from;
+  if (!singletonEndpoint || manyEndpoints.some((endpoint) => !endpoint)) {
+    return null;
+  }
+
+  const origin = { x: 0, y: 0 };
+  const roughSingleton = resolveFanEndpoint(
+    singletonEndpoint,
+    origin,
+    nodesById,
+  );
+  if (!roughSingleton) return null;
+  const roughMany = manyEndpoints.map((endpoint) =>
+    resolveFanEndpoint(endpoint, roughSingleton, nodesById),
+  );
+  if (roughMany.some((point) => point === null)) return null;
+  const roughManyCentroid = centroid(roughMany);
+  if (!roughManyCentroid) return null;
+  const singleton = resolveFanEndpoint(
+    singletonEndpoint,
+    roughManyCentroid,
+    nodesById,
+  );
+  if (!singleton) return null;
+  const many = manyEndpoints.map((endpoint) =>
+    resolveFanEndpoint(endpoint, singleton, nodesById),
+  );
+  if (many.some((point) => point === null)) return null;
+  const manyCentroid = centroid(many);
+  if (!manyCentroid) return null;
+
+  const styledAxis = node?.style?.axis;
+  const axis =
+    node?.axis === "x" || node?.axis === "y"
+      ? node.axis
+      : styledAxis === "x" || styledAxis === "y"
+        ? styledAxis
+        : Math.abs(manyCentroid.x - singleton.x) >=
+            Math.abs(manyCentroid.y - singleton.y)
+          ? "x"
+          : "y";
+  const junction =
+    node?.junction === undefined
+      ? automaticFanJunction(singleton, many, axis)
+      : resolveFanEndpoint(
+          node.junction,
+          fanOut ? manyCentroid : singleton,
+          nodesById,
+        );
+  if (
+    !junction ||
+    !Number.isFinite(junction.x) ||
+    !Number.isFinite(junction.y)
+  ) {
+    return null;
+  }
+
+  const trunk = compactPoints(
+    fanOut
+      ? orthogonalFanPoints(singleton, junction, axis)
+      : orthogonalFanPoints(junction, singleton, axis),
+  );
+  const branches = many.map((endpoint) =>
+    compactPoints(fanBranchPoints(endpoint, junction, axis, !fanOut)),
+  );
+  const trajectories = branches.map((branch) =>
+    compactPoints(
+      fanOut
+        ? [...trunk, ...branch.slice(1)]
+        : [...branch, ...trunk.slice(1)],
+    ),
+  );
+  return { axis, junction, trunk, branches, trajectories };
+}
+
 export function dist(a, b) {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
@@ -375,25 +562,62 @@ export function pathPoints(pathData) {
   return points;
 }
 
+function pathDataFromPoints(points, nodesById) {
+  if (!Array.isArray(points) || points.length === 0) return null;
+  const resolved = points.map((point) => resolveEndpoint(point, nodesById));
+  if (resolved.some((point) => point === null)) return null;
+  return resolved
+    .slice(1)
+    .reduce(
+      (path, point) => `${path} L${point.x} ${point.y}`,
+      `M${resolved[0].x} ${resolved[0].y}`,
+    );
+}
+
+function elbowPathData(start, end, via, axis) {
+  const dx = Math.abs(end.x - start.x);
+  const dy = Math.abs(end.y - start.y);
+  const preferX = axis === "y" ? false : axis === "x" ? true : dx >= dy;
+  if (via) {
+    return preferX
+      ? `M${start.x} ${start.y} H${via.x} V${via.y} H${end.x} V${end.y}`
+      : `M${start.x} ${start.y} V${via.y} H${via.x} V${end.y} H${end.x}`;
+  }
+  if (preferX) {
+    const midX = (start.x + end.x) / 2;
+    return `M${start.x} ${start.y} H${midX} V${end.y} H${end.x}`;
+  }
+  const midY = (start.y + end.y) / 2;
+  return `M${start.x} ${start.y} V${midY} H${end.x} V${end.y}`;
+}
+
 export function arrowPathData(node, nodesById) {
-  if (typeof node?.path === "string" && node.path.trim()) return node.path;
   if (typeof node?.d === "string" && node.d.trim()) return node.d;
+  if (typeof node?.path === "string" && node.path.trim()) return node.path;
+  const pointsPath = pathDataFromPoints(node?.points, nodesById);
+  if (pointsPath) return pointsPath;
   const from = node?.from;
   const to = node?.to;
-  if (
-    from &&
-    to &&
-    Number.isFinite(from.x) &&
-    Number.isFinite(from.y) &&
-    Number.isFinite(to.x) &&
-    Number.isFinite(to.y) &&
-    !(from.x === 0 && from.y === 0 && to.x === 0 && to.y === 0)
-  ) {
-    return `M${from.x} ${from.y} L${to.x} ${to.y}`;
-  }
   const start = resolveEndpoint(from, nodesById);
   const end = resolveEndpoint(to, nodesById);
   if (start && end) {
+    const capability = capabilityOf(node);
+    if (
+      capability === "core.elbow" ||
+      capability === "core.route" ||
+      node?.kind === "elbow" ||
+      node?.style?.route === "elbow"
+    ) {
+      const via = resolveEndpoint(node?.via, nodesById);
+      const styledAxis = node?.style?.axis;
+      const axis =
+        node?.axis === "x" || node?.axis === "y"
+          ? node.axis
+          : styledAxis === "x" || styledAxis === "y"
+            ? styledAxis
+            : undefined;
+      return elbowPathData(start, end, via, axis);
+    }
     return `M${start.x} ${start.y} L${end.x} ${end.y}`;
   }
   return null;

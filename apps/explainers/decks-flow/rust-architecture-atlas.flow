@@ -181,9 +181,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a1a"
-          capability: "core.path"
-          d: "M200 145 H250"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "cli", anchor: "e" }
+          to: { nodeId: "runtime", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -196,9 +196,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a1b"
-          capability: "core.path"
-          d: "M430 145 H480"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "runtime", anchor: "e" }
+          to: { nodeId: "loadgen", anchor: "w" }
           style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -228,8 +228,8 @@ explainer "Rust Architecture Atlas" {
         {
           id: "motion-sig-1"
           capability: "motion.signal"
-          d: "M140 178 H560"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          from: { nodeId: "cli", anchor: "e" }
+          to: { nodeId: "loadgen", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
@@ -284,9 +284,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a2a"
-          capability: "core.path"
-          d: "M170 125 H210"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "app", anchor: "e" }
+          to: { nodeId: "coord", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -299,9 +299,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a2b"
-          capability: "core.path"
-          d: "M350 125 H390"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "coord", anchor: "e" }
+          to: { nodeId: "phase", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -314,9 +314,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a2c"
-          capability: "core.path"
-          d: "M530 125 H570"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "phase", anchor: "e" }
+          to: { nodeId: "sink", anchor: "w" }
           style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -354,8 +354,8 @@ explainer "Rust Architecture Atlas" {
         {
           id: "motion-sig-2"
           capability: "motion.signal"
-          d: "M90 178 H610"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          from: { nodeId: "app", anchor: "e" }
+          to: { nodeId: "sink", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
@@ -413,9 +413,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a3a"
-          capability: "core.path"
-          d: "M190 125 H230"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "profile", anchor: "e" }
+          to: { nodeId: "req", anchor: "w" }
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -428,9 +428,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a3b"
-          capability: "core.path"
-          d: "M390 125 H430"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "req", anchor: "e" }
+          to: { nodeId: "execbin", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -443,9 +443,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a3c"
-          capability: "core.path"
-          d: "M570 125 H610"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "execbin", anchor: "e" }
+          to: { nodeId: "spawn", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -483,8 +483,8 @@ explainer "Rust Architecture Atlas" {
         {
           id: "motion-sig-3"
           capability: "motion.signal"
-          d: "M100 120 H600"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          from: { nodeId: "profile", anchor: "e" }
+          to: { nodeId: "spawn", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
@@ -542,9 +542,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a4a"
-          capability: "core.path"
-          d: "M160 125 H200"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "dataset", anchor: "e" }
+          to: { nodeId: "orch", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -557,9 +557,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a4b"
-          capability: "core.path"
-          d: "M340 125 H380"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "orch", anchor: "e" }
+          to: { nodeId: "slot", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -572,9 +572,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a4c"
-          capability: "core.path"
-          d: "M520 125 H560"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "slot", anchor: "e" }
+          to: { nodeId: "turn", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -604,8 +604,8 @@ explainer "Rust Architecture Atlas" {
         {
           id: "motion-sig-4"
           capability: "motion.signal"
-          d: "M80 160 H620"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          from: { nodeId: "dataset", anchor: "e" }
+          to: { nodeId: "turn", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
@@ -662,9 +662,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a5a"
-          capability: "core.path"
-          d: "M170 125 H210"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "trace", anchor: "e" }
+          to: { nodeId: "gin", anchor: "w" }
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -677,9 +677,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a5b"
-          capability: "core.path"
-          d: "M370 125 H410"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "gin", anchor: "e" }
+          to: { nodeId: "comp", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -692,9 +692,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a5c"
-          capability: "core.path"
-          d: "M560 125 H600"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "comp", anchor: "e" }
+          to: { nodeId: "bundle", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -732,8 +732,8 @@ explainer "Rust Architecture Atlas" {
         {
           id: "motion-sig-5"
           capability: "motion.signal"
-          d: "M90 160 H610"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          from: { nodeId: "trace", anchor: "e" }
+          to: { nodeId: "bundle", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
@@ -791,9 +791,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a6a"
-          capability: "core.path"
-          d: "M190 125 H230"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "profiles", anchor: "e" }
+          to: { nodeId: "ereg", anchor: "w" }
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -806,9 +806,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a6b"
-          capability: "core.path"
-          d: "M390 125 H430"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "ereg", anchor: "e" }
+          to: { nodeId: "prep", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -821,9 +821,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a6c"
-          capability: "core.path"
-          d: "M590 125 H620"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "prep", anchor: "e" }
+          to: { nodeId: "key", anchor: "w" }
           style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -861,8 +861,8 @@ explainer "Rust Architecture Atlas" {
         {
           id: "motion-sig-6"
           capability: "motion.signal"
-          d: "M100 160 H600"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          from: { nodeId: "profiles", anchor: "e" }
+          to: { nodeId: "key", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
           accessibility: { label: "motion signal" }
         }
@@ -920,9 +920,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a7a"
-          capability: "core.path"
-          d: "M180 125 H220"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "rsink", anchor: "e" }
+          to: { nodeId: "robs", anchor: "w" }
           style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -935,9 +935,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a7b"
-          capability: "core.path"
-          d: "M400 125 H440"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "robs", anchor: "e" }
+          to: { nodeId: "wstore", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -950,9 +950,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a7c"
-          capability: "core.path"
-          d: "M580 125 H610"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "wstore", anchor: "e" }
+          to: { nodeId: "merge", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -988,12 +988,17 @@ explainer "Rust Architecture Atlas" {
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
         }
         {
-          id: "motion-sig-7"
-          capability: "motion.signal"
-          d: "M80 160 H620"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          id: "export-fan"
+          capability: "core.fan-out"
+          from: { nodeId: "merge", anchor: "s" }
+          to: [
+            { nodeId: "nv7", anchor: "n" },
+            { nodeId: "compat", anchor: "n" },
+            { nodeId: "otlp", anchor: "n" }
+          ]
+          axis: "y"
+          junction: { x: 645, y: 190 }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
-          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
@@ -1008,7 +1013,8 @@ explainer "Rust Architecture Atlas" {
         { id: "s7-nv7" at: 1920 duration: 280 target: "nv7" action: "enter" }
         { id: "s7-compat" at: 2140 duration: 280 target: "compat" action: "enter" }
         { id: "s7-otlp" at: 2360 duration: 280 target: "otlp" action: "enter" }
-        { id: "s7-motion" at: 2580 duration: 900 target: "motion-sig-7" action: "draw" }
+        { id: "s7-export-draw" at: 1880 duration: 700 target: "export-fan" action: "draw" }
+        { id: "s7-motion" at: 2580 duration: 900 target: "export-fan" action: "trace" }
         { id: "s7-emph" at: 3080 duration: 480 target: "otlp" action: "emphasis" }
       ]
     }
@@ -1049,9 +1055,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a8a"
-          capability: "core.path"
-          d: "M200 125 H240"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "exec8", anchor: "e" }
+          to: { nodeId: "ctrl", anchor: "w" }
           style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -1064,9 +1070,9 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "a8b"
-          capability: "core.path"
-          d: "M410 125 H450"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.connector"
+          from: { nodeId: "ctrl", anchor: "e" }
+          to: { nodeId: "launch", anchor: "w" }
           style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         }
         {
@@ -1110,12 +1116,28 @@ explainer "Rust Architecture Atlas" {
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
         }
         {
-          id: "motion-sig-8"
-          capability: "motion.signal"
-          d: "M120 160 H580"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
-          accessibility: { label: "motion signal" }
+          id: "cell-fan"
+          capability: "core.fan-out"
+          from: { nodeId: "launch", anchor: "s" }
+          to: [
+            { nodeId: "c0", anchor: "n" },
+            { nodeId: "cn", anchor: "n" },
+            { nodeId: "agg", anchor: "n" }
+          ]
+          axis: "y"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        }
+        {
+          id: "result-fan"
+          capability: "core.fan-in"
+          from: [
+            { nodeId: "c0", anchor: "e" },
+            { nodeId: "cn", anchor: "e" },
+            { nodeId: "agg", anchor: "e" }
+          ]
+          to: { nodeId: "merge8", anchor: "w" }
+          axis: "x"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         }
       ]
       timeline: [
@@ -1125,11 +1147,14 @@ explainer "Rust Architecture Atlas" {
         { id: "s8-ctrl" at: 700 duration: 280 target: "ctrl" action: "enter" }
         { id: "s8-a8b" at: 920 duration: 420 target: "a8b" action: "draw" }
         { id: "s8-launch" at: 1200 duration: 280 target: "launch" action: "enter" }
+        { id: "s8-cell-fan" at: 1320 duration: 620 target: "cell-fan" action: "draw" }
+        { id: "s8-cell-trace" at: 1500 duration: 900 target: "cell-fan" action: "trace" }
         { id: "s8-c0" at: 1420 duration: 280 target: "c0" action: "enter" }
         { id: "s8-cn" at: 1640 duration: 280 target: "cn" action: "enter" }
         { id: "s8-agg" at: 1860 duration: 280 target: "agg" action: "enter" }
         { id: "s8-merge8" at: 2080 duration: 280 target: "merge8" action: "enter" }
-        { id: "s8-motion" at: 2300 duration: 900 target: "motion-sig-8" action: "draw" }
+        { id: "s8-result-fan" at: 1960 duration: 620 target: "result-fan" action: "draw" }
+        { id: "s8-motion" at: 2300 duration: 900 target: "result-fan" action: "trace" }
         { id: "s8-emph" at: 2800 duration: 480 target: "merge8" action: "emphasis" }
       ]
     }

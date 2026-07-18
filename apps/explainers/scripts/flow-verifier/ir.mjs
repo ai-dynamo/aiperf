@@ -14,11 +14,14 @@ import {
   isDirectedConnector,
   isDotLike,
   isDrawAction,
+  isFanNode,
   isLegendDot,
   isMotionCompanionDot,
+  isMotionSignalNode,
   nodeIds,
   pathPoints,
   pointNearBox,
+  resolveFanGeometry,
   sceneViewport,
   timelineDurationMs,
   walkNodes,
@@ -81,6 +84,71 @@ function pointNearPath(point, points, snap = SNAP_PX) {
     if (Math.hypot(point.x - cx, point.y - cy) <= snap) return true;
   }
   return false;
+}
+
+function fanCardinalityValid(node) {
+  if (node?.capability === "core.fan-out") {
+    return (
+      node.from !== null &&
+      typeof node.from === "object" &&
+      !Array.isArray(node.from) &&
+      Array.isArray(node.to) &&
+      node.to.length >= 2
+    );
+  }
+  if (node?.capability === "core.fan-in") {
+    return (
+      Array.isArray(node.from) &&
+      node.from.length >= 2 &&
+      node.to !== null &&
+      typeof node.to === "object" &&
+      !Array.isArray(node.to)
+    );
+  }
+  return false;
+}
+
+function pointsNear(left, right, tolerance = 0.001) {
+  return (
+    Math.abs(left.x - right.x) <= tolerance &&
+    Math.abs(left.y - right.y) <= tolerance
+  );
+}
+
+function fanGeometryConnected(geometry) {
+  if (
+    geometry.trunk.length < 2 ||
+    geometry.branches.some((branch) => branch.length < 2)
+  ) {
+    return false;
+  }
+  const trunkTouchesJunction = geometry.trunk.some((point) =>
+    pointsNear(point, geometry.junction),
+  );
+  const branchesTouchJunction = geometry.branches.every((branch) =>
+    branch.some((point) => pointsNear(point, geometry.junction)),
+  );
+  return trunkTouchesJunction && branchesTouchJunction;
+}
+
+function hasFanTraceCue(timeline, fanId) {
+  return (timeline ?? []).some(
+    (cue) =>
+      String(cue?.action ?? "").toLowerCase() === "trace" &&
+      cueTargets(cue).includes(fanId),
+  );
+}
+
+function hasStaggeredBranchMotion(timeline, nodesById) {
+  return (timeline ?? []).some((cue) => {
+    if (String(cue?.action ?? "").toLowerCase() !== "stagger") return false;
+    const targets = [...new Set(cueTargets(cue))];
+    return (
+      targets.length >= 2 &&
+      targets.filter((target) => isMotionSignalNode(nodesById.get(target)))
+        .length >= 2
+    );
+  });
 }
 
 /**
@@ -164,6 +232,10 @@ export function verifyPackageIr(pkg, options = {}) {
         .filter((n) => typeof n?.id === "string" && n.id.length > 0)
         .map((n) => [n.id, n]),
     );
+    const staggeredBranchMotion = hasStaggeredBranchMotion(
+      timeline,
+      nodesById,
+    );
 
     for (const cue of timeline ?? []) {
       const targets = cueTargets(cue);
@@ -202,6 +274,49 @@ export function verifyPackageIr(pkg, options = {}) {
 
     for (const node of nodes) {
       const id = node.id ?? "?";
+
+      if (isFanNode(node)) {
+        const cardinalityValid = fanCardinalityValid(node);
+        if (!cardinalityValid) {
+          findings.push(
+            finding(
+              "error",
+              deck,
+              slideLabel,
+              "fan-invalid-cardinality",
+              `fan "${id}" must be fan-out with one source and at least two destinations, or fan-in with at least two sources and one destination`,
+            ),
+          );
+        } else {
+          const geometry = resolveFanGeometry(node, nodesById);
+          if (!geometry || !fanGeometryConnected(geometry)) {
+            findings.push(
+              finding(
+                "error",
+                deck,
+                slideLabel,
+                "fan-disconnected-junction",
+                `fan "${id}" does not resolve to a finite trunk and branches connected at one junction`,
+              ),
+            );
+          } else {
+            pathPolylines.push(...geometry.trajectories);
+            directedArrowIds.push(id);
+          }
+        }
+        if (!hasFanTraceCue(timeline, id) && !staggeredBranchMotion) {
+          findings.push(
+            finding(
+              "warn",
+              deck,
+              slideLabel,
+              "fan-missing-trace-cue",
+              `fan "${id}" has no trace cue and no staggered branch motion substitute`,
+            ),
+          );
+        }
+        continue;
+      }
 
       if (isArrowLike(node)) {
         const path = arrowPathData(node, nodesById);

@@ -189,16 +189,37 @@ export type ParameterAst = ParamDeclarationAst;
 export type ObjectPropertyAst = AstNode<"object-property"> &
   Readonly<{
     name: string;
-    value: ValueAst | IdentifierReferenceAst;
+    value: ArgumentValueAst;
   }>;
 
 export type ObjectLiteralAst = AstNode<"object-literal"> &
   Readonly<{ properties: readonly ObjectPropertyAst[] }>;
 
+/**
+ * JSON-style array literal usable as a component prop value. Items are
+ * compile-time constants (literals, nested objects/arrays, refs, or symbol
+ * parameter references); no arbitrary expressions are permitted, so iteration
+ * and value resolution remain finite and deterministic.
+ */
+export type ArrayLiteralAst = AstNode<"array-literal"> &
+  Readonly<{ items: readonly ArgumentValueAst[] }>;
+
+/**
+ * Semantic reference to a component instance port, authored as
+ * `ref("instance.port")`. The compiler resolves it against the instance/port
+ * index produced by SDK expansion; it never names a generated child id.
+ * `instance` is the text before the first `.`; `port` is the remainder (which
+ * may itself contain `.` for indexed families such as `worker.0`).
+ */
+export type RefAst = AstNode<"ref"> &
+  Readonly<{ target: string; instance: string; port: string }>;
+
 export type ArgumentValueAst =
   | ValueAst
   | IdentifierReferenceAst
-  | ObjectLiteralAst;
+  | ObjectLiteralAst
+  | ArrayLiteralAst
+  | RefAst;
 
 export type PropAssignmentAst = AstNode<"prop-assignment"> &
   Readonly<{ name: string; value: ArgumentValueAst }>;
@@ -233,10 +254,19 @@ export type SlotBlockAst = AstNode<"slot"> &
     body: readonly SymbolBodyStatementAst[];
   }>;
 
+/**
+ * Bounded `for item in <collection> { … }` expansion.
+ *
+ * The collection is either a reference to an authored array (symbol parameter
+ * or document-level binding) or an inline array literal. Iteration is a
+ * compile-time expansion bounded by the finite authored array; the collection
+ * can never be an arbitrary or dynamic expression, so the loop cannot run
+ * unboundedly.
+ */
 export type ForLoopAst = AstNode<"for-loop"> &
   Readonly<{
     item: string;
-    collection: string;
+    collection: IdentifierReferenceAst | ArrayLiteralAst;
     body: readonly SymbolBodyStatementAst[];
   }>;
 
@@ -257,6 +287,22 @@ export type RenderDeclarationAst =
   | ConnectorAst
   | ScenePrimitiveAst
   | ComponentInvocationAst;
+
+/**
+ * Explicit boundary for unique illustration geometry.
+ *
+ * A `freeform { … }` block encloses raw render declarations (paths, lines,
+ * text, rects, and other primitives) that intentionally have no reusable
+ * structural meaning. The boundary lets the strict SDK-authoring gate permit
+ * bespoke artwork here while rejecting the same signatures elsewhere. Contents
+ * are ordinary render declarations; SDK expansion flattens the block body into
+ * scene render declarations in source order.
+ */
+export type FreeformBlockAst = AstNode<"freeform"> &
+  Readonly<{
+    id?: string;
+    body: readonly RenderDeclarationAst[];
+  }>;
 
 export type CameraKeyframeAst = AstNode<"camera-keyframe"> &
   Readonly<{
@@ -351,6 +397,20 @@ export type SceneAst = AstNode<"scene"> &
     id: string;
     summary?: SummaryAst;
     renderDeclarations: readonly RenderDeclarationAst[];
+    /**
+     * Scene-level bounded `for` expansions, in source order. Kept separate from
+     * `renderDeclarations` so existing lowering (which predates SDK expansion)
+     * is untouched; SDK expansion resolves each loop into render declarations
+     * and merges them back by source offset. Absent when the scene authors no
+     * loops.
+     */
+    loops?: readonly ForLoopAst[];
+    /**
+     * Scene-level explicit `freeform` illustration blocks, in source order.
+     * Consumed by SDK expansion and the strict authoring gate; absent when the
+     * scene authors no freeform blocks.
+     */
+    freeforms?: readonly FreeformBlockAst[];
     cameras: readonly CameraAst[];
     timelines: readonly TimelineAst[];
     interactions: readonly InteractionAst[];

@@ -146,8 +146,8 @@ explainer "Dynosim" {
         {
           id: "s0-motion-sig"
           capability: "motion.signal"
-          from: { nodeId: "s0-aiperf", anchor: "center" }
-          to: { nodeId: "s0-replay", anchor: "center" }
+          from: { nodeId: "s0-aiperf", anchor: "e" }
+          to: { nodeId: "s0-replay", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
@@ -226,8 +226,8 @@ explainer "Dynosim" {
         {
           id: "s1-motion-sig"
           capability: "motion.signal"
-          from: { nodeId: "s1-feat", anchor: "center" }
-          to: { nodeId: "s1-ids", anchor: "center" }
+          from: { nodeId: "s1-feat", anchor: "e" }
+          to: { nodeId: "s1-ids", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
@@ -314,8 +314,8 @@ explainer "Dynosim" {
         {
           id: "s2-motion-sig"
           capability: "motion.signal"
-          from: { nodeId: "s2-run", anchor: "center" }
-          to: { nodeId: "s2-clk", anchor: "center" }
+          from: { nodeId: "s2-run", anchor: "e" }
+          to: { nodeId: "s2-clk", anchor: "w" }
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
@@ -865,8 +865,8 @@ explainer "Dynosim" {
         {
           id: "s9-motion-sig"
           capability: "motion.signal"
-          from: { nodeId: "s9-p0", anchor: "center" }
-          to: { nodeId: "s9-p3", anchor: "center" }
+          from: { nodeId: "s9-p0", anchor: "e" }
+          to: { nodeId: "s9-p3", anchor: "w" }
           style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
