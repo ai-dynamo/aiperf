@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "assert:no-mentalmodel-registry": "node scripts/assert-no-mentalmodel-registry.mjs",
     "deploy:pages": "bash scripts/deploy-pages.sh"
   },
   "dependencies": {
