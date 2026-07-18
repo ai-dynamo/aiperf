@@ -222,8 +222,11 @@ fn parse_env_u32(var: &'static str) -> Result<u32, SlurmTopologyError> {
 /// 0 landed. The narrower step lists therefore take precedence over the job-wide list;
 /// a plain `srun`/`sbatch` allocation (no nested step) sets all three to the same
 /// value, so the order is a no-op there.
-const NODELIST_ENV_PRECEDENCE: [&str; 3] =
-    ["SLURM_STEP_NODELIST", "SLURM_NODELIST", "SLURM_JOB_NODELIST"];
+const NODELIST_ENV_PRECEDENCE: [&str; 3] = [
+    "SLURM_STEP_NODELIST",
+    "SLURM_NODELIST",
+    "SLURM_JOB_NODELIST",
+];
 
 /// The `&'static str` reported by [`SlurmTopologyError::MissingEnv`] when none of the
 /// [`NODELIST_ENV_PRECEDENCE`] variables (nor the [`CONTROLLER_HOST_ENV`] override) is
