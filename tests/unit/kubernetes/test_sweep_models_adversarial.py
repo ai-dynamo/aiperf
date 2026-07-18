@@ -44,7 +44,7 @@ _VALID_BENCHMARK = {
     ],
     "phases": [
         {
-            "name": "default",
+            "name": "profiling",
             "type": "concurrency",
             "requests": 1,
             "concurrency": 1,
@@ -54,7 +54,7 @@ _VALID_BENCHMARK = {
 
 _VALID_SWEEP = {
     "type": "grid",
-    "variables": {"benchmark.phases.default.concurrency": [1, 2]},
+    "parameters": {"phases.profiling.concurrency": [1, 2]},
 }
 
 
@@ -187,10 +187,13 @@ def test_aiperfsweep_ttl_negative_rejected() -> None:
     ],
 )  # fmt: skip
 def test_aiperfsweep_top_level_typo_rejected(extra_key: str) -> None:
-    """extra='forbid' on AIPerfSweepSpec catches arbitrary typos."""
+    """The envelope's unknown-key validator on AIPerfSweepSpec catches arbitrary typos."""
     data = _sweep()
     data[extra_key] = {"numRuns": 1}
-    with pytest.raises(ValidationError, match=r"(?i)extra|forbid|not permitted"):
+    with pytest.raises(
+        ValidationError,
+        match=r"(?i)unknown top-level envelope key|did you mean|extra|forbid|not permitted",
+    ):
         AIPerfSweepSpec.model_validate(data)
 
 
