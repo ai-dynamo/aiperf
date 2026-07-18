@@ -29,7 +29,7 @@ _VALID_BENCHMARK = {
     ],
     "phases": [
         {
-            "name": "default",
+            "name": "profiling",
             "type": "concurrency",
             "requests": 1,
             "concurrency": 1,
@@ -39,7 +39,7 @@ _VALID_BENCHMARK = {
 
 _VALID_SWEEP = {
     "type": "grid",
-    "variables": {"benchmark.phases.default.concurrency": [1, 2]},
+    "parameters": {"phases.profiling.concurrency": [1, 2]},
 }
 
 

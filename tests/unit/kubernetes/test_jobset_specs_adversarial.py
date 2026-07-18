@@ -25,6 +25,7 @@ from aiperf.config.deployment import PodTemplateConfig
 from aiperf.kubernetes.constants import AIPerfLabels, Containers
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import AIPerfJobSetSpec, controller_dns_name
+from aiperf.kubernetes.jobset_helpers import CELL_CONTROLLER_PORT
 from aiperf.kubernetes.jobset_specs import AIPerfContainerSpec
 
 # ============================================================
@@ -102,7 +103,7 @@ class TestJobSetSpecReservedMetadata:
 
         manifest = _manifest(pod_template=template)
 
-        for replicated_job_name in ("controller", "workers"):
+        for replicated_job_name in ("controller", "cells"):
             labels = _pod_metadata(_replicated_job(manifest, replicated_job_name))[
                 "labels"
             ]
@@ -110,9 +111,13 @@ class TestJobSetSpecReservedMetadata:
             assert labels[AIPerfLabels.JOB_ID] == "aiperf-bench-7f2a"
             assert labels["team.nvidia.com/owner"] == "perf-infra"
 
-    def test_controller_prometheus_annotations_override_template_collision(
+    def test_cellular_controller_pod_carries_user_annotations_without_prometheus_override(
         self,
     ) -> None:
+        """The cellular controller pod is a native runner + results sidecar, not the
+        mesh control-plane API. It exposes no scrape endpoint, so unlike the retired
+        mesh controller it injects no prometheus.io/* annotations -- user-supplied
+        podTemplate annotations pass through verbatim."""
         template = PodTemplateConfig(
             annotations={
                 "prometheus.io/scrape": "false",
@@ -127,11 +132,10 @@ class TestJobSetSpecReservedMetadata:
             "annotations"
         ]
 
-        assert annotations["prometheus.io/scrape"] == "true"
-        assert annotations["prometheus.io/port"] == str(
-            K8sEnvironment.PORTS.API_SERVICE
-        )
-        assert annotations["prometheus.io/path"] == "/metrics"
+        # No forced prometheus override: the user's values survive unchanged.
+        assert annotations["prometheus.io/scrape"] == "false"
+        assert annotations["prometheus.io/port"] == "1"
+        assert annotations["prometheus.io/path"] == "/do-not-scrape"
         assert annotations["team.nvidia.com/owner"] == "perf-infra"
 
     def test_to_k8s_manifest_does_not_forge_owner_references(self) -> None:
@@ -160,7 +164,7 @@ class TestJobSetSpecNamesAndTopology:
         replicated_job_names = [
             job["name"] for job in manifest["spec"]["replicatedJobs"]
         ]
-        assert replicated_job_names == ["controller", "workers"]
+        assert replicated_job_names == ["controller", "cells"]
         assert manifest["spec"]["successPolicy"] == {
             "operator": "All",
             "targetReplicatedJobs": ["controller"],
@@ -189,16 +193,17 @@ class TestJobSetSpecNamesAndTopology:
     ) -> None:
         assert controller_dns_name(jobset_name, namespace) == expected
 
-    def test_worker_controller_host_env_matches_jobset_dns_contract(self) -> None:
+    def test_cell_controller_addr_env_matches_jobset_dns_contract(self) -> None:
+        """Each cell dials the controller via AIPERF_CELL_CONTROLLER_ADDR, which is the
+        controller pod's stable JobSet headless-service DNS name plus the cell
+        transport port (tcp://<controller-dns>:9500)."""
         manifest = _manifest(name="aiperf-llama3-8b", namespace="perf-canary")
-        worker_manager = _container(
-            _replicated_job(manifest, "workers"), Containers.WORKER_GROUP_MANAGER
-        )
+        cell = _container(_replicated_job(manifest, "cells"), "cell")
 
-        env = _env_by_name(worker_manager)
-        assert env["AIPERF_K8S_ZMQ_CONTROLLER_HOST"]["value"] == (
-            "aiperf-llama3-8b-controller-0-0."
-            "aiperf-llama3-8b.perf-canary.svc.cluster.local"
+        env = _env_by_name(cell)
+        assert env["AIPERF_CELL_CONTROLLER_ADDR"]["value"] == (
+            f"tcp://aiperf-llama3-8b-controller-0-0."
+            f"aiperf-llama3-8b.perf-canary.svc.cluster.local:{CELL_CONTROLLER_PORT}"
         )
         assert manifest["spec"]["network"] == {"enableDNSHostnames": True}
 
@@ -224,27 +229,25 @@ class TestJobSetSpecContainerArgsAndEnv:
         )
 
         manifest = _manifest(pod_template=template)
-        worker = _container(_replicated_job(manifest, "workers"), "worker-0")
+        cell = _container(_replicated_job(manifest, "cells"), "cell")
 
-        assert worker["command"] == ["aiperf"]
-        assert worker["args"] == [
-            "service",
-            "--type",
-            "worker",
-            "--benchmark-run",
-            f"{K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH}/run_config.json",
-            "--health-port",
-            str(K8sEnvironment.PORTS.WORKER_HEALTH + 1),
-            "--service-id",
-            "worker_$(AIPERF_POD_INDEX)_0",
+        assert cell["command"] == ["aiperf"]
+        assert cell["args"] == [
+            "cell",
+            "--config",
+            f"{K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH}/config.yaml",
         ]
-        assert _env_by_name(worker)["AIPERF_OPERATOR_NOTE"]["value"] == (
+        assert _env_by_name(cell)["AIPERF_OPERATOR_NOTE"]["value"] == (
             "--type api; touch /tmp/aiperf-owned $(whoami)"
         )
 
-    def test_reserved_env_cannot_be_overridden_by_later_pod_template_entry(
+    def test_reserved_cr_identity_env_wins_over_pod_template_entry(
         self,
     ) -> None:
+        """The controller pod's CR-identity env (AIPERF_JOB_ID / AIPERF_NAMESPACE, which
+        the runner uses to patch the owning AIPerfJob .status) is appended after any
+        user podTemplate env. Kubernetes resolves duplicate env names last-wins, so the
+        authoritative identity always takes effect regardless of a rogue override."""
         template = PodTemplateConfig(
             env=[
                 {"name": "AIPERF_JOB_ID", "value": "rogue-benchmark"},
@@ -253,25 +256,31 @@ class TestJobSetSpecContainerArgsAndEnv:
         )
 
         manifest = _manifest(pod_template=template)
-        control_plane = _container(
-            _replicated_job(manifest, "controller"), Containers.CONTROL_PLANE
+        controller = _container(
+            _replicated_job(manifest, "controller"), Containers.CELL_CONTROLLER
         )
-        env_entries = control_plane["env"]
+        env_entries = controller["env"]
         env_names = [entry["name"] for entry in env_entries]
 
-        assert env_names.count("AIPERF_JOB_ID") == 1
-        assert env_names.count("AIPERF_NAMESPACE") == 1
-        env = _env_by_name(control_plane)
+        # The authoritative CR-identity entry is emitted after the user's, so it is
+        # the last occurrence (kubelet last-wins) and resolves to the real identity.
+        job_id_indices = [i for i, n in enumerate(env_names) if n == "AIPERF_JOB_ID"]
+        ns_indices = [i for i, n in enumerate(env_names) if n == "AIPERF_NAMESPACE"]
+        assert env_entries[job_id_indices[-1]]["value"] == "aiperf-bench-7f2a"
+        assert env_entries[ns_indices[-1]]["value"] == "aiperf-benchmarks"
+        env = _env_by_name(controller)
         assert env["AIPERF_JOB_ID"]["value"] == "aiperf-bench-7f2a"
         assert env["AIPERF_NAMESPACE"]["value"] == "aiperf-benchmarks"
 
-    def test_pod_index_env_uses_field_ref_not_shell_substitution(self) -> None:
+    def test_cell_id_env_uses_field_ref_not_shell_substitution(self) -> None:
+        """A cell's CELL_ID (its budget-partition index) is sourced from the JobSet
+        job-index label via a downward-API fieldRef, never a shell substitution."""
         manifest = _manifest()
-        worker = _container(_replicated_job(manifest, "workers"), "worker-0")
+        cell = _container(_replicated_job(manifest, "cells"), "cell")
 
-        pod_index = _env_by_name(worker)["AIPERF_POD_INDEX"]
-        assert pod_index == {
-            "name": "AIPERF_POD_INDEX",
+        cell_id = _env_by_name(cell)["AIPERF_CELL_ID"]
+        assert cell_id == {
+            "name": "AIPERF_CELL_ID",
             "valueFrom": {
                 "fieldRef": {
                     "fieldPath": "metadata.labels['jobset.sigs.k8s.io/job-index']",
@@ -297,11 +306,7 @@ class TestJobSetSpecResultsSidecarContract:
         )
         expected_port = K8sEnvironment.PORTS.RESULTS_SIDECAR
 
-        assert sidecar["command"] == [
-            "python",
-            "-m",
-            "aiperf.kubernetes.results_sidecar",
-        ]
+        assert sidecar["command"] == ["aiperf", "results-sidecar"]
         assert sidecar["ports"] == [{"containerPort": expected_port, "name": "results"}]
         assert _env_by_name(sidecar)["AIPERF_RESULTS_SIDECAR_PORT"]["value"] == str(
             expected_port

@@ -48,7 +48,7 @@ def _valid_doc() -> dict:
                 ],
                 "phases": [
                     {
-                        "name": "default",
+                        "name": "profiling",
                         "type": "concurrency",
                         "concurrency": 1,
                         "requests": 10,
@@ -341,7 +341,7 @@ def _valid_sweep_doc() -> dict:
     doc["metadata"]["name"] = "my-sweep"
     doc["spec"]["sweep"] = {
         "type": "grid",
-        "variables": {
+        "parameters": {
             "phases.profiling.concurrency": [1, 2, 4],
         },
     }
@@ -358,7 +358,7 @@ class TestValidateFileKindDispatch:
         doc = _valid_doc()
         doc["spec"]["sweep"] = {
             "type": "grid",
-            "variables": {"phases.profiling.concurrency": [1, 2]},
+            "parameters": {"phases.profiling.concurrency": [1, 2]},
         }
         path = _write(tmp_path, doc)
 

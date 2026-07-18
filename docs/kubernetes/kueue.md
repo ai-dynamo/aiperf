@@ -61,7 +61,7 @@ and compete for nodes using default Kubernetes scheduling.
 ## Install
 
 AIPerf pins the tested Kueue version in
-[`dev/versions.py`](../../dev/versions.py):
+`dev/versions.py`:
 
 ```python
 # dev/versions.py

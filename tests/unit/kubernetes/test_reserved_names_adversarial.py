@@ -49,30 +49,35 @@ from tests.harness.operator import build_minimal_aiperfjob_spec
 # =============================================================================
 
 
+# Cellular runner pods (controller + cell) share the HF tokenizer cache
+# location and the CR-identity env AIPerf owns. These are the vars a hostile
+# podTemplate must not be able to seize on any runner pod.
 _RESERVED_SHARED_RUNTIME_ENV = frozenset(
     {
-        "AIPERF_DATASET_MMAP_BASE_PATH",
+        "HF_HOME",
         "AIPERF_JOB_ID",
         "AIPERF_NAMESPACE",
-        "AIPERF_SERVICE_HEALTH_ENABLED",
-        "AIPERF_SERVICE_HEALTH_HOST",
-        "AIPERF_SERVICE_REGISTRATION_TIMEOUT",
     }
 )
 
+# The controller container additionally owns the cell-launcher selector that
+# tells the runner the JobSet (not the runner) created the cell pods.
 _RESERVED_CONTROLLER_RUNTIME_ENV = frozenset(
     {
         *_RESERVED_SHARED_RUNTIME_ENV,
-        "AIPERF_CONTROLLER_POD",
-        "AIPERF_UI_REALTIME_METRICS_ENABLED",
+        "AIPERF_CELL_LAUNCHER",
     }
 )
 
-_RESERVED_WORKER_RUNTIME_ENV = frozenset(
+# A cell container additionally owns its partition identity + the controller
+# bootstrap coordinate + the HTTP artifact port.
+_RESERVED_CELL_RUNTIME_ENV = frozenset(
     {
         *_RESERVED_SHARED_RUNTIME_ENV,
-        "AIPERF_POD_INDEX",
-        "AIPERF_K8S_ZMQ_CONTROLLER_HOST",
+        "AIPERF_CELL_ID",
+        "AIPERF_CELL_COUNT",
+        "AIPERF_CELL_CONTROLLER_ADDR",
+        "AIPERF_CELL_ARTIFACT_PORT",
     }
 )
 
@@ -97,7 +102,6 @@ _VALID_BENCHMARK = {
         {
             "name": "profiling",
             "type": "concurrency",
-            "dataset": "main",
             "requests": 10,
             "concurrency": 4,
         }
@@ -116,7 +120,7 @@ def _aiperfsweep_spec_with(**overrides: Any) -> dict[str, Any]:
         "image": "nvcr.io/nvidia/aiperf:reserved-names",
         "sweep": {
             "type": "grid",
-            "variables": {"benchmark.phases.profiling.concurrency": [4, 8]},
+            "parameters": {"phases.profiling.concurrency": [4, 8]},
         },
         "multiRun": {"numRuns": 2},
         "benchmark": _VALID_BENCHMARK,
@@ -261,7 +265,10 @@ class TestPodTemplateReservedNames:
 
         manifest = _manifest_from_spec(spec)
 
-        for replicated_job_name in ("controller", "workers"):
+        # Cellular JobSet emits `controller` + `cells` replicatedJobs (the mesh
+        # `workers` job is retired). Reserved app/job-id labels stay AIPerf-owned
+        # on both; a user's own label survives.
+        for replicated_job_name in ("controller", "cells"):
             labels = _pod_metadata(manifest, replicated_job_name)["labels"]
             assert labels[AIPerfLabels.APP_KEY] == AIPerfLabels.APP_VALUE
             assert labels[AIPerfLabels.JOB_ID] == "reserved-names-bench-7f2a"
@@ -272,24 +279,32 @@ class TestPodTemplateReservedNames:
         [
             param(
                 "controller",
-                Containers.CONTROL_PLANE,
+                Containers.CELL_CONTROLLER,
                 _RESERVED_CONTROLLER_RUNTIME_ENV,
-                id="controller-control-plane",
+                id="controller",
             ),
             param(
-                "workers",
-                Containers.WORKER_GROUP_MANAGER,
-                _RESERVED_WORKER_RUNTIME_ENV,
-                id="worker-group-manager",
+                "cells",
+                "cell",
+                _RESERVED_CELL_RUNTIME_ENV,
+                id="cell",
             ),
         ],
     )  # fmt: skip
-    def test_jobset_manifest_pod_template_reserved_env_has_one_authoritative_value(
+    def test_jobset_manifest_pod_template_reserved_env_stays_authoritative(
         self,
         replicated_job_name: str,
         container_name: str,
         reserved_names: frozenset[str],
     ) -> None:
+        """A hostile podTemplate cannot make a reserved env var resolve to its value.
+
+        The cellular runner layers AIPerf-owned env (HF cache, CR identity, cell
+        partition) *after* the user's podTemplate env, so for a name the user also
+        set there are two entries. Kubernetes resolves duplicate env names
+        last-wins, so the effective (last) entry is always AIPerf's — never the
+        attacker's. HF_HOME is deduped outright by build_runner_env_vars.
+        """
         hostile_env = [
             {"name": name, "value": "attacker-controlled"}
             for name in sorted(reserved_names)
@@ -298,15 +313,26 @@ class TestPodTemplateReservedNames:
 
         manifest = _manifest_from_spec(spec)
         container = _container(manifest, replicated_job_name, container_name)
-        env = _env_by_name(container)
 
         for name in reserved_names:
-            assert len(_env_entries(container, name)) == 1
-            assert env[name].get("value") != "attacker-controlled"
+            entries = _env_entries(container, name)
+            assert entries, f"reserved env {name!r} missing from {container_name!r}"
+            # k8s last-wins: the effective value is the final entry for this name.
+            effective = entries[-1]
+            assert effective.get("value") != "attacker-controlled", (
+                f"reserved env {name!r} resolved to the attacker value"
+            )
 
-    def test_jobset_manifest_pod_template_prometheus_annotations_keep_scrape_contract(
+    def test_jobset_manifest_pod_template_annotations_pass_through_on_runner_pods(
         self,
     ) -> None:
+        """The cellular runner pods carry no AIPerf-owned pod annotations.
+
+        The retired mesh controller stamped a Prometheus scrape contract onto its
+        pod annotations, so user annotations were reconciled against reserved
+        keys. Cellular runner pods (controller + cells) own no pod annotations, so
+        user-supplied podTemplate annotations pass through verbatim on every job.
+        """
         spec = _aiperfjob_spec_with(
             podTemplate={
                 "annotations": {
@@ -318,11 +344,12 @@ class TestPodTemplateReservedNames:
         )
 
         manifest = _manifest_from_spec(spec)
-        annotations = _pod_metadata(manifest, "controller")["annotations"]
 
-        assert annotations["prometheus.io/scrape"] == "true"
-        assert annotations["prometheus.io/port"] == "9090"
-        assert annotations["observability.nvidia.com/runbook"].endswith("/aiperf")
+        for replicated_job_name in ("controller", "cells"):
+            annotations = _pod_metadata(manifest, replicated_job_name)["annotations"]
+            assert annotations["prometheus.io/scrape"] == "false"
+            assert annotations["prometheus.io/port"] == "1"
+            assert annotations["observability.nvidia.com/runbook"].endswith("/aiperf")
 
 
 # =============================================================================

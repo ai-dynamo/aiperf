@@ -11,7 +11,7 @@ sidebar-title: Controller Pod Sidecars
 > Pod's `results-server` container (port 8081) is also colloquially called
 > a sidecar; that one hosts the operator's HTTP API and is documented in
 > [`docs/kubernetes/results-api.md`](results-api.md) and
-> [`docs/dev/kubernetes-flow.md`](../dev/kubernetes-flow.md). Don't confuse
+> `docs/dev/kubernetes-flow.md`. Don't confuse
 > the two — the URL stamped onto `AIPerfSweep.status.apiUrl` and the
 > sweep-controller's empty-summary fallback both target the **operator**'s
 > results-server, never the controller's `results-sidecar`.

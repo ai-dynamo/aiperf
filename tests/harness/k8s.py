@@ -187,7 +187,7 @@ def build_sample_config() -> AIPerfConfig:
             ],
             "phases": [
                 {
-                    "name": "default",
+                    "name": "profiling",
                     "type": "concurrency",
                     "requests": 10,
                     "concurrency": 1,

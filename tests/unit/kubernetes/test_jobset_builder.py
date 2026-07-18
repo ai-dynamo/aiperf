@@ -192,15 +192,11 @@ class TestCreateResultsSidecar:
             K8sEnvironment.PORTS.RESULTS_SIDECAR
         )
 
-    def test_command_uses_python_module_entry(self) -> None:
-        """Sidecar runs as a python -m invocation, not the aiperf CLI."""
+    def test_command_uses_native_results_sidecar_subcommand(self) -> None:
+        """Sidecar runs the native `aiperf results-sidecar` subcommand (zero-Python pod)."""
         builder = _JobSetManifestBuilder(_make_spec())
         container = builder._create_results_sidecar()
-        assert container.command == [
-            "python",
-            "-m",
-            "aiperf.kubernetes.results_sidecar",
-        ]
+        assert container.command == ["aiperf", "results-sidecar"]
 
 
 class TestCreateControlPlaneContainers:

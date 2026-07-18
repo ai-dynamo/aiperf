@@ -93,7 +93,7 @@ spec:
     type: adaptive_search
     planner: bayesian
     searchSpace:
-      - path: benchmark.phases.profiling.concurrency
+      - path: phases.profiling.concurrency
         lo: 1
         hi: 1000
         kind: int
@@ -126,11 +126,11 @@ spec:
     type: adaptive_search
     planner: bayesian
     searchSpace:
-      - path: benchmark.phases.profiling.concurrency
+      - path: phases.profiling.concurrency
         lo: 1
         hi: 500
         kind: int
-      - path: benchmark.phases.profiling.rate
+      - path: phases.profiling.rate
         lo: 1.0
         hi: 50.0
         kind: real
