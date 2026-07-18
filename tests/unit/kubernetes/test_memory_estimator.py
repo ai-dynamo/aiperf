@@ -725,28 +725,29 @@ class TestConfigurationDefaults:
 
         assert DeploymentConfig().connections_per_worker == 100
 
-    def test_workers_per_pod_is_10(self) -> None:
+    def test_workers_per_pod_is_32(self) -> None:
         from aiperf.common.environment import Environment
 
-        assert Environment.WORKER.DEFAULT_WORKERS_PER_POD == 10
+        assert Environment.WORKER.DEFAULT_WORKERS_PER_POD == 32
 
-    def test_rp_per_pod_with_10_workers(self) -> None:
-        """10 workers / scale_factor 1 = 10 RPs per pod."""
+    def test_rp_per_pod_matches_workers_over_scale_factor(self) -> None:
+        """RPs per pod = max(1, DEFAULT_WORKERS_PER_POD // scale_factor)."""
         from aiperf.common.environment import Environment
         from aiperf.kubernetes.environment import K8sEnvironment
 
         wpp = Environment.WORKER.DEFAULT_WORKERS_PER_POD
         sf = K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR
-        assert max(1, wpp // sf) == 10
+        assert max(1, wpp // sf) == wpp  # scale_factor is 1
 
     def test_pod_concurrency_at_defaults(self) -> None:
-        """10 workers x 100 conc/worker = 1000 per pod."""
+        """DEFAULT_WORKERS_PER_POD (32) x 100 conc/worker = 3200 per pod."""
         from aiperf.common.environment import Environment
         from aiperf.config.deployment import DeploymentConfig
 
         wpp = Environment.WORKER.DEFAULT_WORKERS_PER_POD
         cpw = DeploymentConfig().connections_per_worker
-        assert wpp * cpw == 1000
+        assert wpp * cpw == wpp * 100
+        assert cpw == 100
 
     def test_controller_pod_guaranteed_qos(self) -> None:
         from aiperf.kubernetes.environment import K8sEnvironment
