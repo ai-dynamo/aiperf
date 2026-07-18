@@ -42,6 +42,44 @@ function normalizedLabel(label: string): string {
   return label.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Collects an id → accessibility-label map from the scene render tree so a
+ * generic `reveal` timeline cue can be labelled by the entity it reveals
+ * rather than by the internal rendering verb.
+ */
+function collectNodeLabels(
+  roots: SceneIr["roots"],
+  labels: Map<string, string>,
+): void {
+  for (const node of roots) {
+    const label = node.accessibility?.label;
+    if (typeof label === "string" && label.length > 0) {
+      labels.set(node.id, label);
+    }
+    if (node.kind === "group" || node.kind === "component") {
+      collectNodeLabels(node.children, labels);
+    }
+  }
+}
+
+/**
+ * Resolves a human-facing beat label for a timeline cue. `reveal` is a
+ * rendering primitive, not a caption, so reveal cues borrow the label of the
+ * entity they target; every other authored action reads verbatim.
+ */
+function timelineBeatLabel(
+  cue: SceneIr["timeline"][number],
+  nodeLabels: Map<string, string>,
+): string {
+  if (cue.action.trim().toLowerCase() === "reveal") {
+    const targetLabel = nodeLabels.get(cue.target);
+    if (targetLabel !== undefined) {
+      return normalizedLabel(targetLabel);
+    }
+  }
+  return normalizedLabel(cue.action);
+}
+
 function freezeBeat(beat: CausalBeat): CausalBeat {
   return Object.freeze({
     ...beat,
@@ -59,6 +97,8 @@ export function projectCausalBeats(scene: SceneIr): readonly CausalBeat[] {
   const projectedIds = new Set<string>();
   const timelineIds = new Set<string>();
   const narrativeIds = new Set<string>();
+  const nodeLabels = new Map<string, string>();
+  collectNodeLabels(scene.roots, nodeLabels);
 
   scene.timeline.forEach((cue, authoredOrder) => {
     if (timelineIds.has(cue.id)) {
@@ -71,7 +111,7 @@ export function projectCausalBeats(scene: SceneIr): readonly CausalBeat[] {
       authoredOrder,
       beat: freezeBeat({
         id: cue.id,
-        label: normalizedLabel(cue.action),
+        label: timelineBeatLabel(cue, nodeLabels),
         timeMs: cue.at,
         endMs,
         targetEntityIds: [cue.target],
