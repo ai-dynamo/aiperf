@@ -11,6 +11,7 @@ pub mod analyze_trace;
 pub mod bayes;
 pub mod cellular_role;
 pub mod chat;
+pub mod compare;
 pub mod config;
 pub mod delegate;
 pub mod dispatch;
