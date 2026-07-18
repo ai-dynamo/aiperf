@@ -31,6 +31,7 @@ export * from "./evaluate/hit-region-index.js";
 export * from "./evaluate/quality-policy.js";
 export * from "./evaluate/scene-evaluator.js";
 export * from "./evaluate/types.js";
+export * from "./evaluate/with-theme.js";
 export * from "./display-list.js";
 export * from "./narrative/audio-consent-modal.js";
 export * from "./narrative/kokoro-narrator.js";
