@@ -69,6 +69,10 @@ function extractSlidesFromFlow(source) {
 
       const points = pointsMatch ? parsePoints(pointsMatch[1]) : [];
 
+      // Extract @scene block for native .flow rendering
+      const sceneMatch = slideContent.match(/render:\s+@scene\s*\{([\s\S]*)\}/);
+      const sceneBlock = sceneMatch ? `{${sceneMatch[1]}}` : null;
+
       // Generate ID from title
       const slideId = slideTitle
         .toLowerCase()
@@ -84,6 +88,8 @@ function extractSlidesFromFlow(source) {
         points,
         caption: captionMatch?.[1] || '',
         term: undefined,
+        // Include raw @scene block for native rendering
+        ...(sceneBlock && { sceneBlock }),
       });
     }
 
