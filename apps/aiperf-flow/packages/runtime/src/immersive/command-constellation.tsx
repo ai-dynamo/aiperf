@@ -44,7 +44,11 @@ const backdropStyle: CSSProperties = {
   padding:
     "max(1rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px)) max(1rem, env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px))",
   background: "rgb(7 17 31 / 72%)",
-  backdropFilter: "blur(4px)",
+};
+
+const mobileBackdropStyle: CSSProperties = {
+  ...backdropStyle,
+  padding: 0,
 };
 
 const dialogStyle: CSSProperties = {
@@ -59,7 +63,6 @@ const dialogStyle: CSSProperties = {
   borderRadius: "0.25rem",
   background: "rgb(7 17 31 / 96%)",
   color: "var(--flow-ink, #eef4ff)",
-  boxShadow: "0 2rem 5rem rgb(0 0 0 / 36%)",
 };
 
 const dialogMobileStyle: CSSProperties = {
@@ -296,7 +299,6 @@ export function CommandConstellation({
   onClose,
   initialQuery = "",
 }: CommandConstellationProps): ReactNode {
-  const titleId = useId();
   const inputId = useId();
   const listboxId = useId();
   const optionIdPrefix = useId();
@@ -415,11 +417,11 @@ export function CommandConstellation({
   return (
     <div
       className="aiperf-flow__command-constellation-backdrop"
-      style={backdropStyle}
+      style={mobile ? mobileBackdropStyle : backdropStyle}
     >
       <div
         ref={dialogRef}
-        aria-labelledby={titleId}
+        aria-label="Command Constellation"
         aria-modal="true"
         className="aiperf-flow__command-constellation"
         data-mobile={mobile ? "true" : "false"}
@@ -431,7 +433,7 @@ export function CommandConstellation({
           <p className="aiperf-flow__eyebrow" style={eyebrowStyle}>
             Command constellation
           </p>
-          <h2 id={titleId} style={titleStyle}>
+          <h2 style={titleStyle}>
             Jump to a scene, beat, entity, or action
           </h2>
           <label

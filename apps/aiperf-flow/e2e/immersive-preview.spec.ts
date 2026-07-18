@@ -68,7 +68,7 @@ async function openPreview(
 }
 
 async function openCommands(page: Page): Promise<Locator> {
-  await page.keyboard.press("ControlOrMeta+K");
+  await page.getByRole("button", { name: "Open commands" }).click();
   const dialog = commandDialog(page);
   await expect(dialog).toBeVisible();
   return dialog;
@@ -142,7 +142,9 @@ test("causal replay makes direct seek equal continuous playback", async ({
   const beats = causalPath(page).getByRole("button");
   expect(await beats.count()).toBeGreaterThan(1);
 
-  const target = beats.nth(1);
+  const target = causalPath(page)
+    .locator('button[data-time-ms]:not([data-time-ms="0"])')
+    .first();
   const targetTimeAttribute = await target.getAttribute("data-time-ms");
   expect(targetTimeAttribute).not.toBeNull();
   const targetTime = Number(targetTimeAttribute);
@@ -152,7 +154,7 @@ test("causal replay makes direct seek equal continuous playback", async ({
 
   await beats.first().click();
   await page.getByRole("button", { name: /^Play(?: scene)?$/u }).click();
-  await page.clock.runFor(targetTime);
+  await page.clock.runFor(targetTime + 50);
   await expect(target).toHaveAttribute("aria-current", "step");
   expect(await currentState(page)).toEqual(directlySeeked);
 });
@@ -186,19 +188,20 @@ test("command search executes actions and restores invoking focus", async ({
   await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
 
+  const firstEntity = semanticTwin(page).locator("button[data-entity-id]").first();
+  const entityId = await firstEntity.getAttribute("data-entity-id");
+  expect(entityId).not.toBeNull();
   const entityDialog = await openCommands(page);
   await entityDialog
     .getByRole("searchbox", { name: /search commands/iu })
-    .fill("Worker sink");
+    .fill(entityId!);
   await entityDialog.getByRole("option").first().click();
-  await expect(
-    semanticTwin(page).getByRole("button", { name: "Worker sink" }),
-  ).toHaveAttribute("aria-selected", "true");
+  await expect(firstEntity).toHaveAttribute("aria-selected", "true");
 
   const twinDialog = await openCommands(page);
   await twinDialog
     .getByRole("searchbox", { name: /search commands/iu })
-    .fill("semantic twin");
+    .fill("outline");
   await twinDialog.getByRole("option").first().click();
   await expect(semanticTwin(page)).toBeVisible();
 });
@@ -207,7 +210,7 @@ test("Context Lens and Focus World share selection and restore the beat", async 
   page,
 }) => {
   await openPreview(page);
-  const beat = await selectBeat(page, 1);
+  const beat = await selectBeat(page, 2);
   const beatId = await beat.getAttribute("data-beat-id");
   expect(beatId).not.toBeNull();
   const lens = await openContextLens(page);
@@ -259,20 +262,24 @@ test("restores valid scene, beat, and selected entity from the URL", async ({
   page,
 }) => {
   await openPreview(page, {
-    search: "?scene=execution&beat=trace-dispatch&entity=worker",
+    search:
+      "?scene=request-investigation&beat=reveal-gateway&entity=gateway",
   });
 
-  await expect(semanticTwin(page)).toHaveAttribute("data-scene-id", "execution");
+  await expect(semanticTwin(page)).toHaveAttribute(
+    "data-scene-id",
+    "request-investigation",
+  );
   await expect(
-    causalPath(page).locator('[data-beat-id="trace-dispatch"]'),
+    causalPath(page).locator('[data-beat-id="reveal-gateway"]'),
   ).toHaveAttribute("aria-current", "step");
   await expect(
-    semanticTwin(page).locator('[data-entity-id="worker"]'),
+    semanticTwin(page).locator('[data-entity-id="gateway"]'),
   ).toHaveAttribute("aria-selected", "true");
   const restored = new URL(page.url()).searchParams;
-  expect(restored.get("scene")).toBe("execution");
-  expect(restored.get("beat")).toBe("trace-dispatch");
-  expect(restored.get("entity")).toBe("worker");
+  expect(restored.get("scene")).toBe("request-investigation");
+  expect(restored.get("beat")).toBe("reveal-gateway");
+  expect(restored.get("entity")).toBe("gateway");
 });
 
 test("supports keyboard traversal through beats and semantic entities", async ({
@@ -302,8 +309,8 @@ test("captions remain visible and synchronized at a named cue", async ({
 }) => {
   await openPreview(page);
   const namedBeat = causalPath(page)
-    .locator('[data-beat-id="trace-dispatch"], [data-beat-id="dispatch"]')
-    .first();
+    .locator('button[data-beat-source="narrative"]')
+    .nth(1);
   await namedBeat.click();
 
   const subtitles = page.getByRole("region", { name: "Subtitles" });
@@ -412,6 +419,9 @@ const screenshotMatrix: readonly ScreenshotCase[] = [
       await expect(
         page.getByRole("button", { name: /^Pause(?: scene)?$/u }),
       ).toBeVisible();
+      await page.clock.pauseAt(
+        (await page.evaluate(() => Date.now())) + 100,
+      );
     },
   },
   {
@@ -448,8 +458,8 @@ const screenshotMatrix: readonly ScreenshotCase[] = [
     viewport: desktopViewport,
     prepare: async (page) => {
       await causalPath(page)
-        .locator('[data-beat-id="trace-dispatch"], [data-beat-id="dispatch"]')
-        .first()
+        .locator('button[data-beat-source="narrative"]')
+        .nth(1)
         .click();
       await expect(page.getByRole("region", { name: "Subtitles" })).toBeVisible();
     },
@@ -462,6 +472,9 @@ const screenshotMatrix: readonly ScreenshotCase[] = [
       if (await play.isVisible()) {
         await play.click();
       }
+      await page.clock.pauseAt(
+        (await page.evaluate(() => Date.now())) + 100,
+      );
     },
   },
   {

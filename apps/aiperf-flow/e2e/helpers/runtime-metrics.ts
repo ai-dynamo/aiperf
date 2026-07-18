@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 
 import type { Page } from "@playwright/test";
 
@@ -170,5 +171,6 @@ export async function writeRuntimeMetricsJson(
   path: string,
   samples: readonly RuntimeFrameSample[],
 ): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
   await writeFile(path, formatRuntimeMetricsJson(samples), "utf8");
 }

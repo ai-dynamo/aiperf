@@ -78,11 +78,15 @@ export class TimelinePlayer {
     timeline: Timeline,
     clock: Clock = new PerformanceClock(),
     onState: (state: TimelineSnapshot) => void = () => undefined,
+    minimumDurationMs = 0,
   ) {
     this.#timeline = timeline;
     this.#clock = clock;
     this.#onState = onState;
-    this.#durationMs = duration(timeline);
+    this.#durationMs = Math.max(
+      duration(timeline),
+      normalizeSceneTimeMs(minimumDurationMs),
+    );
   }
 
   play(): TimelineSnapshot {

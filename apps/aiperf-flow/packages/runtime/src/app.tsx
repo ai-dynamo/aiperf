@@ -34,7 +34,10 @@ import {
 import type { FlowCommand } from "./commands.js";
 import type { DisplayList } from "./display-list.js";
 import { evaluateFrame, type EvaluatedFrame } from "./evaluate/frame.js";
-import { qualityPolicyProfile } from "./evaluate/quality-policy.js";
+import {
+  qualityPolicyProfile,
+  type QualityPolicyProfile,
+} from "./evaluate/quality-policy.js";
 import type {
   EvaluatedScene,
   SemanticProjection,
@@ -346,7 +349,7 @@ function CanvasStage({
   return (
     <canvas
       aria-hidden="true"
-      className="aiperf-flow__canvas aiperf-flow__stage"
+      className="aiperf-flow__canvas"
       data-backend="canvas"
       onPointerDown={(event) => {
         const point = pointerToScene(event.clientX, event.clientY);
@@ -370,6 +373,8 @@ type CausalFieldStageProps = Readonly<{
   focusedEntityId: string | null;
   selectedEntityId: string | null;
   focusWorldEntityId: string | null;
+  fullscreen: ImmersiveState["fullscreen"];
+  quality: QualityPolicyProfile;
   camera: CameraTakeover | null;
   contextLensOpen: boolean;
   twinCompact: boolean;
@@ -391,6 +396,8 @@ function CausalFieldStage({
   focusedEntityId,
   selectedEntityId,
   focusWorldEntityId,
+  fullscreen,
+  quality,
   camera,
   contextLensOpen,
   twinCompact,
@@ -412,29 +419,41 @@ function CausalFieldStage({
       aria-label="Scene field"
       className="aiperf-flow__scene"
       data-backend={preferCanvas ? "canvas" : "svg"}
+      data-depth={quality.depth}
       data-focus-world={focusWorldEntityId === null ? undefined : "true"}
       data-focus-world-entity={focusWorldEntityId ?? undefined}
+      data-fullscreen={fullscreen}
+      data-quality-tier={quality.tier}
+      data-selected-entity-id={selectedEntityId ?? undefined}
+      data-transparency={quality.tier === "reference" ? "full" : "reduced"}
     >
-      {preferCanvas ? (
-        <CanvasStage
-          camera={camera}
-          displayList={evaluated.displayList}
-          onHit={onActivate}
-        />
-      ) : (
-        <div className="aiperf-flow__stage" data-backend="svg">
-          <SvgFallback
+      <div
+        aria-label={focusWorldEntityId === null ? undefined : "Focus World"}
+        className="aiperf-flow__canvas-host"
+        data-entity-id={focusWorldEntityId ?? undefined}
+        role={focusWorldEntityId === null ? undefined : "region"}
+      >
+        {preferCanvas ? (
+          <CanvasStage
+            camera={camera}
             displayList={evaluated.displayList}
-            focusedEntityId={focusedEntityId}
-            onFocusEntity={onFocus}
-            onSelectEntity={onActivate}
-            scene={evaluated}
-            selectedEntityIds={
-              selectedEntityId === null ? [] : [selectedEntityId]
-            }
+            onHit={onActivate}
           />
-        </div>
-      )}
+        ) : (
+          <div className="aiperf-flow__stage" data-backend="svg">
+            <SvgFallback
+              displayList={evaluated.displayList}
+              focusedEntityId={focusedEntityId}
+              onFocusEntity={onFocus}
+              onSelectEntity={onActivate}
+              scene={evaluated}
+              selectedEntityIds={
+                selectedEntityId === null ? [] : [selectedEntityId]
+              }
+            />
+          </div>
+        )}
+      </div>
       <div ref={twinRef as RefObject<HTMLDivElement>}>
         <SemanticTwin
           compact={twinCompact}
@@ -552,6 +571,7 @@ export function FlowApp({
   const rootRef = useRef<HTMLElement | null>(null);
   const twinRegionRef = useRef<HTMLElement | null>(null);
   const previousDisplayListRef = useRef<DisplayList | undefined>(undefined);
+  const previousSceneIndexRef = useRef(sceneIndex);
   const urlAppliedRef = useRef(false);
 
   const scene = scenes[sceneIndex];
@@ -575,6 +595,7 @@ export function FlowApp({
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
   const narratorRef = useRef<NarratorController | null>(null);
+  const narrationCompleteRef = useRef<(() => void) | null>(null);
   const focusCoordinatorRef = useRef<FocusCoordinator | null>(null);
   const immersiveRef = useRef(immersive);
   immersiveRef.current = immersive;
@@ -589,6 +610,9 @@ export function FlowApp({
         }),
       ),
       narratorBackend,
+      {
+        onComplete: () => narrationCompleteRef.current?.(),
+      },
     );
     if (mutedRef.current) {
       controller.setMuted(true);
@@ -609,8 +633,12 @@ export function FlowApp({
             setPlaying(false);
           }
         },
+        causalBeats.reduce(
+          (maximum, beat) => Math.max(maximum, beat.endMs),
+          0,
+        ),
       ),
-    [timeline, clock],
+    [causalBeats, timeline, clock],
   );
 
   useEffect(() => () => {
@@ -623,6 +651,10 @@ export function FlowApp({
   }, [narrator]);
 
   useEffect(() => {
+    if (previousSceneIndexRef.current === sceneIndex) {
+      return;
+    }
+    previousSceneIndexRef.current = sceneIndex;
     setFocusedEntityId(null);
     setExploration(null);
     setCameraTakeover(null);
@@ -673,12 +705,25 @@ export function FlowApp({
   const evaluationTimeMs = exploring
     ? Math.trunc(exploration.authored.playbackTimeMs)
     : Math.trunc(timeMs);
+  const reducedTransparency =
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-transparency: reduce)").matches;
+  const forcedColors =
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(forced-colors: active)").matches;
   const qualityProfile = useMemo(
     () =>
-      qualityPolicyProfile("reference", {
+      qualityPolicyProfile(
+        reducedTransparency || forcedColors ? "degraded" : "reference",
+        {
         motion: reducedMotion ? "reduced" : "full",
-      }),
-    [reducedMotion],
+          contrast: forcedColors ? "high" : "standard",
+          depth: reducedTransparency || forcedColors ? "none" : "full",
+        },
+      ),
+    [forcedColors, reducedMotion, reducedTransparency],
   );
   const narrativeTimeline = useMemo(
     () =>
@@ -891,9 +936,6 @@ export function FlowApp({
   const displayTimeMs = exploring
     ? exploration.authored.playbackTimeMs
     : timeMs;
-  const highlightText = subtitleState.enabled
-    ? (subtitleState.activeCue?.text ?? "")
-    : "";
 
   function applyFocusState(next: {
     focusedEntityId: string | null;
@@ -916,6 +958,15 @@ export function FlowApp({
       setPlaying(false);
     }
   }
+
+  narrationCompleteRef.current = () => {
+    if (sceneIndex < scenes.length - 1) {
+      navigate(sceneIndex + 1);
+      return;
+    }
+    player.pause();
+    setPlaying(false);
+  };
 
   function chooseAudioConsent(choice: AudioConsentChoice): void {
     setAudioConsent(choice);
@@ -1226,6 +1277,32 @@ export function FlowApp({
         },
       });
     }
+    const firstBeat = causalBeats[0];
+    const lastBeat = causalBeats.at(-1);
+    if (firstBeat !== undefined && lastBeat !== undefined) {
+      catalog.push(
+        {
+          id: "navigation:first-beat",
+          label: "First beat",
+          category: "beat",
+          keywords: Object.freeze(["first", "beat", firstBeat.id]),
+          execute: () => {
+            seekBeat(firstBeat.timeMs, firstBeat.id);
+            dispatchImmersive({ type: "close-command" });
+          },
+        },
+        {
+          id: "navigation:last-beat",
+          label: "Last beat",
+          category: "beat",
+          keywords: Object.freeze(["last", "beat", lastBeat.id]),
+          execute: () => {
+            seekBeat(lastBeat.timeMs, lastBeat.id);
+            dispatchImmersive({ type: "close-command" });
+          },
+        },
+      );
+    }
 
     if (twinProjection !== null) {
       for (const entity of twinProjection.entities) {
@@ -1448,6 +1525,7 @@ export function FlowApp({
         evaluated={evaluation.frame.scene}
         focusedEntityId={focusedEntityId}
         focusWorldEntityId={immersive.focusWorldEntityId}
+        fullscreen={immersive.fullscreen}
         onActivate={activateEntity}
         onCloseContext={closeContextLens}
         onFocus={focusEntity}
@@ -1456,6 +1534,7 @@ export function FlowApp({
         onSubtitlesEnabledChange={setSubtitlesEnabled}
         preferCanvas={preferCanvas}
         projection={twinProjection}
+        quality={qualityProfile}
         reducedMotion={reducedMotion}
         selectedEntityId={immersive.selectedEntityId}
         subtitleState={subtitleState}
@@ -1573,13 +1652,6 @@ export function FlowApp({
           role="status"
         >
           {liveAnnouncement}
-        </p>
-        <p
-          aria-atomic="true"
-          aria-live="polite"
-          className="aiperf-flow__narration-highlight"
-        >
-          {highlightText}
         </p>
         <section
           aria-label="Narration transcript"

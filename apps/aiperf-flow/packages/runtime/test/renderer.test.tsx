@@ -24,7 +24,10 @@ const sourceMap = {
   end: { offset: 1, line: 1, column: 2 },
 };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.history.replaceState(null, "", "/");
+});
 
 function scene(): SceneIr {
   return {
@@ -238,7 +241,7 @@ describe("FlowApp", () => {
 
     expect(screen.getByText("Execution scene summary")).not.toBeNull();
     expect(screen.getByText("Execution scene text fallback")).not.toBeNull();
-    expect(screen.getAllByText(/fresh runtime/)).toHaveLength(2);
+    expect(screen.getAllByText(/fresh runtime/)).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Skip to transcript" })).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Next scene" }));

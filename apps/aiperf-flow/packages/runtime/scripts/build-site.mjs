@@ -4,29 +4,38 @@
  */
 
 import { build } from "esbuild";
-import { copyFile, mkdir } from "node:fs/promises";
+import { access, copyFile, mkdir } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const runtimeRoot = path.dirname(fileURLToPath(new URL("..", import.meta.url)));
+const runtimeRoot = fileURLToPath(new URL("../", import.meta.url));
 const flowRoot = path.dirname(path.dirname(runtimeRoot));
-const transformersDist = path.join(
-  flowRoot,
-  "node_modules/@huggingface/transformers/dist",
-);
 const ortWasmName = "ort-wasm-simd-threaded.jsep.wasm";
 const ortMjsName = "ort-wasm-simd-threaded.jsep.mjs";
 const ortOutDir = path.join(runtimeRoot, "dist/narrative");
 
 await mkdir(ortOutDir, { recursive: true });
-await copyFile(
-  path.join(transformersDist, ortWasmName),
-  path.join(ortOutDir, ortWasmName),
-);
-await copyFile(
-  path.join(transformersDist, ortMjsName),
-  path.join(ortOutDir, ortMjsName),
-);
+
+const require = createRequire(path.join(flowRoot, "package.json"));
+let ortDist = null;
+try {
+  ortDist = path.dirname(require.resolve("onnxruntime-web"));
+} catch {
+  console.warn("Skipping ORT asset copy: onnxruntime-web is not installed.");
+}
+
+if (ortDist !== null) {
+  for (const assetName of [ortWasmName, ortMjsName]) {
+    const sourcePath = path.join(ortDist, assetName);
+    try {
+      await access(sourcePath);
+      await copyFile(sourcePath, path.join(ortOutDir, assetName));
+    } catch {
+      console.warn(`Skipping missing ORT asset: ${sourcePath}`);
+    }
+  }
+}
 
 const ortAssetModule = `
 import type { KokoroWasmPaths } from "./kokoro-worker.js";

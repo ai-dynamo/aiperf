@@ -5,7 +5,7 @@
 
 import type { FlowIr, SceneIr } from "@aiperf/flow-schema";
 import { cleanup, fireEvent, render, screen, within, act } from "@testing-library/react";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { FlowApp } from "../src/app.js";
 import type {
@@ -27,6 +27,7 @@ class FakeNarratorBackend implements NarratorBackend {
   readonly available = true;
   readonly spoken: NarratorUtterance[] = [];
   readonly operations: string[] = [];
+  readonly completions = new Map<string, () => void>();
   readonly #voices: readonly NarratorVoice[] = [
     { id: "voice-a", name: "Voice A", language: "en-US", default: true },
   ];
@@ -35,9 +36,12 @@ class FakeNarratorBackend implements NarratorBackend {
     return this.#voices;
   }
 
-  speak(utterance: NarratorUtterance): void {
+  speak(utterance: NarratorUtterance, onComplete?: () => void): void {
     this.spoken.push(utterance);
     this.operations.push(`speak:${utterance.cueId}`);
+    if (onComplete !== undefined) {
+      this.completions.set(utterance.cueId, onComplete);
+    }
   }
 
   pause(): void {
@@ -183,9 +187,13 @@ function flowWith(scenes: readonly SceneIr[]): FlowIr {
   } as unknown as FlowIr;
 }
 
-function runCommand(label: string): void {
+function runCommand(label: string | RegExp): void {
   fireEvent.click(screen.getByRole("button", { name: "Open commands" }));
-  fireEvent.click(screen.getByRole("option", { name: label }));
+  fireEvent.click(
+    screen.getByRole("option", {
+      name: typeof label === "string" ? new RegExp(label, "i") : label,
+    }),
+  );
 }
 
 describe("FlowApp narrative synchronization", () => {
@@ -246,6 +254,40 @@ describe("FlowApp narrative synchronization", () => {
       "dispatch",
       "observe",
     ]);
+  });
+
+  test("advances after voice completion and stops on the final scene", async () => {
+    const backend = new FakeNarratorBackend();
+    const second = {
+      ...legacyScene(),
+      id: "second",
+      title: "Second scene",
+      narration: "The final scene narration.",
+    };
+    render(
+      <FlowApp
+        flow={flowWith([legacyScene(), second])}
+        forceSvgFallback
+        narratorBackend={backend}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    act(() => {
+      backend.completions.get("execution:narration")?.();
+    });
+
+    await screen.findByRole("heading", { name: "Second scene" });
+    await vi.waitFor(() =>
+      expect(backend.completions.has("second:narration")).toBe(true),
+    );
+
+    act(() => {
+      backend.completions.get("second:narration")?.();
+    });
+
+    expect(screen.getByRole("heading", { name: "Second scene" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Play" })).toBeTruthy();
   });
 
   test("keeps the full transcript panel while showing only the active subtitle cue", () => {

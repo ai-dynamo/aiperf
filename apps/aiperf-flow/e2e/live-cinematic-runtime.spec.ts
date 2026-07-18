@@ -18,6 +18,7 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   clearRuntimeMetrics,
   collectRuntimeMetrics,
+  writeRuntimeMetricsJson,
 } from "./helpers/runtime-metrics.js";
 
 const execFileAsync = promisify(execFile);
@@ -185,7 +186,6 @@ async function openCinematicRuntime(
   await expect(
     page.getByRole("region", { name: "Immersive controls" }),
   ).toBeVisible();
-  await expect(page.getByRole("region", { name: "Scene stage" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Semantic outline" })).toBeVisible();
   await expect(page.locator('input[type="range"]')).toHaveCount(0);
 }
@@ -216,7 +216,7 @@ async function cinematicBrowserSnapshot(
   const activeBeat = page
     .getByRole("navigation", { name: "Causal path" })
     .locator('[aria-current="step"]');
-  const stage = page.getByRole("region", { name: "Scene stage" });
+  const stage = page.getByRole("region", { name: "Scene field" });
   const subtitles = page.getByRole("region", { name: "Subtitles" });
 
   return {
@@ -269,7 +269,7 @@ test.describe("live cinematic runtime", () => {
       const semantics = await semanticSnapshot(page);
       referenceSemantics ??= semantics;
       expect(semantics).toEqual(referenceSemantics);
-      await expect(page.getByRole("region", { name: "Playback controls" })).toBeVisible();
+      await expect(page.getByRole("region", { name: "Immersive controls" })).toBeVisible();
       await expect(page.getByRole("region", { name: "Narration transcript" })).toBeVisible();
       await expect(page.locator('[data-backend="canvas"]').first()).toBeVisible();
     }
@@ -338,7 +338,7 @@ test.describe("live cinematic runtime", () => {
   }) => {
     await openCinematicRuntime(page, { canvas: false });
 
-    await expect(page.getByRole("region", { name: "Scene stage" })).toHaveAttribute(
+    await expect(page.getByRole("region", { name: "Scene field" })).toHaveAttribute(
       "data-backend",
       "svg",
     );
@@ -359,7 +359,7 @@ test.describe("live cinematic runtime", () => {
     await admission.focus();
     await page.keyboard.press("Enter");
     await expect(admission).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByRole("region", { name: "Playback controls" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Immersive controls" })).toBeVisible();
     await expect(
       page.getByRole("region", { name: "Narration transcript" }),
     ).toBeVisible();
@@ -382,7 +382,10 @@ test.describe("live cinematic runtime", () => {
     const directState = await cinematicBrowserSnapshot(page);
     expect(directState.activeBeatId).toBe(targetBeatId);
 
-    await page.getByRole("button", { name: "Restart" }).click();
+    await page.getByRole("button", { name: "Open commands" }).click();
+    const commands = page.getByRole("dialog", { name: "Command Constellation" });
+    await commands.getByRole("searchbox", { name: "Search commands" }).fill("Restart");
+    await commands.getByRole("option", { name: /Restart$/u }).click();
     await page.getByRole("button", { name: "Play", exact: true }).click();
     await expect
       .poll(async () =>
@@ -422,6 +425,10 @@ test.describe("live cinematic runtime", () => {
     await page.getByRole("button", { name: "Play", exact: true }).click();
     const samples = await collectRuntimeMetrics(page, { sampleCount: 2 });
     await page.getByRole("button", { name: "Pause", exact: true }).click();
+    await writeRuntimeMetricsJson(
+      join(flowRoot, "test-results", "runtime-metrics.json"),
+      samples,
+    );
 
     expect(samples).toHaveLength(2);
     for (const sample of samples) {

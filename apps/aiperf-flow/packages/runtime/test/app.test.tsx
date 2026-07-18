@@ -25,6 +25,7 @@ const sourceMap = {
 
 afterEach(() => {
   cleanup();
+  window.history.replaceState(null, "", "/");
   vi.restoreAllMocks();
 });
 
@@ -421,8 +422,16 @@ describe("FlowApp cinematic mount", () => {
       />,
     );
 
-    expect(screen.getByText("Execution scene summary")).not.toBeNull();
-    expect(screen.getByText("Execution scene text fallback")).not.toBeNull();
+    expect(
+      within(screen.getByRole("status", { name: "Scene fallback" })).getByText(
+        "Execution scene summary",
+      ),
+    ).not.toBeNull();
+    expect(
+      within(screen.getByRole("status", { name: "Scene fallback" })).getByText(
+        "Execution scene text fallback",
+      ),
+    ).not.toBeNull();
     expect(screen.queryByRole("region", { name: "Semantic outline" })).toBeNull();
     expect(screen.queryByRole("region", { name: "Scene field" })).toBeNull();
 

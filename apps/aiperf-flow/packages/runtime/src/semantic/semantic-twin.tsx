@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 
 import type {
   SemanticEntityProjection,
@@ -77,6 +77,32 @@ export function SemanticTwin({
 }: SemanticTwinProps): ReactNode {
   const entities = orderedEntities(projection);
 
+  function moveEntityFocus(
+    event: KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ): void {
+    const lastIndex = entities.length - 1;
+    const targetIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? lastIndex
+          : event.key === "ArrowDown" || event.key === "ArrowRight"
+            ? Math.min(index + 1, lastIndex)
+            : event.key === "ArrowUp" || event.key === "ArrowLeft"
+              ? Math.max(index - 1, 0)
+              : null;
+    if (targetIndex === null || targetIndex === index) {
+      return;
+    }
+    event.preventDefault();
+    const buttons =
+      event.currentTarget
+        .closest("ol")
+        ?.querySelectorAll<HTMLButtonElement>("button[data-entity-id]") ?? [];
+    buttons[targetIndex]?.focus();
+  }
+
   return (
     <section
       aria-label="Semantic outline"
@@ -89,7 +115,7 @@ export function SemanticTwin({
       data-scene-id={projection.sceneId}
     >
       <ol aria-label="Entities" className="aiperf-flow__semantic-entities">
-        {entities.map((entity) => {
+        {entities.map((entity, index) => {
           const selected = selectedEntityId === entity.id;
           const focused = focusedEntityId === entity.id;
           return (
@@ -110,7 +136,10 @@ export function SemanticTwin({
                 data-selected={selected ? "true" : "false"}
                 onClick={() => onActivate(entity.id)}
                 onFocus={() => onFocus(entity.id)}
-                tabIndex={focused ? 0 : -1}
+                onKeyDown={(event) => moveEntityFocus(event, index)}
+                tabIndex={
+                  focused || (focusedEntityId === null && index === 0) ? 0 : -1
+                }
                 type="button"
               >
                 {entity.label}

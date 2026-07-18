@@ -30,7 +30,7 @@ export type NarratorUtterance = Readonly<{
 export interface NarratorBackend {
   readonly available: boolean;
   voices(): readonly NarratorVoice[];
-  speak(utterance: NarratorUtterance): void;
+  speak(utterance: NarratorUtterance, onComplete?: () => void): void;
   pause(): void;
   resume(): void;
   cancel(): void;
@@ -46,6 +46,11 @@ export type NarratorSnapshot = Readonly<{
   muted: boolean;
   rate: number;
   voiceId: string | null;
+}>;
+
+/** Optional lifecycle hooks emitted by a narrator controller. */
+export type NarratorControllerOptions = Readonly<{
+  onComplete?: () => void;
 }>;
 
 function sceneTimeMs(value: number): number {
@@ -102,6 +107,7 @@ function firstCueAtOrAfter(
 export class NarratorController {
   readonly #cues: readonly NarrationCue[];
   readonly #backend: NarratorBackend;
+  readonly #onComplete: (() => void) | null;
   #timeMs = 0;
   #nextCueIndex = 0;
   #activeCueId: string | null = null;
@@ -110,9 +116,14 @@ export class NarratorController {
   #rate = 1;
   #voiceId: string | null = null;
 
-  constructor(cues: readonly NarrationCue[], backend: NarratorBackend) {
+  constructor(
+    cues: readonly NarrationCue[],
+    backend: NarratorBackend,
+    options: NarratorControllerOptions = {},
+  ) {
     this.#cues = canonicalCues(cues);
     this.#backend = backend;
+    this.#onComplete = options.onComplete ?? null;
   }
 
   /** Starts narration at the current or supplied scene beat. */
@@ -266,7 +277,19 @@ export class NarratorController {
           rate: this.#rate,
           voiceId: this.#voiceId,
         }),
+        () => this.#completeCue(cue.id),
       );
+    }
+  }
+
+  #completeCue(cueId: string): void {
+    if (this.#status !== "playing" || this.#activeCueId !== cueId) {
+      return;
+    }
+    this.#activeCueId = null;
+    if (this.#nextCueIndex >= this.#cues.length) {
+      this.#status = "stopped";
+      this.#onComplete?.();
     }
   }
 }
@@ -284,6 +307,7 @@ export type SpeechSynthesisUtterancePort = {
   rate: number;
   lang: string;
   voice: SpeechSynthesisVoicePort | null;
+  onend: (() => void) | null;
 };
 
 /** Browser speech APIs accepted as an injectable platform boundary. */
@@ -310,8 +334,13 @@ class BrowserSpeechSynthesisBackend implements NarratorBackend {
   readonly available = true;
   readonly #platform: SpeechSynthesisPlatform;
   readonly #scheduleSpeak: (run: () => void) => () => void;
-  #pending: NarratorUtterance | null = null;
+  #pending: Readonly<{
+    request: NarratorUtterance;
+    onComplete: (() => void) | undefined;
+    generation: number;
+  }> | null = null;
   #cancelScheduled: (() => void) | null = null;
+  #generation = 0;
 
   constructor(platform: SpeechSynthesisPlatform) {
     this.#platform = platform;
@@ -336,8 +365,9 @@ class BrowserSpeechSynthesisBackend implements NarratorBackend {
     );
   }
 
-  speak(request: NarratorUtterance): void {
-    this.#pending = request;
+  speak(request: NarratorUtterance, onComplete?: () => void): void {
+    const generation = ++this.#generation;
+    this.#pending = Object.freeze({ request, onComplete, generation });
     this.#cancelScheduled?.();
     this.#cancelScheduled = this.#scheduleSpeak(() => {
       this.#cancelScheduled = null;
@@ -346,7 +376,7 @@ class BrowserSpeechSynthesisBackend implements NarratorBackend {
       if (pending === null) {
         return;
       }
-      this.#speakNow(pending);
+      this.#speakNow(pending.request, pending.onComplete, pending.generation);
     });
   }
 
@@ -359,19 +389,31 @@ class BrowserSpeechSynthesisBackend implements NarratorBackend {
   }
 
   cancel(): void {
+    this.#generation += 1;
     this.#pending = null;
     this.#cancelScheduled?.();
     this.#cancelScheduled = null;
     this.#platform.synthesis.cancel();
   }
 
-  #speakNow(request: NarratorUtterance): void {
+  #speakNow(
+    request: NarratorUtterance,
+    onComplete: (() => void) | undefined,
+    generation: number,
+  ): void {
     const voices = this.#platform.synthesis.getVoices();
     const voice = resolveBrowserSpeechVoice(voices, request.voiceId);
     const utterance = new this.#platform.Utterance(request.text);
     utterance.rate = request.rate;
     utterance.lang = voice?.lang ?? PREFERRED_BROWSER_VOICE_LANG;
     utterance.voice = voice;
+    utterance.onend = () => {
+      if (generation !== this.#generation) {
+        return;
+      }
+      this.#generation += 1;
+      onComplete?.();
+    };
     this.#platform.synthesis.speak(utterance);
   }
 }

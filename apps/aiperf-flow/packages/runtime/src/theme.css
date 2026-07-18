@@ -32,6 +32,7 @@
   --flow-safe-right: max(1rem, env(safe-area-inset-right, 0px));
   --flow-safe-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
   --flow-safe-left: max(1rem, env(safe-area-inset-left, 0px));
+  --flow-hud-stack-clearance: 8.5rem;
   box-sizing: border-box;
   min-width: 0;
   min-height: 100vh;
@@ -91,10 +92,25 @@
   max-height: none;
 }
 
-.aiperf-flow__canvas {
+.aiperf-flow__canvas-host {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   height: 100%;
-  max-height: none;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.aiperf-flow__canvas {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
   cursor: crosshair;
   touch-action: none;
 }
@@ -111,11 +127,13 @@
   position: absolute;
   z-index: 5;
   inset-block-start: var(--flow-safe-top);
-  inset-inline: var(--flow-safe-left) auto;
-  display: flex;
+  inset-inline: var(--flow-safe-left)
+    calc(var(--flow-safe-right) + min(22rem, 31vw));
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) auto auto;
   align-items: flex-start;
   gap: 1rem;
-  max-width: min(44rem, calc(100% - var(--flow-safe-left) - var(--flow-safe-right)));
+  max-width: none;
   padding: 0;
   pointer-events: none;
 }
@@ -238,6 +256,17 @@
   transform: translateY(0);
 }
 
+.aiperf-flow__live-region {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .aiperf-flow__controls output,
 .aiperf-flow__immersive-controls output {
   margin-inline: 0.35rem;
@@ -252,24 +281,52 @@
   z-index: 6;
   inset-inline: var(--flow-safe-left) var(--flow-safe-right);
   inset-block-end: calc(var(--flow-safe-bottom) + 4.25rem);
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(6rem, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 0;
   max-width: 72rem;
   margin-inline: auto;
   padding: 0;
-  list-style: none;
   border-block: 1px solid var(--flow-guide);
 }
 
-.aiperf-flow__causal-path ol,
-.aiperf-flow__causal-path ul {
-  display: contents;
+.aiperf-flow__causal-beats {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+.aiperf-flow__causal-path li {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.aiperf-flow__causal-path-label,
+.aiperf-flow__causal-beat-description {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .aiperf-flow__causal-beat {
   position: relative;
-  min-width: 0;
+  flex: 0 0 auto;
+  width: clamp(6.5rem, 12vw, 11rem);
+  min-width: 6.5rem;
+  max-width: 11rem;
   min-height: 2.75rem;
   padding: 0.55rem 0.65rem;
   overflow: hidden;
@@ -314,8 +371,13 @@
 .aiperf-flow__inspector {
   align-self: stretch;
   width: min(22rem, 31vw);
-  max-height: calc(100dvh - var(--flow-safe-top) - var(--flow-safe-bottom));
-  margin: var(--flow-safe-top) var(--flow-safe-right) var(--flow-safe-bottom) 0;
+  max-height: calc(
+    100dvh - var(--flow-safe-top) - var(--flow-safe-bottom) -
+      var(--flow-hud-stack-clearance)
+  );
+  margin:
+    var(--flow-safe-top) var(--flow-safe-right)
+    calc(var(--flow-safe-bottom) + var(--flow-hud-stack-clearance)) 0;
   padding: 1rem;
   overflow: auto;
   overscroll-behavior: contain;
@@ -330,7 +392,9 @@
 .aiperf-flow__context-lens {
   position: absolute;
   z-index: 8;
-  inset-block: var(--flow-safe-top) var(--flow-safe-bottom);
+  inset-block:
+    var(--flow-safe-top)
+    calc(var(--flow-safe-bottom) + var(--flow-hud-stack-clearance));
   inset-inline: auto var(--flow-safe-right);
   height: auto;
   margin: 0;
@@ -473,8 +537,19 @@
   background: var(--flow-board);
 }
 
-.aiperf-flow__narration-highlight,
-.aiperf-flow__transcript {
+.aiperf-flow__live-region {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.aiperf-flow__narration-highlight {
   position: relative;
   z-index: 4;
   max-width: min(72ch, calc(100% - var(--flow-safe-left) - var(--flow-safe-right)));
@@ -494,13 +569,33 @@
 
 .aiperf-flow__transcript {
   position: absolute;
-  z-index: 7;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.aiperf-flow__transcript:target,
+.aiperf-flow__transcript:focus {
+  z-index: 9;
   inset-inline: auto var(--flow-safe-right);
-  inset-block: auto var(--flow-safe-bottom);
+  inset-block: var(--flow-safe-top) auto;
   width: min(32rem, calc(100% - var(--flow-safe-left) - var(--flow-safe-right)));
+  height: auto;
   max-height: min(34dvh, 20rem);
   margin: 0;
+  padding: 0.75rem 1rem;
   overflow: auto;
+  clip-path: none;
+  white-space: normal;
+  border: var(--flow-stroke) solid var(--flow-guide);
+  border-inline-start-color: var(--flow-signal);
+  border-radius: var(--flow-radius);
+  color: var(--flow-chalk-muted);
+  background: var(--flow-panel);
 }
 
 .aiperf-flow__transcript h2 {
@@ -608,12 +703,26 @@
   .aiperf-flow {
     --flow-safe-right: max(0.65rem, env(safe-area-inset-right, 0px));
     --flow-safe-left: max(0.65rem, env(safe-area-inset-left, 0px));
+    --flow-hud-stack-clearance: 12rem;
   }
 
   .aiperf-flow__header {
     inset-inline-end: var(--flow-safe-right);
-    justify-content: space-between;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.45rem 0.75rem;
     max-width: none;
+  }
+
+  .aiperf-flow__header > div {
+    min-width: 0;
+  }
+
+  .aiperf-flow__header output {
+    justify-self: end;
+    color: var(--flow-chalk-muted);
+    font-family: var(--flow-font-data);
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
   }
 
   .aiperf-flow__header h1 {
@@ -626,6 +735,7 @@
   }
 
   .aiperf-flow__navigation {
+    grid-column: 1 / -1;
     flex-wrap: nowrap;
   }
 
@@ -638,8 +748,7 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .aiperf-flow__stage,
-  .aiperf-flow__canvas {
+  .aiperf-flow__stage {
     min-height: 100dvh;
   }
 
@@ -669,26 +778,41 @@
   }
 
   .aiperf-flow__causal-path {
-    grid-template-columns: repeat(auto-fit, minmax(4.75rem, 1fr));
     inset-block-end: calc(var(--flow-safe-bottom) + 4.1rem);
-    overflow-x: auto;
   }
 
   .aiperf-flow__causal-beat {
-    min-width: 4.75rem;
+    width: clamp(5.5rem, 18vw, 9rem);
+    min-width: 5.5rem;
+    max-width: 9rem;
     padding-inline: 0.5rem;
     font-size: 0.65rem;
   }
 
   .aiperf-flow__semantic-twin,
-  .aiperf-flow__semantic-twin--compact,
   .aiperf-flow__context-lens,
   .aiperf-flow__inspector {
-    inset-block: auto calc(var(--flow-safe-bottom) + 4.25rem);
+    position: absolute;
+    z-index: 7;
+    inset-block:
+      auto
+      calc(var(--flow-safe-bottom) + var(--flow-hud-stack-clearance));
     inset-inline: var(--flow-safe-left) var(--flow-safe-right);
     width: auto;
-    max-height: min(44dvh, 22rem);
+    max-height: min(30dvh, 16rem);
     margin: 0;
+  }
+
+  .aiperf-flow__semantic-twin--compact {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
   }
 
   .aiperf-flow__narration-highlight {
@@ -699,9 +823,10 @@
     font-size: 0.85rem;
   }
 
-  .aiperf-flow__transcript {
+  .aiperf-flow__transcript:target,
+  .aiperf-flow__transcript:focus {
     inset-inline: var(--flow-safe-left) var(--flow-safe-right);
-    inset-block-end: calc(var(--flow-safe-bottom) + 4.25rem);
+    inset-block: var(--flow-safe-top) auto;
     width: auto;
     max-height: min(38dvh, 18rem);
   }

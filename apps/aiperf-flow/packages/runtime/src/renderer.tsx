@@ -8,6 +8,7 @@ import {
   type SceneIr,
 } from "@aiperf/flow-schema";
 import {
+  Fragment,
   type CSSProperties,
   type ReactNode,
   useEffect,
@@ -375,7 +376,9 @@ export function SceneRenderer({
 
   const stage = measureRuntimePhase("total", () => {
     const roots = measureRuntimePhase("evaluation", () =>
-      renderTree.map(renderNode),
+      renderTree.map((node) => (
+        <Fragment key={nodeId(node)}>{renderNode(node)}</Fragment>
+      )),
     );
     return measureRuntimePhase("draw", () => (
       <div className="aiperf-flow__scene">

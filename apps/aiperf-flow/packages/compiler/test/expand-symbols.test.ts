@@ -200,8 +200,8 @@ describe("expandSymbolInvocations", () => {
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          code: "PROP_TYPE_MISMATCH",
-          message: expect.stringContaining("theme role"),
+          code: "SYMBOL_INVALID_THEME_REFERENCE",
+          message: expect.stringContaining('"ink.primary"'),
         }),
       ]),
     );

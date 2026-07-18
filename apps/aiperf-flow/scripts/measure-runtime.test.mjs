@@ -117,7 +117,10 @@ test("summarizeRuntimeMeasurements rejects non-finite and empty input", () => {
       }),
     /NaN|finite|Invalid/,
   );
-  assert.throws(() => summarizeRuntimeMeasurements({ samples: [] }), /at least|min|Invalid/i);
+  assert.throws(
+    () => summarizeRuntimeMeasurements({ samples: [] }),
+    /at least|min|Invalid|Too small/i,
+  );
   assert.throws(
     () =>
       summarizeRuntimeMeasurements({

@@ -126,7 +126,9 @@ test("Play without audio starts muted playback", async () => {
   expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Open commands" }));
   await vi.waitFor(() => {
-    expect(screen.getByRole("option", { name: "Unmute narration" })).toBeTruthy();
+    expect(
+      screen.getByRole("option", { name: /Unmute narration/i }),
+    ).toBeTruthy();
   });
 });
 

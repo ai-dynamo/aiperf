@@ -67,6 +67,12 @@ export type KokoroNarratorOptions = Readonly<{
 type ActiveRequest = Readonly<{
   requestId: string;
   utterance: NarratorUtterance;
+  onComplete: (() => void) | undefined;
+}>;
+
+type QueuedRequest = Readonly<{
+  utterance: NarratorUtterance;
+  onComplete: (() => void) | undefined;
 }>;
 
 type PendingAudio = Readonly<{
@@ -143,7 +149,7 @@ export class KokoroNarratorBackend implements NarratorBackend {
   readonly #webGpuAvailable: () => boolean | Promise<boolean>;
   readonly #workerSupported: boolean;
   readonly #listeners = new Set<(state: KokoroNarratorSnapshot) => void>();
-  readonly #queue: NarratorUtterance[] = [];
+  readonly #queue: QueuedRequest[] = [];
   #state: KokoroNarratorSnapshot = Object.freeze({
     status: "idle",
     engine: null,
@@ -263,15 +269,15 @@ export class KokoroNarratorBackend implements NarratorBackend {
     }
   }
 
-  speak(utterance: NarratorUtterance): void {
+  speak(utterance: NarratorUtterance, onComplete?: () => void): void {
     if (!this.#modelReady && this.#fallback?.available === true) {
       this.#fallbackOwnsCue = true;
-      this.#fallback.speak(utterance);
+      this.#fallback.speak(utterance, onComplete);
       void this.prewarm().catch(() => undefined);
       return;
     }
     this.#fallbackOwnsCue = false;
-    this.#queue.push(utterance);
+    this.#queue.push(Object.freeze({ utterance, onComplete }));
     void this.prewarm()
       .then(() => this.#pump())
       .catch(() => undefined);
@@ -456,7 +462,12 @@ export class KokoroNarratorBackend implements NarratorBackend {
     const pending = [
       ...(this.#activeRequest === null
         ? []
-        : [this.#activeRequest.utterance]),
+        : [
+            Object.freeze({
+              utterance: this.#activeRequest.utterance,
+              onComplete: this.#activeRequest.onComplete,
+            }),
+          ]),
       ...this.#queue,
     ];
     this.#activeRequest = null;
@@ -472,8 +483,8 @@ export class KokoroNarratorBackend implements NarratorBackend {
       });
       this.#resolvePrewarm?.();
       this.#clearPrewarmSettlement();
-      for (const utterance of pending) {
-        this.#fallback.speak(utterance);
+      for (const request of pending) {
+        this.#fallback.speak(request.utterance, request.onComplete);
       }
       return;
     }
@@ -496,27 +507,28 @@ export class KokoroNarratorBackend implements NarratorBackend {
     ) {
       return;
     }
-    const utterance = this.#queue.shift();
-    if (utterance === undefined) {
+    const queued = this.#queue.shift();
+    if (queued === undefined) {
       return;
     }
     const request = Object.freeze({
-      requestId: `${utterance.cueId}:${++this.#requestSequence}`,
-      utterance,
+      requestId: `${queued.utterance.cueId}:${++this.#requestSequence}`,
+      utterance: queued.utterance,
+      onComplete: queued.onComplete,
     });
     this.#activeRequest = request;
     this.#update({
       status: "generating",
-      activeCueId: utterance.cueId,
+      activeCueId: queued.utterance.cueId,
       error: null,
     });
     this.#worker?.postMessage({
       type: "synthesize",
       requestId: request.requestId,
-      cueId: utterance.cueId,
-      text: utterance.text,
-      voiceId: utterance.voiceId,
-      rate: utterance.rate,
+      cueId: queued.utterance.cueId,
+      text: queued.utterance.text,
+      voiceId: queued.utterance.voiceId,
+      rate: queued.utterance.rate,
     });
   }
 
@@ -560,11 +572,13 @@ export class KokoroNarratorBackend implements NarratorBackend {
       }
       this.#source = null;
       this.#pendingAudio = null;
+      const completed = this.#activeRequest;
       this.#activeRequest = null;
       this.#update({
         status: "ready",
         activeCueId: null,
       });
+      completed?.onComplete?.();
       this.#pump();
     };
     this.#source = source;

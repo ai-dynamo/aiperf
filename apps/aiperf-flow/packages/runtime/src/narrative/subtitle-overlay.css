@@ -15,7 +15,7 @@
   position: absolute;
   inset-inline: max(5%, env(safe-area-inset-left))
     max(5%, env(safe-area-inset-right));
-  inset-block-end: max(7%, calc(env(safe-area-inset-bottom) + 1rem));
+  inset-block-end: calc(var(--flow-safe-bottom, 0.75rem) + 8rem);
   display: flex;
   justify-content: center;
 }
@@ -52,7 +52,7 @@
 
 .aiperf-flow .aiperf-flow__subtitle-control {
   position: absolute;
-  inset-block-start: max(0.75rem, env(safe-area-inset-top));
+  inset-block-start: var(--flow-safe-top, max(0.75rem, env(safe-area-inset-top)));
   inset-inline-end: max(0.75rem, env(safe-area-inset-right));
   min-width: 2.75rem;
   color: var(--flow-subtitle-ink);
@@ -101,10 +101,14 @@
 }
 
 @media (width < 720px) {
+  .aiperf-flow .aiperf-flow__subtitle-control {
+    inset-block-start: calc(var(--flow-safe-top, 0.75rem) + 4.5rem);
+  }
+
   .aiperf-flow__subtitle-safe-area {
     inset-inline: max(0.75rem, env(safe-area-inset-left))
       max(0.75rem, env(safe-area-inset-right));
-    inset-block-end: max(4.5%, calc(env(safe-area-inset-bottom) + 0.65rem));
+    inset-block-end: calc(var(--flow-safe-bottom, 0.75rem) + 7.5rem);
   }
 
   .aiperf-flow__subtitle-cue {

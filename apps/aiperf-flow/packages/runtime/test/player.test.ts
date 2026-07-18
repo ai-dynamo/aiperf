@@ -114,6 +114,18 @@ describe("TimelinePlayer", () => {
     expect(final.targets.spawn?.progress).toBe(1);
   });
 
+  test("extends playback through narrative content beyond the visual timeline", () => {
+    const player = new TimelinePlayer(
+      timeline,
+      new ManualClock(),
+      () => undefined,
+      2_400,
+    );
+
+    expect(player.seek(Number.POSITIVE_INFINITY).timeMs).toBe(2_400);
+    expect(player.finalState().complete).toBe(true);
+  });
+
   test("clamps invalid seek values to finite timeline bounds", () => {
     const player = new TimelinePlayer(timeline, new ManualClock());
 

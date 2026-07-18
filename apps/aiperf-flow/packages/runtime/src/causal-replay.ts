@@ -57,11 +57,14 @@ function freezeBeat(beat: CausalBeat): CausalBeat {
 export function projectCausalBeats(scene: SceneIr): readonly CausalBeat[] {
   const projected: OrderedCausalBeat[] = [];
   const projectedIds = new Set<string>();
+  const timelineIds = new Set<string>();
+  const narrativeIds = new Set<string>();
 
   scene.timeline.forEach((cue, authoredOrder) => {
-    if (projectedIds.has(cue.id)) {
-      return;
+    if (timelineIds.has(cue.id)) {
+      throw new Error(`Duplicate timeline causal beat id "${cue.id}".`);
     }
+    timelineIds.add(cue.id);
     const endMs = checkedEndMs(cue.at, cue.duration, `Timeline cue "${cue.id}"`);
     projectedIds.add(cue.id);
     projected.push({
@@ -78,6 +81,10 @@ export function projectCausalBeats(scene: SceneIr): readonly CausalBeat[] {
   });
 
   scene.narrativeTrack?.cues.forEach((cue, narrativeOrder) => {
+    if (narrativeIds.has(cue.id)) {
+      throw new Error(`Duplicate narrative causal beat id "${cue.id}".`);
+    }
+    narrativeIds.add(cue.id);
     if (projectedIds.has(cue.id)) {
       return;
     }
@@ -120,9 +127,16 @@ export function activeCausalBeat(
   timeMs: number,
 ): CausalBeat | null {
   assertTime(timeMs, "Causal replay time");
-  return (
-    beats.find((beat) => causalBeatState(beat, timeMs) === "active") ?? null
-  );
+  let active: CausalBeat | null = null;
+  for (const beat of beats) {
+    if (
+      causalBeatState(beat, timeMs) === "active" &&
+      (active === null || beat.timeMs > active.timeMs)
+    ) {
+      active = beat;
+    }
+  }
+  return active;
 }
 
 /** Derives one causal beat's state at a virtual timestamp. */

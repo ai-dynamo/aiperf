@@ -8,6 +8,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { App } from "./App";
+import { previewNavigation, previewScene } from "./fixture";
 
 afterEach(cleanup);
 
@@ -29,6 +30,64 @@ beforeEach(() => {
 });
 
 describe("immersive preview host", () => {
+  test("opens on the real hub-and-spoke request investigation scene", () => {
+    const navigation = previewNavigation();
+    const scene = previewScene();
+
+    expect(navigation.active).toMatchObject({
+      flowId: "request-flow",
+      sceneId: "request-investigation",
+    });
+    expect(scene.title).toBe("What made this slow?");
+    expect(scene.accessibility.readingOrder).toHaveLength(15);
+
+    const { container } = render(<App />);
+    expect(container.querySelector('[data-preview-layout="hub-spoke"]')).toBeTruthy();
+    expect(screen.getByText("AIPerf Flow · Scene study 02")).toBeTruthy();
+    expect(
+      screen.getByRole("heading", {
+        name: "From one request to the whole system",
+      }),
+    ).toBeTruthy();
+    expect(screen.getByText("SYSTEMS CHALK")).toBeTruthy();
+
+    const sceneOutput = screen.getByRole("img", {
+      name: /What made this slow\?/iu,
+    });
+    for (const label of [
+      "1. Prompt enters the gateway",
+      "2. Admission queues the work",
+      "3. Prefix cache is consulted",
+      "4. Prefill claims compute",
+      "5. Decode streams tokens",
+      "6. Telemetry supplies evidence",
+      "7. The causal path resolves",
+    ]) {
+      expect(sceneOutput.getAttribute("aria-label")).toContain(label);
+    }
+  });
+
+  test("authors a narrow single-column scene variant without visible wires", () => {
+    const scene = previewScene();
+    const narrow = scene.responsive.find(
+      (variant) => variant.condition === "(max-width: 860px)",
+    );
+
+    expect(narrow).toBeDefined();
+    const cards = narrow?.roots.filter(
+      (node) =>
+        node.kind === "group" &&
+        node.id !== "request-hub",
+    );
+    expect(cards).toHaveLength(7);
+    expect(new Set(cards?.map((node) => node.geometry.x))).toEqual(new Set([34]));
+    expect(
+      narrow?.roots
+        .filter((node) => node.kind === "connector")
+        .every((node) => node.style.strokeWidth === 0),
+    ).toBe(true);
+  });
+
   test("mounts one shared Causal Field without legacy player chrome", () => {
     const { container } = render(<App />);
 
@@ -60,7 +119,7 @@ describe("immersive preview host", () => {
 
     expect(
       screen.getByRole("dialog", {
-        name: "Jump to a scene, beat, entity, or action",
+        name: "Command Constellation",
       }),
     ).toBeTruthy();
   });

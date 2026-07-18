@@ -43,3 +43,4 @@ export * from "./semantic/focus-coordinator.js";
 export * from "./semantic/fallback-table.js";
 export * from "./semantic/semantic-twin.js";
 export * from "./store.js";
+export * from "./theme/index.js";

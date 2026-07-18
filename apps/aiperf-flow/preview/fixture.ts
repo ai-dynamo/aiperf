@@ -6,6 +6,8 @@ import {
   parseSceneIr,
   type CapabilityRequirement,
   type FlowIr,
+  type GeometryIr,
+  type RenderNodeIr,
   type SceneIr,
 } from "../packages/schema/src/ir.js";
 import type { SourceRange } from "../packages/schema/src/source.js";
@@ -25,6 +27,20 @@ function sourceMapFor(source: string): SourceRange {
 const requestSourceMap = sourceMapFor(REQUEST_SOURCE);
 const architectureSourceMap = sourceMapFor(ARCHITECTURE_SOURCE);
 const endpointSourceMap = sourceMapFor(ENDPOINT_SOURCE);
+
+const SYSTEMS_CHALK = {
+  canvas: "#181b1d",
+  panel: "#24282b",
+  ink: "#f2eee3",
+  muted: "#9da6aa",
+  guide: "#596266",
+  cyan: "#65d9de",
+  blue: "#74a9ff",
+  violet: "#9b72ff",
+  amber: "#f6bd60",
+  coral: "#f58b76",
+  green: "#72d6a2",
+} as const;
 
 const FOUNDATION_CAPABILITY_REQUIREMENTS: readonly CapabilityRequirement[] = [
   { id: "core.connector", range: "^1.0.0" },
@@ -167,6 +183,436 @@ function stubScene(input: {
     },
     fallback: input.fallback,
     sourceMap: input.sourceMap,
+  });
+}
+
+type PreviewNodeInput = Readonly<{
+  id: string;
+  geometry: GeometryIr;
+  label: string;
+  description?: string;
+  fallback?: string;
+}>;
+
+function previewRect(
+  input: PreviewNodeInput,
+  fill: string,
+  stroke: string,
+  strokeWidth = 1,
+): RenderNodeIr {
+  return {
+    kind: "rect",
+    id: input.id,
+    geometry: input.geometry,
+    style: { fill, stroke, strokeWidth },
+    accessibility: {
+      label: input.label,
+      ...(input.description === undefined
+        ? {}
+        : { description: input.description }),
+    },
+    fallback: input.fallback ?? input.label,
+    sourceMap: requestSourceMap,
+  };
+}
+
+function previewText(
+  input: PreviewNodeInput & Readonly<{ text: string }>,
+  fill: string,
+  fontSize: number,
+  fontWeight = 500,
+  fontFamily = "Inter, ui-sans-serif, system-ui, sans-serif",
+): RenderNodeIr {
+  return {
+    kind: "text",
+    id: input.id,
+    geometry: input.geometry,
+    text: input.text,
+    style: { fill, fontFamily, fontSize, fontWeight },
+    accessibility: {
+      label: input.label,
+      ...(input.description === undefined
+        ? {}
+        : { description: input.description }),
+    },
+    fallback: input.fallback ?? input.text,
+    sourceMap: requestSourceMap,
+  };
+}
+
+type EvidenceCard = Readonly<{
+  number: number;
+  id: string;
+  title: string;
+  detail: string;
+  diagram: string;
+  accent: string;
+  x: number;
+  y: number;
+}>;
+
+function evidenceCard(card: EvidenceCard): RenderNodeIr {
+  const geometry = { x: card.x, y: card.y, width: 252, height: 130 };
+  const label = `${card.number}. ${card.title}`;
+  return {
+    kind: "group",
+    id: card.id,
+    geometry,
+    style: {},
+    accessibility: { label, description: card.detail },
+    fallback: `${label}. ${card.detail}`,
+    sourceMap: requestSourceMap,
+    children: [
+      previewRect(
+        {
+          id: `${card.id}-panel`,
+          geometry,
+          label: `${card.title} card`,
+        },
+        SYSTEMS_CHALK.panel,
+        card.accent,
+      ),
+      previewText(
+        {
+          id: `${card.id}-number`,
+          geometry: { x: card.x + 16, y: card.y + 29, width: 22, height: 22 },
+          label: `Step ${card.number}`,
+          text: String(card.number).padStart(2, "0"),
+        },
+        card.accent,
+        10,
+        700,
+        "ui-monospace, SFMono-Regular, Menlo, monospace",
+      ),
+      previewText(
+        {
+          id: `${card.id}-title`,
+          geometry: { x: card.x + 48, y: card.y + 29, width: 188, height: 18 },
+          label: `${card.title} title`,
+          text: card.title,
+        },
+        SYSTEMS_CHALK.ink,
+        13,
+        650,
+      ),
+      previewText(
+        {
+          id: `${card.id}-diagram`,
+          geometry: { x: card.x + 30, y: card.y + 73, width: 192, height: 18 },
+          label: `${card.title} diagram`,
+          text: card.diagram,
+        },
+        card.accent,
+        11,
+        700,
+        "ui-monospace, SFMono-Regular, Menlo, monospace",
+      ),
+      previewText(
+        {
+          id: `${card.id}-detail`,
+          geometry: { x: card.x + 16, y: card.y + 110, width: 220, height: 14 },
+          label: `${card.title} annotation`,
+          text: card.detail,
+        },
+        SYSTEMS_CHALK.muted,
+        9,
+        500,
+      ),
+    ],
+  };
+}
+
+function translateNode(node: RenderNodeIr, dx: number, dy: number): RenderNodeIr {
+  const geometry = {
+    ...node.geometry,
+    x: node.geometry.x + dx,
+    y: node.geometry.y + dy,
+  };
+  if (node.kind === "group" || node.kind === "component") {
+    return {
+      ...node,
+      geometry,
+      children: node.children.map((child) => translateNode(child, dx, dy)),
+    };
+  }
+  return { ...node, geometry };
+}
+
+/** Systems Chalk request investigation expressed in foundation Flow IR. */
+function requestInvestigationScene(): SceneIr {
+  const cards: readonly EvidenceCard[] = [
+    {
+      number: 1,
+      id: "gateway",
+      title: "Prompt enters the gateway",
+      detail: "Route and admission decisions become the first authored beat.",
+      diagram: "CLIENT ···→ EDGE",
+      accent: SYSTEMS_CHALK.amber,
+      x: 23,
+      y: 41,
+    },
+    {
+      number: 2,
+      id: "admission",
+      title: "Admission queues the work",
+      detail: "Queue depth and wait time remain attached to the request.",
+      diagram: "08 · 09 · 10 ···→ GPU",
+      accent: SYSTEMS_CHALK.blue,
+      x: 454,
+      y: 7,
+    },
+    {
+      number: 3,
+      id: "prefix-cache",
+      title: "Prefix cache is consulted",
+      detail: "A cache hit shortens prefill; a miss explains the extra work.",
+      diagram: "HASH ···→ KV",
+      accent: SYSTEMS_CHALK.violet,
+      x: 885,
+      y: 41,
+    },
+    {
+      number: 4,
+      id: "prefill",
+      title: "Prefill claims compute",
+      detail: "Batch pressure and memory occupancy explain time to first token.",
+      diagram: "PREFILL ···→ ▂▅█▆",
+      accent: SYSTEMS_CHALK.green,
+      x: 0,
+      y: 352,
+    },
+    {
+      number: 5,
+      id: "decode",
+      title: "Decode streams tokens",
+      detail: "Inter-token gaps reveal contention without losing narrative rhythm.",
+      diagram: "GPU ···→ t₁ · t₂ · t₃",
+      accent: SYSTEMS_CHALK.coral,
+      x: 908,
+      y: 352,
+    },
+    {
+      number: 6,
+      id: "telemetry",
+      title: "Telemetry supplies evidence",
+      detail: "Metrics are supporting evidence, not a competing dashboard.",
+      diagram: "▂▄█▅▇ ···→ TRACE",
+      accent: SYSTEMS_CHALK.cyan,
+      x: 209,
+      y: 560,
+    },
+    {
+      number: 7,
+      id: "resolution",
+      title: "The causal path resolves",
+      detail: "Every spoke collapses back into one explainable request story.",
+      diagram: "ARRIVE ···→ DONE",
+      accent: SYSTEMS_CHALK.amber,
+      x: 699,
+      y: 560,
+    },
+  ];
+  const hubGeometry = { x: 455, y: 271, width: 250, height: 148 };
+  const hub: RenderNodeIr = {
+    kind: "group",
+    id: "request-hub",
+    geometry: hubGeometry,
+    style: {},
+    accessibility: {
+      label: "What made this slow?",
+      description:
+        "Request R-017. Follow one causal path across every layer of inference.",
+    },
+    fallback: "Request R-017: What made this slow?",
+    sourceMap: requestSourceMap,
+    children: [
+      previewRect(
+        {
+          id: "request-hub-panel",
+          geometry: hubGeometry,
+          label: "Selected request R-017",
+        },
+        SYSTEMS_CHALK.panel,
+        SYSTEMS_CHALK.violet,
+      ),
+      previewText(
+        {
+          id: "request-hub-kicker",
+          geometry: { x: 512, y: 317, width: 136, height: 14 },
+          label: "Request identifier",
+          text: "REQUEST · R-017",
+        },
+        SYSTEMS_CHALK.violet,
+        10,
+        700,
+        "ui-monospace, SFMono-Regular, Menlo, monospace",
+      ),
+      previewText(
+        {
+          id: "request-hub-question",
+          geometry: { x: 483, y: 353, width: 194, height: 28 },
+          label: "Investigation question",
+          text: "What made this slow?",
+        },
+        SYSTEMS_CHALK.ink,
+        25,
+        610,
+      ),
+      previewText(
+        {
+          id: "request-hub-detail",
+          geometry: { x: 480, y: 382, width: 200, height: 16 },
+          label: "Investigation instruction",
+          text: "Follow one causal path across every layer.",
+        },
+        SYSTEMS_CHALK.muted,
+        10,
+      ),
+    ],
+  };
+  const connectors = cards.map((card, index): RenderNodeIr => ({
+    kind: "connector",
+    id: `request-to-${card.id}`,
+    geometry: { x: 0, y: 0, width: 0, height: 0 },
+    style: {
+      stroke: index === 0 ? SYSTEMS_CHALK.cyan : SYSTEMS_CHALK.guide,
+      strokeWidth: index === 0 ? 2 : 1.5,
+    },
+    from: { nodeId: "request-hub" },
+    to: { nodeId: card.id },
+    accessibility: {
+      label:
+        index === 0
+          ? "Active cause path to gateway"
+          : `Structural evidence path to ${card.title}`,
+      description: `Request R-017 connects to step ${card.number}, ${card.title}.`,
+    },
+    fallback: `Request connects to ${card.title}`,
+    sourceMap: requestSourceMap,
+  }));
+  const narrowCards = cards.map((card) => ({
+    ...card,
+    x: 34,
+    y: 190 + (card.number - 1) * 145,
+  }));
+  const narrowConnectors = connectors.map((connector) => ({
+    ...connector,
+    style: { ...connector.style, strokeWidth: 0 },
+  }));
+
+  return parseSceneIr({
+    id: "request-investigation",
+    title: "What made this slow?",
+    summary: "One request connects to seven layers of causal evidence.",
+    roots: [
+      previewRect(
+        {
+          id: "systems-chalk-field",
+          geometry: { x: 0, y: 0, width: 1160, height: 690 },
+          label: "Systems Chalk field",
+        },
+        SYSTEMS_CHALK.canvas,
+        SYSTEMS_CHALK.canvas,
+        0,
+      ),
+      ...connectors,
+      hub,
+      ...cards.map(evidenceCard),
+    ],
+    camera: [],
+    timeline: [
+      {
+        id: "reveal-request-hub",
+        at: 0,
+        duration: 700,
+        action: "reveal",
+        target: "request-hub",
+        sourceMap: requestSourceMap,
+      },
+      ...cards.map((card, index) => ({
+        id: `reveal-${card.id}`,
+        at: 200 + index * 120,
+        duration: 550,
+        action: "reveal",
+        target: card.id,
+        sourceMap: requestSourceMap,
+      })),
+      {
+        id: "trace-active-cause",
+        at: 700,
+        duration: 1200,
+        action: "trace",
+        target: "request-to-gateway",
+        sourceMap: requestSourceMap,
+      },
+    ],
+    narration:
+      "Request R-017 asks what made this slow, tracing one causal path from gateway admission through cache, compute, decode, telemetry, and resolution.",
+    narrativeTrack: {
+      language: "en-US",
+      voice: "narrator",
+      cues: [
+        {
+          id: "question",
+          startMs: 0,
+          endMs: 2400,
+          spokenText: "Request R-017 asks what made this slow,",
+          subtitleText: "What made request R-017 slow?",
+        },
+        {
+          id: "evidence",
+          startMs: 2400,
+          endMs: 6200,
+          spokenText:
+            "tracing one causal path from gateway admission through cache, compute, decode, telemetry, and resolution.",
+          subtitleText: "Follow the causal path across every inference layer",
+        },
+      ],
+    },
+    interactions: [
+      {
+        id: "inspect-request",
+        event: "select",
+        target: "request-hub",
+        action: "inspect",
+        sourceMap: requestSourceMap,
+      },
+    ],
+    responsive: [
+      {
+        id: "request-investigation-narrow",
+        condition: "(max-width: 860px)",
+        roots: [
+          previewRect(
+            {
+              id: "systems-chalk-field",
+              geometry: { x: 0, y: 0, width: 320, height: 1_230 },
+              label: "Systems Chalk field",
+            },
+            SYSTEMS_CHALK.canvas,
+            SYSTEMS_CHALK.canvas,
+            0,
+          ),
+          ...narrowConnectors,
+          translateNode(hub, 34 - hub.geometry.x, 20 - hub.geometry.y),
+          ...narrowCards.map(evidenceCard),
+        ],
+        sourceMap: requestSourceMap,
+      },
+    ],
+    accessibility: {
+      label: "Hub and spoke request lifecycle diagram",
+      readingOrder: [
+        "request-hub",
+        ...cards.flatMap((card) => [
+          card.id,
+          `request-to-${card.id}`,
+        ]),
+      ],
+    },
+    fallback:
+      "Request R-017 connects to seven evidence steps from gateway through causal resolution.",
+    sourceMap: requestSourceMap,
   });
 }
 
@@ -517,6 +963,7 @@ function executionScene(): SceneIr {
 function requestFlowScenes(): readonly SceneIr[] {
   // Narrative order matches the Runtime path chapter in previewNavigation().
   return [
+    requestInvestigationScene(),
     stubScene({
       id: "author-run",
       title: "Author the run",
@@ -729,6 +1176,7 @@ function previewBrowserNavigation(
             id: "runtime-path",
             name: "Runtime path",
             scenes: browserScenes(request, [
+              "request-investigation",
               "author-run",
               "launch-runtime",
               "freeze-registry",
@@ -838,7 +1286,7 @@ export function previewWorkspace(): PreviewWorkspace {
   const navigation = previewBrowserNavigation(manifests, {
     flowId: requestFlow.id,
     chapterId: "runtime-path",
-    sceneId: "execution",
+    sceneId: "request-investigation",
   });
   return {
     flow: requestFlow,

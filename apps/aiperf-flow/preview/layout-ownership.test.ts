@@ -15,7 +15,25 @@ describe("preview layout ownership", () => {
     expect(source("./styles.css")).not.toContain(".aiperf-flow__");
   });
 
+  test("the preview loads runtime styles before host chrome overrides", () => {
+    const entrypoint = source("./main.tsx");
+    const runtimeTheme = entrypoint.indexOf(
+      '../packages/runtime/src/theme.css',
+    );
+    const previewTheme = entrypoint.indexOf("./styles.css");
+
+    expect(runtimeTheme).toBeGreaterThanOrEqual(0);
+    expect(previewTheme).toBeGreaterThan(runtimeTheme);
+  });
+
   test("the preview does not mount duplicate runtime controls", () => {
     expect(source("./App.tsx")).not.toContain("preview-canvas-tools");
+  });
+
+  test("the preview delegates narrative cue projection to the runtime", () => {
+    const app = source("./App.tsx");
+
+    expect(app).toContain('../packages/runtime/src/app');
+    expect(app).not.toContain("function sceneNarrativeCues");
   });
 });

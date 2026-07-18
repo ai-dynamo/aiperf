@@ -16,7 +16,7 @@ async function openRequestLifecycle(page: Page): Promise<void> {
   await expect(
     page.getByRole("heading", { level: 1, name: /request lifecycle/u }),
   ).toBeVisible();
-  await expect(page.getByRole("region", { name: "Scene stage" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Scene field" })).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Semantic outline" }),
   ).toBeAttached();
@@ -115,7 +115,7 @@ test.describe("RequestLifecycleWaterfall cinematic north star", () => {
     });
     await openRequestLifecycle(page);
 
-    const stage = page.getByRole("region", { name: "Scene stage" });
+    const stage = page.getByRole("region", { name: "Scene field" });
     await expect(stage).toHaveAttribute("data-backend", "svg");
     await expect(stage.locator("svg.aiperf-flow__svg-fallback")).toBeVisible();
     await expect(
@@ -129,7 +129,7 @@ test.describe("RequestLifecycleWaterfall cinematic north star", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openRequestLifecycle(page);
 
-    const stage = page.getByRole("region", { name: "Scene stage" });
+    const stage = page.getByRole("region", { name: "Scene field" });
     const stageBox = await stage.boundingBox();
     expect(stageBox).not.toBeNull();
     expect(stageBox!.x).toBeGreaterThanOrEqual(0);
@@ -177,13 +177,10 @@ test.describe("RequestLifecycleWaterfall cinematic north star", () => {
     await page.keyboard.press("Enter");
     await expect(arrivalEvidence).toHaveAttribute("aria-selected", "true");
 
-    await page.getByRole("button", { name: "Explore" }).click();
-    await page.getByRole("button", { name: "Inspect", exact: true }).click();
-
-    const inspector = page.getByRole("region", { name: "Node inspector" });
-    await expect(inspector).toBeVisible();
-    await expect(inspector).toContainText("Arrival evidence");
-    await expect(inspector).toContainText(
+    const lens = page.getByRole("region", { name: "Context Lens" });
+    await expect(lens).toBeVisible();
+    await expect(lens).toContainText("Arrival evidence");
+    await expect(lens).toContainText(
       "Evidence ID ev-arrival-req-017, captured from the scheduler at 1200 milliseconds.",
     );
   });

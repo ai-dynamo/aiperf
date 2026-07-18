@@ -244,6 +244,51 @@ describe("Kokoro narrator backend", () => {
     expect(fallback.spoken).toEqual([utterance]);
   });
 
+  test("uses browser speech immediately when Kokoro finished prewarm before the first cue", async () => {
+    const worker = new FakeWorker();
+    const fallback = new FakeFallback();
+    const backend = createKokoroNarratorBackend({
+      fallback,
+      workerFactory: () => worker,
+      audioContextFactory: () => new FakeAudioContext() as unknown as AudioContext,
+      webGpuAvailable: () => false,
+    });
+    const nextUtterance = {
+      ...utterance,
+      cueId: "complete",
+      text: "Complete the request.",
+    };
+
+    const prewarm = backend.prewarm();
+    worker.emit({ type: "ready", voices: [] });
+    await prewarm;
+    expect(backend.snapshot().status).toBe("ready");
+
+    backend.speak(utterance);
+
+    expect(fallback.spoken).toEqual([utterance]);
+    expect(worker.sent).not.toContainEqual(
+      expect.objectContaining({ type: "synthesize", cueId: "dispatch" }),
+    );
+
+    backend.cancel();
+    backend.speak(nextUtterance);
+
+    await vi.waitFor(() =>
+      expect(
+        worker.sent.some(
+          (message) =>
+            typeof message === "object" &&
+            message !== null &&
+            (message as { type?: string; cueId?: string }).type ===
+              "synthesize" &&
+            (message as { cueId?: string }).cueId === "complete",
+        ),
+      ).toBe(true),
+    );
+    expect(fallback.spoken).toEqual([utterance]);
+  });
+
   test("keeps browser transport ownership when Kokoro becomes ready mid-cue", async () => {
     const worker = new FakeWorker();
     const fallback = new FakeFallback();
@@ -318,6 +363,7 @@ describe("Kokoro narrator backend", () => {
   test("one activation gesture unlocks later generated cues automatically", async () => {
     const worker = new FakeWorker();
     const audioContext = new FakeAudioContext();
+    const completed = vi.fn();
     const backend = createKokoroNarratorBackend({
       workerFactory: () => worker,
       audioContextFactory: () => audioContext as unknown as AudioContext,
@@ -325,7 +371,7 @@ describe("Kokoro narrator backend", () => {
     });
 
     await backend.activate();
-    backend.speak(utterance);
+    backend.speak(utterance, completed);
     worker.emit({ type: "ready", voices: [] });
     await vi.waitFor(() =>
       expect(worker.sent).toContainEqual({
@@ -350,6 +396,8 @@ describe("Kokoro narrator backend", () => {
       activeCueId: "dispatch",
       needsUserActivation: false,
     });
+    audioContext.source.onended?.();
+    expect(completed).toHaveBeenCalledOnce();
   });
 
   test("preloads generated audio but reports blocked audible playback", async () => {
@@ -389,6 +437,7 @@ describe("Kokoro narrator backend", () => {
   test("cancel invalidates inference and stops generated audio", async () => {
     const worker = new FakeWorker();
     const audioContext = new FakeAudioContext();
+    const completed = vi.fn();
     const backend = createKokoroNarratorBackend({
       workerFactory: () => worker,
       audioContextFactory: () => audioContext as unknown as AudioContext,
@@ -396,7 +445,7 @@ describe("Kokoro narrator backend", () => {
     });
 
     await backend.activate();
-    backend.speak(utterance);
+    backend.speak(utterance, completed);
     worker.emit({ type: "ready", voices: [] });
     await vi.waitFor(() =>
       expect(worker.sent).toContainEqual(
@@ -418,5 +467,6 @@ describe("Kokoro narrator backend", () => {
     });
     expect(audioContext.source.start).not.toHaveBeenCalled();
     expect(backend.snapshot().activeCueId).toBeNull();
+    expect(completed).not.toHaveBeenCalled();
   });
 });

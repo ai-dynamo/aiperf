@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { FlowIr, SceneIr } from "../packages/schema/src/ir";
-import {
+import type { FlowIr } from "../packages/schema/src/ir";
+import React, {
   type ReactNode,
   type RefObject,
   useEffect,
@@ -13,10 +13,8 @@ import {
 
 import { FlowApp } from "../packages/runtime/src/app";
 import type { KokoroNarratorSnapshot } from "../packages/runtime/src/narrative/kokoro-narrator";
-import type { NarrativeCue } from "../packages/runtime/src/narrative/timeline";
 
 import {
-  previewDurationMs,
   previewWorkspace,
   type PreviewWorkspace,
 } from "./fixture";
@@ -26,114 +24,8 @@ import {
   subscribePreviewKokoroState,
 } from "./narrator-backend";
 
-type UnknownRecord = Readonly<Record<string, unknown>>;
-
-function record(value: unknown): UnknownRecord {
-  return typeof value === "object" && value !== null
-    ? (value as UnknownRecord)
-    : {};
-}
-
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
-}
-
-/** Splits authored narration into clause-sized subtitle/speech units. */
-export function splitNarrationClauses(narration: string): readonly string[] {
-  const trimmed = narration.trim();
-  if (trimmed === "") {
-    return [];
-  }
-  const byComma = trimmed
-    .split(/(?<=,)\s+/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  if (byComma.length > 1) {
-    return byComma;
-  }
-  return trimmed
-    .split(/(?<=\.)\s+/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-}
-
-/**
- * Narrow replaceable adapter: prefer `narrativeTrack`, else derive timed cues
- * from legacy `narration` paced to estimated speech duration so SpeechSynthesis
- * is not crushed into animation-only flash timings.
- */
-export function sceneNarrativeCues(scene: SceneIr): readonly NarrativeCue[] {
-  const track = scene.narrativeTrack;
-  if (track !== undefined && track.cues.length > 0) {
-    return track.cues.map((cue) =>
-      Object.freeze({
-        id: cue.id,
-        atMs: cue.startMs,
-        durationMs: Math.max(1, cue.endMs - cue.startMs),
-        spokenText: cue.spokenText,
-        subtitleText: cue.subtitleText,
-      }),
-    );
-  }
-
-  const narration = text(record(scene).narration).trim();
-  if (narration === "") {
-    return [];
-  }
-
-  const clauses = splitNarrationClauses(narration);
-  const sceneEndMs = Math.max(1, previewDurationMs(scene));
-  if (clauses.length === 0) {
-    return [];
-  }
-  if (clauses.length === 1) {
-    const spoken = clauses[0] ?? narration;
-    return [
-      Object.freeze({
-        id: `${scene.id}:narration`,
-        atMs: 0,
-        durationMs: Math.max(sceneEndMs, estimateSpeechMs(spoken)),
-        spokenText: spoken,
-        subtitleText: spoken,
-      }),
-    ];
-  }
-
-  const speechDurations = clauses.map((clause) => estimateSpeechMs(clause));
-  const totalSpeechMs = speechDurations.reduce(
-    (sum, duration) => sum + duration,
-    0,
-  );
-  const paceMs = Math.max(sceneEndMs, totalSpeechMs);
-  const cues: NarrativeCue[] = [];
-  let cursorMs = 0;
-  for (let index = 0; index < clauses.length; index += 1) {
-    const spokenText = clauses[index] ?? narration;
-    const share = (speechDurations[index] ?? 0) / totalSpeechMs;
-    const durationMs = Math.max(
-      1,
-      index + 1 === clauses.length
-        ? paceMs - cursorMs
-        : Math.round(paceMs * share),
-    );
-    cues.push(
-      Object.freeze({
-        id: `${scene.id}:narration-${index}`,
-        atMs: cursorMs,
-        durationMs,
-        spokenText,
-        subtitleText: spokenText,
-      }),
-    );
-    cursorMs += durationMs;
-  }
-  return cues;
-}
-
-/** Rough spoken duration at ~150 wpm with a readable floor. */
-function estimateSpeechMs(textValue: string): number {
-  const words = textValue.trim().split(/\s+/).filter(Boolean).length;
-  return Math.max(1_200, Math.round((words / 2.5) * 1_000));
 }
 
 export { unlockPreviewSpeech } from "./narrator-backend";
@@ -153,6 +45,21 @@ function flowWithActiveSceneFirst(flow: FlowIr, sceneId: string): FlowIr {
     return flow;
   }
   return { ...flow, scenes: [active, ...scenes] };
+}
+
+function flowWithNarrowScene(flow: FlowIr, sceneId: string): FlowIr {
+  return {
+    ...flow,
+    scenes: flow.scenes.map((scene) => {
+      if (scene.id !== sceneId) {
+        return scene;
+      }
+      const narrow = scene.responsive.find(
+        (variant) => variant.condition === "(max-width: 860px)",
+      );
+      return narrow === undefined ? scene : { ...scene, roots: narrow.roots };
+    }),
+  };
 }
 
 type DocumentBrowserProps = Readonly<{
@@ -189,6 +96,7 @@ function DocumentBrowser({
       aria-hidden={collapsed}
       aria-label="Flow browser"
       className="flow-browser"
+      data-overlay="true"
       inert={collapsed || undefined}
     >
       <div className="flow-browser-head">
@@ -289,13 +197,17 @@ export function App() {
     workspace.navigation.active.sceneId,
   );
   const [reducedMotion, setReducedMotion] = useState(false);
+  const [narrowLayout, setNarrowLayout] = useState(false);
   const [kokoroState, setKokoroState] = useState<KokoroNarratorSnapshot | null>(
     null,
   );
   const flow = useMemo(() => {
     const base = workspace.flows[activeFlowId] ?? workspace.flow;
-    return flowWithActiveSceneFirst(base, activeSceneId);
-  }, [workspace, activeFlowId, activeSceneId]);
+    const responsive = narrowLayout
+      ? flowWithNarrowScene(base, activeSceneId)
+      : base;
+    return flowWithActiveSceneFirst(responsive, activeSceneId);
+  }, [workspace, activeFlowId, activeSceneId, narrowLayout]);
 
   const narratorBackend = useMemo(
     () => createPreviewNarratorBackend(),
@@ -328,6 +240,14 @@ export function App() {
     return () => media.removeEventListener("change", sync);
   }, []);
 
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 860px)");
+    const sync = (): void => setNarrowLayout(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
   function selectScene(flowId: string, sceneId: string): void {
     setActiveFlowId(flowId);
     setActiveSceneId(sceneId);
@@ -341,7 +261,12 @@ export function App() {
         : null;
 
   return (
-    <div className="preview-shell">
+    <div
+      className="preview-shell"
+      data-preview-layout={
+        activeSceneId === "request-investigation" ? "hub-spoke" : "standard"
+      }
+    >
       <header className="preview-topbar">
         <div className="preview-brand-cluster">
           <button
@@ -357,21 +282,21 @@ export function App() {
             <span />
             <span />
           </button>
-          <a className="preview-brand" href="/" aria-label="AIPerf Flow home">
-            <span className="preview-brand-mark" aria-hidden="true">
-              F
-            </span>
+          <a className="preview-study" href="/" aria-label="AIPerf Flow home">
             <span>
-              <strong>AIPerf Flow</strong>
-              <small>Semantic runtime</small>
+              <small>AIPerf Flow · Scene study 02</small>
+              <h1>From one request to the whole system</h1>
             </span>
           </a>
         </div>
-        {voiceStatus === null ? null : (
-          <p className="preview-status" aria-live="polite">
-            {voiceStatus}
-          </p>
-        )}
+        <div className="preview-theme-cluster">
+          {voiceStatus === null ? null : (
+            <p className="preview-status" aria-live="polite">
+              {voiceStatus}
+            </p>
+          )}
+          <span className="preview-theme-mark">SYSTEMS CHALK</span>
+        </div>
       </header>
 
       <div
@@ -398,6 +323,16 @@ export function App() {
           />
         </main>
       </div>
+      {activeSceneId === "request-investigation" ? (
+        <footer className="preview-legend">
+          <div aria-label="Semantic legend" className="preview-legend-items">
+            <span data-legend="cause">active cause</span>
+            <span data-legend="request">selected request</span>
+            <span data-legend="decision">decision point</span>
+          </div>
+          <span>Entity → connector → destination → annotation</span>
+        </footer>
+      ) : null}
     </div>
   );
 }

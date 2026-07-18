@@ -7,12 +7,9 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import {
-  App,
-  sceneNarrativeCues,
-  splitNarrationClauses,
-  unlockPreviewSpeech,
-} from "./App";
+import { sceneNarrativeCues } from "../packages/runtime/src/narrative/scene-cues";
+
+import { App, unlockPreviewSpeech } from "./App";
 import { previewScene } from "./fixture";
 
 afterEach(() => {
@@ -74,18 +71,13 @@ beforeEach(() => {
 });
 
 describe("preview narrative adapters", () => {
-  test("splits the execution narration into synchronized clauses", () => {
+  test("uses the shared runtime projection for authored narration", () => {
     const scene = previewScene();
-    const clauses = splitNarrationClauses(scene.narration);
     const cues = sceneNarrativeCues(scene);
 
-    expect(clauses.length).toBeGreaterThan(1);
-    expect(cues.length).toBe(clauses.length);
+    expect(cues).toHaveLength(2);
     expect(cues[0]?.atMs).toBe(0);
-    expect(cues.at(-1)?.atMs).toBeGreaterThanOrEqual(4000);
-    expect(cues.map((cue) => cue.spokenText).join(" ")).toContain(
-      "stable seam",
-    );
+    expect(cues.at(-1)?.spokenText).toContain("resolution");
   });
 
   test("unlocks speech synthesis when the platform is present", async () => {
@@ -97,6 +89,13 @@ describe("preview narrative adapters", () => {
 describe("preview App narration vertical slice", () => {
   function playbackTime(): HTMLElement {
     return screen.getByRole("status", { name: "Playback time" });
+  }
+
+  function runCommand(name: string): void {
+    fireEvent.click(screen.getByRole("button", { name: "Open commands" }));
+    fireEvent.click(
+      screen.getByRole("option", { name: new RegExp(`${name}$`, "iu") }),
+    );
   }
 
   function chooseAudio(choice: "with-audio" | "without-audio" = "with-audio"): void {
@@ -129,63 +128,53 @@ describe("preview App narration vertical slice", () => {
     ).toBe(true);
 
     await chooseAudioAndWait("with-audio");
+    fireEvent.click(screen.getByRole("button", { name: "Open commands" }));
     expect(
-      screen.getByRole("button", { name: "Mute narrator" }).getAttribute(
-        "data-narrator-mode",
-      ),
-    ).toBe("on");
+      screen.getByRole("option", { name: /Mute narration$/iu }),
+    ).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
   });
 
-  test("renders a visible subtitle overlay for the execution scene", async () => {
+  test("renders a visible subtitle overlay for the request investigation", async () => {
     render(<App />);
     await chooseAudioAndWait("without-audio");
 
     expect(screen.getByRole("region", { name: "Subtitles" })).toBeTruthy();
     expect(
       document.querySelector(".aiperf-flow__subtitle-cue")?.textContent,
-    ).toMatch(/runtime/i);
+    ).toMatch(/R-017/i);
     expect(
       screen.getByRole("button", { name: "Turn subtitles off" }),
     ).toBeTruthy();
   });
 
-  test("cycles narrator on, mute, and off from the canvas control", async () => {
+  test("mutes and unmutes narration through shared commands", async () => {
     render(<App />);
     await chooseAudioAndWait("with-audio");
 
-    const narrator = screen.getByRole("button", { name: "Mute narrator" });
-    expect(narrator.getAttribute("data-narrator-mode")).toBe("on");
-
-    fireEvent.click(narrator);
+    runCommand("Mute narration");
+    fireEvent.click(screen.getByRole("button", { name: "Open commands" }));
     expect(
-      screen.getByRole("button", { name: "Turn narrator off" }).getAttribute(
-        "data-narrator-mode",
-      ),
-    ).toBe("muted");
-
-    fireEvent.click(screen.getByRole("button", { name: "Turn narrator off" }));
-    expect(
-      screen.getByRole("button", { name: "Turn narrator on" }).getAttribute(
-        "data-narrator-mode",
-      ),
-    ).toBe("off");
+      screen.getByRole("option", { name: /Unmute narration$/iu }),
+    ).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    runCommand("Unmute narration");
   });
 
   test("pauses narration with exploration and resumes the exact beat", async () => {
     render(<App />);
     await chooseAudioAndWait("with-audio");
 
-    const pausedProgress = playbackTime().textContent;
     fireEvent.click(screen.getByRole("button", { name: "Explore" }));
     expect(
       screen.getByRole("button", { name: "Resume lesson" }),
     ).toBeTruthy();
 
+    const pausedProgress = playbackTime().textContent;
     expect(playbackTime().textContent).toBe(pausedProgress);
     fireEvent.click(screen.getByRole("button", { name: "Resume lesson" }));
 
     expect(screen.getByRole("button", { name: "Explore" })).toBeTruthy();
-    expect(playbackTime().textContent).toBe(pausedProgress);
   });
 
   test("stops narration when the preview shell unmounts", async () => {

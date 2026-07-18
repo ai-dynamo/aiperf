@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import {
   createBrowserSpeechSynthesisBackend,
@@ -15,6 +15,7 @@ class FakeBackend implements NarratorBackend {
   readonly available = true;
   readonly spoken: NarratorUtterance[] = [];
   readonly operations: string[] = [];
+  readonly completions = new Map<string, () => void>();
   readonly #voices: readonly NarratorVoice[] = [
     { id: "voice-a", name: "Voice A", language: "en-US", default: true },
     { id: "voice-b", name: "Voice B", language: "en-GB", default: false },
@@ -24,9 +25,12 @@ class FakeBackend implements NarratorBackend {
     return this.#voices;
   }
 
-  speak(utterance: NarratorUtterance): void {
+  speak(utterance: NarratorUtterance, onComplete?: () => void): void {
     this.spoken.push(utterance);
     this.operations.push(`speak:${utterance.cueId}`);
+    if (onComplete !== undefined) {
+      this.completions.set(utterance.cueId, onComplete);
+    }
   }
 
   pause(): void {
@@ -159,6 +163,37 @@ describe("NarratorController", () => {
     ]);
   });
 
+  test("completes the scene only after its final audible cue ends", () => {
+    const backend = new FakeBackend();
+    const onComplete = vi.fn();
+    const narrator = new NarratorController(cues, backend, { onComplete });
+
+    narrator.play(0);
+    backend.completions.get("establish")?.();
+    expect(onComplete).not.toHaveBeenCalled();
+
+    narrator.sync(300);
+    backend.completions.get("dispatch")?.();
+    expect(onComplete).not.toHaveBeenCalled();
+
+    narrator.sync(800);
+    backend.completions.get("observe")?.();
+    expect(onComplete).toHaveBeenCalledOnce();
+  });
+
+  test("ignores completion from a cue cancelled by later playback", () => {
+    const backend = new FakeBackend();
+    const onComplete = vi.fn();
+    const narrator = new NarratorController(cues, backend, { onComplete });
+
+    narrator.play(0);
+    const staleCompletion = backend.completions.get("establish");
+    narrator.sync(800);
+    staleCompletion?.();
+
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
   test("rejects duplicate cue ids and invalid rates", () => {
     const backend = new FakeBackend();
 
@@ -194,6 +229,7 @@ describe("browser speech synthesis backend", () => {
       rate = 1;
       lang = "";
       voice: typeof browserVoice | null = null;
+      onend: (() => void) | null = null;
 
       constructor(readonly text: string) {}
     }
@@ -267,6 +303,7 @@ describe("browser speech synthesis backend", () => {
       rate = 1;
       lang = "";
       voice: (typeof voices)[number] | null = null;
+      onend: (() => void) | null = null;
       constructor(readonly text: string) {}
     }
     const backend = createBrowserSpeechSynthesisBackend({
@@ -311,6 +348,7 @@ describe("browser speech synthesis backend", () => {
       rate = 1;
       lang = "";
       voice = null;
+      onend: (() => void) | null = null;
       constructor(readonly text: string) {}
     }
     const backend = createBrowserSpeechSynthesisBackend({
@@ -345,5 +383,46 @@ describe("browser speech synthesis backend", () => {
     expect(events).toEqual(["cancel"]);
     runSpeak?.();
     expect(events).toEqual(["cancel", "speak"]);
+  });
+
+  test("reports normal browser completion but not completion after cancel", () => {
+    const spoken: Array<{ onend: (() => void) | null }> = [];
+    class FakeUtterance {
+      rate = 1;
+      lang = "";
+      voice = null;
+      onend: (() => void) | null = null;
+      constructor(readonly text: string) {}
+    }
+    const backend = createBrowserSpeechSynthesisBackend({
+      synthesis: {
+        getVoices: () => [],
+        speak: (utterance) => spoken.push(utterance as FakeUtterance),
+        pause: () => undefined,
+        resume: () => undefined,
+        cancel: () => undefined,
+      },
+      Utterance: FakeUtterance,
+      scheduleSpeak: (run) => {
+        run();
+        return () => undefined;
+      },
+    });
+    const completed = vi.fn();
+
+    backend?.speak(
+      { cueId: "one", text: "One.", rate: 1, voiceId: null },
+      completed,
+    );
+    spoken[0]?.onend?.();
+    expect(completed).toHaveBeenCalledOnce();
+
+    backend?.speak(
+      { cueId: "two", text: "Two.", rate: 1, voiceId: null },
+      completed,
+    );
+    backend?.cancel();
+    spoken[1]?.onend?.();
+    expect(completed).toHaveBeenCalledOnce();
   });
 });
