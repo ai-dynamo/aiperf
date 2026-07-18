@@ -271,10 +271,12 @@ impl Composer for SyntheticComposer {
                             // is hit exactly and the decoded text carries a
                             // byte-identical leading run across warm prompts.
                             let tokens = reuse.prompt_tokens(generator, input_tokens)?;
-                            turn.input_tokens =
-                                turn.input_tokens.checked_add(tokens.len() as u64).ok_or_else(
-                                    || DatasetError::Validation("input token count overflow".into()),
-                                )?;
+                            turn.input_tokens = turn
+                                .input_tokens
+                                .checked_add(tokens.len() as u64)
+                                .ok_or_else(|| {
+                                    DatasetError::Validation("input token count overflow".into())
+                                })?;
                             let text = tokenizer.decode(&tokens)?;
                             let handle = segments.intern_text(
                                 parent,
@@ -595,13 +597,15 @@ fn validate_prefix_reuse(
     prompt: &crate::dataset::generator::SyntheticPromptConfig,
     prefixes: &SyntheticPrefixConfig,
 ) -> Result<()> {
-    if !(prompt.prefix_reuse_fraction.is_finite() && (0.0..=1.0).contains(&prompt.prefix_reuse_fraction))
+    if !(prompt.prefix_reuse_fraction.is_finite()
+        && (0.0..=1.0).contains(&prompt.prefix_reuse_fraction))
     {
         return Err(DatasetError::Validation(
             "synthetic prompt prefix_reuse_fraction must be within [0, 1]".into(),
         ));
     }
-    if !(prompt.prefix_reuse_ratio.is_finite() && (0.0..=1.0).contains(&prompt.prefix_reuse_ratio)) {
+    if !(prompt.prefix_reuse_ratio.is_finite() && (0.0..=1.0).contains(&prompt.prefix_reuse_ratio))
+    {
         return Err(DatasetError::Validation(
             "synthetic prompt prefix_reuse_ratio must be within [0, 1]".into(),
         ));
@@ -860,7 +864,8 @@ mod tests {
         // The shared prefix is the first six tokens (ratio 0.5 of ISL 12). Warm
         // prompts collapse onto one identical prefix; cold prompts almost surely
         // differ, so the dominant prefix group counts the warm fraction.
-        let mut counts: std::collections::HashMap<Vec<u32>, usize> = std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<Vec<u32>, usize> =
+            std::collections::HashMap::new();
         for conversation in dataset.conversations() {
             let handle = conversation.turns[0].content[0].handles[0];
             let Payload::Text {
@@ -871,8 +876,9 @@ mod tests {
             };
             // Token-native assembly keeps the input length exactly on target.
             assert_eq!(*token_count, 12);
-            let prefix: Vec<u32> = tokenizer.encode(std::str::from_utf8(bytes).unwrap()).unwrap()
-                [..6]
+            let prefix: Vec<u32> = tokenizer
+                .encode(std::str::from_utf8(bytes).unwrap())
+                .unwrap()[..6]
                 .to_vec();
             *counts.entry(prefix).or_default() += 1;
         }
@@ -909,8 +915,10 @@ mod tests {
             let Payload::Text { bytes, .. } = dataset.segments().get(handle).unwrap() else {
                 panic!("synthetic prompt must be text");
             };
-            let head: Vec<u32> =
-                tokenizer.encode(std::str::from_utf8(bytes).unwrap()).unwrap()[..6].to_vec();
+            let head: Vec<u32> = tokenizer
+                .encode(std::str::from_utf8(bytes).unwrap())
+                .unwrap()[..6]
+                .to_vec();
             prefixes.insert(head);
         }
         // With the default fraction 0.0 no shared prefix is drawn, so leading
