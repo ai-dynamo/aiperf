@@ -14,6 +14,7 @@ import React, {
 import { FlowApp } from "../packages/runtime/src/app";
 import type { KokoroNarratorSnapshot } from "../packages/runtime/src/narrative/kokoro-narrator";
 import { COMPILED_EXPLAINER_DECKS } from "../packages/runtime/src/explainer/compiled-decks";
+import { ExplainerSlideViewer } from "../packages/runtime/src/explainer/ui/ExplainerSlideViewer";
 
 import {
   previewWorkspace,
@@ -356,6 +357,7 @@ export function App() {
   const [showThemeMenu, setShowThemeMenu] = useState(false);
   const [audioConsent, setAudioConsent] = useState<AudioConsent>("unset");
   const [hasLeftSite, setHasLeftSite] = useState(false);
+  const [showExplainerDeckId, setShowExplainerDeckId] = useState<string | null>(null);
   const flow = useMemo(() => {
     const base = workspace.flows[activeFlowId] ?? workspace.flow;
     const responsive = narrowLayout
@@ -646,7 +648,31 @@ export function App() {
               } as React.CSSProperties),
             }}
           >
-            <FlowApp
+            {showExplainerDeckId ? (
+              <div style={{ padding: '20px', backgroundColor: '#fff' }}>
+                {(() => {
+                  const deck = COMPILED_EXPLAINER_DECKS.find(
+                    (d) => d.id === showExplainerDeckId
+                  );
+                  if (!deck) return <div>Deck not found</div>;
+                  return <ExplainerSlideViewer deck={deck} slideIndex={0} />;
+                })()}
+                <button
+                  onClick={() => setShowExplainerDeckId(null)}
+                  style={{
+                    marginTop: '40px',
+                    padding: '10px 20px',
+                    backgroundColor: '#f0f0f0',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Back
+                </button>
+              </div>
+            ) : (
+              <FlowApp
               key={`${activeFlowId}:${activeSceneId}`}
               flow={flow}
               narratorBackend={narratorBackend}
@@ -656,7 +682,8 @@ export function App() {
                 setAudioConsent(hasConsented ? "yes" : "no");
               }}
               autoPlay={audioConsent === "yes"}
-            />
+              />
+            )}
           </main>
 
           <BottomNav
