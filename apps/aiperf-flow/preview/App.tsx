@@ -675,14 +675,22 @@ export function App() {
               } as React.CSSProperties),
             }}
           >
-            {selectedExplainerDeckId ? (
-              <ExplainerDeckNavigator
-                deckId={selectedExplainerDeckId}
-                slideIndex={explainerSlideIndex}
-                onSlideChange={handleExplainerSlideChange}
-                onBackClick={closeExplainerDeck}
-              />
-            ) : (
+            {selectedExplainerDeckId ? (() => {
+              const selectedDeck = COMPILED_EXPLAINER_DECKS.find(d => d.id === selectedExplainerDeckId);
+              return selectedDeck ? (
+                <ExplainerDeckNavigator
+                  deckId={selectedExplainerDeckId}
+                  deck={selectedDeck}
+                  slideIndex={explainerSlideIndex}
+                  onSlideChange={handleExplainerSlideChange}
+                  onBackClick={closeExplainerDeck}
+                />
+              ) : (
+                <div style={{ padding: "2rem", color: "var(--preview-chalk)" }}>
+                  Deck not found: {selectedExplainerDeckId}
+                </div>
+              );
+            })() : (
               <FlowApp
                 key={`${activeFlowId}:${activeSceneId}`}
                 flow={flow}

@@ -7,6 +7,7 @@ import { ExplainerSlideViewer } from "../packages/runtime/src/explainer/ui/Expla
 
 type ExplainerDeckNavigatorProps = Readonly<{
   deckId: string;
+  deck?: any;
   slideIndex: number;
   onSlideChange(newIndex: number): void;
   onBackClick(): void;
@@ -30,13 +31,16 @@ function idToTitle(id: string): string {
  */
 export function ExplainerDeckNavigator({
   deckId,
+  deck,
   slideIndex,
   onSlideChange,
   onBackClick,
 }: ExplainerDeckNavigatorProps): ReactNode {
-  const deck = COMPILED_EXPLAINER_DECKS.find((d) => d.id === deckId);
+  // Use passed deck object if available, otherwise look it up by ID
+  // This ensures correct deck is rendered even if lookup is done elsewhere
+  const resolvedDeck = deck ?? COMPILED_EXPLAINER_DECKS.find((d) => d.id === deckId);
 
-  if (!deck) {
+  if (!resolvedDeck) {
     return (
       <div
         style={{
@@ -65,7 +69,7 @@ export function ExplainerDeckNavigator({
     );
   }
 
-  const slideCount = deck.slides.length;
+  const slideCount = resolvedDeck.slides.length;
   const canGoPrev = slideIndex > 0;
   const canGoNext = slideIndex < slideCount - 1;
 
@@ -164,7 +168,7 @@ export function ExplainerDeckNavigator({
         }}
       >
         <ExplainerSlideViewer
-          deck={deck}
+          deck={resolvedDeck}
           slideIndex={slideIndex}
           onSlideChange={onSlideChange}
         />
