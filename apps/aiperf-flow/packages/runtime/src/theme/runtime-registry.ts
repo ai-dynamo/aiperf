@@ -7,9 +7,9 @@ import type { FlowThemeIr } from "@aiperf/flow-schema";
 import {
   FrozenThemeRegistry,
   ThemeRegistry,
-  type ResolvedTheme,
 } from "./registry.js";
 import { SYSTEMS_CHALK } from "./systems-chalk.js";
+import type { ResolvedTheme } from "./types.js";
 
 /** Create a bootstrap theme registry with bundled themes. */
 function createBootstrapRegistry(): ThemeRegistry {
