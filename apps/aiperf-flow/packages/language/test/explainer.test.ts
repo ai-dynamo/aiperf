@@ -8,6 +8,7 @@ import {
   parseExplainerBlock,
   type TokenStream,
 } from "../src/grammar/explainer.js";
+import { parseDocument } from "../src/parser.js";
 
 /** Mock TokenStream implementation for testing. */
 class MockTokenStream implements TokenStream {
@@ -30,7 +31,7 @@ class MockTokenStream implements TokenStream {
           tokens.push(current);
           current = "";
         }
-      } else if (!inQuotes && /[{}\[\]:,@]/.test(char)) {
+      } else if (!inQuotes && /[{}\[\]:,@.]/.test(char)) {
         if (current) {
           tokens.push(current);
           current = "";
@@ -86,6 +87,10 @@ class MockTokenStream implements TokenStream {
   advance(): void {
     this.position++;
   }
+
+  peekImage(): string | undefined {
+    return this.tokens[this.position];
+  }
 }
 
 const FULL_EXPLAINER = `
@@ -112,8 +117,24 @@ const FULL_EXPLAINER = `
       points: ["One binary", "Native profile"]
       caption: "Product shell overview"
       render: @scene {
-        roots: []
-        timeline: []
+        roots: [
+          {
+            id: "box"
+            capability: "core.rect"
+            layout: { x: 10, y: 20, width: 100, height: 40 }
+            style: { fill: "#244a35" }
+            accessibility: { label: "Box" }
+          }
+        ]
+        timeline: [
+          {
+            id: "enter-box"
+            at: 0
+            duration: 400
+            target: "box"
+            action: "enter"
+          }
+        ]
       }
     }
   }
@@ -183,7 +204,26 @@ describe("Explainer Parser", () => {
 
   it("parses render:@scene into sceneIr", () => {
     const ast = parseExplainerBlock(new MockTokenStream(FULL_EXPLAINER));
-    expect(ast.slides[0].sceneIr).toEqual({ type: "scene" });
+    const sceneIr = ast.slides[0].sceneIr as {
+      kind: string;
+      id: string;
+      roots: unknown[];
+      timeline: unknown[];
+      renderDeclarations: Array<{ kind: string; id: string }>;
+      timelines: Array<{ cues: Array<{ target: string; action: string }> }>;
+    };
+    expect(sceneIr.kind).toBe("scene");
+    expect(sceneIr.id).toBe("embedded-scene");
+    expect(sceneIr.roots).toHaveLength(1);
+    expect(sceneIr.timeline).toHaveLength(1);
+    expect(sceneIr.renderDeclarations[0]).toMatchObject({
+      kind: "rect",
+      id: "box",
+    });
+    expect(sceneIr.timelines[0]?.cues[0]).toMatchObject({
+      target: "box",
+      action: "reveal",
+    });
   });
 
   it("falls back to header string when id field is absent", () => {
@@ -302,5 +342,74 @@ describe("Explainer Parser", () => {
     expect(() => parseExplainerBlock(new MockTokenStream(code))).toThrow(
       /storagePrefix.*required/i,
     );
+  });
+});
+
+describe("parseDocument explainer", () => {
+  it("parses an explainer-only .flow file into document.explainers", () => {
+    const source = `
+explainer "test-deck" {
+  route: "/test"
+  topic: "intro"
+  storagePrefix: "test-store"
+  classPrefix: "test"
+  eyebrowLabel: "Test"
+  startGateTitle: "Go?"
+  hub: {
+    title: "from scratch"
+    highlight: "Test"
+    description: "Test deck."
+  }
+
+  slide "First Slide" {
+    eyebrow: "Intro"
+    title: "Welcome"
+    lede: "Getting started"
+    narration: "This is the first slide."
+    points: ["Point 1", "Point 2"]
+    caption: "Test slide"
+  }
+}
+`;
+
+    const result = parseDocument(source, "test-deck.flow");
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.value.explainers).toHaveLength(1);
+    const explainer = result.value.explainers![0]!;
+    expect(explainer.kind).toBe("explainer");
+    expect(explainer.id).toBe("test-deck");
+    expect(explainer.metadata.route).toBe("/test");
+    expect(explainer.metadata.topic).toBe("intro");
+    expect(explainer.metadata.eyebrowLabel).toBe("Test");
+    expect(explainer.metadata.startGateTitle).toBe("Go?");
+    expect(explainer.slides).toHaveLength(1);
+    expect(explainer.slides[0]!.kind).toBe("slide");
+    expect(explainer.slides[0]!.narration).toBe("This is the first slide.");
+    expect(explainer.slides[0]!.points).toEqual(["Point 1", "Point 2"]);
+    expect(result.value.scenes).toEqual([]);
+  });
+
+  it("rejects explainer-only file with missing narration", () => {
+    const source = `
+explainer "bad" {
+  route: "/bad"
+  topic: "intro"
+  eyebrowLabel: "Bad"
+  startGateTitle: "?"
+
+  slide "No Narration" {
+    eyebrow: "Bad"
+    title: "Broken"
+    lede: "Missing"
+    points: []
+    caption: ""
+  }
+}
+`;
+
+    const result = parseDocument(source, "bad.flow");
+    expect(result.ok).toBe(false);
   });
 });

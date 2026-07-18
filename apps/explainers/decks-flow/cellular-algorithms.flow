@@ -1,0 +1,3171 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+explainer "Cellular algorithm workbook" {
+  id: "cellular-algorithms"
+  route: "/cellular-algorithms"
+  topic: "cellular-algorithms"
+  storagePrefix: "cellular-algorithms-explainer"
+  classPrefix: "deck-algorithm"
+  eyebrowLabel: "CELLULAR ALGORITHM WORKBOOK"
+  startGateTitle: "Cellular algorithm workbook"
+
+  hub: {
+    highlight: "Cellular algorithms"
+    title: "compose · compare · trace evidence"
+    description: "Sixteen-slide maintainer map of the cellular algorithm workbook: eight evidence chapters, representative built/partial/feature-gated algorithms, route composition, and the decisions that change ownership, fidelity, topology, and shipping."
+  }
+
+  slide "algorithm-route" {
+    eyebrow: "Workbook · 1 of 16"
+    title: "Read the algorithm workbook as a route"
+    lede: "The workbook is not a second architecture atlas. It is an evidence-indexed catalog of executable decisions, ordered from admission through terminal artifacts. This deck follows that route while selecting representative algorithms from the exhaustive catalog."
+    narration: "The cellular algorithm workbook is an evidence-indexed catalog, not another architecture atlas. Read it as a route through eight chapters: eligibility, ownership, control, distribution, execution, capture, merge, and artifacts. This deck picks representative algorithms; the source canvas remains the exhaustive lookup."
+    term: {
+      word: "algorithm route"
+      meaning: "The ordered algorithms selected by one cellular run shape."
+    }
+    points: [
+      "Eight chapters: eligibility, ownership, control, distribution, execution, capture, merge, artifacts.",
+      "Each entry records inputs, outputs, state, invariants, gates, failures, pseudocode, and evidence.",
+      "This 16-slide deck is a maintainer map, not the full catalog."
+    ]
+    caption: "eight chapters · one derived route."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "WORKBOOK · CHAPTER MAP"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "eight chapters · one derived route."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "ch-eligibility"
+      capability: "core.rect"
+      layout: { x: 25, y: 104, width: 145, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "ch-eligibility-title"
+          capability: "core.text"
+          text: "eligibility"
+          layout: { x: 33, y: 122, width: 129, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "ch-eligibility-detail"
+          capability: "core.text"
+          text: "fail closed"
+          layout: { x: 33, y: 146, width: 129, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "ch-ownership"
+      capability: "core.rect"
+      layout: { x: 193, y: 104, width: 145, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "ch-ownership-title"
+          capability: "core.text"
+          text: "ownership"
+          layout: { x: 201, y: 122, width: 129, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "ch-ownership-detail"
+          capability: "core.text"
+          text: "tile work"
+          layout: { x: 201, y: 146, width: 129, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "ch-control"
+      capability: "core.rect"
+      layout: { x: 361, y: 104, width: 145, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "ch-control-title"
+          capability: "core.text"
+          text: "control"
+          layout: { x: 369, y: 122, width: 129, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "ch-control-detail"
+          capability: "core.text"
+          text: "coordinate"
+          layout: { x: 369, y: 146, width: 129, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "ch-distribution"
+      capability: "core.rect"
+      layout: { x: 529, y: 104, width: 145, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "ch-distribution-title"
+          capability: "core.text"
+          text: "distribution"
+          layout: { x: 537, y: 122, width: 129, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "ch-distribution-detail"
+          capability: "core.text"
+          text: "deliver"
+          layout: { x: 537, y: 146, width: 129, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "ch-execution"
+      capability: "core.rect"
+      layout: { x: 25, y: 232, width: 145, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "ch-execution-title"
+          capability: "core.text"
+          text: "execution"
+          layout: { x: 33, y: 250, width: 129, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "ch-execution-detail"
+          capability: "core.text"
+          text: "run shards"
+          layout: { x: 33, y: 274, width: 129, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "ch-capture"
+      capability: "core.rect"
+      layout: { x: 193, y: 232, width: 145, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "ch-capture-title"
+          capability: "core.text"
+          text: "capture"
+          layout: { x: 201, y: 250, width: 129, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "ch-capture-detail"
+          capability: "core.text"
+          text: "store"
+          layout: { x: 201, y: 274, width: 129, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "ch-merge"
+      capability: "core.rect"
+      layout: { x: 361, y: 232, width: 145, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "ch-merge-title"
+          capability: "core.text"
+          text: "merge"
+          layout: { x: 369, y: 250, width: 129, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "ch-merge-detail"
+          capability: "core.text"
+          text: "reduce"
+          layout: { x: 369, y: 274, width: 129, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "ch-artifacts"
+      capability: "core.rect"
+      layout: { x: 529, y: 232, width: 145, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "ch-artifacts-title"
+          capability: "core.text"
+          text: "artifacts"
+          layout: { x: 537, y: 250, width: 129, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "ch-artifacts-detail"
+          capability: "core.text"
+          text: "publish"
+          layout: { x: 537, y: 274, width: 129, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "footer"
+      capability: "core.text"
+      text: "route order is evidence order"
+      layout: { x: 100, y: 318, width: 500, height: 24 }
+      style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
+    }
+    {
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M70 132 H630"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+      accessibility: { label: "motion signal" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-ch-eligibility", at: 350, duration: 320, target: "ch-eligibility", action: "enter" }
+    { id: "t-ch-ownership", at: 470, duration: 320, target: "ch-ownership", action: "enter" }
+    { id: "t-ch-control", at: 590, duration: 320, target: "ch-control", action: "enter" }
+    { id: "t-ch-distribution", at: 710, duration: 320, target: "ch-distribution", action: "enter" }
+    { id: "t-ch-execution", at: 830, duration: 320, target: "ch-execution", action: "enter" }
+    { id: "t-ch-capture", at: 950, duration: 320, target: "ch-capture", action: "enter" }
+    { id: "t-ch-merge", at: 1070, duration: 320, target: "ch-merge", action: "enter" }
+    { id: "t-ch-artifacts", at: 1190, duration: 320, target: "ch-artifacts", action: "enter" }
+    { id: "t-footer", at: 1400, duration: 300, target: "footer", action: "enter" }
+    { id: "t-emphasis", at: 1800, duration: 400, target: "ch-eligibility", action: "emphasis" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+    ]
+    }
+  }
+
+  slide "evidence-vocabulary" {
+    eyebrow: "Workbook · 2 of 16"
+    title: "Status and evidence are part of the contract"
+    lede: "A colored node is never enough to communicate implementation state. Built means the path exists on the ordinary route, feature-gated means code exists behind build or runtime admission, and partial means a known fidelity or lifecycle boundary remains. Every status stays visible as text."
+    narration: "Status is part of the contract and must be readable without color. Built means the path executes on an admitted route. Feature-gated means code exists behind a build or runtime gate. Partial names a real limitation. Each algorithm also links boundary, unit, integration, or end-to-end evidence."
+    term: {
+      word: "evidence vocabulary"
+      meaning: "Boundary, unit, integration, and end-to-end references attached to an algorithm."
+    }
+    points: [
+      "Built — executable on the admitted route.",
+      "Feature-gated — executable only when its explicit gate is present.",
+      "Partial — implemented with a named limitation or omitted fidelity."
+    ]
+    caption: "status labels · source-backed evidence."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+      accessibility: { label: "WORKBOOK · STATUS & EVIDENCE" }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "WORKBOOK · STATUS & EVIDENCE"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "status labels · source-backed evidence."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "algo-built"
+      capability: "core.rect"
+      layout: { x: 35, y: 132, width: 190, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "algo-built-title"
+          capability: "core.text"
+          text: "modulo-cell-ownership"
+          layout: { x: 43, y: 150, width: 174, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "algo-built-detail"
+          capability: "core.text"
+          text: "ordinary route"
+          layout: { x: 43, y: 174, width: 174, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-built"
+      capability: "core.rect"
+      layout: { x: 155, y: 120, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-built-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 155, y: 124, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "algo-partial"
+      capability: "core.rect"
+      layout: { x: 255, y: 132, width: 190, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "algo-partial-title"
+          capability: "core.text"
+          text: "final-report-assembly"
+          layout: { x: 263, y: 150, width: 174, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "algo-partial-detail"
+          capability: "core.text"
+          text: "named boundary"
+          layout: { x: 263, y: 174, width: 174, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-partial"
+      capability: "core.rect"
+      layout: { x: 375, y: 120, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-partial-text"
+          capability: "core.text"
+          text: "PARTIAL"
+          layout: { x: 375, y: 124, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "algo-gated"
+      capability: "core.rect"
+      layout: { x: 475, y: 132, width: 190, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "algo-gated-title"
+          capability: "core.text"
+          text: "phaser-start"
+          layout: { x: 483, y: 150, width: 174, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "algo-gated-detail"
+          capability: "core.text"
+          text: "explicit admission"
+          layout: { x: 483, y: 174, width: 174, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-gated"
+      capability: "core.rect"
+      layout: { x: 549, y: 120, width: 116, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-gated-text"
+          capability: "core.text"
+          text: "FEATURE-GATED"
+          layout: { x: 549, y: 124, width: 116, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "evidence"
+      capability: "core.rect"
+      layout: { x: 110, y: 275, width: 480, height: 54 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "evidence-title"
+          capability: "core.text"
+          text: "Evidence"
+          layout: { x: 118, y: 293, width: 464, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "evidence-detail"
+          capability: "core.text"
+          text: "boundary · unit · integration · end-to-end"
+          layout: { x: 118, y: 317, width: 464, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-built", at: 400, duration: 360, target: "algo-built", action: "enter" }
+    { id: "t-st-built", at: 450, duration: 280, target: "st-built", action: "enter" }
+    { id: "t-partial", at: 700, duration: 360, target: "algo-partial", action: "enter" }
+    { id: "t-st-partial", at: 750, duration: 280, target: "st-partial", action: "enter" }
+    { id: "t-gated", at: 1000, duration: 360, target: "algo-gated", action: "enter" }
+    { id: "t-st-gated", at: 1050, duration: 280, target: "st-gated", action: "enter" }
+    { id: "t-evidence", at: 1400, duration: 400, target: "evidence", action: "enter" }
+  { id: "t-emphasis-final", at: 2100, duration: 420, target: "algo-built", action: "emphasis" }
+    ]
+    }
+  }
+
+  slide "fail-closed-eligibility" {
+    eyebrow: "Eligibility · 3 of 16"
+    title: "Fail closed before cells launch"
+    lede: "Eligibility begins at execution-mode-dispatch, promotes a multi-cell request with controller-promotion, then validates run kind, budgets, storage, and artifacts. velo-feature-admission is explicitly feature-gated: a lean binary reports an unsupported role instead of silently running direct."
+    narration: "Eligibility fails closed before any cell launches. execution-mode-dispatch enters the private protocol, controller-promotion recognizes a multi-cell request, and run-shape and budget validators admit only supported combinations. velo-feature-admission is feature-gated, so a lean build reports an error rather than silently degrading."
+    term: {
+      word: "cellular-run-shape-validation"
+      meaning: "Pre-launch admission for supported transport, dataset, workload, and ownership combinations."
+    }
+    points: [
+      "execution-mode-dispatch and controller-promotion are built.",
+      "velo-feature-admission is feature-gated.",
+      "execution-merge-backstops revalidates the payload actually returned by cells."
+    ]
+    caption: "dispatch → promote → validate → admit."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "ELIGIBILITY · FAIL-CLOSED GATES"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "dispatch → promote → validate → admit."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "dispatch"
+      capability: "core.rect"
+      layout: { x: 22, y: 150, width: 150, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "dispatch-title"
+          capability: "core.text"
+          text: "execution-mode-dispatch"
+          layout: { x: 30, y: 168, width: 134, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "dispatch-detail"
+          capability: "core.text"
+          text: "private protocol"
+          layout: { x: 30, y: 192, width: 134, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-d"
+      capability: "core.rect"
+      layout: { x: 102, y: 138, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-d-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 102, y: 142, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "a1"
+      capability: "core.line"
+      from: { x: 172, y: 186 }
+      to: { x: 205, y: 186 }
+      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+    }
+    {
+      id: "promote"
+      capability: "core.rect"
+      layout: { x: 205, y: 150, width: 150, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "promote-title"
+          capability: "core.text"
+          text: "controller-promotion"
+          layout: { x: 213, y: 168, width: 134, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "promote-detail"
+          capability: "core.text"
+          text: "cells > 1"
+          layout: { x: 213, y: 192, width: 134, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-p"
+      capability: "core.rect"
+      layout: { x: 285, y: 138, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-p-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 285, y: 142, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "a2"
+      capability: "core.line"
+      from: { x: 355, y: 186 }
+      to: { x: 388, y: 186 }
+      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+    }
+    {
+      id: "validate"
+      capability: "core.rect"
+      layout: { x: 388, y: 150, width: 150, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "validate-title"
+          capability: "core.text"
+          text: "run-shape-validation"
+          layout: { x: 396, y: 168, width: 134, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "validate-detail"
+          capability: "core.text"
+          text: "fail closed"
+          layout: { x: 396, y: 192, width: 134, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-v"
+      capability: "core.rect"
+      layout: { x: 468, y: 138, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-v-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 468, y: 142, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "a3"
+      capability: "core.line"
+      from: { x: 538, y: 186 }
+      to: { x: 570, y: 186 }
+      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+    }
+    {
+      id: "velo"
+      capability: "core.rect"
+      layout: { x: 570, y: 150, width: 108, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "velo-title"
+          capability: "core.text"
+          text: "Velo roles"
+          layout: { x: 578, y: 168, width: 92, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "velo-detail"
+          capability: "core.text"
+          text: "admit"
+          layout: { x: 578, y: 192, width: 92, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-velo"
+      capability: "core.rect"
+      layout: { x: 562, y: 138, width: 116, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-velo-text"
+          capability: "core.text"
+          text: "FEATURE-GATED"
+          layout: { x: 562, y: 142, width: 116, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M85 188 H610"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+      accessibility: { label: "motion signal" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-dispatch", at: 400, duration: 340, target: "dispatch", action: "enter" }
+    { id: "t-st-d", at: 450, duration: 260, target: "st-d", action: "enter" }
+    { id: "t-a1", at: 700, duration: 300, target: "a1", action: "draw" }
+    { id: "t-promote", at: 900, duration: 340, target: "promote", action: "enter" }
+    { id: "t-st-p", at: 950, duration: 260, target: "st-p", action: "enter" }
+    { id: "t-a2", at: 1200, duration: 300, target: "a2", action: "draw" }
+    { id: "t-validate", at: 1400, duration: 340, target: "validate", action: "enter" }
+    { id: "t-st-v", at: 1450, duration: 260, target: "st-v", action: "enter" }
+    { id: "t-a3", at: 1700, duration: 300, target: "a3", action: "draw" }
+    { id: "t-velo", at: 1900, duration: 340, target: "velo", action: "enter" }
+    { id: "t-st-velo", at: 1950, duration: 260, target: "st-velo", action: "enter" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+    { id: "t-emphasis-final", at: 2100, duration: 420, target: "dispatch", action: "emphasis" }
+    ]
+    }
+  }
+
+  slide "disjoint-ownership" {
+    eyebrow: "Ownership · 4 of 16"
+    title: "Tile work without gaps or collisions"
+    lede: "modulo-cell-ownership assigns each global position to exactly one cell, while owned-positions-tiling proves the uneven slices still cover the whole budget. conversation-ownership advances a shared deterministic draw sequence and yields only the positions owned by that cell."
+    narration: "Ownership tiles the authored budget deterministically. modulo-cell-ownership gives every position exactly one cell, and owned-positions-tiling accounts for uneven slices. conversation-ownership uses the same deterministic draw sequence while returning only owned conversations, so no turn crosses a cell boundary."
+    term: {
+      word: "modulo-cell-ownership"
+      meaning: "Cell k owns global position i exactly when i modulo cell_count equals k."
+    }
+    points: [
+      "Request, graph-instance, and conversation ownership remain disjoint.",
+      "cellular-issuance-authority stamps interleaved global ordinals.",
+      "A conversation remains wholly owned; turns never split across cells."
+    ]
+    caption: "one position · exactly one owner."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "OWNERSHIP · DISJOINT TILING"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "one position · exactly one owner."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "modulo"
+      capability: "core.rect"
+      layout: { x: 30, y: 145, width: 210, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "modulo-title"
+          capability: "core.text"
+          text: "modulo-cell-ownership"
+          layout: { x: 38, y: 163, width: 194, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "modulo-detail"
+          capability: "core.text"
+          text: "i % N == k"
+          layout: { x: 38, y: 187, width: 194, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-mod"
+      capability: "core.rect"
+      layout: { x: 170, y: 133, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-mod-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 170, y: 137, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "o1"
+      capability: "core.line"
+      from: { x: 240, y: 181 }
+      to: { x: 290, y: 181 }
+      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    {
+      id: "c0"
+      capability: "core.rect"
+      layout: { x: 290, y: 105, width: 170, height: 58 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "c0-title"
+          capability: "core.text"
+          text: "cell 0"
+          layout: { x: 298, y: 123, width: 154, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "c0-detail"
+          capability: "core.text"
+          text: "0, 3, 6, …"
+          layout: { x: 298, y: 147, width: 154, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "c1"
+      capability: "core.rect"
+      layout: { x: 290, y: 181, width: 170, height: 58 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "c1-title"
+          capability: "core.text"
+          text: "cell 1"
+          layout: { x: 298, y: 199, width: 154, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "c1-detail"
+          capability: "core.text"
+          text: "1, 4, 7, …"
+          layout: { x: 298, y: 223, width: 154, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "c2"
+      capability: "core.rect"
+      layout: { x: 290, y: 257, width: 170, height: 58 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "c2-title"
+          capability: "core.text"
+          text: "cell 2"
+          layout: { x: 298, y: 275, width: 154, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "c2-detail"
+          capability: "core.text"
+          text: "2, 5, 8, …"
+          layout: { x: 298, y: 299, width: 154, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "conv"
+      capability: "core.rect"
+      layout: { x: 500, y: 145, width: 170, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "conv-title"
+          capability: "core.text"
+          text: "conversation-ownership"
+          layout: { x: 508, y: 163, width: 154, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "conv-detail"
+          capability: "core.text"
+          text: "whole sessions"
+          layout: { x: 508, y: 187, width: 154, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-conv"
+      capability: "core.rect"
+      layout: { x: 554, y: 133, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-conv-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 554, y: 137, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "inv"
+      capability: "core.text"
+      text: "disjoint + complete"
+      layout: { x: 100, y: 340, width: 500, height: 20 }
+      style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
+    }
+    {
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M115 190 H585"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+      accessibility: { label: "motion signal" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-modulo", at: 400, duration: 360, target: "modulo", action: "enter" }
+    { id: "t-st-mod", at: 450, duration: 260, target: "st-mod", action: "enter" }
+    { id: "t-o1", at: 700, duration: 300, target: "o1", action: "draw" }
+    { id: "t-c0", at: 900, duration: 300, target: "c0", action: "enter" }
+    { id: "t-c1", at: 1050, duration: 300, target: "c1", action: "enter" }
+    { id: "t-c2", at: 1200, duration: 300, target: "c2", action: "enter" }
+    { id: "t-conv", at: 1450, duration: 360, target: "conv", action: "enter" }
+    { id: "t-st-conv", at: 1500, duration: 260, target: "st-conv", action: "enter" }
+    { id: "t-inv", at: 1800, duration: 300, target: "inv", action: "enter" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+    { id: "t-emphasis-final", at: 2100, duration: 420, target: "modulo", action: "emphasis" }
+    ]
+    }
+  }
+
+  slide "control-plane" {
+    eyebrow: "Control · 5 of 16"
+    title: "Coordinate generations and process state"
+    lede: "broadcast-attach-replay closes the replay-plus-live race, and phaser-generation-advance makes progress monotonic. synchronized-start is the default Velo-gated rendezvous; phaser-start is an opt-in feature-gated path. The gate changes coordination, never ownership."
+    narration: "The control plane joins replay and live delivery without a race, then advances monotonic generations. synchronized-start is the default Velo-gated rendezvous, while phaser-start is an opt-in feature-gated branch. These choices change coordination timing, never which cell owns the work."
+    term: {
+      word: "broadcast-attach-replay"
+      meaning: "Attach under the broadcast seam so concurrent data appears in replay or live delivery, never neither."
+    }
+    points: [
+      "Replay and live delivery meet at one locked seam.",
+      "phaser-await-generation uses a greater-than-or-equal gate.",
+      "controller-child-arbitration surfaces hard child failure."
+    ]
+    caption: "replay seam · generations · START."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "CONTROL · REPLAY + LIVE + START"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "replay seam · generations · START."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "replay"
+      capability: "core.rect"
+      layout: { x: 22, y: 150, width: 185, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "replay-title"
+          capability: "core.text"
+          text: "broadcast-attach-replay"
+          layout: { x: 30, y: 168, width: 169, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "replay-detail"
+          capability: "core.text"
+          text: "close seam race"
+          layout: { x: 30, y: 192, width: 169, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-r"
+      capability: "core.rect"
+      layout: { x: 137, y: 138, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-r-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 137, y: 142, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "c1"
+      capability: "core.line"
+      from: { x: 207, y: 186 }
+      to: { x: 250, y: 186 }
+      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+    }
+    {
+      id: "gen"
+      capability: "core.rect"
+      layout: { x: 250, y: 150, width: 195, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "gen-title"
+          capability: "core.text"
+          text: "phaser-generation-advance"
+          layout: { x: 258, y: 168, width: 179, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "gen-detail"
+          capability: "core.text"
+          text: "monotonic"
+          layout: { x: 258, y: 192, width: 179, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-g"
+      capability: "core.rect"
+      layout: { x: 375, y: 138, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-g-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 375, y: 142, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "c2"
+      capability: "core.line"
+      from: { x: 445, y: 186 }
+      to: { x: 488, y: 186 }
+      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+    }
+    {
+      id: "start"
+      capability: "core.rect"
+      layout: { x: 488, y: 150, width: 190, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "start-title"
+          capability: "core.text"
+          text: "phaser-start"
+          layout: { x: 496, y: 168, width: 174, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "start-detail"
+          capability: "core.text"
+          text: "opt-in START"
+          layout: { x: 496, y: 192, width: 174, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-s"
+      capability: "core.rect"
+      layout: { x: 562, y: 138, width: 116, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-s-text"
+          capability: "core.text"
+          text: "FEATURE-GATED"
+          layout: { x: 562, y: 142, width: 116, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "ctrl-note"
+      capability: "core.text"
+      text: "coordination changes · ownership does not"
+      layout: { x: 80, y: 292, width: 540, height: 24 }
+      style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
+    }
+    {
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M90 205 H610"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+      accessibility: { label: "motion signal" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-replay", at: 400, duration: 340, target: "replay", action: "enter" }
+    { id: "t-st-r", at: 450, duration: 260, target: "st-r", action: "enter" }
+    { id: "t-c1", at: 700, duration: 300, target: "c1", action: "draw" }
+    { id: "t-gen", at: 900, duration: 340, target: "gen", action: "enter" }
+    { id: "t-st-g", at: 950, duration: 260, target: "st-g", action: "enter" }
+    { id: "t-c2", at: 1200, duration: 300, target: "c2", action: "draw" }
+    { id: "t-start", at: 1400, duration: 340, target: "start", action: "enter" }
+    { id: "t-st-s", at: 1450, duration: 260, target: "st-s", action: "enter" }
+    { id: "t-ctrl-note", at: 1750, duration: 300, target: "ctrl-note", action: "enter" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+    { id: "t-emphasis-final", at: 2100, duration: 420, target: "replay", action: "emphasis" }
+    ]
+    }
+  }
+
+  slide "distribution-path" {
+    eyebrow: "Distribution · 6 of 16"
+    title: "Deliver or regenerate only owned work"
+    lede: "canonical-dataset-regeneration remains the measured path. controller-fanout-generation is a feature-gated verification overlay that publishes chunks and builds owned indexes; it never replaces canonical execution data. distribution-miss counts and surfaces an unindexed issue instead of skipping it."
+    narration: "Canonical regeneration remains the measured data path. The feature-gated controller fan-out is a verification overlay that publishes compressed chunks and builds owned indexes. It never becomes measurement authority. If dispatch asks for an unindexed request, distribution-miss counts and surfaces it rather than silently skipping."
+    term: {
+      word: "distribution-miss"
+      meaning: "A counted DispatchDecision::Miss that leaves ownership state recoverable."
+    }
+    points: [
+      "dataset-velo-replay-live provides compressed replay plus live chunks.",
+      "dataset-http-zstd-reconstruct handles cross-host Stage G inputs.",
+      "A verification overlay proves delivery without becoming measurement authority."
+    ]
+    caption: "canonical path · optional verification overlay."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "DISTRIBUTION · CANONICAL + OVERLAY"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "canonical path · optional verification overlay."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "canon"
+      capability: "core.rect"
+      layout: { x: 35, y: 122, width: 220, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "canon-title"
+          capability: "core.text"
+          text: "canonical-regeneration"
+          layout: { x: 43, y: 140, width: 204, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "canon-detail"
+          capability: "core.text"
+          text: "measured data"
+          layout: { x: 43, y: 164, width: 204, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-canon"
+      capability: "core.rect"
+      layout: { x: 185, y: 110, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-canon-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 185, y: 114, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "fanout"
+      capability: "core.rect"
+      layout: { x: 35, y: 245, width: 220, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "fanout-title"
+          capability: "core.text"
+          text: "controller-fanout-generation"
+          layout: { x: 43, y: 263, width: 204, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "fanout-detail"
+          capability: "core.text"
+          text: "verification overlay"
+          layout: { x: 43, y: 287, width: 204, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-fan"
+      capability: "core.rect"
+      layout: { x: 139, y: 233, width: 116, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-fan-text"
+          capability: "core.text"
+          text: "FEATURE-GATED"
+          layout: { x: 139, y: 237, width: 116, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "d1"
+      capability: "core.line"
+      from: { x: 255, y: 158 }
+      to: { x: 440, y: 158 }
+      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    {
+      id: "d2"
+      capability: "core.path"
+      d: "M255 281 C340 275 375 230 440 210"
+      layout: { x: 255, y: 210, width: 185, height: 71 }
+      style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.2 }
+    }
+    {
+      id: "miss"
+      capability: "core.rect"
+      layout: { x: 440, y: 174, width: 225, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "miss-title"
+          capability: "core.text"
+          text: "distribution-miss"
+          layout: { x: 448, y: 192, width: 209, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "miss-detail"
+          capability: "core.text"
+          text: "count · surface · recover"
+          layout: { x: 448, y: 216, width: 209, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-miss"
+      capability: "core.rect"
+      layout: { x: 595, y: 162, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-miss-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 595, y: 166, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M80 195 H620"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+      accessibility: { label: "motion signal" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-canon", at: 400, duration: 340, target: "canon", action: "enter" }
+    { id: "t-st-canon", at: 450, duration: 260, target: "st-canon", action: "enter" }
+    { id: "t-fanout", at: 700, duration: 340, target: "fanout", action: "enter" }
+    { id: "t-st-fan", at: 750, duration: 260, target: "st-fan", action: "enter" }
+    { id: "t-d1", at: 1000, duration: 300, target: "d1", action: "draw" }
+    { id: "t-d2", at: 1100, duration: 300, target: "d2", action: "draw" }
+    { id: "t-miss", at: 1350, duration: 360, target: "miss", action: "enter" }
+    { id: "t-st-miss", at: 1400, duration: 260, target: "st-miss", action: "enter" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+    ]
+    }
+  }
+
+  slide "two-level-execution" {
+    eyebrow: "Execution · 7 of 16"
+    title: "Nest cell and worker shards"
+    lede: "two-level-partition first assigns work to cells and then to thread-per-core workers. scheduled-shard-runtime runs each worker-local sink, while issuance-dispatch-injection carries the global ordinal authority into capture. Graph and scheduled programs branch only after the owned envelope arrives."
+    narration: "Execution nests two deterministic partitions. First the controller assigns a slice to each cell; then thread-per-core workers divide that slice again. The worker-local runtime dispatches through the ordinary sink, while issuance authority carries stable global identity into record capture and later merge."
+    term: {
+      word: "two-level-partition"
+      meaning: "Deterministic cell ownership followed by disjoint worker ownership inside each cell."
+    }
+    points: [
+      "partitioned-scheduled-sampler and partitioned-graph-source preserve workload semantics.",
+      "cell-envelope-fetch hands an autonomous cell its resolved slice.",
+      "Only execution workers dispatch inference load."
+    ]
+    caption: "global run → cell slice → worker shard."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "EXECUTION · TWO-LEVEL PARTITION"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "global run → cell slice → worker shard."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "tlp"
+      capability: "core.rect"
+      layout: { x: 30, y: 150, width: 175, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "tlp-title"
+          capability: "core.text"
+          text: "two-level-partition"
+          layout: { x: 38, y: 168, width: 159, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "tlp-detail"
+          capability: "core.text"
+          text: "cell ownership"
+          layout: { x: 38, y: 192, width: 159, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-tlp"
+      capability: "core.rect"
+      layout: { x: 135, y: 138, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-tlp-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 135, y: 142, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "e1"
+      capability: "core.line"
+      from: { x: 205, y: 186 }
+      to: { x: 260, y: 186 }
+      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    {
+      id: "w0"
+      capability: "core.rect"
+      layout: { x: 260, y: 108, width: 180, height: 64 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "w0-title"
+          capability: "core.text"
+          text: "worker 0"
+          layout: { x: 268, y: 126, width: 164, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "w0-detail"
+          capability: "core.text"
+          text: "!Send local sink"
+          layout: { x: 268, y: 150, width: 164, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "w1"
+      capability: "core.rect"
+      layout: { x: 260, y: 225, width: 180, height: 64 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "w1-title"
+          capability: "core.text"
+          text: "worker 1"
+          layout: { x: 268, y: 243, width: 164, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "w1-detail"
+          capability: "core.text"
+          text: "!Send local sink"
+          layout: { x: 268, y: 267, width: 164, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "e2"
+      capability: "core.line"
+      from: { x: 440, y: 140 }
+      to: { x: 500, y: 140 }
+      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
+      id: "e3"
+      capability: "core.line"
+      from: { x: 440, y: 257 }
+      to: { x: 500, y: 257 }
+      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
+      id: "iss"
+      capability: "core.rect"
+      layout: { x: 500, y: 150, width: 170, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "iss-title"
+          capability: "core.text"
+          text: "issuance-dispatch-injection"
+          layout: { x: 508, y: 168, width: 154, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "iss-detail"
+          capability: "core.text"
+          text: "global identity"
+          layout: { x: 508, y: 192, width: 154, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-iss"
+      capability: "core.rect"
+      layout: { x: 554, y: 138, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-iss-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 554, y: 142, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M80 195 H620"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+      accessibility: { label: "motion signal" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-tlp", at: 400, duration: 340, target: "tlp", action: "enter" }
+    { id: "t-st-tlp", at: 450, duration: 260, target: "st-tlp", action: "enter" }
+    { id: "t-e1", at: 700, duration: 300, target: "e1", action: "draw" }
+    { id: "t-w0", at: 900, duration: 300, target: "w0", action: "enter" }
+    { id: "t-w1", at: 1050, duration: 300, target: "w1", action: "enter" }
+    { id: "t-e2", at: 1250, duration: 280, target: "e2", action: "draw" }
+    { id: "t-e3", at: 1350, duration: 280, target: "e3", action: "draw" }
+    { id: "t-iss", at: 1550, duration: 340, target: "iss", action: "enter" }
+    { id: "t-st-iss", at: 1600, duration: 260, target: "st-iss", action: "enter" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+    ]
+    }
+  }
+
+  slide "capture-modes" {
+    eyebrow: "Capture · 8 of 16"
+    title: "Choose retain, exact fold, or sketch"
+    lede: "terminal-record-finalization closes one observation stream. retain-record-capture keeps rows in dispatch order; streaming-exact-fold appends exact aggregates and drops rows; tagged-sketch-merge bounds distribution memory while retaining exact counts and moments. Storage choice determines later artifact authority."
+    narration: "Capture begins only after terminal record finalization. Retain keeps every row and its artifact authority. Exact fold appends exact record-derived aggregates and drops the row. Sketch also drops rows and bounds memory, while preserving exact counts and moments and approximating percentile interiors."
+    term: {
+      word: "terminal-record-finalization"
+      meaning: "The point where observations become one complete CapturedRecord."
+    }
+    points: [
+      "Retain preserves row-level artifacts.",
+      "Exact fold drops rows but preserves exact record-derived aggregates.",
+      "Sketch bounds memory; percentile interiors are approximate."
+    ]
+    caption: "finalize once · select storage fidelity."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "CAPTURE · STORAGE MODES"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "finalize once · select storage fidelity."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "term"
+      capability: "core.rect"
+      layout: { x: 20, y: 150, width: 165, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "term-title"
+          capability: "core.text"
+          text: "terminal-record-finalization"
+          layout: { x: 28, y: 168, width: 149, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "term-detail"
+          capability: "core.text"
+          text: "CapturedRecord"
+          layout: { x: 28, y: 192, width: 149, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-term"
+      capability: "core.rect"
+      layout: { x: 115, y: 138, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-term-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 115, y: 142, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "cap1"
+      capability: "core.line"
+      from: { x: 185, y: 186 }
+      to: { x: 225, y: 186 }
+      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
+      id: "retain"
+      capability: "core.rect"
+      layout: { x: 225, y: 92, width: 210, height: 60 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "retain-title"
+          capability: "core.text"
+          text: "retain-record-capture"
+          layout: { x: 233, y: 110, width: 194, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "retain-detail"
+          capability: "core.text"
+          text: "rows + raw artifacts"
+          layout: { x: 233, y: 134, width: 194, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "fold"
+      capability: "core.rect"
+      layout: { x: 225, y: 170, width: 210, height: 60 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "fold-title"
+          capability: "core.text"
+          text: "streaming-exact-fold"
+          layout: { x: 233, y: 188, width: 194, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "fold-detail"
+          capability: "core.text"
+          text: "exact store · drop row"
+          layout: { x: 233, y: 212, width: 194, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "sketch"
+      capability: "core.rect"
+      layout: { x: 225, y: 248, width: 210, height: 60 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "sketch-title"
+          capability: "core.text"
+          text: "tagged-sketch-merge"
+          layout: { x: 233, y: 266, width: 194, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "sketch-detail"
+          capability: "core.text"
+          text: "bounded percentiles"
+          layout: { x: 233, y: 290, width: 194, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "compat"
+      capability: "core.rect"
+      layout: { x: 485, y: 150, width: 190, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "compat-title"
+          capability: "core.text"
+          text: "storage compatibility"
+          layout: { x: 493, y: 168, width: 174, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "compat-detail"
+          capability: "core.text"
+          text: "artifact authority"
+          layout: { x: 493, y: 192, width: 174, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-compat"
+      capability: "core.rect"
+      layout: { x: 605, y: 138, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-compat-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 605, y: 142, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M80 195 H620"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+      accessibility: { label: "motion signal" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-term", at: 400, duration: 340, target: "term", action: "enter" }
+    { id: "t-st-term", at: 450, duration: 260, target: "st-term", action: "enter" }
+    { id: "t-cap1", at: 700, duration: 300, target: "cap1", action: "draw" }
+    { id: "t-retain", at: 900, duration: 300, target: "retain", action: "enter" }
+    { id: "t-fold", at: 1050, duration: 300, target: "fold", action: "enter" }
+    { id: "t-sketch", at: 1200, duration: 300, target: "sketch", action: "enter" }
+    { id: "t-compat", at: 1450, duration: 340, target: "compat", action: "enter" }
+    { id: "t-st-compat", at: 1500, duration: 260, target: "st-compat", action: "enter" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+    ]
+    }
+  }
+
+  slide "merge-laws" {
+    eyebrow: "Merge · 9 of 16"
+    title: "Reduce under an explicit merge law"
+    lede: "scheduled-global-ordinal-merge validates a dense permutation and re-ingests retained rows in global order. Graph retain uses deterministic concatenation and renumbering. exact-fold-store-merge and sketch-tdigest-merge reduce bounded stores, while final-report-assembly remains partial because later artifact failure cannot roll back earlier exports."
+    narration: "Merge law follows workload and storage. Scheduled retain validates a dense global ordinal permutation before re-ingestion; graph retain concatenates deterministically and renumbers. Folded and sketch stores reduce without rows. Final report assembly is labeled partial because a later artifact failure cannot undo exports already written."
+    term: {
+      word: "scheduled-global-ordinal-merge"
+      meaning: "Validate, sort, and re-ingest retained scheduled records by global request_index."
+    }
+    points: [
+      "Duplicate, missing, and out-of-range ordinals fail before accumulation.",
+      "Flat controller and hierarchical aggregator reductions share explicit topology.",
+      "merged-report-fidelity-boundary documents what each storage mode can reproduce."
+    ]
+    caption: "partition set → validated reduction → report."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "MERGE · EXPLICIT LAWS"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "partition set → validated reduction → report."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "sgom"
+      capability: "core.rect"
+      layout: { x: 25, y: 116, width: 220, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "sgom-title"
+          capability: "core.text"
+          text: "scheduled-global-ordinal-merge"
+          layout: { x: 33, y: 134, width: 204, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "sgom-detail"
+          capability: "core.text"
+          text: "dense permutation"
+          layout: { x: 33, y: 158, width: 204, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-sgom"
+      capability: "core.rect"
+      layout: { x: 175, y: 104, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-sgom-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 175, y: 108, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "fidelity"
+      capability: "core.rect"
+      layout: { x: 25, y: 246, width: 220, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "fidelity-title"
+          capability: "core.text"
+          text: "merged-report-fidelity-boundary"
+          layout: { x: 33, y: 264, width: 204, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "fidelity-detail"
+          capability: "core.text"
+          text: "graph · fold · sketch"
+          layout: { x: 33, y: 288, width: 204, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-fid"
+      capability: "core.rect"
+      layout: { x: 175, y: 234, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-fid-text"
+          capability: "core.text"
+          text: "PARTIAL"
+          layout: { x: 175, y: 238, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "m1"
+      capability: "core.path"
+      d: "M245 152 C350 155 385 182 445 195"
+      layout: { x: 245, y: 152, width: 200, height: 43 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
+      id: "m2"
+      capability: "core.path"
+      d: "M245 282 C350 275 385 228 445 210"
+      layout: { x: 245, y: 210, width: 200, height: 72 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
+      id: "report"
+      capability: "core.rect"
+      layout: { x: 445, y: 165, width: 225, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "report-title"
+          capability: "core.text"
+          text: "final-report-assembly"
+          layout: { x: 453, y: 183, width: 209, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "report-detail"
+          capability: "core.text"
+          text: "publish merged report"
+          layout: { x: 453, y: 207, width: 209, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-rep"
+      capability: "core.rect"
+      layout: { x: 600, y: 153, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-rep-text"
+          capability: "core.text"
+          text: "PARTIAL"
+          layout: { x: 600, y: 157, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M80 195 H620"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+      accessibility: { label: "motion signal" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-sgom", at: 400, duration: 340, target: "sgom", action: "enter" }
+    { id: "t-st-sgom", at: 450, duration: 260, target: "st-sgom", action: "enter" }
+    { id: "t-fidelity", at: 700, duration: 340, target: "fidelity", action: "enter" }
+    { id: "t-st-fid", at: 750, duration: 260, target: "st-fid", action: "enter" }
+    { id: "t-m1", at: 1000, duration: 300, target: "m1", action: "draw" }
+    { id: "t-m2", at: 1100, duration: 300, target: "m2", action: "draw" }
+    { id: "t-report", at: 1350, duration: 360, target: "report", action: "enter" }
+    { id: "t-st-rep", at: 1400, duration: 260, target: "st-rep", action: "enter" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+    ]
+    }
+  }
+
+  slide "artifact-shipping" {
+    eyebrow: "Artifacts · 10 of 16"
+    title: "Move bytes safely and choose one outcome"
+    lede: "artifact-authority-allowlist is feature-gated and admits only configured relative paths. artifact-http-zstd-upload streams Stage E files, partial-file-atomic-replace avoids publishing torn output, and artifact-completion-barrier waits for required uploads. telemetry-drop-warning and cancellation-propagation remain partial boundaries."
+    narration: "Artifacts have their own authority and failure protocol. An allowlist admits only configured relative paths, streaming upload writes a partial file, atomic replacement publishes it, and a completion barrier waits for the required set. Side-channel aggregation and cancellation scope remain explicitly partial."
+    term: {
+      word: "artifact-completion-barrier"
+      meaning: "Controller gate that waits for the expected cross-host artifact set."
+    }
+    points: [
+      "Path authority is allowlisted before filesystem join.",
+      "Temporary files become authoritative only through atomic replacement.",
+      "child-exit-arbitration, controller-timeout, and terminal-failure-envelope select one terminal result."
+    ]
+    caption: "allowlist → upload → atomic publish → barrier."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "ARTIFACTS · AUTHORITY + FAILURE"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "allowlist → upload → atomic publish → barrier."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "allow"
+      capability: "core.rect"
+      layout: { x: 20, y: 150, width: 160, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "allow-title"
+          capability: "core.text"
+          text: "artifact-authority-allowlist"
+          layout: { x: 28, y: 168, width: 144, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "allow-detail"
+          capability: "core.text"
+          text: "relative paths"
+          layout: { x: 28, y: 192, width: 144, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-allow"
+      capability: "core.rect"
+      layout: { x: 64, y: 138, width: 116, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-allow-text"
+          capability: "core.text"
+          text: "FEATURE-GATED"
+          layout: { x: 64, y: 142, width: 116, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "ar1"
+      capability: "core.line"
+      from: { x: 180, y: 186 }
+      to: { x: 215, y: 186 }
+      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
+      id: "upload"
+      capability: "core.rect"
+      layout: { x: 215, y: 150, width: 150, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "upload-title"
+          capability: "core.text"
+          text: "HTTP zstd upload"
+          layout: { x: 223, y: 168, width: 134, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "upload-detail"
+          capability: "core.text"
+          text: ".partial file"
+          layout: { x: 223, y: 192, width: 134, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-up"
+      capability: "core.rect"
+      layout: { x: 249, y: 138, width: 116, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-up-text"
+          capability: "core.text"
+          text: "FEATURE-GATED"
+          layout: { x: 249, y: 142, width: 116, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "ar2"
+      capability: "core.line"
+      from: { x: 365, y: 186 }
+      to: { x: 400, y: 186 }
+      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
+      id: "atomic"
+      capability: "core.rect"
+      layout: { x: 400, y: 150, width: 130, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "atomic-title"
+          capability: "core.text"
+          text: "atomic replace"
+          layout: { x: 408, y: 168, width: 114, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "atomic-detail"
+          capability: "core.text"
+          text: "publish"
+          layout: { x: 408, y: 192, width: 114, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-at"
+      capability: "core.rect"
+      layout: { x: 414, y: 138, width: 116, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-at-text"
+          capability: "core.text"
+          text: "FEATURE-GATED"
+          layout: { x: 414, y: 142, width: 116, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "ar3"
+      capability: "core.line"
+      from: { x: 530, y: 186 }
+      to: { x: 565, y: 186 }
+      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
+      id: "barrier"
+      capability: "core.rect"
+      layout: { x: 565, y: 150, width: 115, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "barrier-title"
+          capability: "core.text"
+          text: "completion barrier"
+          layout: { x: 573, y: 168, width: 99, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "barrier-detail"
+          capability: "core.text"
+          text: "all files"
+          layout: { x: 573, y: 192, width: 99, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-bar"
+      capability: "core.rect"
+      layout: { x: 564, y: 138, width: 116, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-bar-text"
+          capability: "core.text"
+          text: "FEATURE-GATED"
+          layout: { x: 564, y: 142, width: 116, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M80 195 H620"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+      accessibility: { label: "motion signal" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-allow", at: 400, duration: 320, target: "allow", action: "enter" }
+    { id: "t-st-allow", at: 450, duration: 240, target: "st-allow", action: "enter" }
+    { id: "t-ar1", at: 700, duration: 280, target: "ar1", action: "draw" }
+    { id: "t-upload", at: 900, duration: 320, target: "upload", action: "enter" }
+    { id: "t-st-up", at: 950, duration: 240, target: "st-up", action: "enter" }
+    { id: "t-ar2", at: 1150, duration: 280, target: "ar2", action: "draw" }
+    { id: "t-atomic", at: 1350, duration: 320, target: "atomic", action: "enter" }
+    { id: "t-st-at", at: 1400, duration: 240, target: "st-at", action: "enter" }
+    { id: "t-ar3", at: 1600, duration: 280, target: "ar3", action: "draw" }
+    { id: "t-barrier", at: 1800, duration: 320, target: "barrier", action: "enter" }
+    { id: "t-st-bar", at: 1850, duration: 240, target: "st-bar", action: "enter" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+    ]
+    }
+  }
+
+  slide "canonical-route" {
+    eyebrow: "Composition · 11 of 16"
+    title: "Compose the canonical scheduled route"
+    lede: "A scheduled exact-fold route composes admission, modulo ownership, synchronized control, canonical data regeneration, nested execution, streaming exact fold, store merge, and final reporting. Route composition is ordered; selecting one policy can add or replace algorithms without changing unrelated invariants."
+    narration: "A route composer turns selectors into an ordered algorithm path. The canonical scheduled exact-fold route combines admission, modulo ownership, synchronized start, canonical data, nested execution, exact folding, store merge, and final reporting. Unsupported combinations stop at the first validation gate."
+    term: {
+      word: "scheduled-exact-fold"
+      meaning: "Canonical bounded-memory recipe with exact aggregate storage."
+    }
+    points: [
+      "Selectors derive an ordered algorithm route, not a bag of features.",
+      "Shared algorithms remain stable across route variants.",
+      "Validation gates stop composition at the first unsupported boundary."
+    ]
+    caption: "selectors → ordered algorithms → artifacts."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "COMPOSITION · CANONICAL ROUTE"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "selectors → ordered algorithms → artifacts."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "rt-eligibility"
+      capability: "core.rect"
+      layout: { x: 18, y: 160, width: 74, height: 64 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "rt-eligibility-title"
+          capability: "core.text"
+          text: "eligibility"
+          layout: { x: 26, y: 178, width: 58, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "rt-eligibility-detail"
+          capability: "core.text"
+          text: "gate"
+          layout: { x: 26, y: 202, width: 58, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "rt-a0"
+      capability: "core.line"
+      from: { x: 92, y: 192 }
+      to: { x: 103, y: 192 }
+      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    {
+      id: "rt-ownership"
+      capability: "core.rect"
+      layout: { x: 103, y: 160, width: 74, height: 64 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "rt-ownership-title"
+          capability: "core.text"
+          text: "ownership"
+          layout: { x: 111, y: 178, width: 58, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "rt-ownership-detail"
+          capability: "core.text"
+          text: "route"
+          layout: { x: 111, y: 202, width: 58, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "rt-a1"
+      capability: "core.line"
+      from: { x: 177, y: 192 }
+      to: { x: 188, y: 192 }
+      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    {
+      id: "rt-control"
+      capability: "core.rect"
+      layout: { x: 188, y: 160, width: 74, height: 64 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "rt-control-title"
+          capability: "core.text"
+          text: "control"
+          layout: { x: 196, y: 178, width: 58, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "rt-control-detail"
+          capability: "core.text"
+          text: "route"
+          layout: { x: 196, y: 202, width: 58, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "rt-a2"
+      capability: "core.line"
+      from: { x: 262, y: 192 }
+      to: { x: 273, y: 192 }
+      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    {
+      id: "rt-distribution"
+      capability: "core.rect"
+      layout: { x: 273, y: 160, width: 74, height: 64 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "rt-distribution-title"
+          capability: "core.text"
+          text: "distribution"
+          layout: { x: 281, y: 178, width: 58, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "rt-distribution-detail"
+          capability: "core.text"
+          text: "route"
+          layout: { x: 281, y: 202, width: 58, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "rt-a3"
+      capability: "core.line"
+      from: { x: 347, y: 192 }
+      to: { x: 358, y: 192 }
+      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    {
+      id: "rt-execution"
+      capability: "core.rect"
+      layout: { x: 358, y: 160, width: 74, height: 64 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "rt-execution-title"
+          capability: "core.text"
+          text: "execution"
+          layout: { x: 366, y: 178, width: 58, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "rt-execution-detail"
+          capability: "core.text"
+          text: "route"
+          layout: { x: 366, y: 202, width: 58, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "rt-a4"
+      capability: "core.line"
+      from: { x: 432, y: 192 }
+      to: { x: 443, y: 192 }
+      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    {
+      id: "rt-capture"
+      capability: "core.rect"
+      layout: { x: 443, y: 160, width: 74, height: 64 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "rt-capture-title"
+          capability: "core.text"
+          text: "capture"
+          layout: { x: 451, y: 178, width: 58, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "rt-capture-detail"
+          capability: "core.text"
+          text: "route"
+          layout: { x: 451, y: 202, width: 58, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "rt-a5"
+      capability: "core.line"
+      from: { x: 517, y: 192 }
+      to: { x: 528, y: 192 }
+      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    {
+      id: "rt-merge"
+      capability: "core.rect"
+      layout: { x: 528, y: 160, width: 74, height: 64 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "rt-merge-title"
+          capability: "core.text"
+          text: "merge"
+          layout: { x: 536, y: 178, width: 58, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "rt-merge-detail"
+          capability: "core.text"
+          text: "route"
+          layout: { x: 536, y: 202, width: 58, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "rt-a6"
+      capability: "core.line"
+      from: { x: 602, y: 192 }
+      to: { x: 613, y: 192 }
+      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    {
+      id: "rt-artifacts"
+      capability: "core.rect"
+      layout: { x: 613, y: 160, width: 74, height: 64 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "rt-artifacts-title"
+          capability: "core.text"
+          text: "artifacts"
+          layout: { x: 621, y: 178, width: 58, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "rt-artifacts-detail"
+          capability: "core.text"
+          text: "route"
+          layout: { x: 621, y: 202, width: 58, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "route-cap"
+      capability: "core.text"
+      text: "canonical scheduled · exact fold · flat merge"
+      layout: { x: 80, y: 282, width: 540, height: 24 }
+      style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
+    }
+    {
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M55 195 H645"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+      accessibility: { label: "motion signal" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-rt-eligibility", at: 400, duration: 280, target: "rt-eligibility", action: "enter" }
+    { id: "t-rt-a0", at: 480, duration: 240, target: "rt-a0", action: "draw" }
+    { id: "t-rt-ownership", at: 540, duration: 280, target: "rt-ownership", action: "enter" }
+    { id: "t-rt-a1", at: 620, duration: 240, target: "rt-a1", action: "draw" }
+    { id: "t-rt-control", at: 680, duration: 280, target: "rt-control", action: "enter" }
+    { id: "t-rt-a2", at: 760, duration: 240, target: "rt-a2", action: "draw" }
+    { id: "t-rt-distribution", at: 820, duration: 280, target: "rt-distribution", action: "enter" }
+    { id: "t-rt-a3", at: 900, duration: 240, target: "rt-a3", action: "draw" }
+    { id: "t-rt-execution", at: 960, duration: 280, target: "rt-execution", action: "enter" }
+    { id: "t-rt-a4", at: 1040, duration: 240, target: "rt-a4", action: "draw" }
+    { id: "t-rt-capture", at: 1100, duration: 280, target: "rt-capture", action: "enter" }
+    { id: "t-rt-a5", at: 1180, duration: 240, target: "rt-a5", action: "draw" }
+    { id: "t-rt-merge", at: 1240, duration: 280, target: "rt-merge", action: "enter" }
+    { id: "t-rt-a6", at: 1320, duration: 240, target: "rt-a6", action: "draw" }
+    { id: "t-rt-artifacts", at: 1380, duration: 280, target: "rt-artifacts", action: "enter" }
+    { id: "t-route-cap", at: 1600, duration: 300, target: "route-cap", action: "enter" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+    { id: "t-emphasis-final", at: 2100, duration: 420, target: "rt-eligibility", action: "emphasis" }
+    ]
+    }
+  }
+
+  slide "route-branches" {
+    eyebrow: "Composition · 12 of 16"
+    title: "Gates add explicit route branches"
+    lede: "Phaser START, dataset fan-out verification, external aggregation, and cross-host artifact shipping are feature-gated route branches. final-report-assembly and telemetry-drop-warning are partial boundaries, not hidden green paths. The status label travels with the algorithm wherever it appears."
+    narration: "Optional branches keep their status labels. Phaser start, Velo fan-out, external aggregation, and cross-host shipping are feature-gated. Report rollback, side-channel aggregation, and cancellation scope are partial. Canonical ownership, execution, and core reduction are built."
+    term: {
+      word: "route branch"
+      meaning: "Algorithms added or replaced by an admitted selector and its environment."
+    }
+    points: [
+      "Built: canonical ownership, execution, capture, and core merge.",
+      "Feature-gated: Velo roles, phaser, fan-out, and Stage E/G paths.",
+      "Partial: report rollback, side-channel aggregation, and cancellation scope."
+    ]
+    caption: "built · feature-gated · partial."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+      accessibility: { label: "COMPOSITION · STATUS BRANCHES" }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "COMPOSITION · STATUS BRANCHES"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "built · feature-gated · partial."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "canon-route"
+      capability: "core.rect"
+      layout: { x: 35, y: 118, width: 195, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "canon-route-title"
+          capability: "core.text"
+          text: "canonical route"
+          layout: { x: 43, y: 136, width: 179, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "canon-route-detail"
+          capability: "core.text"
+          text: "ownership + execution"
+          layout: { x: 43, y: 160, width: 179, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-cr"
+      capability: "core.rect"
+      layout: { x: 160, y: 106, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-cr-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 160, y: 110, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "branches"
+      capability: "core.rect"
+      layout: { x: 252, y: 118, width: 195, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "branches-title"
+          capability: "core.text"
+          text: "phaser / fan-out / Stage E"
+          layout: { x: 260, y: 136, width: 179, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "branches-detail"
+          capability: "core.text"
+          text: "explicit branches"
+          layout: { x: 260, y: 160, width: 179, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-br"
+      capability: "core.rect"
+      layout: { x: 331, y: 106, width: 116, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-br-text"
+          capability: "core.text"
+          text: "FEATURE-GATED"
+          layout: { x: 331, y: 110, width: 116, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "partials"
+      capability: "core.rect"
+      layout: { x: 469, y: 118, width: 195, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "partials-title"
+          capability: "core.text"
+          text: "report / telemetry / cancel"
+          layout: { x: 477, y: 136, width: 179, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "partials-detail"
+          capability: "core.text"
+          text: "named limitations"
+          layout: { x: 477, y: 160, width: 179, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "st-pa"
+      capability: "core.rect"
+      layout: { x: 594, y: 106, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-pa-text"
+          capability: "core.text"
+          text: "PARTIAL"
+          layout: { x: 594, y: 110, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "status-msg"
+      capability: "core.text"
+      text: "status text travels with every selected algorithm"
+      layout: { x: 60, y: 280, width: 580, height: 28 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-canon-route", at: 400, duration: 340, target: "canon-route", action: "enter" }
+    { id: "t-st-cr", at: 450, duration: 260, target: "st-cr", action: "enter" }
+    { id: "t-branches", at: 750, duration: 340, target: "branches", action: "enter" }
+    { id: "t-st-br", at: 800, duration: 260, target: "st-br", action: "enter" }
+    { id: "t-partials", at: 1100, duration: 340, target: "partials", action: "enter" }
+    { id: "t-st-pa", at: 1150, duration: 260, target: "st-pa", action: "enter" }
+    { id: "t-status-msg", at: 1500, duration: 360, target: "status-msg", action: "enter" }
+  ]
+    }
+  }
+
+  slide "run-kind-decision" {
+    eyebrow: "Decisions · 13 of 16"
+    title: "Dataset shape decides the run kind"
+    lede: "The decision log compares routes while preserving their shared bands. A graph selector with a synthetic dataset still resolves to scheduled execution, while a WEKA or Dynamo trace resolves to graph execution. Dataset classification, not the authored selector alone, chooses the effective runtime branch."
+    narration: "The first decision is effective run kind. Dataset shape wins over the authored workload selector: synthetic data follows scheduled execution, while DAG JSONL, WEKA, and Dynamo traces select graph execution. Budget and merge validation then follow that effective classification."
+    term: {
+      word: "run-kind-classification"
+      meaning: "Classifies scheduled versus recorded-graph work from the resolved dataset shape."
+    }
+    points: [
+      "Synthetic and ordinary file/public datasets follow scheduled semantics.",
+      "DAG JSONL, WEKA, and Dynamo traces follow graph semantics.",
+      "Budget validation follows the effective run kind."
+    ]
+    caption: "authored intent → dataset classification → runtime."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "DECISION · EFFECTIVE RUN KIND"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "authored intent → dataset classification → runtime."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "decision"
+      capability: "core.rect"
+      layout: { x: 245, y: 92, width: 210, height: 64 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "decision-title"
+          capability: "core.text"
+          text: "run-kind-classification"
+          layout: { x: 253, y: 110, width: 194, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "decision-detail"
+          capability: "core.text"
+          text: "route selector"
+          layout: { x: 253, y: 134, width: 194, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "dl"
+      capability: "core.path"
+      d: "M300 156 C230 195 190 215 165 245"
+      layout: { x: 165, y: 156, width: 135, height: 89 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    {
+      id: "dr"
+      capability: "core.path"
+      d: "M400 156 C470 195 510 215 535 245"
+      layout: { x: 400, y: 156, width: 135, height: 89 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
+      id: "left"
+      capability: "core.rect"
+      layout: { x: 45, y: 245, width: 240, height: 70 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "left-title"
+          capability: "core.text"
+          text: "synthetic → scheduled"
+          layout: { x: 53, y: 263, width: 224, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "left-detail"
+          capability: "core.text"
+          text: "left route"
+          layout: { x: 53, y: 287, width: 224, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "right"
+      capability: "core.rect"
+      layout: { x: 415, y: 245, width: 240, height: 70 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "right-title"
+          capability: "core.text"
+          text: "WEKA → graph"
+          layout: { x: 423, y: 263, width: 224, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "right-detail"
+          capability: "core.text"
+          text: "right route"
+          layout: { x: 423, y: 287, width: 224, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "invariant"
+      capability: "core.text"
+      text: "dataset shape selects the effective run kind"
+      layout: { x: 80, y: 345, width: 540, height: 20 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+    }
+    {
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M350 125 V320"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+      accessibility: { label: "motion signal" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-decision", at: 400, duration: 360, target: "decision", action: "enter" }
+    { id: "t-dl", at: 700, duration: 320, target: "dl", action: "draw" }
+    { id: "t-dr", at: 800, duration: 320, target: "dr", action: "draw" }
+    { id: "t-left", at: 1100, duration: 340, target: "left", action: "enter" }
+    { id: "t-right", at: 1250, duration: 340, target: "right", action: "enter" }
+    { id: "t-invariant", at: 1550, duration: 300, target: "invariant", action: "enter" }
+    { id: "t-emphasis", at: 1850, duration: 400, target: "decision", action: "emphasis" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+    ]
+    }
+  }
+
+  slide "fidelity-decision" {
+    eyebrow: "Decisions · 14 of 16"
+    title: "Storage and conversation choices change fidelity"
+    lede: "Exact fold and sketch both drop completed rows, but sketch trades percentile interior fidelity for request-count-independent memory. Single-turn work owns requests; multi-turn work owns complete conversations. These choices alter capture and ownership algorithms while preserving the one-owner invariant."
+    narration: "Storage and ownership choices change different parts of the route. Exact fold and sketch both remove completed rows, but sketch bounds memory by approximating percentile interiors. Single-turn work owns requests, while multi-turn work owns whole conversations. The one-owner invariant remains unchanged."
+    term: {
+      word: "storage-fidelity decision"
+      meaning: "Select exact fold or sketch before capture and artifact validation."
+    }
+    points: [
+      "Sketch cannot authorize row-dependent raw artifacts.",
+      "Multi-turn ownership selects conversation-ownership.",
+      "No route may split one conversation across cells."
+    ]
+    caption: "storage fidelity · ownership granularity."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "DECISION · FIDELITY + OWNERSHIP"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "storage fidelity · ownership granularity."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "decision"
+      capability: "core.rect"
+      layout: { x: 245, y: 92, width: 210, height: 64 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "decision-title"
+          capability: "core.text"
+          text: "storage + ownership"
+          layout: { x: 253, y: 110, width: 194, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "decision-detail"
+          capability: "core.text"
+          text: "route selector"
+          layout: { x: 253, y: 134, width: 194, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "dl"
+      capability: "core.path"
+      d: "M300 156 C230 195 190 215 165 245"
+      layout: { x: 165, y: 156, width: 135, height: 89 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    {
+      id: "dr"
+      capability: "core.path"
+      d: "M400 156 C470 195 510 215 535 245"
+      layout: { x: 400, y: 156, width: 135, height: 89 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
+      id: "left"
+      capability: "core.rect"
+      layout: { x: 45, y: 245, width: 240, height: 70 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "left-title"
+          capability: "core.text"
+          text: "exact fold · requests"
+          layout: { x: 53, y: 263, width: 224, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "left-detail"
+          capability: "core.text"
+          text: "left route"
+          layout: { x: 53, y: 287, width: 224, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "right"
+      capability: "core.rect"
+      layout: { x: 415, y: 245, width: 240, height: 70 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "right-title"
+          capability: "core.text"
+          text: "sketch · conversations"
+          layout: { x: 423, y: 263, width: 224, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "right-detail"
+          capability: "core.text"
+          text: "right route"
+          layout: { x: 423, y: 287, width: 224, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "invariant"
+      capability: "core.text"
+      text: "one owner remains invariant"
+      layout: { x: 80, y: 345, width: 540, height: 20 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+    }
+    {
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M350 125 V320"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+      accessibility: { label: "motion signal" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-decision", at: 400, duration: 360, target: "decision", action: "enter" }
+    { id: "t-dl", at: 700, duration: 320, target: "dl", action: "draw" }
+    { id: "t-dr", at: 800, duration: 320, target: "dr", action: "draw" }
+    { id: "t-left", at: 1100, duration: 340, target: "left", action: "enter" }
+    { id: "t-right", at: 1250, duration: 340, target: "right", action: "enter" }
+    { id: "t-invariant", at: 1550, duration: 300, target: "invariant", action: "enter" }
+    { id: "t-emphasis", at: 1850, duration: 400, target: "decision", action: "emphasis" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+    ]
+    }
+  }
+
+  slide "placement-decision" {
+    eyebrow: "Decisions · 15 of 16"
+    title: "Placement decides topology and shipping"
+    lede: "Same-host routes can concatenate local files directly. Cross-host placement adds Stage G input reconstruction and Stage E artifact upload around the same execution route. A local-tree intent falls back flat without operator wiring, while an external tree requires its DNS tier and explicit placement admission."
+    narration: "Placement adds topology and shipping decisions around the execution route. Cross-host runs reconstruct inputs through Stage G and upload artifacts through Stage E. External trees require operator wiring; without it, local-tree intent falls back flat. Shipping changes byte placement, not measurement meaning."
+    term: {
+      word: "aggregation-topology decision"
+      meaning: "Choose flat, local tree, or externally placed tree under deployment constraints."
+    }
+    points: [
+      "Cross-host tree wiring is an admission decision, not best-effort discovery.",
+      "Parquet emission depends on a parquet-bearing build and remains text-labeled.",
+      "Shipping changes byte placement, not the measurement contract."
+    ]
+    caption: "deployment → topology + Stage E/G."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "DECISION · PLACEMENT + SHIPPING"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "deployment → topology + Stage E/G."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "decision"
+      capability: "core.rect"
+      layout: { x: 245, y: 92, width: 210, height: 64 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "decision-title"
+          capability: "core.text"
+          text: "deployment placement"
+          layout: { x: 253, y: 110, width: 194, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "decision-detail"
+          capability: "core.text"
+          text: "route selector"
+          layout: { x: 253, y: 134, width: 194, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "dl"
+      capability: "core.path"
+      d: "M300 156 C230 195 190 215 165 245"
+      layout: { x: 165, y: 156, width: 135, height: 89 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    {
+      id: "dr"
+      capability: "core.path"
+      d: "M400 156 C470 195 510 215 535 245"
+      layout: { x: 400, y: 156, width: 135, height: 89 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
+      id: "left"
+      capability: "core.rect"
+      layout: { x: 45, y: 245, width: 240, height: 70 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "left-title"
+          capability: "core.text"
+          text: "same host · flat/local"
+          layout: { x: 53, y: 263, width: 224, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "left-detail"
+          capability: "core.text"
+          text: "left route"
+          layout: { x: 53, y: 287, width: 224, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "right"
+      capability: "core.rect"
+      layout: { x: 415, y: 245, width: 240, height: 70 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "right-title"
+          capability: "core.text"
+          text: "cross host · Stage E/G"
+          layout: { x: 423, y: 263, width: 224, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "right-detail"
+          capability: "core.text"
+          text: "right route"
+          layout: { x: 423, y: 287, width: 224, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "invariant"
+      capability: "core.text"
+      text: "placement changes shipping, not measurement"
+      layout: { x: 80, y: 345, width: 540, height: 20 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+    }
+    {
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M350 125 V320"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+      accessibility: { label: "motion signal" }
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-decision", at: 400, duration: 360, target: "decision", action: "enter" }
+    { id: "t-dl", at: 700, duration: 320, target: "dl", action: "draw" }
+    { id: "t-dr", at: 800, duration: 320, target: "dr", action: "draw" }
+    { id: "t-left", at: 1100, duration: 340, target: "left", action: "enter" }
+    { id: "t-right", at: 1250, duration: 340, target: "right", action: "enter" }
+    { id: "t-invariant", at: 1550, duration: 300, target: "invariant", action: "enter" }
+    { id: "t-emphasis", at: 1850, duration: 400, target: "decision", action: "emphasis" }
+  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+    ]
+    }
+  }
+
+  slide "exhaustive-reference" {
+    eyebrow: "Reference · 16 of 16"
+    title: "Use the source canvas for exhaustive lookup"
+    lede: "This deck preserves the route grammar, representative algorithm names, status semantics, and key decisions. It intentionally does not reproduce the workbook's roughly one hundred algorithm pages, trace frames, recipes, validation fixtures, or selector interactions. Maintainers should use the source canvas for exhaustive evidence lookup."
+    narration: "This deck is intentionally a maintainer map, not a one-to-one copy of roughly one hundred workbook pages. For every algorithm, trace frame, validation fixture, route recipe, selector interaction, and source reference, open docs slash canvases slash cellular algorithm workbook dot canvas dot tsx."
+    term: {
+      word: "source of exhaustive lookup"
+      meaning: "docs/canvases/cellular-algorithm-workbook.canvas.tsx"
+    }
+    points: [
+      "Search by algorithm ID, chapter, status, actor, source path, or route tag.",
+      "Inspect pseudocode, invariants, failures, and evidence before changing behavior.",
+      "Exhaustive catalog: `docs/canvases/cellular-algorithm-workbook.canvas.tsx`."
+    ]
+    caption: "maintainer map → exhaustive source canvas."
+
+    render: @scene {
+    roots: [
+{
+      id: "header"
+      capability: "core.rect"
+      layout: { x: 18, y: 16, width: 664, height: 44 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+      accessibility: { label: "REFERENCE · EXHAUSTIVE CATALOG" }
+    }
+    {
+      id: "label"
+      capability: "core.text"
+      text: "REFERENCE · EXHAUSTIVE CATALOG"
+      layout: { x: 38, y: 28, width: 360, height: 24 }
+      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+    }
+    {
+      id: "note"
+      capability: "core.text"
+      text: "maintainer map → exhaustive source canvas."
+      layout: { x: 400, y: 28, width: 260, height: 24 }
+      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+    }
+    {
+      id: "pages"
+      capability: "core.rect"
+      layout: { x: 70, y: 110, width: 560, height: 82 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "pages-title"
+          capability: "core.text"
+          text: "~100 algorithm pages"
+          layout: { x: 78, y: 128, width: 544, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "pages-detail"
+          capability: "core.text"
+          text: "pseudocode · frames · gates · failures · evidence"
+          layout: { x: 78, y: 152, width: 544, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "ref-a"
+      capability: "core.path"
+      d: "M350 192 V245"
+      layout: { x: 350, y: 192, width: 1, height: 53 }
+      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
+      id: "canvas"
+      capability: "core.rect"
+      layout: { x: 70, y: 245, width: 560, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+      children: [
+        {
+          id: "canvas-title"
+          capability: "core.text"
+          text: "docs/canvases/cellular-algorithm-workbook.canvas.tsx"
+          layout: { x: 78, y: 263, width: 544, height: 22 }
+          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+        }
+        {
+          id: "canvas-detail"
+          capability: "core.text"
+          text: "exhaustive maintainer lookup"
+          layout: { x: 78, y: 287, width: 544, height: 18 }
+          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+    }
+    ]
+  timeline: [
+    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
+    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
+    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-pages", at: 400, duration: 400, target: "pages", action: "enter" }
+    { id: "t-ref-a", at: 800, duration: 320, target: "ref-a", action: "draw" }
+    { id: "t-canvas", at: 1100, duration: 400, target: "canvas", action: "enter" }
+    { id: "t-emphasis", at: 1550, duration: 450, target: "canvas", action: "emphasis" }
+  ]
+    }
+  }
+}

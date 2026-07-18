@@ -1,0 +1,2403 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+explainer "Rust Architecture" {
+  id: "rust-architecture"
+  route: "/rust-architecture"
+  topic: "architecture"
+  storagePrefix: "rust-arch-explainer"
+  classPrefix: "rust-arch"
+  eyebrowLabel: "RUST ARCHITECTURE"
+  startGateTitle: "Rust architecture walkthrough"
+
+  hub: {
+    highlight: "Rust architecture"
+    title: "from scratch"
+    description: "Narrated walkthrough of the native workspace, self-execution seam, registry bootstrap, request lifecycle, workers, cellular mode, and feature gates."
+  }
+
+  slide "Product shell" {
+    eyebrow: "Product shell"
+    title: "One binary is both CLI and engine"
+    lede: "AIPerf ships as a single native `aiperf` executable from crate `aiperf-cli`. There is no separate runner process—the same binary parses public commands and re-executes itself for benchmark runs."
+    narration: "AIPerf ships as one native aiperf binary. That same executable is both the public command line and the hidden execution engine."
+    term: {
+      word: "aiperf-cli"
+      meaning: "The product entry crate: public commands, Config v2 loading, and self-spawned execution over stdio."
+    }
+    points: [
+      "`rust/cli` builds the `aiperf` binary.",
+      "Global allocator is mimalloc on the hot path.",
+      "Internal modes are intercepted before normal CLI parsing."
+    ]
+    caption: "One executable, two hats: operator CLI and execution child."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "ONE BINARY"
+          layout: { x: 38, y: 28, width: 280, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "cli is entry + engine"
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "binary"
+          capability: "core.rect"
+          layout: { x: 230, y: 100, width: 240, height: 160 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "binary-title"
+              capability: "core.text"
+              text: "aiperf binary"
+              layout: { x: 230, y: 112, width: 240, height: 22 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "binary-detail"
+              capability: "core.text"
+              text: "cli/src/main.rs · mimalloc"
+              layout: { x: 230, y: 134, width: 240, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+            {
+              id: "cli-inner"
+              capability: "core.rect"
+              layout: { x: 245, y: 160, width: 100, height: 72 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "cli-inner-title"
+                  capability: "core.text"
+                  text: "CLI Shell"
+                  layout: { x: 245, y: 180, width: 100, height: 18 }
+                  style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+                }
+                {
+                  id: "cli-inner-detail"
+                  capability: "core.text"
+                  text: "operator UX"
+                  layout: { x: 245, y: 200, width: 100, height: 16 }
+                  style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+                }
+              ]
+            }
+            {
+              id: "engine-inner"
+              capability: "core.rect"
+              layout: { x: 355, y: 160, width: 100, height: 72 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "engine-inner-title"
+                  capability: "core.text"
+                  text: "Execution Engine"
+                  layout: { x: 355, y: 180, width: 100, height: 18 }
+                  style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+                }
+                {
+                  id: "engine-inner-detail"
+                  capability: "core.text"
+                  text: "--execute"
+                  layout: { x: 355, y: 200, width: 100, height: 16 }
+                  style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+                }
+              ]
+            }
+          ]
+        }
+        {
+          id: "cli-hat"
+          capability: "core.rect"
+          layout: { x: 50, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.5 }
+          children: [
+            {
+              id: "cli-hat-title"
+              capability: "core.text"
+              text: "public CLI"
+              layout: { x: 50, y: 172, width: 150, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cli-hat-detail"
+              capability: "core.text"
+              text: "operator UX"
+              layout: { x: 50, y: 194, width: 150, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 200, y: 190 }
+          to: { x: 230, y: 178 }
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+        }
+        {
+          id: "engine-hat"
+          capability: "core.rect"
+          layout: { x: 500, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.5 }
+          children: [
+            {
+              id: "engine-hat-title"
+              capability: "core.text"
+              text: "execution child"
+              layout: { x: 500, y: 172, width: 150, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "engine-hat-detail"
+              capability: "core.text"
+              text: "--execute"
+              layout: { x: 500, y: 194, width: 150, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 470, y: 178 }
+          to: { x: 500, y: 190 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "footer"
+          capability: "core.text"
+          text: "One executable, two hats: CLI Shell outside · Execution Engine inside"
+          layout: { x: 50, y: 300, width: 600, height: 24 }
+          style: { fontSize: 13, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-binary", at: 280, duration: 360, target: "binary", action: "enter" }
+        { id: "t-cli-inner", at: 480, duration: 280, target: "cli-inner", action: "enter" }
+        { id: "t-engine-inner", at: 620, duration: 280, target: "engine-inner", action: "enter" }
+        { id: "t-cli", at: 780, duration: 320, target: "cli-hat", action: "enter" }
+        { id: "t-a1", at: 960, duration: 280, target: "a1", action: "draw" }
+        { id: "t-engine", at: 1140, duration: 320, target: "engine-hat", action: "enter" }
+        { id: "t-a2", at: 1320, duration: 280, target: "a2", action: "draw" }
+        { id: "t-footer", at: 1500, duration: 320, target: "footer", action: "enter" }
+        { id: "t-emphasis", at: 1820, duration: 480, target: "binary", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Workspace map" {
+    eyebrow: "Workspace map"
+    title: "Six crates, one dependency direction"
+    lede: "The Rust workspace is intentionally small. Capability flows cli → runtime → loadgen-core. Mock server and e2e are separate targets; pyext is packaging-only."
+    narration: "The Rust workspace stays small. Capability flows from aiperf-cli into aiperf-runtime and then into loadgen-core."
+    term: {
+      word: "loadgen-core"
+      meaning: "Transport-neutral observer and sink vocabulary with no HTTP, gRPC, or engine dependencies."
+    }
+    points: [
+      "Members: loadgen-core, runtime, cli, mock-server, e2e, pyext.",
+      "aiperf-cli depends on aiperf-runtime with the engine feature.",
+      "aiperf-mock-server is a standalone benchmark target."
+    ]
+    caption: "cli → runtime → loadgen-core"
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "WORKSPACE CRATES"
+          layout: { x: 38, y: 28, width: 300, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "cli → runtime → loadgen-core"
+          layout: { x: 340, y: 28, width: 320, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "cli"
+          capability: "core.rect"
+          layout: { x: 60, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "cli-title"
+              capability: "core.text"
+              text: "aiperf-cli"
+              layout: { x: 60, y: 160, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cli-detail"
+              capability: "core.text"
+              text: "commands + execute"
+              layout: { x: 60, y: 184, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 210, y: 178 }
+          to: { x: 250, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "runtime"
+          capability: "core.rect"
+          layout: { x: 250, y: 130, width: 170, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "runtime-title"
+              capability: "core.text"
+              text: "aiperf-runtime"
+              layout: { x: 250, y: 160, width: 170, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "runtime-detail"
+              capability: "core.text"
+              text: "engine + transports"
+              layout: { x: 250, y: 184, width: 170, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 420, y: 178 }
+          to: { x: 460, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "loadgen"
+          capability: "core.rect"
+          layout: { x: 460, y: 130, width: 180, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "loadgen-title"
+              capability: "core.text"
+              text: "loadgen-core"
+              layout: { x: 460, y: 160, width: 180, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "loadgen-detail"
+              capability: "core.text"
+              text: "observer seam"
+              layout: { x: 460, y: 184, width: 180, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "mock"
+          capability: "core.rect"
+          layout: { x: 520, y: 280, width: 120, height: 58 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "mock-title"
+              capability: "core.text"
+              text: "mock-server"
+              layout: { x: 520, y: 296, width: 120, height: 20 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "mock-detail"
+              capability: "core.text"
+              text: "separate target"
+              layout: { x: 520, y: 316, width: 120, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "offpath"
+          capability: "core.rect"
+          layout: { x: 60, y: 280, width: 140, height: 58 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "offpath-title"
+              capability: "core.text"
+              text: "e2e · pyext"
+              layout: { x: 60, y: 296, width: 140, height: 20 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "offpath-detail"
+              capability: "core.text"
+              text: "off hot path"
+              layout: { x: 60, y: 316, width: 140, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-cli", at: 280, duration: 320, target: "cli", action: "enter" }
+        { id: "t-a1", at: 500, duration: 280, target: "a1", action: "draw" }
+        { id: "t-runtime", at: 680, duration: 320, target: "runtime", action: "enter" }
+        { id: "t-a2", at: 900, duration: 280, target: "a2", action: "draw" }
+        { id: "t-loadgen", at: 1080, duration: 320, target: "loadgen", action: "enter" }
+        { id: "t-mock", at: 1300, duration: 300, target: "mock", action: "enter" }
+        { id: "t-offpath", at: 1480, duration: 300, target: "offpath", action: "enter" }
+        { id: "t-emphasis", at: 1780, duration: 480, target: "runtime", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Startup order" {
+    eyebrow: "Startup order"
+    title: "Intercept internal modes, then dispatch"
+    lede: "Every process starts the same way: initialize logging, check for hidden execution flags like `--execute`, `--cell`, or `--aggregator`, and only then route public subcommands."
+    narration: "Startup always checks hidden execution modes first. Only after that does the process route public subcommands."
+    term: {
+      word: "execute_mode"
+      meaning: "Hidden argv surface that runs protocol-v2 children before clap ever sees a public command."
+    }
+    points: [
+      "`main.rs` calls `execute_mode::is_execution_mode`.",
+      "Internal handlers never return to public dispatch.",
+      "Everything else goes through `dispatch::run`."
+    ]
+    caption: "Hidden modes short-circuit; public commands fall through."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "STARTUP ORDER"
+          layout: { x: 38, y: 28, width: 280, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "execute_mode before dispatch"
+          layout: { x: 340, y: 28, width: 320, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "logging"
+          capability: "core.rect"
+          layout: { x: 70, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "logging-title"
+              capability: "core.text"
+              text: "1. Initialize logging"
+              layout: { x: 70, y: 160, width: 150, height: 24 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "logging-detail"
+              capability: "core.text"
+              text: "startup"
+              layout: { x: 70, y: 184, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 220, y: 178 }
+          to: { x: 260, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "execute"
+          capability: "core.rect"
+          layout: { x: 260, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "execute-title"
+              capability: "core.text"
+              text: "2. Check hidden modes"
+              layout: { x: 260, y: 152, width: 150, height: 22 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "execute-detail"
+              capability: "core.text"
+              text: "--execute · --cell · --aggregator"
+              layout: { x: 260, y: 184, width: 150, height: 20 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 410, y: 178 }
+          to: { x: 450, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "dispatch"
+          capability: "core.rect"
+          layout: { x: 450, y: 130, width: 170, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "dispatch-title"
+              capability: "core.text"
+              text: "3. Dispatch public commands"
+              layout: { x: 450, y: 152, width: 170, height: 22 }
+              style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "dispatch-detail"
+              capability: "core.text"
+              text: "dispatch::run"
+              layout: { x: 450, y: 184, width: 170, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-logging", at: 280, duration: 320, target: "logging", action: "enter" }
+        { id: "t-a1", at: 500, duration: 280, target: "a1", action: "draw" }
+        { id: "t-execute", at: 680, duration: 360, target: "execute", action: "enter" }
+        { id: "t-a2", at: 940, duration: 280, target: "a2", action: "draw" }
+        { id: "t-dispatch", at: 1120, duration: 320, target: "dispatch", action: "enter" }
+        { id: "t-emphasis", at: 1440, duration: 480, target: "execute", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Command surface" {
+    eyebrow: "Command surface"
+    title: "Native benchmark commands stay in Rust"
+    lede: "`profile`, `config`, cellular roles, `slurm run`, and several utility commands are native. Most operational tooling still delegates to the Python package unless built with pyo3-embed."
+    narration: "Core benchmark commands stay native in Rust. Most operational tooling still delegates to Python unless the build embeds it."
+    term: {
+      word: "delegate"
+      meaning: "Lean builds shell out to `python -m aiperf`; pyo3-embed runs the same entrypoint in-process."
+    }
+    points: [
+      "`dispatch.rs` matches the first argv token.",
+      "Unknown commands delegate to Python.",
+      "Feature gates select gRPC, cellular, dynosim, parquet, and embed modes."
+    ]
+    caption: "Benchmark hot path native; extended surface delegated."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "COMMAND DISPATCH"
+          layout: { x: 38, y: 28, width: 300, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "native profile/config/cell"
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "native"
+          capability: "core.rect"
+          layout: { x: 70, y: 120, width: 220, height: 110 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "native-title"
+              capability: "core.text"
+              text: "Native commands"
+              layout: { x: 70, y: 152, width: 220, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "native-detail"
+              capability: "core.text"
+              text: "profile · config · cell"
+              layout: { x: 70, y: 178, width: 220, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "delegated"
+          capability: "core.rect"
+          layout: { x: 410, y: 120, width: 220, height: 110 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "delegated-title"
+              capability: "core.text"
+              text: "Delegated commands"
+              layout: { x: 410, y: 152, width: 220, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "delegated-detail"
+              capability: "core.text"
+              text: "python -m aiperf"
+              layout: { x: 410, y: 178, width: 220, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "split"
+          capability: "core.line"
+          from: { x: 350, y: 130 }
+          to: { x: 350, y: 220 }
+          style: { stroke: @theme.ink.secondary, strokeWidth: 1.5 }
+        }
+        {
+          id: "footer"
+          capability: "core.text"
+          text: "dispatch.rs chooses the path from argv[0]"
+          layout: { x: 50, y: 280, width: 600, height: 24 }
+          style: { fontSize: 13, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-native", at: 280, duration: 360, target: "native", action: "enter" }
+        { id: "t-split", at: 520, duration: 280, target: "split", action: "draw" }
+        { id: "t-delegated", at: 700, duration: 360, target: "delegated", action: "enter" }
+        { id: "t-footer", at: 980, duration: 320, target: "footer", action: "enter" }
+        { id: "t-emphasis", at: 1300, duration: 480, target: "native", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Configuration" {
+    eyebrow: "Configuration"
+    title: "Config v2 resolves into BenchmarkRun"
+    lede: "`aiperf profile --config` reads YAML, expands env vars and Jinja, applies CLI overrides, and materializes a strict `BenchmarkRun` object—the wire payload for execution."
+    narration: "Profile reads Config v2, expands it, and resolves a strict BenchmarkRun object that describes the whole benchmark."
+    term: {
+      word: "BenchmarkRun"
+      meaning: "The authored protocol-v2 request describing workload, transport, endpoints, artifacts, and runtime facts."
+    }
+    points: [
+      "`yaml.rs` handles substitution and alias normalization.",
+      "`load.rs` and `model/` build the typed run object.",
+      "`config init|validate|expand` are native helpers."
+    ]
+    caption: "YAML in → validated BenchmarkRun out."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "CONFIG V2"
+          layout: { x: 38, y: 28, width: 240, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "BenchmarkRun wire object"
+          layout: { x: 340, y: 28, width: 320, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "yaml"
+          capability: "core.rect"
+          layout: { x: 50, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "yaml-title"
+              capability: "core.text"
+              text: "benchmark.yaml"
+              layout: { x: 50, y: 160, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "yaml-detail"
+              capability: "core.text"
+              text: "Config v2"
+              layout: { x: 50, y: 184, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 200, y: 178 }
+          to: { x: 250, y: 178 }
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+        }
+        {
+          id: "load"
+          capability: "core.rect"
+          layout: { x: 250, y: 130, width: 170, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "load-title"
+              capability: "core.text"
+              text: "yaml + load"
+              layout: { x: 250, y: 160, width: 170, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "load-detail"
+              capability: "core.text"
+              text: "expand + validate"
+              layout: { x: 250, y: 184, width: 170, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 420, y: 178 }
+          to: { x: 470, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "run"
+          capability: "core.rect"
+          layout: { x: 470, y: 130, width: 180, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "run-title"
+              capability: "core.text"
+              text: "BenchmarkRun"
+              layout: { x: 470, y: 160, width: 180, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "run-detail"
+              capability: "core.text"
+              text: "typed wire object"
+              layout: { x: 470, y: 184, width: 180, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-yaml", at: 280, duration: 320, target: "yaml", action: "enter" }
+        { id: "t-a1", at: 500, duration: 280, target: "a1", action: "draw" }
+        { id: "t-load", at: 680, duration: 320, target: "load", action: "enter" }
+        { id: "t-a2", at: 900, duration: 280, target: "a2", action: "draw" }
+        { id: "t-run", at: 1080, duration: 360, target: "run", action: "enter" }
+        { id: "t-emphasis", at: 1440, duration: 480, target: "run", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Self execution" {
+    eyebrow: "Self execution"
+    title: "profile spawns aiperf --execute"
+    lede: "Each run is a fresh child of the same binary. Parent writes JSON to stdin; child returns one terminal JSONL envelope on stdout while stderr carries diagnostics."
+    narration: "Each profile run spawns a fresh child of the same binary with aiperf execute over stdio."
+    term: {
+      word: "stdio seam"
+      meaning: "The deliberate parent/child boundary that keeps operator UX separate from execution isolation."
+    }
+    points: [
+      "`execute::run_once` spawns `current_exe()` with hidden flags.",
+      "Stdout stays reserved for protocol traffic.",
+      "Panics in the child become typed failure envelopes."
+    ]
+    caption: "Same binary, new process, protocol on stdio."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "SELF EXECUTE"
+          layout: { x: 38, y: 28, width: 240, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "spawn current_exe()"
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "parent"
+          capability: "core.rect"
+          layout: { x: 70, y: 130, width: 170, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "parent-title"
+              capability: "core.text"
+              text: "Parent Process"
+              layout: { x: 70, y: 160, width: 170, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "parent-detail"
+              capability: "core.text"
+              text: "writes JSON stdin"
+              layout: { x: 70, y: 184, width: 170, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 240, y: 178 }
+          to: { x: 290, y: 178 }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+        }
+        {
+          id: "spawn"
+          capability: "core.rect"
+          layout: { x: 290, y: 130, width: 170, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "spawn-title"
+              capability: "core.text"
+              text: "Child Process"
+              layout: { x: 290, y: 160, width: 170, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "spawn-detail"
+              capability: "core.text"
+              text: "--execute · current_exe()"
+              layout: { x: 290, y: 184, width: 170, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 460, y: 178 }
+          to: { x: 510, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "execute"
+          capability: "core.rect"
+          layout: { x: 510, y: 130, width: 120, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "execute-title"
+              capability: "core.text"
+              text: "--execute"
+              layout: { x: 510, y: 160, width: 120, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "execute-detail"
+              capability: "core.text"
+              text: "stdio JSON"
+              layout: { x: 510, y: 184, width: 120, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-parent", at: 280, duration: 320, target: "parent", action: "enter" }
+        { id: "t-a1", at: 500, duration: 280, target: "a1", action: "draw" }
+        { id: "t-spawn", at: 680, duration: 320, target: "spawn", action: "enter" }
+        { id: "t-a2", at: 900, duration: 280, target: "a2", action: "draw" }
+        { id: "t-execute", at: 1080, duration: 360, target: "execute", action: "enter" }
+        { id: "t-emphasis", at: 1440, duration: 480, target: "spawn", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Wire contract" {
+    eyebrow: "Wire contract"
+    title: "Protocol v2 wraps the bare run"
+    lede: "The child accepts protocol version 2 only. It composes a stock `Application` once, then `handle_v2` validates, prepares, executes, and persists results."
+    narration: "Protocol version two wraps the run, composes Application once, and returns one terminal envelope."
+    term: {
+      word: "Application"
+      meaning: "Frozen runtime composition: registry, coordinator, and factories selected at bootstrap."
+    }
+    points: [
+      "`protocol_v2.rs` defines strict authored types.",
+      "Unknown fields fail closed at serde boundaries.",
+      "Factory-owned config stays opaque until registry decode."
+    ]
+    caption: "Envelope v2 in → terminal envelope out."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "PROTOCOL V2"
+          layout: { x: 38, y: 28, width: 240, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "Application::handle_v2"
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "envelope"
+          capability: "core.rect"
+          layout: { x: 90, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "envelope-title"
+              capability: "core.text"
+              text: "Envelope v2"
+              layout: { x: 90, y: 160, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "envelope-detail"
+              capability: "core.text"
+              text: "protocol boundary"
+              layout: { x: 90, y: 184, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 240, y: 178 }
+          to: { x: 290, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "app"
+          capability: "core.rect"
+          layout: { x: 290, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "app-title"
+              capability: "core.text"
+              text: "Application"
+              layout: { x: 290, y: 160, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "app-detail"
+              capability: "core.text"
+              text: "stock composition"
+              layout: { x: 290, y: 184, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 440, y: 178 }
+          to: { x: 490, y: 178 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+        }
+        {
+          id: "terminal"
+          capability: "core.rect"
+          layout: { x: 490, y: 130, width: 120, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "terminal-title"
+              capability: "core.text"
+              text: "terminal"
+              layout: { x: 490, y: 160, width: 120, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "terminal-detail"
+              capability: "core.text"
+              text: "JSONL out"
+              layout: { x: 490, y: 184, width: 120, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-envelope", at: 280, duration: 320, target: "envelope", action: "enter" }
+        { id: "t-a1", at: 500, duration: 280, target: "a1", action: "draw" }
+        { id: "t-app", at: 680, duration: 360, target: "app", action: "enter" }
+        { id: "t-a2", at: 940, duration: 280, target: "a2", action: "draw" }
+        { id: "t-terminal", at: 1120, duration: 320, target: "terminal", action: "enter" }
+        { id: "t-emphasis", at: 1440, duration: 480, target: "app", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Bootstrap" {
+    eyebrow: "Bootstrap"
+    title: "AIPerfRegistry freezes capabilities"
+    lede: "At startup one registry is built transactionally from explicit extensions: loaders, samplers, endpoints, transports, workloads, exporters, and actuators. There is no runtime plugin scanning."
+    narration: "At bootstrap, AIPerfRegistry freezes loaders, samplers, endpoints, transports, workloads, and exporters."
+    term: {
+      word: "AIPerfExtension"
+      meaning: "Compile-time registration hook that adds implementations into the shared registry during Application construction."
+    }
+    points: [
+      "Built-ins register HTTP, gRPC, dry_run, dynosim when features are on.",
+      "Duplicate identifiers are rejected.",
+      "Unknown transport or workload IDs fail closed."
+    ]
+    caption: "Capabilities are frozen before the first request."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "REGISTRY BOOTSTRAP"
+          layout: { x: 38, y: 28, width: 320, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "frozen capabilities"
+          layout: { x: 400, y: 28, width: 260, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "registry"
+          capability: "core.rect"
+          layout: { x: 250, y: 80, width: 200, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "registry-title"
+              capability: "core.text"
+              text: "AIPerfRegistry"
+              layout: { x: 250, y: 100, width: 200, height: 22 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "registry-detail"
+              capability: "core.text"
+              text: "transactional build"
+              layout: { x: 250, y: 122, width: 200, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 300, y: 150 }
+          to: { x: 135, y: 220 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 330, y: 150 }
+          to: { x: 275, y: 220 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        }
+        {
+          id: "a3"
+          capability: "core.line"
+          from: { x: 370, y: 150 }
+          to: { x: 415, y: 220 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        }
+        {
+          id: "a4"
+          capability: "core.line"
+          from: { x: 400, y: 150 }
+          to: { x: 555, y: 220 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        }
+        {
+          id: "loaders"
+          capability: "core.rect"
+          layout: { x: 80, y: 220, width: 110, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "loaders-title"
+              capability: "core.text"
+              text: "loaders"
+              layout: { x: 80, y: 240, width: 110, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "loaders-detail"
+              capability: "core.text"
+              text: "registered"
+              layout: { x: 80, y: 260, width: 110, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "samplers"
+          capability: "core.rect"
+          layout: { x: 220, y: 220, width: 110, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "samplers-title"
+              capability: "core.text"
+              text: "samplers"
+              layout: { x: 220, y: 240, width: 110, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "samplers-detail"
+              capability: "core.text"
+              text: "registered"
+              layout: { x: 220, y: 260, width: 110, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "endpoints"
+          capability: "core.rect"
+          layout: { x: 360, y: 220, width: 110, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "endpoints-title"
+              capability: "core.text"
+              text: "endpoints"
+              layout: { x: 360, y: 240, width: 110, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "endpoints-detail"
+              capability: "core.text"
+              text: "registered"
+              layout: { x: 360, y: 260, width: 110, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "transports"
+          capability: "core.rect"
+          layout: { x: 500, y: 220, width: 110, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "transports-title"
+              capability: "core.text"
+              text: "transports"
+              layout: { x: 500, y: 240, width: 110, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "transports-detail"
+              capability: "core.text"
+              text: "registered"
+              layout: { x: 500, y: 260, width: 110, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "workloads"
+          capability: "core.rect"
+          layout: { x: 150, y: 310, width: 120, height: 55 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "workloads-title"
+              capability: "core.text"
+              text: "workloads"
+              layout: { x: 150, y: 326, width: 120, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "workloads-detail"
+              capability: "core.text"
+              text: "registered"
+              layout: { x: 150, y: 344, width: 120, height: 14 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "exporters"
+          capability: "core.rect"
+          layout: { x: 430, y: 310, width: 120, height: 55 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "exporters-title"
+              capability: "core.text"
+              text: "exporters"
+              layout: { x: 430, y: 326, width: 120, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "exporters-detail"
+              capability: "core.text"
+              text: "registered"
+              layout: { x: 430, y: 344, width: 120, height: 14 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-registry", at: 280, duration: 360, target: "registry", action: "enter" }
+        { id: "t-a1", at: 520, duration: 240, target: "a1", action: "draw" }
+        { id: "t-loaders", at: 640, duration: 280, target: "loaders", action: "enter" }
+        { id: "t-a2", at: 780, duration: 240, target: "a2", action: "draw" }
+        { id: "t-samplers", at: 900, duration: 280, target: "samplers", action: "enter" }
+        { id: "t-a3", at: 1040, duration: 240, target: "a3", action: "draw" }
+        { id: "t-endpoints", at: 1160, duration: 280, target: "endpoints", action: "enter" }
+        { id: "t-a4", at: 1300, duration: 240, target: "a4", action: "draw" }
+        { id: "t-transports", at: 1420, duration: 280, target: "transports", action: "enter" }
+        { id: "t-workloads", at: 1580, duration: 280, target: "workloads", action: "enter" }
+        { id: "t-exporters", at: 1720, duration: 280, target: "exporters", action: "enter" }
+        { id: "t-emphasis", at: 2000, duration: 480, target: "registry", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Composition root" {
+    eyebrow: "Composition root"
+    title: "Coordinator validates, prepares, executes, persists"
+    lede: "`Coordinator::handle` is the orchestration spine: validate envelope and endpoint profiles, prepare dataset and sidecars, execute the selected program shape, write `native-v2.json`, then run exporters best-effort."
+    narration: "Coordinator is the composition root: validate, prepare, execute, persist native-v2.json, then run exporters."
+    term: {
+      word: "Coordinator"
+      meaning: "Engine composition root that owns validate → prepare → execute → persist for a single BenchmarkRun."
+    }
+    points: [
+      "Sidecar collectors start only on the primary cell when needed.",
+      "Exporter failures are logged, not run-fatal.",
+      "Cellular and graph runs branch inside the same coordinator."
+    ]
+    caption: "One coordinator owns the whole run lifecycle."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "Coordinator::handle"
+          layout: { x: 38, y: 28, width: 280, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "1→2→3→4 persist →5 exporters"
+          layout: { x: 320, y: 28, width: 340, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "validate"
+          capability: "core.rect"
+          layout: { x: 40, y: 130, width: 130, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "validate-title"
+              capability: "core.text"
+              text: "1. Validate"
+              layout: { x: 40, y: 160, width: 130, height: 24 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "validate-detail"
+              capability: "core.text"
+              text: "envelope + profiles"
+              layout: { x: 40, y: 184, width: 130, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 170, y: 178 }
+          to: { x: 200, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "prepare"
+          capability: "core.rect"
+          layout: { x: 200, y: 130, width: 130, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "prepare-title"
+              capability: "core.text"
+              text: "2. Prepare"
+              layout: { x: 200, y: 160, width: 130, height: 24 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "prepare-detail"
+              capability: "core.text"
+              text: "dataset + sidecars"
+              layout: { x: 200, y: 184, width: 130, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 330, y: 178 }
+          to: { x: 360, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "execute"
+          capability: "core.rect"
+          layout: { x: 360, y: 130, width: 130, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "execute-title"
+              capability: "core.text"
+              text: "3. Execute"
+              layout: { x: 360, y: 160, width: 130, height: 24 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "execute-detail"
+              capability: "core.text"
+              text: "program shape"
+              layout: { x: 360, y: 184, width: 130, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a3"
+          capability: "core.line"
+          from: { x: 490, y: 178 }
+          to: { x: 520, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "persist"
+          capability: "core.rect"
+          layout: { x: 520, y: 130, width: 130, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "persist-title"
+              capability: "core.text"
+              text: "4. Persist"
+              layout: { x: 520, y: 160, width: 130, height: 24 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "persist-detail"
+              capability: "core.text"
+              text: "native-v2.json"
+              layout: { x: 520, y: 184, width: 130, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-validate", at: 280, duration: 300, target: "validate", action: "enter" }
+        { id: "t-a1", at: 480, duration: 240, target: "a1", action: "draw" }
+        { id: "t-prepare", at: 620, duration: 300, target: "prepare", action: "enter" }
+        { id: "t-a2", at: 820, duration: 240, target: "a2", action: "draw" }
+        { id: "t-execute", at: 960, duration: 340, target: "execute", action: "enter" }
+        { id: "t-a3", at: 1200, duration: 240, target: "a3", action: "draw" }
+        { id: "t-persist", at: 1340, duration: 300, target: "persist", action: "enter" }
+        { id: "t-emphasis", at: 1640, duration: 480, target: "execute", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Time seam" {
+    eyebrow: "Time seam"
+    title: "Every schedule uses Clock"
+    lede: "Hot paths never call wall-clock APIs directly. `RealClock` drives online HTTP and gRPC; `SimClock` drives dynosim and graph co-simulation with deterministic ordering."
+    narration: "All timing goes through Clock. RealClock drives online traffic; SimClock drives deterministic simulation."
+    term: {
+      word: "Clock"
+      meaning: "Injectable time source used for scheduling, measurement gates, backoff, and simulation driving."
+    }
+    points: [
+      "Measurement must not use `Instant::now` on hot paths.",
+      "Virtual clocks expose integer-nanosecond time.",
+      "Transport retry backoff is clock-driven too."
+    ]
+    caption: "Real time online, virtual time in simulation."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "CLOCK SEAM"
+          layout: { x: 38, y: 28, width: 240, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "RealClock / SimClock"
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "real"
+          capability: "core.rect"
+          layout: { x: 120, y: 130, width: 180, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "real-title"
+              capability: "core.text"
+              text: "RealClock"
+              layout: { x: 120, y: 160, width: 180, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "real-detail"
+              capability: "core.text"
+              text: "HTTP / gRPC online"
+              layout: { x: 120, y: 184, width: 180, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "sim"
+          capability: "core.rect"
+          layout: { x: 400, y: 130, width: 180, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "sim-title"
+              capability: "core.text"
+              text: "SimClock"
+              layout: { x: 400, y: 160, width: 180, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "sim-detail"
+              capability: "core.text"
+              text: "dynosim + graph"
+              layout: { x: 400, y: 184, width: 180, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "footer"
+          capability: "core.text"
+          text: "scheduling, backoff, and measurement all route through Clock"
+          layout: { x: 50, y: 280, width: 600, height: 24 }
+          style: { fontSize: 13, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-real", at: 280, duration: 360, target: "real", action: "enter" }
+        { id: "t-sim", at: 560, duration: 360, target: "sim", action: "enter" }
+        { id: "t-footer", at: 840, duration: 320, target: "footer", action: "enter" }
+        { id: "t-emphasis", at: 1160, duration: 480, target: "real", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Inputs" {
+    eyebrow: "Inputs"
+    title: "Dataset flows load → sample → materialize"
+    lede: "Loaders ingest files and traces, conversations intern into a BLAKE3-addressed segment pool, samplers choose turns, and materializers build wire payloads per endpoint dialect."
+    narration: "Datasets load, sample, and materialize into endpoint-ready requests through one shared substrate."
+    term: {
+      word: "Segment pool"
+      meaning: "Content-addressed conversation storage shared read-only across worker threads via Arc."
+    }
+    points: [
+      "LoaderRegistry and SamplerRegistry live in the frozen registry.",
+      "Synthetic, JSONL, graph, and trace formats share one substrate.",
+      "Prompt materialization stays endpoint-aware."
+    ]
+    caption: "Inputs become endpoint-ready requests once, then reuse handles."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "DATASET PIPELINE"
+          layout: { x: 38, y: 28, width: 300, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "load → sample → materialize"
+          layout: { x: 340, y: 28, width: 320, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "load"
+          capability: "core.rect"
+          layout: { x: 40, y: 130, width: 120, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "load-title"
+              capability: "core.text"
+              text: "load"
+              layout: { x: 40, y: 160, width: 120, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "load-detail"
+              capability: "core.text"
+              text: "dataset"
+              layout: { x: 40, y: 184, width: 120, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 160, y: 178 }
+          to: { x: 190, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "compose"
+          capability: "core.rect"
+          layout: { x: 190, y: 130, width: 120, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "compose-title"
+              capability: "core.text"
+              text: "compose"
+              layout: { x: 190, y: 160, width: 120, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "compose-detail"
+              capability: "core.text"
+              text: "dataset"
+              layout: { x: 190, y: 184, width: 120, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 310, y: 178 }
+          to: { x: 340, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "sample"
+          capability: "core.rect"
+          layout: { x: 340, y: 130, width: 120, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "sample-title"
+              capability: "core.text"
+              text: "sample"
+              layout: { x: 340, y: 160, width: 120, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "sample-detail"
+              capability: "core.text"
+              text: "dataset"
+              layout: { x: 340, y: 184, width: 120, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a3"
+          capability: "core.line"
+          from: { x: 460, y: 178 }
+          to: { x: 490, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "materialize"
+          capability: "core.rect"
+          layout: { x: 490, y: 130, width: 140, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "materialize-title"
+              capability: "core.text"
+              text: "materialize"
+              layout: { x: 490, y: 160, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "materialize-detail"
+              capability: "core.text"
+              text: "dataset"
+              layout: { x: 490, y: 184, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-load", at: 280, duration: 280, target: "load", action: "enter" }
+        { id: "t-a1", at: 460, duration: 240, target: "a1", action: "draw" }
+        { id: "t-compose", at: 600, duration: 280, target: "compose", action: "enter" }
+        { id: "t-a2", at: 780, duration: 240, target: "a2", action: "draw" }
+        { id: "t-sample", at: 920, duration: 280, target: "sample", action: "enter" }
+        { id: "t-a3", at: 1100, duration: 240, target: "a3", action: "draw" }
+        { id: "t-materialize", at: 1240, duration: 340, target: "materialize", action: "enter" }
+        { id: "t-emphasis", at: 1580, duration: 480, target: "materialize", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Work generation" {
+    eyebrow: "Work generation"
+    title: "Workloads and phases drive turns"
+    lede: "Scheduled workloads—request rate, concurrency, user-centric, fixed schedule—emit turn schedules. Phase runtime applies warmup, profiling, ramp, drain, and cancellation policy before transport ever sends."
+    narration: "Workloads and phase runtime decide when turns fire. Transports only send and observe the wire path."
+    term: {
+      word: "phase_runtime"
+      meaning: "Shared lifecycle orchestration that connects schedulers to turn dispatch and terminal drain behavior."
+    }
+    points: [
+      "Graph programs use the separate DAG executor.",
+      "`scheduled.rs` bridges Workload to TurnDispatcher.",
+      "Cancellation and grace propagate through shared phase code."
+    ]
+    caption: "Scheduling decides when; transport decides how to send."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "WORKLOAD + PHASES"
+          layout: { x: 38, y: 28, width: 320, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "scheduled + phase_runtime"
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "workload"
+          capability: "core.rect"
+          layout: { x: 80, y: 120, width: 180, height: 110 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "workload-title"
+              capability: "core.text"
+              text: "Workload"
+              layout: { x: 80, y: 152, width: 180, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "workload-detail"
+              capability: "core.text"
+              text: "request-rate / graph"
+              layout: { x: 80, y: 178, width: 180, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 260, y: 175 }
+          to: { x: 310, y: 175 }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+        }
+        {
+          id: "phase"
+          capability: "core.rect"
+          layout: { x: 310, y: 120, width: 180, height: 110 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "phase-title"
+              capability: "core.text"
+              text: "phase_runtime"
+              layout: { x: 310, y: 152, width: 180, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "phase-detail"
+              capability: "core.text"
+              text: "warmup · drain"
+              layout: { x: 310, y: 178, width: 180, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 490, y: 175 }
+          to: { x: 540, y: 175 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "turns"
+          capability: "core.rect"
+          layout: { x: 540, y: 120, width: 90, height: 110 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "turns-title"
+              capability: "core.text"
+              text: "Turns"
+              layout: { x: 540, y: 152, width: 90, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "turns-detail"
+              capability: "core.text"
+              text: "dispatch"
+              layout: { x: 540, y: 178, width: 90, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-workload", at: 280, duration: 340, target: "workload", action: "enter" }
+        { id: "t-a1", at: 520, duration: 280, target: "a1", action: "draw" }
+        { id: "t-phase", at: 700, duration: 340, target: "phase", action: "enter" }
+        { id: "t-a2", at: 940, duration: 280, target: "a2", action: "draw" }
+        { id: "t-turns", at: 1120, duration: 340, target: "turns", action: "enter" }
+        { id: "t-emphasis", at: 1460, duration: 480, target: "phase", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Observation seam" {
+    eyebrow: "Observation seam"
+    title: "loadgen-core keeps transport neutral"
+    lede: "Transports implement `RequestSink`; observers receive arrival, admission, token, usage, and terminal events. TTFT is the first token observation—there is no separate first-token event."
+    narration: "loadgen-core defines the neutral observer seam. Transports implement RequestSink; measurement stays shared."
+    term: {
+      word: "RequestObserver"
+      meaning: "Worker-local callback surface with no Send bound, allowing LocalSet-friendly state."
+    }
+    points: [
+      "HTTP and gRPC share reduction in `transport::reduce`.",
+      "Measurement accumulates in `transport::measure`.",
+      "Endpoint usage is captured verbatim when present."
+    ]
+    caption: "Transport sends; observer measures; sink owns the lifecycle."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "OBSERVER SEAM"
+          layout: { x: 38, y: 28, width: 280, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "RequestSink + Observer"
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "dispatcher"
+          capability: "core.rect"
+          layout: { x: 70, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "dispatcher-title"
+              capability: "core.text"
+              text: "TurnDispatcher"
+              layout: { x: 70, y: 160, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "dispatcher-detail"
+              capability: "core.text"
+              text: "scheduler side"
+              layout: { x: 70, y: 184, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 220, y: 178 }
+          to: { x: 270, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "sink"
+          capability: "core.rect"
+          layout: { x: 270, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "sink-title"
+              capability: "core.text"
+              text: "RequestSink"
+              layout: { x: 270, y: 160, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "sink-detail"
+              capability: "core.text"
+              text: "transport side"
+              layout: { x: 270, y: 184, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 420, y: 178 }
+          to: { x: 470, y: 178 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+        }
+        {
+          id: "observer"
+          capability: "core.rect"
+          layout: { x: 470, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "observer-title"
+              capability: "core.text"
+              text: "RequestObserver"
+              layout: { x: 470, y: 160, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "observer-detail"
+              capability: "core.text"
+              text: "measurement"
+              layout: { x: 470, y: 184, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-dispatcher", at: 280, duration: 320, target: "dispatcher", action: "enter" }
+        { id: "t-a1", at: 500, duration: 280, target: "a1", action: "draw" }
+        { id: "t-sink", at: 680, duration: 340, target: "sink", action: "enter" }
+        { id: "t-a2", at: 920, duration: 280, target: "a2", action: "draw" }
+        { id: "t-observer", at: 1100, duration: 340, target: "observer", action: "enter" }
+        { id: "t-emphasis", at: 1440, duration: 480, target: "observer", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Parallelism" {
+    eyebrow: "Parallelism"
+    title: "Thread-per-core workers, not mutex hot paths"
+    lede: "When `workers == 1`, scheduler and sink co-locate on a current-thread runtime. When `workers > 1`, each OS thread runs a self-contained sub-cell with its own LocalSet and transport sink."
+    narration: "Parallelism is thread-per-core. Each worker owns local scheduling, transport, and capture without hot-path mutexes."
+    term: {
+      word: "Sub-cell"
+      meaning: "A worker thread that owns scheduling, admission, transport, capture, and local measurement without cross-thread locks on the request path."
+    }
+    points: [
+      "Read-only Arc data crosses thread boundaries.",
+      "Per-worker state stays local and merges at boundaries.",
+      "Hyper and SSE paths rely on LocalSet because clients are not Send."
+    ]
+    caption: "Scale out by adding worker threads, not shared mutable hot state."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "WORKER MODEL"
+          layout: { x: 38, y: 28, width: 260, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "thread-per-core sub-cells"
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "coord"
+          capability: "core.rect"
+          layout: { x: 250, y: 80, width: 200, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "coord-title"
+              capability: "core.text"
+              text: "Coordinator thread"
+              layout: { x: 250, y: 100, width: 200, height: 22 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "coord-detail"
+              capability: "core.text"
+              text: "workers > 1"
+              layout: { x: 250, y: 122, width: 200, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 300, y: 150 }
+          to: { x: 175, y: 220 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 350, y: 150 }
+          to: { x: 345, y: 220 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        }
+        {
+          id: "a3"
+          capability: "core.line"
+          from: { x: 400, y: 150 }
+          to: { x: 515, y: 220 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        }
+        {
+          id: "w0"
+          capability: "core.rect"
+          layout: { x: 120, y: 220, width: 110, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "w0-title"
+              capability: "core.text"
+              text: "Worker 0"
+              layout: { x: 120, y: 240, width: 110, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "w0-detail"
+              capability: "core.text"
+              text: "sub-cell"
+              layout: { x: 120, y: 260, width: 110, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "w1"
+          capability: "core.rect"
+          layout: { x: 290, y: 220, width: 110, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "w1-title"
+              capability: "core.text"
+              text: "Worker 1"
+              layout: { x: 290, y: 240, width: 110, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "w1-detail"
+              capability: "core.text"
+              text: "sub-cell"
+              layout: { x: 290, y: 260, width: 110, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "w2"
+          capability: "core.rect"
+          layout: { x: 460, y: 220, width: 110, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "w2-title"
+              capability: "core.text"
+              text: "Worker 2"
+              layout: { x: 460, y: 240, width: 110, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "w2-detail"
+              capability: "core.text"
+              text: "sub-cell"
+              layout: { x: 460, y: 260, width: 110, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-coord", at: 280, duration: 360, target: "coord", action: "enter" }
+        { id: "t-a1", at: 520, duration: 240, target: "a1", action: "draw" }
+        { id: "t-w0", at: 640, duration: 280, target: "w0", action: "enter" }
+        { id: "t-a2", at: 800, duration: 240, target: "a2", action: "draw" }
+        { id: "t-w1", at: 920, duration: 280, target: "w1", action: "enter" }
+        { id: "t-a3", at: 1080, duration: 240, target: "a3", action: "draw" }
+        { id: "t-w2", at: 1200, duration: 280, target: "w2", action: "enter" }
+        { id: "t-emphasis", at: 1480, duration: 480, target: "coord", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Scale-out" {
+    eyebrow: "Scale-out"
+    title: "Cellular mode adds controller and cells"
+    lede: "`--cells N` promotes the run to a controller that partitions work, launches `aiperf --cell` children, merges records or folded stores over Velo, and writes one authoritative report. SLURM and Kubernetes reuse the same model."
+    narration: "Cellular mode adds a controller, remote cells, Velo control traffic, and a single merged report."
+    term: {
+      word: "Cell partition"
+      meaning: "Deterministic slice of the global request or conversation budget owned by one remote cell process."
+    }
+    points: [
+      "Rank 0 or the controller owns merge and artifact shipping.",
+      "Velo carries control only; HTTP and gRPC carry measured load.",
+      "Bulk artifacts can use a separate HTTP/1 + zstd path."
+    ]
+    caption: "Same engine, more processes, partitioned ownership."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "CELLULAR MODE"
+          layout: { x: 38, y: 28, width: 260, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "controller + cells + Velo"
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "controller"
+          capability: "core.rect"
+          layout: { x: 70, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "controller-title"
+              capability: "core.text"
+              text: "Controller"
+              layout: { x: 70, y: 160, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "controller-detail"
+              capability: "core.text"
+              text: "rank 0"
+              layout: { x: 70, y: 184, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 220, y: 178 }
+          to: { x: 270, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "velo"
+          capability: "core.rect"
+          layout: { x: 270, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "velo-title"
+              capability: "core.text"
+              text: "Velo"
+              layout: { x: 270, y: 160, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "velo-detail"
+              capability: "core.text"
+              text: "control plane"
+              layout: { x: 270, y: 184, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 420, y: 178 }
+          to: { x: 470, y: 178 }
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+        }
+        {
+          id: "cells"
+          capability: "core.rect"
+          layout: { x: 470, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "cells-title"
+              capability: "core.text"
+              text: "Cells"
+              layout: { x: 470, y: 160, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cells-detail"
+              capability: "core.text"
+              text: "load + results"
+              layout: { x: 470, y: 184, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-controller", at: 280, duration: 340, target: "controller", action: "enter" }
+        { id: "t-a1", at: 520, duration: 280, target: "a1", action: "draw" }
+        { id: "t-velo", at: 700, duration: 340, target: "velo", action: "enter" }
+        { id: "t-a2", at: 940, duration: 280, target: "a2", action: "draw" }
+        { id: "t-cells", at: 1120, duration: 340, target: "cells", action: "enter" }
+        { id: "t-emphasis", at: 1460, duration: 480, target: "velo", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Outputs & gates" {
+    eyebrow: "Outputs & gates"
+    title: "Metrics merge, exporters fan out, features opt in"
+    lede: "Workers accumulate metrics locally; the report plane writes `native-v2.json` as authoritative truth, then exporters emit JSON, CSV, Parquet, OTLP, and more. Cargo features gate gRPC, cellular, parquet, dynosim, and pyo3-embed."
+    narration: "Metrics merge into native-v2.json, exporters fan out artifacts, and Cargo features opt into gRPC, cellular, dynosim, and more."
+    term: {
+      word: "native-v2.json"
+      meaning: "Authoritative merged report for a run before optional exporter side outputs."
+    }
+    points: [
+      "Sketch mode uses mergeable t-digests for approximate percentiles.",
+      "`--steady-state` derives a measurement window from concurrency crossings.",
+      "Mock server stays outside profile supervision for deterministic tests."
+    ]
+    caption: "Measure locally, merge once, export many formats."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "METRICS + FEATURES"
+          layout: { x: 38, y: 28, width: 300, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "native-v2.json + exporters"
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "workers"
+          capability: "core.rect"
+          layout: { x: 60, y: 130, width: 130, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "workers-title"
+              capability: "core.text"
+              text: "Workers"
+              layout: { x: 60, y: 160, width: 130, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "workers-detail"
+              capability: "core.text"
+              text: "local metrics"
+              layout: { x: 60, y: 184, width: 130, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 190, y: 178 }
+          to: { x: 240, y: 178 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+        }
+        {
+          id: "report"
+          capability: "core.rect"
+          layout: { x: 240, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "report-title"
+              capability: "core.text"
+              text: "native-v2.json"
+              layout: { x: 240, y: 160, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "report-detail"
+              capability: "core.text"
+              text: "authoritative"
+              layout: { x: 240, y: 184, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 390, y: 178 }
+          to: { x: 440, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "exporters"
+          capability: "core.rect"
+          layout: { x: 440, y: 130, width: 200, height: 96 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "exporters-title"
+              capability: "core.text"
+              text: "Exporters"
+              layout: { x: 440, y: 160, width: 200, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "exporters-detail"
+              capability: "core.text"
+              text: "JSON · CSV · Parquet"
+              layout: { x: 440, y: 184, width: 200, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "footer"
+          capability: "core.text"
+          text: "features: grpc · cellular · dynosim · parquet · pyo3-embed"
+          layout: { x: 50, y: 280, width: 600, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-workers", at: 280, duration: 300, target: "workers", action: "enter" }
+        { id: "t-a1", at: 480, duration: 280, target: "a1", action: "draw" }
+        { id: "t-report", at: 660, duration: 340, target: "report", action: "enter" }
+        { id: "t-a2", at: 900, duration: 280, target: "a2", action: "draw" }
+        { id: "t-exporters", at: 1080, duration: 340, target: "exporters", action: "enter" }
+        { id: "t-footer", at: 1320, duration: 300, target: "footer", action: "enter" }
+        { id: "t-emphasis", at: 1620, duration: 480, target: "report", action: "emphasis" }
+      ]
+    }
+  }
+}

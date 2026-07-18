@@ -1,0 +1,3718 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+explainer "SLURM + Velo from scratch" {
+  id: "slurm-velo"
+  route: "/slurm-velo"
+  topic: "distributed-execution"
+  storagePrefix: "slurm-explainer"
+  classPrefix: "slurm101"
+  eyebrowLabel: "SLURM + VELO FROM SCRATCH"
+  startGateTitle: "SLURM + Velo from scratch"
+
+  hub: {
+    highlight: "SLURM + Velo"
+    title: "from scratch"
+    description: "Step-by-step slideshow for how SLURM launches cellular AIPerf runs and how Velo wires the control plane."
+  }
+
+  slide "You want to load-test a big AI server" {
+    eyebrow: "The problem"
+    title: "You want to load-test a big AI server"
+    lede: "AIPerf sends many requests to an inference server and measures how fast it answers. To push a really large server hard, one computer sending traffic is not enough — you need many computers sending at once."
+    narration: "Large AI servers need many load generators acting together as one benchmark."
+    term: {
+      word: "Inference server"
+      meaning: "The service that runs an AI model and answers requests (for example, a chat completion endpoint)."
+    }
+    points: [
+      "One laptop can only send so many requests per second.",
+      "To stress a large server you need a fleet of machines generating load together.",
+      "That fleet has to act like one coordinated test, not many disconnected ones."
+    ]
+    caption: "Goal: many machines, one benchmark, one result."
+
+    render: @scene {
+      roots: [
+{
+          id: "s0-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s0-hdr-l"
+              capability: "core.text"
+              text: "BENCHMARK GOAL"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s0-hdr-n"
+              capability: "core.text"
+              text: "many machines generate one combined load"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s0-gens"
+          capability: "core.rect"
+          layout: { x: 74, y: 138, width: 220, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s0-gens-t"
+              capability: "core.text"
+              text: "Many load generators"
+              layout: { x: 90, y: 166, width: 190, height: 22 }
+              style: { fontSize: 16, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s0-gens-s"
+              capability: "core.text"
+              text: "more machines = more traffic"
+              layout: { x: 90, y: 190, width: 190, height: 18 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s0-req"
+          capability: "core.path"
+          d: "M294 186 L418 186"
+          from: { x: 294, y: 186 }
+          to: { x: 418, y: 186 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+          {
+              id: "s0-req-l"
+              capability: "core.text"
+              text: "REQUESTS"
+              layout: { x: 320, y: 160, width: 80, height: 16 }
+              style: { fontSize: 11, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+{
+          id: "s0-srv"
+          capability: "core.rect"
+          layout: { x: 418, y: 138, width: 210, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 36 }
+          children: [
+            {
+              id: "s0-srv-t"
+              capability: "core.text"
+              text: "Inference server"
+              layout: { x: 440, y: 170, width: 170, height: 22 }
+              style: { fontSize: 16, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s0-srv-s"
+              capability: "core.text"
+              text: "the AI model endpoint"
+              layout: { x: 440, y: 194, width: 170, height: 18 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s0-motion"
+          capability: "core.path"
+          d: "M294 186 H418"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s0-motion-draw"
+          at: 250
+          duration: 500
+          target: "s0-motion"
+          action: "draw"
+        },
+        {
+          id: "s0-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s0-hdr"
+          action: "enter"
+        },
+        {
+          id: "s0-enter-s0-gens"
+          at: 180
+          duration: 240
+          target: "s0-gens"
+          action: "enter"
+        },
+        {
+          id: "s0-draw-s0-req"
+          at: 310
+          duration: 360
+          target: "s0-req"
+          action: "draw"
+        },
+        {
+          id: "s0-enter-req-l"
+          at: 380
+          duration: 180
+          target: "s0-req-l"
+          action: "enter"
+        },
+        {
+          id: "s0-enter-s0-srv"
+          at: 440
+          duration: 240
+          target: "s0-srv"
+          action: "enter"
+        },
+        {
+          id: "s0-emph-srv"
+          at: 610
+          duration: 200
+          target: "s0-srv"
+          action: "emphasis"
+        }
+      ]
+    }
+  }
+
+  slide "SLURM hands you a cluster of machines" {
+    eyebrow: "The tool"
+    title: "SLURM hands you a cluster of machines"
+    lede: "SLURM is the software that shares a big cluster among many people. You ask it for machines; it finds free ones, reserves them for you, and runs your command on every one of them at the same time."
+    narration: "SLURM reserves cluster machines and launches your program across all of them."
+    term: {
+      word: "SLURM"
+      meaning: "A job scheduler for compute clusters. You submit a request for N machines; SLURM grants an allocation and launches your program on each task."
+    }
+    points: [
+      "`sbatch` submits a batch job; `srun` launches tasks right now.",
+      "An allocation is your reserved set of machines for this job.",
+      "SLURM runs the exact same command on every task in the allocation."
+    ]
+    caption: "SLURM = the landlord that lends you machines for a while."
+
+    render: @scene {
+      roots: [
+{
+          id: "s1-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s1-hdr-l"
+              capability: "core.text"
+              text: "SLURM RESERVES RESOURCES"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s1-hdr-n"
+              capability: "core.text"
+              text: "the scheduler lends your job a set of machines"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s1-slurm"
+          capability: "core.rect"
+          layout: { x: 64, y: 128, width: 190, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s1-slurm-t"
+              capability: "core.text"
+              text: "SLURM scheduler"
+              layout: { x: 80, y: 158, width: 160, height: 22 }
+              style: { fontSize: 15, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s1-slurm-s"
+              capability: "core.text"
+              text: "finds and reserves machines"
+              layout: { x: 80, y: 182, width: 160, height: 18 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s1-arr"
+          capability: "core.path"
+          d: "M254 176 L330 176"
+          from: { x: 254, y: 176 }
+          to: { x: 330, y: 176 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s1-alloc"
+          capability: "core.rect"
+          layout: { x: 330, y: 98, width: 304, height: 156 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s1-alloc-t"
+              capability: "core.text"
+              text: "Your allocation"
+              layout: { x: 360, y: 118, width: 240, height: 20 }
+              style: { fontSize: 15, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s1-task-0"
+              capability: "core.rect"
+              layout: { x: 350, y: 150, width: 54, height: 58 }
+              style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+              children: [
+                {
+                  id: "s1-task-0-t"
+                  capability: "core.text"
+                  text: "Task 0"
+                  layout: { x: 352, y: 168, width: 50, height: 16 }
+                  style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "s1-task-0-s"
+                  capability: "core.text"
+                  text: "machine"
+                  layout: { x: 352, y: 186, width: 50, height: 14 }
+                  style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+                }
+              ]
+            },
+            {
+              id: "s1-task-1"
+              capability: "core.rect"
+              layout: { x: 418, y: 150, width: 54, height: 58 }
+              style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+              children: [
+                {
+                  id: "s1-task-1-t"
+                  capability: "core.text"
+                  text: "Task 1"
+                  layout: { x: 420, y: 168, width: 50, height: 16 }
+                  style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "s1-task-1-s"
+                  capability: "core.text"
+                  text: "machine"
+                  layout: { x: 420, y: 186, width: 50, height: 14 }
+                  style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+                }
+              ]
+            },
+            {
+              id: "s1-task-2"
+              capability: "core.rect"
+              layout: { x: 486, y: 150, width: 54, height: 58 }
+              style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+              children: [
+                {
+                  id: "s1-task-2-t"
+                  capability: "core.text"
+                  text: "Task 2"
+                  layout: { x: 488, y: 168, width: 50, height: 16 }
+                  style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "s1-task-2-s"
+                  capability: "core.text"
+                  text: "machine"
+                  layout: { x: 488, y: 186, width: 50, height: 14 }
+                  style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+                }
+              ]
+            },
+            {
+              id: "s1-task-3"
+              capability: "core.rect"
+              layout: { x: 554, y: 150, width: 54, height: 58 }
+              style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+              children: [
+                {
+                  id: "s1-task-3-t"
+                  capability: "core.text"
+                  text: "Task 3"
+                  layout: { x: 556, y: 168, width: 50, height: 16 }
+                  style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "s1-task-3-s"
+                  capability: "core.text"
+                  text: "machine"
+                  layout: { x: 556, y: 186, width: 50, height: 14 }
+                  style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          id: "s1-motion"
+          capability: "core.path"
+          d: "M254 176 H330"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s1-motion-draw"
+          at: 250
+          duration: 500
+          target: "s1-motion"
+          action: "draw"
+        },
+        {
+          id: "s1-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s1-hdr"
+          action: "enter"
+        },
+        {
+          id: "s1-enter-s1-slurm"
+          at: 180
+          duration: 240
+          target: "s1-slurm"
+          action: "enter"
+        },
+        {
+          id: "s1-draw-s1-arr"
+          at: 310
+          duration: 320
+          target: "s1-arr"
+          action: "draw"
+        },
+        {
+          id: "s1-enter-s1-alloc"
+          at: 440
+          duration: 240
+          target: "s1-alloc"
+          action: "enter"
+        },
+        {
+          id: "s1-enter-task-0"
+          at: 570
+          duration: 200
+          target: "s1-task-0"
+          action: "enter"
+        },
+        {
+          id: "s1-enter-task-1"
+          at: 660
+          duration: 200
+          target: "s1-task-1"
+          action: "enter"
+        },
+        {
+          id: "s1-enter-task-2"
+          at: 750
+          duration: 200
+          target: "s1-task-2"
+          action: "enter"
+        },
+        {
+          id: "s1-enter-task-3"
+          at: 840
+          duration: 200
+          target: "s1-task-3"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Every machine runs the identical command" {
+    eyebrow: "The key trick"
+    title: "Every machine runs the identical command"
+    lede: "This is the part that surprises newcomers. SLURM does not run a different program on each machine. It launches the very same line — `aiperf slurm run` — on all of them at once."
+    narration: "Every task runs the same AIPerf command, then its rank determines its role."
+    term: {
+      word: "Task"
+      meaning: "One running copy of your command inside the allocation. A 4-machine job has 4 tasks."
+    }
+    points: [
+      "So how does each copy know what to do differently?",
+      "SLURM gives each task a numbered identity called its rank.",
+      "The program reads that number and decides its own job."
+    ]
+    caption: "Same command everywhere — the rank number breaks the tie."
+
+    render: @scene {
+      roots: [
+{
+          id: "s2-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s2-hdr-l"
+              capability: "core.text"
+              text: "ONE COMMAND, MANY TASKS"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s2-hdr-n"
+              capability: "core.text"
+              text: "SLURM_PROCID gives each copy a unique rank"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s2-cmd"
+          capability: "core.rect"
+          layout: { x: 190, y: 78, width: 320, height: 58 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s2-cmd-t"
+              capability: "core.text"
+              text: "aiperf slurm run --config benchmark.yaml"
+              layout: { x: 200, y: 94, width: 300, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s2-cmd-s"
+              capability: "core.text"
+              text: "one identical command on every task"
+              layout: { x: 200, y: 114, width: 300, height: 16 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s2-trunk"
+          capability: "core.path"
+          d: "M350 136 L350 168"
+          from: { x: 350, y: 136 }
+          to: { x: 350, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s2-bar"
+          capability: "core.path"
+          d: "M150 168 L550 168"
+          from: { x: 150, y: 168 }
+          to: { x: 550, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s2-down-0"
+          capability: "core.path"
+          d: "M150 168 L150 198"
+          from: { x: 150, y: 168 }
+          to: { x: 150, y: 198 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s2-task-0"
+          capability: "core.rect"
+          layout: { x: 72, y: 198, width: 156, height: 88 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s2-task-0-t"
+              capability: "core.text"
+              text: "Task 0"
+              layout: { x: 90, y: 220, width: 120, height: 18 }
+              style: { fontSize: 15, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s2-task-0-r"
+              capability: "core.text"
+              text: "SLURM_PROCID = 0"
+              layout: { x: 90, y: 242, width: 120, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s2-task-0-s"
+              capability: "core.text"
+              text: "rank decides the role"
+              layout: { x: 90, y: 262, width: 120, height: 14 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.tertiary }
+            }
+          ]
+        },
+{
+          id: "s2-down-1"
+          capability: "core.path"
+          d: "M350 168 L350 198"
+          from: { x: 350, y: 168 }
+          to: { x: 350, y: 198 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s2-task-1"
+          capability: "core.rect"
+          layout: { x: 272, y: 198, width: 156, height: 88 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s2-task-1-t"
+              capability: "core.text"
+              text: "Task 1"
+              layout: { x: 290, y: 220, width: 120, height: 18 }
+              style: { fontSize: 15, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s2-task-1-r"
+              capability: "core.text"
+              text: "SLURM_PROCID = 1"
+              layout: { x: 290, y: 242, width: 120, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s2-task-1-s"
+              capability: "core.text"
+              text: "rank decides the role"
+              layout: { x: 290, y: 262, width: 120, height: 14 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.tertiary }
+            }
+          ]
+        },
+{
+          id: "s2-down-2"
+          capability: "core.path"
+          d: "M550 168 L550 198"
+          from: { x: 550, y: 168 }
+          to: { x: 550, y: 198 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s2-task-2"
+          capability: "core.rect"
+          layout: { x: 472, y: 198, width: 156, height: 88 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s2-task-2-t"
+              capability: "core.text"
+              text: "Task 2"
+              layout: { x: 490, y: 220, width: 120, height: 18 }
+              style: { fontSize: 15, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s2-task-2-r"
+              capability: "core.text"
+              text: "SLURM_PROCID = 2"
+              layout: { x: 490, y: 242, width: 120, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s2-task-2-s"
+              capability: "core.text"
+              text: "rank decides the role"
+              layout: { x: 490, y: 262, width: 120, height: 14 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.tertiary }
+            }
+          ]
+        },
+        {
+          id: "s2-motion"
+          capability: "core.path"
+          d: "M350 136 V168 H150 V198 V168 H350 V198 V168 H550 V198"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s2-motion-draw"
+          at: 250
+          duration: 500
+          target: "s2-motion"
+          action: "draw"
+        },
+        {
+          id: "s2-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s2-hdr"
+          action: "enter"
+        },
+        {
+          id: "s2-enter-s2-cmd"
+          at: 180
+          duration: 240
+          target: "s2-cmd"
+          action: "enter"
+        },
+        {
+          id: "s2-draw-s2-trunk"
+          at: 310
+          duration: 220
+          target: "s2-trunk"
+          action: "draw"
+        },
+        {
+          id: "s2-draw-s2-bar"
+          at: 440
+          duration: 280
+          target: "s2-bar"
+          action: "draw"
+        },
+        {
+          id: "s2-draw-s2-down-0"
+          at: 570
+          duration: 200
+          target: "s2-down-0"
+          action: "draw"
+        },
+        {
+          id: "s2-enter-s2-task-0"
+          at: 700
+          duration: 240
+          target: "s2-task-0"
+          action: "enter"
+        },
+        {
+          id: "s2-draw-s2-down-1"
+          at: 830
+          duration: 200
+          target: "s2-down-1"
+          action: "draw"
+        },
+        {
+          id: "s2-enter-s2-task-1"
+          at: 960
+          duration: 240
+          target: "s2-task-1"
+          action: "enter"
+        },
+        {
+          id: "s2-draw-s2-down-2"
+          at: 1090
+          duration: 200
+          target: "s2-down-2"
+          action: "draw"
+        },
+        {
+          id: "s2-enter-s2-task-2"
+          at: 1220
+          duration: 240
+          target: "s2-task-2"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Rank 0 leads; everyone else does the work" {
+    eyebrow: "Splitting the roles"
+    title: "Rank 0 leads; everyone else does the work"
+    lede: "AIPerf reads the rank SLURM assigned. Rank 0 becomes the controller — the coordinator. Every other rank becomes a cell — a worker that actually sends load to the server."
+    narration: "Rank zero coordinates the benchmark. Every other rank becomes a load-generating cell."
+    term: {
+      word: "Rank"
+      meaning: "Each task's index in the allocation, from 0 up. AIPerf uses it to pick controller vs. cell."
+    }
+    points: [
+      "Rank 0 → the single controller (it coordinates, it does not send benchmark load).",
+      "Ranks 1, 2, 3, … → cells, numbered cell_id = rank − 1.",
+      "So a 4-task job = 1 controller + 3 cells."
+    ]
+    caption: "controller = rank 0 · cell_id = rank − 1 · cell_count = tasks − 1."
+
+    render: @scene {
+      roots: [
+{
+          id: "s3-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s3-hdr-l"
+              capability: "core.text"
+              text: "RANKS BECOME AIPERF ROLES"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s3-hdr-n"
+              capability: "core.text"
+              text: "rank 0 coordinates · ranks 1…N generate load"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s3-r0"
+          capability: "core.rect"
+          layout: { x: 72, y: 122, width: 220, height: 112 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s3-r0-t"
+              capability: "core.text"
+              text: "Rank 0"
+              layout: { x: 90, y: 148, width: 180, height: 22 }
+              style: { fontSize: 17, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s3-r0-r"
+              capability: "core.text"
+              text: "CONTROLLER"
+              layout: { x: 90, y: 174, width: 180, height: 18 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.accent.secondary }
+            },
+            {
+              id: "s3-r0-s"
+              capability: "core.text"
+              text: "coordinates the benchmark"
+              layout: { x: 90, y: 200, width: 180, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s3-link"
+          capability: "core.path"
+          d: "M292 178 L408 178"
+          from: { x: 292, y: 178 }
+          to: { x: 408, y: 178 }
+          style: { stroke: @theme.ink.secondary, strokeWidth: 2 }
+        },
+          {
+              id: "s3-same"
+              capability: "core.text"
+              text: "SAME RUN"
+              layout: { x: 320, y: 155, width: 80, height: 16 }
+              style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.secondary }
+            },
+{
+          id: "s3-cells"
+          capability: "core.rect"
+          layout: { x: 408, y: 98, width: 220, height: 160 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s3-cells-t"
+              capability: "core.text"
+              text: "Ranks 1, 2, 3…"
+              layout: { x: 426, y: 120, width: 180, height: 22 }
+              style: { fontSize: 16, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s3-cells-r"
+              capability: "core.text"
+              text: "LOAD CELLS"
+              layout: { x: 426, y: 148, width: 180, height: 18 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+            {
+              id: "s3-cells-s1"
+              capability: "core.text"
+              text: "cell 0 · cell 1 · cell 2…"
+              layout: { x: 426, y: 176, width: 180, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s3-cells-s2"
+              capability: "core.text"
+              text: "send benchmark requests"
+              layout: { x: 426, y: 198, width: 180, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s3-motion"
+          capability: "core.path"
+          d: "M292 178 H408"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s3-motion-draw"
+          at: 250
+          duration: 500
+          target: "s3-motion"
+          action: "draw"
+        },
+        {
+          id: "s3-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s3-hdr"
+          action: "enter"
+        },
+        {
+          id: "s3-enter-s3-r0"
+          at: 180
+          duration: 240
+          target: "s3-r0"
+          action: "enter"
+        },
+        {
+          id: "s3-draw-s3-link"
+          at: 310
+          duration: 280
+          target: "s3-link"
+          action: "draw"
+        },
+        {
+          id: "s3-enter-same"
+          at: 440
+          duration: 180
+          target: "s3-same"
+          action: "enter"
+        },
+        {
+          id: "s3-enter-s3-cells"
+          at: 540
+          duration: 240
+          target: "s3-cells"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Cells dial the controller with one shared fact" {
+    eyebrow: "Finding each other"
+    title: "Cells dial the controller with one shared fact"
+    lede: "The cells need to talk to the controller, but nobody set up a directory service. Instead, every task computes the same address from the SLURM environment: the first machine in the allocation, on a known port."
+    narration: "Each cell derives the rank-zero controller address from the shared SLURM allocation."
+    term: {
+      word: "Coordinate"
+      meaning: "The controller's address, like tcp://node01:9500, derived identically on every task from SLURM_* variables."
+    }
+    points: [
+      "SLURM tells every task the list of machines and its own rank.",
+      "All tasks agree rank 0 lives on the first machine in that list.",
+      "Default connection port is 9500, so every cell knows exactly where to call."
+    ]
+    caption: "One fact, computed the same everywhere — no discovery service needed."
+
+    render: @scene {
+      roots: [
+{
+          id: "s4-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s4-hdr-l"
+              capability: "core.text"
+              text: "EVERY CELL FINDS RANK 0"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s4-hdr-n"
+              capability: "core.text"
+              text: "the controller address is derived, not discovered"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s4-nodes"
+          capability: "core.rect"
+          layout: { x: 38, y: 116, width: 142, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s4-nodes-t"
+              capability: "core.text"
+              text: "SLURM nodelist"
+              layout: { x: 48, y: 138, width: 120, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s4-nodes-s1"
+              capability: "core.text"
+              text: "node01, node02…"
+              layout: { x: 48, y: 162, width: 120, height: 14 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s4-nodes-s2"
+              capability: "core.text"
+              text: "+ port 9500"
+              layout: { x: 48, y: 182, width: 120, height: 14 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s4-a1"
+          capability: "core.path"
+          d: "M180 164 L236 164"
+          from: { x: 180, y: 164 }
+          to: { x: 236, y: 164 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s4-coord"
+          capability: "core.rect"
+          layout: { x: 236, y: 116, width: 190, height: 96 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s4-coord-t"
+              capability: "core.text"
+              text: "Controller coordinate"
+              layout: { x: 248, y: 140, width: 165, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s4-coord-a"
+              capability: "core.text"
+              text: "tcp://node01:9500"
+              layout: { x: 248, y: 168, width: 165, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.accent.primary }
+            }
+          ]
+        },
+{
+          id: "s4-a2"
+          capability: "core.path"
+          d: "M426 164 L482 164"
+          from: { x: 426, y: 164 }
+          to: { x: 482, y: 164 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s4-dial"
+          capability: "core.rect"
+          layout: { x: 482, y: 102, width: 180, height: 124 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s4-dial-t"
+              capability: "core.text"
+              text: "Every cell dials"
+              layout: { x: 494, y: 126, width: 155, height: 18 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s4-dial-s1"
+              capability: "core.text"
+              text: "the same address"
+              layout: { x: 494, y: 152, width: 155, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s4-dial-s2"
+              capability: "core.text"
+              text: "and reaches rank 0"
+              layout: { x: 494, y: 174, width: 155, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s4-dial-s3"
+              capability: "core.text"
+              text: "no discovery service"
+              layout: { x: 494, y: 196, width: 155, height: 14 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.tertiary }
+            }
+          ]
+        },
+        {
+          id: "s4-motion"
+          capability: "core.path"
+          d: "M572 164 H331 H572"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s4-motion-draw"
+          at: 250
+          duration: 500
+          target: "s4-motion"
+          action: "draw"
+        },
+        {
+          id: "s4-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s4-hdr"
+          action: "enter"
+        },
+        {
+          id: "s4-enter-s4-nodes"
+          at: 180
+          duration: 240
+          target: "s4-nodes"
+          action: "enter"
+        },
+        {
+          id: "s4-draw-s4-a1"
+          at: 310
+          duration: 220
+          target: "s4-a1"
+          action: "draw"
+        },
+        {
+          id: "s4-enter-s4-coord"
+          at: 440
+          duration: 240
+          target: "s4-coord"
+          action: "enter"
+        },
+        {
+          id: "s4-draw-s4-a2"
+          at: 570
+          duration: 220
+          target: "s4-a2"
+          action: "draw"
+        },
+        {
+          id: "s4-enter-s4-dial"
+          at: 700
+          duration: 240
+          target: "s4-dial"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Velo is the walkie-talkie between controller and cells" {
+    eyebrow: "Meet Velo"
+    title: "Velo is the walkie-talkie between controller and cells"
+    lede: "Once cells know the controller address, they still need a messaging system. That system is Velo: a small control-plane library AIPerf uses so the controller and cells can exchange short messages across machines."
+    narration: "Velo carries coordination messages between the controller and its remote cells."
+    term: {
+      word: "Velo"
+      meaning: "An async messaging framework used only for cellular control traffic — registration, START sync, heartbeats, and result summaries. It is never on the per-request hot path."
+    }
+    points: [
+      "Velo is how AIPerf processes talk to each other across hosts.",
+      "It carries small control messages, not the benchmark requests themselves.",
+      "Without cellular mode (`--cells`), Velo is not constructed at all."
+    ]
+    caption: "SLURM launches the processes. Velo lets those processes talk."
+
+    render: @scene {
+      roots: [
+{
+          id: "s5-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s5-hdr-l"
+              capability: "core.text"
+              text: "VELO = CONTROL MESSAGING"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s5-hdr-n"
+              capability: "core.text"
+              text: "SLURM launches processes · Velo lets them talk"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s5-ctrl"
+          capability: "core.rect"
+          layout: { x: 48, y: 100, width: 180, height: 150 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s5-ctrl-t"
+              capability: "core.text"
+              text: "Controller"
+              layout: { x: 64, y: 130, width: 148, height: 20 }
+              style: { fontSize: 16, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s5-ctrl-r"
+              capability: "core.text"
+              text: "rank 0"
+              layout: { x: 64, y: 154, width: 148, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s5-ctrl-s1"
+              capability: "core.text"
+              text: "binds Velo listener"
+              layout: { x: 64, y: 184, width: 148, height: 14 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s5-ctrl-s2"
+              capability: "core.text"
+              text: "on port 9500"
+              layout: { x: 64, y: 206, width: 148, height: 14 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s5-send"
+          capability: "core.path"
+          d: "M228 155 L270 155"
+          from: { x: 228, y: 155 }
+          to: { x: 270, y: 155 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s5-velo"
+          capability: "core.rect"
+          layout: { x: 270, y: 132, width: 160, height: 86 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s5-velo-t"
+              capability: "core.text"
+              text: "VELO"
+              layout: { x: 290, y: 156, width: 120, height: 22 }
+              style: { fontSize: 18, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+            {
+              id: "s5-velo-s"
+              capability: "core.text"
+              text: "control walkie-talkie"
+              layout: { x: 290, y: 184, width: 120, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s5-to"
+          capability: "core.path"
+          d: "M430 155 L472 155"
+          from: { x: 430, y: 155 }
+          to: { x: 472, y: 155 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s5-cells"
+          capability: "core.rect"
+          layout: { x: 472, y: 100, width: 180, height: 150 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s5-cells-t"
+              capability: "core.text"
+              text: "Load cells"
+              layout: { x: 488, y: 130, width: 148, height: 20 }
+              style: { fontSize: 16, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s5-cells-r"
+              capability: "core.text"
+              text: "ranks 1…N"
+              layout: { x: 488, y: 154, width: 148, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s5-cells-s1"
+              capability: "core.text"
+              text: "dial controller"
+              layout: { x: 488, y: 184, width: 148, height: 14 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s5-cells-s2"
+              capability: "core.text"
+              text: "over Velo"
+              layout: { x: 488, y: 206, width: 148, height: 14 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s5-reply"
+          capability: "core.path"
+          d: "M472 195 L430 195"
+          from: { x: 472, y: 195 }
+          to: { x: 430, y: 195 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s5-back"
+          capability: "core.path"
+          d: "M270 195 L228 195"
+          from: { x: 270, y: 195 }
+          to: { x: 228, y: 195 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+          {
+              id: "s5-note"
+              capability: "core.text"
+              text: "Velo carries short control messages — not the AI requests."
+              layout: { x: 80, y: 290, width: 540, height: 18 }
+              style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+        {
+          id: "s5-motion"
+          capability: "core.path"
+          d: "M228 155 H472 V195 H228"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s5-motion-draw"
+          at: 250
+          duration: 500
+          target: "s5-motion"
+          action: "draw"
+        },
+        {
+          id: "s5-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s5-hdr"
+          action: "enter"
+        },
+        {
+          id: "s5-enter-s5-ctrl"
+          at: 180
+          duration: 240
+          target: "s5-ctrl"
+          action: "enter"
+        },
+        {
+          id: "s5-draw-s5-send"
+          at: 310
+          duration: 200
+          target: "s5-send"
+          action: "draw"
+        },
+        {
+          id: "s5-enter-s5-velo"
+          at: 440
+          duration: 240
+          target: "s5-velo"
+          action: "enter"
+        },
+        {
+          id: "s5-draw-s5-to"
+          at: 570
+          duration: 200
+          target: "s5-to"
+          action: "draw"
+        },
+        {
+          id: "s5-enter-s5-cells"
+          at: 700
+          duration: 240
+          target: "s5-cells"
+          action: "enter"
+        },
+        {
+          id: "s5-draw-s5-reply"
+          at: 830
+          duration: 200
+          target: "s5-reply"
+          action: "draw"
+        },
+        {
+          id: "s5-draw-s5-back"
+          at: 960
+          duration: 200
+          target: "s5-back"
+          action: "draw"
+        },
+        {
+          id: "s5-enter-note"
+          at: 1090
+          duration: 220
+          target: "s5-note"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "A cell connects once, then Velo learns the peer" {
+    eyebrow: "Velo bootstrap"
+    title: "A cell connects once, then Velo learns the peer"
+    lede: "Each cell calls Velo with the one known address: tcp://HOST:9500. Velo's hello handshake discovers the controller's real peer identity, then the two sides can send named messages to each other."
+    narration: "Each cell connects once, allowing Velo to establish the peer relationship."
+    term: {
+      word: "Handshake"
+      meaning: "Velo's connect step that turns a host:port into a live, mutually registered peer connection."
+    }
+    points: [
+      "The cell only needs AIPERF_CELL_CONTROLLER_ADDR.",
+      "Velo connects, shakes hands, and registers both peers.",
+      "After that, named handlers like register / heartbeat / partition work."
+    ]
+    caption: "Address in → peer connection out. No service discovery backend."
+
+    render: @scene {
+      roots: [
+{
+          id: "s6-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s6-hdr-l"
+              capability: "core.text"
+              text: "VELO HANDSHAKE"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s6-hdr-n"
+              capability: "core.text"
+              text: "address in · peer connection out"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s6-step-0"
+          capability: "core.rect"
+          layout: { x: 28, y: 128, width: 140, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 9 }
+          children: [
+            {
+              id: "s6-step-0-t"
+              capability: "core.text"
+              text: "Cell knows"
+              layout: { x: 38, y: 158, width: 120, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s6-step-0-s"
+              capability: "core.text"
+              text: "tcp://node01:9500"
+              layout: { x: 38, y: 186, width: 120, height: 16 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s6-arr-0"
+          capability: "core.path"
+          d: "M168 178 L196 178"
+          from: { x: 168, y: 178 }
+          to: { x: 196, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s6-step-1"
+          capability: "core.rect"
+          layout: { x: 196, y: 128, width: 140, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 9 }
+          children: [
+            {
+              id: "s6-step-1-t"
+              capability: "core.text"
+              text: "velo.connect"
+              layout: { x: 206, y: 158, width: 120, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s6-step-1-s"
+              capability: "core.text"
+              text: "hello handshake"
+              layout: { x: 206, y: 186, width: 120, height: 16 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s6-arr-1"
+          capability: "core.path"
+          d: "M336 178 L364 178"
+          from: { x: 336, y: 178 }
+          to: { x: 364, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s6-step-2"
+          capability: "core.rect"
+          layout: { x: 364, y: 128, width: 140, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 9 }
+          children: [
+            {
+              id: "s6-step-2-t"
+              capability: "core.text"
+              text: "Peers registered"
+              layout: { x: 374, y: 158, width: 120, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s6-step-2-s"
+              capability: "core.text"
+              text: "controller ↔ cell"
+              layout: { x: 374, y: 186, width: 120, height: 16 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s6-arr-2"
+          capability: "core.path"
+          d: "M504 178 L532 178"
+          from: { x: 504, y: 178 }
+          to: { x: 532, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s6-step-3"
+          capability: "core.rect"
+          layout: { x: 532, y: 128, width: 140, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 9 }
+          children: [
+            {
+              id: "s6-step-3-t"
+              capability: "core.text"
+              text: "Ready to talk"
+              layout: { x: 542, y: 158, width: 120, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s6-step-3-s"
+              capability: "core.text"
+              text: "named handlers"
+              layout: { x: 542, y: 186, width: 120, height: 16 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s6-return"
+          capability: "core.path"
+          d: "M602 248 L98 248"
+          from: { x: 602, y: 248 }
+          to: { x: 98, y: 248 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+          {
+              id: "s6-ret-l"
+              capability: "core.text"
+              text: "HELLO REPLY RETURNS TO THE CELL"
+              layout: { x: 180, y: 258, width: 340, height: 14 }
+              style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+          {
+              id: "s6-note"
+              capability: "core.text"
+              text: "No DNS discovery service. One a-priori address is enough."
+              layout: { x: 80, y: 285, width: 540, height: 16 }
+              style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+        {
+          id: "s6-motion"
+          capability: "core.path"
+          d: "M98 178 H602 V248 H98"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s6-motion-draw"
+          at: 250
+          duration: 500
+          target: "s6-motion"
+          action: "draw"
+        },
+        {
+          id: "s6-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s6-hdr"
+          action: "enter"
+        },
+        {
+          id: "s6-enter-s6-step-0"
+          at: 180
+          duration: 240
+          target: "s6-step-0"
+          action: "enter"
+        },
+        {
+          id: "s6-draw-s6-arr-0"
+          at: 310
+          duration: 180
+          target: "s6-arr-0"
+          action: "draw"
+        },
+        {
+          id: "s6-enter-s6-step-1"
+          at: 440
+          duration: 240
+          target: "s6-step-1"
+          action: "enter"
+        },
+        {
+          id: "s6-draw-s6-arr-1"
+          at: 570
+          duration: 180
+          target: "s6-arr-1"
+          action: "draw"
+        },
+        {
+          id: "s6-enter-s6-step-2"
+          at: 700
+          duration: 240
+          target: "s6-step-2"
+          action: "enter"
+        },
+        {
+          id: "s6-draw-s6-arr-2"
+          at: 830
+          duration: 180
+          target: "s6-arr-2"
+          action: "draw"
+        },
+        {
+          id: "s6-enter-s6-step-3"
+          at: 960
+          duration: 240
+          target: "s6-step-3"
+          action: "enter"
+        },
+        {
+          id: "s6-draw-s6-return"
+          at: 1090
+          duration: 400
+          target: "s6-return"
+          action: "draw"
+        },
+        {
+          id: "s6-enter-ret-l"
+          at: 1220
+          duration: 180
+          target: "s6-ret-l"
+          action: "enter"
+        },
+        {
+          id: "s6-enter-note"
+          at: 1320
+          duration: 200
+          target: "s6-note"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Register and START travel over Velo" {
+    eyebrow: "Getting ready together"
+    title: "Register and START travel over Velo"
+    lede: "Before any traffic flies, each cell registers over Velo. The controller replies with that cell's work slice and a START event handle. When every expected cell has registered, the controller triggers START and they begin together."
+    narration: "Cells register through Velo, then wait until the controller broadcasts START."
+    term: {
+      word: "START barrier"
+      meaning: "A Velo event gate that holds every cell until all of them have registered, so the benchmark starts in sync."
+    }
+    points: [
+      "aiperf.cell.register — cell joins and receives its sliced envelope.",
+      "The controller waits until cell_count cells have registered.",
+      "One START trigger releases every waiting cell at once."
+    ]
+    caption: "Line everyone up over Velo, then start the race together."
+
+    render: @scene {
+      roots: [
+{
+          id: "s7-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s7-hdr-l"
+              capability: "core.text"
+              text: "REGISTER + START OVER VELO"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s7-hdr-n"
+              capability: "core.text"
+              text: "Velo carries the readiness choreography"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s7-step-0"
+          capability: "core.rect"
+          layout: { x: 20, y: 120, width: 112, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s7-step-0-t"
+              capability: "core.text"
+              text: "Connect"
+              layout: { x: 28, y: 148, width: 96, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s7-step-0-s"
+              capability: "core.text"
+              text: "Velo hello"
+              layout: { x: 28, y: 176, width: 96, height: 16 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s7-arr-0"
+          capability: "core.path"
+          d: "M132 170 L156 170"
+          from: { x: 132, y: 170 }
+          to: { x: 156, y: 170 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s7-step-1"
+          capability: "core.rect"
+          layout: { x: 156, y: 120, width: 112, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s7-step-1-t"
+              capability: "core.text"
+              text: "Register"
+              layout: { x: 164, y: 148, width: 96, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s7-step-1-s"
+              capability: "core.text"
+              text: "aiperf.cell.register"
+              layout: { x: 164, y: 176, width: 96, height: 16 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s7-arr-1"
+          capability: "core.path"
+          d: "M268 170 L292 170"
+          from: { x: 268, y: 170 }
+          to: { x: 292, y: 170 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s7-step-2"
+          capability: "core.rect"
+          layout: { x: 292, y: 120, width: 112, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s7-step-2-t"
+              capability: "core.text"
+              text: "Get slice"
+              layout: { x: 300, y: 148, width: 96, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s7-step-2-s"
+              capability: "core.text"
+              text: "sliced envelope"
+              layout: { x: 300, y: 176, width: 96, height: 16 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s7-arr-2"
+          capability: "core.path"
+          d: "M404 170 L428 170"
+          from: { x: 404, y: 170 }
+          to: { x: 428, y: 170 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s7-step-3"
+          capability: "core.rect"
+          layout: { x: 428, y: 120, width: 112, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s7-step-3-t"
+              capability: "core.text"
+              text: "Await START"
+              layout: { x: 436, y: 148, width: 96, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s7-step-3-s"
+              capability: "core.text"
+              text: "EventHandle"
+              layout: { x: 436, y: 176, width: 96, height: 16 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s7-arr-3"
+          capability: "core.path"
+          d: "M540 170 L564 170"
+          from: { x: 540, y: 170 }
+          to: { x: 564, y: 170 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s7-step-4"
+          capability: "core.rect"
+          layout: { x: 564, y: 120, width: 112, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s7-step-4-t"
+              capability: "core.text"
+              text: "START!"
+              layout: { x: 572, y: 148, width: 96, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s7-step-4-s"
+              capability: "core.text"
+              text: "all cells release"
+              layout: { x: 572, y: 176, width: 96, height: 16 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+          {
+              id: "s7-note"
+              capability: "core.text"
+              text: "All of this readiness choreography rides on Velo."
+              layout: { x: 80, y: 270, width: 540, height: 18 }
+              style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+        {
+          id: "s7-motion"
+          capability: "core.path"
+          d: "M76 170 H620 H76"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s7-motion-draw"
+          at: 250
+          duration: 500
+          target: "s7-motion"
+          action: "draw"
+        },
+        {
+          id: "s7-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s7-hdr"
+          action: "enter"
+        },
+        {
+          id: "s7-enter-s7-step-0"
+          at: 180
+          duration: 240
+          target: "s7-step-0"
+          action: "enter"
+        },
+        {
+          id: "s7-draw-s7-arr-0"
+          at: 310
+          duration: 160
+          target: "s7-arr-0"
+          action: "draw"
+        },
+        {
+          id: "s7-enter-s7-step-1"
+          at: 440
+          duration: 240
+          target: "s7-step-1"
+          action: "enter"
+        },
+        {
+          id: "s7-draw-s7-arr-1"
+          at: 570
+          duration: 160
+          target: "s7-arr-1"
+          action: "draw"
+        },
+        {
+          id: "s7-enter-s7-step-2"
+          at: 700
+          duration: 240
+          target: "s7-step-2"
+          action: "enter"
+        },
+        {
+          id: "s7-draw-s7-arr-2"
+          at: 830
+          duration: 160
+          target: "s7-arr-2"
+          action: "draw"
+        },
+        {
+          id: "s7-enter-s7-step-3"
+          at: 960
+          duration: 240
+          target: "s7-step-3"
+          action: "enter"
+        },
+        {
+          id: "s7-draw-s7-arr-3"
+          at: 1090
+          duration: 160
+          target: "s7-arr-3"
+          action: "draw"
+        },
+        {
+          id: "s7-enter-s7-step-4"
+          at: 1220
+          duration: 240
+          target: "s7-step-4"
+          action: "enter"
+        },
+        {
+          id: "s7-enter-note"
+          at: 1350
+          duration: 220
+          target: "s7-note"
+          action: "enter"
+        },
+        {
+          id: "s7-emph-start"
+          at: 1470
+          duration: 220
+          target: "s7-step-4"
+          action: "emphasis"
+        }
+      ]
+    }
+  }
+
+  slide "Benchmark requests do NOT use Velo" {
+    eyebrow: "Doing the work"
+    title: "Benchmark requests do NOT use Velo"
+    lede: "After START, cells send their share of requests straight to the inference server over HTTP or gRPC. Velo stays out of that path — it only carries lightweight heartbeats back to the controller."
+    narration: "Benchmark requests travel directly from cells to the inference server, never through Velo."
+    term: {
+      word: "Hot path"
+      meaning: "The per-request and per-token traffic that measures latency. In AIPerf that path is HTTP/gRPC, never Velo."
+    }
+    points: [
+      "Each cell sends only its assigned slice — no overlap, no gaps.",
+      "Request traffic goes cell → inference server directly.",
+      "The controller is not a bottleneck: it never sits in the request path."
+    ]
+    caption: "Velo coordinates. HTTP/gRPC generates the measured load."
+
+    render: @scene {
+      roots: [
+{
+          id: "s8-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s8-hdr-l"
+              capability: "core.text"
+              text: "HOT PATH IS NOT VELO"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s8-hdr-n"
+              capability: "core.text"
+              text: "measured requests use HTTP / gRPC only"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s8-cells"
+          capability: "core.rect"
+          layout: { x: 40, y: 100, width: 170, height: 120 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s8-cells-t"
+              capability: "core.text"
+              text: "Load cells"
+              layout: { x: 55, y: 130, width: 140, height: 20 }
+              style: { fontSize: 16, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s8-cells-s1"
+              capability: "core.text"
+              text: "send requests"
+              layout: { x: 55, y: 158, width: 140, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s8-cells-s2"
+              capability: "core.text"
+              text: "measure replies"
+              layout: { x: 55, y: 182, width: 140, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s8-hot"
+          capability: "core.path"
+          d: "M210 160 L430 160"
+          from: { x: 210, y: 160 }
+          to: { x: 430, y: 160 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+          {
+              id: "s8-proto"
+              capability: "core.text"
+              text: "HTTP / gRPC"
+              layout: { x: 280, y: 135, width: 120, height: 16 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+          {
+              id: "s8-not"
+              capability: "core.text"
+              text: "NOT Velo"
+              layout: { x: 300, y: 172, width: 100, height: 16 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+{
+          id: "s8-srv"
+          capability: "core.rect"
+          layout: { x: 430, y: 100, width: 170, height: 120 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 36 }
+          children: [
+            {
+              id: "s8-srv-t"
+              capability: "core.text"
+              text: "Inference server"
+              layout: { x: 445, y: 138, width: 140, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s8-srv-s"
+              capability: "core.text"
+              text: "AI endpoint"
+              layout: { x: 445, y: 166, width: 140, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s8-hb"
+          capability: "core.rect"
+          layout: { x: 230, y: 268, width: 240, height: 56 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s8-hb-t"
+              capability: "core.text"
+              text: "Velo heartbeats only"
+              layout: { x: 250, y: 282, width: 200, height: 16 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+            {
+              id: "s8-hb-s"
+              capability: "core.text"
+              text: "progress summaries → rank 0"
+              layout: { x: 250, y: 302, width: 200, height: 14 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s8-motion"
+          capability: "core.path"
+          d: "M210 160 H430 H210"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s8-motion-draw"
+          at: 250
+          duration: 500
+          target: "s8-motion"
+          action: "draw"
+        },
+        {
+          id: "s8-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s8-hdr"
+          action: "enter"
+        },
+        {
+          id: "s8-enter-s8-cells"
+          at: 180
+          duration: 240
+          target: "s8-cells"
+          action: "enter"
+        },
+        {
+          id: "s8-draw-s8-hot"
+          at: 310
+          duration: 360
+          target: "s8-hot"
+          action: "draw"
+        },
+        {
+          id: "s8-enter-proto"
+          at: 440
+          duration: 160
+          target: "s8-proto"
+          action: "enter"
+        },
+        {
+          id: "s8-enter-s8-srv"
+          at: 520
+          duration: 240
+          target: "s8-srv"
+          action: "enter"
+        },
+        {
+          id: "s8-enter-s8-hb"
+          at: 650
+          duration: 240
+          target: "s8-hb"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Three completely different kinds of traffic" {
+    eyebrow: "Three planes"
+    title: "Three completely different kinds of traffic"
+    lede: "It helps to keep three roads separate in your head. Velo is only the control road. The load road hits the AI server. Large result files take a third bulk-upload road."
+    narration: "Control, benchmark traffic, and bulk artifacts use three deliberately separate paths."
+    term: {
+      word: "Traffic plane"
+      meaning: "A separate purpose for network traffic: control messages, benchmark load, or bulk artifact files."
+    }
+    points: [
+      "Velo — register, START, heartbeats, result partitions / stores.",
+      "HTTP / gRPC — the real benchmark requests to the inference server.",
+      "HTTP/1 + zstd — large per-record artifact files, not carried on Velo."
+    ]
+    caption: "Mixing these up is the main source of confusion."
+
+    render: @scene {
+      roots: [
+{
+          id: "s9-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s9-hdr-l"
+              capability: "core.text"
+              text: "THREE TRAFFIC PLANES"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s9-hdr-n"
+              capability: "core.text"
+              text: "control · load · bulk files"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s9-p-0"
+          capability: "core.rect"
+          layout: { x: 60, y: 84, width: 580, height: 76 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s9-p-0-t"
+              capability: "core.text"
+              text: "VELO"
+              layout: { x: 90, y: 102, width: 150, height: 20 }
+              style: { fontSize: 16, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+            {
+              id: "s9-p-0-r"
+              capability: "core.text"
+              text: "control"
+              layout: { x: 260, y: 102, width: 120, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s9-p-0-d"
+              capability: "core.text"
+              text: "register · START · heartbeat · partition"
+              layout: { x: 90, y: 128, width: 520, height: 18 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s9-p-1"
+          capability: "core.rect"
+          layout: { x: 60, y: 176, width: 580, height: 76 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s9-p-1-t"
+              capability: "core.text"
+              text: "HTTP / gRPC"
+              layout: { x: 90, y: 194, width: 150, height: 20 }
+              style: { fontSize: 16, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+            {
+              id: "s9-p-1-r"
+              capability: "core.text"
+              text: "load"
+              layout: { x: 260, y: 194, width: 120, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s9-p-1-d"
+              capability: "core.text"
+              text: "benchmark requests to the AI server"
+              layout: { x: 90, y: 220, width: 520, height: 18 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s9-p-2"
+          capability: "core.rect"
+          layout: { x: 60, y: 268, width: 580, height: 76 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s9-p-2-t"
+              capability: "core.text"
+              text: "HTTP/1 + zstd"
+              layout: { x: 90, y: 286, width: 150, height: 20 }
+              style: { fontSize: 16, fontWeight: "bold", fill: @theme.accent.tertiary }
+            },
+            {
+              id: "s9-p-2-r"
+              capability: "core.text"
+              text: "bulk files"
+              layout: { x: 260, y: 286, width: 120, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s9-p-2-d"
+              capability: "core.text"
+              text: "large per-record artifact uploads"
+              layout: { x: 90, y: 312, width: 520, height: 18 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s9-motion"
+          capability: "core.path"
+          d: "M80 122 H620 V214 H80 V306 H620"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s9-motion-draw"
+          at: 250
+          duration: 500
+          target: "s9-motion"
+          action: "draw"
+        },
+        {
+          id: "s9-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s9-hdr"
+          action: "enter"
+        },
+        {
+          id: "s9-enter-s9-p-0"
+          at: 180
+          duration: 240
+          target: "s9-p-0"
+          action: "enter"
+        },
+        {
+          id: "s9-enter-s9-p-1"
+          at: 310
+          duration: 240
+          target: "s9-p-1"
+          action: "enter"
+        },
+        {
+          id: "s9-enter-s9-p-2"
+          at: 440
+          duration: 240
+          target: "s9-p-2"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Result partitions return to rank 0 over Velo" {
+    eyebrow: "One answer"
+    title: "Result partitions return to rank 0 over Velo"
+    lede: "When the run ends, each cell ships its measurements back to the original rank-0 controller over Velo. The controller merges every cell's numbers into one report."
+    narration: "When work finishes, each cell returns its result partition to rank zero over Velo."
+    term: {
+      word: "Partition"
+      meaning: "One cell's bundle of results (raw records or a pre-summarized store) sent to the controller at the end over Velo."
+    }
+    points: [
+      "aiperf.cell.partition or store_partition — one terminal ship per cell.",
+      "Merge happens inside the original rank-0 controller process.",
+      "The report looks like one benchmark, not N separate jobs."
+    ]
+    caption: "Cells measure. Rank 0 merges. One authoritative report."
+
+    render: @scene {
+      roots: [
+{
+          id: "s10-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s10-hdr-l"
+              capability: "core.text"
+              text: "RESULTS OVER VELO"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s10-hdr-n"
+              capability: "core.text"
+              text: "partitions return to the original rank-0 controller"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s10-step-0"
+          capability: "core.rect"
+          layout: { x: 26, y: 126, width: 136, height: 104 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 9 }
+          children: [
+            {
+              id: "s10-step-0-t"
+              capability: "core.text"
+              text: "Load cells"
+              layout: { x: 36, y: 154, width: 116, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s10-step-0-s"
+              capability: "core.text"
+              text: "finish local work"
+              layout: { x: 36, y: 182, width: 116, height: 16 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s10-arr-0"
+          capability: "core.path"
+          d: "M162 178 L196 178"
+          from: { x: 162, y: 178 }
+          to: { x: 196, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s10-step-1"
+          capability: "core.rect"
+          layout: { x: 196, y: 126, width: 136, height: 104 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 9 }
+          children: [
+            {
+              id: "s10-step-1-t"
+              capability: "core.text"
+              text: "Velo ship"
+              layout: { x: 206, y: 154, width: 116, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s10-step-1-s"
+              capability: "core.text"
+              text: "partition / store"
+              layout: { x: 206, y: 182, width: 116, height: 16 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s10-arr-1"
+          capability: "core.path"
+          d: "M332 178 L366 178"
+          from: { x: 332, y: 178 }
+          to: { x: 366, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s10-step-2"
+          capability: "core.rect"
+          layout: { x: 366, y: 126, width: 136, height: 104 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 9 }
+          children: [
+            {
+              id: "s10-step-2-t"
+              capability: "core.text"
+              text: "Rank-0 controller"
+              layout: { x: 376, y: 154, width: 116, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s10-step-2-s"
+              capability: "core.text"
+              text: "receives + merges"
+              layout: { x: 376, y: 182, width: 116, height: 16 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s10-arr-2"
+          capability: "core.path"
+          d: "M502 178 L536 178"
+          from: { x: 502, y: 178 }
+          to: { x: 536, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s10-step-3"
+          capability: "core.rect"
+          layout: { x: 536, y: 126, width: 136, height: 104 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.6, radius: 9 }
+          children: [
+            {
+              id: "s10-step-3-t"
+              capability: "core.text"
+              text: "One report"
+              layout: { x: 546, y: 154, width: 116, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s10-step-3-s"
+              capability: "core.text"
+              text: "global benchmark"
+              layout: { x: 546, y: 182, width: 116, height: 16 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+          {
+              id: "s10-n1"
+              capability: "core.text"
+              text: "Result summaries travel on Velo back to the original rank-0 controller."
+              layout: { x: 60, y: 270, width: 580, height: 16 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+          {
+              id: "s10-n2"
+              capability: "core.text"
+              text: "Merge is work inside that controller process — not a separate merge machine."
+              layout: { x: 60, y: 295, width: 580, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+        {
+          id: "s10-motion"
+          capability: "core.path"
+          d: "M162 178 H536"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s10-motion-draw"
+          at: 250
+          duration: 500
+          target: "s10-motion"
+          action: "draw"
+        },
+        {
+          id: "s10-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s10-hdr"
+          action: "enter"
+        },
+        {
+          id: "s10-enter-s10-step-0"
+          at: 180
+          duration: 240
+          target: "s10-step-0"
+          action: "enter"
+        },
+        {
+          id: "s10-draw-s10-arr-0"
+          at: 310
+          duration: 180
+          target: "s10-arr-0"
+          action: "draw"
+        },
+        {
+          id: "s10-enter-s10-step-1"
+          at: 440
+          duration: 240
+          target: "s10-step-1"
+          action: "enter"
+        },
+        {
+          id: "s10-draw-s10-arr-1"
+          at: 570
+          duration: 180
+          target: "s10-arr-1"
+          action: "draw"
+        },
+        {
+          id: "s10-enter-s10-step-2"
+          at: 700
+          duration: 240
+          target: "s10-step-2"
+          action: "enter"
+        },
+        {
+          id: "s10-draw-s10-arr-2"
+          at: 830
+          duration: 180
+          target: "s10-arr-2"
+          action: "draw"
+        },
+        {
+          id: "s10-enter-s10-step-3"
+          at: 960
+          duration: 240
+          target: "s10-step-3"
+          action: "enter"
+        },
+        {
+          id: "s10-enter-n1"
+          at: 1090
+          duration: 200
+          target: "s10-n1"
+          action: "enter"
+        },
+        {
+          id: "s10-enter-n2"
+          at: 1190
+          duration: 200
+          target: "s10-n2"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Huge per-record files take a different road" {
+    eyebrow: "Bulk files"
+    title: "Huge per-record files take a different road"
+    lede: "If the run keeps large per-record artifact files, those bytes do not ride Velo. They upload over a separate HTTP/1 path with zstd compression. The controller concatenates them after every cell finishes."
+    narration: "Large per-request artifacts use compressed HTTP instead of crowding the control plane."
+    term: {
+      word: "Artifact plane"
+      meaning: "A second network path for bulk files, derived from the same controller host with a different port."
+    }
+    points: [
+      "Velo stays small: control messages and metric summaries.",
+      "Bulk files use HTTP/1 + zstd so they do not clog the control plane.",
+      "Synthetic / summary-only runs may never need this path."
+    ]
+    caption: "Small control on Velo. Big files on HTTP."
+
+    render: @scene {
+      roots: [
+{
+          id: "s11-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s11-hdr-l"
+              capability: "core.text"
+              text: "BULK ARTIFACTS SEPARATE"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s11-hdr-n"
+              capability: "core.text"
+              text: "large files use HTTP/1 + zstd, not Velo"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s11-velo"
+          capability: "core.rect"
+          layout: { x: 48, y: 110, width: 250, height: 150 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s11-velo-t"
+              capability: "core.text"
+              text: "VELO PATH"
+              layout: { x: 70, y: 138, width: 200, height: 20 }
+              style: { fontSize: 15, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+            {
+              id: "s11-velo-s1"
+              capability: "core.text"
+              text: "small messages"
+              layout: { x: 70, y: 168, width: 200, height: 16 }
+              style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.primary }
+            },
+            {
+              id: "s11-velo-s2"
+              capability: "core.text"
+              text: "register · START"
+              layout: { x: 70, y: 194, width: 200, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s11-velo-s3"
+              capability: "core.text"
+              text: "heartbeat · partition"
+              layout: { x: 70, y: 218, width: 200, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s11-http"
+          capability: "core.rect"
+          layout: { x: 402, y: 110, width: 250, height: 150 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s11-http-t"
+              capability: "core.text"
+              text: "HTTP ARTIFACT PATH"
+              layout: { x: 420, y: 138, width: 210, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.accent.tertiary }
+            },
+            {
+              id: "s11-http-s1"
+              capability: "core.text"
+              text: "large files"
+              layout: { x: 420, y: 168, width: 210, height: 16 }
+              style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.primary }
+            },
+            {
+              id: "s11-http-s2"
+              capability: "core.text"
+              text: "per-record exports"
+              layout: { x: 420, y: 194, width: 210, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s11-http-s3"
+              capability: "core.text"
+              text: "zstd upload + concat"
+              layout: { x: 420, y: 218, width: 210, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+          {
+              id: "s11-note"
+              capability: "core.text"
+              text: "Same controller host. Different purpose. Different port."
+              layout: { x: 80, y: 300, width: 540, height: 16 }
+              style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+      ]
+      timeline: [
+        {
+          id: "s11-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s11-hdr"
+          action: "enter"
+        },
+        {
+          id: "s11-enter-s11-velo"
+          at: 180
+          duration: 240
+          target: "s11-velo"
+          action: "enter"
+        },
+        {
+          id: "s11-enter-s11-http"
+          at: 310
+          duration: 240
+          target: "s11-http"
+          action: "enter"
+        },
+        {
+          id: "s11-enter-note"
+          at: 440
+          duration: 220
+          target: "s11-note"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Why spend a whole rank on a non-loading process?" {
+    eyebrow: "Controller cost"
+    title: "Why spend a whole rank on a non-loading process?"
+    lede: "A dedicated controller rank keeps coordination, START sync, merging, and artifact handling away from measured load. That does not always mean a dedicated node — only a dedicated role."
+    narration: "A dedicated controller rank keeps coordination responsive while cells generate maximum load."
+    term: {
+      word: "Dedicated rank"
+      meaning: "A process role, not necessarily a whole machine. Rank 0 can share a node with a cell if isolation is less important than allocation efficiency."
+    }
+    points: [
+      "Dedicated role: yes — keeps measurement clean and merge simple.",
+      "Dedicated node: optional — the script defaults to one task per node.",
+      "Co-locate controller + cell when machine count is scarce."
+    ]
+    caption: "Pay for coordination. Do not always pay for a whole idle node."
+
+    render: @scene {
+      roots: [
+{
+          id: "s12-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s12-hdr-l"
+              capability: "core.text"
+              text: "CONTROLLER ROLE VS NODE"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s12-hdr-n"
+              capability: "core.text"
+              text: "role is required · whole node is optional"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s12-role"
+          capability: "core.rect"
+          layout: { x: 60, y: 110, width: 260, height: 150 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s12-role-t"
+              capability: "core.text"
+              text: "Dedicated ROLE"
+              layout: { x: 80, y: 138, width: 220, height: 20 }
+              style: { fontSize: 15, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s12-role-r"
+              capability: "core.text"
+              text: "always useful"
+              layout: { x: 80, y: 168, width: 220, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.accent.secondary }
+            },
+            {
+              id: "s12-role-s1"
+              capability: "core.text"
+              text: "keeps merge + sync"
+              layout: { x: 80, y: 198, width: 220, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s12-role-s2"
+              capability: "core.text"
+              text: "off the measured path"
+              layout: { x: 80, y: 222, width: 220, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s12-node"
+          capability: "core.rect"
+          layout: { x: 380, y: 110, width: 260, height: 150 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s12-node-t"
+              capability: "core.text"
+              text: "Dedicated NODE"
+              layout: { x: 400, y: 138, width: 220, height: 20 }
+              style: { fontSize: 15, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s12-node-r"
+              capability: "core.text"
+              text: "optional"
+              layout: { x: 400, y: 168, width: 220, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s12-node-s1"
+              capability: "core.text"
+              text: "default script uses one"
+              layout: { x: 400, y: 198, width: 220, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+            {
+              id: "s12-node-s2"
+              capability: "core.text"
+              text: "task per node"
+              layout: { x: 400, y: 222, width: 220, height: 16 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+          {
+              id: "s12-note"
+              capability: "core.text"
+              text: "Co-locate controller + cell when machines are scarce."
+              layout: { x: 80, y: 300, width: 540, height: 16 }
+              style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+      ]
+      timeline: [
+        {
+          id: "s12-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s12-hdr"
+          action: "enter"
+        },
+        {
+          id: "s12-enter-s12-role"
+          at: 180
+          duration: 240
+          target: "s12-role"
+          action: "enter"
+        },
+        {
+          id: "s12-enter-s12-node"
+          at: 310
+          duration: 240
+          target: "s12-node"
+          action: "enter"
+        },
+        {
+          id: "s12-enter-note"
+          at: 440
+          duration: 220
+          target: "s12-note"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Rank 0 fans distinct work slices out to the cells" {
+    eyebrow: "Fan-out"
+    title: "Rank 0 fans distinct work slices out to the cells"
+    lede: "The controller begins with one global benchmark plan. As each cell registers over Velo, rank 0 replies with that cell's sliced envelope so the cells divide the work without overlap or omissions."
+    narration: "The controller partitions one global plan into distinct slices and fans them out together."
+    term: {
+      word: "Fan-out"
+      meaning: "One source distributes different pieces of a larger job to several workers."
+    }
+    points: [
+      "The controller owns the one resolved Config v2 benchmark plan.",
+      "Cell 0 gets slice 0, cell 1 gets slice 1, and so on.",
+      "Together the slices tile the global request or conversation budget exactly."
+    ]
+    caption: "One benchmark plan fans out into disjoint cell-owned slices."
+
+    render: @scene {
+      roots: [
+{
+          id: "s13-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s13-hdr-l"
+              capability: "core.text"
+              text: "FAN-OUT: ONE PLAN → MANY SLICES"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s13-hdr-n"
+              capability: "core.text"
+              text: "rank 0 distributes distinct cell-owned work"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s13-r0"
+          capability: "core.rect"
+          layout: { x: 48, y: 124, width: 162, height: 108 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s13-r0-t"
+              capability: "core.text"
+              text: "Rank 0"
+              layout: { x: 64, y: 150, width: 130, height: 20 }
+              style: { fontSize: 15, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s13-r0-r"
+              capability: "core.text"
+              text: "GLOBAL PLAN"
+              layout: { x: 64, y: 174, width: 130, height: 16 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.accent.secondary }
+            },
+            {
+              id: "s13-r0-s"
+              capability: "core.text"
+              text: "requests 0…N"
+              layout: { x: 64, y: 198, width: 130, height: 14 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s13-to-velo"
+          capability: "core.path"
+          d: "M210 178 L292 178"
+          from: { x: 210, y: 178 }
+          to: { x: 292, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s13-velo"
+          capability: "core.rect"
+          layout: { x: 292, y: 160, width: 36, height: 36 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 18 }
+          children: [
+            {
+              id: "s13-velo-t"
+              capability: "core.text"
+              text: "Velo"
+              layout: { x: 294, y: 170, width: 32, height: 14 }
+              style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.primary }
+            }
+          ]
+        },
+{
+          id: "s13-br-0"
+          capability: "core.path"
+          d: "M328 178 L410 118"
+          from: { x: 328, y: 178 }
+          to: { x: 410, y: 118 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s13-cell-0"
+          capability: "core.rect"
+          layout: { x: 410, y: 93, width: 186, height: 50 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s13-cell-0-t"
+              capability: "core.text"
+              text: "Cell 0"
+              layout: { x: 422, y: 106, width: 80, height: 16 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s13-cell-0-r"
+              capability: "core.text"
+              text: "slice 0"
+              layout: { x: 520, y: 106, width: 60, height: 16 }
+              style: { fontSize: 11, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+            {
+              id: "s13-cell-0-s"
+              capability: "core.text"
+              text: "disjoint owned work"
+              layout: { x: 422, y: 126, width: 160, height: 14 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s13-br-1"
+          capability: "core.path"
+          d: "M328 178 L410 178"
+          from: { x: 328, y: 178 }
+          to: { x: 410, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s13-cell-1"
+          capability: "core.rect"
+          layout: { x: 410, y: 153, width: 186, height: 50 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s13-cell-1-t"
+              capability: "core.text"
+              text: "Cell 1"
+              layout: { x: 422, y: 166, width: 80, height: 16 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s13-cell-1-r"
+              capability: "core.text"
+              text: "slice 1"
+              layout: { x: 520, y: 166, width: 60, height: 16 }
+              style: { fontSize: 11, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+            {
+              id: "s13-cell-1-s"
+              capability: "core.text"
+              text: "disjoint owned work"
+              layout: { x: 422, y: 186, width: 160, height: 14 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s13-br-2"
+          capability: "core.path"
+          d: "M328 178 L410 238"
+          from: { x: 328, y: 178 }
+          to: { x: 410, y: 238 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s13-cell-2"
+          capability: "core.rect"
+          layout: { x: 410, y: 213, width: 186, height: 50 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s13-cell-2-t"
+              capability: "core.text"
+              text: "Cell 2"
+              layout: { x: 422, y: 226, width: 80, height: 16 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s13-cell-2-r"
+              capability: "core.text"
+              text: "slice 2"
+              layout: { x: 520, y: 226, width: 60, height: 16 }
+              style: { fontSize: 11, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+            {
+              id: "s13-cell-2-s"
+              capability: "core.text"
+              text: "disjoint owned work"
+              layout: { x: 422, y: 246, width: 160, height: 14 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+          {
+              id: "s13-note"
+              capability: "core.text"
+              text: "One plan branches into different slices — not copies of the same work."
+              layout: { x: 60, y: 305, width: 580, height: 16 }
+              style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+        {
+          id: "s13-motion"
+          capability: "core.path"
+          d: "M210 178 H410"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s13-motion-draw"
+          at: 250
+          duration: 500
+          target: "s13-motion"
+          action: "draw"
+        },
+        {
+          id: "s13-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s13-hdr"
+          action: "enter"
+        },
+        {
+          id: "s13-enter-s13-r0"
+          at: 180
+          duration: 240
+          target: "s13-r0"
+          action: "enter"
+        },
+        {
+          id: "s13-draw-s13-to-velo"
+          at: 310
+          duration: 220
+          target: "s13-to-velo"
+          action: "draw"
+        },
+        {
+          id: "s13-enter-s13-velo"
+          at: 440
+          duration: 240
+          target: "s13-velo"
+          action: "enter"
+        },
+        {
+          id: "s13-draw-s13-br-0"
+          at: 570
+          duration: 240
+          target: "s13-br-0"
+          action: "draw"
+        },
+        {
+          id: "s13-enter-s13-cell-0"
+          at: 700
+          duration: 240
+          target: "s13-cell-0"
+          action: "enter"
+        },
+        {
+          id: "s13-draw-s13-br-1"
+          at: 830
+          duration: 240
+          target: "s13-br-1"
+          action: "draw"
+        },
+        {
+          id: "s13-enter-s13-cell-1"
+          at: 960
+          duration: 240
+          target: "s13-cell-1"
+          action: "enter"
+        },
+        {
+          id: "s13-draw-s13-br-2"
+          at: 1090
+          duration: 240
+          target: "s13-br-2"
+          action: "draw"
+        },
+        {
+          id: "s13-enter-s13-cell-2"
+          at: 1220
+          duration: 240
+          target: "s13-cell-2"
+          action: "enter"
+        },
+        {
+          id: "s13-enter-note"
+          at: 1350
+          duration: 220
+          target: "s13-note"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Cells fan their finished results back into rank 0" {
+    eyebrow: "Fan-in"
+    title: "Cells fan their finished results back into rank 0"
+    lede: "At the end, direction reverses. Every cell sends exactly one terminal partition or folded store over Velo. Rank 0 collects all expected children and merges them into the global result."
+    narration: "Cells return their completed slices in parallel, and rank zero merges one final report."
+    term: {
+      word: "Fan-in"
+      meaning: "Several workers return their outputs to one collector, which combines them."
+    }
+    points: [
+      "Each cell ships one result partition or one folded metric store.",
+      "Rank 0 waits for every expected cell before completing the merge.",
+      "The merged output becomes one authoritative AIPerf report."
+    ]
+    caption: "Many cell results fan in to the original rank-0 controller."
+
+    render: @scene {
+      roots: [
+{
+          id: "s14-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s14-hdr-l"
+              capability: "core.text"
+              text: "FAN-IN: MANY RESULTS → ONE REPORT"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s14-hdr-n"
+              capability: "core.text"
+              text: "every cell returns one terminal result"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s14-cell-0"
+          capability: "core.rect"
+          layout: { x: 104, y: 93, width: 186, height: 50 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s14-cell-0-t"
+              capability: "core.text"
+              text: "Cell 0"
+              layout: { x: 116, y: 106, width: 80, height: 16 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s14-cell-0-r"
+              capability: "core.text"
+              text: "partition 0"
+              layout: { x: 220, y: 106, width: 60, height: 16 }
+              style: { fontSize: 11, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+            {
+              id: "s14-cell-0-s"
+              capability: "core.text"
+              text: "finished local result"
+              layout: { x: 116, y: 126, width: 160, height: 14 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s14-br-0"
+          capability: "core.path"
+          d: "M290 118 L372 178"
+          from: { x: 290, y: 118 }
+          to: { x: 372, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s14-cell-1"
+          capability: "core.rect"
+          layout: { x: 104, y: 153, width: 186, height: 50 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s14-cell-1-t"
+              capability: "core.text"
+              text: "Cell 1"
+              layout: { x: 116, y: 166, width: 80, height: 16 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s14-cell-1-r"
+              capability: "core.text"
+              text: "partition 1"
+              layout: { x: 220, y: 166, width: 60, height: 16 }
+              style: { fontSize: 11, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+            {
+              id: "s14-cell-1-s"
+              capability: "core.text"
+              text: "finished local result"
+              layout: { x: 116, y: 186, width: 160, height: 14 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s14-br-1"
+          capability: "core.path"
+          d: "M290 178 L372 178"
+          from: { x: 290, y: 178 }
+          to: { x: 372, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s14-cell-2"
+          capability: "core.rect"
+          layout: { x: 104, y: 213, width: 186, height: 50 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s14-cell-2-t"
+              capability: "core.text"
+              text: "Cell 2"
+              layout: { x: 116, y: 226, width: 80, height: 16 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s14-cell-2-r"
+              capability: "core.text"
+              text: "partition 2"
+              layout: { x: 220, y: 226, width: 60, height: 16 }
+              style: { fontSize: 11, fontWeight: "bold", fill: @theme.accent.primary }
+            },
+            {
+              id: "s14-cell-2-s"
+              capability: "core.text"
+              text: "finished local result"
+              layout: { x: 116, y: 246, width: 160, height: 14 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s14-br-2"
+          capability: "core.path"
+          d: "M290 238 L372 178"
+          from: { x: 290, y: 238 }
+          to: { x: 372, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s14-velo"
+          capability: "core.rect"
+          layout: { x: 372, y: 160, width: 36, height: 36 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 18 }
+          children: [
+            {
+              id: "s14-velo-t"
+              capability: "core.text"
+              text: "Velo"
+              layout: { x: 374, y: 170, width: 32, height: 14 }
+              style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.primary }
+            }
+          ]
+        },
+{
+          id: "s14-to-r0"
+          capability: "core.path"
+          d: "M408 178 L454 178"
+          from: { x: 408, y: 178 }
+          to: { x: 454, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s14-r0"
+          capability: "core.rect"
+          layout: { x: 454, y: 124, width: 166, height: 108 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.6, radius: 10 }
+          children: [
+            {
+              id: "s14-r0-t"
+              capability: "core.text"
+              text: "Rank 0"
+              layout: { x: 470, y: 148, width: 130, height: 20 }
+              style: { fontSize: 15, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s14-r0-r"
+              capability: "core.text"
+              text: "MERGE"
+              layout: { x: 470, y: 174, width: 130, height: 16 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.accent.tertiary }
+            },
+            {
+              id: "s14-r0-s"
+              capability: "core.text"
+              text: "one global report"
+              layout: { x: 470, y: 198, width: 130, height: 14 }
+              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+          {
+              id: "s14-note"
+              capability: "core.text"
+              text: "Three terminal results converge; rank 0 combines them once all arrive."
+              layout: { x: 60, y: 305, width: 580, height: 16 }
+              style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary }
+            },
+        {
+          id: "s14-motion"
+          capability: "core.path"
+          d: "M290 178 H454"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s14-motion-draw"
+          at: 250
+          duration: 500
+          target: "s14-motion"
+          action: "draw"
+        },
+        {
+          id: "s14-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s14-hdr"
+          action: "enter"
+        },
+        {
+          id: "s14-enter-s14-cell-0"
+          at: 180
+          duration: 240
+          target: "s14-cell-0"
+          action: "enter"
+        },
+        {
+          id: "s14-draw-s14-br-0"
+          at: 310
+          duration: 240
+          target: "s14-br-0"
+          action: "draw"
+        },
+        {
+          id: "s14-enter-s14-cell-1"
+          at: 440
+          duration: 240
+          target: "s14-cell-1"
+          action: "enter"
+        },
+        {
+          id: "s14-draw-s14-br-1"
+          at: 570
+          duration: 240
+          target: "s14-br-1"
+          action: "draw"
+        },
+        {
+          id: "s14-enter-s14-cell-2"
+          at: 700
+          duration: 240
+          target: "s14-cell-2"
+          action: "enter"
+        },
+        {
+          id: "s14-draw-s14-br-2"
+          at: 830
+          duration: 240
+          target: "s14-br-2"
+          action: "draw"
+        },
+        {
+          id: "s14-enter-s14-velo"
+          at: 960
+          duration: 240
+          target: "s14-velo"
+          action: "enter"
+        },
+        {
+          id: "s14-draw-s14-to-r0"
+          at: 1090
+          duration: 220
+          target: "s14-to-r0"
+          action: "draw"
+        },
+        {
+          id: "s14-enter-s14-r0"
+          at: 1220
+          duration: 240
+          target: "s14-r0"
+          action: "enter"
+        },
+        {
+          id: "s14-enter-note"
+          at: 1350
+          duration: 220
+          target: "s14-note"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "The two commands you actually type" {
+    eyebrow: "Try it"
+    title: "The two commands you actually type"
+    lede: "You rarely wire this up by hand. AIPerf generates a ready-to-submit SLURM script for you, and a single command runs the whole cellular benchmark inside the allocation."
+    narration: "Generate the batch script, submit it, and AIPerf handles ranks, Velo, load, and results."
+    points: [
+      "Generate a submission script from your benchmark config.",
+      "Submit it with SLURM; every task launches the same run command.",
+      "Rank assignment, Velo wiring, and merging all happen automatically."
+    ]
+    caption: "You describe the benchmark; AIPerf handles the cluster choreography."
+
+    render: @scene {
+      roots: [
+{
+          id: "s15-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "s15-hdr-l"
+              capability: "core.text"
+              text: "FROM CONFIG TO REPORT"
+              layout: { x: 38, y: 28, width: 320, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s15-hdr-n"
+              capability: "core.text"
+              text: "the generated script launches the complete run"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s15-step-0"
+          capability: "core.rect"
+          layout: { x: 20, y: 126, width: 108, height: 94 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s15-step-0-t"
+              capability: "core.text"
+              text: "Config v2"
+              layout: { x: 26, y: 152, width: 96, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s15-step-0-s"
+              capability: "core.text"
+              text: "benchmark.yaml"
+              layout: { x: 26, y: 180, width: 96, height: 16 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s15-arr-0"
+          capability: "core.path"
+          d: "M128 173 L156 173"
+          from: { x: 128, y: 173 }
+          to: { x: 156, y: 173 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s15-step-1"
+          capability: "core.rect"
+          layout: { x: 156, y: 126, width: 108, height: 94 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s15-step-1-t"
+              capability: "core.text"
+              text: "Generate"
+              layout: { x: 162, y: 152, width: 96, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s15-step-1-s"
+              capability: "core.text"
+              text: "job.sbatch"
+              layout: { x: 162, y: 180, width: 96, height: 16 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s15-arr-1"
+          capability: "core.path"
+          d: "M264 173 L292 173"
+          from: { x: 264, y: 173 }
+          to: { x: 292, y: 173 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s15-step-2"
+          capability: "core.rect"
+          layout: { x: 292, y: 126, width: 108, height: 94 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s15-step-2-t"
+              capability: "core.text"
+              text: "Submit"
+              layout: { x: 298, y: 152, width: 96, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s15-step-2-s"
+              capability: "core.text"
+              text: "sbatch job.sbatch"
+              layout: { x: 298, y: 180, width: 96, height: 16 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s15-arr-2"
+          capability: "core.path"
+          d: "M400 173 L428 173"
+          from: { x: 400, y: 173 }
+          to: { x: 428, y: 173 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s15-step-3"
+          capability: "core.rect"
+          layout: { x: 428, y: 126, width: 108, height: 94 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s15-step-3-t"
+              capability: "core.text"
+              text: "SLURM + Velo"
+              layout: { x: 434, y: 152, width: 96, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s15-step-3-s"
+              capability: "core.text"
+              text: "roles + messaging"
+              layout: { x: 434, y: 180, width: 96, height: 16 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+{
+          id: "s15-arr-3"
+          capability: "core.path"
+          d: "M536 173 L564 173"
+          from: { x: 536, y: 173 }
+          to: { x: 564, y: 173 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+{
+          id: "s15-step-4"
+          capability: "core.rect"
+          layout: { x: 564, y: 126, width: 108, height: 94 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.6, radius: 8 }
+          children: [
+            {
+              id: "s15-step-4-t"
+              capability: "core.text"
+              text: "AIPerf report"
+              layout: { x: 570, y: 152, width: 96, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s15-step-4-s"
+              capability: "core.text"
+              text: "merged result"
+              layout: { x: 570, y: 180, width: 96, height: 16 }
+              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s15-motion"
+          capability: "core.path"
+          d: "M128 173 H564"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.4 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s15-motion-draw"
+          at: 250
+          duration: 500
+          target: "s15-motion"
+          action: "draw"
+        },
+        {
+          id: "s15-enter-hdr"
+          at: 0
+          duration: 200
+          target: "s15-hdr"
+          action: "enter"
+        },
+        {
+          id: "s15-enter-s15-step-0"
+          at: 180
+          duration: 240
+          target: "s15-step-0"
+          action: "enter"
+        },
+        {
+          id: "s15-draw-s15-arr-0"
+          at: 310
+          duration: 160
+          target: "s15-arr-0"
+          action: "draw"
+        },
+        {
+          id: "s15-enter-s15-step-1"
+          at: 440
+          duration: 240
+          target: "s15-step-1"
+          action: "enter"
+        },
+        {
+          id: "s15-draw-s15-arr-1"
+          at: 570
+          duration: 160
+          target: "s15-arr-1"
+          action: "draw"
+        },
+        {
+          id: "s15-enter-s15-step-2"
+          at: 700
+          duration: 240
+          target: "s15-step-2"
+          action: "enter"
+        },
+        {
+          id: "s15-draw-s15-arr-2"
+          at: 830
+          duration: 160
+          target: "s15-arr-2"
+          action: "draw"
+        },
+        {
+          id: "s15-enter-s15-step-3"
+          at: 960
+          duration: 240
+          target: "s15-step-3"
+          action: "enter"
+        },
+        {
+          id: "s15-draw-s15-arr-3"
+          at: 1090
+          duration: 160
+          target: "s15-arr-3"
+          action: "draw"
+        },
+        {
+          id: "s15-enter-s15-step-4"
+          at: 1220
+          duration: 240
+          target: "s15-step-4"
+          action: "enter"
+        },
+        {
+          id: "s15-emph-report"
+          at: 1390
+          duration: 220
+          target: "s15-step-4"
+          action: "emphasis"
+        }
+      ]
+    }
+  }
+}

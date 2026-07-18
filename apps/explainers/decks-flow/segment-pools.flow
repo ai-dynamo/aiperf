@@ -1,0 +1,1507 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+explainer "Segment Pools" {
+  id: "segment-pools"
+  route: "/segment-pools"
+  topic: "dataset"
+  storagePrefix: "segment-pools-explainer"
+  classPrefix: "deck-segment-pools"
+  eyebrowLabel: "SEGMENT POOLS"
+  startGateTitle: "Segment pools & body plans"
+
+  hub: {
+    highlight: "Segment pools"
+    title: "intern → freeze → splice"
+    description: "How dataset rows become content-addressed handles and wire Bytes: SegmentPool, six payload domains, BodyPlan materialization, prefix chains, and Turn.body dispatch precedence."
+  }
+
+  slide "Rows in → wire bytes out" {
+    eyebrow: "Overview"
+    title: "Rows in → wire bytes out"
+    lede: "Every request body starts as a dataset row. SegmentPool interns content-addressed segments; freeze drops the hash map into InMemorySegmentStore; BodyPlan plus JsonBodyMaterializer splice handles into Bytes on the hot path."
+    narration: "Dataset rows become wire bytes through SegmentPool, a frozen segment store, and BodyPlan splicing. Content serializes once; the hot path clones handles."
+    term: {
+      word: "serialize once"
+      meaning: "Content is serialized at intern time; dispatch clones prebuilt wire bytes instead of re-encoding payloads."
+    }
+    points: [
+      "`Handle(u32)` is the dense public address; `SegmentId([u8;32])` is the blake3 dedup key.",
+      "Freeze discards the id→handle map; handles remain valid in the store.",
+      "Evidence: `rust/runtime/src/dataset/segment.rs`, `body_plan.rs`."
+    ]
+    caption: "BUILD → FREEZE → DISPATCH · zero content re-serialize on the hot path."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "label"
+              capability: "core.text"
+              text: "BUILD · FREEZE · DISPATCH"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "hdr-caption"
+              capability: "core.text"
+              text: "zero content re-serialize on the hot path"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "phase-build"
+          capability: "core.text"
+          text: "BUILD"
+          layout: { x: 90, y: 72, width: 80, height: 20 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.tertiary }
+        },
+        {
+          id: "phase-freeze"
+          capability: "core.text"
+          text: "FREEZE"
+          layout: { x: 320, y: 72, width: 80, height: 20 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.tertiary }
+        },
+        {
+          id: "phase-dispatch"
+          capability: "core.text"
+          text: "DISPATCH"
+          layout: { x: 530, y: 72, width: 100, height: 20 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.tertiary }
+        },
+        {
+          id: "composer"
+          capability: "core.rect"
+          layout: { x: 30, y: 110, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "composer-title"
+              capability: "core.text"
+              text: "Composer"
+              layout: { x: 40, y: 128, width: 130, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "composer-detail"
+              capability: "core.text"
+              text: "intern rows"
+              layout: { x: 40, y: 152, width: 130, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-composer-pool"
+          capability: "core.path"
+          d: "M180 145 H230"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+        },
+        {
+          id: "segment-pool"
+          capability: "core.rect"
+          layout: { x: 230, y: 100, width: 160, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "segment-pool-title"
+              capability: "core.text"
+              text: "SegmentPool"
+              layout: { x: 240, y: 128, width: 140, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "segment-pool-detail"
+              capability: "core.text"
+              text: "arena + ids map"
+              layout: { x: 240, y: 152, width: 140, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-pool-freeze"
+          capability: "core.path"
+          d: "M390 145 H430"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+        },
+        {
+          id: "freeze"
+          capability: "core.rect"
+          layout: { x: 430, y: 110, width: 110, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "freeze-title"
+              capability: "core.text"
+              text: ".freeze()"
+              layout: { x: 438, y: 128, width: 94, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "freeze-detail"
+              capability: "core.text"
+              text: "drop ids"
+              layout: { x: 438, y: 152, width: 94, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-freeze-dispatch"
+          capability: "core.path"
+          d: "M540 145 H570"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+        },
+        {
+          id: "arrow-pool-store"
+          capability: "core.path"
+          d: "M310 190 V250"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.0 }
+        },
+        {
+          id: "dataset"
+          capability: "core.rect"
+          layout: { x: 570, y: 90, width: 110, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "dataset-title"
+              capability: "core.text"
+              text: "Dataset"
+              layout: { x: 578, y: 105, width: 94, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "dataset-detail"
+              capability: "core.text"
+              text: "Arc store"
+              layout: { x: 578, y: 128, width: 94, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "body-plan"
+          capability: "core.rect"
+          layout: { x: 570, y: 170, width: 110, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "body-plan-title"
+              capability: "core.text"
+              text: "BodyPlan"
+              layout: { x: 578, y: 185, width: 94, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "body-plan-detail"
+              capability: "core.text"
+              text: "precompute"
+              layout: { x: 578, y: 208, width: 94, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "materializer"
+          capability: "core.rect"
+          layout: { x: 570, y: 250, width: 110, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "materializer-title"
+              capability: "core.text"
+              text: "Materializer"
+              layout: { x: 578, y: 265, width: 94, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "materializer-detail"
+              capability: "core.text"
+              text: "→ Bytes"
+              layout: { x: 578, y: 288, width: 94, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "in-memory-store"
+          capability: "core.rect"
+          layout: { x: 230, y: 250, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "in-memory-store-title"
+              capability: "core.text"
+              text: "InMemoryStore"
+              layout: { x: 240, y: 268, width: 140, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "in-memory-store-detail"
+              capability: "core.text"
+              text: "Box<[Segment]>"
+              layout: { x: 240, y: 292, width: 140, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-store-mat"
+          capability: "core.path"
+          d: "M390 285 H570"
+          style: { stroke: @theme.accent.warning, strokeWidth: 1.8, opacity: 0.7 }
+        },
+        {
+          id: "motion"
+          capability: "core.path"
+          d: "M120 200 H580"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 1.4, opacity: 0.55 }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 240, target: "header", action: "enter" },
+        { id: "t-phase-build", at: 80, duration: 180, target: "phase-build", action: "enter" },
+        { id: "t-phase-freeze", at: 140, duration: 180, target: "phase-freeze", action: "enter" },
+        { id: "t-phase-dispatch", at: 200, duration: 180, target: "phase-dispatch", action: "enter" },
+        { id: "t-composer", at: 300, duration: 280, target: "composer", action: "enter" },
+        { id: "t-arrow1", at: 520, duration: 220, target: "arrow-composer-pool", action: "draw" },
+        { id: "t-pool", at: 680, duration: 300, target: "segment-pool", action: "enter" },
+        { id: "t-arrow2", at: 940, duration: 220, target: "arrow-pool-freeze", action: "draw" },
+        { id: "t-freeze", at: 1100, duration: 280, target: "freeze", action: "enter" },
+        { id: "t-arrow-store", at: 1320, duration: 240, target: "arrow-pool-store", action: "draw" },
+        { id: "t-store", at: 1480, duration: 260, target: "in-memory-store", action: "enter" },
+        { id: "t-arrow3", at: 1680, duration: 220, target: "arrow-freeze-dispatch", action: "draw" },
+        { id: "t-dataset", at: 1840, duration: 240, target: "dataset", action: "enter" },
+        { id: "t-body-plan", at: 1980, duration: 240, target: "body-plan", action: "enter" },
+        { id: "t-materializer", at: 2140, duration: 280, target: "materializer", action: "enter" },
+        { id: "t-arrow-mat", at: 2360, duration: 280, target: "arrow-store-mat", action: "draw" },
+        { id: "t-motion", at: 2580, duration: 520, target: "motion", action: "draw" },
+        { id: "t-emphasis", at: 3040, duration: 420, target: "segment-pool", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Content-addressed interning" {
+    eyebrow: "SegmentPool"
+    title: "Content-addressed interning"
+    lede: "SegmentPool is a mutable arena plus HashMap of SegmentId to Handle. A child's identity folds the parent's content hash, so identical prefixes across conversations collapse to the same handle even when load order differs."
+    narration: "SegmentPool interns by blake3 content identity. Parent hashes fold into children, so shared prefixes collapse to the same dense handle across conversations."
+    term: {
+      word: "prefix-dependent id"
+      meaning: "Child SegmentId hashes parent SegmentId plus domain payload bytes, not insertion index."
+    }
+    points: [
+      "`Segment { id, parent, payload }` lives in a dense Vec arena.",
+      "Dedup hits reuse handles; only novel content allocates.",
+      "`freeze()` yields `InMemorySegmentStore` with `Box<[Segment]>`."
+    ]
+    caption: "Same parent chain + same bytes → same Handle."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "label"
+              capability: "core.text"
+              text: "SEGMENT POOL INTERN"
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "hdr-caption"
+              capability: "core.text"
+              text: "Same parent chain + same bytes → same Handle"
+              layout: { x: 340, y: 28, width: 320, height: 20 }
+              style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "intern"
+          capability: "core.rect"
+          layout: { x: 40, y: 100, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "intern-title"
+              capability: "core.text"
+              text: "intern(msg)"
+              layout: { x: 50, y: 122, width: 140, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "intern-detail"
+              capability: "core.text"
+              text: "parent + bytes"
+              layout: { x: 50, y: 148, width: 140, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-intern-pool"
+          capability: "core.path"
+          d: "M200 140 H250"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+        },
+        {
+          id: "pool"
+          capability: "core.rect"
+          layout: { x: 250, y: 90, width: 200, height: 100 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "pool-title"
+              capability: "core.text"
+              text: "SegmentPool"
+              layout: { x: 260, y: 120, width: 180, height: 20 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "pool-detail"
+              capability: "core.text"
+              text: "HashMap → Handle"
+              layout: { x: 260, y: 148, width: 180, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-pool-dedup"
+          capability: "core.path"
+          d: "M450 140 H500"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+        },
+        {
+          id: "dedup"
+          capability: "core.rect"
+          layout: { x: 500, y: 100, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "dedup-title"
+              capability: "core.text"
+              text: "dedup hit?"
+              layout: { x: 510, y: 122, width: 140, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "dedup-detail"
+              capability: "core.text"
+              text: "reuse Handle"
+              layout: { x: 510, y: 148, width: 140, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "chain-label"
+          capability: "core.text"
+          text: "prefix-dependent handles"
+          layout: { x: 250, y: 210, width: 200, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.tertiary, textAnchor: "middle" }
+        },
+        {
+          id: "h0"
+          capability: "core.rect"
+          layout: { x: 120, y: 240, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "h0-title"
+              capability: "core.text"
+              text: "H0 system"
+              layout: { x: 130, y: 258, width: 120, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "h0-detail"
+              capability: "core.text"
+              text: "shared"
+              layout: { x: 130, y: 282, width: 120, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-h0-h1"
+          capability: "core.path"
+          d: "M260 275 H300"
+          style: { stroke: @theme.accent.primary, strokeWidth: 1.8 }
+        },
+        {
+          id: "h1"
+          capability: "core.rect"
+          layout: { x: 300, y: 240, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "h1-title"
+              capability: "core.text"
+              text: "H1 user"
+              layout: { x: 310, y: 258, width: 120, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "h1-detail"
+              capability: "core.text"
+              text: "shared"
+              layout: { x: 310, y: 282, width: 120, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-h1-h23"
+          capability: "core.path"
+          d: "M440 275 H480"
+          style: { stroke: @theme.accent.caution, strokeWidth: 1.8 }
+        },
+        {
+          id: "h23"
+          capability: "core.rect"
+          layout: { x: 480, y: 240, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "h23-title"
+              capability: "core.text"
+              text: "H2 / H3"
+              layout: { x: 490, y: 258, width: 120, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "h23-detail"
+              capability: "core.text"
+              text: "novel replies"
+              layout: { x: 490, y: 282, width: 120, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "motion"
+          capability: "core.path"
+          d: "M200 180 H500"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 1.4, opacity: 0.55 }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 240, target: "header", action: "enter" },
+        { id: "t-intern", at: 260, duration: 280, target: "intern", action: "enter" },
+        { id: "t-arrow1", at: 480, duration: 220, target: "arrow-intern-pool", action: "draw" },
+        { id: "t-pool", at: 640, duration: 320, target: "pool", action: "enter" },
+        { id: "t-arrow2", at: 900, duration: 220, target: "arrow-pool-dedup", action: "draw" },
+        { id: "t-dedup", at: 1060, duration: 280, target: "dedup", action: "enter" },
+        { id: "t-chain", at: 1320, duration: 200, target: "chain-label", action: "enter" },
+        { id: "t-h0", at: 1480, duration: 240, target: "h0", action: "enter" },
+        { id: "t-arrow-h01", at: 1660, duration: 180, target: "arrow-h0-h1", action: "draw" },
+        { id: "t-h1", at: 1780, duration: 240, target: "h1", action: "enter" },
+        { id: "t-arrow-h123", at: 1960, duration: 180, target: "arrow-h1-h23", action: "draw" },
+        { id: "t-h23", at: 2080, duration: 260, target: "h23", action: "enter" },
+        { id: "t-motion", at: 2280, duration: 480, target: "motion", action: "draw" },
+        { id: "t-emphasis", at: 2720, duration: 420, target: "pool", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Six disjoint blake3 domains" {
+    eyebrow: "Payloads"
+    title: "Six disjoint blake3 domains"
+    lede: "Payload is one of Message, Text, Raw, TokenIds, Media, or TraceHashIds. Each hashes under its own domain prefix framed by `aiperf-dataset-segment-v1` and the parent id, so identical bytes in different domains never collide."
+    narration: "Six payload domains hash under disjoint prefixes. Message, text, raw, token ids, media, and trace hashes never collide even when the bytes look identical."
+    term: {
+      word: "SegmentDomain"
+      meaning: "Discriminant that drives dispatch formatting: Message array, Raw complete body, or TokenIds native path."
+    }
+    points: [
+      "Message carries role, wire Bytes, and token ids.",
+      "Raw is a complete JSON body or field; TokenIds stay token-native.",
+      "TraceHashIds retain simulator cache identity without prompt bytes."
+    ]
+    caption: "HASH_VERSION · domain prefix · parent id · payload recipe → SegmentId."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "label"
+              capability: "core.text"
+              text: "PAYLOAD DOMAINS"
+              layout: { x: 38, y: 28, width: 280, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "hdr-caption"
+              capability: "core.text"
+              text: "HASH_VERSION · domain · parent → SegmentId"
+              layout: { x: 300, y: 28, width: 360, height: 20 }
+              style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "domain-message"
+          capability: "core.rect"
+          layout: { x: 30, y: 110, width: 100, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "domain-message-title"
+              capability: "core.text"
+              text: "Message"
+              layout: { x: 35, y: 135, width: 90, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "domain-message-detail"
+              capability: "core.text"
+              text: "wire + tokens"
+              layout: { x: 35, y: 160, width: 90, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "domain-text"
+          capability: "core.rect"
+          layout: { x: 145, y: 110, width: 100, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "domain-text-title"
+              capability: "core.text"
+              text: "Text"
+              layout: { x: 150, y: 135, width: 90, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "domain-text-detail"
+              capability: "core.text"
+              text: "text-only"
+              layout: { x: 150, y: 160, width: 90, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "domain-raw"
+          capability: "core.rect"
+          layout: { x: 260, y: 110, width: 100, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "domain-raw-title"
+              capability: "core.text"
+              text: "Raw"
+              layout: { x: 265, y: 135, width: 90, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "domain-raw-detail"
+              capability: "core.text"
+              text: "complete body"
+              layout: { x: 265, y: 160, width: 90, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "domain-token"
+          capability: "core.rect"
+          layout: { x: 375, y: 110, width: 100, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "domain-token-title"
+              capability: "core.text"
+              text: "TokenIds"
+              layout: { x: 380, y: 135, width: 90, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "domain-token-detail"
+              capability: "core.text"
+              text: "native path"
+              layout: { x: 380, y: 160, width: 90, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "domain-media"
+          capability: "core.rect"
+          layout: { x: 490, y: 110, width: 100, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "domain-media-title"
+              capability: "core.text"
+              text: "Media"
+              layout: { x: 495, y: 135, width: 90, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "domain-media-detail"
+              capability: "core.text"
+              text: "multimodal"
+              layout: { x: 495, y: 160, width: 90, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "domain-trace"
+          capability: "core.rect"
+          layout: { x: 605, y: 110, width: 80, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "domain-trace-title"
+              capability: "core.text"
+              text: "TraceHash"
+              layout: { x: 608, y: 135, width: 74, height: 18 }
+              style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "domain-trace-detail"
+              capability: "core.text"
+              text: "sim identity"
+              layout: { x: 608, y: 160, width: 74, height: 16 }
+              style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-domains-hash"
+          capability: "core.path"
+          d: "M350 200 V250"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.0 }
+        },
+        {
+          id: "hash-recipe"
+          capability: "core.rect"
+          layout: { x: 150, y: 250, width: 400, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "hash-recipe-title"
+              capability: "core.text"
+              text: "HASH_VERSION + domain + parent id"
+              layout: { x: 160, y: 268, width: 380, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "hash-recipe-detail"
+              capability: "core.text"
+              text: "blake3 → SegmentId([u8;32])"
+              layout: { x: 160, y: 292, width: 380, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "frame-note"
+          capability: "core.text"
+          text: "framed by aiperf-dataset-segment-v1"
+          layout: { x: 150, y: 340, width: 400, height: 18 }
+          style: { fontSize: 11, fill: @theme.ink.tertiary, textAnchor: "middle" }
+        },
+        {
+          id: "motion"
+          capability: "core.path"
+          d: "M100 200 H600"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 1.4, opacity: 0.55 }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 240, target: "header", action: "enter" },
+        { id: "t-msg", at: 240, duration: 220, target: "domain-message", action: "enter" },
+        { id: "t-text", at: 360, duration: 220, target: "domain-text", action: "enter" },
+        { id: "t-raw", at: 480, duration: 220, target: "domain-raw", action: "enter" },
+        { id: "t-token", at: 600, duration: 220, target: "domain-token", action: "enter" },
+        { id: "t-media", at: 720, duration: 220, target: "domain-media", action: "enter" },
+        { id: "t-trace", at: 840, duration: 220, target: "domain-trace", action: "enter" },
+        { id: "t-arrow-hash", at: 1060, duration: 240, target: "arrow-domains-hash", action: "draw" },
+        { id: "t-hash", at: 1240, duration: 320, target: "hash-recipe", action: "enter" },
+        { id: "t-frame", at: 1520, duration: 240, target: "frame-note", action: "enter" },
+        { id: "t-motion", at: 1720, duration: 480, target: "motion", action: "draw" },
+        { id: "t-emphasis", at: 2160, duration: 420, target: "hash-recipe", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Shape now, splice bytes later" {
+    eyebrow: "BodyPlan"
+    title: "Shape now, splice bytes later"
+    lede: "BodyPlan declares which JSON fields are literals versus segment handles. JsonBodyMaterializer walks the plan once: literals are the only hot-path serde work; segment slots clone pre-serialized wire bytes from the store."
+    narration: "BodyPlan shapes the JSON object. JsonBodyMaterializer serializes only literals and clones prebuilt segment wires from the store."
+    term: {
+      word: "JsonBodyMaterializer"
+      meaning: "Shared walker that turns a BodyPlan plus SegmentStore into dispatch Bytes."
+    }
+    points: [
+      "Endpoints format BodyPlans in `rust/runtime/src/endpoints/`.",
+      "Dataset precomputes plans for static turns where possible.",
+      "Overrides merge stream flags and limits without rewriting message wires."
+    ]
+    caption: "literals serialize · segment wires clone · Overrides patch the tail."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "label"
+              capability: "core.text"
+              text: "BODYPLAN SPLICE"
+              layout: { x: 38, y: 28, width: 280, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "hdr-caption"
+              capability: "core.text"
+              text: "literals serialize · segment wires clone"
+              layout: { x: 320, y: 28, width: 340, height: 20 }
+              style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "plan"
+          capability: "core.rect"
+          layout: { x: 40, y: 100, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "plan-title"
+              capability: "core.text"
+              text: "BodyPlan"
+              layout: { x: 50, y: 122, width: 140, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "plan-detail"
+              capability: "core.text"
+              text: "shape + slots"
+              layout: { x: 50, y: 148, width: 140, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-plan-mat"
+          capability: "core.path"
+          d: "M200 140 H250"
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+        },
+        {
+          id: "mat"
+          capability: "core.rect"
+          layout: { x: 250, y: 90, width: 200, height: 100 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "mat-title"
+              capability: "core.text"
+              text: "JsonBodyMaterializer"
+              layout: { x: 260, y: 120, width: 180, height: 20 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "mat-detail"
+              capability: "core.text"
+              text: "walk once"
+              layout: { x: 260, y: 148, width: 180, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-mat-bytes"
+          capability: "core.path"
+          d: "M450 140 H500"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+        },
+        {
+          id: "bytes"
+          capability: "core.rect"
+          layout: { x: 500, y: 100, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "bytes-title"
+              capability: "core.text"
+              text: "Bytes"
+              layout: { x: 510, y: 122, width: 140, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "bytes-detail"
+              capability: "core.text"
+              text: "wire body"
+              layout: { x: 510, y: 148, width: 140, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "feed-label"
+          capability: "core.text"
+          text: "hot-path inputs"
+          layout: { x: 250, y: 210, width: 200, height: 18 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.tertiary, textAnchor: "middle" }
+        },
+        {
+          id: "literals"
+          capability: "core.rect"
+          layout: { x: 80, y: 240, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "literals-title"
+              capability: "core.text"
+              text: "literals"
+              layout: { x: 90, y: 258, width: 140, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "literals-detail"
+              capability: "core.text"
+              text: "serde_json"
+              layout: { x: 90, y: 282, width: 140, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-lit-mat"
+          capability: "core.path"
+          d: "M160 240 V200 H250"
+          style: { stroke: @theme.accent.primary, strokeWidth: 1.6, opacity: 0.75 }
+        },
+        {
+          id: "wires"
+          capability: "core.rect"
+          layout: { x: 280, y: 240, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "wires-title"
+              capability: "core.text"
+              text: "segment wires"
+              layout: { x: 290, y: 258, width: 140, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "wires-detail"
+              capability: "core.text"
+              text: "clone Bytes"
+              layout: { x: 290, y: 282, width: 140, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-wires-mat"
+          capability: "core.path"
+          d: "M360 240 V190"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 1.6, opacity: 0.75 }
+        },
+        {
+          id: "overrides"
+          capability: "core.rect"
+          layout: { x: 480, y: 240, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "overrides-title"
+              capability: "core.text"
+              text: "Overrides"
+              layout: { x: 490, y: 258, width: 140, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "overrides-detail"
+              capability: "core.text"
+              text: "stream · limits"
+              layout: { x: 490, y: 282, width: 140, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-ovr-mat"
+          capability: "core.path"
+          d: "M560 240 V200 H450"
+          style: { stroke: @theme.accent.caution, strokeWidth: 1.6, opacity: 0.75 }
+        },
+        {
+          id: "motion"
+          capability: "core.path"
+          d: "M350 120 V280"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 1.4, opacity: 0.55 }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 240, target: "header", action: "enter" },
+        { id: "t-plan", at: 260, duration: 280, target: "plan", action: "enter" },
+        { id: "t-arrow1", at: 480, duration: 220, target: "arrow-plan-mat", action: "draw" },
+        { id: "t-mat", at: 640, duration: 320, target: "mat", action: "enter" },
+        { id: "t-arrow2", at: 900, duration: 220, target: "arrow-mat-bytes", action: "draw" },
+        { id: "t-bytes", at: 1060, duration: 280, target: "bytes", action: "enter" },
+        { id: "t-feed", at: 1320, duration: 200, target: "feed-label", action: "enter" },
+        { id: "t-literals", at: 1480, duration: 240, target: "literals", action: "enter" },
+        { id: "t-arrow-lit", at: 1660, duration: 200, target: "arrow-lit-mat", action: "draw" },
+        { id: "t-wires", at: 1780, duration: 240, target: "wires", action: "enter" },
+        { id: "t-arrow-wires", at: 1960, duration: 200, target: "arrow-wires-mat", action: "draw" },
+        { id: "t-overrides", at: 2080, duration: 260, target: "overrides", action: "enter" },
+        { id: "t-arrow-ovr", at: 2260, duration: 200, target: "arrow-ovr-mat", action: "draw" },
+        { id: "t-motion", at: 2420, duration: 480, target: "motion", action: "draw" },
+        { id: "t-emphasis", at: 2860, duration: 420, target: "mat", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Shared prefixes and LCP lowering" {
+    eyebrow: "Prefix trie"
+    title: "Shared prefixes and LCP lowering"
+    lede: "Composers keep a running parent Handle per conversation so each turn extends a chain. Recorded WEKA and Dynamo traces lower through an LCP trie over block hashes, reusing interned handles for the longest shared prefix."
+    narration: "Conversation composers and recorded-trace LCP tries keep shared prefixes stored once. Branches allocate only the novel suffix handles."
+    term: {
+      word: "rebase"
+      meaning: "Re-intern conversation handles under a new system/user context root so blake3 ids reflect the injected prefix."
+    }
+    points: [
+      "`dataset/compose.rs` owns conversation chains and rebase.",
+      "`graph/recorded/trie/` resolves content parents from hash_ids.",
+      "Shared system and user turns store once; branches allocate only novel replies."
+    ]
+    caption: "One shared prefix · many conversation branches by handle."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "label"
+              capability: "core.text"
+              text: "PREFIX CHAINS"
+              layout: { x: 38, y: 28, width: 280, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "hdr-caption"
+              capability: "core.text"
+              text: "One shared prefix · many branches by handle"
+              layout: { x: 300, y: 28, width: 360, height: 20 }
+              style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "shared-band"
+          capability: "core.rect"
+          layout: { x: 30, y: 80, width: 340, height: 28 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+          children: [
+            {
+              id: "shared-band-text"
+              capability: "core.text"
+              text: "shared prefix (store once)"
+              layout: { x: 40, y: 96, width: 320, height: 16 }
+              style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "h0"
+          capability: "core.rect"
+          layout: { x: 40, y: 140, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "h0-title"
+              capability: "core.text"
+              text: "H0 system"
+              layout: { x: 50, y: 158, width: 120, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "h0-detail"
+              capability: "core.text"
+              text: "shared once"
+              layout: { x: 50, y: 182, width: 120, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-h0-h1"
+          capability: "core.path"
+          d: "M180 175 H220"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        },
+        {
+          id: "h1"
+          capability: "core.rect"
+          layout: { x: 220, y: 140, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "h1-title"
+              capability: "core.text"
+              text: "H1 user"
+              layout: { x: 230, y: 158, width: 120, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "h1-detail"
+              capability: "core.text"
+              text: "shared once"
+              layout: { x: 230, y: 182, width: 120, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-h1-h2"
+          capability: "core.path"
+          d: "M360 155 C400 120 420 100 460 100"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        },
+        {
+          id: "arrow-h1-h3"
+          capability: "core.path"
+          d: "M360 195 C400 230 420 250 460 250"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+        },
+        {
+          id: "h2"
+          capability: "core.rect"
+          layout: { x: 460, y: 70, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "h2-title"
+              capability: "core.text"
+              text: "H2 assistant"
+              layout: { x: 470, y: 88, width: 130, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "h2-detail"
+              capability: "core.text"
+              text: "C1 \"4\""
+              layout: { x: 470, y: 112, width: 130, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "h3"
+          capability: "core.rect"
+          layout: { x: 460, y: 220, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "h3-title"
+              capability: "core.text"
+              text: "H3 assistant"
+              layout: { x: 470, y: 238, width: 130, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "h3-detail"
+              capability: "core.text"
+              text: "C2 novel"
+              layout: { x: 470, y: 262, width: 130, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "branch-label"
+          capability: "core.text"
+          text: "novel suffixes only"
+          layout: { x: 460, y: 310, width: 150, height: 16 }
+          style: { fontSize: 11, fill: @theme.ink.tertiary, textAnchor: "middle" }
+        },
+        {
+          id: "footnote"
+          capability: "core.text"
+          text: "LCP trie / compose parent chains reuse H0·H1"
+          layout: { x: 150, y: 350, width: 400, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
+        },
+        {
+          id: "motion"
+          capability: "core.path"
+          d: "M190 167 H470"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 1.4, opacity: 0.55 }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 240, target: "header", action: "enter" },
+        { id: "t-band", at: 200, duration: 220, target: "shared-band", action: "enter" },
+        { id: "t-h0", at: 360, duration: 280, target: "h0", action: "enter" },
+        { id: "t-arrow1", at: 580, duration: 220, target: "arrow-h0-h1", action: "draw" },
+        { id: "t-h1", at: 740, duration: 280, target: "h1", action: "enter" },
+        { id: "t-arrow2", at: 980, duration: 260, target: "arrow-h1-h2", action: "draw" },
+        { id: "t-arrow3", at: 1100, duration: 260, target: "arrow-h1-h3", action: "draw" },
+        { id: "t-h2", at: 1280, duration: 260, target: "h2", action: "enter" },
+        { id: "t-h3", at: 1460, duration: 260, target: "h3", action: "enter" },
+        { id: "t-branch", at: 1680, duration: 220, target: "branch-label", action: "enter" },
+        { id: "t-footnote", at: 1860, duration: 240, target: "footnote", action: "enter" },
+        { id: "t-motion", at: 2060, duration: 480, target: "motion", action: "draw" },
+        { id: "t-emphasis", at: 2500, duration: 420, target: "h1", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Turn.body precedence is domain-driven" {
+    eyebrow: "Dispatch"
+    title: "Turn.body precedence is domain-driven"
+    lede: "`Turn.dispatch_body` builds one SmallVec of handles: raw payload first, then token ids, else the message list. The domain of the leading handle decides whether materialization takes the complete-body, token-native, or message-array path."
+    narration: "Turn.body is one precedence vector. Raw leads, token ids follow, otherwise messages fill the body, and SegmentDomain selects the materializer path."
+    term: {
+      word: "dispatch_body"
+      meaning: "Precedence helper in `dataset/model.rs` that replaces the old multi-field body selection."
+    }
+    points: [
+      "Raw + TokenIds may coexist as `[raw, token]` for validation backends.",
+      "Messages fill the body only when neither raw nor token ids are set.",
+      "Graph HTTP can splice message wires directly; scheduled paths use BodyPlan."
+    ]
+    caption: "Raw → TokenIds → Messages · domain chooses the materializer path."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+          children: [
+            {
+              id: "label"
+              capability: "core.text"
+              text: "DISPATCH PRECEDENCE"
+              layout: { x: 38, y: 28, width: 320, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "hdr-caption"
+              capability: "core.text"
+              text: "Raw → TokenIds → Messages"
+              layout: { x: 360, y: 28, width: 300, height: 20 }
+              style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "prio-label"
+          capability: "core.text"
+          text: "precedence order"
+          layout: { x: 280, y: 72, width: 170, height: 16 }
+          style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.tertiary, textAnchor: "middle" }
+        },
+        {
+          id: "turn-body"
+          capability: "core.rect"
+          layout: { x: 30, y: 140, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "turn-body-title"
+              capability: "core.text"
+              text: "Turn.body"
+              layout: { x: 40, y: 160, width: 130, height: 20 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "turn-body-detail"
+              capability: "core.text"
+              text: "SmallVec handles"
+              layout: { x: 40, y: 186, width: 130, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-raw"
+          capability: "core.path"
+          d: "M180 160 C220 120 240 100 280 100"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+        },
+        {
+          id: "arrow-token"
+          capability: "core.path"
+          d: "M180 180 H280"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+        },
+        {
+          id: "arrow-msg"
+          capability: "core.path"
+          d: "M180 200 C220 240 240 260 280 260"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        },
+        {
+          id: "raw"
+          capability: "core.rect"
+          layout: { x: 280, y: 70, width: 170, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "raw-title"
+              capability: "core.text"
+              text: "Raw first?"
+              layout: { x: 290, y: 88, width: 150, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "raw-detail"
+              capability: "core.text"
+              text: "complete body"
+              layout: { x: 290, y: 112, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "token"
+          capability: "core.rect"
+          layout: { x: 280, y: 155, width: 170, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "token-title"
+              capability: "core.text"
+              text: "TokenIds?"
+              layout: { x: 290, y: 173, width: 150, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "token-detail"
+              capability: "core.text"
+              text: "native / validate"
+              layout: { x: 290, y: 197, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "messages"
+          capability: "core.rect"
+          layout: { x: 280, y: 240, width: 170, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "messages-title"
+              capability: "core.text"
+              text: "Messages"
+              layout: { x: 290, y: 258, width: 150, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "messages-detail"
+              capability: "core.text"
+              text: "format array"
+              layout: { x: 290, y: 282, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "arrow-out"
+          capability: "core.path"
+          d: "M450 180 H500"
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+        },
+        {
+          id: "out"
+          capability: "core.rect"
+          layout: { x: 500, y: 140, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+          children: [
+            {
+              id: "out-title"
+              capability: "core.text"
+              text: "BodyPlan → Bytes"
+              layout: { x: 510, y: 160, width: 140, height: 18 }
+              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            },
+            {
+              id: "out-detail"
+              capability: "core.text"
+              text: "domain path"
+              layout: { x: 510, y: 186, width: 140, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "motion"
+          capability: "core.path"
+          d: "M210 180 H590"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 1.4, opacity: 0.55 }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 240, target: "header", action: "enter" },
+        { id: "t-prio", at: 180, duration: 200, target: "prio-label", action: "enter" },
+        { id: "t-turn", at: 320, duration: 300, target: "turn-body", action: "enter" },
+        { id: "t-arrow-raw", at: 560, duration: 240, target: "arrow-raw", action: "draw" },
+        { id: "t-raw", at: 720, duration: 240, target: "raw", action: "enter" },
+        { id: "t-arrow-token", at: 900, duration: 220, target: "arrow-token", action: "draw" },
+        { id: "t-token", at: 1060, duration: 240, target: "token", action: "enter" },
+        { id: "t-arrow-msg", at: 1240, duration: 220, target: "arrow-msg", action: "draw" },
+        { id: "t-messages", at: 1400, duration: 240, target: "messages", action: "enter" },
+        { id: "t-arrow-out", at: 1620, duration: 220, target: "arrow-out", action: "draw" },
+        { id: "t-out", at: 1780, duration: 280, target: "out", action: "enter" },
+        { id: "t-motion", at: 2020, duration: 480, target: "motion", action: "draw" },
+        { id: "t-emphasis", at: 2460, duration: 420, target: "turn-body", action: "emphasis" }
+      ]
+    }
+  }
+
+  finalCard: @scene {
+    roots: [
+      {
+        id: "final-hdr"
+        capability: "core.rect"
+        layout: { x: 18, y: 16, width: 664, height: 44 }
+        style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        children: [
+          {
+            id: "final-hdr-text"
+            capability: "core.text"
+            text: "Live evidence files"
+            layout: { x: 34, y: 32, width: 400, height: 20 }
+            style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+          },
+          {
+            id: "final-pill"
+            capability: "core.text"
+            text: "dataset path"
+            layout: { x: 500, y: 32, width: 160, height: 20 }
+            style: { fontSize: 12, fontWeight: "bold", fill: @theme.accent.secondary }
+          }
+        ]
+      },
+      {
+        id: "f1"
+        capability: "core.rect"
+        layout: { x: 40, y: 90, width: 620, height: 40 }
+        style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+        children: [
+          {
+            id: "f1-text"
+            capability: "core.text"
+            text: "rust/runtime/src/dataset/segment.rs"
+            layout: { x: 56, y: 112, width: 588, height: 18 }
+            style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+          }
+        ]
+      },
+      {
+        id: "f2"
+        capability: "core.rect"
+        layout: { x: 40, y: 142, width: 620, height: 40 }
+        style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+        children: [
+          {
+            id: "f2-text"
+            capability: "core.text"
+            text: "rust/runtime/src/dataset/model.rs"
+            layout: { x: 56, y: 164, width: 588, height: 18 }
+            style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+          }
+        ]
+      },
+      {
+        id: "f3"
+        capability: "core.rect"
+        layout: { x: 40, y: 194, width: 620, height: 40 }
+        style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.6, radius: 8 }
+        children: [
+          {
+            id: "f3-text"
+            capability: "core.text"
+            text: "rust/runtime/src/dataset/compose.rs"
+            layout: { x: 56, y: 216, width: 588, height: 18 }
+            style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+          }
+        ]
+      },
+      {
+        id: "f4"
+        capability: "core.rect"
+        layout: { x: 40, y: 246, width: 620, height: 40 }
+        style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.6, radius: 8 }
+        children: [
+          {
+            id: "f4-text"
+            capability: "core.text"
+            text: "rust/runtime/src/body_plan.rs"
+            layout: { x: 56, y: 268, width: 588, height: 18 }
+            style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+          }
+        ]
+      },
+      {
+        id: "f5"
+        capability: "core.rect"
+        layout: { x: 40, y: 298, width: 620, height: 40 }
+        style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.6, radius: 8 }
+        children: [
+          {
+            id: "f5-text"
+            capability: "core.text"
+            text: "rust/runtime/src/graph/recorded/trie/"
+            layout: { x: 56, y: 320, width: 588, height: 18 }
+            style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+          }
+        ]
+      }
+    ]
+    timeline: [
+      { id: "tf-hdr", at: 0, duration: 240, target: "final-hdr", action: "enter" },
+      { id: "tf-1", at: 200, duration: 220, target: "f1", action: "enter" },
+      { id: "tf-2", at: 360, duration: 220, target: "f2", action: "enter" },
+      { id: "tf-3", at: 520, duration: 220, target: "f3", action: "enter" },
+      { id: "tf-4", at: 680, duration: 220, target: "f4", action: "enter" },
+      { id: "tf-5", at: 840, duration: 220, target: "f5", action: "enter" }
+    ]
+  }
+}

@@ -23,10 +23,39 @@ const minimalScene = {
     {
       kind: "rect" as const,
       id: "box",
+      capability: "core.rect" as const,
       geometry: { x: 0, y: 0, width: 100, height: 40 },
       style: {},
       accessibility: { label: "Box" },
       fallback: "Box unavailable",
+      sourceMap,
+    },
+    {
+      kind: "text" as const,
+      id: "label",
+      capability: "core.text" as const,
+      text: "Coordinator",
+      geometry: { x: 8, y: 8, width: 84, height: 24 },
+      style: { fontSize: 14 },
+      accessibility: { label: "Coordinator label" },
+      fallback: "Label unavailable",
+      sourceMap,
+    },
+    {
+      kind: "connector" as const,
+      id: "arrow",
+      capability: "core.connector" as const,
+      path: "M100 20 H160",
+      points: [
+        { x: 100, y: 20 },
+        { x: 160, y: 20 },
+      ],
+      from: { nodeId: "box", anchor: "right" },
+      to: { nodeId: "label", anchor: "left" },
+      geometry: { x: 100, y: 16, width: 60, height: 8 },
+      style: { stroke: "#3FA266" },
+      accessibility: { label: "Flow arrow" },
+      fallback: "Arrow unavailable",
       sourceMap,
     },
   ],
@@ -40,11 +69,19 @@ const minimalScene = {
       action: "enter",
       sourceMap,
     },
+    {
+      id: "draw-arrow",
+      at: 200,
+      duration: 300,
+      target: "arrow",
+      action: "draw",
+      sourceMap,
+    },
   ],
   narration: "",
   interactions: [],
   responsive: [],
-  accessibility: { label: "Main scene", readingOrder: ["box"] },
+  accessibility: { label: "Main scene", readingOrder: ["box", "label", "arrow"] },
   fallback: "Scene unavailable",
   sourceMap,
 };
@@ -97,6 +134,36 @@ describe("DeckPackage", () => {
     );
     expect(parsed.slides[0]?.render?.kind).toBe("scene");
     expect(parsed.slides[0]?.render?.scene.id).toBe("main");
+  });
+
+  test("accepts text/path/points nodes, foundation capabilities, and enter/draw cues", () => {
+    const parsed = deckPackageSchema.parse(validPackage());
+    const scene = parsed.slides[0]?.render?.scene;
+    expect(scene).toBeDefined();
+    if (scene === undefined) {
+      return;
+    }
+
+    const [rect, text, connector] = scene.roots;
+    expect(rect).toMatchObject({
+      kind: "rect",
+      capability: "core.rect",
+    });
+    expect(text).toMatchObject({
+      kind: "text",
+      capability: "core.text",
+      text: "Coordinator",
+    });
+    expect(connector).toMatchObject({
+      kind: "connector",
+      capability: "core.connector",
+      path: "M100 20 H160",
+      points: [
+        { x: 100, y: 20 },
+        { x: 160, y: 20 },
+      ],
+    });
+    expect(scene.timeline.map((cue) => cue.action)).toEqual(["enter", "draw"]);
   });
 
   test("allows slides without render", () => {

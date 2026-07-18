@@ -3,7 +3,7 @@
 
 import React, { useEffect, useState } from "react";
 
-import { COMPILED_EXPLAINER_DECKS } from "../packages/runtime/src/explainer/compiled-decks";
+import { COMPILED_EXPLAINER_DECKS } from "./deck-packages";
 
 import { ExplainerDeckPicker } from "./explainer-deck-picker";
 import { ExplainerDeckNavigator } from "./explainer-deck-navigator";

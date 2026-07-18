@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ExplainerHubAst, SlideAst } from "../ast.js";
+import {
+  captureEmbeddedScene,
+  parseEmbeddedSceneSource,
+  type EmbeddedSceneSource,
+  type PackageSceneIrAst,
+  type PeekableTokenStream,
+} from "../embedded-scene.js";
 
 export interface ExplainerAstCompat {
   type: "explainer";
@@ -36,6 +43,8 @@ export interface TokenStream {
   expectIdentifier(): string;
   match(keyword: string): boolean;
   advance(): void;
+  /** Required to capture `render: @scene { ... }` bodies. */
+  peekImage(): string | undefined;
 }
 
 type ExplainerMetadata = ExplainerAstCompat["metadata"] & { id?: string };
@@ -72,6 +81,14 @@ export function parseExplainerBlock(tokens: TokenStream): ExplainerAstCompat {
 
   const raw = parseExplainerMetadata(tokens);
   const slides = parseSlides(tokens);
+  // Optional trailing finalCard scene — captured and ignored until schema lands it.
+  if (tokens.match("finalCard")) {
+    tokens.advance();
+    tokens.expect(":");
+    tokens.expect("@");
+    tokens.expect("scene");
+    captureEmbeddedScene(tokens as PeekableTokenStream);
+  }
 
   tokens.expect("}");
 
@@ -202,7 +219,7 @@ function parseSlideBlock(tokens: TokenStream): SlideAst {
     } else if (key === "render") {
       tokens.expect("@");
       tokens.expect("scene");
-      slide.sceneIr = parseSceneBlock(tokens);
+      slide.sceneIr = parseSceneBlock(tokens as PeekableTokenStream);
     } else {
       slide[key] = tokens.expectString();
     }
@@ -218,20 +235,14 @@ function parseSlideBlock(tokens: TokenStream): SlideAst {
   return slide as SlideAst;
 }
 
-function parseSceneBlock(tokens: TokenStream): any {
-  // Consume `@scene { ... }` body; scene IR lowering integrates later.
-  tokens.expect("{");
-  let depth = 1;
-  while (depth > 0) {
-    if (tokens.match("{")) {
-      depth++;
-      tokens.advance();
-    } else if (tokens.match("}")) {
-      depth--;
-      tokens.advance();
-    } else {
-      tokens.advance();
-    }
-  }
-  return { type: "scene" };
+/**
+ * Parses `render: @scene { ... }` so package `roots`/`timeline` survive on the
+ * AST (`PackageSceneIrAst`), and native cinematic bodies remain as capture
+ * source for `parseNativeEmbeddedScene`.
+ */
+function parseSceneBlock(
+  tokens: PeekableTokenStream,
+): EmbeddedSceneSource | PackageSceneIrAst {
+  const captured = captureEmbeddedScene(tokens);
+  return parseEmbeddedSceneSource(captured);
 }

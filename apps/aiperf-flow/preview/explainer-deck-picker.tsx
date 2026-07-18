@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React, { ReactNode } from "react";
-import type { ExplainerDefinition } from "@aiperf/flow-compiler";
+import type { PreviewDeck } from "./deck-packages";
 
 type ExplainerDeckPickerProps = Readonly<{
-  decks: readonly ExplainerDefinition[];
+  decks: readonly PreviewDeck[];
   onDeckSelect: (deckId: string) => void;
 }>;
 
@@ -24,7 +24,7 @@ function idToTitle(id: string): string {
 }
 
 type DeckCardProps = Readonly<{
-  deck: ExplainerDefinition;
+  deck: PreviewDeck;
   onSelect: (deckId: string) => void;
 }>;
 

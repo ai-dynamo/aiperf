@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "assert:no-mentalmodel-registry": "node scripts/assert-no-mentalmodel-registry.mjs",
+    "assert:deck-packages": "node scripts/assert-deck-packages.mjs",
     "deploy:pages": "bash scripts/deploy-pages.sh"
   },
   "dependencies": {

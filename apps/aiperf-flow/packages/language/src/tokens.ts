@@ -122,6 +122,13 @@ export const Comma = createToken({ name: "Comma", pattern: /,/ });
 export const Dot = createToken({ name: "Dot", pattern: /\./ });
 export const Colon = createToken({ name: "Colon", pattern: /:/ });
 export const Equals = createToken({ name: "Equals", pattern: /=/ });
+/** Literal `@` for `@scene` and `@theme.role` explainer package scenes. */
+export const AtSign = createToken({ name: "AtSign", pattern: /@/ });
+/** Hex color literals (`#rgb` / `#rrggbb` / `#rrggbbaa`) inside package scenes. */
+export const HexColor = createToken({
+  name: "HexColor",
+  pattern: /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b/,
+});
 
 export const allTokens = [
   WhiteSpace,
@@ -200,6 +207,8 @@ export const allTokens = [
   Dot,
   Colon,
   Equals,
+  AtSign,
+  HexColor,
   ComponentIdentifier,
   Identifier,
 ];

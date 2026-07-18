@@ -3,25 +3,36 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Lower an embedded slide `@scene` AST node to a DeckPackage `SceneRender`.
+//! Lower an embedded slide `@scene` to a DeckPackage `SceneRender`.
 //!
-//! Reuses the document scene lowerer via a single-scene `LinkedDocument`, then
-//! fail-closes with `sceneIrSchema` so invalid scenes never become package
-//! render payloads.
+//! Accepts:
+//! - native cinematic `SceneAst` (rect/connector/timeline/camera)
+//! - `embedded-scene-source` with form `native` (parsed via shared
+//!   `parseNativeEmbeddedScene`)
+//! - decks-flow `package-scene` (`roots` / `timeline` / `camera`)
+//!
+//! Native paths reuse the document scene lowerer. Package paths normalize the
+//! JSON-ish authoring shape into strict `SceneIr`.
 
-import type {
-  ConnectorAst,
-  DocumentAst,
-  LiteralAst,
-  RectAst,
-  SceneAst,
+import {
+  parseNativeEmbeddedScene,
+  type EmbeddedSceneSource,
+  type PackageSceneAst,
+  type SceneAst,
+  type ConnectorAst,
+  type DocumentAst,
+  type LiteralAst,
+  type RectAst,
 } from "@aiperf/flow-language";
 import {
   diagnostic,
   sceneIrSchema,
+  type RenderNodeIr,
   type Result,
+  type SceneIr,
   type SceneRender,
   type SourceRange,
+  type TimelineCueIr,
 } from "@aiperf/flow-schema";
 
 import type { LinkedDocument, SceneSymbolTable } from "./link.js";
@@ -29,6 +40,14 @@ import { lower } from "./lower.js";
 
 export type LowerExplainerSceneOptions = Readonly<{
   tokens?: ReadonlyMap<string, LiteralAst["value"]>;
+  /** Fill-ins when package scenes omit SceneIr identity fields. */
+  defaults?: Readonly<{
+    id?: string;
+    title?: string;
+    summary?: string;
+    narration?: string;
+    fallback?: string;
+  }>;
 }>;
 
 const unknownRange: SourceRange = {
@@ -49,6 +68,37 @@ function isSceneAst(value: unknown): value is SceneAst {
     typeof value.title === "string" &&
     "renderDeclarations" in value &&
     Array.isArray(value.renderDeclarations)
+  );
+}
+
+function isEmbeddedSceneSource(value: unknown): value is EmbeddedSceneSource {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "kind" in value &&
+    value.kind === "embedded-scene-source" &&
+    "form" in value &&
+    "body" in value &&
+    typeof value.body === "string"
+  );
+}
+
+function isPackageSceneAst(value: unknown): value is PackageSceneAst {
+  if (typeof value !== "object" || value === null || !("roots" in value)) {
+    return false;
+  }
+  if (!Array.isArray(value.roots)) {
+    return false;
+  }
+  // Explicit package-scene, or PackageSceneIrAst (kind "scene" + preserved roots).
+  if ("kind" in value && value.kind === "package-scene") {
+    return true;
+  }
+  return (
+    "kind" in value &&
+    value.kind === "scene" &&
+    "timeline" in value &&
+    Array.isArray(value.timeline)
   );
 }
 
@@ -104,22 +154,10 @@ function invalidScene(
   };
 }
 
-/**
- * Lowers an embedded slide `@scene` AST node to `{ kind: "scene", scene }`.
- *
- * Returns diagnostics when the input is not a scene AST or the lowered IR
- * fails strict `SceneIr` validation.
- */
-export function lowerExplainerScene(
-  scene: unknown,
-  options: LowerExplainerSceneOptions = {},
+function lowerNativeSceneAst(
+  scene: SceneAst,
+  options: LowerExplainerSceneOptions,
 ): Result<SceneRender> {
-  if (!isSceneAst(scene)) {
-    return invalidScene(
-      "Expected an embedded @scene AST node with kind \"scene\".",
-    );
-  }
-
   let lowered;
   try {
     lowered = lower(wrapSceneDocument(scene, options.tokens ?? new Map()));
@@ -137,6 +175,26 @@ export function lowerExplainerScene(
     );
   }
 
+  if (sceneIr.roots.length === 0) {
+    return invalidScene(
+      `Scene "${scene.id}" lowered with empty scene.roots.`,
+      scene.sourceMap,
+    );
+  }
+  if (sceneIr.timeline.length === 0) {
+    return invalidScene(
+      `Scene "${scene.id}" lowered with empty scene.timeline.`,
+      scene.sourceMap,
+    );
+  }
+
+  return validateSceneRender(sceneIr, scene.sourceMap);
+}
+
+function validateSceneRender(
+  sceneIr: unknown,
+  range: SourceRange,
+): Result<SceneRender> {
   const parsed = sceneIrSchema.safeParse(sceneIr);
   if (!parsed.success) {
     return {
@@ -147,7 +205,7 @@ export function lowerExplainerScene(
           "EXPLAINER_SCENE_INVALID",
           "error",
           `${path}: ${issue.message}`,
-          scene.sourceMap,
+          range,
         );
       }),
     };
@@ -158,4 +216,230 @@ export function lowerExplainerScene(
     value: { kind: "scene", scene: parsed.data },
     diagnostics: [],
   };
+}
+
+function capabilityKind(capability: string): RenderNodeIr["kind"] {
+  const leaf = capability.includes(".")
+    ? capability.slice(capability.lastIndexOf(".") + 1)
+    : capability;
+  switch (leaf) {
+    case "text":
+      return "text";
+    case "connector":
+    case "line":
+    case "arrow":
+    case "path":
+      return "connector";
+    case "group":
+      return "group";
+    default:
+      return "rect";
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+function geometryOf(node: Record<string, unknown>): SceneIr["roots"][number]["geometry"] {
+  const geometry = asRecord(node.geometry) ?? asRecord(node.layout) ?? {};
+  return {
+    x: Number(geometry.x ?? 0),
+    y: Number(geometry.y ?? 0),
+    width: Number(geometry.width ?? 0),
+    height: Number(geometry.height ?? 0),
+  };
+}
+
+function styleOf(node: Record<string, unknown>): Record<string, string | number | boolean> {
+  const style = asRecord(node.style) ?? {};
+  const out: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(style)) {
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function normalizePackageNode(value: unknown): RenderNodeIr {
+  const node = asRecord(value);
+  if (node === undefined) {
+    throw new Error("package scene root must be an object");
+  }
+  const id = String(node.id ?? "node");
+  const capability =
+    typeof node.capabilityId === "string"
+      ? node.capabilityId
+      : typeof node.capability === "string"
+        ? node.capability
+        : typeof node.kind === "string"
+          ? `core.${node.kind}`
+          : "core.rect";
+  const children = Array.isArray(node.children)
+    ? node.children.map(normalizePackageNode)
+    : undefined;
+  const kind =
+    children !== undefined && children.length > 0
+      ? "group"
+      : capabilityKind(capability);
+  const label =
+    typeof node.text === "string"
+      ? node.text
+      : typeof asRecord(node.accessibility)?.label === "string"
+        ? String(asRecord(node.accessibility)!.label)
+        : id;
+  const base = {
+    id,
+    capabilityId: capability,
+    geometry: geometryOf(node),
+    style: styleOf(node),
+    accessibility: { label },
+    fallback: typeof node.fallback === "string" ? node.fallback : label,
+    sourceMap: unknownRange,
+  };
+
+  if (kind === "group") {
+    return { ...base, kind: "group", children: children ?? [] };
+  }
+  if (kind === "text") {
+    return {
+      ...base,
+      kind: "text",
+      text: typeof node.text === "string" ? node.text : label,
+    };
+  }
+  if (kind === "connector") {
+    const from = asRecord(node.from);
+    const to = asRecord(node.to);
+    return {
+      ...base,
+      kind: "connector",
+      from: {
+        nodeId: String(from?.nodeId ?? from?.id ?? "from"),
+        ...(typeof from?.anchor === "string" ? { anchor: from.anchor } : {}),
+      },
+      to: {
+        nodeId: String(to?.nodeId ?? to?.id ?? "to"),
+        ...(typeof to?.anchor === "string" ? { anchor: to.anchor } : {}),
+      },
+    };
+  }
+  return { ...base, kind: "rect" };
+}
+
+function normalizePackageTimeline(value: unknown, index: number): TimelineCueIr {
+  const cue = asRecord(value) ?? {};
+  return {
+    id: String(cue.id ?? `cue-${index}`),
+    at: Number(cue.at ?? 0),
+    duration: Number(cue.duration ?? 0),
+    target: String(cue.target ?? ""),
+    action: String(cue.action ?? "enter"),
+    sourceMap: unknownRange,
+  };
+}
+
+function lowerPackageScene(
+  scene: PackageSceneAst,
+  options: LowerExplainerSceneOptions,
+): Result<SceneRender> {
+  const defaults = options.defaults ?? {};
+  const roots = scene.roots.map(normalizePackageNode);
+  const timeline = (scene.timeline ?? []).map(normalizePackageTimeline);
+  if (roots.length === 0) {
+    return invalidScene(
+      "Embedded @scene must emit at least one scene.roots node.",
+    );
+  }
+  if (timeline.length === 0) {
+    return invalidScene(
+      "Embedded @scene must emit at least one scene.timeline cue.",
+    );
+  }
+  const id = defaults.id ?? "embedded";
+  const title = defaults.title ?? "Embedded scene";
+  const sceneIr: SceneIr = {
+    id,
+    title,
+    summary: defaults.summary ?? title,
+    roots,
+    camera: [],
+    timeline,
+    narration: defaults.narration ?? "",
+    interactions: [],
+    responsive: [],
+    accessibility: {
+      label: title,
+      readingOrder: roots.map((node) => node.id),
+    },
+    fallback: defaults.fallback ?? title,
+    sourceMap: unknownRange,
+  };
+  return validateSceneRender(sceneIr, unknownRange);
+}
+
+/**
+ * Lowers an embedded slide `@scene` value to `{ kind: "scene", scene }`.
+ *
+ * Returns diagnostics when the input is not a recognized scene form or the
+ * lowered IR fails strict `SceneIr` validation.
+ */
+export function lowerExplainerScene(
+  scene: unknown,
+  options: LowerExplainerSceneOptions = {},
+): Result<SceneRender> {
+  // Prefer preserved package roots/timeline when non-empty (PackageSceneIrAst).
+  if (isPackageSceneAst(scene) && scene.roots.length > 0) {
+    try {
+      return lowerPackageScene(scene, options);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Package scene lowering failed.";
+      return invalidScene(message);
+    }
+  }
+
+  if (isEmbeddedSceneSource(scene)) {
+    if (scene.form !== "native") {
+      return invalidScene(
+        'Expected native embedded-scene-source; package form should be parsed first.',
+      );
+    }
+    const parsed = parseNativeEmbeddedScene(scene.body);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        diagnostics: parsed.diagnostics.map((item) =>
+          diagnostic(
+            "EXPLAINER_SCENE_INVALID",
+            item.severity,
+            item.message,
+            item.range,
+          ),
+        ),
+      };
+    }
+    return lowerNativeSceneAst(parsed.value, options);
+  }
+
+  if (!isSceneAst(scene)) {
+    if (isPackageSceneAst(scene)) {
+      return invalidScene(
+        "Embedded @scene must emit at least one scene.roots node.",
+      );
+    }
+    return invalidScene(
+      'Expected an embedded @scene AST (native SceneAst, package-scene, or native source).',
+    );
+  }
+
+  return lowerNativeSceneAst(scene, options);
 }

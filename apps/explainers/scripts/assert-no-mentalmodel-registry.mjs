@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 /**
- * Fails if the deck-registry module graph still imports any MentalModel.tsx.
- * MentalModel.tsx files may remain on disk; they must not be reachable from
- * apps/explainers/src/core/deck-registry.ts.
+ * Assert that `apps/explainers/src/core/deck-registry.ts` does not reach any
+ * deck `MentalModel.tsx` via static relative imports (transitive module graph).
+ *
+ * Registry is packages-only: MentalModel.tsx files may remain on disk but must
+ * not be reachable from the registry import graph. Always hard-fails on hits.
+ *
+ * Usage:
+ *   node scripts/assert-no-mentalmodel-registry.mjs
+ *   npm run assert:no-mentalmodel-registry
  */
 
 import { readFileSync, existsSync, statSync } from "node:fs";
@@ -95,11 +101,11 @@ if (!existsSync(REGISTRY)) {
 const hits = walkRegistryGraph(REGISTRY);
 if (hits.length > 0) {
   console.error(
-    "deck-registry.ts still imports MentalModel.tsx via the registry path:",
+    [
+      "deck-registry.ts still imports MentalModel.tsx via the registry path:",
+      ...hits.sort().map((hit) => `  - ${relative(ROOT, hit)}`),
+    ].join("\n"),
   );
-  for (const hit of hits.sort()) {
-    console.error(`  - ${relative(ROOT, hit)}`);
-  }
   process.exit(1);
 }
 

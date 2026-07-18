@@ -42,6 +42,21 @@ describe("resolveCapabilityId", () => {
     expect(resolveCapabilityId(node)).toBe("core.span-map");
   });
 
+  test("falls back to authored capability alias", () => {
+    const node: RectNodeIr = {
+      kind: "rect",
+      id: "box",
+      capability: "core.rect",
+      geometry: { x: 0, y: 0, width: 10, height: 10 },
+      style: {},
+      accessibility: { label: "Box" },
+      fallback: "Box",
+      sourceMap,
+    };
+
+    expect(resolveCapabilityId(node)).toBe("core.rect");
+  });
+
   test("component nodes resolve to their capability id", () => {
     const node: ComponentNodeIr = {
       kind: "component",

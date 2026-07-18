@@ -3,10 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Lower explainer AST metadata and slide text into a DeckPackage.
-//!
-//! Scene / `render` lowering is intentionally deferred: this stage maps
-//! deck fields and slide copy only, leaving `render` undefined.
+//! Lower explainer AST into a DeckPackage, including slide `@scene` → SceneIr.
 
 import type { ExplainerAst, SlideAst } from "@aiperf/flow-language";
 import {
@@ -22,6 +19,8 @@ import {
   type SourceRange,
 } from "@aiperf/flow-schema";
 
+import { lowerExplainerScene } from "./lower-explainer-scene.js";
+
 /** Deck packaging fields required by DeckPackage beyond today's ExplainerAst. */
 export type ExplainerDeckMetadata = Readonly<{
   route: string;
@@ -35,7 +34,7 @@ export type ExplainerDeckMetadata = Readonly<{
 }>;
 
 /**
- * Explainer input for text-only DeckPackage lowering.
+ * Explainer input for DeckPackage lowering.
  *
  * Extends `ExplainerAst` with `storagePrefix`, `classPrefix`, and `hub`
  * (and optional `css` / `glossary`) so packages validate before language AST
@@ -104,8 +103,9 @@ function lowerSlide(
     diagnostics,
   );
 
-  const pkg: SlidePackage = {
-    id: slideIdFromTitle(title || slide.title || `slide-${index}`, index),
+  const id = slideIdFromTitle(title || slide.title || `slide-${index}`, index);
+  let pkg: SlidePackage = {
+    id,
     eyebrow: slide.eyebrow ?? "",
     title,
     lede: slide.lede ?? "",
@@ -115,10 +115,27 @@ function lowerSlide(
   };
 
   if (slide.term !== undefined) {
-    return {
+    pkg = {
       ...pkg,
       term: { word: slide.term.word, meaning: slide.term.meaning },
     };
+  }
+
+  if (slide.sceneIr !== undefined) {
+    const sceneResult = lowerExplainerScene(slide.sceneIr, {
+      defaults: {
+        id: `scene-${id}`,
+        title: title || id,
+        summary: slide.lede || title || id,
+        narration,
+        fallback: slide.caption || title || id,
+      },
+    });
+    if (!sceneResult.ok) {
+      diagnostics.push(...sceneResult.diagnostics);
+    } else {
+      pkg = { ...pkg, render: sceneResult.value };
+    }
   }
 
   return pkg;
@@ -152,8 +169,8 @@ function collectGlossary(
 }
 
 /**
- * Maps explainer AST metadata and slide text into a DeckPackage
- * (`schemaVersion: 1`) without lowering scenes (`render` stays undefined).
+ * Maps explainer AST metadata, slide text, and embedded `@scene` bodies into
+ * a DeckPackage (`schemaVersion: 1`).
  */
 export function lowerExplainerToDeckPackage(
   ast: ExplainerLowerInput,

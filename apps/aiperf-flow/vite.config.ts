@@ -25,7 +25,7 @@ export default defineConfig({
     strictPort: true,
     open: false,
     fs: {
-      allow: [rootDir],
+      allow: [rootDir, path.join(rootDir, "../explainers/src/decks-generated")],
     },
   },
 });

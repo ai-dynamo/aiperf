@@ -14,7 +14,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Authors write explainer decks as `.flow` files. The real `@aiperf/flow-compiler` pipeline compiles them into a stable **DeckPackage** artifact. The legacy `apps/explainers` shell loads those packages and plays them with **full animation** and **voiced narration**, matching today’s SPA behavior and visual parity.
 
-**Done means all eight current `DECK_REGISTRY` decks are `.flow`-backed, animated, voiced, and free of React `MentalModel` / hand-authored `content.ts` on the registry path.** There is **no** MentalModel escape hatch.
+**Done means all eight current `DECK_REGISTRY` decks are `.flow`-backed (embedded `@scene` parse → DeckPackage), packages-only on the registry path, animated, voiced, and free of React `MentalModel` / hand-authored `content.ts` / dual-load fallback.** There is **no** MentalModel escape hatch.
 
 ## Locked decisions
 
@@ -65,10 +65,11 @@ apps/explainers adapter  packageToDeckDefinition(pkg)
 
 **Ownership**
 
-- **Authoring:** `.flow` source under a dedicated explainers decks tree (e.g. `apps/aiperf-flow/explainers/decks/` or `apps/explainers/decks-flow/`). One file (or package entry) per deck.
-- **Compile:** real Flow compiler only. Delete `apps/aiperf-flow/scripts/compile-explainer-flows.mjs` and the hand-maintained `compiled-decks.ts` regex path once the real pipeline is green.
-- **Runtime:** `apps/explainers` never parses `.flow` at runtime; it only loads DeckPackage artifacts.
-- **Diagrams:** port every React `MentalModel.tsx` into animated `@scene` + timeline IR.
+- **Authoring:** Exactly **one `.flow` file per deck**. Path: `apps/explainers/decks-flow/<deck-id>.flow`. That single file must contain the full deck: hub/metadata, every slide’s text + narration, every diagram as inline `render: @scene { … }` with timelines, and optional `finalCard` scene. **No** companion fragment trees (`decks-flow/scenes/…`, `.flowfrag`, per-slide sidecar files, or MentalModel React modules on the registry path).
+- **Expressiveness:** The `explainer` + nested `@scene` surface must be rich enough to replace today’s React MentalModels (nested boxes/labels/arrows/paths, multi-cue timelines, theme roles). If a diagram feature exists in a legacy MentalModel, it must be expressible inside that one `.flow` file — extend grammar/lowering/SceneRenderer, do not split the deck across files.
+- **Compile:** real Flow compiler only — explainer documents go through embedded scene parse (`parsePackageSceneBody` / `parseNativeEmbeddedScene`) and `lowerExplainerScene` / `compileExplainerSource`. Delete `apps/aiperf-flow/scripts/compile-explainer-flows.mjs` and the hand-maintained `compiled-decks.ts` regex path once the real pipeline is green.
+- **Runtime:** `apps/explainers` never parses `.flow` at runtime; it only loads DeckPackage artifacts. Registry is **packages-only** (no legacy dual-load).
+- **Diagrams:** port every React `MentalModel.tsx` into animated `@scene` + timeline IR **inside the same deck `.flow`**.
 
 ## Data model — DeckPackage
 
@@ -111,7 +112,70 @@ type SlidePackage = {
 
 `SceneIr` is the existing Flow scene IR (roots, capabilities, theme roles, **timeline cues**). No alternate render kinds.
 
-### Authoring surface
+## Language surface
+
+Authoring is **one `.flow` file per deck** at `apps/explainers/decks-flow/<deck-id>.flow`. That file is the entire deck: hub/metadata, every slide’s copy + narration, every diagram, and optional `finalCard`. The compiler does not assemble decks from companion trees.
+
+**Packages-only runtime:** `DECK_REGISTRY` loads **only** DeckPackage artifacts from `apps/explainers/src/decks-generated/` via `packageToDeckDefinition`. There is no dual-load / legacy React deck fallback on the registry path. Compile emits packages; the shell never parses `.flow` at runtime.
+
+### Slide diagrams — embedded `@scene` parse
+
+Diagram slides use only `render: @scene { … }`. Bodies are captured and parsed through the shared **embedded scene** path in `@aiperf/flow-language` (`embedded-scene.ts` + `parseNativeEmbeddedScene`), then lowered by `@aiperf/flow-compiler` (`lowerExplainerScene`). There is no alternate `render` kind and no regex / `Function()` scene parse.
+
+```flow
+render: @scene {
+  roots: [ /* scene nodes */ ]
+  timeline: [ /* non-empty cues */ ]
+}
+```
+
+Lowering emits `{ kind: "scene"; scene: SceneIr }` into `SlidePackage.render` (and into `finalCard` when authored as a scene).
+
+Two dialects share one capture/lower path:
+
+| Dialect | Body shape | Parse | Lower |
+|---|---|---|---|
+| **package** (decks-flow — required for the eight registry decks) | `roots: […]`, optional `timeline` / `camera` | `captureEmbeddedScene` → `parsePackageSceneBody` → `package-scene` | `lowerExplainerScene` normalizes to strict `SceneIr` |
+| **native** (cinematic / shared scene rules) | `rect` / `text` / `connector` / `timeline` / `camera` statements | `embedded-scene-source` + `parseNativeEmbeddedScene` (same Chevrotain scene rules as cinematic examples) | existing document `lower()` via `lowerExplainerScene` |
+
+Dialect is detected by a leading `roots:` / `timeline:` / `camera:` field; otherwise the body is native. `@theme.*` package style refs stay as strings for runtime theme resolution. Public exports: `captureEmbeddedScene`, `detectEmbeddedSceneForm`, `parsePackageSceneBody`, `parseNativeEmbeddedScene`, `lowerExplainerScene`, `compileExplainerSource`.
+
+### Roots capabilities
+
+Scene `roots` (and nested `children`) are Scene IR nodes. The explainer diagram vocabulary used by `SceneRenderer` and deck ports is:
+
+| Capability | Role |
+|---|---|
+| `core.rect` | Boxes / panels |
+| `core.text` | Labels |
+| `core.arrow` | Directed edges (also accepts line/path-shaped arrow nodes) |
+| `core.connector` | Links between nodes |
+
+Nodes carry `id`, `capability`, `layout` (or geometry), optional `style` / theme roles (`@theme.…`), optional `text`, and optional nested `children`. Extend grammar/lowering/`SceneRenderer` if a legacy MentalModel feature cannot be expressed with these primitives — do not invent a second render path.
+
+### Timeline cues
+
+Every slide with `render: @scene` **must** carry a non-empty `timeline` array. Cues are finite `{ id, at, duration, target, action }` entries (enter / draw / emphasis and related motion roles). The explainer compile path fail-closes on empty timelines. Runtime plays cues from slide start, restarts on revisit, and honors `prefers-reduced-motion`.
+
+### No `@mental_model` / no registry dual-load
+
+- Source must not use `@mental_model(...)`.
+- DeckPackage / schema reject any `render.kind` other than `"scene"` (including `"mental_model"`).
+- `DECK_REGISTRY` must not import deck-local `MentalModel.tsx` / `content.ts` modules and must not fall back to legacy deck modules when a package is missing (fail closed / build gate instead).
+
+### Forbidden fragments
+
+Do **not** author or consume:
+
+- `decks-flow/scenes/` (or any parallel scene tree)
+- `.flowfrag` / per-slide sidecar `.flow` files
+- `#include` / fragment assembly that splits one deck across files
+- Hand-maintained React MentalModel modules on the registry path
+- Dual-load helpers that prefer package-then-legacy for registry entries
+
+Discard any such trees if they appear in worktrees or ports. One deck → one `.flow` → one DeckPackage → packages-only registry entry.
+
+### Authoring example
 
 ```flow
 explainer "Rust Architecture" {
@@ -139,20 +203,28 @@ explainer "Rust Architecture" {
     caption: "..."
 
     render: @scene {
-      roots: [ /* boxes, labels, arrows */ ]
+      roots: [
+        {
+          id: "shell"
+          capability: "core.rect"
+          layout: { x: 80, y: 120, width: 540, height: 160 }
+          children: [
+            {
+              id: "label"
+              capability: "core.text"
+              text: "aiperf binary"
+              layout: { x: 100, y: 180, width: 500, height: 40 }
+            }
+          ]
+        }
+      ]
       timeline: [
-        /* enter / draw / emphasis cues — required for diagram slides */
+        { id: "enter-shell", at: 0, duration: 400, target: "shell", action: "enter" }
       ]
     }
   }
 }
 ```
-
-Forbidden in source and IR:
-
-- `@mental_model(...)`
-- `render.kind !== "scene"`
-- Runtime imports of deck-local `MentalModel.tsx` from the registry path
 
 ## Compiler & language
 
@@ -199,10 +271,10 @@ function packageToDeckDefinition(pkg: DeckPackage): DeckDefinition
 ```
 
 - Maps package fields onto existing `DeckDefinition`.
-- `MentalModel` becomes a thin wrapper that selects `pkg.slides[i].render?.scene` and mounts `SceneRenderer`.
+- Diagram slot selects `pkg.slides[i].render?.scene` and mounts `SceneRenderer`.
 - `FinalCard` mounts `SceneRenderer` when `finalCard` is present.
 - `css` may still style shell chrome (layout wrappers); diagram pixels come from Scene IR + theme.
-- `DECK_REGISTRY` imports compiled packages only (no `content.ts`, no `MentalModel.tsx` imports).
+- **Packages-only:** `DECK_REGISTRY` imports / loads compiled DeckPackages only (no `content.ts`, no `MentalModel.tsx`, no legacy dual-load fallback).
 
 ## Error handling
 
@@ -235,20 +307,23 @@ Order (suggested): `rust-architecture` → `slurm-velo` → `dynosim` → `segme
 ### Phase 3 — Cleanup
 - Delete unused `MentalModel.tsx` / `content.ts` / deck `styles.ts` diagram rules once unused
 - Delete regex compile script and `compiled-decks.ts` generation path
-- CI: registry is package-only; compile check on all eight `.flow` files
+- Remove dual-load (`deckFromPackageOrLegacy` / legacy deck imports) so registry is packages-only
+- CI: registry is package-only; compile check on all eight `.flow` files; MentalModel registry import assert hard-fails
 
 ## Testing / done bar
 
 **Unit**
 
 - Schema round-trip for DeckPackage
-- Compiler: each deck `.flow` compiles; unique ids/routes; narration non-empty; timelines present on diagram slides
+- Embedded scene parse: package-form `roots`/`timeline` via `parsePackageSceneBody`; native form via `parseNativeEmbeddedScene`; dialect detection; lowering to `SceneIr`
+- Compiler: each deck `.flow` compiles via `compileExplainerSource` / explainer lowerer; unique ids/routes; narration non-empty; timelines present on diagram slides
 
 **Integration**
 
-- `validateDeckRegistry` still passes on package-backed registry
+- `validateDeckRegistry` passes on a **packages-only** registry (no dual-load)
+- Assert script / CI: `deck-registry` does not statically import any deck `MentalModel.tsx`
 - Slide counts match legacy (or documented intentional deltas)
-- Adapter produces working `DeckDefinition` for ExplainerShell
+- Adapter produces working `DeckDefinition` for ExplainerShell from generated packages only
 
 **E2E / visual**
 
@@ -258,10 +333,10 @@ Order (suggested): `rust-architecture` → `slurm-velo` → `dynosim` → `segme
 
 **Done checklist**
 
-- [ ] All 8 decks authored only as `.flow`
-- [ ] Real compiler produces DeckPackages (no regex compiler)
-- [ ] Registry imports packages only
-- [ ] No React MentalModel on registry path
+- [ ] All 8 decks authored only as `.flow` (package-form embedded `@scene`)
+- [ ] Real compiler + embedded scene parse produce DeckPackages (no regex / `Function()` scene parse)
+- [x] Registry is packages-only (`decks-generated` → `packageToDeckDefinition`; no legacy dual-load)
+- [ ] No React MentalModel / `content.ts` on registry path
 - [ ] Diagram slides animated via timeline
 - [ ] Voiced narration works through ExplainerShell
 - [ ] Routes/ids unchanged

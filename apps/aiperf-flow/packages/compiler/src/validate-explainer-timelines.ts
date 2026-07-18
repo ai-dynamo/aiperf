@@ -3,12 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Fail-closed validation that every diagram slide carries a non-empty timeline.
+//! Fail-closed validation that every diagram slide carries non-empty roots
+//! and timeline cues.
 //!
 //! Explainer decks may include text-only slides without `render`. Any slide
-//! that mounts a `render.kind === "scene"` diagram must drive motion through
-//! Flow timeline cues; empty timelines are rejected so legacy CSS/SVG motion
-//! cannot sneak back in through silent no-ops.
+//! that mounts a `render.kind === "scene"` diagram must emit at least one
+//! `scene.roots` node and drive motion through Flow timeline cues; empty
+//! roots or timelines are rejected so silent no-ops cannot sneak back in.
 
 import {
   diagnostic,
@@ -28,18 +29,28 @@ export function validateExplainerTimelines(
     if (slide.render?.kind !== "scene") {
       continue;
     }
-    if (slide.render.scene.timeline.length > 0) {
-      continue;
+    if (slide.render.scene.roots.length === 0) {
+      diagnostics.push(
+        diagnostic(
+          "EXPLAINER_SCENE_ROOTS_REQUIRED",
+          "error",
+          `Slide "${slide.id}" has render.kind "scene" but scene.roots is empty.`,
+          slide.render.scene.sourceMap,
+          "Lower embedded @scene roots into at least one diagram node.",
+        ),
+      );
     }
-    diagnostics.push(
-      diagnostic(
-        "EXPLAINER_TIMELINE_REQUIRED",
-        "error",
-        `Slide "${slide.id}" has render.kind "scene" but scene.timeline is empty.`,
-        slide.render.scene.sourceMap,
-        "Add at least one timeline cue that drives enter, draw, or emphasis motion.",
-      ),
-    );
+    if (slide.render.scene.timeline.length === 0) {
+      diagnostics.push(
+        diagnostic(
+          "EXPLAINER_TIMELINE_REQUIRED",
+          "error",
+          `Slide "${slide.id}" has render.kind "scene" but scene.timeline is empty.`,
+          slide.render.scene.sourceMap,
+          "Add at least one timeline cue that drives enter, draw, or emphasis motion.",
+        ),
+      );
+    }
   }
 
   if (hasErrors(diagnostics)) {

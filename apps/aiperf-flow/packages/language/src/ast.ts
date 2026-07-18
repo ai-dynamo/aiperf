@@ -264,7 +264,12 @@ export type SlideAst = AstNode<"slide"> &
     term?: Readonly<{ word: string; meaning: string }>;
     points: readonly string[];
     caption: string;
-    sceneIr?: SceneAst;
+    /**
+     * Embedded diagram from `render: @scene { ... }`.
+     * Package form is parsed immediately; native cinematic form is captured as
+     * source for the shared scene parser (`rect` / `connector` / `timeline`).
+     */
+    sceneIr?: unknown;
   }>;
 
 export type ExplainerHubAst = Readonly<{

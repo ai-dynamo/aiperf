@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { usePrefersReducedMotion } from "./diagram/usePrefersReducedMotion";
 import { narrationSupported, stopNarration, unlockSpeech } from "./narration";
-import type { DeckDefinition, SlideDefinition } from "./types";
+import type { DeckDefinition, MentalModelProps } from "./types";
 import { slideNarrations } from "./types";
 import {
   formatSlideDuration,
@@ -24,14 +24,6 @@ import {
   useCanvasState,
   useHostTheme,
 } from "./ui";
-
-type MentalModelProps = {
-  slideIndex: number;
-  slide: SlideDefinition;
-  playing: boolean;
-  restartKey: number;
-  reducedMotion: boolean;
-};
 
 export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
   const t = useHostTheme();

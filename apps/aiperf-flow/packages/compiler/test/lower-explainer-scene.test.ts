@@ -164,6 +164,50 @@ describe("lowerExplainerScene", () => {
     expect(result.diagnostics[0]?.code).toBe("EXPLAINER_SCENE_INVALID");
   });
 
+  test("lowers a decks-flow package-scene to SceneRender", () => {
+    const result = lowerExplainerScene(
+      {
+        kind: "package-scene",
+        roots: [
+          {
+            id: "box",
+            capability: "core.rect",
+            layout: { x: 10, y: 20, width: 100, height: 40 },
+            style: { fill: "@theme.surface.primary" },
+          },
+        ],
+        timeline: [
+          {
+            id: "enter-box",
+            at: 0,
+            duration: 400,
+            target: "box",
+            action: "enter",
+          },
+        ],
+        camera: [],
+      },
+      { defaults: { id: "diagram", title: "Diagram", summary: "A box" } },
+    );
+
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.kind).toBe("scene");
+    expect(result.value.scene.roots[0]).toMatchObject({
+      kind: "rect",
+      id: "box",
+      geometry: { x: 10, y: 20, width: 100, height: 40 },
+      style: { fill: "@theme.surface.primary" },
+    });
+    expect(result.value.scene.timeline[0]).toMatchObject({
+      id: "enter-box",
+      action: "enter",
+      target: "box",
+    });
+  });
+
   test("fails when lowered SceneIr is schema-invalid", () => {
     const result = lowerExplainerScene(
       validScene({

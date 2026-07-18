@@ -63,22 +63,6 @@ function sampleAst(
         term: { word: "aiperf-cli", meaning: "Native CLI crate" },
         points: ["CLI and engine share one process."],
         caption: "Product shell overview",
-        sceneIr: {
-          kind: "scene",
-          id: "ignored",
-          title: "Ignored",
-          summary: {
-            kind: "summary",
-            text: "Should not be lowered yet.",
-            sourceMap: range(),
-          },
-          renderDeclarations: [],
-          cameras: [],
-          timelines: [],
-          interactions: [],
-          responsiveVariants: [],
-          sourceMap: range(),
-        },
       },
     ],
     ...overrides,
@@ -121,6 +105,57 @@ describe("lowerExplainerToDeckPackage", () => {
     expect(result.value.glossary).toEqual([
       { word: "aiperf-cli", meaning: "Native CLI crate" },
     ]);
+  });
+
+  test("lowers package-scene slide.sceneIr into render.scene with roots and timeline", () => {
+    const result = lowerExplainerToDeckPackage(
+      sampleAst({
+        slides: [
+          {
+            kind: "slide",
+            sourceMap: range(),
+            eyebrow: "One box",
+            title: "A single animated rectangle",
+            lede: "Minimal diagram",
+            narration: "This slide shows one rectangle entering the scene.",
+            points: ["One core.rect node"],
+            caption: "Minimal scene with enter cue",
+            sceneIr: {
+              kind: "package-scene",
+              roots: [
+                {
+                  id: "box",
+                  capability: "core.rect",
+                  layout: { x: 80, y: 120, width: 160, height: 72 },
+                  style: { fill: "#3FA266" },
+                },
+              ],
+              timeline: [
+                {
+                  id: "enter-box",
+                  at: 0,
+                  duration: 400,
+                  target: "box",
+                  action: "enter",
+                },
+              ],
+              camera: [],
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const scene = result.value.slides[0]?.render?.scene;
+    expect(result.value.slides[0]?.render?.kind).toBe("scene");
+    expect(scene?.roots.length).toBeGreaterThanOrEqual(1);
+    expect(scene?.timeline.length).toBeGreaterThan(0);
+    expect(scene?.timeline.some((cue) => cue.action === "enter")).toBe(true);
   });
 
   test("rejects empty narration", () => {
@@ -268,6 +303,9 @@ describe("explainer DeckPackage pipeline", () => {
     const slide = validated.value.slides[0]!;
     expect(slide.narration.trim().length).toBeGreaterThan(0);
     expect(slide.render?.kind).toBe("scene");
+
+    const roots = slide.render?.scene.roots ?? [];
+    expect(roots.length).toBeGreaterThanOrEqual(1);
 
     const timeline = slide.render?.scene.timeline ?? [];
     expect(timeline.length).toBeGreaterThan(0);

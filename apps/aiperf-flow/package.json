@@ -12,6 +12,9 @@
     "flow:check": "npm run flow:build && npm run flow:test",
     "flow:verify": "npm run flow:check && npm run e2e && npm run measure:runtime -- --input test-results/runtime-metrics.json --profile reference --fail-on-budget",
     "measure:runtime": "node scripts/measure-runtime.mjs",
+    "build:explainer-packages": "node scripts/build-explainer-packages.mjs",
+    "assert:no-mentalmodel-registry": "npm --prefix ../explainers run assert:no-mentalmodel-registry",
+    "assert:deck-packages": "npm --prefix ../explainers run assert:deck-packages",
     "preview:test": "vitest run preview/*.test.tsx --environment jsdom"
   },
   "devDependencies": {

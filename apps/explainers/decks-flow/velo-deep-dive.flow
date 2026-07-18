@@ -1,0 +1,1144 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Velo deep dive — ten cellular transport mechanisms.
+//! Ported from apps/explainers/src/decks/velo-deep-dive/{index.tsx,content.ts,MentalModel.tsx}.
+
+explainer "Velo deep dive" {
+  id: "velo-deep-dive"
+  route: "/velo-deep-dive"
+  topic: "cellular-transport"
+  storagePrefix: "velo-deep-dive-explainer"
+  classPrefix: "deck-velo-deep"
+  eyebrowLabel: "VELO DEEP DIVE"
+  startGateTitle: "Velo deep dive"
+
+  hub: {
+    title: "cellular transport mechanisms"
+    highlight: "Velo deep dive"
+    description: "Ten mechanisms behind AIPerf's cellular Velo plane: connection resolve, registration reply, synchronized START, MessagePack, heartbeat, partition shipping, merge, phaser replay, dataset floodgate, and the aggregator tree. Deeper than the beginner SLURM & Velo tour."
+  }
+
+  slide "Resolve the controller over Velo" {
+    eyebrow: "1 · Connection"
+    title: "Resolve the controller over Velo"
+    lede: "A cell starts from one known coordinate: a TCP or UDS endpoint. The Velo hello exchange turns that address into routable controller PeerInfo, and the cell registers the peer before any protocol traffic flows."
+    narration: "A cell begins from one known coordinate. The Velo hello exchange resolves it into routable controller PeerInfo, and the cell registers that peer before any protocol traffic."
+    term: {
+      word: "register_peer"
+      meaning: "Velo call that records a resolved coordinate as an addressable peer so later unary and active-message calls can route to it."
+    }
+    points: [
+      "SLURM derives the coordinate from `SLURM_*`; Kubernetes from the operator address.",
+      "`_hello` establishes the return route before `register_peer(controller)`.",
+      "Evidence: `rust/runtime/src/cellular/transport/connect.rs`, `velo_transport.rs`."
+    ]
+    caption: "endpoint → _hello → register_peer(controller)."
+
+    render: @scene {
+      roots: [
+        {
+          id: "hdr0"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "CONNECTION RESOLVE" }
+          children: [
+            { id: "hdr0-text" capability: "core.text" text: "CONNECTION RESOLVE" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "hdr0-cap" capability: "core.text" text: "endpoint → _hello → register_peer(controller)." layout: { x: 320, y: 34, width: 350, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "cell0"
+          capability: "core.rect"
+          layout: { x: 40, y: 140, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "Cell k: known coordinate" }
+          children: [
+            { id: "cell0-title" capability: "core.text" text: "Cell k" layout: { x: 48, y: 168, width: 144, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "cell0-detail" capability: "core.text" text: "known coordinate" layout: { x: 48, y: 190, width: 144, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a0a" capability: "core.path" d: "M200 180 H300" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } },
+        { id: "hello0" capability: "core.text" text: "_hello" layout: { x: 220, y: 158, width: 60, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.secondary } },
+        {
+          id: "velo0"
+          capability: "core.rect"
+          layout: { x: 300, y: 140, width: 170, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "Velo transport: resolve PeerInfo" }
+          children: [
+            { id: "velo0-title" capability: "core.text" text: "Velo transport" layout: { x: 308, y: 168, width: 154, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "velo0-detail" capability: "core.text" text: "resolve PeerInfo" layout: { x: 308, y: 190, width: 154, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a0b" capability: "core.path" d: "M470 180 H540" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "ctrl0"
+          capability: "core.rect"
+          layout: { x: 540, y: 140, width: 140, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          accessibility: { label: "Controller: register_peer" }
+          children: [
+            { id: "ctrl0-title" capability: "core.text" text: "Controller" layout: { x: 548, y: 168, width: 124, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "ctrl0-detail" capability: "core.text" text: "register_peer" layout: { x: 548, y: 190, width: 124, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "src0"
+          capability: "core.rect"
+          layout: { x: 210, y: 280, width: 280, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "coordinate sources" }
+          children: [
+            { id: "src0-title" capability: "core.text" text: "tcp:// · uds:// · SLURM_* · k8s" layout: { x: 218, y: 300, width: 264, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "src0-detail" capability: "core.text" text: "coordinate sources" layout: { x: 218, y: 320, width: 264, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "motion0" capability: "core.path" d: "M110 175 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+      ]
+      timeline: [
+        { id: "s0-hdr0" at: 0 duration: 280 target: "hdr0" action: "enter" },
+        { id: "s0-cell0" at: 220 duration: 280 target: "cell0" action: "enter" },
+        { id: "s0-a0a" at: 440 duration: 420 target: "a0a" action: "draw" },
+        { id: "s0-hello0" at: 500 duration: 220 target: "hello0" action: "enter" },
+        { id: "s0-velo0" at: 660 duration: 280 target: "velo0" action: "enter" },
+        { id: "s0-a0b" at: 880 duration: 420 target: "a0b" action: "draw" },
+        { id: "s0-ctrl0" at: 1100 duration: 280 target: "ctrl0" action: "enter" },
+        { id: "s0-src0" at: 1320 duration: 280 target: "src0" action: "enter" },
+        { id: "s0-motion0" at: 1540 duration: 420 target: "motion0" action: "draw" }
+      ]
+    }
+  }
+
+  slide "The controller answers with the run envelope" {
+    eyebrow: "2 · Registration"
+    title: "The controller answers with the run envelope"
+    lede: "Each cell sends a CellRegister carrying its identity. The controller decodes it, registers the cell peer for the return path, looks up the pre-sliced protocol-v2 envelope for that cell id, and returns it inside a RegisterReply alongside the run-wide START handle."
+    narration: "Each cell sends a CellRegister. The controller decodes its identity, registers the return route, looks up the pre-sliced protocol-v2 envelope, and replies with it plus the shared START handle."
+    term: {
+      word: "RegisterReply"
+      meaning: "Unary reply carrying the cell's sliced protocol-v2 envelope bytes plus the shared start EventHandle."
+    }
+    points: [
+      "`register_peer(cell)` fixes the controller→cell return route.",
+      "`spec_for(cell_id)` is a pure lookup into the pre-partitioned envelopes.",
+      "Reply = envelope bytes + start_event EventHandle; identity is `cell_id: u32`."
+    ]
+    caption: "decode CellRegister → spec_for(cell_id) → RegisterReply."
+
+    render: @scene {
+      roots: [
+        {
+          id: "hdr1"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "REGISTRATION REPLY" }
+          children: [
+            { id: "hdr1-text" capability: "core.text" text: "REGISTRATION REPLY" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "hdr1-cap" capability: "core.text" text: "decode CellRegister → spec_for(cell_id) → RegisterReply." layout: { x: 300, y: 34, width: 370, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "reg1"
+          capability: "core.rect"
+          layout: { x: 30, y: 150, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "CellRegister: cell_id u32" }
+          children: [
+            { id: "reg1-title" capability: "core.text" text: "CellRegister" layout: { x: 38, y: 172, width: 134, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "reg1-detail" capability: "core.text" text: "cell_id: u32" layout: { x: 38, y: 194, width: 134, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a1a" capability: "core.path" d: "M180 185 H225" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "peer1"
+          capability: "core.rect"
+          layout: { x: 225, y: 150, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          accessibility: { label: "register_peer: return route" }
+          children: [
+            { id: "peer1-title" capability: "core.text" text: "register_peer" layout: { x: 233, y: 172, width: 134, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "peer1-detail" capability: "core.text" text: "return route" layout: { x: 233, y: 194, width: 134, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a1b" capability: "core.path" d: "M375 185 H420" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "spec1"
+          capability: "core.rect"
+          layout: { x: 420, y: 150, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          accessibility: { label: "spec_for: pure lookup" }
+          children: [
+            { id: "spec1-title" capability: "core.text" text: "spec_for(id)" layout: { x: 428, y: 172, width: 134, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "spec1-detail" capability: "core.text" text: "pure lookup" layout: { x: 428, y: 194, width: 134, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a1c" capability: "core.path" d: "M570 185 H610" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a1d" capability: "core.path" d: "M495 220 V280" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "reply1"
+          capability: "core.rect"
+          layout: { x: 470, y: 280, width: 200, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "RegisterReply: envelope + start_event" }
+          children: [
+            { id: "reply1-title" capability: "core.text" text: "RegisterReply" layout: { x: 478, y: 302, width: 184, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "reply1-detail" capability: "core.text" text: "envelope + start_event" layout: { x: 478, y: 324, width: 184, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "motion1" capability: "core.path" d: "M110 170 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+      ]
+      timeline: [
+        { id: "s1-hdr1" at: 0 duration: 280 target: "hdr1" action: "enter" },
+        { id: "s1-reg1" at: 220 duration: 280 target: "reg1" action: "enter" },
+        { id: "s1-a1a" at: 440 duration: 420 target: "a1a" action: "draw" },
+        { id: "s1-peer1" at: 660 duration: 280 target: "peer1" action: "enter" },
+        { id: "s1-a1b" at: 880 duration: 420 target: "a1b" action: "draw" },
+        { id: "s1-spec1" at: 1100 duration: 280 target: "spec1" action: "enter" },
+        { id: "s1-a1c" at: 1320 duration: 420 target: "a1c" action: "draw" },
+        { id: "s1-a1d" at: 1540 duration: 420 target: "a1d" action: "draw" },
+        { id: "s1-reply1" at: 1760 duration: 280 target: "reply1" action: "enter" },
+        { id: "s1-motion1" at: 1980 duration: 420 target: "motion1" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Asynchronous arrival, one release" {
+    eyebrow: "3 · START barrier"
+    title: "Asynchronous arrival, one release"
+    lede: "Cells register at different times, but synchronized START holds them at a barrier. The Nth registration satisfies the controller's all-registered condition; triggering the shared start event wakes every awaiting cell together, so no cell dispatches early."
+    narration: "Cells register asynchronously but wait at the synchronized barrier. The Nth registration releases the controller, and triggering the shared start event wakes every cell together."
+    term: {
+      word: "all_registered → trigger"
+      meaning: "The controller counts registrations and fires the shared start event only when every cell is ready."
+    }
+    points: [
+      "Default START is synchronized; barrier-free and phaser are opt-in policies.",
+      "The barrier bounds cross-cell start skew without a shared wall clock.",
+      "Evidence: `rust/runtime/src/engine/cellular_controller.rs`."
+    ]
+    caption: "N registrations → trigger → all awaiters go Ready."
+
+    render: @scene {
+      roots: [
+        {
+          id: "hdr2"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "SYNCHRONIZED START" }
+          children: [
+            { id: "hdr2-text" capability: "core.text" text: "SYNCHRONIZED START" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "hdr2-cap" capability: "core.text" text: "N registrations → trigger → all awaiters go Ready." layout: { x: 320, y: 34, width: 350, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "c20"
+          capability: "core.rect"
+          layout: { x: 30, y: 280, width: 80, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "c20-title" capability: "core.text" text: "c0" layout: { x: 38, y: 300, width: 64, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "c20-detail" capability: "core.text" text: "register" layout: { x: 38, y: 320, width: 64, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "c21"
+          capability: "core.rect"
+          layout: { x: 130, y: 280, width: 80, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "c21-title" capability: "core.text" text: "c1" layout: { x: 138, y: 300, width: 64, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "c21-detail" capability: "core.text" text: "register" layout: { x: 138, y: 320, width: 64, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "c22"
+          capability: "core.rect"
+          layout: { x: 230, y: 280, width: 80, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "c22-title" capability: "core.text" text: "c2" layout: { x: 238, y: 300, width: 64, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "c22-detail" capability: "core.text" text: "register" layout: { x: 238, y: 320, width: 64, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "c23"
+          capability: "core.rect"
+          layout: { x: 330, y: 280, width: 80, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "c23-title" capability: "core.text" text: "c3" layout: { x: 338, y: 300, width: 64, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "c23-detail" capability: "core.text" text: "register" layout: { x: 338, y: 320, width: 64, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a20" capability: "core.path" d: "M70 280 C70 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        { id: "a21" capability: "core.path" d: "M170 280 C170 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        { id: "a22" capability: "core.path" d: "M270 280 C270 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        { id: "a23" capability: "core.path" d: "M370 280 C370 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "barrier2"
+          capability: "core.rect"
+          layout: { x: 460, y: 150, width: 180, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          accessibility: { label: "Barrier: all_registered → trigger" }
+          children: [
+            { id: "barrier2-title" capability: "core.text" text: "Barrier" layout: { x: 468, y: 178, width: 164, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "barrier2-detail" capability: "core.text" text: "all_registered → trigger" layout: { x: 468, y: 200, width: 164, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "start2"
+          capability: "core.rect"
+          layout: { x: 210, y: 110, width: 220, height: 54 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          accessibility: { label: "START event: wake all awaiters" }
+          children: [
+            { id: "start2-title" capability: "core.text" text: "START event" layout: { x: 218, y: 128, width: 204, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "start2-detail" capability: "core.text" text: "wake all awaiters" layout: { x: 218, y: 148, width: 204, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a2b" capability: "core.path" d: "M550 150 C520 120 470 130 430 137" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        { id: "motion2" capability: "core.path" d: "M350 300 V150" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+      ]
+      timeline: [
+        { id: "s2-hdr2" at: 0 duration: 280 target: "hdr2" action: "enter" },
+        { id: "s2-c20" at: 200 duration: 240 target: "c20" action: "enter" },
+        { id: "s2-c21" at: 320 duration: 240 target: "c21" action: "enter" },
+        { id: "s2-c22" at: 440 duration: 240 target: "c22" action: "enter" },
+        { id: "s2-c23" at: 560 duration: 240 target: "c23" action: "enter" },
+        { id: "s2-a20" at: 700 duration: 420 target: "a20" action: "draw" },
+        { id: "s2-a21" at: 820 duration: 420 target: "a21" action: "draw" },
+        { id: "s2-a22" at: 940 duration: 420 target: "a22" action: "draw" },
+        { id: "s2-a23" at: 1060 duration: 420 target: "a23" action: "draw" },
+        { id: "s2-barrier2" at: 1280 duration: 280 target: "barrier2" action: "enter" },
+        { id: "s2-a2b" at: 1500 duration: 420 target: "a2b" action: "draw" },
+        { id: "s2-start2" at: 1720 duration: 280 target: "start2" action: "enter" },
+        { id: "s2-motion2" at: 1940 duration: 420 target: "motion2" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Typed state becomes raw payload bytes" {
+    eyebrow: "4 · MessagePack"
+    title: "Typed state becomes raw payload bytes"
+    lede: "Velo carries opaque bytes, so cellular messages serialize through rmp-serde. MessagePack preserves NaN and infinity that metric aggregates depend on, and the receiving handler reconstructs the exact typed CellMessage from the slice."
+    narration: "Velo carries opaque bytes, so messages serialize through MessagePack. NaN and infinity survive the round trip, and the handler reconstructs the exact typed value from the slice."
+    term: {
+      word: "rmp_serde"
+      meaning: "MessagePack serde codec: `to_vec` on the sender, `from_slice` on the handler, with finite-and-non-finite floats intact."
+    }
+    points: [
+      "Heartbeats and partitions both ride the same encode/decode seam.",
+      "NaN and ±∞ survive the round trip so extrema anchors stay correct.",
+      "Evidence: `rust/runtime/src/cellular/transport/mod.rs` CellMessage codec."
+    ]
+    caption: "to_vec → raw payload → from_slice → typed value."
+
+    render: @scene {
+      roots: [
+        {
+          id: "hdr3"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "MESSAGEPACK CODEC" }
+          children: [
+            { id: "hdr3-text" capability: "core.text" text: "MESSAGEPACK CODEC" layout: { x: 30, y: 34, width: 280, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "hdr3-cap" capability: "core.text" text: "to_vec → raw payload → from_slice → typed value." layout: { x: 300, y: 34, width: 370, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "msg3"
+          capability: "core.rect"
+          layout: { x: 30, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "CellMessage: ttft NaN · max +∞" }
+          children: [
+            { id: "msg3-title" capability: "core.text" text: "CellMessage" layout: { x: 38, y: 178, width: 134, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "msg3-detail" capability: "core.text" text: "ttft: NaN · max +∞" layout: { x: 38, y: 200, width: 134, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a3a" capability: "core.path" d: "M180 190 H225" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "tovec3"
+          capability: "core.rect"
+          layout: { x: 225, y: 150, width: 130, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "to_vec: rmp_serde" }
+          children: [
+            { id: "tovec3-title" capability: "core.text" text: "to_vec" layout: { x: 233, y: 178, width: 114, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "tovec3-detail" capability: "core.text" text: "rmp_serde" layout: { x: 233, y: 200, width: 114, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a3b" capability: "core.path" d: "M355 190 H400" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "raw3"
+          capability: "core.rect"
+          layout: { x: 400, y: 150, width: 130, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "raw bytes: Velo payload" }
+          children: [
+            { id: "raw3-title" capability: "core.text" text: "raw bytes" layout: { x: 408, y: 178, width: 114, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "raw3-detail" capability: "core.text" text: "Velo payload" layout: { x: 408, y: 200, width: 114, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a3c" capability: "core.path" d: "M530 190 H575" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a3d" capability: "core.path" d: "M600 230 V280" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "from3"
+          capability: "core.rect"
+          layout: { x: 555, y: 280, width: 130, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "from_slice: typed again" }
+          children: [
+            { id: "from3-title" capability: "core.text" text: "from_slice" layout: { x: 563, y: 302, width: 114, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "from3-detail" capability: "core.text" text: "typed again" layout: { x: 563, y: 324, width: 114, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "motion3" capability: "core.path" d: "M90 180 H600" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+      ]
+      timeline: [
+        { id: "s3-hdr3" at: 0 duration: 280 target: "hdr3" action: "enter" },
+        { id: "s3-msg3" at: 220 duration: 280 target: "msg3" action: "enter" },
+        { id: "s3-a3a" at: 440 duration: 420 target: "a3a" action: "draw" },
+        { id: "s3-tovec3" at: 660 duration: 280 target: "tovec3" action: "enter" },
+        { id: "s3-a3b" at: 880 duration: 420 target: "a3b" action: "draw" },
+        { id: "s3-raw3" at: 1100 duration: 280 target: "raw3" action: "enter" },
+        { id: "s3-a3c" at: 1320 duration: 420 target: "a3c" action: "draw" },
+        { id: "s3-a3d" at: 1540 duration: 420 target: "a3d" action: "draw" },
+        { id: "s3-from3" at: 1760 duration: 280 target: "from3" action: "enter" },
+        { id: "s3-motion3" at: 1980 duration: 420 target: "motion3" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Fire-and-forget liveness and live metrics" {
+    eyebrow: "5 · Heartbeat"
+    title: "Fire-and-forget liveness and live metrics"
+    lede: "Cells push MetricsHeartbeat snapshots without waiting for a reply. Each snapshot carries counters, mergeable sketches, and an observation time, so the controller reads live progress and detects a lagging or missing cell before the run ends."
+    narration: "Cells push fire-and-forget heartbeat snapshots of counters and sketches. The controller reads live progress and sees a lagging or missing cell as rising lag and a dropped pulse."
+    term: {
+      word: "MetricsHeartbeat"
+      meaning: "Periodic cell→controller snapshot of counts and sketches used for a live cross-cell aggregate; enabling the lane forces retain."
+    }
+    points: [
+      "Fire-and-forget: heartbeats never block the dispatch hot path.",
+      "A stalled channel surfaces as rising lag and a missing pulse.",
+      "Evidence: `rust/runtime/src/cellular/heartbeat.rs`."
+    ]
+    caption: "snapshot counters + sketches → live aggregate · lag visible."
+
+    render: @scene {
+      roots: [
+        {
+          id: "hdr4"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "HEARTBEAT LANE" }
+          children: [
+            { id: "hdr4-text" capability: "core.text" text: "HEARTBEAT LANE" layout: { x: 30, y: 34, width: 240, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "hdr4-cap" capability: "core.text" text: "snapshot counters + sketches → live aggregate · lag visible." layout: { x: 260, y: 34, width: 410, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "hb40"
+          capability: "core.rect"
+          layout: { x: 40, y: 100, width: 140, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "hb40-title" capability: "core.text" text: "cell 0" layout: { x: 48, y: 120, width: 124, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "hb40-detail" capability: "core.text" text: "snapshot" layout: { x: 48, y: 140, width: 124, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "hb41"
+          capability: "core.rect"
+          layout: { x: 40, y: 190, width: 140, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "hb41-title" capability: "core.text" text: "cell 1" layout: { x: 48, y: 210, width: 124, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "hb41-detail" capability: "core.text" text: "snapshot" layout: { x: 48, y: 230, width: 124, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "hb42"
+          capability: "core.rect"
+          layout: { x: 40, y: 280, width: 140, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.danger, strokeWidth: 1.8 }
+          children: [
+            { id: "hb42-title" capability: "core.text" text: "cell 2" layout: { x: 48, y: 300, width: 124, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "hb42-detail" capability: "core.text" text: "pulse missing" layout: { x: 48, y: 320, width: 124, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a40" capability: "core.path" d: "M180 132 C300 132 360 200 440 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a41" capability: "core.path" d: "M180 222 C300 222 360 200 440 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a42" capability: "core.path" d: "M180 312 C300 312 360 200 440 200" style: { stroke: @theme.accent.danger, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "agg4"
+          capability: "core.rect"
+          layout: { x: 440, y: 160, width: 220, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "Controller aggregate: counters + sketches · lag" }
+          children: [
+            { id: "agg4-title" capability: "core.text" text: "Controller aggregate" layout: { x: 448, y: 188, width: 204, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "agg4-detail" capability: "core.text" text: "counters + sketches · lag" layout: { x: 448, y: 210, width: 204, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "note4" capability: "core.text" text: "fire-and-forget · never blocks dispatch" layout: { x: 110, y: 360, width: 400, height: 16 } style: { fontSize: 12, fill: @theme.ink.secondary } },
+        { id: "motion4" capability: "core.path" d: "M120 130 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+      ]
+      timeline: [
+        { id: "s4-hdr4" at: 0 duration: 280 target: "hdr4" action: "enter" },
+        { id: "s4-hb40" at: 200 duration: 240 target: "hb40" action: "enter" },
+        { id: "s4-hb41" at: 320 duration: 240 target: "hb41" action: "enter" },
+        { id: "s4-hb42" at: 440 duration: 240 target: "hb42" action: "enter" },
+        { id: "s4-a40" at: 600 duration: 420 target: "a40" action: "draw" },
+        { id: "s4-a41" at: 760 duration: 420 target: "a41" action: "draw" },
+        { id: "s4-a42" at: 920 duration: 420 target: "a42" action: "draw" },
+        { id: "s4-agg4" at: 1140 duration: 280 target: "agg4" action: "enter" },
+        { id: "s4-note4" at: 1360 duration: 280 target: "note4" action: "enter" },
+        { id: "s4-motion4" at: 1580 duration: 420 target: "motion4" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Ship the terminal partition home" {
+    eyebrow: "6 · Partition"
+    title: "Ship the terminal partition home"
+    lede: "When a cell finishes, it sends a terminal unary payload containing a fresh shipper PeerInfo plus its records or folded-store partition. The controller registers that shipper peer first, then returns a CellAck, so delivery is confirmed end to end."
+    narration: "A finished cell ships a terminal payload with a fresh return peer and its partition. The controller registers that shipper before returning an acknowledgement."
+    term: {
+      word: "CellPartitionShip"
+      meaning: "Terminal payload carrying the shipping instance's own coordinate plus its RecordsShardPartition or ColumnStorePartition."
+    }
+    points: [
+      "The fresh return route is registered before the controller acknowledges.",
+      "Retain ships raw rows; fold ships an exact or sketch store partition.",
+      "Evidence: `rust/runtime/src/cellular/transport/mod.rs` CellMessage::Partition."
+    ]
+    caption: "ship peer + partition → register_peer(shipper) → CellAck."
+
+    render: @scene {
+      roots: [
+        {
+          id: "hdr5"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "PARTITION SHIP" }
+          children: [
+            { id: "hdr5-text" capability: "core.text" text: "PARTITION SHIP" layout: { x: 30, y: 34, width: 240, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "hdr5-cap" capability: "core.text" text: "ship peer + partition → register_peer(shipper) → CellAck." layout: { x: 260, y: 34, width: 410, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "fin5"
+          capability: "core.rect"
+          layout: { x: 30, y: 150, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "Finished cell: ship peer + partition" }
+          children: [
+            { id: "fin5-title" capability: "core.text" text: "Finished cell" layout: { x: 38, y: 178, width: 144, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "fin5-detail" capability: "core.text" text: "ship peer + partition" layout: { x: 38, y: 200, width: 144, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a5a" capability: "core.path" d: "M190 190 H250" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "unary5"
+          capability: "core.rect"
+          layout: { x: 250, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "unary payload: fresh PeerInfo" }
+          children: [
+            { id: "unary5-title" capability: "core.text" text: "unary payload" layout: { x: 258, y: 178, width: 134, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "unary5-detail" capability: "core.text" text: "fresh PeerInfo" layout: { x: 258, y: 200, width: 134, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a5b" capability: "core.path" d: "M400 190 H460" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "ctrl5"
+          capability: "core.rect"
+          layout: { x: 460, y: 150, width: 200, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          accessibility: { label: "Controller: register_peer(shipper)" }
+          children: [
+            { id: "ctrl5-title" capability: "core.text" text: "Controller" layout: { x: 468, y: 178, width: 184, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "ctrl5-detail" capability: "core.text" text: "register_peer(shipper)" layout: { x: 468, y: 200, width: 184, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a5c" capability: "core.path" d: "M560 230 C560 290 300 300 190 290" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "ack5"
+          capability: "core.rect"
+          layout: { x: 210, y: 280, width: 130, height: 54 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "CellAck: delivered" }
+          children: [
+            { id: "ack5-title" capability: "core.text" text: "CellAck" layout: { x: 218, y: 298, width: 114, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "ack5-detail" capability: "core.text" text: "delivered" layout: { x: 218, y: 316, width: 114, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "motion5" capability: "core.path" d: "M110 180 H590" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+      ]
+      timeline: [
+        { id: "s5-hdr5" at: 0 duration: 280 target: "hdr5" action: "enter" },
+        { id: "s5-fin5" at: 220 duration: 280 target: "fin5" action: "enter" },
+        { id: "s5-a5a" at: 440 duration: 420 target: "a5a" action: "draw" },
+        { id: "s5-unary5" at: 660 duration: 280 target: "unary5" action: "enter" },
+        { id: "s5-a5b" at: 880 duration: 420 target: "a5b" action: "draw" },
+        { id: "s5-ctrl5" at: 1100 duration: 280 target: "ctrl5" action: "enter" },
+        { id: "s5-a5c" at: 1320 duration: 420 target: "a5c" action: "draw" },
+        { id: "s5-ack5" at: 1540 duration: 280 target: "ack5" action: "enter" },
+        { id: "s5-motion5" at: 1760 duration: 420 target: "motion5" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Feed the associative reduction center" {
+    eyebrow: "7 · Merge"
+    title: "Feed the associative reduction center"
+    lede: "The controller merges every arriving partition. Retained records restore one global dispatch order by ordinal; folded stores append exact algebra and merge approximate t-digests. Both paths collapse many cell inputs into one authoritative result."
+    narration: "The controller merges every partition. Retained records restore one global dispatch order; folded stores append exact algebra and merge approximate t-digests."
+    term: {
+      word: "merge_store_partitions"
+      meaning: "Associative fold that appends exact aggregates and merges sketches across cell store partitions."
+    }
+    points: [
+      "Records mode: sort by global ordinal to reconstruct dispatch order.",
+      "Store mode: exact counts, sums, and extrema; percentiles via t-digest.",
+      "Evidence: `rust/runtime/src/cellular/shard.rs`."
+    ]
+    caption: "records → global-order sort · stores → append + merge."
+
+    render: @scene {
+      roots: [
+        {
+          id: "hdr6"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "MERGE CENTER" }
+          children: [
+            { id: "hdr6-text" capability: "core.text" text: "MERGE CENTER" layout: { x: 30, y: 34, width: 220, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "hdr6-cap" capability: "core.text" text: "records → global-order sort · stores → append + merge." layout: { x: 250, y: 34, width: 420, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "p60"
+          capability: "core.rect"
+          layout: { x: 30, y: 90, width: 130, height: 52 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            { id: "p60-title" capability: "core.text" text: "partition 0" layout: { x: 38, y: 108, width: 114, height: 14 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "p60-detail" capability: "core.text" text: "records" layout: { x: 38, y: 126, width: 114, height: 12 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "p61"
+          capability: "core.rect"
+          layout: { x: 30, y: 158, width: 130, height: 52 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            { id: "p61-title" capability: "core.text" text: "partition 1" layout: { x: 38, y: 176, width: 114, height: 14 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "p61-detail" capability: "core.text" text: "store" layout: { x: 38, y: 194, width: 114, height: 12 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "p62"
+          capability: "core.rect"
+          layout: { x: 30, y: 226, width: 130, height: 52 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            { id: "p62-title" capability: "core.text" text: "partition 2" layout: { x: 38, y: 244, width: 114, height: 14 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "p62-detail" capability: "core.text" text: "records" layout: { x: 38, y: 262, width: 114, height: 12 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "p63"
+          capability: "core.rect"
+          layout: { x: 30, y: 294, width: 130, height: 52 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            { id: "p63-title" capability: "core.text" text: "partition 3" layout: { x: 38, y: 312, width: 114, height: 14 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "p63-detail" capability: "core.text" text: "store" layout: { x: 38, y: 330, width: 114, height: 12 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a60" capability: "core.path" d: "M160 116 C280 116 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a61" capability: "core.path" d: "M160 184 C280 184 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a62" capability: "core.path" d: "M160 252 C280 252 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a63" capability: "core.path" d: "M160 320 C280 320 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "merge6"
+          capability: "core.rect"
+          layout: { x: 420, y: 160, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "Merge center: associative fold" }
+          children: [
+            { id: "merge6-title" capability: "core.text" text: "Merge center" layout: { x: 428, y: 188, width: 134, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "merge6-detail" capability: "core.text" text: "associative fold" layout: { x: 428, y: 210, width: 134, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a6b" capability: "core.path" d: "M570 200 H620" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a6c" capability: "core.path" d: "M600 240 V290" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "one6"
+          capability: "core.rect"
+          layout: { x: 520, y: 290, width: 160, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "one result: order · append · merge" }
+          children: [
+            { id: "one6-title" capability: "core.text" text: "one result" layout: { x: 528, y: 310, width: 144, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "one6-detail" capability: "core.text" text: "order · append · merge" layout: { x: 528, y: 330, width: 144, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "motion6" capability: "core.path" d: "M110 175 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+      ]
+      timeline: [
+        { id: "s6-hdr6" at: 0 duration: 280 target: "hdr6" action: "enter" },
+        { id: "s6-p60" at: 180 duration: 220 target: "p60" action: "enter" },
+        { id: "s6-p61" at: 300 duration: 220 target: "p61" action: "enter" },
+        { id: "s6-p62" at: 420 duration: 220 target: "p62" action: "enter" },
+        { id: "s6-p63" at: 540 duration: 220 target: "p63" action: "enter" },
+        { id: "s6-a60" at: 680 duration: 420 target: "a60" action: "draw" },
+        { id: "s6-a61" at: 800 duration: 420 target: "a61" action: "draw" },
+        { id: "s6-a62" at: 920 duration: 420 target: "a62" action: "draw" },
+        { id: "s6-a63" at: 1040 duration: 420 target: "a63" action: "draw" },
+        { id: "s6-merge6" at: 1260 duration: 280 target: "merge6" action: "enter" },
+        { id: "s6-a6b" at: 1480 duration: 420 target: "a6b" action: "draw" },
+        { id: "s6-a6c" at: 1600 duration: 420 target: "a6c" action: "draw" },
+        { id: "s6-one6" at: 1820 duration: 280 target: "one6" action: "enter" },
+        { id: "s6-motion6" at: 2040 duration: 420 target: "motion6" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Replay the prefix, then live push" {
+    eyebrow: "8 · Phaser"
+    title: "Replay the prefix, then live push"
+    lede: "The monotonic phaser broadcasts generation events for opt-in distributed START. When a subscriber attaches, the current generation prefix returns in the unary reply as replay; only later generations arrive by active-message push, so no event is missed or duplicated."
+    narration: "The monotonic phaser broadcasts generations for opt-in distributed start. Attaching replays the current prefix in the reply, and later generations arrive by live push."
+    term: {
+      word: "PhaserServer / PhaserClient"
+      meaning: "Velo phaser transport that captures the current generation on attach and streams later generations as live pushes."
+    }
+    points: [
+      "Attach captures a generation boundary; everything ≤ it is replayed.",
+      "Generations strictly increase, so ordering is deterministic across cells.",
+      "Evidence: `rust/runtime/src/cellular/transport/phaser_velo.rs`, `phaser.rs`."
+    ]
+    caption: "attach → reply replay ≤ g · live push > g."
+
+    render: @scene {
+      roots: [
+        {
+          id: "hdr7"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "PHASER REPLAY" }
+          children: [
+            { id: "hdr7-text" capability: "core.text" text: "PHASER REPLAY" layout: { x: 30, y: 34, width: 220, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "hdr7-cap" capability: "core.text" text: "attach → reply replay ≤ g · live push > g." layout: { x: 260, y: 34, width: 410, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "g71"
+          capability: "core.rect"
+          layout: { x: 30, y: 110, width: 80, height: 56 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            { id: "g71-title" capability: "core.text" text: "g1" layout: { x: 38, y: 128, width: 64, height: 14 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "g71-detail" capability: "core.text" text: "replay" layout: { x: 38, y: 146, width: 64, height: 12 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "g72"
+          capability: "core.rect"
+          layout: { x: 125, y: 110, width: 80, height: 56 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            { id: "g72-title" capability: "core.text" text: "g2" layout: { x: 133, y: 128, width: 64, height: 14 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "g72-detail" capability: "core.text" text: "replay" layout: { x: 133, y: 146, width: 64, height: 12 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "g73"
+          capability: "core.rect"
+          layout: { x: 220, y: 110, width: 80, height: 56 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            { id: "g73-title" capability: "core.text" text: "g3" layout: { x: 228, y: 128, width: 64, height: 14 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "g73-detail" capability: "core.text" text: "replay" layout: { x: 228, y: 146, width: 64, height: 12 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "g74"
+          capability: "core.rect"
+          layout: { x: 315, y: 110, width: 80, height: 56 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "g74-title" capability: "core.text" text: "g4" layout: { x: 323, y: 128, width: 64, height: 14 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "g74-detail" capability: "core.text" text: "live" layout: { x: 323, y: 146, width: 64, height: 12 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "g75"
+          capability: "core.rect"
+          layout: { x: 410, y: 110, width: 80, height: 56 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "g75-title" capability: "core.text" text: "g5" layout: { x: 418, y: 128, width: 64, height: 14 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "g75-detail" capability: "core.text" text: "live" layout: { x: 418, y: 146, width: 64, height: 12 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "attach7"
+          capability: "core.rect"
+          layout: { x: 220, y: 250, width: 180, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          accessibility: { label: "attach @ g3: capture boundary" }
+          children: [
+            { id: "attach7-title" capability: "core.text" text: "attach @ g3" layout: { x: 228, y: 272, width: 164, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "attach7-detail" capability: "core.text" text: "capture boundary" layout: { x: 228, y: 294, width: 164, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a7a" capability: "core.path" d: "M310 250 C310 210 250 190 200 168" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } },
+        { id: "a7b" capability: "core.path" d: "M400 260 C480 240 500 200 510 168" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        { id: "note7" capability: "core.text" text: "reply replays ≤ g3 · active-message pushes > g3" layout: { x: 150, y: 356, width: 420, height: 16 } style: { fontSize: 12, fill: @theme.ink.secondary } },
+        { id: "motion7" capability: "core.path" d: "M110 130 H590" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+      ]
+      timeline: [
+        { id: "s7-hdr7" at: 0 duration: 280 target: "hdr7" action: "enter" },
+        { id: "s7-g71" at: 180 duration: 220 target: "g71" action: "enter" },
+        { id: "s7-g72" at: 300 duration: 220 target: "g72" action: "enter" },
+        { id: "s7-g73" at: 420 duration: 220 target: "g73" action: "enter" },
+        { id: "s7-g74" at: 540 duration: 220 target: "g74" action: "enter" },
+        { id: "s7-g75" at: 660 duration: 220 target: "g75" action: "enter" },
+        { id: "s7-attach7" at: 880 duration: 280 target: "attach7" action: "enter" },
+        { id: "s7-a7a" at: 1100 duration: 420 target: "a7a" action: "draw" },
+        { id: "s7-a7b" at: 1320 duration: 420 target: "a7b" action: "draw" },
+        { id: "s7-note7" at: 1540 duration: 280 target: "note7" action: "enter" },
+        { id: "s7-motion7" at: 1760 duration: 420 target: "motion7" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Broadcast once, retain by modulo" {
+    eyebrow: "9 · Dataset"
+    title: "Broadcast once, retain by modulo"
+    lede: "The opt-in dataset overlay publishes input chunks once. MessagePack plus zstd carries the prefix already published at attach time as replay and every later chunk as live push. Each cell keeps only the identities where request_id % cells equals its cell id."
+    narration: "The dataset overlay broadcasts input chunks once over MessagePack and zstd. Each cell replays the published prefix, follows the live tail, and keeps only its modulo-owned identities."
+    term: {
+      word: "DatasetIndex"
+      meaning: "Cell-local index that accepts replayed and live chunks but retains only its owned request identities."
+    }
+    points: [
+      "One broadcast fans out to all cells; ownership filters on receipt.",
+      "Replay-on-attach plus live tail mirrors the phaser subscription model.",
+      "Evidence: `rust/runtime/src/cellular/transport/dataset_velo.rs`, `dataset_session.rs`."
+    ]
+    caption: "publish chunk → replay + live · keep id % cells == cell_id."
+
+    render: @scene {
+      roots: [
+        {
+          id: "hdr8"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "DATASET FLOODGATE" }
+          children: [
+            { id: "hdr8-text" capability: "core.text" text: "DATASET FLOODGATE" layout: { x: 30, y: 34, width: 260, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "hdr8-cap" capability: "core.text" text: "publish chunk → replay + live · keep id % cells == cell_id." layout: { x: 280, y: 34, width: 390, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "chunk8"
+          capability: "core.rect"
+          layout: { x: 30, y: 140, width: 140, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "chunk stream: MessagePack + zstd" }
+          children: [
+            { id: "chunk8-title" capability: "core.text" text: "chunk stream" layout: { x: 38, y: 170, width: 124, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "chunk8-detail" capability: "core.text" text: "MessagePack + zstd" layout: { x: 38, y: 194, width: 124, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a8a" capability: "core.path" d: "M170 185 H230" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "bcast8"
+          capability: "core.rect"
+          layout: { x: 230, y: 150, width: 120, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "broadcast: publish once" }
+          children: [
+            { id: "bcast8-title" capability: "core.text" text: "broadcast" layout: { x: 238, y: 172, width: 104, height: 18 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "bcast8-detail" capability: "core.text" text: "publish once" layout: { x: 238, y: 194, width: 104, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "cell80"
+          capability: "core.rect"
+          layout: { x: 430, y: 90, width: 230, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "cell80-title" capability: "core.text" text: "cell 0" layout: { x: 438, y: 110, width: 214, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "cell80-detail" capability: "core.text" text: "keep id % 3 == 0" layout: { x: 438, y: 130, width: 214, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "cell81"
+          capability: "core.rect"
+          layout: { x: 430, y: 180, width: 230, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "cell81-title" capability: "core.text" text: "cell 1" layout: { x: 438, y: 200, width: 214, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "cell81-detail" capability: "core.text" text: "keep id % 3 == 1" layout: { x: 438, y: 220, width: 214, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "cell82"
+          capability: "core.rect"
+          layout: { x: 430, y: 270, width: 230, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "cell82-title" capability: "core.text" text: "cell 2" layout: { x: 438, y: 290, width: 214, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "cell82-detail" capability: "core.text" text: "keep id % 3 == 2" layout: { x: 438, y: 310, width: 214, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a80" capability: "core.path" d: "M350 185 C390 122 400 122 430 122" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a81" capability: "core.path" d: "M350 185 C390 212 400 212 430 212" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a82" capability: "core.path" d: "M350 185 C390 302 400 302 430 302" style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" } },
+        { id: "motion8" capability: "core.path" d: "M120 175 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+      ]
+      timeline: [
+        { id: "s8-hdr8" at: 0 duration: 280 target: "hdr8" action: "enter" },
+        { id: "s8-chunk8" at: 220 duration: 280 target: "chunk8" action: "enter" },
+        { id: "s8-a8a" at: 440 duration: 420 target: "a8a" action: "draw" },
+        { id: "s8-bcast8" at: 660 duration: 280 target: "bcast8" action: "enter" },
+        { id: "s8-a80" at: 880 duration: 420 target: "a80" action: "draw" },
+        { id: "s8-cell80" at: 1100 duration: 240 target: "cell80" action: "enter" },
+        { id: "s8-a81" at: 1220 duration: 420 target: "a81" action: "draw" },
+        { id: "s8-cell81" at: 1440 duration: 240 target: "cell81" action: "enter" },
+        { id: "s8-a82" at: 1560 duration: 420 target: "a82" action: "draw" },
+        { id: "s8-cell82" at: 1780 duration: 240 target: "cell82" action: "enter" },
+        { id: "s8-motion8" at: 2000 duration: 420 target: "motion8" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Collapse payload up a fold-only tree" {
+    eyebrow: "10 · Aggregators"
+    title: "Collapse payload up a fold-only tree"
+    lede: "Folded stores can reduce through an aggregator tier: cells ship bounded store partitions to aggregators, which merge subtrees before the controller. Retained raw records stay flat so the controller can still restore one global dispatch order."
+    narration: "Folded stores can reduce through an aggregator tree that merges subtrees before the controller. Retained raw records stay flat so global dispatch order can still be restored."
+    term: {
+      word: "run_aggregator"
+      meaning: "Fold-only tree tier that merges bounded child store partitions into one partition per subtree."
+    }
+    points: [
+      "Tree merge requires fold mode; retain partitions cannot enter a subtree.",
+      "Flat star fan-in remains the fallback and the retain-mode path.",
+      "Evidence: `rust/runtime/src/engine/cellular_aggregator.rs`."
+    ]
+    caption: "fold: cells → aggregators → controller · retain stays flat."
+
+    render: @scene {
+      roots: [
+        {
+          id: "hdr9"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "AGGREGATOR TREE" }
+          children: [
+            { id: "hdr9-text" capability: "core.text" text: "AGGREGATOR TREE" layout: { x: 30, y: 34, width: 240, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "hdr9-cap" capability: "core.text" text: "fold: cells → aggregators → controller · retain stays flat." layout: { x: 270, y: 34, width: 400, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "ctrl9"
+          capability: "core.rect"
+          layout: { x: 270, y: 90, width: 160, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "Controller: one report" }
+          children: [
+            { id: "ctrl9-title" capability: "core.text" text: "Controller" layout: { x: 278, y: 110, width: 144, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "ctrl9-detail" capability: "core.text" text: "one report" layout: { x: 278, y: 130, width: 144, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "agg90"
+          capability: "core.rect"
+          layout: { x: 120, y: 210, width: 150, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          accessibility: { label: "aggregator 0: cells 0–3" }
+          children: [
+            { id: "agg90-title" capability: "core.text" text: "aggregator 0" layout: { x: 128, y: 228, width: 134, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "agg90-detail" capability: "core.text" text: "cells 0–3" layout: { x: 128, y: 248, width: 134, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "agg91"
+          capability: "core.rect"
+          layout: { x: 430, y: 210, width: 150, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          accessibility: { label: "aggregator 1: cells 4–7" }
+          children: [
+            { id: "agg91-title" capability: "core.text" text: "aggregator 1" layout: { x: 438, y: 228, width: 134, height: 16 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "agg91-detail" capability: "core.text" text: "cells 4–7" layout: { x: 438, y: 248, width: 134, height: 14 } style: { fontSize: 11, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a9a" capability: "core.path" d: "M195 210 C220 180 300 160 330 154" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a9b" capability: "core.path" d: "M505 210 C480 180 400 160 370 154" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        {
+          id: "c90"
+          capability: "core.rect"
+          layout: { x: 30, y: 320, width: 70, height: 50 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "c90-title" capability: "core.text" text: "c0" layout: { x: 38, y: 336, width: 54, height: 14 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "c90-detail" capability: "core.text" text: "store" layout: { x: 38, y: 352, width: 54, height: 12 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "c91"
+          capability: "core.rect"
+          layout: { x: 120, y: 320, width: 70, height: 50 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "c91-title" capability: "core.text" text: "c1" layout: { x: 128, y: 336, width: 54, height: 14 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "c91-detail" capability: "core.text" text: "store" layout: { x: 128, y: 352, width: 54, height: 12 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "c92"
+          capability: "core.rect"
+          layout: { x: 210, y: 320, width: 70, height: 50 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "c92-title" capability: "core.text" text: "c2" layout: { x: 218, y: 336, width: 54, height: 14 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "c92-detail" capability: "core.text" text: "store" layout: { x: 218, y: 352, width: 54, height: 12 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+          ]
+        },
+        {
+          id: "c93"
+          capability: "core.rect"
+          layout: { x: 300, y: 320, width: 70, height: 50 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            { id: "c93-title" capability: "core.text" text: "c3" layout: { x: 308, y: 336, width: 54, height: 14 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } },
+            { id: "c93-detail" capability: "core.text" text: "store" layout: { x: 308, y: 352, width: 54, height: 12 } style: { fontSize: 10, fill: @theme.ink.secondary } }
+          ]
+        },
+        { id: "a90" capability: "core.path" d: "M65 320 C65 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a91" capability: "core.path" d: "M155 320 C155 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a92" capability: "core.path" d: "M245 320 C245 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        { id: "a93" capability: "core.path" d: "M335 320 C335 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } },
+        { id: "note9" capability: "core.text" text: "fold only · retain stays flat" layout: { x: 430, y: 356, width: 240, height: 16 } style: { fontSize: 12, fill: @theme.ink.secondary } },
+        { id: "motion9" capability: "core.path" d: "M350 320 V150" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+      ]
+      timeline: [
+        { id: "s9-hdr9" at: 0 duration: 280 target: "hdr9" action: "enter" },
+        { id: "s9-ctrl9" at: 220 duration: 280 target: "ctrl9" action: "enter" },
+        { id: "s9-agg90" at: 440 duration: 280 target: "agg90" action: "enter" },
+        { id: "s9-agg91" at: 560 duration: 280 target: "agg91" action: "enter" },
+        { id: "s9-a9a" at: 780 duration: 420 target: "a9a" action: "draw" },
+        { id: "s9-a9b" at: 900 duration: 420 target: "a9b" action: "draw" },
+        { id: "s9-c90" at: 1120 duration: 220 target: "c90" action: "enter" },
+        { id: "s9-c91" at: 1220 duration: 220 target: "c91" action: "enter" },
+        { id: "s9-c92" at: 1320 duration: 220 target: "c92" action: "enter" },
+        { id: "s9-c93" at: 1420 duration: 220 target: "c93" action: "enter" },
+        { id: "s9-a90" at: 1540 duration: 360 target: "a90" action: "draw" },
+        { id: "s9-a91" at: 1660 duration: 360 target: "a91" action: "draw" },
+        { id: "s9-a92" at: 1780 duration: 360 target: "a92" action: "draw" },
+        { id: "s9-a93" at: 1900 duration: 360 target: "a93" action: "draw" },
+        { id: "s9-note9" at: 2120 duration: 280 target: "note9" action: "enter" },
+        { id: "s9-motion9" at: 2340 duration: 420 target: "motion9" action: "draw" }
+      ]
+    }
+  }
+
+  finalCard: @scene {
+    roots: [
+      {
+        id: "final-hdr"
+        capability: "core.rect"
+        layout: { x: 18, y: 16, width: 664, height: 44 }
+        style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        children: [
+          { id: "final-hdr-text" capability: "core.text" text: "Live evidence files" layout: { x: 34, y: 32, width: 400, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary } },
+          { id: "final-pill" capability: "core.text" text: "velo transport" layout: { x: 500, y: 32, width: 160, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.accent.secondary } }
+        ]
+      },
+      {
+        id: "f1"
+        capability: "core.rect"
+        layout: { x: 40, y: 90, width: 620, height: 36 }
+        style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+        children: [
+          { id: "f1-title" capability: "core.text" text: "rust/runtime/src/cellular/transport/mod.rs" layout: { x: 50, y: 108, width: 600, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
+        ]
+      },
+      {
+        id: "f2"
+        capability: "core.rect"
+        layout: { x: 40, y: 140, width: 620, height: 36 }
+        style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+        children: [
+          { id: "f2-title" capability: "core.text" text: "rust/runtime/src/cellular/transport/velo_transport.rs" layout: { x: 50, y: 158, width: 600, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
+        ]
+      },
+      {
+        id: "f3"
+        capability: "core.rect"
+        layout: { x: 40, y: 190, width: 620, height: 36 }
+        style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
+        children: [
+          { id: "f3-title" capability: "core.text" text: "rust/runtime/src/cellular/transport/phaser_velo.rs" layout: { x: 50, y: 208, width: 600, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
+        ]
+      },
+      {
+        id: "f4"
+        capability: "core.rect"
+        layout: { x: 40, y: 240, width: 620, height: 36 }
+        style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
+        children: [
+          { id: "f4-title" capability: "core.text" text: "rust/runtime/src/cellular/transport/dataset_velo.rs" layout: { x: 50, y: 258, width: 600, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
+        ]
+      },
+      {
+        id: "f5"
+        capability: "core.rect"
+        layout: { x: 40, y: 290, width: 620, height: 36 }
+        style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
+        children: [
+          { id: "f5-title" capability: "core.text" text: "rust/runtime/src/cellular/heartbeat.rs" layout: { x: 50, y: 308, width: 600, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
+        ]
+      },
+      {
+        id: "f6"
+        capability: "core.rect"
+        layout: { x: 40, y: 340, width: 620, height: 36 }
+        style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.4 }
+        children: [
+          { id: "f6-title" capability: "core.text" text: "rust/runtime/src/cellular/shard.rs" layout: { x: 50, y: 358, width: 600, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
+        ]
+      }
+    ]
+    timeline: [
+      { id: "enter-f0" at: 0 duration: 280 target: "final-hdr" action: "enter" },
+      { id: "enter-f1" at: 120 duration: 280 target: "f1" action: "enter" },
+      { id: "enter-f2" at: 240 duration: 280 target: "f2" action: "enter" },
+      { id: "enter-f3" at: 360 duration: 280 target: "f3" action: "enter" },
+      { id: "enter-f4" at: 480 duration: 280 target: "f4" action: "enter" },
+      { id: "enter-f5" at: 600 duration: 280 target: "f5" action: "enter" },
+      { id: "enter-f6" at: 720 duration: 280 target: "f6" action: "enter" }
+    ]
+  }
+}

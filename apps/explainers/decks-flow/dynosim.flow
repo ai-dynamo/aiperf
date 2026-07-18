@@ -1,0 +1,2790 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+explainer "Dynosim" {
+  id: "dynosim"
+  route: "/dynosim"
+  topic: "architecture"
+  storagePrefix: "dynosim-explainer"
+  classPrefix: "deck-dynosim"
+  eyebrowLabel: "DYNOSIM"
+  startGateTitle: "Dynosim co-simulation walkthrough"
+
+  hub: {
+    title: "offline & online replay"
+    highlight: "Dynosim"
+    description: "Concise tour of dynosim transports, SimClock vs RealClock, the sim pump, token flow through RequestObserver, and metric parity with HTTP runs."
+  }
+
+  slide "Why Dynosim" {
+    eyebrow: "Why Dynosim"
+    title: "Co-simulation without a live inference server"
+    lede: "Dynosim runs AIPerf's full workload loop, observers, and metrics against Dynamo's passive mock engine in-process. No HTTP sockets, no gRPC wire path — the transport ID selects a simulation driver instead."
+
+    narration: "Dynosim lets AIPerf benchmark without a live inference server. The workload loop and observers stay native; Dynamo's passive engine supplies timing and token events in-process."
+
+    term: {
+      word: "dynosim"
+      meaning: "Feature-gated transport family (`dynosim_offline`, `dynosim_online`) that replaces native HTTP execution with SteppableReplay-driven co-simulation."
+    }
+
+    points: [
+      "AIPerf owns scheduling, Clock, RequestObserver, and report merge.",
+      "Dynamo mocker owns scheduler and performance-model state behind SteppableReplay.",
+      "Same metric vocabulary as online runs when configured for parity."
+    ]
+
+    caption: "No serving socket on the hot path."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s0-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s0-hdr-label"
+              capability: "core.text"
+              text: "NO SERVING SOCKET"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s0-hdr-caption"
+              capability: "core.text"
+              text: "No serving socket on the hot path."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s0-aiperf"
+          capability: "core.rect"
+          layout: { x: 80, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s0-aiperf-title"
+              capability: "core.text"
+              text: "AIPerf workload"
+              layout: { x: 88, y: 158, width: 144, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s0-aiperf-detail"
+              capability: "core.text"
+              text: "schedule + observe"
+              layout: { x: 88, y: 182, width: 144, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s0-sink"
+          capability: "core.rect"
+          layout: { x: 280, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s0-sink-title"
+              capability: "core.text"
+              text: "DynosimSink"
+              layout: { x: 288, y: 158, width: 144, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s0-sink-detail"
+              capability: "core.text"
+              text: "in-process"
+              layout: { x: 288, y: 182, width: 144, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s0-replay"
+          capability: "core.rect"
+          layout: { x: 480, y: 130, width: 140, height: 96 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s0-replay-title"
+              capability: "core.text"
+              text: "SteppableReplay"
+              layout: { x: 488, y: 158, width: 124, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s0-replay-detail"
+              capability: "core.text"
+              text: "Dynamo mocker"
+              layout: { x: 488, y: 182, width: 124, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s0-a1"
+          capability: "core.line"
+          from: { x: 240, y: 178 }
+          to: { x: 280, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s0-a2"
+          capability: "core.line"
+          from: { x: 440, y: 178 }
+          to: { x: 480, y: 178 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2 }
+        },
+        {
+          id: "s0-note"
+          capability: "core.text"
+          text: "HTTP/gRPC socket omitted on the hot path"
+          layout: { x: 120, y: 280, width: 460, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary }
+        }
+      ]
+      timeline: [
+        {
+          id: "s0-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s0-hdr"
+          action: "enter"
+        },
+        {
+          id: "s0-enter-aiperf"
+          at: 200
+          duration: 250
+          target: "s0-aiperf"
+          action: "enter"
+        },
+        {
+          id: "s0-enter-sink"
+          at: 400
+          duration: 250
+          target: "s0-sink"
+          action: "enter"
+        },
+        {
+          id: "s0-enter-replay"
+          at: 600
+          duration: 250
+          target: "s0-replay"
+          action: "enter"
+        },
+        {
+          id: "s0-draw-a1"
+          at: 800
+          duration: 250
+          target: "s0-a1"
+          action: "draw"
+        },
+        {
+          id: "s0-draw-a2"
+          at: 1000
+          duration: 250
+          target: "s0-a2"
+          action: "draw"
+        },
+        {
+          id: "s0-enter-note"
+          at: 1200
+          duration: 250
+          target: "s0-note"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Feature gate" {
+    eyebrow: "Feature gate"
+    title: "Cargo feature dynosim pulls the native crates"
+    lede: "Ordinary lean HTTP builds omit dynosim entirely. Enabling the `dynosim` feature links dynamo-mocker and exposes transport IDs `dynosim_offline` and `dynosim_online` in the frozen registry."
+
+    narration: "Dynosim is behind the dynosim Cargo feature. When enabled, the registry exposes dynosim offline and online transport identifiers alongside HTTP and gRPC."
+
+    term: {
+      word: "transport ID"
+      meaning: "Config v2 transport.type string resolved at Application bootstrap; unknown IDs fail closed."
+    }
+
+    points: [
+      "`cargo build -p aiperf-cli --features dynosim` enables the path.",
+      "Registry registers dynosim transports only when the feature is on.",
+      "Missing feature → unknown transport at validate time."
+    ]
+
+    caption: "Opt-in at compile time, selected at config time."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s1-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s1-hdr-label"
+              capability: "core.text"
+              text: "FEATURE GATE"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s1-hdr-caption"
+              capability: "core.text"
+              text: "Opt-in at compile time, selected at config time."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s1-cargo"
+          capability: "core.rect"
+          layout: { x: 120, y: 120, width: 200, height: 110 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s1-cargo-title"
+              capability: "core.text"
+              text: "Cargo feature"
+              layout: { x: 128, y: 148, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s1-cargo-detail"
+              capability: "core.text"
+              text: "dynosim"
+              layout: { x: 128, y: 172, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s1-a1"
+          capability: "core.line"
+          from: { x: 320, y: 175 }
+          to: { x: 380, y: 175 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s1-ids"
+          capability: "core.rect"
+          layout: { x: 380, y: 120, width: 200, height: 110 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s1-ids-title"
+              capability: "core.text"
+              text: "Registry IDs"
+              layout: { x: 388, y: 148, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s1-ids-detail"
+              capability: "core.text"
+              text: "offline · online"
+              layout: { x: 388, y: 172, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        {
+          id: "s1-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s1-hdr"
+          action: "enter"
+        },
+        {
+          id: "s1-enter-cargo"
+          at: 200
+          duration: 250
+          target: "s1-cargo"
+          action: "enter"
+        },
+        {
+          id: "s1-draw-a1"
+          at: 400
+          duration: 250
+          target: "s1-a1"
+          action: "draw"
+        },
+        {
+          id: "s1-enter-ids"
+          at: 600
+          duration: 250
+          target: "s1-ids"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Config seam" {
+    eyebrow: "Config seam"
+    title: "One BenchmarkRun; transport selects the clock"
+    lede: "The same Config v2 envelope describes workload, endpoints, and artifacts. Changing transport.type from http to dynosim_offline swaps the execution driver and clock implementation without rewriting the benchmark plan."
+
+    narration: "You author one benchmark configuration. The transport field chooses offline simulation with a virtual clock, or online replay against wall time."
+
+    term: {
+      word: "BenchmarkRun"
+      meaning: "Strict protocol-v2 object materialized by profile and passed to the execution child."
+    }
+
+    points: [
+      "Workload, phases, and artifact settings stay shared.",
+      "`dynosim_offline` → SimClock + virtual pump.",
+      "`dynosim_online` → RealClock + wall-time replay."
+    ]
+
+    caption: "Config is shared; transport picks real vs. virtual time."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s2-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s2-hdr-label"
+              capability: "core.text"
+              text: "TRANSPORT → CLOCK"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s2-hdr-caption"
+              capability: "core.text"
+              text: "Config is shared; transport picks real vs. virtual time."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s2-run"
+          capability: "core.rect"
+          layout: { x: 60, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s2-run-title"
+              capability: "core.text"
+              text: "BenchmarkRun"
+              layout: { x: 68, y: 158, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s2-run-detail"
+              capability: "core.text"
+              text: "Config v2"
+              layout: { x: 68, y: 182, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s2-a1"
+          capability: "core.line"
+          from: { x: 210, y: 178 }
+          to: { x: 260, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s2-tt"
+          capability: "core.rect"
+          layout: { x: 260, y: 130, width: 180, height: 96 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s2-tt-title"
+              capability: "core.text"
+              text: "transport.type"
+              layout: { x: 268, y: 158, width: 164, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s2-tt-detail"
+              capability: "core.text"
+              text: "selects driver"
+              layout: { x: 268, y: 182, width: 164, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s2-a2"
+          capability: "core.line"
+          from: { x: 440, y: 178 }
+          to: { x: 490, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s2-clk"
+          capability: "core.rect"
+          layout: { x: 490, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s2-clk-title"
+              capability: "core.text"
+              text: "Clock"
+              layout: { x: 498, y: 158, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s2-clk-detail"
+              capability: "core.text"
+              text: "Sim or Real"
+              layout: { x: 498, y: 182, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        {
+          id: "s2-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s2-hdr"
+          action: "enter"
+        },
+        {
+          id: "s2-enter-run"
+          at: 200
+          duration: 250
+          target: "s2-run"
+          action: "enter"
+        },
+        {
+          id: "s2-draw-a1"
+          at: 400
+          duration: 250
+          target: "s2-a1"
+          action: "draw"
+        },
+        {
+          id: "s2-enter-tt"
+          at: 600
+          duration: 250
+          target: "s2-tt"
+          action: "enter"
+        },
+        {
+          id: "s2-draw-a2"
+          at: 800
+          duration: 250
+          target: "s2-a2"
+          action: "draw"
+        },
+        {
+          id: "s2-enter-clk"
+          at: 1000
+          duration: 250
+          target: "s2-clk"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Routing" {
+    eyebrow: "Routing"
+    title: "Factory bypasses native HTTP execution"
+    lede: "At bootstrap, dynosim registers its own ExecutionSinkBuilder. The coordinator never constructs Hyper or Tonic clients for these runs — preparation builds an EngineHost and DynosimSink instead."
+
+    narration: "Registry routing sends dynosim runs down a dedicated factory path. Native HTTP and gRPC clients are never constructed for these transport identifiers."
+
+    term: {
+      word: "ExecutionSinkBuilder"
+      meaning: "Transport hook that produces worker-local sinks; dynosim's builder wires the replay engine seam."
+    }
+
+    points: [
+      "Application freeze includes dynosim factories when feature-gated.",
+      "Validate rejects dynosim IDs on builds without the feature.",
+      "HTTP/gRPC code paths are not entered for dynosim transport IDs."
+    ]
+
+    caption: "Transport ID → dynosim factory, not HTTP stack."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s3-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s3-hdr-label"
+              capability: "core.text"
+              text: "REGISTRY ROUTE"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s3-hdr-caption"
+              capability: "core.text"
+              text: "Transport ID → dynosim factory, not HTTP stack."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s3-http"
+          capability: "core.rect"
+          layout: { x: 90, y: 120, width: 180, height: 110 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s3-http-title"
+              capability: "core.text"
+              text: "HTTP factory"
+              layout: { x: 98, y: 148, width: 164, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s3-http-detail"
+              capability: "core.text"
+              text: "not used"
+              layout: { x: 98, y: 172, width: 164, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s3-dyno"
+          capability: "core.rect"
+          layout: { x: 430, y: 120, width: 180, height: 110 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s3-dyno-title"
+              capability: "core.text"
+              text: "Dynosim factory"
+              layout: { x: 438, y: 148, width: 164, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s3-dyno-detail"
+              capability: "core.text"
+              text: "ExecutionSinkBuilder"
+              layout: { x: 438, y: 172, width: 164, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s3-note"
+          capability: "core.text"
+          text: "transport ID routes before Hyper/Tonic clients build"
+          layout: { x: 120, y: 280, width: 460, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary }
+        }
+      ]
+      timeline: [
+        {
+          id: "s3-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s3-hdr"
+          action: "enter"
+        },
+        {
+          id: "s3-enter-http"
+          at: 200
+          duration: 250
+          target: "s3-http"
+          action: "enter"
+        },
+        {
+          id: "s3-enter-dyno"
+          at: 400
+          duration: 250
+          target: "s3-dyno"
+          action: "enter"
+        },
+        {
+          id: "s3-enter-note"
+          at: 600
+          duration: 250
+          target: "s3-note"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Composition" {
+    eyebrow: "Composition"
+    title: "EngineHost + DynosimSink share one observer seam"
+    lede: "DynosimSink implements RequestSink and forwards token, usage, and terminal events into the same RequestObserver pipeline HTTP uses. EngineHost wraps SteppableReplay and bridges DirectRequest submission."
+
+    narration: "EngineHost wraps the replay engine. DynosimSink implements the same RequestSink and RequestObserver contract as HTTP transports."
+
+    term: {
+      word: "DynosimSink"
+      meaning: "Worker-local sink that drives replay turns through loadgen-core observation without wire encoding."
+    }
+
+    points: [
+      "RequestObserver callbacks match online semantics.",
+      "TTFT is the first token observation — no separate first-token event.",
+      "Terminal coalescing policy matches configured streaming mode."
+    ]
+
+    caption: "Same observation vocabulary, different dispatch backend."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s4-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s4-hdr-label"
+              capability: "core.text"
+              text: "HOST + SINK"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s4-hdr-caption"
+              capability: "core.text"
+              text: "Same observer seam; different request driver."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s4-host"
+          capability: "core.rect"
+          layout: { x: 70, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s4-host-title"
+              capability: "core.text"
+              text: "EngineHost"
+              layout: { x: 78, y: 158, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s4-host-detail"
+              capability: "core.text"
+              text: "SteppableReplay"
+              layout: { x: 78, y: 182, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s4-a1"
+          capability: "core.line"
+          from: { x: 220, y: 178 }
+          to: { x: 270, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s4-sink"
+          capability: "core.rect"
+          layout: { x: 270, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s4-sink-title"
+              capability: "core.text"
+              text: "DynosimSink"
+              layout: { x: 278, y: 158, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s4-sink-detail"
+              capability: "core.text"
+              text: "RequestSink"
+              layout: { x: 278, y: 182, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s4-a2"
+          capability: "core.line"
+          from: { x: 420, y: 178 }
+          to: { x: 470, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s4-obs"
+          capability: "core.rect"
+          layout: { x: 470, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s4-obs-title"
+              capability: "core.text"
+              text: "RequestObserver"
+              layout: { x: 478, y: 158, width: 144, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s4-obs-detail"
+              capability: "core.text"
+              text: "metrics"
+              layout: { x: 478, y: 182, width: 144, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        {
+          id: "s4-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s4-hdr"
+          action: "enter"
+        },
+        {
+          id: "s4-enter-host"
+          at: 200
+          duration: 250
+          target: "s4-host"
+          action: "enter"
+        },
+        {
+          id: "s4-draw-a1"
+          at: 400
+          duration: 250
+          target: "s4-a1"
+          action: "draw"
+        },
+        {
+          id: "s4-enter-sink"
+          at: 600
+          duration: 250
+          target: "s4-sink"
+          action: "enter"
+        },
+        {
+          id: "s4-draw-a2"
+          at: 800
+          duration: 250
+          target: "s4-a2"
+          action: "draw"
+        },
+        {
+          id: "s4-enter-obs"
+          at: 1000
+          duration: 250
+          target: "s4-obs"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Offline mode" {
+    eyebrow: "Offline mode"
+    title: "dynosim_offline owns SimClock"
+    lede: "Offline runs use SimClock: integer-nanosecond virtual time with deterministic event ordering. The sim pump advances virtual time until the workload future completes or the source quiesces."
+
+    narration: "Offline dynosim runs on SimClock. Virtual nanoseconds advance under the sim pump until the workload completes."
+
+    term: {
+      word: "SimClock"
+      meaning: "Virtual Clock implementation; scheduling and measurement must not call wall-clock APIs on hot paths."
+    }
+
+    points: [
+      "Arrivals, phase gates, and backoff use SimClock timers.",
+      "Engine steps consume virtual time, not wall time.",
+      "Runs are reproducible when inputs and seeds are fixed."
+    ]
+
+    caption: "Deterministic virtual time drives offline replay."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s5-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s5-hdr-label"
+              capability: "core.text"
+              text: "OFFLINE · SIMCLOCK"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s5-hdr-caption"
+              capability: "core.text"
+              text: "Virtual nanoseconds; no wall sleep on the hot path."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s5-off"
+          capability: "core.rect"
+          layout: { x: 250, y: 100, width: 200, height: 110 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s5-off-title"
+              capability: "core.text"
+              text: "dynosim_offline"
+              layout: { x: 258, y: 128, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s5-off-detail"
+              capability: "core.text"
+              text: "SimClock"
+              layout: { x: 258, y: 152, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s5-a1"
+          capability: "core.line"
+          from: { x: 350, y: 210 }
+          to: { x: 350, y: 250 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s5-drive"
+          capability: "core.rect"
+          layout: { x: 250, y: 250, width: 200, height: 70 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s5-drive-title"
+              capability: "core.text"
+              text: "drive_sim_with_source"
+              layout: { x: 258, y: 278, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s5-drive-detail"
+              capability: "core.text"
+              text: "virtual pump"
+              layout: { x: 258, y: 302, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        {
+          id: "s5-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s5-hdr"
+          action: "enter"
+        },
+        {
+          id: "s5-enter-off"
+          at: 200
+          duration: 250
+          target: "s5-off"
+          action: "enter"
+        },
+        {
+          id: "s5-draw-a1"
+          at: 400
+          duration: 250
+          target: "s5-a1"
+          action: "draw"
+        },
+        {
+          id: "s5-enter-drive"
+          at: 600
+          duration: 250
+          target: "s5-drive"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Online mode" {
+    eyebrow: "Online mode"
+    title: "dynosim_online keeps RealClock"
+    lede: "Online replay still uses SteppableReplay but drives it with RealClock — wall time between engine steps. This validates live integration paths while preserving the same observer and metric merge logic."
+
+    narration: "Online dynosim uses RealClock. The same replay engine runs, but virtual scheduling gives way to wall-clock pacing."
+
+    term: {
+      word: "RealClock"
+      meaning: "Wall-time Clock used for HTTP, gRPC, and dynosim_online execution."
+    }
+
+    points: [
+      "drive_real_with_source is the wall-clock twin of drive_sim_with_source.",
+      "Useful when timing must reflect actual scheduler latency.",
+      "Metric merge and artifacts follow the same coordinator path."
+    ]
+
+    caption: "Same engine contract; clock switches to wall time."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s6-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s6-hdr-label"
+              capability: "core.text"
+              text: "ONLINE · REALCLOCK"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s6-hdr-caption"
+              capability: "core.text"
+              text: "Wall clock; engine events still step through SteppableReplay."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s6-on"
+          capability: "core.rect"
+          layout: { x: 250, y: 100, width: 200, height: 110 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s6-on-title"
+              capability: "core.text"
+              text: "dynosim_online"
+              layout: { x: 258, y: 128, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s6-on-detail"
+              capability: "core.text"
+              text: "RealClock"
+              layout: { x: 258, y: 152, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s6-a1"
+          capability: "core.line"
+          from: { x: 350, y: 210 }
+          to: { x: 350, y: 250 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s6-drive"
+          capability: "core.rect"
+          layout: { x: 250, y: 250, width: 200, height: 70 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s6-drive-title"
+              capability: "core.text"
+              text: "drive_real_with_source"
+              layout: { x: 258, y: 278, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s6-drive-detail"
+              capability: "core.text"
+              text: "wall pump"
+              layout: { x: 258, y: 302, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        {
+          id: "s6-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s6-hdr"
+          action: "enter"
+        },
+        {
+          id: "s6-enter-on"
+          at: 200
+          duration: 250
+          target: "s6-on"
+          action: "enter"
+        },
+        {
+          id: "s6-draw-a1"
+          at: 400
+          duration: 250
+          target: "s6-a1"
+          action: "draw"
+        },
+        {
+          id: "s6-enter-drive"
+          at: 600
+          duration: 250
+          target: "s6-drive"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Clock compare" {
+    eyebrow: "Clock compare"
+    title: "RealClock vs SimClock semantics"
+    lede: "Both implement Clock::now_ns and timer registration. SimClock advances only when the driver pumps; RealClock tracks system time. Measurement code must route through Clock in both modes."
+
+    narration: "RealClock tracks wall time. SimClock advances only when the driver pumps events. All measurement must go through the Clock abstraction in both modes."
+
+    term: {
+      word: "Clock::is_virtual"
+      meaning: "Runtime selector between real-reactor and simulation drivers; hot paths branch on virtual vs. real timers."
+    }
+
+    points: [
+      "Never call Instant::now on request hot paths.",
+      "SimClock tie-breaks favor scheduled arrivals before engine passes at equal t.",
+      "RealClock online runs behave like ordinary profile executions."
+    ]
+
+    caption: "One Clock trait; two time domains."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s7-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s7-hdr-label"
+              capability: "core.text"
+              text: "CLOCK COMPARE"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s7-hdr-caption"
+              capability: "core.text"
+              text: "One Clock trait; two time domains."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s7-real"
+          capability: "core.rect"
+          layout: { x: 100, y: 130, width: 200, height: 96 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s7-real-title"
+              capability: "core.text"
+              text: "RealClock"
+              layout: { x: 108, y: 158, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s7-real-detail"
+              capability: "core.text"
+              text: "wall nanoseconds"
+              layout: { x: 108, y: 182, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s7-sim"
+          capability: "core.rect"
+          layout: { x: 400, y: 130, width: 200, height: 96 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s7-sim-title"
+              capability: "core.text"
+              text: "SimClock"
+              layout: { x: 408, y: 158, width: 184, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s7-sim-detail"
+              capability: "core.text"
+              text: "virtual nanoseconds"
+              layout: { x: 408, y: 182, width: 184, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s7-note"
+          capability: "core.text"
+          text: "Clock::is_virtual() selects reactor vs. simulation driver"
+          layout: { x: 100, y: 280, width: 500, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary }
+        }
+      ]
+      timeline: [
+        {
+          id: "s7-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s7-hdr"
+          action: "enter"
+        },
+        {
+          id: "s7-enter-real"
+          at: 200
+          duration: 250
+          target: "s7-real"
+          action: "enter"
+        },
+        {
+          id: "s7-enter-sim"
+          at: 400
+          duration: 250
+          target: "s7-sim"
+          action: "enter"
+        },
+        {
+          id: "s7-enter-note"
+          at: 600
+          duration: 250
+          target: "s7-note"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Event queues" {
+    eyebrow: "Event queues"
+    title: "Virtual timers and external engine events"
+    lede: "During offline drive, two queues compete: SimClock's ready timer set and the replay engine's next external event time. The driver always resolves the earliest timestamp, with clock events winning ties."
+
+    narration: "Two virtual queues feed the pump: SimClock timers and the replay engine's next event. The driver always picks the earliest timestamp."
+
+    term: {
+      word: "SimEventSource"
+      meaning: "Passive engine adapter exposing next_event_ns and step bounds for the graph runtime pump."
+    }
+
+    points: [
+      "Clock queue: arrivals, phase transitions, grace timers.",
+      "Source queue: SteppableReplay engine passes and token timing.",
+      "Tie at t → clock fires before the engine observes its batch."
+    ]
+
+    caption: "Earliest event wins; clock wins ties at the same t."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s8-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s8-hdr-label"
+              capability: "core.text"
+              text: "DUAL QUEUES"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s8-hdr-caption"
+              capability: "core.text"
+              text: "Two queues; one earliest-event rule."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s8-cq"
+          capability: "core.rect"
+          layout: { x: 80, y: 130, width: 220, height: 96 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s8-cq-title"
+              capability: "core.text"
+              text: "SimClock queue"
+              layout: { x: 88, y: 158, width: 204, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s8-cq-detail"
+              capability: "core.text"
+              text: "arrivals · phases"
+              layout: { x: 88, y: 182, width: 204, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s8-sq"
+          capability: "core.rect"
+          layout: { x: 400, y: 130, width: 220, height: 96 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s8-sq-title"
+              capability: "core.text"
+              text: "SimEventSource"
+              layout: { x: 408, y: 158, width: 204, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s8-sq-detail"
+              capability: "core.text"
+              text: "engine events"
+              layout: { x: 408, y: 182, width: 204, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s8-note"
+          capability: "core.text"
+          text: "min(clock, source) · clock wins ties"
+          layout: { x: 150, y: 280, width: 400, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary }
+        }
+      ]
+      timeline: [
+        {
+          id: "s8-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s8-hdr"
+          action: "enter"
+        },
+        {
+          id: "s8-enter-cq"
+          at: 200
+          duration: 250
+          target: "s8-cq"
+          action: "enter"
+        },
+        {
+          id: "s8-enter-sq"
+          at: 400
+          duration: 250
+          target: "s8-sq"
+          action: "enter"
+        },
+        {
+          id: "s8-enter-note"
+          at: 600
+          duration: 250
+          target: "s8-note"
+          action: "enter"
+        },
+        {
+          id: "s8-emph-note"
+          at: 800
+          duration: 300
+          target: "s8-note"
+          action: "emphasize"
+        }
+      ]
+    }
+  }
+
+  slide "Sim pump" {
+    eyebrow: "Sim pump"
+    title: "Poll workload to quiescence, then advance time"
+    lede: "drive_sim_with_source loops: poll the workload future on a current-thread runtime; if Pending and idle, advance to the earliest clock or source event; repeat until Ready or stall/deadlock detection triggers."
+
+    narration: "The sim pump polls the workload future. When idle, it advances virtual time to the next clock or engine event and repeats until completion."
+
+    term: {
+      word: "sim pump"
+      meaning: "The drive_sim_with_source loop in graph/runtime.rs that alternates polling and virtual time advancement."
+    }
+
+    points: [
+      "Wakes during a poll re-enter without advancing time.",
+      "Source steps can span [at_ns, end_ns) virtual intervals.",
+      "Deadlock returns when neither queue has a future event."
+    ]
+
+    caption: "Poll → idle → advance → poll again."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s9-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s9-hdr-label"
+              capability: "core.text"
+              text: "SIM PUMP LOOP"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s9-hdr-caption"
+              capability: "core.text"
+              text: "Poll · idle · advance · repeat until terminal."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s9-p0"
+          capability: "core.rect"
+          layout: { x: 40, y: 130, width: 130, height: 96 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s9-p0-title"
+              capability: "core.text"
+              text: "poll future"
+              layout: { x: 48, y: 158, width: 114, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s9-p0-detail"
+              capability: "core.text"
+              text: "sim pump"
+              layout: { x: 48, y: 182, width: 114, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s9-a0"
+          capability: "core.line"
+          from: { x: 170, y: 178 }
+          to: { x: 200, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s9-p1"
+          capability: "core.rect"
+          layout: { x: 200, y: 130, width: 130, height: 96 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s9-p1-title"
+              capability: "core.text"
+              text: "idle?"
+              layout: { x: 208, y: 158, width: 114, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s9-p1-detail"
+              capability: "core.text"
+              text: "sim pump"
+              layout: { x: 208, y: 182, width: 114, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s9-a1"
+          capability: "core.line"
+          from: { x: 330, y: 178 }
+          to: { x: 360, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s9-p2"
+          capability: "core.rect"
+          layout: { x: 360, y: 130, width: 130, height: 96 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s9-p2-title"
+              capability: "core.text"
+              text: "advance t"
+              layout: { x: 368, y: 158, width: 114, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s9-p2-detail"
+              capability: "core.text"
+              text: "sim pump"
+              layout: { x: 368, y: 182, width: 114, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s9-a2"
+          capability: "core.line"
+          from: { x: 490, y: 178 }
+          to: { x: 520, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s9-p3"
+          capability: "core.rect"
+          layout: { x: 520, y: 130, width: 130, height: 96 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s9-p3-title"
+              capability: "core.text"
+              text: "repeat"
+              layout: { x: 528, y: 158, width: 114, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s9-p3-detail"
+              capability: "core.text"
+              text: "sim pump"
+              layout: { x: 528, y: 182, width: 114, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s9-pulse"
+          capability: "core.rect"
+          layout: { x: 105, y: 172, width: 12, height: 12 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+      ]
+      timeline: [
+        {
+          id: "s9-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s9-hdr"
+          action: "enter"
+        },
+        {
+          id: "s9-enter-p0"
+          at: 200
+          duration: 250
+          target: "s9-p0"
+          action: "enter"
+        },
+        {
+          id: "s9-draw-a0"
+          at: 400
+          duration: 250
+          target: "s9-a0"
+          action: "draw"
+        },
+        {
+          id: "s9-enter-p1"
+          at: 600
+          duration: 250
+          target: "s9-p1"
+          action: "enter"
+        },
+        {
+          id: "s9-draw-a1"
+          at: 800
+          duration: 250
+          target: "s9-a1"
+          action: "draw"
+        },
+        {
+          id: "s9-enter-p2"
+          at: 1000
+          duration: 250
+          target: "s9-p2"
+          action: "enter"
+        },
+        {
+          id: "s9-draw-a2"
+          at: 1200
+          duration: 250
+          target: "s9-a2"
+          action: "draw"
+        },
+        {
+          id: "s9-enter-p3"
+          at: 1400
+          duration: 250
+          target: "s9-p3"
+          action: "enter"
+        },
+        {
+          id: "s9-enter-pulse"
+          at: 1600
+          duration: 250
+          target: "s9-pulse"
+          action: "enter"
+        },
+        {
+          id: "s9-emph-pulse"
+          at: 1800
+          duration: 300
+          target: "s9-pulse"
+          action: "emphasize"
+        }
+      ]
+    }
+  }
+
+  slide "Ordering rule" {
+    eyebrow: "Ordering rule"
+    title: "Earliest event selection; clock wins ties"
+    lede: "If a request-rate arrival and an engine pass both occur at the same virtual instant, the clock event fires first. Accepting a source step that jumps across a parked clock event would make batching backend-dependent."
+
+    narration: "When timestamps tie, the clock queue wins. That preserves arrival-before-pass ordering required for deterministic batching."
+
+    term: {
+      word: "arrival-before-pass"
+      meaning: "Invariant preserved by clock-wins-ties ordering in drive_sim_inner."
+    }
+
+    points: [
+      "validate_event_time rejects time regression.",
+      "Overshoot protection errors if a step ends past the next clock event.",
+      "Preserves parity with scheduled HTTP arrival ordering."
+    ]
+
+    caption: "Clock-wins-ties keeps scheduling backend-independent."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s10-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s10-hdr-label"
+              capability: "core.text"
+              text: "CLOCK WINS TIES"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s10-hdr-caption"
+              capability: "core.text"
+              text: "Equal timestamps: clock before source."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s10-arr"
+          capability: "core.rect"
+          layout: { x: 120, y: 140, width: 180, height: 80 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s10-arr-title"
+              capability: "core.text"
+              text: "arrival @ t"
+              layout: { x: 128, y: 168, width: 164, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s10-arr-detail"
+              capability: "core.text"
+              text: "clock queue"
+              layout: { x: 128, y: 192, width: 164, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s10-eng"
+          capability: "core.rect"
+          layout: { x: 400, y: 140, width: 180, height: 80 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s10-eng-title"
+              capability: "core.text"
+              text: "engine pass @ t"
+              layout: { x: 408, y: 168, width: 164, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s10-eng-detail"
+              capability: "core.text"
+              text: "source queue"
+              layout: { x: 408, y: 192, width: 164, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s10-note"
+          capability: "core.text"
+          text: "clock fires first at equal t"
+          layout: { x: 180, y: 260, width: 340, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary }
+        }
+      ]
+      timeline: [
+        {
+          id: "s10-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s10-hdr"
+          action: "enter"
+        },
+        {
+          id: "s10-enter-arr"
+          at: 200
+          duration: 250
+          target: "s10-arr"
+          action: "enter"
+        },
+        {
+          id: "s10-enter-eng"
+          at: 400
+          duration: 250
+          target: "s10-eng"
+          action: "enter"
+        },
+        {
+          id: "s10-enter-note"
+          at: 600
+          duration: 250
+          target: "s10-note"
+          action: "enter"
+        },
+        {
+          id: "s10-emph-note"
+          at: 800
+          duration: 300
+          target: "s10-note"
+          action: "emphasize"
+        }
+      ]
+    }
+  }
+
+  slide "Step bounds" {
+    eyebrow: "Step bounds"
+    title: "Engine steps respect virtual interval limits"
+    lede: "Each source.step(at_ns) returns SimStep with end_ns. The driver rejects steps that regress time or overshoot the next parked clock event — those guards keep the pump monotonic and safe."
+
+    narration: "Engine steps declare an end time. The pump rejects regressions and overshoots that would skip a parked clock event."
+
+    term: {
+      word: "SimStep"
+      meaning: "One engine advance with end_ns, made_progress, and optional terminal metadata for the pump."
+    }
+
+    points: [
+      "TimeRegression if end_ns < now.",
+      "OvershotClockEvent if end_ns passes a sooner clock timer.",
+      "Stall detection after MAX_NO_PROGRESS_STEPS idle iterations."
+    ]
+
+    caption: "Monotonic virtual time with overshoot protection."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s11-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s11-hdr-label"
+              capability: "core.text"
+              text: "STEP BOUNDS"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s11-hdr-caption"
+              capability: "core.text"
+              text: "Steps are half-open intervals with hard guards."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s11-step"
+          capability: "core.rect"
+          layout: { x: 80, y: 130, width: 170, height: 96 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s11-step-title"
+              capability: "core.text"
+              text: "source.step"
+              layout: { x: 88, y: 158, width: 154, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s11-step-detail"
+              capability: "core.text"
+              text: "[at, end_ns)"
+              layout: { x: 88, y: 182, width: 154, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s11-a1"
+          capability: "core.line"
+          from: { x: 250, y: 178 }
+          to: { x: 300, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s11-guard"
+          capability: "core.rect"
+          layout: { x: 300, y: 130, width: 170, height: 96 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s11-guard-title"
+              capability: "core.text"
+              text: "guards"
+              layout: { x: 308, y: 158, width: 154, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s11-guard-detail"
+              capability: "core.text"
+              text: "regression · overshoot"
+              layout: { x: 308, y: 182, width: 154, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s11-a2"
+          capability: "core.line"
+          from: { x: 470, y: 178 }
+          to: { x: 520, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s11-adv"
+          capability: "core.rect"
+          layout: { x: 520, y: 130, width: 100, height: 96 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s11-adv-title"
+              capability: "core.text"
+              text: "advance"
+              layout: { x: 528, y: 158, width: 84, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s11-adv-detail"
+              capability: "core.text"
+              text: "SimClock"
+              layout: { x: 528, y: 182, width: 84, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        {
+          id: "s11-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s11-hdr"
+          action: "enter"
+        },
+        {
+          id: "s11-enter-step"
+          at: 200
+          duration: 250
+          target: "s11-step"
+          action: "enter"
+        },
+        {
+          id: "s11-draw-a1"
+          at: 400
+          duration: 250
+          target: "s11-a1"
+          action: "draw"
+        },
+        {
+          id: "s11-enter-guard"
+          at: 600
+          duration: 250
+          target: "s11-guard"
+          action: "enter"
+        },
+        {
+          id: "s11-draw-a2"
+          at: 800
+          duration: 250
+          target: "s11-a2"
+          action: "draw"
+        },
+        {
+          id: "s11-enter-adv"
+          at: 1000
+          duration: 250
+          target: "s11-adv"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Submission" {
+    eyebrow: "Submission"
+    title: "DirectRequest and waiter mailboxes"
+    lede: "Turns become DirectRequest values submitted to SteppableReplay. Completion signals flow back through per-request waiter mailboxes polled by the sink — no HTTP encoding on the path."
+
+    narration: "Turns become DirectRequest values submitted to the replay engine. Waiter mailboxes bridge completion back into the sink without HTTP."
+
+    term: {
+      word: "DirectRequest"
+      meaning: "Dynamo mocker request descriptor carrying prompt, decode budget, and routing hints for one replay turn."
+    }
+
+    points: [
+      "Sink submits when the workload dispatches a turn.",
+      "Engine events dequeue into token and terminal observer callbacks.",
+      "Waiters bridge async engine state to LocalSet-friendly sinks."
+    ]
+
+    caption: "In-process submission; mailbox completion."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s12-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s12-hdr-label"
+              capability: "core.text"
+              text: "DIRECT REQUEST"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s12-hdr-caption"
+              capability: "core.text"
+              text: "DirectRequest in; completion via waiter mailbox."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s12-turn"
+          capability: "core.rect"
+          layout: { x: 70, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s12-turn-title"
+              capability: "core.text"
+              text: "Turn dispatch"
+              layout: { x: 78, y: 158, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s12-turn-detail"
+              capability: "core.text"
+              text: "workload"
+              layout: { x: 78, y: 182, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s12-a1"
+          capability: "core.line"
+          from: { x: 220, y: 178 }
+          to: { x: 270, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s12-req"
+          capability: "core.rect"
+          layout: { x: 270, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s12-req-title"
+              capability: "core.text"
+              text: "DirectRequest"
+              layout: { x: 278, y: 158, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s12-req-detail"
+              capability: "core.text"
+              text: "submit"
+              layout: { x: 278, y: 182, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s12-a2"
+          capability: "core.line"
+          from: { x: 420, y: 178 }
+          to: { x: 470, y: 178 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2 }
+        },
+        {
+          id: "s12-mail"
+          capability: "core.rect"
+          layout: { x: 470, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s12-mail-title"
+              capability: "core.text"
+              text: "waiter mailbox"
+              layout: { x: 478, y: 158, width: 144, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s12-mail-detail"
+              capability: "core.text"
+              text: "completion"
+              layout: { x: 478, y: 182, width: 144, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        {
+          id: "s12-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s12-hdr"
+          action: "enter"
+        },
+        {
+          id: "s12-enter-turn"
+          at: 200
+          duration: 250
+          target: "s12-turn"
+          action: "enter"
+        },
+        {
+          id: "s12-draw-a1"
+          at: 400
+          duration: 250
+          target: "s12-a1"
+          action: "draw"
+        },
+        {
+          id: "s12-enter-req"
+          at: 600
+          duration: 250
+          target: "s12-req"
+          action: "enter"
+        },
+        {
+          id: "s12-draw-a2"
+          at: 800
+          duration: 250
+          target: "s12-a2"
+          action: "draw"
+        },
+        {
+          id: "s12-enter-mail"
+          at: 1000
+          duration: 250
+          target: "s12-mail"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Token path" {
+    eyebrow: "Token path"
+    title: "Engine events become RequestObserver callbacks"
+    lede: "As SteppableReplay emits token, usage, and terminal engine events, DynosimSink translates them into the same observer vocabulary HTTP reduction produces: classified tokens, batched output tokens, usage fields, and terminal status."
+
+    narration: "Replay engine events translate into RequestObserver callbacks: tokens, usage, and terminal status match the HTTP reduction path."
+
+    term: {
+      word: "RequestObserver"
+      meaning: "Worker-local callback surface; TTFT is the first token observation."
+    }
+
+    points: [
+      "First token observation sets TTFT.",
+      "Usage fields stay absent when the engine omits them.",
+      "Terminal events close the sink lifecycle."
+    ]
+
+    caption: "Observer seam is transport-neutral."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s13-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s13-hdr-label"
+              capability: "core.text"
+              text: "OBSERVER PATH"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s13-hdr-caption"
+              capability: "core.text"
+              text: "Engine events become observer callbacks."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s13-ev"
+          capability: "core.rect"
+          layout: { x: 60, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s13-ev-title"
+              capability: "core.text"
+              text: "EngineEvent"
+              layout: { x: 68, y: 158, width: 144, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s13-ev-detail"
+              capability: "core.text"
+              text: "token · usage"
+              layout: { x: 68, y: 182, width: 144, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s13-a1"
+          capability: "core.line"
+          from: { x: 220, y: 178 }
+          to: { x: 280, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s13-sink"
+          capability: "core.rect"
+          layout: { x: 280, y: 130, width: 160, height: 96 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s13-sink-title"
+              capability: "core.text"
+              text: "DynosimSink"
+              layout: { x: 288, y: 158, width: 144, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s13-sink-detail"
+              capability: "core.text"
+              text: "translate"
+              layout: { x: 288, y: 182, width: 144, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s13-a2"
+          capability: "core.line"
+          from: { x: 440, y: 178 }
+          to: { x: 500, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s13-obs"
+          capability: "core.rect"
+          layout: { x: 500, y: 130, width: 140, height: 96 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s13-obs-title"
+              capability: "core.text"
+              text: "Observer"
+              layout: { x: 508, y: 158, width: 124, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s13-obs-detail"
+              capability: "core.text"
+              text: "TTFT · terminal"
+              layout: { x: 508, y: 182, width: 124, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        {
+          id: "s13-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s13-hdr"
+          action: "enter"
+        },
+        {
+          id: "s13-enter-ev"
+          at: 200
+          duration: 250
+          target: "s13-ev"
+          action: "enter"
+        },
+        {
+          id: "s13-draw-a1"
+          at: 400
+          duration: 250
+          target: "s13-a1"
+          action: "draw"
+        },
+        {
+          id: "s13-enter-sink"
+          at: 600
+          duration: 250
+          target: "s13-sink"
+          action: "enter"
+        },
+        {
+          id: "s13-draw-a2"
+          at: 800
+          duration: 250
+          target: "s13-a2"
+          action: "draw"
+        },
+        {
+          id: "s13-enter-obs"
+          at: 1000
+          duration: 250
+          target: "s13-obs"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Metrics" {
+    eyebrow: "Metrics"
+    title: "TTFT, ITL batches, usage, terminal merge"
+    lede: "NativeMetricsObserver accumulates per-record timing from observer events. TTFT comes from the first token; inter-token spacing from subsequent token observations; usage_* mirrors endpoint usage when present."
+
+    narration: "Metrics accumulate from observer events: time to first token, inter-token spacing, usage fields, and terminal status merge like online runs."
+
+    term: {
+      word: "NativeMetricsObserver"
+      meaning: "Runtime adapter that turns observer events into metrics_core accumulators and record traces."
+    }
+
+    points: [
+      "Generated-token ITL excludes terminal usage frames.",
+      "Sketch mode merges digests; exact mode retains records.",
+      "Phase windows and steady-state derive from the same curves as HTTP."
+    ]
+
+    caption: "Same metric plane; source is replay instead of wire."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s14-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s14-hdr-label"
+              capability: "core.text"
+              text: "METRICS MERGE"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s14-hdr-caption"
+              capability: "core.text"
+              text: "Same metrics plane as HTTP runs."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s14-obs"
+          capability: "core.rect"
+          layout: { x: 80, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s14-obs-title"
+              capability: "core.text"
+              text: "Observer events"
+              layout: { x: 88, y: 158, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s14-obs-detail"
+              capability: "core.text"
+              text: "per worker"
+              layout: { x: 88, y: 182, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s14-a1"
+          capability: "core.line"
+          from: { x: 230, y: 178 }
+          to: { x: 280, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s14-core"
+          capability: "core.rect"
+          layout: { x: 280, y: 130, width: 170, height: 96 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s14-core-title"
+              capability: "core.text"
+              text: "metrics_core"
+              layout: { x: 288, y: 158, width: 154, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s14-core-detail"
+              capability: "core.text"
+              text: "accumulate"
+              layout: { x: 288, y: 182, width: 154, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s14-a2"
+          capability: "core.line"
+          from: { x: 450, y: 178 }
+          to: { x: 500, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s14-rec"
+          capability: "core.rect"
+          layout: { x: 500, y: 130, width: 120, height: 96 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s14-rec-title"
+              capability: "core.text"
+              text: "records"
+              layout: { x: 508, y: 158, width: 104, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s14-rec-detail"
+              capability: "core.text"
+              text: "exact / sketch"
+              layout: { x: 508, y: 182, width: 104, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        {
+          id: "s14-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s14-hdr"
+          action: "enter"
+        },
+        {
+          id: "s14-enter-obs"
+          at: 200
+          duration: 250
+          target: "s14-obs"
+          action: "enter"
+        },
+        {
+          id: "s14-draw-a1"
+          at: 400
+          duration: 250
+          target: "s14-a1"
+          action: "draw"
+        },
+        {
+          id: "s14-enter-core"
+          at: 600
+          duration: 250
+          target: "s14-core"
+          action: "enter"
+        },
+        {
+          id: "s14-draw-a2"
+          at: 800
+          duration: 250
+          target: "s14-a2"
+          action: "draw"
+        },
+        {
+          id: "s14-enter-rec"
+          at: 1000
+          duration: 250
+          target: "s14-rec"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Delivery modes" {
+    eyebrow: "Delivery modes"
+    title: "Incremental tokens vs terminal coalescing"
+    lede: "Streaming configuration selects whether token observations arrive incrementally as the engine produces them or coalesce at terminal. Dynosim honors the same policy flags HTTP SSE paths respect."
+
+    narration: "Streaming policy controls incremental token events versus terminal coalescing. Dynosim honors the same flags as HTTP streaming paths."
+
+    term: {
+      word: "terminal coalescing"
+      meaning: "Delivery mode that emits batched output at terminal instead of per-token streaming observations."
+    }
+
+    points: [
+      "Incremental: each engine token → observer token event.",
+      "Coalesced: sink batches until terminal reduces once.",
+      "Policy is endpoint/streaming config, not dynosim-specific."
+    ]
+
+    caption: "Delivery shape follows config, not transport family."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s15-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s15-hdr-label"
+              capability: "core.text"
+              text: "DELIVERY MODE"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s15-hdr-caption"
+              capability: "core.text"
+              text: "Incremental vs coalesced delivery."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s15-inc"
+          capability: "core.rect"
+          layout: { x: 100, y: 130, width: 220, height: 96 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s15-inc-title"
+              capability: "core.text"
+              text: "Incremental"
+              layout: { x: 108, y: 158, width: 204, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s15-inc-detail"
+              capability: "core.text"
+              text: "token → token"
+              layout: { x: 108, y: 182, width: 204, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s15-coa"
+          capability: "core.rect"
+          layout: { x: 380, y: 130, width: 220, height: 96 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s15-coa-title"
+              capability: "core.text"
+              text: "Coalesced"
+              layout: { x: 388, y: 158, width: 204, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s15-coa-detail"
+              capability: "core.text"
+              text: "terminal batch"
+              layout: { x: 388, y: 182, width: 204, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        {
+          id: "s15-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s15-hdr"
+          action: "enter"
+        },
+        {
+          id: "s15-enter-inc"
+          at: 200
+          duration: 250
+          target: "s15-inc"
+          action: "enter"
+        },
+        {
+          id: "s15-enter-coa"
+          at: 400
+          duration: 250
+          target: "s15-coa"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Completion" {
+    eyebrow: "Completion"
+    title: "Drain, stall, and deadlock detection"
+    lede: "When the workload future completes, the pump drains remaining source events. If neither clock nor source can progress, the driver returns deadlocked. Repeated no-progress steps raise SimDriveError::Stalled."
+
+    narration: "On completion the pump drains remaining engine events. Stall and deadlock detection prevent infinite idle loops when no progress is possible."
+
+    term: {
+      word: "RunOutcome"
+      meaning: "Pump result carrying deadlocked flag when virtual time cannot advance and the workload remains pending."
+    }
+
+    points: [
+      "Ready workload → drain_source then exit.",
+      "No next event with pending work → deadlocked.",
+      "Stall guard prevents infinite idle loops."
+    ]
+
+    caption: "Clean termination with explicit stall signals."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s16-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s16-hdr-label"
+              capability: "core.text"
+              text: "DRAIN + STALL"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s16-hdr-caption"
+              capability: "core.text"
+              text: "Ready drain vs. no-progress stall."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s16-ready"
+          capability: "core.rect"
+          layout: { x: 120, y: 120, width: 180, height: 110 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s16-ready-title"
+              capability: "core.text"
+              text: "Ready future"
+              layout: { x: 128, y: 148, width: 164, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s16-ready-detail"
+              capability: "core.text"
+              text: "drain source"
+              layout: { x: 128, y: 172, width: 164, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s16-stall"
+          capability: "core.rect"
+          layout: { x: 400, y: 120, width: 180, height: 110 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s16-stall-title"
+              capability: "core.text"
+              text: "No progress"
+              layout: { x: 408, y: 148, width: 164, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s16-stall-detail"
+              capability: "core.text"
+              text: "stall / deadlock"
+              layout: { x: 408, y: 172, width: 164, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        {
+          id: "s16-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s16-hdr"
+          action: "enter"
+        },
+        {
+          id: "s16-enter-ready"
+          at: 200
+          duration: 250
+          target: "s16-ready"
+          action: "enter"
+        },
+        {
+          id: "s16-enter-stall"
+          at: 400
+          duration: 250
+          target: "s16-stall"
+          action: "enter"
+        }
+      ]
+    }
+  }
+
+  slide "Recap" {
+    eyebrow: "Recap"
+    title: "Offline vs online parity and artifacts"
+    lede: "Both modes write native-v2.json through the same Coordinator persist path. Choose offline for deterministic sweeps and co-simulation; choose online when wall-clock fidelity matters. Artifacts and exporters follow the configured BenchmarkRun."
+
+    narration: "Offline dynosim gives deterministic virtual time. Online dynosim keeps wall clocks. Both produce the same native report and configured artifacts through the coordinator."
+
+    term: {
+      word: "native-v2.json"
+      meaning: "Authoritative merged report before optional exporter fan-out."
+    }
+
+    points: [
+      "Offline: SimClock + drive_sim_with_source.",
+      "Online: RealClock + drive_real_with_source.",
+      "Exporters and cellular modes are orthogonal to dynosim choice."
+    ]
+
+    caption: "Pick the clock; keep the rest of AIPerf unchanged."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s17-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          children: [
+            {
+              id: "s17-hdr-label"
+              capability: "core.text"
+              text: "MODE RECAP"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s17-hdr-caption"
+              capability: "core.text"
+              text: "Two clocks; one artifact contract."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s17-off"
+          capability: "core.rect"
+          layout: { x: 60, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s17-off-title"
+              capability: "core.text"
+              text: "Offline"
+              layout: { x: 68, y: 158, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s17-off-detail"
+              capability: "core.text"
+              text: "SimClock"
+              layout: { x: 68, y: 182, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s17-a1"
+          capability: "core.line"
+          from: { x: 210, y: 178 }
+          to: { x: 275, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s17-on"
+          capability: "core.rect"
+          layout: { x: 275, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s17-on-title"
+              capability: "core.text"
+              text: "Online"
+              layout: { x: 283, y: 158, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s17-on-detail"
+              capability: "core.text"
+              text: "RealClock"
+              layout: { x: 283, y: 182, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        },
+        {
+          id: "s17-a2"
+          capability: "core.line"
+          from: { x: 425, y: 178 }
+          to: { x: 490, y: 178 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2 }
+        },
+        {
+          id: "s17-art"
+          capability: "core.rect"
+          layout: { x: 490, y: 130, width: 150, height: 96 }
+          style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "s17-art-title"
+              capability: "core.text"
+              text: "native-v2.json"
+              layout: { x: 498, y: 158, width: 134, height: 22 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "s17-art-detail"
+              capability: "core.text"
+              text: "same persist"
+              layout: { x: 498, y: 182, width: 134, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary }
+            }
+          ]
+        }
+      ]
+      timeline: [
+        {
+          id: "s17-enter-hdr"
+          at: 0
+          duration: 250
+          target: "s17-hdr"
+          action: "enter"
+        },
+        {
+          id: "s17-enter-off"
+          at: 200
+          duration: 250
+          target: "s17-off"
+          action: "enter"
+        },
+        {
+          id: "s17-draw-a1"
+          at: 400
+          duration: 250
+          target: "s17-a1"
+          action: "draw"
+        },
+        {
+          id: "s17-enter-on"
+          at: 600
+          duration: 250
+          target: "s17-on"
+          action: "enter"
+        },
+        {
+          id: "s17-draw-a2"
+          at: 800
+          duration: 250
+          target: "s17-a2"
+          action: "draw"
+        },
+        {
+          id: "s17-enter-art"
+          at: 1000
+          duration: 250
+          target: "s17-art"
+          action: "enter"
+        }
+      ]
+    }
+  }
+}

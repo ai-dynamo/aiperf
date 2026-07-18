@@ -8,7 +8,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { ExplainerDeckPicker } from "./explainer-deck-picker";
-import { COMPILED_EXPLAINER_DECKS } from "../packages/runtime/src/explainer/compiled-decks";
+import { COMPILED_EXPLAINER_DECKS } from "./deck-packages";
 
 afterEach(() => {
   cleanup();
@@ -42,7 +42,7 @@ describe("ExplainerDeckPicker", () => {
     // Check for human-readable titles
     expect(screen.getByText(/Rust Architecture/i)).toBeTruthy();
     expect(screen.getByText(/Slurm Velo/i)).toBeTruthy();
-    expect(screen.getByText(/Dynosim/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: /Dynosim/i })).toBeTruthy();
     expect(screen.getByText(/Aiperf Flow System/i)).toBeTruthy();
   });
 
@@ -150,7 +150,7 @@ describe("ExplainerDeckPicker", () => {
     // slurm-velo -> Slurm Velo
     expect(screen.getByText(/Slurm Velo/i)).toBeTruthy();
     // dynosim -> Dynosim
-    expect(screen.getByText(/Dynosim/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: /Dynosim/i })).toBeTruthy();
     // aiperf-flow-system -> Aiperf Flow System
     expect(screen.getByText(/Aiperf Flow System/i)).toBeTruthy();
   });

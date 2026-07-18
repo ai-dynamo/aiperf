@@ -9,7 +9,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { ExplainerDeckPicker } from "./explainer-deck-picker";
 import { ExplainerDeckNavigator } from "./explainer-deck-navigator";
-import { COMPILED_EXPLAINER_DECKS } from "../packages/runtime/src/explainer/compiled-decks";
+import { COMPILED_EXPLAINER_DECKS } from "./deck-packages";
 
 afterEach(() => {
   cleanup();
@@ -24,7 +24,7 @@ describe("Explainer Deck Navigation Integration", () => {
     // All 4 decks should be displayed
     expect(screen.getByText(/Rust Architecture/i)).toBeTruthy();
     expect(screen.getByText(/Slurm Velo/i)).toBeTruthy();
-    expect(screen.getByText(/Dynosim/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: /Dynosim/i })).toBeTruthy();
   });
 
   test("ExplainerDeckPicker calls onDeckSelect when deck clicked", () => {

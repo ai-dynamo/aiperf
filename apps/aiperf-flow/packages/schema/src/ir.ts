@@ -32,22 +32,40 @@ export type GeometryIr = Readonly<{
   height: number;
 }>;
 
+/** 2D point used by path / polyline / connector geometry. */
+export type PointIr = Readonly<{
+  x: number;
+  y: number;
+}>;
+
 export type NodeAccessibilityIr = Readonly<{
   label: string;
   description?: string | undefined;
   decorative?: boolean | undefined;
 }>;
 
+/** Authored foundation capabilities used by explainer DeckPackage scenes. */
+export type FoundationCapabilityId =
+  | "core.text"
+  | "core.rect"
+  | "core.connector";
+
 export type { JsonScalar, JsonValue } from "./json-value.js";
 
 export type RenderNodeBaseIr = Readonly<{
   id: string;
   capabilityId?: string | undefined;
+  /** Authoring alias for `capabilityId` (e.g. core.text / core.rect / core.connector). */
+  capability?: string | undefined;
   geometry: GeometryIr;
   style: Readonly<Record<string, StyleValueIr>>;
   accessibility: NodeAccessibilityIr;
   fallback: string;
   sourceMap: SourceRange;
+  /** SVG path data for connector / arrow / path nodes. */
+  path?: string | undefined;
+  /** Polyline or control points for path / connector nodes. */
+  points?: readonly PointIr[] | undefined;
 }>;
 
 export type GroupNodeIr = RenderNodeBaseIr &
@@ -99,15 +117,25 @@ export type CameraKeyframeIr = Readonly<{
   x: number;
   y: number;
   zoom: number;
-  sourceMap: SourceRange;
+  /** Present for cinematic lowers; optional on package/DeckPackage scenes. */
+  sourceMap?: SourceRange | undefined;
 }>;
+
+/** Logical SVG / canvas bounds for explainer SceneRenderer viewports. */
+export type SceneViewportIr = Readonly<{
+  width: number;
+  height: number;
+}>;
+
+/** Well-known timeline cue actions used by explainer diagram playback. */
+export type TimelineCueAction = "enter" | "draw" | (string & {});
 
 export type TimelineCueIr = Readonly<{
   id: string;
   at: number;
   duration: number;
   target: string;
-  action: string;
+  action: TimelineCueAction;
   sourceMap: SourceRange;
 }>;
 
@@ -151,7 +179,10 @@ export type SceneAccessibilityIr = Readonly<{
 export type SceneIr = Readonly<{
   id: string;
   title: string;
+  /** Human-readable scene summary (SVG `<desc>` / a11y). */
   summary: string;
+  /** Optional diagram viewport (defaults to ~700×400 in ExplainerShell). */
+  viewport?: SceneViewportIr | undefined;
   roots: readonly RenderNodeIr[];
   camera: readonly CameraKeyframeIr[];
   timeline: readonly TimelineCueIr[];
@@ -197,25 +228,44 @@ const geometrySchema = z.strictObject({
   width: z.number().finite().nonnegative(),
   height: z.number().finite().nonnegative(),
 });
+const pointIrSchema = z.strictObject({
+  x: z.number().finite(),
+  y: z.number().finite(),
+});
 const nodeAccessibilitySchema = z.strictObject({
   label: z.string().min(1),
   description: z.string().min(1).optional(),
   decorative: z.boolean().optional(),
 });
+const foundationCapabilitySchema = z.union([
+  z.literal("core.text"),
+  z.literal("core.rect"),
+  z.literal("core.connector"),
+  z.string().min(1),
+]);
 
 const renderNodeBaseShape = {
   id: z.string().min(1),
   capabilityId: z.string().min(1).optional(),
+  capability: foundationCapabilitySchema.optional(),
   geometry: geometrySchema,
   style: styleSchema,
   accessibility: nodeAccessibilitySchema,
   fallback: z.string().min(1),
   sourceMap: sourceRangeSchema,
+  path: z.string().optional(),
+  points: z.array(pointIrSchema).optional(),
 };
 const connectorEndpointSchema = z.strictObject({
   nodeId: z.string().min(1),
   anchor: z.string().min(1).optional(),
 });
+/** Timeline cue actions accepted by SceneIr / DeckPackage scenes. */
+export const timelineCueActionSchema = z.union([
+  z.literal("enter"),
+  z.literal("draw"),
+  z.string().min(1),
+]);
 
 const renderNodeSchema: z.ZodType<RenderNodeIr> = z.lazy(() =>
   z.discriminatedUnion("kind", [
@@ -257,14 +307,18 @@ const cameraKeyframeSchema = z.strictObject({
   x: z.number().finite(),
   y: z.number().finite(),
   zoom: z.number().finite().positive(),
-  sourceMap: sourceRangeSchema,
+  sourceMap: sourceRangeSchema.optional(),
+});
+const sceneViewportSchema = z.strictObject({
+  width: z.number().finite().positive(),
+  height: z.number().finite().positive(),
 });
 const timelineCueSchema = z.strictObject({
   id: z.string().min(1),
   at: z.number().finite().nonnegative(),
   duration: z.number().finite().nonnegative(),
   target: z.string().min(1),
-  action: z.string().min(1),
+  action: timelineCueActionSchema,
   sourceMap: sourceRangeSchema,
 });
 const timeMsSchema = z
@@ -355,6 +409,7 @@ export const sceneIrSchema: z.ZodType<SceneIr> = z.strictObject({
   id: z.string().min(1),
   title: z.string().min(1),
   summary: z.string().min(1),
+  viewport: sceneViewportSchema.optional(),
   roots: z.array(renderNodeSchema),
   camera: z.array(cameraKeyframeSchema),
   timeline: z.array(timelineCueSchema),

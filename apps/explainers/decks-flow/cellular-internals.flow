@@ -1,0 +1,3864 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Cellular internals explainer — launch · distribute · execute · reduce · scale.
+//! Ported from apps/explainers/src/decks/cellular-internals/{index.tsx,content.ts,MentalModel.tsx}.
+
+explainer "Cellular internals" {
+  id: "cellular-internals"
+  route: "/cellular-internals"
+  topic: "cellular-runtime"
+  storagePrefix: "cellular-internals-explainer"
+  classPrefix: "deck-cellular"
+  eyebrowLabel: "CELLULAR INTERNALS"
+  startGateTitle: "Cellular internals"
+
+  hub: {
+    highlight: "Cellular internals"
+    title: "launch · distribute · execute · reduce · scale"
+    description: "Twenty-slide walkthrough of AIPerf's cellular runtime in five chapters: promotion and validation, deterministic distribution, autonomous execution, retain/fold/sketch reduction, and flat-or-tree merge to one report. Grounded in rust/runtime source, deeper than the SLURM & Velo tour."
+  }
+
+  slide "One run, many cells, one report" {
+    eyebrow: "Launch · 1 of 20"
+    title: "One run, many cells, one report"
+    lede: "Cellular scale keeps a single benchmark identity while autonomous processes share the work. Scaling changes placement, not the measurement contract: the authored run, the cells, and the one authoritative report frame everything that follows."
+    narration: "Cellular scale keeps one benchmark identity while autonomous processes share the work. Scaling changes placement, not the measurement contract: one authored run, many cells, one report."
+    term: {
+      word: "run_cellular"
+      meaning: "Controller entry that partitions one authored run across cell processes and merges their results into one report."
+    }
+    points: [
+      "Invariant: scaling changes placement, not the measurement contract.",
+      "Meet the authored run, an autonomous cell, and the final report.",
+      "Evidence: `rust/runtime/src/engine/cellular_controller.rs`."
+    ]
+    caption: "authored run → many cells → one report."
+
+    render: @scene {
+      summary "authored run → many cells → one report."
+      roots: [
+        {
+          id: "hdr0"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "LAUNCH · ONE RUN, MANY CELLS" }
+          children: [
+            {
+              id: "hdr0-text"
+              capability: "core.text"
+              text: "LAUNCH · ONE RUN, MANY CELLS"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr0-cap"
+              capability: "core.text"
+              text: "authored run → many cells → one report."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "authored"
+          capability: "core.rect"
+          layout: { x: 40, y: 150, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "Authored run: one identity" }
+          children: [
+            {
+              id: "authored-title"
+              capability: "core.text"
+              text: "Authored run"
+              layout: { x: 40, y: 176, width: 160, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "authored-detail"
+              capability: "core.text"
+              text: "one identity"
+              layout: { x: 40, y: 196, width: 160, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a0a"
+          capability: "core.path"
+          d: "M200 190 H280"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "cell-k"
+          capability: "core.rect"
+          layout: { x: 280, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "Cell k / N: autonomous" }
+          children: [
+            {
+              id: "cell-k-title"
+              capability: "core.text"
+              text: "Cell k / N"
+              layout: { x: 280, y: 176, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cell-k-detail"
+              capability: "core.text"
+              text: "autonomous"
+              layout: { x: 280, y: 196, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a0b"
+          capability: "core.path"
+          d: "M430 190 H510"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "report"
+          capability: "core.rect"
+          layout: { x: 510, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "One report: authoritative" }
+          children: [
+            {
+              id: "report-title"
+              capability: "core.text"
+              text: "One report"
+              layout: { x: 510, y: 176, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "report-detail"
+              capability: "core.text"
+              text: "authoritative"
+              layout: { x: 510, y: 196, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "note0"
+          capability: "core.text"
+          text: "placement changes · measurement contract does not"
+          layout: { x: 120, y: 300, width: 500, height: 20 }
+          style: { fontSize: 12, fill: @theme.ink.secondary }
+        },
+        {
+          id: "motion0"
+          capability: "core.path"
+          d: "M180 175 H560"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s0-hdr0" at: 0 duration: 280 target: "hdr0" action: "enter" }
+        { id: "s0-authored" at: 220 duration: 280 target: "authored" action: "enter" }
+        { id: "s0-a0a" at: 440 duration: 420 target: "a0a" action: "draw" }
+        { id: "s0-cell-k" at: 660 duration: 280 target: "cell-k" action: "enter" }
+        { id: "s0-a0b" at: 880 duration: 420 target: "a0b" action: "draw" }
+        { id: "s0-report" at: 1100 duration: 280 target: "report" action: "enter" }
+        { id: "s0-note0" at: 1320 duration: 280 target: "note0" action: "enter" }
+        { id: "s0-motion0" at: 1540 duration: 420 target: "motion0" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Author the Config v2 run" {
+    eyebrow: "Launch · 2 of 20"
+    title: "Author the Config v2 run"
+    lede: "The human-facing command resolves exactly one strict benchmark request before any child process exists. Every cell later derives from that same resolved request, so there is a single authored source of truth."
+    narration: "The human-facing command resolves exactly one strict benchmark request before any child exists. Every cell later derives from that same resolved source of truth."
+    term: {
+      word: "ProfileFlags"
+      meaning: "Config v2 CLI surface resolved into one BenchmarkRun before cellular partitioning."
+    }
+    points: [
+      "Every cell derives from the same resolved request.",
+      "Resolution happens once, in the parent, before fan-out.",
+      "Evidence: `rust/cli/src/flags.rs`."
+    ]
+    caption: "one authored Config v2 request · resolved before fan-out."
+
+    render: @scene {
+      summary "one authored Config v2 request · resolved before fan-out."
+      roots: [
+        {
+          id: "hdr1"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "LAUNCH · CONFIG V2 SOURCE" }
+          children: [
+            {
+              id: "hdr1-text"
+              capability: "core.text"
+              text: "LAUNCH · CONFIG V2 SOURCE"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr1-cap"
+              capability: "core.text"
+              text: "one authored Config v2 request · resolved before fan-out."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "cfg"
+          capability: "core.rect"
+          layout: { x: 230, y: 120, width: 240, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "Config v2: ProfileFlags → BenchmarkRun" }
+          children: [
+            {
+              id: "cfg-title"
+              capability: "core.text"
+              text: "Config v2"
+              layout: { x: 230, y: 151, width: 240, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cfg-detail"
+              capability: "core.text"
+              text: "ProfileFlags → BenchmarkRun"
+              layout: { x: 230, y: 171, width: 240, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "cell0"
+          capability: "core.rect"
+          layout: { x: 40, y: 280, width: 130, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "cell 0: same request" }
+          children: [
+            {
+              id: "cell0-title"
+              capability: "core.text"
+              text: "cell 0"
+              layout: { x: 40, y: 296, width: 130, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cell0-detail"
+              capability: "core.text"
+              text: "same request"
+              layout: { x: 40, y: 316, width: 130, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a10"
+          capability: "core.path"
+          d: "M350 210 C180 240 105 250 105 280"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "cell1"
+          capability: "core.rect"
+          layout: { x: 200, y: 280, width: 130, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "cell 1: same request" }
+          children: [
+            {
+              id: "cell1-title"
+              capability: "core.text"
+              text: "cell 1"
+              layout: { x: 200, y: 296, width: 130, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cell1-detail"
+              capability: "core.text"
+              text: "same request"
+              layout: { x: 200, y: 316, width: 130, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a11"
+          capability: "core.path"
+          d: "M350 210 C300 240 265 250 265 280"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "cell2"
+          capability: "core.rect"
+          layout: { x: 360, y: 280, width: 130, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "cell 2: same request" }
+          children: [
+            {
+              id: "cell2-title"
+              capability: "core.text"
+              text: "cell 2"
+              layout: { x: 360, y: 296, width: 130, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cell2-detail"
+              capability: "core.text"
+              text: "same request"
+              layout: { x: 360, y: 316, width: 130, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a12"
+          capability: "core.path"
+          d: "M350 210 C420 240 425 250 425 280"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "cell3"
+          capability: "core.rect"
+          layout: { x: 520, y: 280, width: 130, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "cell 3: same request" }
+          children: [
+            {
+              id: "cell3-title"
+              capability: "core.text"
+              text: "cell 3"
+              layout: { x: 520, y: 296, width: 130, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cell3-detail"
+              capability: "core.text"
+              text: "same request"
+              layout: { x: 520, y: 316, width: 130, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a13"
+          capability: "core.path"
+          d: "M350 210 C540 240 585 250 585 280"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s1-hdr1" at: 0 duration: 280 target: "hdr1" action: "enter" }
+        { id: "s1-cfg" at: 220 duration: 280 target: "cfg" action: "enter" }
+        { id: "s1-a10" at: 440 duration: 420 target: "a10" action: "draw" }
+        { id: "s1-cell0" at: 660 duration: 280 target: "cell0" action: "enter" }
+        { id: "s1-a11" at: 880 duration: 420 target: "a11" action: "draw" }
+        { id: "s1-cell1" at: 1100 duration: 280 target: "cell1" action: "enter" }
+        { id: "s1-a12" at: 1320 duration: 420 target: "a12" action: "draw" }
+        { id: "s1-cell2" at: 1540 duration: 280 target: "cell2" action: "enter" }
+        { id: "s1-a13" at: 1760 duration: 420 target: "a13" action: "draw" }
+        { id: "s1-cell3" at: 1980 duration: 280 target: "cell3" action: "enter" }
+      ]
+    }
+  }
+
+  slide "Re-exec the unified binary" {
+    eyebrow: "Launch · 3 of 20"
+    title: "Re-exec the unified binary"
+    lede: "The entry point launches the same aiperf image in a hidden execution mode over stdio. Process isolation is achieved without a second product executable: the protocol-v2 self-exec boundary is the only handoff."
+    narration: "The entry point launches the same aiperf image in a hidden execution mode over stdio. Process isolation is achieved through the protocol-v2 self-exec boundary, not a second executable."
+    term: {
+      word: "exec_bin::resolve"
+      meaning: "Resolves current_exe() so the parent can spawn itself as the protocol-v2 --execute child."
+    }
+    points: [
+      "Process isolation survives without a second product executable.",
+      "The child receives one protocol-v2 envelope on stdin.",
+      "Evidence: `rust/cli/src/exec_bin.rs`, `execute_mode.rs`."
+    ]
+    caption: "self-exec --execute · protocol-v2 boundary."
+
+    render: @scene {
+      summary "self-exec --execute · protocol-v2 boundary."
+      roots: [
+        {
+          id: "hdr2"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "LAUNCH · SELF-EXEC BOUNDARY" }
+          children: [
+            {
+              id: "hdr2-text"
+              capability: "core.text"
+              text: "LAUNCH · SELF-EXEC BOUNDARY"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr2-cap"
+              capability: "core.text"
+              text: "self-exec --execute · protocol-v2 boundary."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "profile"
+          capability: "core.rect"
+          layout: { x: 30, y: 150, width: 140, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "profile: parent shell" }
+          children: [
+            {
+              id: "profile-title"
+              capability: "core.text"
+              text: "profile"
+              layout: { x: 30, y: 176, width: 140, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "profile-detail"
+              capability: "core.text"
+              text: "parent shell"
+              layout: { x: 30, y: 196, width: 140, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a2a"
+          capability: "core.path"
+          d: "M170 190 H220"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "execbin"
+          capability: "core.rect"
+          layout: { x: 220, y: 150, width: 140, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "exec_bin: current_exe()" }
+          children: [
+            {
+              id: "execbin-title"
+              capability: "core.text"
+              text: "exec_bin"
+              layout: { x: 220, y: 176, width: 140, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "execbin-detail"
+              capability: "core.text"
+              text: "current_exe()"
+              layout: { x: 220, y: 196, width: 140, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a2b"
+          capability: "core.path"
+          d: "M360 190 H410"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "execute"
+          capability: "core.rect"
+          layout: { x: 410, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "--execute: protocol-v2 child" }
+          children: [
+            {
+              id: "execute-title"
+              capability: "core.text"
+              text: "--execute"
+              layout: { x: 410, y: 176, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "execute-detail"
+              capability: "core.text"
+              text: "protocol-v2 child"
+              layout: { x: 410, y: 196, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "stdio"
+          capability: "core.rect"
+          layout: { x: 230, y: 290, width: 200, height: 56 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "stdin: one envelope: stdout: one terminal" }
+          children: [
+            {
+              id: "stdio-title"
+              capability: "core.text"
+              text: "stdin: one envelope"
+              layout: { x: 230, y: 304, width: 200, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "stdio-detail"
+              capability: "core.text"
+              text: "stdout: one terminal"
+              layout: { x: 230, y: 324, width: 200, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a2c"
+          capability: "core.path"
+          d: "M485 230 V290 H430"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "motion2"
+          capability: "core.path"
+          d: "M110 175 H600"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s2-hdr2" at: 0 duration: 280 target: "hdr2" action: "enter" }
+        { id: "s2-profile" at: 220 duration: 280 target: "profile" action: "enter" }
+        { id: "s2-a2a" at: 440 duration: 420 target: "a2a" action: "draw" }
+        { id: "s2-execbin" at: 660 duration: 280 target: "execbin" action: "enter" }
+        { id: "s2-a2b" at: 880 duration: 420 target: "a2b" action: "draw" }
+        { id: "s2-execute" at: 1100 duration: 280 target: "execute" action: "enter" }
+        { id: "s2-a2c" at: 1320 duration: 420 target: "a2c" action: "draw" }
+        { id: "s2-stdio" at: 1540 duration: 280 target: "stdio" action: "enter" }
+        { id: "s2-motion2" at: 1760 duration: 420 target: "motion2" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Promote to controller at cells > 1" {
+    eyebrow: "Launch · 4 of 20"
+    title: "Promote to controller at cells > 1"
+    lede: "Single-cell execution stays direct. Multi-cell execution promotes one process into a coordinator that partitions and launches, but never dispatches inference load itself. Native Kubernetes roles reuse the same entry points."
+    narration: "Single-cell execution stays direct. At more than one cell, one process is promoted to a coordinator that partitions and launches but never dispatches inference load itself."
+    term: {
+      word: "controller promotion"
+      meaning: "At cells > 1 the execute process becomes a coordinator; the controller coordinates, cells dispatch."
+    }
+    points: [
+      "The controller coordinates but does not dispatch inference load.",
+      "Native `controller` / `cell` / `aggregator` roles wire the same model.",
+      "Evidence: `rust/runtime/src/engine/cellular_controller.rs`."
+    ]
+    caption: "cells > 1 → promote one coordinator."
+
+    render: @scene {
+      summary "cells > 1 → promote one coordinator."
+      roots: [
+        {
+          id: "hdr3"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "LAUNCH · CONTROLLER PROMOTION" }
+          children: [
+            {
+              id: "hdr3-text"
+              capability: "core.text"
+              text: "LAUNCH · CONTROLLER PROMOTION"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr3-cap"
+              capability: "core.text"
+              text: "cells > 1 → promote one coordinator."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "exec3"
+          capability: "core.rect"
+          layout: { x: 30, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "--execute: cells > 1" }
+          children: [
+            {
+              id: "exec3-title"
+              capability: "core.text"
+              text: "--execute"
+              layout: { x: 30, y: 176, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "exec3-detail"
+              capability: "core.text"
+              text: "cells > 1"
+              layout: { x: 30, y: 196, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a3a"
+          capability: "core.path"
+          d: "M180 190 H240"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "ctrl"
+          capability: "core.rect"
+          layout: { x: 240, y: 150, width: 180, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "Controller: coordinate · no load" }
+          children: [
+            {
+              id: "ctrl-title"
+              capability: "core.text"
+              text: "Controller"
+              layout: { x: 240, y: 176, width: 180, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ctrl-detail"
+              capability: "core.text"
+              text: "coordinate · no load"
+              layout: { x: 240, y: 196, width: 180, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a3b"
+          capability: "core.path"
+          d: "M420 175 C480 120 560 120 610 140"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "roles"
+          capability: "core.rect"
+          layout: { x: 480, y: 280, width: 190, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "controller / cell / aggregator: native K8s roles" }
+          children: [
+            {
+              id: "roles-title"
+              capability: "core.text"
+              text: "controller / cell / aggregator"
+              layout: { x: 480, y: 296, width: 190, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "roles-detail"
+              capability: "core.text"
+              text: "native K8s roles"
+              layout: { x: 480, y: 316, width: 190, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "single"
+          capability: "core.rect"
+          layout: { x: 60, y: 280, width: 140, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "single cell: stays direct" }
+          children: [
+            {
+              id: "single-title"
+              capability: "core.text"
+              text: "single cell"
+              layout: { x: 60, y: 296, width: 140, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "single-detail"
+              capability: "core.text"
+              text: "stays direct"
+              layout: { x: 60, y: 316, width: 140, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "motion3"
+          capability: "core.path"
+          d: "M180 160 H560"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s3-hdr3" at: 0 duration: 280 target: "hdr3" action: "enter" }
+        { id: "s3-exec3" at: 220 duration: 280 target: "exec3" action: "enter" }
+        { id: "s3-a3a" at: 440 duration: 420 target: "a3a" action: "draw" }
+        { id: "s3-ctrl" at: 660 duration: 280 target: "ctrl" action: "enter" }
+        { id: "s3-a3b" at: 880 duration: 420 target: "a3b" action: "draw" }
+        { id: "s3-roles" at: 1100 duration: 280 target: "roles" action: "enter" }
+        { id: "s3-single" at: 1320 duration: 280 target: "single" action: "enter" }
+        { id: "s3-motion3" at: 1540 duration: 420 target: "motion3" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Validate and fail closed" {
+    eyebrow: "Launch · 5 of 20"
+    title: "Validate and fail closed"
+    lede: "Eligibility is checked before cells launch. Unsupported transport, budget, storage, and workload combinations are rejected up front so a distributed run never degrades silently into a partial or incorrect result."
+    narration: "Eligibility is checked before cells launch. Unsupported transport, budget, storage, and workload combinations are rejected up front so a run never degrades silently."
+    term: {
+      word: "validate_cellular_run_shape"
+      meaning: "Pre-launch gate that rejects unsupported cellular combinations instead of degrading silently."
+    }
+    points: [
+      "Unsupported combinations never degrade silently.",
+      "Scheduled duration and unbounded runs fail closed.",
+      "Evidence: `rust/runtime/src/engine/cellular_controller.rs`."
+    ]
+    caption: "eligibility gate → reject unsupported shapes."
+
+    render: @scene {
+      summary "eligibility gate → reject unsupported shapes."
+      roots: [
+        {
+          id: "hdr4"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "LAUNCH · VALIDATE / FAIL CLOSED" }
+          children: [
+            {
+              id: "hdr4-text"
+              capability: "core.text"
+              text: "LAUNCH · VALIDATE / FAIL CLOSED"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr4-cap"
+              capability: "core.text"
+              text: "eligibility gate → reject unsupported shapes."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "ctrl4"
+          capability: "core.rect"
+          layout: { x: 250, y: 110, width: 200, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "Controller: validate_cellular_run_shape" }
+          children: [
+            {
+              id: "ctrl4-title"
+              capability: "core.text"
+              text: "Controller"
+              layout: { x: 250, y: 136, width: 200, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ctrl4-detail"
+              capability: "core.text"
+              text: "validate_cellular_run_shape"
+              layout: { x: 250, y: 156, width: 200, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "rej1"
+          capability: "core.rect"
+          layout: { x: 40, y: 270, width: 170, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.danger, strokeWidth: 1.8 }
+          accessibility: { label: "scheduled infinite: rejected" }
+          children: [
+            {
+              id: "rej1-title"
+              capability: "core.text"
+              text: "scheduled infinite"
+              layout: { x: 40, y: 291, width: 170, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "rej1-detail"
+              capability: "core.text"
+              text: "rejected"
+              layout: { x: 40, y: 311, width: 170, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "rej2"
+          capability: "core.rect"
+          layout: { x: 260, y: 270, width: 170, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.danger, strokeWidth: 1.8 }
+          accessibility: { label: "DynoSim cellular: rejected" }
+          children: [
+            {
+              id: "rej2-title"
+              capability: "core.text"
+              text: "DynoSim cellular"
+              layout: { x: 260, y: 291, width: 170, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "rej2-detail"
+              capability: "core.text"
+              text: "rejected"
+              layout: { x: 260, y: 311, width: 170, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "ok4"
+          capability: "core.rect"
+          layout: { x: 480, y: 270, width: 180, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "eligible shape: launch" }
+          children: [
+            {
+              id: "ok4-title"
+              capability: "core.text"
+              text: "eligible shape"
+              layout: { x: 480, y: 291, width: 180, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ok4-detail"
+              capability: "core.text"
+              text: "launch"
+              layout: { x: 480, y: 311, width: 180, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a4a"
+          capability: "core.path"
+          d: "M340 190 C240 220 180 240 150 270"
+          style: { stroke: @theme.accent.danger, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a4b"
+          capability: "core.path"
+          d: "M360 190 V270"
+          style: { stroke: @theme.accent.danger, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a4c"
+          capability: "core.path"
+          d: "M400 190 C520 220 560 240 570 270"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s4-hdr4" at: 0 duration: 280 target: "hdr4" action: "enter" }
+        { id: "s4-ctrl4" at: 220 duration: 280 target: "ctrl4" action: "enter" }
+        { id: "s4-a4a" at: 440 duration: 420 target: "a4a" action: "draw" }
+        { id: "s4-rej1" at: 660 duration: 280 target: "rej1" action: "enter" }
+        { id: "s4-a4b" at: 880 duration: 420 target: "a4b" action: "draw" }
+        { id: "s4-rej2" at: 1100 duration: 280 target: "rej2" action: "enter" }
+        { id: "s4-a4c" at: 1320 duration: 420 target: "a4c" action: "draw" }
+        { id: "s4-ok4" at: 1540 duration: 280 target: "ok4" action: "enter" }
+      ]
+    }
+  }
+
+  slide "Slice the global budget" {
+    eyebrow: "Distribute · 6 of 20"
+    title: "Slice the global budget"
+    lede: "Request and conversation budgets divide across cells without overlap or omission. The union of every cell's owned positions exactly tiles the global budget through a deterministic modulo partition and a stable workload source."
+    narration: "Request and conversation budgets divide across cells without overlap or omission. The union of every cell's owned positions exactly tiles the global budget by modulo."
+    term: {
+      word: "owned_positions"
+      meaning: "The set i where i % cells == cell_id; cell-owned global positions that tile the budget."
+    }
+    points: [
+      "The union of cell-owned positions exactly tiles the global budget.",
+      "`ModuloCellPartition` assigns i % cells == cell_id.",
+      "Evidence: `rust/runtime/src/cellular/partition.rs`, `rust/runtime/src/engine/cell_launcher.rs`."
+    ]
+    caption: "global budget → disjoint modulo tiles."
+
+    render: @scene {
+      summary "global budget → disjoint modulo tiles."
+      roots: [
+        {
+          id: "hdr5"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "DISTRIBUTE · MODULO PARTITION" }
+          children: [
+            {
+              id: "hdr5-text"
+              capability: "core.text"
+              text: "DISTRIBUTE · MODULO PARTITION"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr5-cap"
+              capability: "core.text"
+              text: "global budget → disjoint modulo tiles."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "ctrl5"
+          capability: "core.rect"
+          layout: { x: 30, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "Controller: global budget" }
+          children: [
+            {
+              id: "ctrl5-title"
+              capability: "core.text"
+              text: "Controller"
+              layout: { x: 30, y: 176, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ctrl5-detail"
+              capability: "core.text"
+              text: "global budget"
+              layout: { x: 30, y: 196, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a5a"
+          capability: "core.path"
+          d: "M180 190 H230"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "mod"
+          capability: "core.rect"
+          layout: { x: 230, y: 150, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "ModuloCellPartition: i % cells == id" }
+          children: [
+            {
+              id: "mod-title"
+              capability: "core.text"
+              text: "ModuloCellPartition"
+              layout: { x: 230, y: 176, width: 160, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "mod-detail"
+              capability: "core.text"
+              text: "i % cells == id"
+              layout: { x: 230, y: 196, width: 160, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a5b"
+          capability: "core.path"
+          d: "M390 190 H440"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "own0"
+          capability: "core.rect"
+          layout: { x: 440, y: 100, width: 220, height: 54 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "cell 0 owns: i % 3 == 0" }
+          children: [
+            {
+              id: "own0-title"
+              capability: "core.text"
+              text: "cell 0 owns"
+              layout: { x: 440, y: 113, width: 220, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "own0-detail"
+              capability: "core.text"
+              text: "i % 3 == 0"
+              layout: { x: 440, y: 133, width: 220, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a5c0"
+          capability: "core.path"
+          d: "M470 190 C480 127 490 127 440 127"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "own1"
+          capability: "core.rect"
+          layout: { x: 440, y: 170, width: 220, height: 54 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "cell 1 owns: i % 3 == 1" }
+          children: [
+            {
+              id: "own1-title"
+              capability: "core.text"
+              text: "cell 1 owns"
+              layout: { x: 440, y: 183, width: 220, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "own1-detail"
+              capability: "core.text"
+              text: "i % 3 == 1"
+              layout: { x: 440, y: 203, width: 220, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a5c1"
+          capability: "core.path"
+          d: "M470 190 C480 197 490 197 440 197"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "own2"
+          capability: "core.rect"
+          layout: { x: 440, y: 240, width: 220, height: 54 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "cell 2 owns: i % 3 == 2" }
+          children: [
+            {
+              id: "own2-title"
+              capability: "core.text"
+              text: "cell 2 owns"
+              layout: { x: 440, y: 253, width: 220, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "own2-detail"
+              capability: "core.text"
+              text: "i % 3 == 2"
+              layout: { x: 440, y: 273, width: 220, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a5c2"
+          capability: "core.path"
+          d: "M470 190 C480 267 490 267 440 267"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "motion5"
+          capability: "core.path"
+          d: "M110 175 H580"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s5-hdr5" at: 0 duration: 280 target: "hdr5" action: "enter" }
+        { id: "s5-ctrl5" at: 220 duration: 280 target: "ctrl5" action: "enter" }
+        { id: "s5-a5a" at: 440 duration: 420 target: "a5a" action: "draw" }
+        { id: "s5-mod" at: 660 duration: 280 target: "mod" action: "enter" }
+        { id: "s5-a5b" at: 880 duration: 420 target: "a5b" action: "draw" }
+        { id: "s5-a5c0" at: 1100 duration: 420 target: "a5c0" action: "draw" }
+        { id: "s5-own0" at: 1320 duration: 280 target: "own0" action: "enter" }
+        { id: "s5-a5c1" at: 1540 duration: 420 target: "a5c1" action: "draw" }
+        { id: "s5-own1" at: 1760 duration: 280 target: "own1" action: "enter" }
+        { id: "s5-a5c2" at: 1980 duration: 420 target: "a5c2" action: "draw" }
+        { id: "s5-own2" at: 2200 duration: 280 target: "own2" action: "enter" }
+        { id: "s5-motion5" at: 2420 duration: 420 target: "motion5" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Register, then release START" {
+    eyebrow: "Distribute · 7 of 20"
+    title: "Register, then release START"
+    lede: "Children become ready before the controller releases synchronized execution. No synchronized cell dispatches before the registration barrier opens, so cross-cell start skew is bounded without a shared wall clock."
+    narration: "Children become ready before the controller releases synchronized execution. No synchronized cell dispatches before the registration barrier opens."
+    term: {
+      word: "await_all_registered → trigger"
+      meaning: "Default lifecycle gate: the controller triggers the shared start event only once every cell registers."
+    }
+    points: [
+      "No synchronized cell dispatches before the barrier opens.",
+      "This is the default START policy.",
+      "Evidence: `rust/runtime/src/engine/cellular_controller.rs`."
+    ]
+    caption: "register all → trigger → synchronized dispatch."
+
+    render: @scene {
+      summary "register all → trigger → synchronized dispatch."
+      roots: [
+        {
+          id: "hdr6"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "DISTRIBUTE · START BARRIER" }
+          children: [
+            {
+              id: "hdr6-text"
+              capability: "core.text"
+              text: "DISTRIBUTE · START BARRIER"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr6-cap"
+              capability: "core.text"
+              text: "register all → trigger → synchronized dispatch."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "c0"
+          capability: "core.rect"
+          layout: { x: 30, y: 280, width: 80, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "c0: register" }
+          children: [
+            {
+              id: "c0-title"
+              capability: "core.text"
+              text: "c0"
+              layout: { x: 30, y: 296, width: 80, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "c0-detail"
+              capability: "core.text"
+              text: "register"
+              layout: { x: 30, y: 316, width: 80, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a6a0"
+          capability: "core.path"
+          d: "M70 280 C70 240 350 220 440 195"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "c1"
+          capability: "core.rect"
+          layout: { x: 130, y: 280, width: 80, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "c1: register" }
+          children: [
+            {
+              id: "c1-title"
+              capability: "core.text"
+              text: "c1"
+              layout: { x: 130, y: 296, width: 80, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "c1-detail"
+              capability: "core.text"
+              text: "register"
+              layout: { x: 130, y: 316, width: 80, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a6a1"
+          capability: "core.path"
+          d: "M170 280 C170 240 350 220 440 195"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "c2"
+          capability: "core.rect"
+          layout: { x: 230, y: 280, width: 80, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "c2: register" }
+          children: [
+            {
+              id: "c2-title"
+              capability: "core.text"
+              text: "c2"
+              layout: { x: 230, y: 296, width: 80, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "c2-detail"
+              capability: "core.text"
+              text: "register"
+              layout: { x: 230, y: 316, width: 80, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a6a2"
+          capability: "core.path"
+          d: "M270 280 C270 240 350 220 440 195"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "c3"
+          capability: "core.rect"
+          layout: { x: 330, y: 280, width: 80, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "c3: register" }
+          children: [
+            {
+              id: "c3-title"
+              capability: "core.text"
+              text: "c3"
+              layout: { x: 330, y: 296, width: 80, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "c3-detail"
+              capability: "core.text"
+              text: "register"
+              layout: { x: 330, y: 316, width: 80, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a6a3"
+          capability: "core.path"
+          d: "M370 280 C370 240 350 220 440 195"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "barrier"
+          capability: "core.rect"
+          layout: { x: 440, y: 155, width: 190, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "Barrier: await_all → trigger" }
+          children: [
+            {
+              id: "barrier-title"
+              capability: "core.text"
+              text: "Barrier"
+              layout: { x: 440, y: 181, width: 190, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "barrier-detail"
+              capability: "core.text"
+              text: "await_all → trigger"
+              layout: { x: 440, y: 201, width: 190, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "start"
+          capability: "core.rect"
+          layout: { x: 200, y: 110, width: 220, height: 52 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "START: synchronized dispatch" }
+          children: [
+            {
+              id: "start-title"
+              capability: "core.text"
+              text: "START"
+              layout: { x: 200, y: 122, width: 220, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "start-detail"
+              capability: "core.text"
+              text: "synchronized dispatch"
+              layout: { x: 200, y: 142, width: 220, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a6b"
+          capability: "core.path"
+          d: "M530 155 C500 125 450 130 420 136"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "motion6"
+          capability: "core.path"
+          d: "M350 300 V160"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s6-hdr6" at: 0 duration: 280 target: "hdr6" action: "enter" }
+        { id: "s6-c0" at: 220 duration: 280 target: "c0" action: "enter" }
+        { id: "s6-a6a0" at: 440 duration: 420 target: "a6a0" action: "draw" }
+        { id: "s6-c1" at: 660 duration: 280 target: "c1" action: "enter" }
+        { id: "s6-a6a1" at: 880 duration: 420 target: "a6a1" action: "draw" }
+        { id: "s6-c2" at: 1100 duration: 280 target: "c2" action: "enter" }
+        { id: "s6-a6a2" at: 1320 duration: 420 target: "a6a2" action: "draw" }
+        { id: "s6-c3" at: 1540 duration: 280 target: "c3" action: "enter" }
+        { id: "s6-a6a3" at: 1760 duration: 420 target: "a6a3" action: "draw" }
+        { id: "s6-barrier" at: 1980 duration: 280 target: "barrier" action: "enter" }
+        { id: "s6-a6b" at: 2200 duration: 420 target: "a6b" action: "draw" }
+        { id: "s6-start" at: 2420 duration: 280 target: "start" action: "enter" }
+        { id: "s6-motion6" at: 2640 duration: 420 target: "motion6" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Choose START policy and timing origin" {
+    eyebrow: "Distribute · 8 of 20"
+    title: "Choose START policy and timing origin"
+    lede: "Phaser and barrier-free START are opt-in alternatives to the synchronized barrier. A shared timing origin can zero cell clocks at the barrier. Start policy and timing epoch change coordination, never ownership."
+    narration: "Phaser and barrier-free start are opt-in alternatives, and a shared origin can zero cell clocks at the barrier. Start policy and timing epoch change coordination, never ownership."
+    term: {
+      word: "PhaserServer / PhaserClient"
+      meaning: "Velo phaser transport for monotonic distributed START, selected with AIPERF_CELL_PHASER_START."
+    }
+    points: [
+      "Start policy and timing epoch change coordination, never ownership.",
+      "Shared origin zeroes cell clocks at the synchronized barrier.",
+      "Evidence: `rust/runtime/src/cellular/transport/phaser_velo.rs`, `engine/cell_origin.rs`."
+    ]
+    caption: "synchronized · phaser · barrier-free · shared origin."
+
+    render: @scene {
+      summary "synchronized · phaser · barrier-free · shared origin."
+      roots: [
+        {
+          id: "hdr7"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "DISTRIBUTE · START POLICIES" }
+          children: [
+            {
+              id: "hdr7-text"
+              capability: "core.text"
+              text: "DISTRIBUTE · START POLICIES"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr7-cap"
+              capability: "core.text"
+              text: "synchronized · phaser · barrier-free · shared origin."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "pol0"
+          capability: "core.rect"
+          layout: { x: 40, y: 110, width: 180, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "synchronized: default barrier" }
+          children: [
+            {
+              id: "pol0-title"
+              capability: "core.text"
+              text: "synchronized"
+              layout: { x: 40, y: 128, width: 180, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "pol0-detail"
+              capability: "core.text"
+              text: "default barrier"
+              layout: { x: 40, y: 148, width: 180, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "pol1"
+          capability: "core.rect"
+          layout: { x: 40, y: 190, width: 180, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "phaser: opt-in generations" }
+          children: [
+            {
+              id: "pol1-title"
+              capability: "core.text"
+              text: "phaser"
+              layout: { x: 40, y: 208, width: 180, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "pol1-detail"
+              capability: "core.text"
+              text: "opt-in generations"
+              layout: { x: 40, y: 228, width: 180, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "pol2"
+          capability: "core.rect"
+          layout: { x: 40, y: 270, width: 180, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "barrier-free: k6-class" }
+          children: [
+            {
+              id: "pol2-title"
+              capability: "core.text"
+              text: "barrier-free"
+              layout: { x: 40, y: 288, width: 180, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "pol2-detail"
+              capability: "core.text"
+              text: "k6-class"
+              layout: { x: 40, y: 308, width: 180, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "origin"
+          capability: "core.rect"
+          layout: { x: 400, y: 150, width: 260, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "shared timing origin: zero at barrier · opt-in" }
+          children: [
+            {
+              id: "origin-title"
+              capability: "core.text"
+              text: "shared timing origin"
+              layout: { x: 400, y: 176, width: 260, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "origin-detail"
+              capability: "core.text"
+              text: "zero at barrier · opt-in"
+              layout: { x: 400, y: 196, width: 260, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a7a"
+          capability: "core.path"
+          d: "M220 142 C320 150 340 170 400 180"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a7b"
+          capability: "core.path"
+          d: "M220 302 C320 280 340 220 400 205"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s7-hdr7" at: 0 duration: 280 target: "hdr7" action: "enter" }
+        { id: "s7-pol0" at: 220 duration: 280 target: "pol0" action: "enter" }
+        { id: "s7-pol1" at: 440 duration: 280 target: "pol1" action: "enter" }
+        { id: "s7-pol2" at: 660 duration: 280 target: "pol2" action: "enter" }
+        { id: "s7-a7a" at: 880 duration: 420 target: "a7a" action: "draw" }
+        { id: "s7-a7b" at: 1100 duration: 420 target: "a7b" action: "draw" }
+        { id: "s7-origin" at: 1320 duration: 280 target: "origin" action: "enter" }
+      ]
+    }
+  }
+
+  slide "Distribute datasets by overlay or HTTP" {
+    eyebrow: "Distribute · 9 of 20"
+    title: "Distribute datasets by overlay or HTTP"
+    lede: "The opt-in Velo overlay verifies request fan-out, while Stage G serves cross-host file and graph inputs over HTTP plus zstd. Every cell receives only its owned input identities, independent of the delivery mechanism."
+    narration: "The Velo overlay verifies request fan-out while Stage G serves cross-host inputs over HTTP and zstd. Every cell receives only its owned input identities."
+    term: {
+      word: "build_dataset_serve_plan"
+      meaning: "Stage G plan that serves file and graph inputs to cross-host cells over HTTP + zstd."
+    }
+    points: [
+      "Every cell receives only its owned input identities.",
+      "Overlay and HTTP serving are both built, without replacing cell-local execution.",
+      "Evidence: `rust/runtime/src/cellular/dataset_session.rs`, `engine/cellular_controller.rs`."
+    ]
+    caption: "Velo overlay · Stage G HTTP+zstd · owned inputs only."
+
+    render: @scene {
+      summary "Velo overlay · Stage G HTTP+zstd · owned inputs only."
+      roots: [
+        {
+          id: "hdr8"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "DISTRIBUTE · DATASET DELIVERY" }
+          children: [
+            {
+              id: "hdr8-text"
+              capability: "core.text"
+              text: "DISTRIBUTE · DATASET DELIVERY"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr8-cap"
+              capability: "core.text"
+              text: "Velo overlay · Stage G HTTP+zstd · owned inputs only."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "own8"
+          capability: "core.rect"
+          layout: { x: 30, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "Ownership: request-id chunks" }
+          children: [
+            {
+              id: "own8-title"
+              capability: "core.text"
+              text: "Ownership"
+              layout: { x: 30, y: 176, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "own8-detail"
+              capability: "core.text"
+              text: "request-id chunks"
+              layout: { x: 30, y: 196, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a8a"
+          capability: "core.path"
+          d: "M180 175 C240 130 300 130 350 145"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a8b"
+          capability: "core.path"
+          d: "M180 205 C240 250 300 250 350 235"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "velo"
+          capability: "core.rect"
+          layout: { x: 350, y: 110, width: 200, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "Velo overlay: fan-out verify" }
+          children: [
+            {
+              id: "velo-title"
+              capability: "core.text"
+              text: "Velo overlay"
+              layout: { x: 350, y: 131, width: 200, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "velo-detail"
+              capability: "core.text"
+              text: "fan-out verify"
+              layout: { x: 350, y: 151, width: 200, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "stage"
+          capability: "core.rect"
+          layout: { x: 350, y: 210, width: 200, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "Stage G serve: HTTP + zstd" }
+          children: [
+            {
+              id: "stage-title"
+              capability: "core.text"
+              text: "Stage G serve"
+              layout: { x: 350, y: 231, width: 200, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "stage-detail"
+              capability: "core.text"
+              text: "HTTP + zstd"
+              layout: { x: 350, y: 251, width: 200, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a8c"
+          capability: "core.path"
+          d: "M550 145 H610"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a8d"
+          capability: "core.path"
+          d: "M550 245 H610"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "cell8"
+          capability: "core.rect"
+          layout: { x: 575, y: 160, width: 110, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "cell: owned only" }
+          children: [
+            {
+              id: "cell8-title"
+              capability: "core.text"
+              text: "cell"
+              layout: { x: 575, y: 181, width: 110, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cell8-detail"
+              capability: "core.text"
+              text: "owned only"
+              layout: { x: 575, y: 201, width: 110, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "motion8"
+          capability: "core.path"
+          d: "M180 175 H560"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s8-hdr8" at: 0 duration: 280 target: "hdr8" action: "enter" }
+        { id: "s8-own8" at: 220 duration: 280 target: "own8" action: "enter" }
+        { id: "s8-a8a" at: 440 duration: 420 target: "a8a" action: "draw" }
+        { id: "s8-a8b" at: 660 duration: 420 target: "a8b" action: "draw" }
+        { id: "s8-velo" at: 880 duration: 280 target: "velo" action: "enter" }
+        { id: "s8-stage" at: 1100 duration: 280 target: "stage" action: "enter" }
+        { id: "s8-a8c" at: 1320 duration: 420 target: "a8c" action: "draw" }
+        { id: "s8-a8d" at: 1540 duration: 420 target: "a8d" action: "draw" }
+        { id: "s8-cell8" at: 1760 duration: 280 target: "cell8" action: "enter" }
+        { id: "s8-motion8" at: 1980 duration: 420 target: "motion8" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Index stable cell ownership" {
+    eyebrow: "Distribute · 10 of 20"
+    title: "Index stable cell ownership"
+    lede: "Each cell tracks indexed, in-flight, and completed request identities. A request identity belongs to exactly one cell, so the cell-local ownership index is the ground truth for who runs what."
+    narration: "Each cell tracks indexed, in-flight, and completed request identities. A request identity belongs to exactly one cell."
+    term: {
+      word: "DatasetIndex"
+      meaning: "Cell-local index of owned request identities across indexed, in-flight, and completed states."
+    }
+    points: [
+      "A request identity belongs to exactly one cell.",
+      "Indexed → InFlight → completed is tracked per cell.",
+      "Evidence: `rust/runtime/src/cellular/dataset_session.rs`."
+    ]
+    caption: "owned ids only · indexed → in-flight → complete."
+
+    render: @scene {
+      summary "owned ids only · indexed → in-flight → complete."
+      roots: [
+        {
+          id: "hdr9"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "DISTRIBUTE · OWNERSHIP INDEX" }
+          children: [
+            {
+              id: "hdr9-text"
+              capability: "core.text"
+              text: "DISTRIBUTE · OWNERSHIP INDEX"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr9-cap"
+              capability: "core.text"
+              text: "owned ids only · indexed → in-flight → complete."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "idx"
+          capability: "core.rect"
+          layout: { x: 40, y: 150, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "DatasetIndex: cell-local" }
+          children: [
+            {
+              id: "idx-title"
+              capability: "core.text"
+              text: "DatasetIndex"
+              layout: { x: 40, y: 176, width: 160, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "idx-detail"
+              capability: "core.text"
+              text: "cell-local"
+              layout: { x: 40, y: 196, width: 160, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a9a"
+          capability: "core.path"
+          d: "M200 190 H260"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "indexed"
+          capability: "core.rect"
+          layout: { x: 260, y: 100, width: 150, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "Indexed: owned ids" }
+          children: [
+            {
+              id: "indexed-title"
+              capability: "core.text"
+              text: "Indexed"
+              layout: { x: 260, y: 118, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "indexed-detail"
+              capability: "core.text"
+              text: "owned ids"
+              layout: { x: 260, y: 138, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "inflight"
+          capability: "core.rect"
+          layout: { x: 260, y: 180, width: 150, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "InFlight: dispatched" }
+          children: [
+            {
+              id: "inflight-title"
+              capability: "core.text"
+              text: "InFlight"
+              layout: { x: 260, y: 198, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "inflight-detail"
+              capability: "core.text"
+              text: "dispatched"
+              layout: { x: 260, y: 218, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "completed"
+          capability: "core.rect"
+          layout: { x: 260, y: 260, width: 150, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "Completed: captured" }
+          children: [
+            {
+              id: "completed-title"
+              capability: "core.text"
+              text: "Completed"
+              layout: { x: 260, y: 278, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "completed-detail"
+              capability: "core.text"
+              text: "captured"
+              layout: { x: 260, y: 298, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "note9"
+          capability: "core.text"
+          text: "one identity → exactly one cell"
+          layout: { x: 450, y: 195, width: 220, height: 20 }
+          style: { fontSize: 13, fill: @theme.ink.primary }
+        },
+        {
+          id: "motion9"
+          capability: "core.path"
+          d: "M110 175 H580"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s9-hdr9" at: 0 duration: 280 target: "hdr9" action: "enter" }
+        { id: "s9-idx" at: 220 duration: 280 target: "idx" action: "enter" }
+        { id: "s9-a9a" at: 440 duration: 420 target: "a9a" action: "draw" }
+        { id: "s9-indexed" at: 660 duration: 280 target: "indexed" action: "enter" }
+        { id: "s9-inflight" at: 880 duration: 280 target: "inflight" action: "enter" }
+        { id: "s9-completed" at: 1100 duration: 280 target: "completed" action: "enter" }
+        { id: "s9-note9" at: 1320 duration: 280 target: "note9" action: "enter" }
+        { id: "s9-motion9" at: 1540 duration: 420 target: "motion9" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Enter one autonomous cell" {
+    eyebrow: "Execute · 11 of 20"
+    title: "Enter one autonomous cell"
+    lede: "A cell owns its runtime, transport state, metrics, and local lifecycle. Cells share no hot-path collector lock, so deterministic ownership connects directly to an autonomous process running the ordinary engine."
+    narration: "A cell owns its runtime, transport state, metrics, and lifecycle, sharing no hot-path collector lock. Deterministic ownership connects directly to an autonomous process."
+    term: {
+      word: "fetch_cell_envelope"
+      meaning: "Cell startup that fetches its sliced protocol-v2 envelope and runs the ordinary single-run engine."
+    }
+    points: [
+      "Cells share no hot-path collector lock.",
+      "Each cell runs the ordinary engine on its slice.",
+      "Evidence: `rust/runtime/src/engine/cellular_cell.rs`."
+    ]
+    caption: "sliced envelope → autonomous cell process."
+
+    render: @scene {
+      summary "sliced envelope → autonomous cell process."
+      roots: [
+        {
+          id: "hdr10"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "EXECUTE · AUTONOMOUS CELL" }
+          children: [
+            {
+              id: "hdr10-text"
+              capability: "core.text"
+              text: "EXECUTE · AUTONOMOUS CELL"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr10-cap"
+              capability: "core.text"
+              text: "sliced envelope → autonomous cell process."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "env"
+          capability: "core.rect"
+          layout: { x: 30, y: 90, width: 150, height: 56 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "sliced envelope: control" }
+          children: [
+            {
+              id: "env-title"
+              capability: "core.text"
+              text: "sliced envelope"
+              layout: { x: 30, y: 104, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "env-detail"
+              capability: "core.text"
+              text: "control"
+              layout: { x: 30, y: 124, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "inputs"
+          capability: "core.rect"
+          layout: { x: 30, y: 172, width: 150, height: 56 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "owned inputs: data" }
+          children: [
+            {
+              id: "inputs-title"
+              capability: "core.text"
+              text: "owned inputs"
+              layout: { x: 30, y: 186, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "inputs-detail"
+              capability: "core.text"
+              text: "data"
+              layout: { x: 30, y: 206, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "torigin"
+          capability: "core.rect"
+          layout: { x: 30, y: 254, width: 150, height: 56 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "shared origin: timing" }
+          children: [
+            {
+              id: "torigin-title"
+              capability: "core.text"
+              text: "shared origin"
+              layout: { x: 30, y: 268, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "torigin-detail"
+              capability: "core.text"
+              text: "timing"
+              layout: { x: 30, y: 288, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a10a"
+          capability: "core.path"
+          d: "M180 118 C240 150 260 170 300 185"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a10b"
+          capability: "core.path"
+          d: "M180 200 H300"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a10c"
+          capability: "core.path"
+          d: "M180 282 C240 250 260 220 300 205"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "auto"
+          capability: "core.rect"
+          layout: { x: 300, y: 150, width: 200, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "Autonomous cell: own runtime + metrics" }
+          children: [
+            {
+              id: "auto-title"
+              capability: "core.text"
+              text: "Autonomous cell"
+              layout: { x: 300, y: 181, width: 200, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "auto-detail"
+              capability: "core.text"
+              text: "own runtime + metrics"
+              layout: { x: 300, y: 201, width: 200, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "note10"
+          capability: "core.text"
+          text: "no hot-path collector lock"
+          layout: { x: 330, y: 300, width: 500, height: 20 }
+          style: { fontSize: 12, fill: @theme.ink.secondary }
+        },
+        {
+          id: "motion10"
+          capability: "core.path"
+          d: "M110 175 H560"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s10-hdr10" at: 0 duration: 280 target: "hdr10" action: "enter" }
+        { id: "s10-env" at: 220 duration: 280 target: "env" action: "enter" }
+        { id: "s10-inputs" at: 440 duration: 280 target: "inputs" action: "enter" }
+        { id: "s10-torigin" at: 660 duration: 280 target: "torigin" action: "enter" }
+        { id: "s10-a10a" at: 880 duration: 420 target: "a10a" action: "draw" }
+        { id: "s10-a10b" at: 1100 duration: 420 target: "a10b" action: "draw" }
+        { id: "s10-a10c" at: 1320 duration: 420 target: "a10c" action: "draw" }
+        { id: "s10-auto" at: 1540 duration: 280 target: "auto" action: "enter" }
+        { id: "s10-note10" at: 1760 duration: 280 target: "note10" action: "enter" }
+        { id: "s10-motion10" at: 1980 duration: 420 target: "motion10" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Partition again across worker shards" {
+    eyebrow: "Execute · 12 of 20"
+    title: "Partition again across worker shards"
+    lede: "Inside a cell the same ownership rule applies across thread-per-core workers. Nested ownership stays deterministic and disjoint, so the second partition level never overlaps the first."
+    narration: "Inside a cell the same ownership rule applies across thread-per-core workers. Nested ownership stays deterministic and disjoint."
+    term: {
+      word: "run_sharded_scheduled"
+      meaning: "Thread-per-core sharded execution that partitions the cell's owned work across !Send workers."
+    }
+    points: [
+      "Nested ownership remains deterministic and disjoint.",
+      "Workers are thread-per-core and !Send on the hot path.",
+      "Evidence: `rust/runtime/src/engine/sharded_scheduled.rs`."
+    ]
+    caption: "cell slice → worker shards · second disjoint partition."
+
+    render: @scene {
+      summary "cell slice → worker shards · second disjoint partition."
+      roots: [
+        {
+          id: "hdr11"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "EXECUTE · WORKER SHARDS" }
+          children: [
+            {
+              id: "hdr11-text"
+              capability: "core.text"
+              text: "EXECUTE · WORKER SHARDS"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr11-cap"
+              capability: "core.text"
+              text: "cell slice → worker shards · second disjoint partition."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "slice"
+          capability: "core.rect"
+          layout: { x: 40, y: 150, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "Cell slice: owned positions" }
+          children: [
+            {
+              id: "slice-title"
+              capability: "core.text"
+              text: "Cell slice"
+              layout: { x: 40, y: 176, width: 160, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "slice-detail"
+              capability: "core.text"
+              text: "owned positions"
+              layout: { x: 40, y: 196, width: 160, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a11a"
+          capability: "core.path"
+          d: "M200 190 H260"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "w0"
+          capability: "core.rect"
+          layout: { x: 260, y: 100, width: 160, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "worker 0: local 0,2,…" }
+          children: [
+            {
+              id: "w0-title"
+              capability: "core.text"
+              text: "worker 0"
+              layout: { x: 260, y: 118, width: 160, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "w0-detail"
+              capability: "core.text"
+              text: "local 0,2,…"
+              layout: { x: 260, y: 138, width: 160, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "w1"
+          capability: "core.rect"
+          layout: { x: 260, y: 210, width: 160, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "worker 1: local 1,3,…" }
+          children: [
+            {
+              id: "w1-title"
+              capability: "core.text"
+              text: "worker 1"
+              layout: { x: 260, y: 228, width: 160, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "w1-detail"
+              capability: "core.text"
+              text: "local 1,3,…"
+              layout: { x: 260, y: 248, width: 160, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a11b"
+          capability: "core.path"
+          d: "M420 132 H480"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a11c"
+          capability: "core.path"
+          d: "M420 242 H480"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "store"
+          capability: "core.rect"
+          layout: { x: 480, y: 150, width: 170, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "worker-local store: thread-per-core" }
+          children: [
+            {
+              id: "store-title"
+              capability: "core.text"
+              text: "worker-local store"
+              layout: { x: 480, y: 176, width: 170, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "store-detail"
+              capability: "core.text"
+              text: "thread-per-core"
+              layout: { x: 480, y: 196, width: 170, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "motion11"
+          capability: "core.path"
+          d: "M190 175 H540"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s11-hdr11" at: 0 duration: 280 target: "hdr11" action: "enter" }
+        { id: "s11-slice" at: 220 duration: 280 target: "slice" action: "enter" }
+        { id: "s11-a11a" at: 440 duration: 420 target: "a11a" action: "draw" }
+        { id: "s11-w0" at: 660 duration: 280 target: "w0" action: "enter" }
+        { id: "s11-w1" at: 880 duration: 280 target: "w1" action: "enter" }
+        { id: "s11-a11b" at: 1100 duration: 420 target: "a11b" action: "draw" }
+        { id: "s11-a11c" at: 1320 duration: 420 target: "a11c" action: "draw" }
+        { id: "s11-store" at: 1540 duration: 280 target: "store" action: "enter" }
+        { id: "s11-motion11" at: 1760 duration: 420 target: "motion11" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Stamp global ordinals" {
+    eyebrow: "Execute · 13 of 20"
+    title: "Stamp global ordinals"
+    lede: "Local worker progress maps back to one stable global request order. The ordinal formula lets every worker carry a globally unique identity so merged output can be reordered exactly."
+    narration: "Local worker progress maps back to one global order. The ordinal is phase base plus local index times cell count plus cell id."
+    term: {
+      word: "global_ordinal"
+      meaning: "ordinal = phase_base + within_phase_local × cell_count + cell_id."
+    }
+    points: [
+      "ordinal = phase_base + local × cell_count + cell_id.",
+      "Every worker carries the identity formula.",
+      "Evidence: `rust/runtime/src/cellular/issuance.rs`."
+    ]
+    caption: "local progress → stable global ordinal."
+
+    render: @scene {
+      summary "local progress → stable global ordinal."
+      roots: [
+        {
+          id: "hdr12"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "EXECUTE · GLOBAL ORDINAL" }
+          children: [
+            {
+              id: "hdr12-text"
+              capability: "core.text"
+              text: "EXECUTE · GLOBAL ORDINAL"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr12-cap"
+              capability: "core.text"
+              text: "local progress → stable global ordinal."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "gord"
+          capability: "core.rect"
+          layout: { x: 140, y: 110, width: 420, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "global_ordinal: phase_base + local × cell_count + cell_id" }
+          children: [
+            {
+              id: "gord-title"
+              capability: "core.text"
+              text: "global_ordinal"
+              layout: { x: 140, y: 131, width: 420, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "gord-detail"
+              capability: "core.text"
+              text: "phase_base + local × cell_count + cell_id"
+              layout: { x: 140, y: 151, width: 420, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "ord0"
+          capability: "core.rect"
+          layout: { x: 40, y: 250, width: 130, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "ordinal 0: cell + 0·N" }
+          children: [
+            {
+              id: "ord0-title"
+              capability: "core.text"
+              text: "ordinal 0"
+              layout: { x: 40, y: 268, width: 130, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ord0-detail"
+              capability: "core.text"
+              text: "cell + 0·N"
+              layout: { x: 40, y: 288, width: 130, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a120"
+          capability: "core.path"
+          d: "M350 180 C180 210 105 220 105 250"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "ord1"
+          capability: "core.rect"
+          layout: { x: 200, y: 250, width: 130, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "ordinal 1: cell + 1·N" }
+          children: [
+            {
+              id: "ord1-title"
+              capability: "core.text"
+              text: "ordinal 1"
+              layout: { x: 200, y: 268, width: 130, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ord1-detail"
+              capability: "core.text"
+              text: "cell + 1·N"
+              layout: { x: 200, y: 288, width: 130, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a121"
+          capability: "core.path"
+          d: "M350 180 C280 210 265 220 265 250"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "ord2"
+          capability: "core.rect"
+          layout: { x: 360, y: 250, width: 130, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "ordinal 2: cell + 2·N" }
+          children: [
+            {
+              id: "ord2-title"
+              capability: "core.text"
+              text: "ordinal 2"
+              layout: { x: 360, y: 268, width: 130, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ord2-detail"
+              capability: "core.text"
+              text: "cell + 2·N"
+              layout: { x: 360, y: 288, width: 130, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a122"
+          capability: "core.path"
+          d: "M350 180 C380 210 425 220 425 250"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "ord3"
+          capability: "core.rect"
+          layout: { x: 520, y: 250, width: 130, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "ordinal 3: cell + 3·N" }
+          children: [
+            {
+              id: "ord3-title"
+              capability: "core.text"
+              text: "ordinal 3"
+              layout: { x: 520, y: 268, width: 130, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ord3-detail"
+              capability: "core.text"
+              text: "cell + 3·N"
+              layout: { x: 520, y: 288, width: 130, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a123"
+          capability: "core.path"
+          d: "M350 180 C480 210 585 220 585 250"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s12-hdr12" at: 0 duration: 280 target: "hdr12" action: "enter" }
+        { id: "s12-gord" at: 220 duration: 280 target: "gord" action: "enter" }
+        { id: "s12-a120" at: 440 duration: 420 target: "a120" action: "draw" }
+        { id: "s12-ord0" at: 660 duration: 280 target: "ord0" action: "enter" }
+        { id: "s12-a121" at: 880 duration: 420 target: "a121" action: "draw" }
+        { id: "s12-ord1" at: 1100 duration: 280 target: "ord1" action: "enter" }
+        { id: "s12-a122" at: 1320 duration: 420 target: "a122" action: "draw" }
+        { id: "s12-ord2" at: 1540 duration: 280 target: "ord2" action: "enter" }
+        { id: "s12-a123" at: 1760 duration: 420 target: "a123" action: "draw" }
+        { id: "s12-ord3" at: 1980 duration: 280 target: "ord3" action: "enter" }
+      ]
+    }
+  }
+
+  slide "Dispatch online; reject unwired simulation" {
+    eyebrow: "Execute · 14 of 20"
+    title: "Dispatch online; reject unwired simulation"
+    lede: "Every shard drives the same clock-injected HTTP or gRPC seam that single-cell runs use. Scheduled gRPC cellular is proven; graph plus gRPC cellular is unproven; DynoSim cellular fails closed because its SimClock executor is unwired."
+    narration: "Every shard drives the same clock-injected HTTP or gRPC seam. Scheduled gRPC cellular is proven, graph plus gRPC is unproven, and DynoSim cellular fails closed."
+    term: {
+      word: "RequestSink"
+      meaning: "Transport-neutral dispatch seam; only the execution child dispatches inference requests."
+    }
+    points: [
+      "Only the execution child dispatches inference requests.",
+      "Scheduled HTTP and gRPC cellular are built; graph+gRPC cellular is unproven.",
+      "Evidence: `rust/loadgen-core/src/sink.rs`, `engine/cellular_controller.rs`."
+    ]
+    caption: "clock-injected HTTP/gRPC · DynoSim cellular rejected."
+
+    render: @scene {
+      summary "clock-injected HTTP/gRPC · DynoSim cellular rejected."
+      roots: [
+        {
+          id: "hdr13"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "EXECUTE · ONLINE DISPATCH" }
+          children: [
+            {
+              id: "hdr13-text"
+              capability: "core.text"
+              text: "EXECUTE · ONLINE DISPATCH"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr13-cap"
+              capability: "core.text"
+              text: "clock-injected HTTP/gRPC · DynoSim cellular rejected."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "shard"
+          capability: "core.rect"
+          layout: { x: 40, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "worker shard: RequestSink" }
+          children: [
+            {
+              id: "shard-title"
+              capability: "core.text"
+              text: "worker shard"
+              layout: { x: 40, y: 176, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "shard-detail"
+              capability: "core.text"
+              text: "RequestSink"
+              layout: { x: 40, y: 196, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a13a"
+          capability: "core.path"
+          d: "M190 175 C250 130 300 130 350 150"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a13b"
+          capability: "core.path"
+          d: "M190 205 C250 250 300 250 350 230"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "http"
+          capability: "core.rect"
+          layout: { x: 350, y: 115, width: 180, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "HTTP / gRPC: clock-injected" }
+          children: [
+            {
+              id: "http-title"
+              capability: "core.text"
+              text: "HTTP / gRPC"
+              layout: { x: 350, y: 133, width: 180, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "http-detail"
+              capability: "core.text"
+              text: "clock-injected"
+              layout: { x: 350, y: 153, width: 180, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "dyno"
+          capability: "core.rect"
+          layout: { x: 350, y: 215, width: 180, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.danger, strokeWidth: 1.8 }
+          accessibility: { label: "DynoSim cellular: fail closed" }
+          children: [
+            {
+              id: "dyno-title"
+              capability: "core.text"
+              text: "DynoSim cellular"
+              layout: { x: 350, y: 233, width: 180, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "dyno-detail"
+              capability: "core.text"
+              text: "fail closed"
+              layout: { x: 350, y: 253, width: 180, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a13c"
+          capability: "core.path"
+          d: "M530 147 H600"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "srv"
+          capability: "core.rect"
+          layout: { x: 560, y: 115, width: 110, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "server: response" }
+          children: [
+            {
+              id: "srv-title"
+              capability: "core.text"
+              text: "server"
+              layout: { x: 560, y: 133, width: 110, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "srv-detail"
+              capability: "core.text"
+              text: "response"
+              layout: { x: 560, y: 153, width: 110, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "motion13"
+          capability: "core.path"
+          d: "M110 175 H560"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s13-hdr13" at: 0 duration: 280 target: "hdr13" action: "enter" }
+        { id: "s13-shard" at: 220 duration: 280 target: "shard" action: "enter" }
+        { id: "s13-a13a" at: 440 duration: 420 target: "a13a" action: "draw" }
+        { id: "s13-a13b" at: 660 duration: 420 target: "a13b" action: "draw" }
+        { id: "s13-http" at: 880 duration: 280 target: "http" action: "enter" }
+        { id: "s13-dyno" at: 1100 duration: 280 target: "dyno" action: "enter" }
+        { id: "s13-a13c" at: 1320 duration: 420 target: "a13c" action: "draw" }
+        { id: "s13-srv" at: 1540 duration: 280 target: "srv" action: "enter" }
+        { id: "s13-motion13" at: 1760 duration: 420 target: "motion13" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Observe and finalize each record" {
+    eyebrow: "Execute · 15 of 20"
+    title: "Observe and finalize each record"
+    lede: "Arrival, admission, token, usage, and terminal observations become one CapturedRecord. Storage mode begins only after the record is finalized, which is where execution crosses into the results plane."
+    narration: "Arrival, admission, token, usage, and terminal observations become one captured record. Storage mode begins only after the record is finalized."
+    term: {
+      word: "CapturedRecord"
+      meaning: "Finalized per-request observation assembled from arrival through terminal events."
+    }
+    points: [
+      "Storage mode begins only after the record is finalized.",
+      "One record spans arrival → admission → token → usage → terminal.",
+      "Evidence: `rust/runtime/src/engine/records.rs`."
+    ]
+    caption: "observe events → one CapturedRecord."
+
+    render: @scene {
+      summary "observe events → one CapturedRecord."
+      roots: [
+        {
+          id: "hdr14"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "EXECUTE · CAPTURED RECORD" }
+          children: [
+            {
+              id: "hdr14-text"
+              capability: "core.text"
+              text: "EXECUTE · CAPTURED RECORD"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr14-cap"
+              capability: "core.text"
+              text: "observe events → one CapturedRecord."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "ev0"
+          capability: "core.rect"
+          layout: { x: 20, y: 110, width: 96, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "arrival: event" }
+          children: [
+            {
+              id: "ev0-title"
+              capability: "core.text"
+              text: "arrival"
+              layout: { x: 20, y: 126, width: 96, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ev0-detail"
+              capability: "core.text"
+              text: "event"
+              layout: { x: 20, y: 146, width: 96, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "ev1"
+          capability: "core.rect"
+          layout: { x: 128, y: 110, width: 96, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "admission: event" }
+          children: [
+            {
+              id: "ev1-title"
+              capability: "core.text"
+              text: "admission"
+              layout: { x: 128, y: 126, width: 96, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ev1-detail"
+              capability: "core.text"
+              text: "event"
+              layout: { x: 128, y: 146, width: 96, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "ev2"
+          capability: "core.rect"
+          layout: { x: 236, y: 110, width: 96, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "token: event" }
+          children: [
+            {
+              id: "ev2-title"
+              capability: "core.text"
+              text: "token"
+              layout: { x: 236, y: 126, width: 96, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ev2-detail"
+              capability: "core.text"
+              text: "event"
+              layout: { x: 236, y: 146, width: 96, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "ev3"
+          capability: "core.rect"
+          layout: { x: 344, y: 110, width: 96, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "usage: event" }
+          children: [
+            {
+              id: "ev3-title"
+              capability: "core.text"
+              text: "usage"
+              layout: { x: 344, y: 126, width: 96, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ev3-detail"
+              capability: "core.text"
+              text: "event"
+              layout: { x: 344, y: 146, width: 96, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "ev4"
+          capability: "core.rect"
+          layout: { x: 452, y: 110, width: 96, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "terminal: event" }
+          children: [
+            {
+              id: "ev4-title"
+              capability: "core.text"
+              text: "terminal"
+              layout: { x: 452, y: 126, width: 96, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ev4-detail"
+              capability: "core.text"
+              text: "event"
+              layout: { x: 452, y: 146, width: 96, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a140"
+          capability: "core.path"
+          d: "M68 170 C120 210 320 220 350 250"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a141"
+          capability: "core.path"
+          d: "M176 170 C180 210 320 220 350 250"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a142"
+          capability: "core.path"
+          d: "M284 170 C240 210 320 220 350 250"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a143"
+          capability: "core.path"
+          d: "M392 170 C300 210 320 220 350 250"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a14v"
+          capability: "core.path"
+          d: "M350 200 V250"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "cap"
+          capability: "core.rect"
+          layout: { x: 230, y: 250, width: 240, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "CapturedRecord: finalized · storage begins" }
+          children: [
+            {
+              id: "cap-title"
+              capability: "core.text"
+              text: "CapturedRecord"
+              layout: { x: 230, y: 276, width: 240, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cap-detail"
+              capability: "core.text"
+              text: "finalized · storage begins"
+              layout: { x: 230, y: 296, width: 240, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "motion14"
+          capability: "core.path"
+          d: "M110 175 H600"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s14-hdr14" at: 0 duration: 280 target: "hdr14" action: "enter" }
+        { id: "s14-ev0" at: 220 duration: 280 target: "ev0" action: "enter" }
+        { id: "s14-ev1" at: 440 duration: 280 target: "ev1" action: "enter" }
+        { id: "s14-ev2" at: 660 duration: 280 target: "ev2" action: "enter" }
+        { id: "s14-ev3" at: 880 duration: 280 target: "ev3" action: "enter" }
+        { id: "s14-ev4" at: 1100 duration: 280 target: "ev4" action: "enter" }
+        { id: "s14-a140" at: 1320 duration: 420 target: "a140" action: "draw" }
+        { id: "s14-a141" at: 1540 duration: 420 target: "a141" action: "draw" }
+        { id: "s14-a142" at: 1760 duration: 420 target: "a142" action: "draw" }
+        { id: "s14-a143" at: 1980 duration: 420 target: "a143" action: "draw" }
+        { id: "s14-a14v" at: 2200 duration: 420 target: "a14v" action: "draw" }
+        { id: "s14-cap" at: 2420 duration: 280 target: "cap" action: "enter" }
+        { id: "s14-motion14" at: 2640 duration: 420 target: "motion14" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Retain rows for exact artifacts" {
+    eyebrow: "Reduce · 16 of 20"
+    title: "Retain rows for exact artifacts"
+    lede: "The retain path preserves per-record data and merges it in a deterministic topology order. Retain costs O(records) but keeps raw record artifacts available, carried home as CellMessage::Partition."
+    narration: "The retain path preserves per-record data and merges it in deterministic topology order. It costs order records but keeps raw artifacts available."
+    term: {
+      word: "RecordsShardPartition"
+      meaning: "Retain-mode partition of raw CapturedRecords shipped over the cell wire."
+    }
+    points: [
+      "Retain costs O(records) and keeps raw record artifacts available.",
+      "Records restore global dispatch order at merge.",
+      "Evidence: `rust/runtime/src/cellular/shard.rs`, `engine/execute.rs`."
+    ]
+    caption: "keep rows → ship Partition → global-order merge."
+
+    render: @scene {
+      summary "keep rows → ship Partition → global-order merge."
+      roots: [
+        {
+          id: "hdr15"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "REDUCE · RETAIN ROWS" }
+          children: [
+            {
+              id: "hdr15-text"
+              capability: "core.text"
+              text: "REDUCE · RETAIN ROWS"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr15-cap"
+              capability: "core.text"
+              text: "keep rows → ship Partition → global-order merge."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "disp15"
+          capability: "core.rect"
+          layout: { x: 40, y: 150, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "dispatch: CapturedRecord" }
+          children: [
+            {
+              id: "disp15-title"
+              capability: "core.text"
+              text: "dispatch"
+              layout: { x: 40, y: 176, width: 160, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "disp15-detail"
+              capability: "core.text"
+              text: "CapturedRecord"
+              layout: { x: 40, y: 196, width: 160, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a15a"
+          capability: "core.path"
+          d: "M200 190 H270"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "retain"
+          capability: "core.rect"
+          layout: { x: 270, y: 150, width: 180, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "Retained rows: Vec<Record> · O(records)" }
+          children: [
+            {
+              id: "retain-title"
+              capability: "core.text"
+              text: "Retained rows"
+              layout: { x: 270, y: 176, width: 180, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "retain-detail"
+              capability: "core.text"
+              text: "Vec<Record> · O(records)"
+              layout: { x: 270, y: 196, width: 180, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a15b"
+          capability: "core.path"
+          d: "M450 190 H520"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "part"
+          capability: "core.rect"
+          layout: { x: 520, y: 150, width: 150, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "Partition: global-order merge" }
+          children: [
+            {
+              id: "part-title"
+              capability: "core.text"
+              text: "Partition"
+              layout: { x: 520, y: 176, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "part-detail"
+              capability: "core.text"
+              text: "global-order merge"
+              layout: { x: 520, y: 196, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "note15"
+          capability: "core.text"
+          text: "keeps raw record artifacts available"
+          layout: { x: 230, y: 300, width: 500, height: 20 }
+          style: { fontSize: 12, fill: @theme.ink.secondary }
+        },
+        {
+          id: "motion15"
+          capability: "core.path"
+          d: "M110 175 H560"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s15-hdr15" at: 0 duration: 280 target: "hdr15" action: "enter" }
+        { id: "s15-disp15" at: 220 duration: 280 target: "disp15" action: "enter" }
+        { id: "s15-a15a" at: 440 duration: 420 target: "a15a" action: "draw" }
+        { id: "s15-retain" at: 660 duration: 280 target: "retain" action: "enter" }
+        { id: "s15-a15b" at: 880 duration: 420 target: "a15b" action: "draw" }
+        { id: "s15-part" at: 1100 duration: 280 target: "part" action: "enter" }
+        { id: "s15-note15" at: 1320 duration: 280 target: "note15" action: "enter" }
+        { id: "s15-motion15" at: 1540 duration: 420 target: "motion15" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Exact-fold into ColumnStore" {
+    eyebrow: "Reduce · 17 of 20"
+    title: "Exact-fold into ColumnStore"
+    lede: "Each completed record folds into an exact mergeable store and the row is dropped. Exact-fold retains exact record-derived aggregates without retaining rows, trading raw artifacts for bounded memory."
+    narration: "Each completed record folds into an exact mergeable store and the row is dropped. Exact-fold keeps exact aggregates without retaining rows."
+    term: {
+      word: "RunCapture::fold_streaming"
+      meaning: "Folds each finalized record into an exact ColumnStore, then drops the row."
+    }
+    points: [
+      "Exact-fold keeps exact aggregates without retaining rows.",
+      "Float sums may differ by a ULP; distributions stay exact.",
+      "Evidence: `rust/runtime/src/engine/execute.rs`."
+    ]
+    caption: "fold each record → exact store · drop row."
+
+    render: @scene {
+      summary "fold each record → exact store · drop row."
+      roots: [
+        {
+          id: "hdr16"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "REDUCE · EXACT FOLD" }
+          children: [
+            {
+              id: "hdr16-text"
+              capability: "core.text"
+              text: "REDUCE · EXACT FOLD"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr16-cap"
+              capability: "core.text"
+              text: "fold each record → exact store · drop row."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "disp16"
+          capability: "core.rect"
+          layout: { x: 40, y: 150, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "dispatch: each record" }
+          children: [
+            {
+              id: "disp16-title"
+              capability: "core.text"
+              text: "dispatch"
+              layout: { x: 40, y: 176, width: 160, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "disp16-detail"
+              capability: "core.text"
+              text: "each record"
+              layout: { x: 40, y: 196, width: 160, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a16a"
+          capability: "core.path"
+          d: "M200 190 H270"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "fold"
+          capability: "core.rect"
+          layout: { x: 270, y: 150, width: 200, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "fold_streaming: exact ColumnStore" }
+          children: [
+            {
+              id: "fold-title"
+              capability: "core.text"
+              text: "fold_streaming"
+              layout: { x: 270, y: 176, width: 200, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "fold-detail"
+              capability: "core.text"
+              text: "exact ColumnStore"
+              layout: { x: 270, y: 196, width: 200, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a16b"
+          capability: "core.path"
+          d: "M470 190 H540"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "drop"
+          capability: "core.rect"
+          layout: { x: 540, y: 150, width: 130, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "drop row: bounded" }
+          children: [
+            {
+              id: "drop-title"
+              capability: "core.text"
+              text: "drop row"
+              layout: { x: 540, y: 176, width: 130, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "drop-detail"
+              capability: "core.text"
+              text: "bounded"
+              layout: { x: 540, y: 196, width: 130, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "note16"
+          capability: "core.text"
+          text: "exact aggregates without retaining rows"
+          layout: { x: 230, y: 300, width: 500, height: 20 }
+          style: { fontSize: 12, fill: @theme.ink.secondary }
+        },
+        {
+          id: "motion16"
+          capability: "core.path"
+          d: "M110 175 H560"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s16-hdr16" at: 0 duration: 280 target: "hdr16" action: "enter" }
+        { id: "s16-disp16" at: 220 duration: 280 target: "disp16" action: "enter" }
+        { id: "s16-a16a" at: 440 duration: 420 target: "a16a" action: "draw" }
+        { id: "s16-fold" at: 660 duration: 280 target: "fold" action: "enter" }
+        { id: "s16-a16b" at: 880 duration: 420 target: "a16b" action: "draw" }
+        { id: "s16-drop" at: 1100 duration: 280 target: "drop" action: "enter" }
+        { id: "s16-note16" at: 1320 duration: 280 target: "note16" action: "enter" }
+        { id: "s16-motion16" at: 1540 duration: 420 target: "motion16" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Sketch into t-digest plus exact moments" {
+    eyebrow: "Reduce · 18 of 20"
+    title: "Sketch into t-digest plus exact moments"
+    lede: "Finite metric values stream into bounded sketches while counts and moments stay exact. Percentiles become approximate; counts, sums, extrema, mean, standard deviation, and rates remain exact — the k6-style bounded-memory path."
+    narration: "Finite metric values stream into bounded sketches while counts and moments stay exact. Percentiles are approximate; everything else remains exact."
+    term: {
+      word: "TagSketch"
+      meaning: "t-digest per tag plus exact moments; approximate percentiles, no per-record artifacts."
+    }
+    points: [
+      "Percentiles approximate; counts, sums, extrema, mean, std, rates exact.",
+      "Bounded memory; per-record artifacts are unavailable.",
+      "Evidence: `rust/runtime/src/metrics_core/store.rs`, `cellular/sketch.rs`."
+    ]
+    caption: "finite values → t-digest + exact moments."
+
+    render: @scene {
+      summary "finite values → t-digest + exact moments."
+      roots: [
+        {
+          id: "hdr17"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "REDUCE · SKETCH" }
+          children: [
+            {
+              id: "hdr17-text"
+              capability: "core.text"
+              text: "REDUCE · SKETCH"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr17-cap"
+              capability: "core.text"
+              text: "finite values → t-digest + exact moments."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "fin"
+          capability: "core.rect"
+          layout: { x: 40, y: 150, width: 160, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "finite values: metric stream" }
+          children: [
+            {
+              id: "fin-title"
+              capability: "core.text"
+              text: "finite values"
+              layout: { x: 40, y: 176, width: 160, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "fin-detail"
+              capability: "core.text"
+              text: "metric stream"
+              layout: { x: 40, y: 196, width: 160, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a17a"
+          capability: "core.path"
+          d: "M200 190 H270"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "sketch"
+          capability: "core.rect"
+          layout: { x: 270, y: 150, width: 200, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "TagSketch: t-digest + moments" }
+          children: [
+            {
+              id: "sketch-title"
+              capability: "core.text"
+              text: "TagSketch"
+              layout: { x: 270, y: 176, width: 200, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "sketch-detail"
+              capability: "core.text"
+              text: "t-digest + moments"
+              layout: { x: 270, y: 196, width: 200, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "exact"
+          capability: "core.rect"
+          layout: { x: 150, y: 280, width: 200, height: 54 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "exact: count · sum · extrema · std" }
+          children: [
+            {
+              id: "exact-title"
+              capability: "core.text"
+              text: "exact"
+              layout: { x: 150, y: 293, width: 200, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "exact-detail"
+              capability: "core.text"
+              text: "count · sum · extrema · std"
+              layout: { x: 150, y: 313, width: 200, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "approx"
+          capability: "core.rect"
+          layout: { x: 380, y: 280, width: 200, height: 54 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          accessibility: { label: "approximate: percentiles" }
+          children: [
+            {
+              id: "approx-title"
+              capability: "core.text"
+              text: "approximate"
+              layout: { x: 380, y: 293, width: 200, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "approx-detail"
+              capability: "core.text"
+              text: "percentiles"
+              layout: { x: 380, y: 313, width: 200, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a17b"
+          capability: "core.path"
+          d: "M370 230 C320 255 300 260 280 280"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a17c"
+          capability: "core.path"
+          d: "M400 230 C440 255 460 260 470 280"
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "motion17"
+          capability: "core.path"
+          d: "M110 175 H560"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s17-hdr17" at: 0 duration: 280 target: "hdr17" action: "enter" }
+        { id: "s17-fin" at: 220 duration: 280 target: "fin" action: "enter" }
+        { id: "s17-a17a" at: 440 duration: 420 target: "a17a" action: "draw" }
+        { id: "s17-sketch" at: 660 duration: 280 target: "sketch" action: "enter" }
+        { id: "s17-a17b" at: 880 duration: 420 target: "a17b" action: "draw" }
+        { id: "s17-exact" at: 1100 duration: 280 target: "exact" action: "enter" }
+        { id: "s17-a17c" at: 1320 duration: 420 target: "a17c" action: "draw" }
+        { id: "s17-approx" at: 1540 duration: 280 target: "approx" action: "enter" }
+        { id: "s17-motion17" at: 1760 duration: 420 target: "motion17" action: "draw" }
+      ]
+    }
+  }
+
+  slide "Merge, publish, and know the boundary" {
+    eyebrow: "Scale · 19 of 20"
+    title: "Merge, publish, and know the boundary"
+    lede: "Flat star fan-in and hierarchical aggregator trees are both built; external stream-only aggregation remains planned. One authoritative report exists — through controller merge, record-lane artifacts, and cross-host shipping — unless a future external sink explicitly replaces it."
+    narration: "Flat and hierarchical merges are both built while external stream-only aggregation is planned. One authoritative report exists through merge, artifacts, and shipping."
+    term: {
+      word: "run_aggregator"
+      meaning: "Fold-only tree tier merging bounded child store partitions before the controller merge."
+    }
+    points: [
+      "One authoritative report exists unless an external sink replaces it.",
+      "Flat and tree merges built; scheduled infinite budgets rejected.",
+      "Evidence: `rust/runtime/src/engine/cellular_aggregator.rs`, `record_lane.rs`, `artifact_shipping.rs`."
+    ]
+    caption: "flat + tree merge → artifacts + report · external planned."
+
+    render: @scene {
+      summary "flat + tree merge → artifacts + report · external planned."
+      roots: [
+        {
+          id: "hdr18"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "SCALE · MERGE & PUBLISH" }
+          children: [
+            {
+              id: "hdr18-text"
+              capability: "core.text"
+              text: "SCALE · MERGE & PUBLISH"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr18-cap"
+              capability: "core.text"
+              text: "flat + tree merge → artifacts + report · external planned."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "cell180"
+          capability: "core.rect"
+          layout: { x: 30, y: 90, width: 120, height: 46 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "cell 0: store" }
+          children: [
+            {
+              id: "cell180-title"
+              capability: "core.text"
+              text: "cell 0"
+              layout: { x: 30, y: 99, width: 120, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cell180-detail"
+              capability: "core.text"
+              text: "store"
+              layout: { x: 30, y: 119, width: 120, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "cell181"
+          capability: "core.rect"
+          layout: { x: 30, y: 150, width: 120, height: 46 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "cell 1: store" }
+          children: [
+            {
+              id: "cell181-title"
+              capability: "core.text"
+              text: "cell 1"
+              layout: { x: 30, y: 159, width: 120, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cell181-detail"
+              capability: "core.text"
+              text: "store"
+              layout: { x: 30, y: 179, width: 120, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "cell182"
+          capability: "core.rect"
+          layout: { x: 30, y: 210, width: 120, height: 46 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "cell 2: store" }
+          children: [
+            {
+              id: "cell182-title"
+              capability: "core.text"
+              text: "cell 2"
+              layout: { x: 30, y: 219, width: 120, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cell182-detail"
+              capability: "core.text"
+              text: "store"
+              layout: { x: 30, y: 239, width: 120, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "cell183"
+          capability: "core.rect"
+          layout: { x: 30, y: 270, width: 120, height: 46 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "cell 3: store" }
+          children: [
+            {
+              id: "cell183-title"
+              capability: "core.text"
+              text: "cell 3"
+              layout: { x: 30, y: 279, width: 120, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cell183-detail"
+              capability: "core.text"
+              text: "store"
+              layout: { x: 30, y: 299, width: 120, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "agg0"
+          capability: "core.rect"
+          layout: { x: 210, y: 110, width: 150, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "aggregator 0: subtree fold" }
+          children: [
+            {
+              id: "agg0-title"
+              capability: "core.text"
+              text: "aggregator 0"
+              layout: { x: 210, y: 128, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "agg0-detail"
+              capability: "core.text"
+              text: "subtree fold"
+              layout: { x: 210, y: 148, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "agg1"
+          capability: "core.rect"
+          layout: { x: 210, y: 240, width: 150, height: 64 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "aggregator 1: subtree fold" }
+          children: [
+            {
+              id: "agg1-title"
+              capability: "core.text"
+              text: "aggregator 1"
+              layout: { x: 210, y: 258, width: 150, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "agg1-detail"
+              capability: "core.text"
+              text: "subtree fold"
+              layout: { x: 210, y: 278, width: 150, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a18t0"
+          capability: "core.path"
+          d: "M150 116 H210"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a18t1"
+          capability: "core.path"
+          d: "M150 176 H210"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a18t2"
+          capability: "core.path"
+          d: "M150 236 C180 236 190 272 210 272"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a18t3"
+          capability: "core.path"
+          d: "M150 296 C180 296 190 272 210 272"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a18m0"
+          capability: "core.path"
+          d: "M360 142 C420 160 430 180 460 190"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a18m1"
+          capability: "core.path"
+          d: "M360 272 C420 250 430 220 460 210"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "merge"
+          capability: "core.rect"
+          layout: { x: 460, y: 150, width: 140, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "Controller merge: one report" }
+          children: [
+            {
+              id: "merge-title"
+              capability: "core.text"
+              text: "Controller merge"
+              layout: { x: 460, y: 176, width: 140, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "merge-detail"
+              capability: "core.text"
+              text: "one report"
+              layout: { x: 460, y: 196, width: 140, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "sink"
+          capability: "core.rect"
+          layout: { x: 430, y: 300, width: 200, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "external sink: planned" }
+          children: [
+            {
+              id: "sink-title"
+              capability: "core.text"
+              text: "external sink"
+              layout: { x: 430, y: 308, width: 200, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "sink-detail"
+              capability: "core.text"
+              text: "planned"
+              layout: { x: 430, y: 328, width: 200, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "motion18"
+          capability: "core.path"
+          d: "M110 175 H580"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s18-hdr18" at: 0 duration: 280 target: "hdr18" action: "enter" }
+        { id: "s18-cell180" at: 220 duration: 280 target: "cell180" action: "enter" }
+        { id: "s18-cell181" at: 440 duration: 280 target: "cell181" action: "enter" }
+        { id: "s18-cell182" at: 660 duration: 280 target: "cell182" action: "enter" }
+        { id: "s18-cell183" at: 880 duration: 280 target: "cell183" action: "enter" }
+        { id: "s18-agg0" at: 1100 duration: 280 target: "agg0" action: "enter" }
+        { id: "s18-agg1" at: 1320 duration: 280 target: "agg1" action: "enter" }
+        { id: "s18-a18t0" at: 1540 duration: 420 target: "a18t0" action: "draw" }
+        { id: "s18-a18t1" at: 1760 duration: 420 target: "a18t1" action: "draw" }
+        { id: "s18-a18t2" at: 1980 duration: 420 target: "a18t2" action: "draw" }
+        { id: "s18-a18t3" at: 2200 duration: 420 target: "a18t3" action: "draw" }
+        { id: "s18-a18m0" at: 2420 duration: 420 target: "a18m0" action: "draw" }
+        { id: "s18-a18m1" at: 2640 duration: 420 target: "a18m1" action: "draw" }
+        { id: "s18-merge" at: 2860 duration: 280 target: "merge" action: "enter" }
+        { id: "s18-sink" at: 3080 duration: 280 target: "sink" action: "enter" }
+        { id: "s18-motion18" at: 3300 duration: 420 target: "motion18" action: "draw" }
+      ]
+    }
+  }
+
+  slide "The full cellular system atlas" {
+    eyebrow: "Scale · 20 of 20"
+    title: "The full cellular system atlas"
+    lede: "Every plane assembled: control coordination, data distribution, execution, and results reduction. The complete atlas preserves the measurement contract end to end. For the interactive recipe explorer and ability map, open the source canvas."
+    narration: "The full atlas assembles the control, data, execution, and results planes in one view. The complete picture preserves the measurement contract; open the source canvas for the interactive explorer."
+    term: {
+      word: "measurement contract"
+      meaning: "The invariant that scaling to many cells never changes what a single-cell run would have measured."
+    }
+    points: [
+      "Control · data · execution · results planes assembled in one view.",
+      "The complete atlas preserves the measurement contract.",
+      "Full explorer: `docs/canvases/cellular-architecture.canvas.tsx`."
+    ]
+    caption: "all planes together · one measurement contract."
+
+    render: @scene {
+      summary "all planes together · one measurement contract."
+      roots: [
+        {
+          id: "hdr19"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "SCALE · FULL SYSTEM ATLAS" }
+          children: [
+            {
+              id: "hdr19-text"
+              capability: "core.text"
+              text: "SCALE · FULL SYSTEM ATLAS"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "hdr19-cap"
+              capability: "core.text"
+              text: "all planes together · one measurement contract."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "ctrl19"
+          capability: "core.rect"
+          layout: { x: 30, y: 70, width: 640, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "CONTROL — coordinate & authority: controller · START · roles" }
+          children: [
+            {
+              id: "ctrl19-title"
+              capability: "core.text"
+              text: "CONTROL — coordinate & authority"
+              layout: { x: 30, y: 78, width: 640, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ctrl19-detail"
+              capability: "core.text"
+              text: "controller · START · roles"
+              layout: { x: 30, y: 98, width: 640, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "data19"
+          capability: "core.rect"
+          layout: { x: 30, y: 140, width: 640, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "DATA — distribute & timing: partition · dataset · origin" }
+          children: [
+            {
+              id: "data19-title"
+              capability: "core.text"
+              text: "DATA — distribute & timing"
+              layout: { x: 30, y: 148, width: 640, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "data19-detail"
+              capability: "core.text"
+              text: "partition · dataset · origin"
+              layout: { x: 30, y: 168, width: 640, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "exec19"
+          capability: "core.rect"
+          layout: { x: 30, y: 210, width: 640, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "EXECUTE — request / load: cells · shards · dispatch" }
+          children: [
+            {
+              id: "exec19-title"
+              capability: "core.text"
+              text: "EXECUTE — request / load"
+              layout: { x: 30, y: 218, width: 640, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "exec19-detail"
+              capability: "core.text"
+              text: "cells · shards · dispatch"
+              layout: { x: 30, y: 238, width: 640, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "res19"
+          capability: "core.rect"
+          layout: { x: 30, y: 280, width: 640, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "RESULTS — reduce & publish: retain · fold · merge · report" }
+          children: [
+            {
+              id: "res19-title"
+              capability: "core.text"
+              text: "RESULTS — reduce & publish"
+              layout: { x: 30, y: 288, width: 640, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "res19-detail"
+              capability: "core.text"
+              text: "retain · fold · merge · report"
+              layout: { x: 30, y: 308, width: 640, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "a19a"
+          capability: "core.path"
+          d: "M350 114 V140"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a19b"
+          capability: "core.path"
+          d: "M350 184 V210"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "a19c"
+          capability: "core.path"
+          d: "M350 254 V280"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "s19-hdr19" at: 0 duration: 280 target: "hdr19" action: "enter" }
+        { id: "s19-ctrl19" at: 220 duration: 280 target: "ctrl19" action: "enter" }
+        { id: "s19-a19a" at: 440 duration: 420 target: "a19a" action: "draw" }
+        { id: "s19-data19" at: 660 duration: 280 target: "data19" action: "enter" }
+        { id: "s19-a19b" at: 880 duration: 420 target: "a19b" action: "draw" }
+        { id: "s19-exec19" at: 1100 duration: 280 target: "exec19" action: "enter" }
+        { id: "s19-a19c" at: 1320 duration: 420 target: "a19c" action: "draw" }
+        { id: "s19-res19" at: 1540 duration: 280 target: "res19" action: "enter" }
+      ]
+    }
+  }
+
+  finalCard: @scene {
+      summary "all planes together · one measurement contract."
+      roots: [
+        {
+          id: "f-hdr"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+          accessibility: { label: "SCALE · FULL SYSTEM ATLAS" }
+          children: [
+            {
+              id: "f-hdr-text"
+              capability: "core.text"
+              text: "SCALE · FULL SYSTEM ATLAS"
+              layout: { x: 38, y: 28, width: 360, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+            }
+            {
+              id: "f-hdr-cap"
+              capability: "core.text"
+              text: "all planes together · one measurement contract."
+              layout: { x: 400, y: 28, width: 260, height: 24 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+            }
+          ]
+        },
+        {
+          id: "f-ctrl"
+          capability: "core.rect"
+          layout: { x: 30, y: 70, width: 640, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "CONTROL — coordinate & authority: controller · START · roles" }
+          children: [
+            {
+              id: "f-ctrl-title"
+              capability: "core.text"
+              text: "CONTROL — coordinate & authority"
+              layout: { x: 30, y: 78, width: 640, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "f-ctrl-detail"
+              capability: "core.text"
+              text: "controller · START · roles"
+              layout: { x: 30, y: 98, width: 640, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "f-data"
+          capability: "core.rect"
+          layout: { x: 30, y: 140, width: 640, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          accessibility: { label: "DATA — distribute & timing: partition · dataset · origin" }
+          children: [
+            {
+              id: "f-data-title"
+              capability: "core.text"
+              text: "DATA — distribute & timing"
+              layout: { x: 30, y: 148, width: 640, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "f-data-detail"
+              capability: "core.text"
+              text: "partition · dataset · origin"
+              layout: { x: 30, y: 168, width: 640, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "f-exec"
+          capability: "core.rect"
+          layout: { x: 30, y: 210, width: 640, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          accessibility: { label: "EXECUTE — request / load: cells · shards · dispatch" }
+          children: [
+            {
+              id: "f-exec-title"
+              capability: "core.text"
+              text: "EXECUTE — request / load"
+              layout: { x: 30, y: 218, width: 640, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "f-exec-detail"
+              capability: "core.text"
+              text: "cells · shards · dispatch"
+              layout: { x: 30, y: 238, width: 640, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "f-res"
+          capability: "core.rect"
+          layout: { x: 30, y: 280, width: 640, height: 44 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          accessibility: { label: "RESULTS — reduce & publish: retain · fold · merge · report" }
+          children: [
+            {
+              id: "f-res-title"
+              capability: "core.text"
+              text: "RESULTS — reduce & publish"
+              layout: { x: 30, y: 288, width: 640, height: 18 }
+              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "f-res-detail"
+              capability: "core.text"
+              text: "retain · fold · merge · report"
+              layout: { x: 30, y: 308, width: 640, height: 16 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        },
+        {
+          id: "f-a"
+          capability: "core.path"
+          d: "M350 114 V140"
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "f-b"
+          capability: "core.path"
+          d: "M350 184 V210"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "f-c"
+          capability: "core.path"
+          d: "M350 254 V280"
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        }
+      ]
+      timeline: [
+        { id: "final-f-hdr" at: 0 duration: 280 target: "f-hdr" action: "enter" }
+        { id: "final-f-ctrl" at: 220 duration: 280 target: "f-ctrl" action: "enter" }
+        { id: "final-f-a" at: 440 duration: 420 target: "f-a" action: "draw" }
+        { id: "final-f-data" at: 660 duration: 280 target: "f-data" action: "enter" }
+        { id: "final-f-b" at: 880 duration: 420 target: "f-b" action: "draw" }
+        { id: "final-f-exec" at: 1100 duration: 280 target: "f-exec" action: "enter" }
+        { id: "final-f-c" at: 1320 duration: 420 target: "f-c" action: "draw" }
+        { id: "final-f-res" at: 1540 duration: 280 target: "f-res" action: "enter" }
+      ]
+    }
+}

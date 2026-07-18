@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React, { ReactNode } from "react";
-import { COMPILED_EXPLAINER_DECKS } from "../packages/runtime/src/explainer/compiled-decks";
+import { COMPILED_EXPLAINER_DECKS } from "./deck-packages";
 import { ExplainerSlideViewer } from "../packages/runtime/src/explainer/ui/ExplainerSlideViewer";
 
 type ExplainerDeckNavigatorProps = Readonly<{

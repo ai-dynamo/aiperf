@@ -10,5 +10,8 @@ export function resolveCapabilityId(node: RenderNodeIr): string {
   if ("capabilityId" in node && node.capabilityId !== undefined) {
     return node.capabilityId;
   }
+  if ("capability" in node && node.capability !== undefined) {
+    return node.capability;
+  }
   return `core.${node.kind}`;
 }

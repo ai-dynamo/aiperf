@@ -25,12 +25,29 @@ import { collectSymbols } from "./symbols.js";
 import { validate } from "./validate.js";
 
 export * from "./components.js";
+/** Build-script / DeckPackage public entry: `compileExplainerSource`. */
+export {
+  compileExplainerSource,
+  type CompileExplainerRequest,
+} from "./compile-explainer.js";
 export * from "./expand-symbols.js";
 export * from "./link.js";
 export * from "./lower-explainer.js";
+export * from "./lower-explainer-scene.js";
+export {
+  lowerExplainerSlides,
+  type SlideTextAst,
+} from "./lower-explainer-slides.js";
+/** Build-script / DeckPackage public entry: `writeDeckPackage`. */
+export {
+  packDeckPackageToJson,
+  writeDeckPackage,
+} from "./pack-deck-package.js";
 export * from "./pack.js";
 export * from "./symbols.js";
 export * from "./themes.js";
+export * from "./validate-explainer-set.js";
+export * from "./validate-explainer-timelines.js";
 export * from "./validate.js";
 export { lower } from "./lower.js";
 

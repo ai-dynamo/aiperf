@@ -21,6 +21,7 @@ export type MentalModelProps = {
   slide: SlideDefinition;
   playing?: boolean;
   restartKey?: number;
+  reducedMotion?: boolean;
 };
 
 export type DeckDefinition = {

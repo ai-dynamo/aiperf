@@ -1,0 +1,2558 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+explainer "Rust Architecture Atlas" {
+  id: "rust-architecture-atlas"
+  route: "/rust-architecture-atlas"
+  topic: "architecture"
+  storagePrefix: "rust-arch-atlas-explainer"
+  classPrefix: "deck-rust-atlas"
+  eyebrowLabel: "RUST ARCHITECTURE ATLAS"
+  startGateTitle: "Rust architecture atlas"
+
+  hub: {
+    highlight: "Rust architecture atlas"
+    title: "source-oriented map"
+    description: "Eleven-slide companion to the overview deck: system landscape, crate graph, hot path, protocol v2, scheduled and graph execution, endpoints, metrics, cellular, features, and extension seams."
+  }
+
+  slide "System landscape" {
+    eyebrow: "1 · System"
+    title: "Product landscape: author, execute, target"
+    lede: "The atlas starts at product boundaries. `aiperf` from `aiperf-cli` authors Config v2, re-execs itself as `--execute`, and optionally launches `--cell` children. Load targets are real servers, `aiperf-mock-server`, or in-process Dynosim."
+    narration: "The atlas opens at product boundaries. One aiperf binary authors the run, re-executes itself to dispatch load, and targets a real server, the mock server, or Dynosim."
+    term: {
+      word: "execute child"
+      meaning: "Same `aiperf` binary started with hidden `--execute` flags; the only process that dispatches measured load."
+    }
+    points: [
+      "`rust/cli/src/dispatch.rs` routes public commands.",
+      "`rust/cli/src/execute_mode.rs` intercepts internal modes before clap.",
+      "Mock server is a separate target; Dynosim is a transport feature, not a command."
+    ]
+    caption: "Author → execute → target · artifacts fan out after the run."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "SYSTEM LANDSCAPE"
+          layout: { x: 38, y: 28, width: 360, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "Author → execute → target · artifacts fan out after the run."
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "config"
+          capability: "core.rect"
+          layout: { x: 60, y: 90, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "config-title"
+              capability: "core.text"
+              text: "Config v2"
+              layout: { x: 60, y: 107, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "config-detail"
+              capability: "core.text"
+              text: "cli flags"
+              layout: { x: 60, y: 129, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 220, y: 125 }
+          to: { x: 270, y: 125 }
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+        }
+        {
+          id: "aiperf"
+          capability: "core.rect"
+          layout: { x: 270, y: 80, width: 180, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "aiperf-title"
+              capability: "core.text"
+              text: "aiperf"
+              layout: { x: 270, y: 107, width: 180, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "aiperf-detail"
+              capability: "core.text"
+              text: "cli/src/main.rs"
+              layout: { x: 270, y: 129, width: 180, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 360, y: 170 }
+          to: { x: 360, y: 210 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "execute"
+          capability: "core.rect"
+          layout: { x: 250, y: 210, width: 220, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "execute-title"
+              capability: "core.text"
+              text: "aiperf --execute"
+              layout: { x: 250, y: 232, width: 220, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "execute-detail"
+              capability: "core.text"
+              text: "protocol v2 child"
+              layout: { x: 250, y: 254, width: 220, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a3"
+          capability: "core.line"
+          from: { x: 470, y: 250 }
+          to: { x: 520, y: 250 }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+        }
+        {
+          id: "cell"
+          capability: "core.rect"
+          layout: { x: 520, y: 210, width: 140, height: 80 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "cell-title"
+              capability: "core.text"
+              text: "--cell N"
+              layout: { x: 520, y: 232, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cell-detail"
+              capability: "core.text"
+              text: "optional"
+              layout: { x: 520, y: 254, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "real"
+          capability: "core.rect"
+          layout: { x: 60, y: 310, width: 150, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "real-title"
+              capability: "core.text"
+              text: "real server"
+              layout: { x: 60, y: 322, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "real-detail"
+              capability: "core.text"
+              text: "HTTP / gRPC"
+              layout: { x: 60, y: 344, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "mock"
+          capability: "core.rect"
+          layout: { x: 250, y: 310, width: 170, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "mock-title"
+              capability: "core.text"
+              text: "mock-server"
+              layout: { x: 250, y: 322, width: 170, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "mock-detail"
+              capability: "core.text"
+              text: "standalone"
+              layout: { x: 250, y: 344, width: 170, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "dynosim"
+          capability: "core.rect"
+          layout: { x: 460, y: 310, width: 180, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "dynosim-title"
+              capability: "core.text"
+              text: "Dynosim"
+              layout: { x: 460, y: 322, width: 180, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "dynosim-detail"
+              capability: "core.text"
+              text: "feature gate"
+              layout: { x: 460, y: 344, width: 180, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "motion-sig"
+          capability: "core.path"
+          d: "M350 120 V200"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-config", at: 320, duration: 320, target: "config", action: "enter" }
+        { id: "t-a1", at: 460, duration: 300, target: "a1", action: "draw" }
+        { id: "t-aiperf", at: 600, duration: 320, target: "aiperf", action: "enter" }
+        { id: "t-a2", at: 740, duration: 300, target: "a2", action: "draw" }
+        { id: "t-execute", at: 880, duration: 320, target: "execute", action: "enter" }
+        { id: "t-a3", at: 1020, duration: 300, target: "a3", action: "draw" }
+        { id: "t-cell", at: 1160, duration: 320, target: "cell", action: "enter" }
+        { id: "t-real", at: 1300, duration: 320, target: "real", action: "enter" }
+        { id: "t-mock", at: 1440, duration: 320, target: "mock", action: "enter" }
+        { id: "t-dynosim", at: 1580, duration: 320, target: "dynosim", action: "enter" }
+        { id: "t-motion-sig", at: 800, duration: 900, target: "motion-sig", action: "draw" }
+        { id: "t-emphasis", at: 1800, duration: 480, target: "dynosim", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Crate graph" {
+    eyebrow: "2 · Processes"
+    title: "Crate graph and process roles"
+    lede: "Compile-time capability flows `aiperf-cli` → `aiperf-runtime` → `loadgen-core`. The entry process and its `--execute` child share one binary; `aiperf-mock-server` links runtime independently; `pyext` and `e2e` stay off the hot path."
+    narration: "Capability flows from aiperf-cli into aiperf-runtime and then loadgen-core. Mock server and packaging crates stay outside that execute dependency edge."
+    term: {
+      word: "aiperf-runtime"
+      meaning: "Library crate that owns clocks, transports, datasets, engine, cellular, and metrics composition."
+    }
+    points: [
+      "Workspace members: loadgen-core, runtime, cli, mock-server, e2e, pyext.",
+      "Solid edges are Cargo deps or self re-exec; dashed edges are network or optional features.",
+      "Evidence: `rust/cli/Cargo.toml`, `rust/runtime/Cargo.toml`, `rust/loadgen-core/`."
+    ]
+    caption: "cli → runtime → loadgen-core · mock-server is peer, not child."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "PROCESS / CRATE GRAPH"
+          layout: { x: 38, y: 28, width: 360, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "cli → runtime → loadgen-core · mock-server is peer, not child."
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "cli"
+          capability: "core.rect"
+          layout: { x: 40, y: 100, width: 160, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "cli-title"
+              capability: "core.text"
+              text: "aiperf-cli"
+              layout: { x: 40, y: 127, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cli-detail"
+              capability: "core.text"
+              text: "binary + commands"
+              layout: { x: 40, y: 149, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 200, y: 145 }
+          to: { x: 250, y: 145 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "runtime"
+          capability: "core.rect"
+          layout: { x: 250, y: 100, width: 180, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "runtime-title"
+              capability: "core.text"
+              text: "aiperf-runtime"
+              layout: { x: 250, y: 127, width: 180, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "runtime-detail"
+              capability: "core.text"
+              text: "engine + transports"
+              layout: { x: 250, y: 149, width: 180, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 430, y: 145 }
+          to: { x: 480, y: 145 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+        }
+        {
+          id: "loadgen"
+          capability: "core.rect"
+          layout: { x: 480, y: 100, width: 180, height: 90 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "loadgen-title"
+              capability: "core.text"
+              text: "loadgen-core"
+              layout: { x: 480, y: 127, width: 180, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "loadgen-detail"
+              capability: "core.text"
+              text: "sink · observer"
+              layout: { x: 480, y: 149, width: 180, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "mock"
+          capability: "core.rect"
+          layout: { x: 250, y: 240, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "mock-title"
+              capability: "core.text"
+              text: "mock-server"
+              layout: { x: 250, y: 257, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "mock-detail"
+              capability: "core.text"
+              text: "→ runtime"
+              layout: { x: 250, y: 279, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "offpath"
+          capability: "core.rect"
+          layout: { x: 450, y: 240, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "offpath-title"
+              capability: "core.text"
+              text: "pyext / e2e"
+              layout: { x: 450, y: 257, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "offpath-detail"
+              capability: "core.text"
+              text: "off hot path"
+              layout: { x: 450, y: 279, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "motion-sig"
+          capability: "core.path"
+          d: "M140 178 H560"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-cli", at: 320, duration: 320, target: "cli", action: "enter" }
+        { id: "t-a1", at: 500, duration: 300, target: "a1", action: "draw" }
+        { id: "t-runtime", at: 680, duration: 320, target: "runtime", action: "enter" }
+        { id: "t-a2", at: 860, duration: 300, target: "a2", action: "draw" }
+        { id: "t-loadgen", at: 1040, duration: 320, target: "loadgen", action: "enter" }
+        { id: "t-mock", at: 1220, duration: 320, target: "mock", action: "enter" }
+        { id: "t-offpath", at: 1400, duration: 320, target: "offpath", action: "enter" }
+        { id: "t-motion-sig", at: 800, duration: 900, target: "motion-sig", action: "draw" }
+        { id: "t-emphasis", at: 1660, duration: 480, target: "offpath", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "One-run hot path" {
+    eyebrow: "3 · Runtime"
+    title: "One request from bootstrap to commit"
+    lede: "Startup freezes registries in `Application`, then `Coordinator` validates and prepares factories. Phase runtime paces work; `RequestSink` dispatches transport-native requests; observers accumulate; exporters commit `native-v2.json`."
+    narration: "One request path freezes registries, validates through Coordinator, paces phases, dispatches on RequestSink, observes tokens, and commits native-v2.json."
+    term: {
+      word: "Coordinator"
+      meaning: "Engine composition root: validate → prepare → execute → persist for one BenchmarkRun."
+    }
+    points: [
+      "`rust/runtime/src/engine/application.rs` freezes factories once.",
+      "`rust/runtime/src/engine/coordinator.rs` owns the run spine.",
+      "`rust/loadgen-core/src/sink.rs` defines RequestSink and RequestObserver."
+    ]
+    caption: "Registries at startup · Clock + sink on the hot path · merge after drain."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "ONE-RUN HOT PATH"
+          layout: { x: 38, y: 28, width: 360, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "Registries at startup · Clock + sink on the hot path · merge after drain."
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "app"
+          capability: "core.rect"
+          layout: { x: 30, y: 90, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "app-title"
+              capability: "core.text"
+              text: "Application"
+              layout: { x: 30, y: 107, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "app-detail"
+              capability: "core.text"
+              text: "freeze registry"
+              layout: { x: 30, y: 129, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 170, y: 125 }
+          to: { x: 210, y: 125 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "coord"
+          capability: "core.rect"
+          layout: { x: 210, y: 90, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "coord-title"
+              capability: "core.text"
+              text: "Coordinator"
+              layout: { x: 210, y: 107, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "coord-detail"
+              capability: "core.text"
+              text: "validate/prepare"
+              layout: { x: 210, y: 129, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 350, y: 125 }
+          to: { x: 390, y: 125 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "phase"
+          capability: "core.rect"
+          layout: { x: 390, y: 90, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "phase-title"
+              capability: "core.text"
+              text: "Phase runtime"
+              layout: { x: 390, y: 107, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "phase-detail"
+              capability: "core.text"
+              text: "warmup→profile"
+              layout: { x: 390, y: 129, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a3"
+          capability: "core.line"
+          from: { x: 530, y: 125 }
+          to: { x: 570, y: 125 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+        }
+        {
+          id: "sink"
+          capability: "core.rect"
+          layout: { x: 570, y: 90, width: 110, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "sink-title"
+              capability: "core.text"
+              text: "Sink"
+              layout: { x: 570, y: 107, width: 110, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "sink-detail"
+              capability: "core.text"
+              text: "dispatch"
+              layout: { x: 570, y: 129, width: 110, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "clock"
+          capability: "core.rect"
+          layout: { x: 120, y: 220, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "clock-title"
+              capability: "core.text"
+              text: "Clock"
+              layout: { x: 120, y: 237, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "clock-detail"
+              capability: "core.text"
+              text: "Real / Sim"
+              layout: { x: 120, y: 259, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "obs"
+          capability: "core.rect"
+          layout: { x: 320, y: 220, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "obs-title"
+              capability: "core.text"
+              text: "Observer"
+              layout: { x: 320, y: 237, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "obs-detail"
+              capability: "core.text"
+              text: "token · usage"
+              layout: { x: 320, y: 259, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "report"
+          capability: "core.rect"
+          layout: { x: 520, y: 220, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "report-title"
+              capability: "core.text"
+              text: "native-v2"
+              layout: { x: 520, y: 237, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "report-detail"
+              capability: "core.text"
+              text: "report commit"
+              layout: { x: 520, y: 259, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "motion-sig"
+          capability: "core.path"
+          d: "M90 178 H610"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-app", at: 320, duration: 320, target: "app", action: "enter" }
+        { id: "t-a1", at: 450, duration: 300, target: "a1", action: "draw" }
+        { id: "t-coord", at: 580, duration: 320, target: "coord", action: "enter" }
+        { id: "t-a2", at: 710, duration: 300, target: "a2", action: "draw" }
+        { id: "t-phase", at: 840, duration: 320, target: "phase", action: "enter" }
+        { id: "t-a3", at: 970, duration: 300, target: "a3", action: "draw" }
+        { id: "t-sink", at: 1100, duration: 320, target: "sink", action: "enter" }
+        { id: "t-clock", at: 1230, duration: 320, target: "clock", action: "enter" }
+        { id: "t-obs", at: 1360, duration: 320, target: "obs", action: "enter" }
+        { id: "t-report", at: 1490, duration: 320, target: "report", action: "enter" }
+        { id: "t-motion-sig", at: 800, duration: 900, target: "motion-sig", action: "draw" }
+        { id: "t-emphasis", at: 1700, duration: 480, target: "report", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Protocol v2 child" {
+    eyebrow: "4 · Protocol"
+    title: "Self-exec protocol v2 lifecycle"
+    lede: "Profile resolves `current_exe()`, spawns `aiperf --execute`, writes one strict protocol-v2 envelope to stdin, and waits for exactly one terminal JSONL line on stdout. stderr stays diagnostics-only."
+    narration: "Protocol version two is a fresh process boundary: parent writes one envelope to stdin and reads one terminal JSONL line from stdout."
+    term: {
+      word: "protocol v2"
+      meaning: "Strict serde envelope wrapping the authored BenchmarkRun; unknown fields fail closed."
+    }
+    points: [
+      "`rust/cli/src/exec_bin.rs` resolves the child binary override.",
+      "`rust/cli/src/execute.rs` is the parent protocol client.",
+      "Child bootstrap composes Application, then Coordinator validate|execute."
+    ]
+    caption: "stdin: one envelope · stdout: one terminal · parent stays the shell."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "PROTOCOL V2 CHILD"
+          layout: { x: 38, y: 28, width: 360, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "stdin: one envelope · stdout: one terminal · parent stays the shell."
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "profile"
+          capability: "core.rect"
+          layout: { x: 40, y: 90, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "profile-title"
+              capability: "core.text"
+              text: "profile"
+              layout: { x: 40, y: 107, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "profile-detail"
+              capability: "core.text"
+              text: "parent shell"
+              layout: { x: 40, y: 129, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 190, y: 125 }
+          to: { x: 230, y: 125 }
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+        }
+        {
+          id: "req"
+          capability: "core.rect"
+          layout: { x: 230, y: 90, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "req-title"
+              capability: "core.text"
+              text: "RunnerRequest"
+              layout: { x: 230, y: 107, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "req-detail"
+              capability: "core.text"
+              text: "protocol v2"
+              layout: { x: 230, y: 129, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 390, y: 125 }
+          to: { x: 430, y: 125 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "execbin"
+          capability: "core.rect"
+          layout: { x: 430, y: 90, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "execbin-title"
+              capability: "core.text"
+              text: "exec_bin"
+              layout: { x: 430, y: 107, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "execbin-detail"
+              capability: "core.text"
+              text: "current_exe"
+              layout: { x: 430, y: 129, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a3"
+          capability: "core.line"
+          from: { x: 570, y: 125 }
+          to: { x: 610, y: 125 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "spawn"
+          capability: "core.rect"
+          layout: { x: 610, y: 90, width: 70, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "spawn-title"
+              capability: "core.text"
+              text: "spawn"
+              layout: { x: 610, y: 107, width: 70, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "spawn-detail"
+              capability: "core.text"
+              text: "--execute"
+              layout: { x: 610, y: 129, width: 70, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "stdin"
+          capability: "core.rect"
+          layout: { x: 80, y: 210, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "stdin-title"
+              capability: "core.text"
+              text: "stdin JSON"
+              layout: { x: 80, y: 227, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "stdin-detail"
+              capability: "core.text"
+              text: "to EOF"
+              layout: { x: 80, y: 249, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "app"
+          capability: "core.rect"
+          layout: { x: 280, y: 210, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "app-title"
+              capability: "core.text"
+              text: "Application"
+              layout: { x: 280, y: 227, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "app-detail"
+              capability: "core.text"
+              text: "frozen catalog"
+              layout: { x: 280, y: 249, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "stdout"
+          capability: "core.rect"
+          layout: { x: 500, y: 210, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "stdout-title"
+              capability: "core.text"
+              text: "stdout JSONL"
+              layout: { x: 500, y: 227, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "stdout-detail"
+              capability: "core.text"
+              text: "one terminal"
+              layout: { x: 500, y: 249, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "motion-sig"
+          capability: "core.path"
+          d: "M100 120 H600"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-profile", at: 320, duration: 320, target: "profile", action: "enter" }
+        { id: "t-a1", at: 450, duration: 300, target: "a1", action: "draw" }
+        { id: "t-req", at: 580, duration: 320, target: "req", action: "enter" }
+        { id: "t-a2", at: 710, duration: 300, target: "a2", action: "draw" }
+        { id: "t-execbin", at: 840, duration: 320, target: "execbin", action: "enter" }
+        { id: "t-a3", at: 970, duration: 300, target: "a3", action: "draw" }
+        { id: "t-spawn", at: 1100, duration: 320, target: "spawn", action: "enter" }
+        { id: "t-stdin", at: 1230, duration: 320, target: "stdin", action: "enter" }
+        { id: "t-app", at: 1360, duration: 320, target: "app", action: "enter" }
+        { id: "t-stdout", at: 1490, duration: 320, target: "stdout", action: "enter" }
+        { id: "t-motion-sig", at: 800, duration: 900, target: "motion-sig", action: "draw" }
+        { id: "t-emphasis", at: 1700, duration: 480, target: "stdout", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Scheduled workload" {
+    eyebrow: "5 · Scheduled"
+    title: "Paced workload path"
+    lede: "Scheduled runs load conversations, apply arrival policy, admit through SlotPool, and dispatch PreparedTurns over HTTP, gRPC, or Dynosim. Worker topology is one LocalSet co-located sink or OS-thread sub-cells."
+    narration: "Scheduled work loads conversations, applies arrival policy, admits through SlotPool, and places PreparedTurns on worker-local sinks."
+    term: {
+      word: "phase_runtime"
+      meaning: "Shared warmup → profiling lifecycle with ramp, grace, cancellation, and drain."
+    }
+    points: [
+      "`rust/runtime/src/phase_runtime.rs` and `scheduled.rs` bridge policy to turns.",
+      "Request-rate, concurrency, user-centric, and fixed-schedule share one path.",
+      "Transport choice does not fork separate workload registrations."
+    ]
+    caption: "dataset → phase → admit → TurnDispatcher → RequestSink."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "SCHEDULED WORKLOAD"
+          layout: { x: 38, y: 28, width: 360, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "dataset → phase → admit → TurnDispatcher → RequestSink."
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "dataset"
+          capability: "core.rect"
+          layout: { x: 30, y: 90, width: 130, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "dataset-title"
+              capability: "core.text"
+              text: "dataset"
+              layout: { x: 30, y: 107, width: 130, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "dataset-detail"
+              capability: "core.text"
+              text: "loader"
+              layout: { x: 30, y: 129, width: 130, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 160, y: 125 }
+          to: { x: 200, y: 125 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "phase"
+          capability: "core.rect"
+          layout: { x: 200, y: 90, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "phase-title"
+              capability: "core.text"
+              text: "PhaseOrchestrator"
+              layout: { x: 200, y: 107, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "phase-detail"
+              capability: "core.text"
+              text: "lifecycle"
+              layout: { x: 200, y: 129, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 340, y: 125 }
+          to: { x: 380, y: 125 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "slot"
+          capability: "core.rect"
+          layout: { x: 380, y: 90, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "slot-title"
+              capability: "core.text"
+              text: "SlotPool"
+              layout: { x: 380, y: 107, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "slot-detail"
+              capability: "core.text"
+              text: "admission"
+              layout: { x: 380, y: 129, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a3"
+          capability: "core.line"
+          from: { x: 520, y: 125 }
+          to: { x: 560, y: 125 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "turn"
+          capability: "core.rect"
+          layout: { x: 560, y: 90, width: 120, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "turn-title"
+              capability: "core.text"
+              text: "TurnDispatcher"
+              layout: { x: 560, y: 107, width: 120, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "turn-detail"
+              capability: "core.text"
+              text: "place turn"
+              layout: { x: 560, y: 129, width: 120, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "w1"
+          capability: "core.rect"
+          layout: { x: 120, y: 220, width: 180, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "w1-title"
+              capability: "core.text"
+              text: "workers=1"
+              layout: { x: 120, y: 237, width: 180, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "w1-detail"
+              capability: "core.text"
+              text: "co-located LocalSet"
+              layout: { x: 120, y: 259, width: 180, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "wn"
+          capability: "core.rect"
+          layout: { x: 400, y: 220, width: 200, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "wn-title"
+              capability: "core.text"
+              text: "workers>1"
+              layout: { x: 400, y: 237, width: 200, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "wn-detail"
+              capability: "core.text"
+              text: "OS thread sub-cells"
+              layout: { x: 400, y: 259, width: 200, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "motion-sig"
+          capability: "core.path"
+          d: "M80 160 H620"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-dataset", at: 320, duration: 320, target: "dataset", action: "enter" }
+        { id: "t-a1", at: 500, duration: 300, target: "a1", action: "draw" }
+        { id: "t-phase", at: 680, duration: 320, target: "phase", action: "enter" }
+        { id: "t-a2", at: 860, duration: 300, target: "a2", action: "draw" }
+        { id: "t-slot", at: 1040, duration: 320, target: "slot", action: "enter" }
+        { id: "t-a3", at: 1220, duration: 300, target: "a3", action: "draw" }
+        { id: "t-turn", at: 1400, duration: 320, target: "turn", action: "enter" }
+        { id: "t-w1", at: 1580, duration: 320, target: "w1", action: "enter" }
+        { id: "t-wn", at: 1760, duration: 320, target: "wn", action: "enter" }
+        { id: "t-motion-sig", at: 800, duration: 900, target: "motion-sig", action: "draw" }
+        { id: "t-emphasis", at: 2020, duration: 480, target: "wn", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Graph trace path" {
+    eyebrow: "6 · Graph"
+    title: "Trace compile, phase rewrite, execute"
+    lede: "Graph inputs (`dag_jsonl`, WEKA, Dynamo) compile once into a program plus SegmentStore. Warmup and profiling derive phase programs around a seeded frontier, then the graph executor fires nodes through the same RequestSink seam."
+    narration: "Graph traces compile once into a program and segment store, derive warmup and profiling programs, then fire nodes through the same sink seam."
+    term: {
+      word: "GraphInputBundle"
+      meaning: "Compiled program plus shared SegmentStore produced by the graph input resolver."
+    }
+    points: [
+      "`rust/runtime/src/engine/graph_input.rs` selects and strictly decodes sources.",
+      "`rust/runtime/src/engine/graph_phase_runtime.rs` derives warmup/profiling programs.",
+      "`rust/runtime/src/graph/executor.rs` owns firing gates and dependencies."
+    ]
+    caption: "Compile once · rewrite phases · dispatch per node."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "GRAPH TRACE PATH"
+          layout: { x: 38, y: 28, width: 360, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "Compile once · rewrite phases · dispatch per node."
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "src"
+          capability: "core.rect"
+          layout: { x: 30, y: 90, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "src-title"
+              capability: "core.text"
+              text: "trace source"
+              layout: { x: 30, y: 107, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "src-detail"
+              capability: "core.text"
+              text: "dag · WEKA · Dynamo"
+              layout: { x: 30, y: 129, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 170, y: 125 }
+          to: { x: 210, y: 125 }
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+        }
+        {
+          id: "gin"
+          capability: "core.rect"
+          layout: { x: 210, y: 90, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "gin-title"
+              capability: "core.text"
+              text: "graph_input"
+              layout: { x: 210, y: 107, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "gin-detail"
+              capability: "core.text"
+              text: "strict decode"
+              layout: { x: 210, y: 129, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 370, y: 125 }
+          to: { x: 410, y: 125 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "comp"
+          capability: "core.rect"
+          layout: { x: 410, y: 90, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "comp-title"
+              capability: "core.text"
+              text: "compiler"
+              layout: { x: 410, y: 107, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "comp-detail"
+              capability: "core.text"
+              text: "LCP + intern"
+              layout: { x: 410, y: 129, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a3"
+          capability: "core.line"
+          from: { x: 560, y: 125 }
+          to: { x: 600, y: 125 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "bundle"
+          capability: "core.rect"
+          layout: { x: 600, y: 90, width: 80, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "bundle-title"
+              capability: "core.text"
+              text: "bundle"
+              layout: { x: 600, y: 107, width: 80, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "bundle-detail"
+              capability: "core.text"
+              text: "program"
+              layout: { x: 600, y: 129, width: 80, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "warm"
+          capability: "core.rect"
+          layout: { x: 80, y: 210, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "warm-title"
+              capability: "core.text"
+              text: "warmup rewrite"
+              layout: { x: 80, y: 227, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "warm-detail"
+              capability: "core.text"
+              text: "prime prefixes"
+              layout: { x: 80, y: 249, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "prof"
+          capability: "core.rect"
+          layout: { x: 280, y: 210, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "prof-title"
+              capability: "core.text"
+              text: "profiling chop"
+              layout: { x: 280, y: 227, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "prof-detail"
+              capability: "core.text"
+              text: "from t*"
+              layout: { x: 280, y: 249, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "exec"
+          capability: "core.rect"
+          layout: { x: 480, y: 210, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "exec-title"
+              capability: "core.text"
+              text: "graph executor"
+              layout: { x: 480, y: 227, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "exec-detail"
+              capability: "core.text"
+              text: "RequestSink"
+              layout: { x: 480, y: 249, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "motion-sig"
+          capability: "core.path"
+          d: "M90 160 H610"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-src", at: 320, duration: 320, target: "src", action: "enter" }
+        { id: "t-a1", at: 450, duration: 300, target: "a1", action: "draw" }
+        { id: "t-gin", at: 580, duration: 320, target: "gin", action: "enter" }
+        { id: "t-a2", at: 710, duration: 300, target: "a2", action: "draw" }
+        { id: "t-comp", at: 840, duration: 320, target: "comp", action: "enter" }
+        { id: "t-a3", at: 970, duration: 300, target: "a3", action: "draw" }
+        { id: "t-bundle", at: 1100, duration: 320, target: "bundle", action: "enter" }
+        { id: "t-warm", at: 1230, duration: 320, target: "warm", action: "enter" }
+        { id: "t-prof", at: 1360, duration: 320, target: "prof", action: "enter" }
+        { id: "t-exec", at: 1490, duration: 320, target: "exec", action: "enter" }
+        { id: "t-motion-sig", at: 800, duration: 900, target: "motion-sig", action: "draw" }
+        { id: "t-emphasis", at: 1700, duration: 480, target: "exec", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Endpoint dialects" {
+    eyebrow: "7 · Endpoints"
+    title: "Dialect preparation and wire binding"
+    lede: "Endpoint registries validate authored profiles into dense EndpointKeys. Each worker calls prepare_worker once to build a local table; dialects format BodyPlans and bind HTTP or gRPC wire forms without per-token registry lookups."
+    narration: "Endpoint dialects validate once, prepare a dense worker table, and format BodyPlans into HTTP or gRPC bindings without registry churn on the hot path."
+    term: {
+      word: "PreparedEndpointTable"
+      meaning: "Worker-local dense lookup from EndpointKey to tokenizer, binder, and parser state."
+    }
+    points: [
+      "`rust/runtime/src/endpoints/` owns dialect factories and traits.",
+      "OpenAI, Anthropic, KServe, Riva, and specialized families register as factories.",
+      "HTTP and gRPC share identity, prepare different bindings."
+    ]
+    caption: "validate once · prepare per worker · format per turn."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "ENDPOINT DIALECTS"
+          layout: { x: 38, y: 28, width: 360, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "validate once · prepare per worker · format per turn."
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "prof"
+          capability: "core.rect"
+          layout: { x: 40, y: 90, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "prof-title"
+              capability: "core.text"
+              text: "profiles"
+              layout: { x: 40, y: 107, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "prof-detail"
+              capability: "core.text"
+              text: "EndpointId"
+              layout: { x: 40, y: 129, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 190, y: 125 }
+          to: { x: 230, y: 125 }
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+        }
+        {
+          id: "reg"
+          capability: "core.rect"
+          layout: { x: 230, y: 90, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "reg-title"
+              capability: "core.text"
+              text: "EndpointRegistry"
+              layout: { x: 230, y: 107, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "reg-detail"
+              capability: "core.text"
+              text: "factory lookup"
+              layout: { x: 230, y: 129, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 390, y: 125 }
+          to: { x: 430, y: 125 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "prep"
+          capability: "core.rect"
+          layout: { x: 430, y: 90, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "prep-title"
+              capability: "core.text"
+              text: "prepare_worker"
+              layout: { x: 430, y: 107, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "prep-detail"
+              capability: "core.text"
+              text: "dense table"
+              layout: { x: 430, y: 129, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a3"
+          capability: "core.line"
+          from: { x: 590, y: 125 }
+          to: { x: 620, y: 125 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+        }
+        {
+          id: "key"
+          capability: "core.rect"
+          layout: { x: 620, y: 90, width: 60, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "key-title"
+              capability: "core.text"
+              text: "key"
+              layout: { x: 620, y: 107, width: 60, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "key-detail"
+              capability: "core.text"
+              text: "table"
+              layout: { x: 620, y: 129, width: 60, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "dialect"
+          capability: "core.rect"
+          layout: { x: 80, y: 220, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "dialect-title"
+              capability: "core.text"
+              text: "dialect"
+              layout: { x: 80, y: 237, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "dialect-detail"
+              capability: "core.text"
+              text: "BodyPlan"
+              layout: { x: 80, y: 259, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "bind"
+          capability: "core.rect"
+          layout: { x: 280, y: 220, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "bind-title"
+              capability: "core.text"
+              text: "HTTP / gRPC bind"
+              layout: { x: 280, y: 237, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "bind-detail"
+              capability: "core.text"
+              text: "URI · tensors"
+              layout: { x: 280, y: 259, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "obs"
+          capability: "core.rect"
+          layout: { x: 500, y: 220, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "obs-title"
+              capability: "core.text"
+              text: "observations"
+              layout: { x: 500, y: 237, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "obs-detail"
+              capability: "core.text"
+              text: "usage · tokens"
+              layout: { x: 500, y: 259, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "motion-sig"
+          capability: "core.path"
+          d: "M100 160 H600"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-prof", at: 320, duration: 320, target: "prof", action: "enter" }
+        { id: "t-a1", at: 450, duration: 300, target: "a1", action: "draw" }
+        { id: "t-reg", at: 580, duration: 320, target: "reg", action: "enter" }
+        { id: "t-a2", at: 710, duration: 300, target: "a2", action: "draw" }
+        { id: "t-prep", at: 840, duration: 320, target: "prep", action: "enter" }
+        { id: "t-a3", at: 970, duration: 300, target: "a3", action: "draw" }
+        { id: "t-key", at: 1100, duration: 320, target: "key", action: "enter" }
+        { id: "t-dialect", at: 1230, duration: 320, target: "dialect", action: "enter" }
+        { id: "t-bind", at: 1360, duration: 320, target: "bind", action: "enter" }
+        { id: "t-obs", at: 1490, duration: 320, target: "obs", action: "enter" }
+        { id: "t-motion-sig", at: 800, duration: 900, target: "motion-sig", action: "draw" }
+        { id: "t-emphasis", at: 1700, duration: 480, target: "obs", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Metrics plane" {
+    eyebrow: "8 · Metrics"
+    title: "Observer stream to exporters"
+    lede: "Transports emit RequestObserver events; worker-local collectors and metrics observers accumulate exact rows or t-digest sketches. After drain, MetricsAccumulator merges stores, joins side channels, commits the report, and exporters fan out."
+    narration: "Measurement is an observer event stream. Workers accumulate locally, merge after drain, join side channels, and exporters fan out from the committed report."
+    term: {
+      word: "native-v2.json"
+      meaning: "Authoritative typed report commit before optional exporter side outputs."
+    }
+    points: [
+      "`rust/runtime/src/metrics.rs` adapts observers into the catalog.",
+      "`rust/runtime/src/metrics_core/` accumulates and folds.",
+      "`rust/runtime/src/export/` registers JSON, CSV, Parquet, OTLP, MLflow, W&B sinks."
+    ]
+    caption: "hot-path events · post-drain merge · durable report + fan-out."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "METRICS PLANE"
+          layout: { x: 38, y: 28, width: 360, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "hot-path events · post-drain merge · durable report + fan-out."
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "sink"
+          capability: "core.rect"
+          layout: { x: 40, y: 90, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "sink-title"
+              capability: "core.text"
+              text: "RequestSink"
+              layout: { x: 40, y: 107, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "sink-detail"
+              capability: "core.text"
+              text: "complete request"
+              layout: { x: 40, y: 129, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 180, y: 125 }
+          to: { x: 220, y: 125 }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+        }
+        {
+          id: "obs"
+          capability: "core.rect"
+          layout: { x: 220, y: 90, width: 180, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "obs-title"
+              capability: "core.text"
+              text: "RequestObserver"
+              layout: { x: 220, y: 107, width: 180, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "obs-detail"
+              capability: "core.text"
+              text: "arrival→terminal"
+              layout: { x: 220, y: 129, width: 180, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 400, y: 125 }
+          to: { x: 440, y: 125 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "store"
+          capability: "core.rect"
+          layout: { x: 440, y: 90, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "store-title"
+              capability: "core.text"
+              text: "worker store"
+              layout: { x: 440, y: 107, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "store-detail"
+              capability: "core.text"
+              text: "exact / sketch"
+              layout: { x: 440, y: 129, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a3"
+          capability: "core.line"
+          from: { x: 580, y: 125 }
+          to: { x: 610, y: 125 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "merge"
+          capability: "core.rect"
+          layout: { x: 610, y: 90, width: 70, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "merge-title"
+              capability: "core.text"
+              text: "merge"
+              layout: { x: 610, y: 107, width: 70, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "merge-detail"
+              capability: "core.text"
+              text: "drain"
+              layout: { x: 610, y: 129, width: 70, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "nv2"
+          capability: "core.rect"
+          layout: { x: 100, y: 220, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "nv2-title"
+              capability: "core.text"
+              text: "native-v2.json"
+              layout: { x: 100, y: 237, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "nv2-detail"
+              capability: "core.text"
+              text: "commit"
+              layout: { x: 100, y: 259, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "compat"
+          capability: "core.rect"
+          layout: { x: 300, y: 220, width: 150, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "compat-title"
+              capability: "core.text"
+              text: "compat exports"
+              layout: { x: 300, y: 237, width: 150, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "compat-detail"
+              capability: "core.text"
+              text: "JSON · CSV"
+              layout: { x: 300, y: 259, width: 150, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "net"
+          capability: "core.rect"
+          layout: { x: 500, y: 220, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "net-title"
+              capability: "core.text"
+              text: "OTLP · MLflow"
+              layout: { x: 500, y: 237, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "net-detail"
+              capability: "core.text"
+              text: "network sinks"
+              layout: { x: 500, y: 259, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "motion-sig"
+          capability: "core.path"
+          d: "M80 160 H620"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-sink", at: 320, duration: 320, target: "sink", action: "enter" }
+        { id: "t-a1", at: 450, duration: 300, target: "a1", action: "draw" }
+        { id: "t-obs", at: 580, duration: 320, target: "obs", action: "enter" }
+        { id: "t-a2", at: 710, duration: 300, target: "a2", action: "draw" }
+        { id: "t-store", at: 840, duration: 320, target: "store", action: "enter" }
+        { id: "t-a3", at: 970, duration: 300, target: "a3", action: "draw" }
+        { id: "t-merge", at: 1100, duration: 320, target: "merge", action: "enter" }
+        { id: "t-nv2", at: 1230, duration: 320, target: "nv2", action: "enter" }
+        { id: "t-compat", at: 1360, duration: 320, target: "compat", action: "enter" }
+        { id: "t-net", at: 1490, duration: 320, target: "net", action: "enter" }
+        { id: "t-motion-sig", at: 800, duration: 900, target: "motion-sig", action: "draw" }
+        { id: "t-emphasis", at: 1700, duration: 480, target: "net", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Cellular scale-out" {
+    eyebrow: "9 · Cellular"
+    title: "Controller, cells, hierarchical merge"
+    lede: "`cells > 1` promotes the execute child into a controller. Cells fetch sliced envelopes over Velo, run the ordinary engine, and return records or folded stores. Optional aggregators merge subtrees; the controller commits once."
+    narration: "Cellular mode promotes the execute child into a controller. Cells run ordinary execute on sliced envelopes and return mergeable partitions over Velo."
+    term: {
+      word: "cellular feature"
+      meaning: "Cargo feature that enables Velo-backed cross-host cell transport (`aiperf-runtime/cellular`)."
+    }
+    points: [
+      "`rust/runtime/src/engine/cellular_controller.rs` owns launch and merge.",
+      "`rust/runtime/src/engine/cellular_cell.rs` runs the sliced execute path.",
+      "SLURM and Kubernetes launchers reuse the same controller/cell model."
+    ]
+    caption: "promote → slice → ordinary execute → merge → one commit."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "CELLULAR SCALE-OUT"
+          layout: { x: 38, y: 28, width: 360, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "promote → slice → ordinary execute → merge → one commit."
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "exec"
+          capability: "core.rect"
+          layout: { x: 40, y: 90, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "exec-title"
+              capability: "core.text"
+              text: "--execute"
+              layout: { x: 40, y: 107, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "exec-detail"
+              capability: "core.text"
+              text: "cells > 1"
+              layout: { x: 40, y: 129, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 200, y: 125 }
+          to: { x: 240, y: 125 }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+        }
+        {
+          id: "ctrl"
+          capability: "core.rect"
+          layout: { x: 240, y: 90, width: 170, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "ctrl-title"
+              capability: "core.text"
+              text: "controller"
+              layout: { x: 240, y: 107, width: 170, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ctrl-detail"
+              capability: "core.text"
+              text: "partition + Velo"
+              layout: { x: 240, y: 129, width: 170, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a2"
+          capability: "core.line"
+          from: { x: 410, y: 125 }
+          to: { x: 450, y: 125 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+        }
+        {
+          id: "launch"
+          capability: "core.rect"
+          layout: { x: 450, y: 90, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "launch-title"
+              capability: "core.text"
+              text: "cell launcher"
+              layout: { x: 450, y: 107, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "launch-detail"
+              capability: "core.text"
+              text: "sliced envelope"
+              layout: { x: 450, y: 129, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "c0"
+          capability: "core.rect"
+          layout: { x: 60, y: 210, width: 130, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "c0-title"
+              capability: "core.text"
+              text: "--cell 0"
+              layout: { x: 60, y: 227, width: 130, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "c0-detail"
+              capability: "core.text"
+              text: "ordinary exec"
+              layout: { x: 60, y: 249, width: 130, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "cn"
+          capability: "core.rect"
+          layout: { x: 230, y: 210, width: 130, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "cn-title"
+              capability: "core.text"
+              text: "--cell N"
+              layout: { x: 230, y: 227, width: 130, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "cn-detail"
+              capability: "core.text"
+              text: "ordinary exec"
+              layout: { x: 230, y: 249, width: 130, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "agg"
+          capability: "core.rect"
+          layout: { x: 400, y: 210, width: 140, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "agg-title"
+              capability: "core.text"
+              text: "aggregators"
+              layout: { x: 400, y: 227, width: 140, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "agg-detail"
+              capability: "core.text"
+              text: "optional"
+              layout: { x: 400, y: 249, width: 140, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "merge"
+          capability: "core.rect"
+          layout: { x: 560, y: 210, width: 120, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "merge-title"
+              capability: "core.text"
+              text: "merge"
+              layout: { x: 560, y: 227, width: 120, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "merge-detail"
+              capability: "core.text"
+              text: "one commit"
+              layout: { x: 560, y: 249, width: 120, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "motion-sig"
+          capability: "core.path"
+          d: "M120 160 H580"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-exec", at: 320, duration: 320, target: "exec", action: "enter" }
+        { id: "t-a1", at: 500, duration: 300, target: "a1", action: "draw" }
+        { id: "t-ctrl", at: 680, duration: 320, target: "ctrl", action: "enter" }
+        { id: "t-a2", at: 860, duration: 300, target: "a2", action: "draw" }
+        { id: "t-launch", at: 1040, duration: 320, target: "launch", action: "enter" }
+        { id: "t-c0", at: 1220, duration: 320, target: "c0", action: "enter" }
+        { id: "t-cn", at: 1400, duration: 320, target: "cn", action: "enter" }
+        { id: "t-agg", at: 1580, duration: 320, target: "agg", action: "enter" }
+        { id: "t-merge", at: 1760, duration: 320, target: "merge", action: "enter" }
+        { id: "t-motion-sig", at: 800, duration: 900, target: "motion-sig", action: "draw" }
+        { id: "t-emphasis", at: 2020, duration: 480, target: "merge", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Feature builds" {
+    eyebrow: "10 · Builds"
+    title: "Feature graph defines capability"
+    lede: "Default `aiperf-cli` enables `grpc` and `cellular`. Orthogonal features add `parquet`, `dynosim`, `pyo3-embed`, and `search-pyo3`. `full` unions dynosim + parquet + cellular + grpc. Missing capabilities fail closed at validation."
+    narration: "Cargo features define the linked universe. Default builds include gRPC and cellular; parquet, dynosim, and pyo3-embed opt in and fail closed when missing."
+    term: {
+      word: "fail closed"
+      meaning: "Authored transports, artifacts, or cell counts unavailable in the linked image are rejected during validation."
+    }
+    points: [
+      "Evidence: `rust/cli/Cargo.toml` and `rust/runtime/Cargo.toml`.",
+      "Dynosim pulls the pinned Dynamo mocker git dep when the feature is on.",
+      "No runtime plugin discovery—capabilities are statically linked factories."
+    ]
+    caption: "Cargo features freeze the implementation universe."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "FEATURE BUILDS"
+          layout: { x: 38, y: 28, width: 360, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "Cargo features freeze the implementation universe."
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "default"
+          capability: "core.rect"
+          layout: { x: 40, y: 90, width: 180, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "default-title"
+              capability: "core.text"
+              text: "default"
+              layout: { x: 40, y: 107, width: 180, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "default-detail"
+              capability: "core.text"
+              text: "grpc + cellular"
+              layout: { x: 40, y: 129, width: 180, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "parquet"
+          capability: "core.rect"
+          layout: { x: 260, y: 90, width: 130, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "parquet-title"
+              capability: "core.text"
+              text: "parquet"
+              layout: { x: 260, y: 107, width: 130, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "parquet-detail"
+              capability: "core.text"
+              text: "columnar"
+              layout: { x: 260, y: 129, width: 130, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "dynosim"
+          capability: "core.rect"
+          layout: { x: 420, y: 90, width: 130, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "dynosim-title"
+              capability: "core.text"
+              text: "dynosim"
+              layout: { x: 420, y: 107, width: 130, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "dynosim-detail"
+              capability: "core.text"
+              text: "Dynamo mocker"
+              layout: { x: 420, y: 129, width: 130, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "pyo3"
+          capability: "core.rect"
+          layout: { x: 580, y: 90, width: 100, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "pyo3-title"
+              capability: "core.text"
+              text: "pyo3"
+              layout: { x: 580, y: 107, width: 100, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "pyo3-detail"
+              capability: "core.text"
+              text: "embed"
+              layout: { x: 580, y: 129, width: 100, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "search"
+          capability: "core.rect"
+          layout: { x: 120, y: 220, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "search-title"
+              capability: "core.text"
+              text: "search-pyo3"
+              layout: { x: 120, y: 237, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "search-detail"
+              capability: "core.text"
+              text: "planners"
+              layout: { x: 120, y: 259, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "full"
+          capability: "core.rect"
+          layout: { x: 340, y: 220, width: 160, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "full-title"
+              capability: "core.text"
+              text: "full"
+              layout: { x: 340, y: 237, width: 160, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "full-detail"
+              capability: "core.text"
+              text: "dynosim+parquet+…"
+              layout: { x: 340, y: 259, width: 160, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "fail"
+          capability: "core.rect"
+          layout: { x: 540, y: 220, width: 120, height: 70 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "fail-title"
+              capability: "core.text"
+              text: "fail closed"
+              layout: { x: 540, y: 237, width: 120, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "fail-detail"
+              capability: "core.text"
+              text: "validate"
+              layout: { x: 540, y: 259, width: 120, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "motion-sig"
+          capability: "core.path"
+          d: "M140 160 H560"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-default", at: 320, duration: 320, target: "default", action: "enter" }
+        { id: "t-parquet", at: 480, duration: 320, target: "parquet", action: "enter" }
+        { id: "t-dynosim", at: 640, duration: 320, target: "dynosim", action: "enter" }
+        { id: "t-pyo3", at: 800, duration: 320, target: "pyo3", action: "enter" }
+        { id: "t-search", at: 960, duration: 320, target: "search", action: "enter" }
+        { id: "t-full", at: 1120, duration: 320, target: "full", action: "enter" }
+        { id: "t-fail", at: 1280, duration: 320, target: "fail", action: "enter" }
+        { id: "t-motion-sig", at: 800, duration: 900, target: "motion-sig", action: "draw" }
+        { id: "t-emphasis", at: 1520, duration: 480, target: "fail", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Extension seams" {
+    eyebrow: "11 · Seams"
+    title: "Extensions and execution substitution"
+    lede: "AIPerfExtension registers datasets, endpoints, transports, workloads, and exporters into a frozen AIPerfRegistry. Execution substitutes Clock and RequestSink implementations; cellular mode scales by wrapping the same single-run core."
+    narration: "The open seams are AIPerfExtension registration at bootstrap and Clock plus RequestSink substitution on the hot path. Cellular wraps that same core."
+    term: {
+      word: "AIPerfRegistry"
+      meaning: "Transactional, frozen capability table composed once per Application bootstrap."
+    }
+    points: [
+      "`rust/runtime/src/extensions/` owns registration contracts.",
+      "loadgen-core RequestObserver stays transport-neutral and !Send-friendly.",
+      "Workloads resolve an execution factory from the prepared transport—no pair matrix."
+    ]
+    caption: "compile-time composition · Clock/Sink substitution · cellular wraps the core."
+
+    render: @scene {
+      roots: [
+        {
+          id: "header"
+          capability: "core.rect"
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+        }
+        {
+          id: "label"
+          capability: "core.text"
+          text: "EXTENSION SEAMS"
+          layout: { x: 38, y: 28, width: 360, height: 24 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+        }
+        {
+          id: "note"
+          capability: "core.text"
+          text: "compile-time composition · Clock/Sink substitution · cellular wraps the core."
+          layout: { x: 360, y: 28, width: 300, height: 24 }
+          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+        }
+        {
+          id: "ext"
+          capability: "core.rect"
+          layout: { x: 240, y: 80, width: 200, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "ext-title"
+              capability: "core.text"
+              text: "AIPerfExtension"
+              layout: { x: 240, y: 92, width: 200, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ext-detail"
+              capability: "core.text"
+              text: "transactional register"
+              layout: { x: 240, y: 114, width: 200, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "a1"
+          capability: "core.line"
+          from: { x: 340, y: 140 }
+          to: { x: 340, y: 170 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        }
+        {
+          id: "reg"
+          capability: "core.rect"
+          layout: { x: 230, y: 170, width: 220, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "reg-title"
+              capability: "core.text"
+              text: "AIPerfRegistry"
+              layout: { x: 230, y: 182, width: 220, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "reg-detail"
+              capability: "core.text"
+              text: "frozen once"
+              layout: { x: 230, y: 204, width: 220, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "ds"
+          capability: "core.rect"
+          layout: { x: 40, y: 270, width: 110, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "ds-title"
+              capability: "core.text"
+              text: "datasets"
+              layout: { x: 40, y: 282, width: 110, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ds-detail"
+              capability: "core.text"
+              text: "loaders"
+              layout: { x: 40, y: 304, width: 110, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "ep"
+          capability: "core.rect"
+          layout: { x: 170, y: 270, width: 110, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "ep-title"
+              capability: "core.text"
+              text: "endpoints"
+              layout: { x: 170, y: 282, width: 110, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ep-detail"
+              capability: "core.text"
+              text: "dialects"
+              layout: { x: 170, y: 304, width: 110, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "tr"
+          capability: "core.rect"
+          layout: { x: 300, y: 270, width: 110, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
+          children: [
+            {
+              id: "tr-title"
+              capability: "core.text"
+              text: "transports"
+              layout: { x: 300, y: 282, width: 110, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "tr-detail"
+              capability: "core.text"
+              text: "HTTP·gRPC"
+              layout: { x: 300, y: 304, width: 110, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "wl"
+          capability: "core.rect"
+          layout: { x: 430, y: 270, width: 110, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "wl-title"
+              capability: "core.text"
+              text: "workloads"
+              layout: { x: 430, y: 282, width: 110, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "wl-detail"
+              capability: "core.text"
+              text: "sched·graph"
+              layout: { x: 430, y: 304, width: 110, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "ex"
+          capability: "core.rect"
+          layout: { x: 560, y: 270, width: 110, height: 60 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
+          children: [
+            {
+              id: "ex-title"
+              capability: "core.text"
+              text: "exporters"
+              layout: { x: 560, y: 282, width: 110, height: 24 }
+              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
+            }
+            {
+              id: "ex-detail"
+              capability: "core.text"
+              text: "sinks"
+              layout: { x: 560, y: 304, width: 110, height: 20 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
+          ]
+        }
+        {
+          id: "motion-sig"
+          capability: "core.path"
+          d: "M200 100 V280"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
+          accessibility: { label: "motion signal" }
+        }
+      ]
+      timeline: [
+        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
+        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
+        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-ext", at: 320, duration: 320, target: "ext", action: "enter" }
+        { id: "t-a1", at: 460, duration: 300, target: "a1", action: "draw" }
+        { id: "t-reg", at: 600, duration: 320, target: "reg", action: "enter" }
+        { id: "t-ds", at: 740, duration: 320, target: "ds", action: "enter" }
+        { id: "t-ep", at: 880, duration: 320, target: "ep", action: "enter" }
+        { id: "t-tr", at: 1020, duration: 320, target: "tr", action: "enter" }
+        { id: "t-wl", at: 1160, duration: 320, target: "wl", action: "enter" }
+        { id: "t-ex", at: 1300, duration: 320, target: "ex", action: "enter" }
+        { id: "t-motion-sig", at: 800, duration: 900, target: "motion-sig", action: "draw" }
+        { id: "t-emphasis", at: 1520, duration: 480, target: "ex", action: "emphasis" }
+      ]
+    }
+  }
+}
+

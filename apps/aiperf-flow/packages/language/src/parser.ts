@@ -21,6 +21,7 @@ import type {
   ComponentInvocationAst,
   ConnectorAst,
   DocumentAst,
+  ExplainerAst,
   FallbackAst,
   ForLoopAst,
   IdentifierReferenceAst,
@@ -43,6 +44,7 @@ import type {
   ResponsiveConditionAst,
   ResponsiveOverrideAst,
   SceneAst,
+  SlideAst,
   SlotBlockAst,
   SummaryAst,
   SymbolDefinitionAst,
@@ -61,6 +63,11 @@ import type {
   ValueAst,
 } from "./ast.js";
 import {
+  parseExplainerBlock,
+  type ExplainerAstCompat,
+  type TokenStream,
+} from "./grammar/explainer.js";
+import {
   allTokens,
   As,
   At,
@@ -78,6 +85,7 @@ import {
   EqualEqual,
   EnumKind,
   Equals,
+  Explainer,
   Extends,
   False,
   Fallback,
@@ -1482,18 +1490,222 @@ function parseDiagnostic(
   };
 }
 
+/** Adapts Chevrotain lexer tokens to the TokenStream expected by parseExplainerBlock. */
+class ChevrotainTokenStream implements TokenStream {
+  private index = 0;
+
+  constructor(private readonly tokens: readonly IToken[]) {}
+
+  get done(): boolean {
+    return this.index >= this.tokens.length;
+  }
+
+  peekImage(): string | undefined {
+    return this.tokens[this.index]?.image;
+  }
+
+  expect(keyword: string): void {
+    const current = this.tokens[this.index];
+    if (current === undefined || current.image !== keyword) {
+      throw new Error(
+        `Expected "${keyword}" but got "${current?.image ?? "<eof>"}"`,
+      );
+    }
+    this.index += 1;
+  }
+
+  expectString(): string {
+    const current = this.tokens[this.index];
+    if (current === undefined || current.tokenType !== QuotedString) {
+      throw new Error(
+        `Expected string but got "${current?.image ?? "<eof>"}"`,
+      );
+    }
+    this.index += 1;
+    return stringValue(current);
+  }
+
+  expectIdentifier(): string {
+    const current = this.tokens[this.index];
+    if (
+      current === undefined ||
+      current.tokenType === QuotedString ||
+      /[{}\[\]:,@]/.test(current.image)
+    ) {
+      throw new Error(
+        `Expected identifier but got "${current?.image ?? "<eof>"}"`,
+      );
+    }
+    this.index += 1;
+    return current.image;
+  }
+
+  match(keyword: string): boolean {
+    return this.tokens[this.index]?.image === keyword;
+  }
+
+  advance(): void {
+    this.index += 1;
+  }
+}
+
+function documentSourceMap(source: string, sourceName: string): SourceRange {
+  return {
+    source: sourceName,
+    start: positionAt(source, 0),
+    end: positionAt(source, source.length),
+  };
+}
+
+function toExplainerAst(
+  compat: ExplainerAstCompat,
+  sourceMap: SourceRange,
+): ExplainerAst {
+  return {
+    kind: "explainer",
+    id: compat.id,
+    metadata: {
+      route: compat.metadata.route,
+      topic: compat.metadata.topic,
+      storagePrefix: compat.metadata.storagePrefix,
+      classPrefix: compat.metadata.classPrefix,
+      eyebrowLabel: compat.metadata.eyebrowLabel,
+      startGateTitle: compat.metadata.startGateTitle,
+      hub: compat.metadata.hub,
+    },
+    slides: compat.slides.map((slide) => toSlideAst(slide, sourceMap)),
+    sourceMap,
+  };
+}
+
+function toSlideAst(
+  slide: ExplainerAstCompat["slides"][number],
+  sourceMap: SourceRange,
+): SlideAst {
+  return {
+    kind: "slide",
+    eyebrow: slide.eyebrow ?? "",
+    title: slide.title ?? "",
+    lede: slide.lede ?? "",
+    narration: slide.narration,
+    ...(slide.term === undefined ? {} : { term: slide.term }),
+    points: slide.points ?? [],
+    caption: slide.caption ?? "",
+    ...(slide.sceneIr === undefined ? {} : { sceneIr: slide.sceneIr }),
+    sourceMap,
+  };
+}
+
+function explainerOnlyDocument(
+  explainers: readonly ExplainerAst[],
+  sourceMap: SourceRange,
+): DocumentAst {
+  const primary = explainers[0]!;
+  return {
+    kind: "document",
+    title: primary.id,
+    id: primary.id,
+    language: {
+      kind: "language",
+      version: 1,
+      sourceMap,
+    },
+    requirements: [],
+    tokens: [],
+    themes: [],
+    symbols: [],
+    scenes: [],
+    explainers,
+    sourceMap,
+  };
+}
+
+function parseExplainerDocument(
+  source: string,
+  sourceName: string,
+  tokens: readonly IToken[],
+  lexDiagnostics: readonly Diagnostic[],
+): Result<DocumentAst> {
+  const sourceMap = documentSourceMap(source, sourceName);
+  if (lexDiagnostics.length > 0) {
+    return { ok: false, diagnostics: [...lexDiagnostics] };
+  }
+
+  try {
+    const stream = new ChevrotainTokenStream(tokens);
+    const explainers: ExplainerAst[] = [];
+    while (stream.match("explainer")) {
+      explainers.push(toExplainerAst(parseExplainerBlock(stream), sourceMap));
+    }
+    if (explainers.length === 0) {
+      return {
+        ok: false,
+        diagnostics: [
+          {
+            code: "PARSE_EXPLAINER",
+            severity: "error",
+            message: "Expected top-level explainer block",
+            range: sourceMap,
+          },
+        ],
+      };
+    }
+    if (!stream.done) {
+      return {
+        ok: false,
+        diagnostics: [
+          {
+            code: "PARSE_EXPLAINER",
+            severity: "error",
+            message: `Unexpected token "${stream.peekImage() ?? "<eof>"}"`,
+            range: sourceMap,
+          },
+        ],
+      };
+    }
+    return {
+      ok: true,
+      value: explainerOnlyDocument(explainers, sourceMap),
+      diagnostics: [],
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      diagnostics: [
+        {
+          code: "PARSE_EXPLAINER",
+          severity: "error",
+          message: error instanceof Error ? error.message : String(error),
+          range: sourceMap,
+        },
+      ],
+    };
+  }
+}
+
 export function parseDocument(
   source: string,
   sourceName: string,
 ): Result<DocumentAst> {
   const lexResult = flowLexer.tokenize(source);
+  const lexDiagnostics = lexResult.errors.map((error) =>
+    lexDiagnostic(source, sourceName, error),
+  );
+
+  if (lexResult.tokens[0]?.tokenType === Explainer) {
+    return parseExplainerDocument(
+      source,
+      sourceName,
+      lexResult.tokens,
+      lexDiagnostics,
+    );
+  }
+
   const parser = new FlowParser(sourceName);
   parser.input = lexResult.tokens;
   const value = parser.document();
   const diagnostics = [
-    ...lexResult.errors.map((error) =>
-      lexDiagnostic(source, sourceName, error),
-    ),
+    ...lexDiagnostics,
     ...parser.errors.map((error) => parseDiagnostic(sourceName, error)),
   ];
 
@@ -1505,12 +1717,47 @@ export function parseDocument(
     ok: true,
     value: {
       ...value,
-      sourceMap: {
-        source: sourceName,
-        start: positionAt(source, 0),
-        end: positionAt(source, source.length),
-      },
+      sourceMap: documentSourceMap(source, sourceName),
     },
     diagnostics,
   };
+}
+
+/**
+ * Parses a native cinematic `@scene` body (rect/connector/timeline/camera)
+ * by wrapping it in a one-scene Flow document and reusing `parseDocument`.
+ *
+ * Shared path for explainer slides that author the same dialect as
+ * `examples/cinematic/request-lifecycle.flow`.
+ */
+export function parseNativeEmbeddedScene(
+  body: string,
+  sourceName = "<embedded-scene>",
+): Result<SceneAst> {
+  const wrapped = `flow "Embedded scene" as embedded-scene {
+  language 1
+  scene "Embedded" as embedded {
+${body}
+  }
+}
+`;
+  const parsed = parseDocument(wrapped, sourceName);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const scene = parsed.value.scenes[0];
+  if (scene === undefined) {
+    return {
+      ok: false,
+      diagnostics: [
+        {
+          code: "PARSE_EMBEDDED_SCENE",
+          severity: "error",
+          message: "Native @scene body produced no scene AST.",
+          range: documentSourceMap(wrapped, sourceName),
+        },
+      ],
+    };
+  }
+  return { ok: true, value: scene, diagnostics: parsed.diagnostics };
 }

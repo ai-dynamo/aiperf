@@ -65,15 +65,14 @@ test.describe('Explainer Deck Visual Parity - aiperf-flow vs Legacy', () => {
     }
   });
 
-  test('compiled-decks contain all slides extracted from .flow files', async () => {
-    // This test verifies that the build-time compilation extracted
-    // all slides correctly from .flow source files
+  test('deck-packages contain all slides from generated DeckPackage artifacts', async () => {
+    // This test verifies that generated packages under decks-generated load
     const { COMPILED_EXPLAINER_DECKS } = await import(
-      '../packages/runtime/src/explainer/compiled-decks.ts'
+      '../preview/deck-packages.ts'
     );
 
     expect(COMPILED_EXPLAINER_DECKS).toBeTruthy();
-    expect(COMPILED_EXPLAINER_DECKS.length).toBe(4); // 4 decks
+    expect(COMPILED_EXPLAINER_DECKS.length).toBe(8);
 
     // Verify rust-architecture
     const rustArch = COMPILED_EXPLAINER_DECKS.find(
@@ -89,17 +88,15 @@ test.describe('Explainer Deck Visual Parity - aiperf-flow vs Legacy', () => {
     expect(slurmVelo).toBeTruthy();
     expect(slurmVelo?.slides.length).toBe(16);
 
-    // Verify aiperf-flow-system
-    const aiPerfFlow = COMPILED_EXPLAINER_DECKS.find(
-      (d) => d.id === 'aiperf-flow-system'
-    );
-    expect(aiPerfFlow).toBeTruthy();
-    expect(aiPerfFlow?.slides.length).toBe(9);
+    // Verify dynosim
+    const dynosim = COMPILED_EXPLAINER_DECKS.find((d) => d.id === 'dynosim');
+    expect(dynosim).toBeTruthy();
+    expect(dynosim?.slides.length).toBe(18);
   });
 
   test('all slides have required fields for rendering', async () => {
     const { COMPILED_EXPLAINER_DECKS } = await import(
-      '../packages/runtime/src/explainer/compiled-decks.ts'
+      '../preview/deck-packages.ts'
     );
 
     for (const deck of COMPILED_EXPLAINER_DECKS) {
