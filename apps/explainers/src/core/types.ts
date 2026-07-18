@@ -16,6 +16,13 @@ export type DeckHubMeta = {
   description: string;
 };
 
+export type MentalModelProps = {
+  slideIndex: number;
+  slide: SlideDefinition;
+  playing?: boolean;
+  restartKey?: number;
+};
+
 export type DeckDefinition = {
   id: string;
   route: string;
@@ -25,7 +32,7 @@ export type DeckDefinition = {
   startGateTitle: string;
   hub: DeckHubMeta;
   slides: readonly SlideDefinition[];
-  MentalModel: (props: { slideIndex: number; slide: SlideDefinition }) => ReactNode;
+  MentalModel: (props: MentalModelProps) => ReactNode;
   css: string;
   FinalCard?: () => ReactNode;
 };
