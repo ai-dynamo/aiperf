@@ -238,7 +238,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M180 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s0-hdr0", at: 0, duration: 260, target: "hdr0", action: "enter" },
@@ -254,7 +255,21 @@ explainer "Cellular internals" {
         { id: "s0-note0", at: 1560, duration: 260, target: "note0", action: "enter" },
         { id: "s0-ev0", at: 1710, duration: 260, target: "ev0", action: "enter" },
         { id: "s0-motion0", at: 1860, duration: 420, target: "motion0", action: "draw" },
-        { id: "s0-report", at: 2080, duration: 280, target: "report", action: "emphasis" }
+        { id: "s0-report", at: 2080, duration: 280, target: "report", action: "emphasis" },
+        { id: "s0-auto-hdr0-text", at: 2160, duration: 200, target: "hdr0-text", action: "enter" },
+        { id: "s0-auto-hdr0-cap", at: 2215, duration: 200, target: "hdr0-cap", action: "enter" },
+        { id: "s0-auto-chip0a-t", at: 2270, duration: 200, target: "chip0a-t", action: "enter" },
+        { id: "s0-auto-chip0b-t", at: 2325, duration: 200, target: "chip0b-t", action: "enter" },
+        { id: "s0-auto-chip0c-t", at: 2380, duration: 200, target: "chip0c-t", action: "enter" },
+        { id: "s0-auto-authored-title", at: 2435, duration: 200, target: "authored-title", action: "enter" },
+        { id: "s0-auto-authored-detail", at: 2490, duration: 200, target: "authored-detail", action: "enter" },
+        { id: "s0-auto-authored-sub", at: 2545, duration: 200, target: "authored-sub", action: "enter" },
+        { id: "s0-auto-cell-k-title", at: 2600, duration: 200, target: "cell-k-title", action: "enter" },
+        { id: "s0-auto-cell-k-detail", at: 2655, duration: 200, target: "cell-k-detail", action: "enter" },
+        { id: "s0-auto-cell-k-sub", at: 2710, duration: 200, target: "cell-k-sub", action: "enter" },
+        { id: "s0-auto-report-title", at: 2765, duration: 200, target: "report-title", action: "enter" },
+        { id: "s0-auto-report-detail", at: 2820, duration: 200, target: "report-detail", action: "enter" },
+        { id: "s0-auto-report-sub", at: 2875, duration: 200, target: "report-sub", action: "enter" },
       ]
     }
   }
@@ -492,6 +507,13 @@ explainer "Cellular internals" {
           text: "flags.rs · resolve before children"
           layout: { x: 40, y: 360, width: 300, height: 20 }
           style: { fontSize: 10, fill: @theme.ink.tertiary }
+        },
+        {
+          id: "motion1"
+          capability: "core.path"
+          d: "M105 200 C250 220 400 220 585 250"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
@@ -508,6 +530,24 @@ explainer "Cellular internals" {
         { id: "s1-cell3", at: 1620, duration: 260, target: "cell3", action: "enter" },
         { id: "s1-ev1", at: 1770, duration: 260, target: "ev1", action: "enter" },
         { id: "s1-cfg", at: 1960, duration: 280, target: "cfg", action: "emphasis" }
+        { id: "s1-motion1", at: 2020, duration: 520, target: "motion1", action: "draw" },
+        { id: "s1-auto-hdr1-text", at: 2100, duration: 200, target: "hdr1-text", action: "enter" },
+        { id: "s1-auto-hdr1-cap", at: 2155, duration: 200, target: "hdr1-cap", action: "enter" },
+        { id: "s1-auto-cfg-title", at: 2210, duration: 200, target: "cfg-title", action: "enter" },
+        { id: "s1-auto-cfg-detail", at: 2265, duration: 200, target: "cfg-detail", action: "enter" },
+        { id: "s1-auto-cfg-sub", at: 2320, duration: 200, target: "cfg-sub", action: "enter" },
+        { id: "s1-auto-cell0-title", at: 2375, duration: 200, target: "cell0-title", action: "enter" },
+        { id: "s1-auto-cell0-detail", at: 2430, duration: 200, target: "cell0-detail", action: "enter" },
+        { id: "s1-auto-cell0-sub", at: 2485, duration: 200, target: "cell0-sub", action: "enter" },
+        { id: "s1-auto-cell1-title", at: 2540, duration: 200, target: "cell1-title", action: "enter" },
+        { id: "s1-auto-cell1-detail", at: 2595, duration: 200, target: "cell1-detail", action: "enter" },
+        { id: "s1-auto-cell1-sub", at: 2650, duration: 200, target: "cell1-sub", action: "enter" },
+        { id: "s1-auto-cell2-title", at: 2705, duration: 200, target: "cell2-title", action: "enter" },
+        { id: "s1-auto-cell2-detail", at: 2760, duration: 200, target: "cell2-detail", action: "enter" },
+        { id: "s1-auto-cell2-sub", at: 2815, duration: 200, target: "cell2-sub", action: "enter" },
+        { id: "s1-auto-cell3-title", at: 2870, duration: 200, target: "cell3-title", action: "enter" },
+        { id: "s1-auto-cell3-detail", at: 2925, duration: 200, target: "cell3-detail", action: "enter" },
+        { id: "s1-auto-cell3-sub", at: 2980, duration: 200, target: "cell3-sub", action: "enter" },
       ]
     }
   }
@@ -722,7 +762,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M110 175 H600"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s2-hdr2", at: 0, duration: 260, target: "hdr2", action: "enter" },
@@ -736,7 +777,22 @@ explainer "Cellular internals" {
         { id: "s2-a2c", at: 1260, duration: 420, target: "a2c", action: "draw" },
         { id: "s2-stdio", at: 1440, duration: 260, target: "stdio", action: "enter" },
         { id: "s2-motion2", at: 1590, duration: 420, target: "motion2", action: "draw" },
-        { id: "s2-execute", at: 1810, duration: 280, target: "execute", action: "emphasis" }
+        { id: "s2-execute", at: 1810, duration: 280, target: "execute", action: "emphasis" },
+        { id: "s2-auto-hdr2-text", at: 1890, duration: 200, target: "hdr2-text", action: "enter" },
+        { id: "s2-auto-hdr2-cap", at: 1945, duration: 200, target: "hdr2-cap", action: "enter" },
+        { id: "s2-auto-chip2-t", at: 2000, duration: 200, target: "chip2-t", action: "enter" },
+        { id: "s2-auto-profile-title", at: 2055, duration: 200, target: "profile-title", action: "enter" },
+        { id: "s2-auto-profile-detail", at: 2110, duration: 200, target: "profile-detail", action: "enter" },
+        { id: "s2-auto-profile-sub", at: 2165, duration: 200, target: "profile-sub", action: "enter" },
+        { id: "s2-auto-execbin-title", at: 2220, duration: 200, target: "execbin-title", action: "enter" },
+        { id: "s2-auto-execbin-detail", at: 2275, duration: 200, target: "execbin-detail", action: "enter" },
+        { id: "s2-auto-execbin-sub", at: 2330, duration: 200, target: "execbin-sub", action: "enter" },
+        { id: "s2-auto-execute-title", at: 2385, duration: 200, target: "execute-title", action: "enter" },
+        { id: "s2-auto-execute-detail", at: 2440, duration: 200, target: "execute-detail", action: "enter" },
+        { id: "s2-auto-execute-sub", at: 2495, duration: 200, target: "execute-sub", action: "enter" },
+        { id: "s2-auto-stdio-title", at: 2550, duration: 200, target: "stdio-title", action: "enter" },
+        { id: "s2-auto-stdio-detail", at: 2605, duration: 200, target: "stdio-detail", action: "enter" },
+        { id: "s2-auto-stdio-sub", at: 2660, duration: 200, target: "stdio-sub", action: "enter" },
       ]
     }
   }
@@ -930,7 +986,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M180 160 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s3-hdr3", at: 0, duration: 260, target: "hdr3", action: "enter" },
@@ -942,7 +999,21 @@ explainer "Cellular internals" {
         { id: "s3-roles", at: 960, duration: 260, target: "roles", action: "enter" },
         { id: "s3-single", at: 1110, duration: 260, target: "single", action: "enter" },
         { id: "s3-motion3", at: 1260, duration: 420, target: "motion3", action: "draw" },
-        { id: "s3-ctrl", at: 1480, duration: 280, target: "ctrl", action: "emphasis" }
+        { id: "s3-ctrl", at: 1480, duration: 280, target: "ctrl", action: "emphasis" },
+        { id: "s3-auto-hdr3-text", at: 1560, duration: 200, target: "hdr3-text", action: "enter" },
+        { id: "s3-auto-hdr3-cap", at: 1615, duration: 200, target: "hdr3-cap", action: "enter" },
+        { id: "s3-auto-exec3-title", at: 1670, duration: 200, target: "exec3-title", action: "enter" },
+        { id: "s3-auto-exec3-detail", at: 1725, duration: 200, target: "exec3-detail", action: "enter" },
+        { id: "s3-auto-exec3-sub", at: 1780, duration: 200, target: "exec3-sub", action: "enter" },
+        { id: "s3-auto-ctrl-title", at: 1835, duration: 200, target: "ctrl-title", action: "enter" },
+        { id: "s3-auto-ctrl-detail", at: 1890, duration: 200, target: "ctrl-detail", action: "enter" },
+        { id: "s3-auto-ctrl-sub", at: 1945, duration: 200, target: "ctrl-sub", action: "enter" },
+        { id: "s3-auto-roles-title", at: 2000, duration: 200, target: "roles-title", action: "enter" },
+        { id: "s3-auto-roles-detail", at: 2055, duration: 200, target: "roles-detail", action: "enter" },
+        { id: "s3-auto-roles-sub", at: 2110, duration: 200, target: "roles-sub", action: "enter" },
+        { id: "s3-auto-single-title", at: 2165, duration: 200, target: "single-title", action: "enter" },
+        { id: "s3-auto-single-detail", at: 2220, duration: 200, target: "single-detail", action: "enter" },
+        { id: "s3-auto-single-sub", at: 2275, duration: 200, target: "single-sub", action: "enter" },
       ]
     }
   }
@@ -1151,6 +1222,13 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M400 193 C520 220 560 240 570 260"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "motion4"
+          capability: "core.path"
+          d: "M150 220 H570"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
@@ -1165,6 +1243,22 @@ explainer "Cellular internals" {
         { id: "s4-a4c", at: 1260, duration: 420, target: "a4c", action: "draw" },
         { id: "s4-ok4", at: 1440, duration: 260, target: "ok4", action: "enter" },
         { id: "s4-ok4", at: 1630, duration: 280, target: "ok4", action: "emphasis" }
+        { id: "s4-motion4", at: 1690, duration: 520, target: "motion4", action: "draw" },
+        { id: "s4-auto-hdr4-text", at: 1770, duration: 200, target: "hdr4-text", action: "enter" },
+        { id: "s4-auto-hdr4-cap", at: 1825, duration: 200, target: "hdr4-cap", action: "enter" },
+        { id: "s4-auto-chip4-t", at: 1880, duration: 200, target: "chip4-t", action: "enter" },
+        { id: "s4-auto-ctrl4-title", at: 1935, duration: 200, target: "ctrl4-title", action: "enter" },
+        { id: "s4-auto-ctrl4-detail", at: 1990, duration: 200, target: "ctrl4-detail", action: "enter" },
+        { id: "s4-auto-ctrl4-sub", at: 2045, duration: 200, target: "ctrl4-sub", action: "enter" },
+        { id: "s4-auto-rej1-title", at: 2100, duration: 200, target: "rej1-title", action: "enter" },
+        { id: "s4-auto-rej1-detail", at: 2155, duration: 200, target: "rej1-detail", action: "enter" },
+        { id: "s4-auto-rej1-sub", at: 2210, duration: 200, target: "rej1-sub", action: "enter" },
+        { id: "s4-auto-rej2-title", at: 2265, duration: 200, target: "rej2-title", action: "enter" },
+        { id: "s4-auto-rej2-detail", at: 2320, duration: 200, target: "rej2-detail", action: "enter" },
+        { id: "s4-auto-rej2-sub", at: 2375, duration: 200, target: "rej2-sub", action: "enter" },
+        { id: "s4-auto-ok4-title", at: 2430, duration: 200, target: "ok4-title", action: "enter" },
+        { id: "s4-auto-ok4-detail", at: 2485, duration: 200, target: "ok4-detail", action: "enter" },
+        { id: "s4-auto-ok4-sub", at: 2540, duration: 200, target: "ok4-sub", action: "enter" },
       ]
     }
   }
@@ -1407,7 +1501,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M110 175 H580"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s5-hdr5", at: 0, duration: 260, target: "hdr5", action: "enter" },
@@ -1423,7 +1518,24 @@ explainer "Cellular internals" {
         { id: "s5-a5c2", at: 1620, duration: 420, target: "a5c2", action: "draw" },
         { id: "s5-own2", at: 1800, duration: 260, target: "own2", action: "enter" },
         { id: "s5-motion5", at: 1950, duration: 420, target: "motion5", action: "draw" },
-        { id: "s5-mod", at: 2170, duration: 280, target: "mod", action: "emphasis" }
+        { id: "s5-mod", at: 2170, duration: 280, target: "mod", action: "emphasis" },
+        { id: "s5-auto-hdr5-text", at: 2250, duration: 200, target: "hdr5-text", action: "enter" },
+        { id: "s5-auto-hdr5-cap", at: 2305, duration: 200, target: "hdr5-cap", action: "enter" },
+        { id: "s5-auto-ctrl5-title", at: 2360, duration: 200, target: "ctrl5-title", action: "enter" },
+        { id: "s5-auto-ctrl5-detail", at: 2415, duration: 200, target: "ctrl5-detail", action: "enter" },
+        { id: "s5-auto-ctrl5-sub", at: 2470, duration: 200, target: "ctrl5-sub", action: "enter" },
+        { id: "s5-auto-mod-title", at: 2525, duration: 200, target: "mod-title", action: "enter" },
+        { id: "s5-auto-mod-detail", at: 2580, duration: 200, target: "mod-detail", action: "enter" },
+        { id: "s5-auto-mod-sub", at: 2635, duration: 200, target: "mod-sub", action: "enter" },
+        { id: "s5-auto-own0-title", at: 2690, duration: 200, target: "own0-title", action: "enter" },
+        { id: "s5-auto-own0-detail", at: 2745, duration: 200, target: "own0-detail", action: "enter" },
+        { id: "s5-auto-own0-sub", at: 2800, duration: 200, target: "own0-sub", action: "enter" },
+        { id: "s5-auto-own1-title", at: 2855, duration: 200, target: "own1-title", action: "enter" },
+        { id: "s5-auto-own1-detail", at: 2910, duration: 200, target: "own1-detail", action: "enter" },
+        { id: "s5-auto-own1-sub", at: 2965, duration: 200, target: "own1-sub", action: "enter" },
+        { id: "s5-auto-own2-title", at: 3020, duration: 200, target: "own2-title", action: "enter" },
+        { id: "s5-auto-own2-detail", at: 3075, duration: 200, target: "own2-detail", action: "enter" },
+        { id: "s5-auto-own2-sub", at: 3130, duration: 200, target: "own2-sub", action: "enter" },
       ]
     }
   }
@@ -1697,7 +1809,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M350 300 V160"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s6-hdr6", at: 0, duration: 260, target: "hdr6", action: "enter" },
@@ -1714,7 +1827,27 @@ explainer "Cellular internals" {
         { id: "s6-a6b", at: 1770, duration: 420, target: "a6b", action: "draw" },
         { id: "s6-start", at: 1950, duration: 260, target: "start", action: "enter" },
         { id: "s6-motion6", at: 2100, duration: 420, target: "motion6", action: "draw" },
-        { id: "s6-start", at: 2320, duration: 280, target: "start", action: "emphasis" }
+        { id: "s6-start", at: 2320, duration: 280, target: "start", action: "emphasis" },
+        { id: "s6-auto-hdr6-text", at: 2400, duration: 200, target: "hdr6-text", action: "enter" },
+        { id: "s6-auto-hdr6-cap", at: 2455, duration: 200, target: "hdr6-cap", action: "enter" },
+        { id: "s6-auto-c0-title", at: 2510, duration: 200, target: "c0-title", action: "enter" },
+        { id: "s6-auto-c0-detail", at: 2565, duration: 200, target: "c0-detail", action: "enter" },
+        { id: "s6-auto-c0-sub", at: 2620, duration: 200, target: "c0-sub", action: "enter" },
+        { id: "s6-auto-c1-title", at: 2675, duration: 200, target: "c1-title", action: "enter" },
+        { id: "s6-auto-c1-detail", at: 2730, duration: 200, target: "c1-detail", action: "enter" },
+        { id: "s6-auto-c1-sub", at: 2785, duration: 200, target: "c1-sub", action: "enter" },
+        { id: "s6-auto-c2-title", at: 2840, duration: 200, target: "c2-title", action: "enter" },
+        { id: "s6-auto-c2-detail", at: 2895, duration: 200, target: "c2-detail", action: "enter" },
+        { id: "s6-auto-c2-sub", at: 2950, duration: 200, target: "c2-sub", action: "enter" },
+        { id: "s6-auto-c3-title", at: 3005, duration: 200, target: "c3-title", action: "enter" },
+        { id: "s6-auto-c3-detail", at: 3060, duration: 200, target: "c3-detail", action: "enter" },
+        { id: "s6-auto-c3-sub", at: 3115, duration: 200, target: "c3-sub", action: "enter" },
+        { id: "s6-auto-barrier-title", at: 3170, duration: 200, target: "barrier-title", action: "enter" },
+        { id: "s6-auto-barrier-detail", at: 3225, duration: 200, target: "barrier-detail", action: "enter" },
+        { id: "s6-auto-barrier-sub", at: 3280, duration: 200, target: "barrier-sub", action: "enter" },
+        { id: "s6-auto-start-title", at: 3335, duration: 200, target: "start-title", action: "enter" },
+        { id: "s6-auto-start-detail", at: 3390, duration: 200, target: "start-detail", action: "enter" },
+        { id: "s6-auto-start-sub", at: 3445, duration: 200, target: "start-sub", action: "enter" },
       ]
     }
   }
@@ -1909,6 +2042,13 @@ explainer "Cellular internals" {
           text: "timing origin optional · policies change rendezvous only"
           layout: { x: 390, y: 280, width: 270, height: 20 }
           style: { fontSize: 10, fill: @theme.ink.tertiary }
+        },
+        {
+          id: "motion7"
+          capability: "core.path"
+          d: "M140 220 H450"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
@@ -1922,6 +2062,21 @@ explainer "Cellular internals" {
         { id: "s7-origin", at: 1110, duration: 260, target: "origin", action: "enter" },
         { id: "s7-ev7", at: 1260, duration: 260, target: "ev7", action: "enter" },
         { id: "s7-origin", at: 1450, duration: 280, target: "origin", action: "emphasis" }
+        { id: "s7-motion7", at: 1510, duration: 520, target: "motion7", action: "draw" },
+        { id: "s7-auto-hdr7-text", at: 1590, duration: 200, target: "hdr7-text", action: "enter" },
+        { id: "s7-auto-hdr7-cap", at: 1645, duration: 200, target: "hdr7-cap", action: "enter" },
+        { id: "s7-auto-pol0-title", at: 1700, duration: 200, target: "pol0-title", action: "enter" },
+        { id: "s7-auto-pol0-detail", at: 1755, duration: 200, target: "pol0-detail", action: "enter" },
+        { id: "s7-auto-pol0-sub", at: 1810, duration: 200, target: "pol0-sub", action: "enter" },
+        { id: "s7-auto-pol1-title", at: 1865, duration: 200, target: "pol1-title", action: "enter" },
+        { id: "s7-auto-pol1-detail", at: 1920, duration: 200, target: "pol1-detail", action: "enter" },
+        { id: "s7-auto-pol1-sub", at: 1975, duration: 200, target: "pol1-sub", action: "enter" },
+        { id: "s7-auto-pol2-title", at: 2030, duration: 200, target: "pol2-title", action: "enter" },
+        { id: "s7-auto-pol2-detail", at: 2085, duration: 200, target: "pol2-detail", action: "enter" },
+        { id: "s7-auto-pol2-sub", at: 2140, duration: 200, target: "pol2-sub", action: "enter" },
+        { id: "s7-auto-origin-title", at: 2195, duration: 200, target: "origin-title", action: "enter" },
+        { id: "s7-auto-origin-detail", at: 2250, duration: 200, target: "origin-detail", action: "enter" },
+        { id: "s7-auto-origin-sub", at: 2305, duration: 200, target: "origin-sub", action: "enter" },
       ]
     }
   }
@@ -2127,7 +2282,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M180 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s8-hdr8", at: 0, duration: 260, target: "hdr8", action: "enter" },
@@ -2141,7 +2297,21 @@ explainer "Cellular internals" {
         { id: "s8-a8d", at: 1290, duration: 420, target: "a8d", action: "draw" },
         { id: "s8-cell8", at: 1470, duration: 260, target: "cell8", action: "enter" },
         { id: "s8-motion8", at: 1620, duration: 420, target: "motion8", action: "draw" },
-        { id: "s8-cell8", at: 1840, duration: 280, target: "cell8", action: "emphasis" }
+        { id: "s8-cell8", at: 1840, duration: 280, target: "cell8", action: "emphasis" },
+        { id: "s8-auto-hdr8-text", at: 1920, duration: 200, target: "hdr8-text", action: "enter" },
+        { id: "s8-auto-hdr8-cap", at: 1975, duration: 200, target: "hdr8-cap", action: "enter" },
+        { id: "s8-auto-own8-title", at: 2030, duration: 200, target: "own8-title", action: "enter" },
+        { id: "s8-auto-own8-detail", at: 2085, duration: 200, target: "own8-detail", action: "enter" },
+        { id: "s8-auto-own8-sub", at: 2140, duration: 200, target: "own8-sub", action: "enter" },
+        { id: "s8-auto-velo-title", at: 2195, duration: 200, target: "velo-title", action: "enter" },
+        { id: "s8-auto-velo-detail", at: 2250, duration: 200, target: "velo-detail", action: "enter" },
+        { id: "s8-auto-velo-sub", at: 2305, duration: 200, target: "velo-sub", action: "enter" },
+        { id: "s8-auto-stage-title", at: 2360, duration: 200, target: "stage-title", action: "enter" },
+        { id: "s8-auto-stage-detail", at: 2415, duration: 200, target: "stage-detail", action: "enter" },
+        { id: "s8-auto-stage-sub", at: 2470, duration: 200, target: "stage-sub", action: "enter" },
+        { id: "s8-auto-cell8-title", at: 2525, duration: 200, target: "cell8-title", action: "enter" },
+        { id: "s8-auto-cell8-detail", at: 2580, duration: 200, target: "cell8-detail", action: "enter" },
+        { id: "s8-auto-cell8-sub", at: 2635, duration: 200, target: "cell8-sub", action: "enter" },
       ]
     }
   }
@@ -2351,7 +2521,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M110 175 H580"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s9-hdr9", at: 0, duration: 260, target: "hdr9", action: "enter" },
@@ -2364,7 +2535,22 @@ explainer "Cellular internals" {
         { id: "s9-note9", at: 1080, duration: 260, target: "note9", action: "enter" },
         { id: "s9-chip9", at: 1230, duration: 260, target: "chip9", action: "enter" },
         { id: "s9-motion9", at: 1380, duration: 420, target: "motion9", action: "draw" },
-        { id: "s9-completed", at: 1600, duration: 280, target: "completed", action: "emphasis" }
+        { id: "s9-completed", at: 1600, duration: 280, target: "completed", action: "emphasis" },
+        { id: "s9-auto-hdr9-text", at: 1680, duration: 200, target: "hdr9-text", action: "enter" },
+        { id: "s9-auto-hdr9-cap", at: 1735, duration: 200, target: "hdr9-cap", action: "enter" },
+        { id: "s9-auto-idx-title", at: 1790, duration: 200, target: "idx-title", action: "enter" },
+        { id: "s9-auto-idx-detail", at: 1845, duration: 200, target: "idx-detail", action: "enter" },
+        { id: "s9-auto-idx-sub", at: 1900, duration: 200, target: "idx-sub", action: "enter" },
+        { id: "s9-auto-indexed-title", at: 1955, duration: 200, target: "indexed-title", action: "enter" },
+        { id: "s9-auto-indexed-detail", at: 2010, duration: 200, target: "indexed-detail", action: "enter" },
+        { id: "s9-auto-indexed-sub", at: 2065, duration: 200, target: "indexed-sub", action: "enter" },
+        { id: "s9-auto-inflight-title", at: 2120, duration: 200, target: "inflight-title", action: "enter" },
+        { id: "s9-auto-inflight-detail", at: 2175, duration: 200, target: "inflight-detail", action: "enter" },
+        { id: "s9-auto-inflight-sub", at: 2230, duration: 200, target: "inflight-sub", action: "enter" },
+        { id: "s9-auto-completed-title", at: 2285, duration: 200, target: "completed-title", action: "enter" },
+        { id: "s9-auto-completed-detail", at: 2340, duration: 200, target: "completed-detail", action: "enter" },
+        { id: "s9-auto-completed-sub", at: 2395, duration: 200, target: "completed-sub", action: "enter" },
+        { id: "s9-auto-chip9-t", at: 2450, duration: 200, target: "chip9-t", action: "enter" },
       ]
     }
   }
@@ -2586,7 +2772,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M110 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s10-hdr10", at: 0, duration: 260, target: "hdr10", action: "enter" },
@@ -2601,7 +2788,22 @@ explainer "Cellular internals" {
         { id: "s10-note10", at: 1440, duration: 260, target: "note10", action: "enter" },
         { id: "s10-chip10", at: 1590, duration: 260, target: "chip10", action: "enter" },
         { id: "s10-motion10", at: 1740, duration: 420, target: "motion10", action: "draw" },
-        { id: "s10-auto", at: 1960, duration: 280, target: "auto", action: "emphasis" }
+        { id: "s10-auto", at: 1960, duration: 280, target: "auto", action: "emphasis" },
+        { id: "s10-auto-hdr10-text", at: 2040, duration: 200, target: "hdr10-text", action: "enter" },
+        { id: "s10-auto-hdr10-cap", at: 2095, duration: 200, target: "hdr10-cap", action: "enter" },
+        { id: "s10-auto-env-title", at: 2150, duration: 200, target: "env-title", action: "enter" },
+        { id: "s10-auto-env-detail", at: 2205, duration: 200, target: "env-detail", action: "enter" },
+        { id: "s10-auto-env-sub", at: 2260, duration: 200, target: "env-sub", action: "enter" },
+        { id: "s10-auto-inputs-title", at: 2315, duration: 200, target: "inputs-title", action: "enter" },
+        { id: "s10-auto-inputs-detail", at: 2370, duration: 200, target: "inputs-detail", action: "enter" },
+        { id: "s10-auto-inputs-sub", at: 2425, duration: 200, target: "inputs-sub", action: "enter" },
+        { id: "s10-auto-torigin-title", at: 2480, duration: 200, target: "torigin-title", action: "enter" },
+        { id: "s10-auto-torigin-detail", at: 2535, duration: 200, target: "torigin-detail", action: "enter" },
+        { id: "s10-auto-torigin-sub", at: 2590, duration: 200, target: "torigin-sub", action: "enter" },
+        { id: "s10-auto-auto-title", at: 2645, duration: 200, target: "auto-title", action: "enter" },
+        { id: "s10-auto-auto-detail", at: 2700, duration: 200, target: "auto-detail", action: "enter" },
+        { id: "s10-auto-auto-sub", at: 2755, duration: 200, target: "auto-sub", action: "enter" },
+        { id: "s10-auto-chip10-t", at: 2810, duration: 200, target: "chip10-t", action: "enter" },
       ]
     }
   }
@@ -2801,7 +3003,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M190 175 H540"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s11-hdr11", at: 0, duration: 260, target: "hdr11", action: "enter" },
@@ -2814,7 +3017,21 @@ explainer "Cellular internals" {
         { id: "s11-a11c", at: 1110, duration: 420, target: "a11c", action: "draw" },
         { id: "s11-store", at: 1290, duration: 260, target: "store", action: "enter" },
         { id: "s11-motion11", at: 1440, duration: 420, target: "motion11", action: "draw" },
-        { id: "s11-store", at: 1660, duration: 280, target: "store", action: "emphasis" }
+        { id: "s11-store", at: 1660, duration: 280, target: "store", action: "emphasis" },
+        { id: "s11-auto-hdr11-text", at: 1740, duration: 200, target: "hdr11-text", action: "enter" },
+        { id: "s11-auto-hdr11-cap", at: 1795, duration: 200, target: "hdr11-cap", action: "enter" },
+        { id: "s11-auto-slice-title", at: 1850, duration: 200, target: "slice-title", action: "enter" },
+        { id: "s11-auto-slice-detail", at: 1905, duration: 200, target: "slice-detail", action: "enter" },
+        { id: "s11-auto-slice-sub", at: 1960, duration: 200, target: "slice-sub", action: "enter" },
+        { id: "s11-auto-w0-title", at: 2015, duration: 200, target: "w0-title", action: "enter" },
+        { id: "s11-auto-w0-detail", at: 2070, duration: 200, target: "w0-detail", action: "enter" },
+        { id: "s11-auto-w0-sub", at: 2125, duration: 200, target: "w0-sub", action: "enter" },
+        { id: "s11-auto-w1-title", at: 2180, duration: 200, target: "w1-title", action: "enter" },
+        { id: "s11-auto-w1-detail", at: 2235, duration: 200, target: "w1-detail", action: "enter" },
+        { id: "s11-auto-w1-sub", at: 2290, duration: 200, target: "w1-sub", action: "enter" },
+        { id: "s11-auto-store-title", at: 2345, duration: 200, target: "store-title", action: "enter" },
+        { id: "s11-auto-store-detail", at: 2400, duration: 200, target: "store-detail", action: "enter" },
+        { id: "s11-auto-store-sub", at: 2455, duration: 200, target: "store-sub", action: "enter" },
       ]
     }
   }
@@ -3045,6 +3262,13 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M350 185 C480 215 585 225 585 250"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "motion12"
+          capability: "core.path"
+          d: "M105 200 C250 220 400 220 585 250"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
@@ -3060,6 +3284,24 @@ explainer "Cellular internals" {
         { id: "s12-a123", at: 1440, duration: 420, target: "a123", action: "draw" },
         { id: "s12-ord3", at: 1620, duration: 260, target: "ord3", action: "enter" },
         { id: "s12-gord", at: 1810, duration: 280, target: "gord", action: "emphasis" }
+        { id: "s12-motion12", at: 1870, duration: 520, target: "motion12", action: "draw" },
+        { id: "s12-auto-hdr12-text", at: 1950, duration: 200, target: "hdr12-text", action: "enter" },
+        { id: "s12-auto-hdr12-cap", at: 2005, duration: 200, target: "hdr12-cap", action: "enter" },
+        { id: "s12-auto-gord-title", at: 2060, duration: 200, target: "gord-title", action: "enter" },
+        { id: "s12-auto-gord-detail", at: 2115, duration: 200, target: "gord-detail", action: "enter" },
+        { id: "s12-auto-gord-sub", at: 2170, duration: 200, target: "gord-sub", action: "enter" },
+        { id: "s12-auto-ord0-title", at: 2225, duration: 200, target: "ord0-title", action: "enter" },
+        { id: "s12-auto-ord0-detail", at: 2280, duration: 200, target: "ord0-detail", action: "enter" },
+        { id: "s12-auto-ord0-sub", at: 2335, duration: 200, target: "ord0-sub", action: "enter" },
+        { id: "s12-auto-ord1-title", at: 2390, duration: 200, target: "ord1-title", action: "enter" },
+        { id: "s12-auto-ord1-detail", at: 2445, duration: 200, target: "ord1-detail", action: "enter" },
+        { id: "s12-auto-ord1-sub", at: 2500, duration: 200, target: "ord1-sub", action: "enter" },
+        { id: "s12-auto-ord2-title", at: 2555, duration: 200, target: "ord2-title", action: "enter" },
+        { id: "s12-auto-ord2-detail", at: 2610, duration: 200, target: "ord2-detail", action: "enter" },
+        { id: "s12-auto-ord2-sub", at: 2665, duration: 200, target: "ord2-sub", action: "enter" },
+        { id: "s12-auto-ord3-title", at: 2720, duration: 200, target: "ord3-title", action: "enter" },
+        { id: "s12-auto-ord3-detail", at: 2775, duration: 200, target: "ord3-detail", action: "enter" },
+        { id: "s12-auto-ord3-sub", at: 2830, duration: 200, target: "ord3-sub", action: "enter" },
       ]
     }
   }
@@ -3274,7 +3516,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M110 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s13-hdr13", at: 0, duration: 260, target: "hdr13", action: "enter" },
@@ -3288,7 +3531,22 @@ explainer "Cellular internals" {
         { id: "s13-a13c", at: 1260, duration: 420, target: "a13c", action: "draw" },
         { id: "s13-srv", at: 1440, duration: 260, target: "srv", action: "enter" },
         { id: "s13-motion13", at: 1590, duration: 420, target: "motion13", action: "draw" },
-        { id: "s13-http", at: 1810, duration: 280, target: "http", action: "emphasis" }
+        { id: "s13-http", at: 1810, duration: 280, target: "http", action: "emphasis" },
+        { id: "s13-auto-hdr13-text", at: 1890, duration: 200, target: "hdr13-text", action: "enter" },
+        { id: "s13-auto-hdr13-cap", at: 1945, duration: 200, target: "hdr13-cap", action: "enter" },
+        { id: "s13-auto-chip13-t", at: 2000, duration: 200, target: "chip13-t", action: "enter" },
+        { id: "s13-auto-shard-title", at: 2055, duration: 200, target: "shard-title", action: "enter" },
+        { id: "s13-auto-shard-detail", at: 2110, duration: 200, target: "shard-detail", action: "enter" },
+        { id: "s13-auto-shard-sub", at: 2165, duration: 200, target: "shard-sub", action: "enter" },
+        { id: "s13-auto-http-title", at: 2220, duration: 200, target: "http-title", action: "enter" },
+        { id: "s13-auto-http-detail", at: 2275, duration: 200, target: "http-detail", action: "enter" },
+        { id: "s13-auto-http-sub", at: 2330, duration: 200, target: "http-sub", action: "enter" },
+        { id: "s13-auto-dyno-title", at: 2385, duration: 200, target: "dyno-title", action: "enter" },
+        { id: "s13-auto-dyno-detail", at: 2440, duration: 200, target: "dyno-detail", action: "enter" },
+        { id: "s13-auto-dyno-sub", at: 2495, duration: 200, target: "dyno-sub", action: "enter" },
+        { id: "s13-auto-srv-title", at: 2550, duration: 200, target: "srv-title", action: "enter" },
+        { id: "s13-auto-srv-detail", at: 2605, duration: 200, target: "srv-detail", action: "enter" },
+        { id: "s13-auto-srv-sub", at: 2660, duration: 200, target: "srv-sub", action: "enter" },
       ]
     }
   }
@@ -3562,7 +3820,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M110 175 H600"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s14-hdr14", at: 0, duration: 260, target: "hdr14", action: "enter" },
@@ -3579,7 +3838,27 @@ explainer "Cellular internals" {
         { id: "s14-a14v", at: 1770, duration: 420, target: "a14v", action: "draw" },
         { id: "s14-cap", at: 1950, duration: 260, target: "cap", action: "enter" },
         { id: "s14-motion14", at: 2100, duration: 420, target: "motion14", action: "draw" },
-        { id: "s14-cap", at: 2320, duration: 280, target: "cap", action: "emphasis" }
+        { id: "s14-cap", at: 2320, duration: 280, target: "cap", action: "emphasis" },
+        { id: "s14-auto-hdr14-text", at: 2400, duration: 200, target: "hdr14-text", action: "enter" },
+        { id: "s14-auto-hdr14-cap", at: 2455, duration: 200, target: "hdr14-cap", action: "enter" },
+        { id: "s14-auto-ev0-title", at: 2510, duration: 200, target: "ev0-title", action: "enter" },
+        { id: "s14-auto-ev0-detail", at: 2565, duration: 200, target: "ev0-detail", action: "enter" },
+        { id: "s14-auto-ev0-sub", at: 2620, duration: 200, target: "ev0-sub", action: "enter" },
+        { id: "s14-auto-ev1-title", at: 2675, duration: 200, target: "ev1-title", action: "enter" },
+        { id: "s14-auto-ev1-detail", at: 2730, duration: 200, target: "ev1-detail", action: "enter" },
+        { id: "s14-auto-ev1-sub", at: 2785, duration: 200, target: "ev1-sub", action: "enter" },
+        { id: "s14-auto-ev2-title", at: 2840, duration: 200, target: "ev2-title", action: "enter" },
+        { id: "s14-auto-ev2-detail", at: 2895, duration: 200, target: "ev2-detail", action: "enter" },
+        { id: "s14-auto-ev2-sub", at: 2950, duration: 200, target: "ev2-sub", action: "enter" },
+        { id: "s14-auto-ev3-title", at: 3005, duration: 200, target: "ev3-title", action: "enter" },
+        { id: "s14-auto-ev3-detail", at: 3060, duration: 200, target: "ev3-detail", action: "enter" },
+        { id: "s14-auto-ev3-sub", at: 3115, duration: 200, target: "ev3-sub", action: "enter" },
+        { id: "s14-auto-ev4-title", at: 3170, duration: 200, target: "ev4-title", action: "enter" },
+        { id: "s14-auto-ev4-detail", at: 3225, duration: 200, target: "ev4-detail", action: "enter" },
+        { id: "s14-auto-ev4-sub", at: 3280, duration: 200, target: "ev4-sub", action: "enter" },
+        { id: "s14-auto-cap-title", at: 3335, duration: 200, target: "cap-title", action: "enter" },
+        { id: "s14-auto-cap-detail", at: 3390, duration: 200, target: "cap-detail", action: "enter" },
+        { id: "s14-auto-cap-sub", at: 3445, duration: 200, target: "cap-sub", action: "enter" },
       ]
     }
   }
@@ -3749,7 +4028,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M110 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s15-hdr15", at: 0, duration: 260, target: "hdr15", action: "enter" },
@@ -3761,7 +4041,18 @@ explainer "Cellular internals" {
         { id: "s15-part", at: 960, duration: 260, target: "part", action: "enter" },
         { id: "s15-note15", at: 1110, duration: 260, target: "note15", action: "enter" },
         { id: "s15-motion15", at: 1260, duration: 420, target: "motion15", action: "draw" },
-        { id: "s15-retain", at: 1480, duration: 280, target: "retain", action: "emphasis" }
+        { id: "s15-retain", at: 1480, duration: 280, target: "retain", action: "emphasis" },
+        { id: "s15-auto-hdr15-text", at: 1560, duration: 200, target: "hdr15-text", action: "enter" },
+        { id: "s15-auto-hdr15-cap", at: 1615, duration: 200, target: "hdr15-cap", action: "enter" },
+        { id: "s15-auto-disp15-title", at: 1670, duration: 200, target: "disp15-title", action: "enter" },
+        { id: "s15-auto-disp15-detail", at: 1725, duration: 200, target: "disp15-detail", action: "enter" },
+        { id: "s15-auto-disp15-sub", at: 1780, duration: 200, target: "disp15-sub", action: "enter" },
+        { id: "s15-auto-retain-title", at: 1835, duration: 200, target: "retain-title", action: "enter" },
+        { id: "s15-auto-retain-detail", at: 1890, duration: 200, target: "retain-detail", action: "enter" },
+        { id: "s15-auto-retain-sub", at: 1945, duration: 200, target: "retain-sub", action: "enter" },
+        { id: "s15-auto-part-title", at: 2000, duration: 200, target: "part-title", action: "enter" },
+        { id: "s15-auto-part-detail", at: 2055, duration: 200, target: "part-detail", action: "enter" },
+        { id: "s15-auto-part-sub", at: 2110, duration: 200, target: "part-sub", action: "enter" },
       ]
     }
   }
@@ -3931,7 +4222,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M110 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s16-hdr16", at: 0, duration: 260, target: "hdr16", action: "enter" },
@@ -3943,7 +4235,18 @@ explainer "Cellular internals" {
         { id: "s16-drop", at: 960, duration: 260, target: "drop", action: "enter" },
         { id: "s16-note16", at: 1110, duration: 260, target: "note16", action: "enter" },
         { id: "s16-motion16", at: 1260, duration: 420, target: "motion16", action: "draw" },
-        { id: "s16-fold", at: 1480, duration: 280, target: "fold", action: "emphasis" }
+        { id: "s16-fold", at: 1480, duration: 280, target: "fold", action: "emphasis" },
+        { id: "s16-auto-hdr16-text", at: 1560, duration: 200, target: "hdr16-text", action: "enter" },
+        { id: "s16-auto-hdr16-cap", at: 1615, duration: 200, target: "hdr16-cap", action: "enter" },
+        { id: "s16-auto-disp16-title", at: 1670, duration: 200, target: "disp16-title", action: "enter" },
+        { id: "s16-auto-disp16-detail", at: 1725, duration: 200, target: "disp16-detail", action: "enter" },
+        { id: "s16-auto-disp16-sub", at: 1780, duration: 200, target: "disp16-sub", action: "enter" },
+        { id: "s16-auto-fold-title", at: 1835, duration: 200, target: "fold-title", action: "enter" },
+        { id: "s16-auto-fold-detail", at: 1890, duration: 200, target: "fold-detail", action: "enter" },
+        { id: "s16-auto-fold-sub", at: 1945, duration: 200, target: "fold-sub", action: "enter" },
+        { id: "s16-auto-drop-title", at: 2000, duration: 200, target: "drop-title", action: "enter" },
+        { id: "s16-auto-drop-detail", at: 2055, duration: 200, target: "drop-detail", action: "enter" },
+        { id: "s16-auto-drop-sub", at: 2110, duration: 200, target: "drop-sub", action: "enter" },
       ]
     }
   }
@@ -4143,7 +4446,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M110 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s17-hdr17", at: 0, duration: 260, target: "hdr17", action: "enter" },
@@ -4156,7 +4460,21 @@ explainer "Cellular internals" {
         { id: "s17-a17c", at: 1110, duration: 420, target: "a17c", action: "draw" },
         { id: "s17-approx", at: 1290, duration: 260, target: "approx", action: "enter" },
         { id: "s17-motion17", at: 1440, duration: 420, target: "motion17", action: "draw" },
-        { id: "s17-sketch", at: 1660, duration: 280, target: "sketch", action: "emphasis" }
+        { id: "s17-sketch", at: 1660, duration: 280, target: "sketch", action: "emphasis" },
+        { id: "s17-auto-hdr17-text", at: 1740, duration: 200, target: "hdr17-text", action: "enter" },
+        { id: "s17-auto-hdr17-cap", at: 1795, duration: 200, target: "hdr17-cap", action: "enter" },
+        { id: "s17-auto-fin-title", at: 1850, duration: 200, target: "fin-title", action: "enter" },
+        { id: "s17-auto-fin-detail", at: 1905, duration: 200, target: "fin-detail", action: "enter" },
+        { id: "s17-auto-fin-sub", at: 1960, duration: 200, target: "fin-sub", action: "enter" },
+        { id: "s17-auto-sketch-title", at: 2015, duration: 200, target: "sketch-title", action: "enter" },
+        { id: "s17-auto-sketch-detail", at: 2070, duration: 200, target: "sketch-detail", action: "enter" },
+        { id: "s17-auto-sketch-sub", at: 2125, duration: 200, target: "sketch-sub", action: "enter" },
+        { id: "s17-auto-exact-title", at: 2180, duration: 200, target: "exact-title", action: "enter" },
+        { id: "s17-auto-exact-detail", at: 2235, duration: 200, target: "exact-detail", action: "enter" },
+        { id: "s17-auto-exact-sub", at: 2290, duration: 200, target: "exact-sub", action: "enter" },
+        { id: "s17-auto-approx-title", at: 2345, duration: 200, target: "approx-title", action: "enter" },
+        { id: "s17-auto-approx-detail", at: 2400, duration: 200, target: "approx-detail", action: "enter" },
+        { id: "s17-auto-approx-sub", at: 2455, duration: 200, target: "approx-sub", action: "enter" },
       ]
     }
   }
@@ -4491,7 +4809,8 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M110 175 H580"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
-        }
+                  accessibility: { label: "motion signal" }
+}
       ]
       timeline: [
         { id: "s18-hdr18", at: 0, duration: 260, target: "hdr18", action: "enter" },
@@ -4511,7 +4830,32 @@ explainer "Cellular internals" {
         { id: "s18-merge", at: 2280, duration: 260, target: "merge", action: "enter" },
         { id: "s18-sink", at: 2430, duration: 260, target: "sink", action: "enter" },
         { id: "s18-motion18", at: 2580, duration: 420, target: "motion18", action: "draw" },
-        { id: "s18-merge", at: 2800, duration: 280, target: "merge", action: "emphasis" }
+        { id: "s18-merge", at: 2800, duration: 280, target: "merge", action: "emphasis" },
+        { id: "s18-auto-hdr18-text", at: 2880, duration: 200, target: "hdr18-text", action: "enter" },
+        { id: "s18-auto-hdr18-cap", at: 2935, duration: 200, target: "hdr18-cap", action: "enter" },
+        { id: "s18-auto-cell180-title", at: 2990, duration: 200, target: "cell180-title", action: "enter" },
+        { id: "s18-auto-cell180-detail", at: 3045, duration: 200, target: "cell180-detail", action: "enter" },
+        { id: "s18-auto-cell180-sub", at: 3100, duration: 200, target: "cell180-sub", action: "enter" },
+        { id: "s18-auto-cell181-title", at: 3155, duration: 200, target: "cell181-title", action: "enter" },
+        { id: "s18-auto-cell181-detail", at: 3210, duration: 200, target: "cell181-detail", action: "enter" },
+        { id: "s18-auto-cell181-sub", at: 3265, duration: 200, target: "cell181-sub", action: "enter" },
+        { id: "s18-auto-cell182-title", at: 3320, duration: 200, target: "cell182-title", action: "enter" },
+        { id: "s18-auto-cell182-detail", at: 3375, duration: 200, target: "cell182-detail", action: "enter" },
+        { id: "s18-auto-cell182-sub", at: 3430, duration: 200, target: "cell182-sub", action: "enter" },
+        { id: "s18-auto-cell183-title", at: 3485, duration: 200, target: "cell183-title", action: "enter" },
+        { id: "s18-auto-cell183-detail", at: 3540, duration: 200, target: "cell183-detail", action: "enter" },
+        { id: "s18-auto-cell183-sub", at: 3595, duration: 200, target: "cell183-sub", action: "enter" },
+        { id: "s18-auto-agg0-title", at: 3650, duration: 200, target: "agg0-title", action: "enter" },
+        { id: "s18-auto-agg0-detail", at: 3705, duration: 200, target: "agg0-detail", action: "enter" },
+        { id: "s18-auto-agg0-sub", at: 3760, duration: 200, target: "agg0-sub", action: "enter" },
+        { id: "s18-auto-agg1-title", at: 3815, duration: 200, target: "agg1-title", action: "enter" },
+        { id: "s18-auto-agg1-detail", at: 3870, duration: 200, target: "agg1-detail", action: "enter" },
+        { id: "s18-auto-agg1-sub", at: 3925, duration: 200, target: "agg1-sub", action: "enter" },
+        { id: "s18-auto-merge-title", at: 3980, duration: 200, target: "merge-title", action: "enter" },
+        { id: "s18-auto-merge-detail", at: 4035, duration: 200, target: "merge-detail", action: "enter" },
+        { id: "s18-auto-merge-sub", at: 4090, duration: 200, target: "merge-sub", action: "enter" },
+        { id: "s18-auto-sink-title", at: 4145, duration: 200, target: "sink-title", action: "enter" },
+        { id: "s18-auto-sink-detail", at: 4200, duration: 200, target: "sink-detail", action: "enter" },
       ]
     }
   }
@@ -4677,6 +5021,13 @@ explainer "Cellular internals" {
           capability: "core.path"
           d: "M350 287 V305"
           style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "motion19"
+          capability: "core.path"
+          d: "M350 120 V320"
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
+          accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
@@ -4690,6 +5041,17 @@ explainer "Cellular internals" {
         { id: "s19-a19c", at: 1110, duration: 420, target: "a19c", action: "draw" },
         { id: "s19-res19", at: 1290, duration: 260, target: "res19", action: "enter" },
         { id: "s19-res19", at: 1480, duration: 280, target: "res19", action: "emphasis" }
+        { id: "s19-motion19", at: 1540, duration: 520, target: "motion19", action: "draw" },
+        { id: "s19-auto-hdr19-text", at: 1620, duration: 200, target: "hdr19-text", action: "enter" },
+        { id: "s19-auto-hdr19-cap", at: 1675, duration: 200, target: "hdr19-cap", action: "enter" },
+        { id: "s19-auto-ctrl19-title", at: 1730, duration: 200, target: "ctrl19-title", action: "enter" },
+        { id: "s19-auto-ctrl19-detail", at: 1785, duration: 200, target: "ctrl19-detail", action: "enter" },
+        { id: "s19-auto-data19-title", at: 1840, duration: 200, target: "data19-title", action: "enter" },
+        { id: "s19-auto-data19-detail", at: 1895, duration: 200, target: "data19-detail", action: "enter" },
+        { id: "s19-auto-exec19-title", at: 1950, duration: 200, target: "exec19-title", action: "enter" },
+        { id: "s19-auto-exec19-detail", at: 2005, duration: 200, target: "exec19-detail", action: "enter" },
+        { id: "s19-auto-res19-title", at: 2060, duration: 200, target: "res19-title", action: "enter" },
+        { id: "s19-auto-res19-detail", at: 2115, duration: 200, target: "res19-detail", action: "enter" },
       ]
     }
   }

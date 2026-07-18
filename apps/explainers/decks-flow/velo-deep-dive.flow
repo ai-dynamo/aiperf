@@ -158,7 +158,7 @@ explainer "Velo deep dive" {
             { id: "ann0c-detail" capability: "core.text" text: "until peer registered" layout: { x: 508, y: 325, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
           ]
         },
-        { id: "motion0" capability: "core.path" d: "M110 145 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "motion0" capability: "core.path" d: "M110 145 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
       ]
       timeline: [
         { id: "s0-hdr0" at: 0 duration: 260 target: "hdr0" action: "enter" },
@@ -183,6 +183,24 @@ explainer "Velo deep dive" {
         { id: "s0-ann0c" at: 2200 duration: 240 target: "ann0c" action: "enter" },
         { id: "s0-motion0" at: 2380 duration: 520 target: "motion0" action: "draw" },
         { id: "s0-emph" at: 2860 duration: 400 target: "ctrl0" action: "emphasis" },
+        { id: "s0-auto-hdr0-text" at: 2940 duration: 200 target: "hdr0-text" action: "enter" },
+        { id: "s0-auto-hdr0-cap" at: 2995 duration: 200 target: "hdr0-cap" action: "enter" },
+        { id: "s0-auto-cell0-title" at: 3050 duration: 200 target: "cell0-title" action: "enter" },
+        { id: "s0-auto-cell0-detail" at: 3105 duration: 200 target: "cell0-detail" action: "enter" },
+        { id: "s0-auto-velo0-title" at: 3160 duration: 200 target: "velo0-title" action: "enter" },
+        { id: "s0-auto-velo0-detail" at: 3215 duration: 200 target: "velo0-detail" action: "enter" },
+        { id: "s0-auto-ctrl0-title" at: 3270 duration: 200 target: "ctrl0-title" action: "enter" },
+        { id: "s0-auto-ctrl0-detail" at: 3325 duration: 200 target: "ctrl0-detail" action: "enter" },
+        { id: "s0-auto-src-tcp-t" at: 3380 duration: 200 target: "src-tcp-t" action: "enter" },
+        { id: "s0-auto-src-uds-t" at: 3435 duration: 200 target: "src-uds-t" action: "enter" },
+        { id: "s0-auto-src-slurm-t" at: 3490 duration: 200 target: "src-slurm-t" action: "enter" },
+        { id: "s0-auto-src-k8s-t" at: 3545 duration: 200 target: "src-k8s-t" action: "enter" },
+        { id: "s0-auto-ann0a-title" at: 3600 duration: 200 target: "ann0a-title" action: "enter" },
+        { id: "s0-auto-ann0a-detail" at: 3655 duration: 200 target: "ann0a-detail" action: "enter" },
+        { id: "s0-auto-ann0b-title" at: 3710 duration: 200 target: "ann0b-title" action: "enter" },
+        { id: "s0-auto-ann0b-detail" at: 3765 duration: 200 target: "ann0b-detail" action: "enter" },
+        { id: "s0-auto-ann0c-title" at: 3820 duration: 200 target: "ann0c-title" action: "enter" },
+        { id: "s0-auto-ann0c-detail" at: 3875 duration: 200 target: "ann0c-detail" action: "enter" },
       ]
     }
   }
@@ -326,7 +344,7 @@ explainer "Velo deep dive" {
             { id: "ann1c-detail" capability: "core.text" text: "run-wide START" layout: { x: 478, y: 350, width: 174, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
           ]
         },
-        { id: "motion1" capability: "core.path" d: "M110 142 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "motion1" capability: "core.path" d: "M110 142 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
       ]
       timeline: [
         { id: "s1-hdr1" at: 0 duration: 260 target: "hdr1" action: "enter" },
@@ -350,6 +368,26 @@ explainer "Velo deep dive" {
         { id: "s1-ann1c" at: 2280 duration: 220 target: "ann1c" action: "enter" },
         { id: "s1-motion1" at: 2440 duration: 500 target: "motion1" action: "draw" },
         { id: "s1-emph" at: 2900 duration: 400 target: "reply1" action: "emphasis" },
+        { id: "s1-auto-hdr1-text" at: 2980 duration: 200 target: "hdr1-text" action: "enter" },
+        { id: "s1-auto-hdr1-cap" at: 3035 duration: 200 target: "hdr1-cap" action: "enter" },
+        { id: "s1-auto-reg1-title" at: 3090 duration: 200 target: "reg1-title" action: "enter" },
+        { id: "s1-auto-reg1-detail" at: 3145 duration: 200 target: "reg1-detail" action: "enter" },
+        { id: "s1-auto-peer1-title" at: 3200 duration: 200 target: "peer1-title" action: "enter" },
+        { id: "s1-auto-peer1-detail" at: 3255 duration: 200 target: "peer1-detail" action: "enter" },
+        { id: "s1-auto-spec1-title" at: 3310 duration: 200 target: "spec1-title" action: "enter" },
+        { id: "s1-auto-spec1-detail" at: 3365 duration: 200 target: "spec1-detail" action: "enter" },
+        { id: "s1-auto-reply1-title" at: 3420 duration: 200 target: "reply1-title" action: "enter" },
+        { id: "s1-auto-reply1-detail" at: 3475 duration: 200 target: "reply1-detail" action: "enter" },
+        { id: "s1-auto-dec1-title" at: 3530 duration: 200 target: "dec1-title" action: "enter" },
+        { id: "s1-auto-dec1-detail" at: 3585 duration: 200 target: "dec1-detail" action: "enter" },
+        { id: "s1-auto-env1-t" at: 3640 duration: 200 target: "env1-t" action: "enter" },
+        { id: "s1-auto-start1-t" at: 3695 duration: 200 target: "start1-t" action: "enter" },
+        { id: "s1-auto-ann1a-title" at: 3750 duration: 200 target: "ann1a-title" action: "enter" },
+        { id: "s1-auto-ann1a-detail" at: 3805 duration: 200 target: "ann1a-detail" action: "enter" },
+        { id: "s1-auto-ann1b-title" at: 3860 duration: 200 target: "ann1b-title" action: "enter" },
+        { id: "s1-auto-ann1b-detail" at: 3915 duration: 200 target: "ann1b-detail" action: "enter" },
+        { id: "s1-auto-ann1c-title" at: 3970 duration: 200 target: "ann1c-title" action: "enter" },
+        { id: "s1-auto-ann1c-detail" at: 4025 duration: 200 target: "ann1c-detail" action: "enter" },
       ]
     }
   }
@@ -501,7 +539,7 @@ explainer "Velo deep dive" {
             { id: "ann2b-detail" capability: "core.text" text: "cellular_controller" layout: { x: 508, y: 370, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
           ]
         },
-        { id: "motion2" capability: "core.path" d: "M350 300 V150" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "motion2" capability: "core.path" d: "M350 300 V150" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
       ]
       timeline: [
         { id: "s2-hdr2" at: 0 duration: 260 target: "hdr2" action: "enter" },
@@ -527,6 +565,27 @@ explainer "Velo deep dive" {
         { id: "s2-ann2b" at: 2280 duration: 220 target: "ann2b" action: "enter" },
         { id: "s2-motion2" at: 2440 duration: 480 target: "motion2" action: "draw" },
         { id: "s2-emph" at: 2880 duration: 400 target: "start2" action: "emphasis" },
+        { id: "s2-auto-hdr2-text" at: 2960 duration: 200 target: "hdr2-text" action: "enter" },
+        { id: "s2-auto-hdr2-cap" at: 3015 duration: 200 target: "hdr2-cap" action: "enter" },
+        { id: "s2-auto-c20-title" at: 3070 duration: 200 target: "c20-title" action: "enter" },
+        { id: "s2-auto-c20-detail" at: 3125 duration: 200 target: "c20-detail" action: "enter" },
+        { id: "s2-auto-c21-title" at: 3180 duration: 200 target: "c21-title" action: "enter" },
+        { id: "s2-auto-c21-detail" at: 3235 duration: 200 target: "c21-detail" action: "enter" },
+        { id: "s2-auto-c22-title" at: 3290 duration: 200 target: "c22-title" action: "enter" },
+        { id: "s2-auto-c22-detail" at: 3345 duration: 200 target: "c22-detail" action: "enter" },
+        { id: "s2-auto-c23-title" at: 3400 duration: 200 target: "c23-title" action: "enter" },
+        { id: "s2-auto-c23-detail" at: 3455 duration: 200 target: "c23-detail" action: "enter" },
+        { id: "s2-auto-barrier2-title" at: 3510 duration: 200 target: "barrier2-title" action: "enter" },
+        { id: "s2-auto-barrier2-detail" at: 3565 duration: 200 target: "barrier2-detail" action: "enter" },
+        { id: "s2-auto-start2-title" at: 3620 duration: 200 target: "start2-title" action: "enter" },
+        { id: "s2-auto-start2-detail" at: 3675 duration: 200 target: "start2-detail" action: "enter" },
+        { id: "s2-auto-pol-sync-t" at: 3730 duration: 200 target: "pol-sync-t" action: "enter" },
+        { id: "s2-auto-pol-free-t" at: 3785 duration: 200 target: "pol-free-t" action: "enter" },
+        { id: "s2-auto-pol-phas-t" at: 3840 duration: 200 target: "pol-phas-t" action: "enter" },
+        { id: "s2-auto-ann2a-title" at: 3895 duration: 200 target: "ann2a-title" action: "enter" },
+        { id: "s2-auto-ann2a-detail" at: 3950 duration: 200 target: "ann2a-detail" action: "enter" },
+        { id: "s2-auto-ann2b-title" at: 4005 duration: 200 target: "ann2b-title" action: "enter" },
+        { id: "s2-auto-ann2b-detail" at: 4060 duration: 200 target: "ann2b-detail" action: "enter" },
       ]
     }
   }
@@ -669,7 +728,7 @@ explainer "Velo deep dive" {
             { id: "ann3b-detail" capability: "core.text" text: "survive codec" layout: { x: 288, y: 360, width: 184, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
           ]
         },
-        { id: "motion3" capability: "core.path" d: "M90 155 H600" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "motion3" capability: "core.path" d: "M90 155 H600" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
       ]
       timeline: [
         { id: "s3-hdr3" at: 0 duration: 260 target: "hdr3" action: "enter" },
@@ -694,6 +753,24 @@ explainer "Velo deep dive" {
         { id: "s3-ann3b" at: 2340 duration: 220 target: "ann3b" action: "enter" },
         { id: "s3-motion3" at: 2500 duration: 500 target: "motion3" action: "draw" },
         { id: "s3-emph" at: 2960 duration: 400 target: "raw3" action: "emphasis" },
+        { id: "s3-auto-hdr3-text" at: 3040 duration: 200 target: "hdr3-text" action: "enter" },
+        { id: "s3-auto-hdr3-cap" at: 3095 duration: 200 target: "hdr3-cap" action: "enter" },
+        { id: "s3-auto-msg3-title" at: 3150 duration: 200 target: "msg3-title" action: "enter" },
+        { id: "s3-auto-msg3-detail" at: 3205 duration: 200 target: "msg3-detail" action: "enter" },
+        { id: "s3-auto-tovec3-title" at: 3260 duration: 200 target: "tovec3-title" action: "enter" },
+        { id: "s3-auto-tovec3-detail" at: 3315 duration: 200 target: "tovec3-detail" action: "enter" },
+        { id: "s3-auto-raw3-title" at: 3370 duration: 200 target: "raw3-title" action: "enter" },
+        { id: "s3-auto-raw3-detail" at: 3425 duration: 200 target: "raw3-detail" action: "enter" },
+        { id: "s3-auto-from3-title" at: 3480 duration: 200 target: "from3-title" action: "enter" },
+        { id: "s3-auto-from3-detail" at: 3535 duration: 200 target: "from3-detail" action: "enter" },
+        { id: "s3-auto-nan3-t" at: 3590 duration: 200 target: "nan3-t" action: "enter" },
+        { id: "s3-auto-inf3-t" at: 3645 duration: 200 target: "inf3-t" action: "enter" },
+        { id: "s3-auto-hb3-t" at: 3700 duration: 200 target: "hb3-t" action: "enter" },
+        { id: "s3-auto-part3-t" at: 3755 duration: 200 target: "part3-t" action: "enter" },
+        { id: "s3-auto-ann3a-title" at: 3810 duration: 200 target: "ann3a-title" action: "enter" },
+        { id: "s3-auto-ann3a-detail" at: 3865 duration: 200 target: "ann3a-detail" action: "enter" },
+        { id: "s3-auto-ann3b-title" at: 3920 duration: 200 target: "ann3b-title" action: "enter" },
+        { id: "s3-auto-ann3b-detail" at: 3975 duration: 200 target: "ann3b-detail" action: "enter" },
       ]
     }
   }
@@ -822,7 +899,7 @@ explainer "Velo deep dive" {
             { id: "ann4b-detail" capability: "core.text" text: "rising lag + drop" layout: { x: 428, y: 350, width: 204, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
           ]
         },
-        { id: "motion4" capability: "core.path" d: "M120 128 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "motion4" capability: "core.path" d: "M120 128 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
       ]
       timeline: [
         { id: "s4-hdr4" at: 0 duration: 260 target: "hdr4" action: "enter" },
@@ -844,6 +921,23 @@ explainer "Velo deep dive" {
         { id: "s4-ann4b" at: 1800 duration: 220 target: "ann4b" action: "enter" },
         { id: "s4-motion4" at: 1960 duration: 500 target: "motion4" action: "draw" },
         { id: "s4-emph" at: 2420 duration: 400 target: "hb42" action: "emphasis" },
+        { id: "s4-auto-hdr4-text" at: 2500 duration: 200 target: "hdr4-text" action: "enter" },
+        { id: "s4-auto-hdr4-cap" at: 2555 duration: 200 target: "hdr4-cap" action: "enter" },
+        { id: "s4-auto-hb40-title" at: 2610 duration: 200 target: "hb40-title" action: "enter" },
+        { id: "s4-auto-hb40-detail" at: 2665 duration: 200 target: "hb40-detail" action: "enter" },
+        { id: "s4-auto-hb41-title" at: 2720 duration: 200 target: "hb41-title" action: "enter" },
+        { id: "s4-auto-hb41-detail" at: 2775 duration: 200 target: "hb41-detail" action: "enter" },
+        { id: "s4-auto-hb42-title" at: 2830 duration: 200 target: "hb42-title" action: "enter" },
+        { id: "s4-auto-hb42-detail" at: 2885 duration: 200 target: "hb42-detail" action: "enter" },
+        { id: "s4-auto-agg4-title" at: 2940 duration: 200 target: "agg4-title" action: "enter" },
+        { id: "s4-auto-agg4-detail" at: 2995 duration: 200 target: "agg4-detail" action: "enter" },
+        { id: "s4-auto-m-cnt-t" at: 3050 duration: 200 target: "m-cnt-t" action: "enter" },
+        { id: "s4-auto-m-sk-t" at: 3105 duration: 200 target: "m-sk-t" action: "enter" },
+        { id: "s4-auto-m-lag-t" at: 3160 duration: 200 target: "m-lag-t" action: "enter" },
+        { id: "s4-auto-ann4a-title" at: 3215 duration: 200 target: "ann4a-title" action: "enter" },
+        { id: "s4-auto-ann4a-detail" at: 3270 duration: 200 target: "ann4a-detail" action: "enter" },
+        { id: "s4-auto-ann4b-title" at: 3325 duration: 200 target: "ann4b-title" action: "enter" },
+        { id: "s4-auto-ann4b-detail" at: 3380 duration: 200 target: "ann4b-detail" action: "enter" },
       ]
     }
   }
@@ -966,7 +1060,7 @@ explainer "Velo deep dive" {
             { id: "ann5b-detail" capability: "core.text" text: "terminal payload" layout: { x: 528, y: 325, width: 134, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
           ]
         },
-        { id: "motion5" capability: "core.path" d: "M110 155 H590" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "motion5" capability: "core.path" d: "M110 155 H590" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
       ]
       timeline: [
         { id: "s5-hdr5" at: 0 duration: 260 target: "hdr5" action: "enter" },
@@ -987,6 +1081,22 @@ explainer "Velo deep dive" {
         { id: "s5-ann5b" at: 2000 duration: 220 target: "ann5b" action: "enter" },
         { id: "s5-motion5" at: 2160 duration: 500 target: "motion5" action: "draw" },
         { id: "s5-emph" at: 2620 duration: 400 target: "ack5" action: "emphasis" },
+        { id: "s5-auto-hdr5-text" at: 2700 duration: 200 target: "hdr5-text" action: "enter" },
+        { id: "s5-auto-hdr5-cap" at: 2755 duration: 200 target: "hdr5-cap" action: "enter" },
+        { id: "s5-auto-fin5-title" at: 2810 duration: 200 target: "fin5-title" action: "enter" },
+        { id: "s5-auto-fin5-detail" at: 2865 duration: 200 target: "fin5-detail" action: "enter" },
+        { id: "s5-auto-unary5-title" at: 2920 duration: 200 target: "unary5-title" action: "enter" },
+        { id: "s5-auto-unary5-detail" at: 2975 duration: 200 target: "unary5-detail" action: "enter" },
+        { id: "s5-auto-ctrl5-title" at: 3030 duration: 200 target: "ctrl5-title" action: "enter" },
+        { id: "s5-auto-ctrl5-detail" at: 3085 duration: 200 target: "ctrl5-detail" action: "enter" },
+        { id: "s5-auto-ack5-title" at: 3140 duration: 200 target: "ack5-title" action: "enter" },
+        { id: "s5-auto-ack5-detail" at: 3195 duration: 200 target: "ack5-detail" action: "enter" },
+        { id: "s5-auto-mode-ret-t" at: 3250 duration: 200 target: "mode-ret-t" action: "enter" },
+        { id: "s5-auto-mode-fold-t" at: 3305 duration: 200 target: "mode-fold-t" action: "enter" },
+        { id: "s5-auto-ann5a-title" at: 3360 duration: 200 target: "ann5a-title" action: "enter" },
+        { id: "s5-auto-ann5a-detail" at: 3415 duration: 200 target: "ann5a-detail" action: "enter" },
+        { id: "s5-auto-ann5b-title" at: 3470 duration: 200 target: "ann5b-title" action: "enter" },
+        { id: "s5-auto-ann5b-detail" at: 3525 duration: 200 target: "ann5b-detail" action: "enter" },
       ]
     }
   }
@@ -1128,7 +1238,7 @@ explainer "Velo deep dive" {
             { id: "ann6a-detail" capability: "core.text" text: "merge_store_partitions" layout: { x: 188, y: 350, width: 184, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
           ]
         },
-        { id: "motion6" capability: "core.path" d: "M110 185 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "motion6" capability: "core.path" d: "M110 185 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
       ]
       timeline: [
         { id: "s6-hdr6" at: 0 duration: 260 target: "hdr6" action: "enter" },
@@ -1153,6 +1263,25 @@ explainer "Velo deep dive" {
         { id: "s6-ann6a" at: 2060 duration: 220 target: "ann6a" action: "enter" },
         { id: "s6-motion6" at: 2220 duration: 500 target: "motion6" action: "draw" },
         { id: "s6-emph" at: 2680 duration: 400 target: "merge6" action: "emphasis" },
+        { id: "s6-auto-hdr6-text" at: 2760 duration: 200 target: "hdr6-text" action: "enter" },
+        { id: "s6-auto-hdr6-cap" at: 2815 duration: 200 target: "hdr6-cap" action: "enter" },
+        { id: "s6-auto-p60-title" at: 2870 duration: 200 target: "p60-title" action: "enter" },
+        { id: "s6-auto-p60-detail" at: 2925 duration: 200 target: "p60-detail" action: "enter" },
+        { id: "s6-auto-p61-title" at: 2980 duration: 200 target: "p61-title" action: "enter" },
+        { id: "s6-auto-p61-detail" at: 3035 duration: 200 target: "p61-detail" action: "enter" },
+        { id: "s6-auto-p62-title" at: 3090 duration: 200 target: "p62-title" action: "enter" },
+        { id: "s6-auto-p62-detail" at: 3145 duration: 200 target: "p62-detail" action: "enter" },
+        { id: "s6-auto-p63-title" at: 3200 duration: 200 target: "p63-title" action: "enter" },
+        { id: "s6-auto-p63-detail" at: 3255 duration: 200 target: "p63-detail" action: "enter" },
+        { id: "s6-auto-merge6-title" at: 3310 duration: 200 target: "merge6-title" action: "enter" },
+        { id: "s6-auto-merge6-detail" at: 3365 duration: 200 target: "merge6-detail" action: "enter" },
+        { id: "s6-auto-one6-title" at: 3420 duration: 200 target: "one6-title" action: "enter" },
+        { id: "s6-auto-one6-detail" at: 3475 duration: 200 target: "one6-detail" action: "enter" },
+        { id: "s6-auto-rec-sort-t" at: 3530 duration: 200 target: "rec-sort-t" action: "enter" },
+        { id: "s6-auto-sto-app-t" at: 3585 duration: 200 target: "sto-app-t" action: "enter" },
+        { id: "s6-auto-sto-td-t" at: 3640 duration: 200 target: "sto-td-t" action: "enter" },
+        { id: "s6-auto-ann6a-title" at: 3695 duration: 200 target: "ann6a-title" action: "enter" },
+        { id: "s6-auto-ann6a-detail" at: 3750 duration: 200 target: "ann6a-detail" action: "enter" },
       ]
     }
   }
@@ -1291,7 +1420,7 @@ explainer "Velo deep dive" {
             { id: "ann7b-detail" capability: "core.text" text: "prefix + live tail" layout: { x: 448, y: 345, width: 184, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
           ]
         },
-        { id: "motion7" capability: "core.path" d: "M110 130 H590" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "motion7" capability: "core.path" d: "M110 130 H590" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
       ]
       timeline: [
         { id: "s7-hdr7" at: 0 duration: 260 target: "hdr7" action: "enter" },
@@ -1313,6 +1442,26 @@ explainer "Velo deep dive" {
         { id: "s7-note7" at: 1840 duration: 220 target: "note7" action: "enter" },
         { id: "s7-motion7" at: 2000 duration: 500 target: "motion7" action: "draw" },
         { id: "s7-emph" at: 2460 duration: 400 target: "attach7" action: "emphasis" },
+        { id: "s7-auto-hdr7-text" at: 2540 duration: 200 target: "hdr7-text" action: "enter" },
+        { id: "s7-auto-hdr7-cap" at: 2595 duration: 200 target: "hdr7-cap" action: "enter" },
+        { id: "s7-auto-g71-title" at: 2650 duration: 200 target: "g71-title" action: "enter" },
+        { id: "s7-auto-g71-detail" at: 2705 duration: 200 target: "g71-detail" action: "enter" },
+        { id: "s7-auto-g72-title" at: 2760 duration: 200 target: "g72-title" action: "enter" },
+        { id: "s7-auto-g72-detail" at: 2815 duration: 200 target: "g72-detail" action: "enter" },
+        { id: "s7-auto-g73-title" at: 2870 duration: 200 target: "g73-title" action: "enter" },
+        { id: "s7-auto-g73-detail" at: 2925 duration: 200 target: "g73-detail" action: "enter" },
+        { id: "s7-auto-g74-title" at: 2980 duration: 200 target: "g74-title" action: "enter" },
+        { id: "s7-auto-g74-detail" at: 3035 duration: 200 target: "g74-detail" action: "enter" },
+        { id: "s7-auto-g75-title" at: 3090 duration: 200 target: "g75-title" action: "enter" },
+        { id: "s7-auto-g75-detail" at: 3145 duration: 200 target: "g75-detail" action: "enter" },
+        { id: "s7-auto-attach7-title" at: 3200 duration: 200 target: "attach7-title" action: "enter" },
+        { id: "s7-auto-attach7-detail" at: 3255 duration: 200 target: "attach7-detail" action: "enter" },
+        { id: "s7-auto-srv7-t" at: 3310 duration: 200 target: "srv7-t" action: "enter" },
+        { id: "s7-auto-cli7-t" at: 3365 duration: 200 target: "cli7-t" action: "enter" },
+        { id: "s7-auto-ann7a-title" at: 3420 duration: 200 target: "ann7a-title" action: "enter" },
+        { id: "s7-auto-ann7a-detail" at: 3475 duration: 200 target: "ann7a-detail" action: "enter" },
+        { id: "s7-auto-ann7b-title" at: 3530 duration: 200 target: "ann7b-title" action: "enter" },
+        { id: "s7-auto-ann7b-detail" at: 3585 duration: 200 target: "ann7b-detail" action: "enter" },
       ]
     }
   }
@@ -1443,7 +1592,7 @@ explainer "Velo deep dive" {
             { id: "ann8a-detail" capability: "core.text" text: "ownership on receipt" layout: { x: 38, y: 373, width: 194, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary } }
           ]
         },
-        { id: "motion8" capability: "core.path" d: "M120 160 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "motion8" capability: "core.path" d: "M120 160 H560" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
       ]
       timeline: [
         { id: "s8-hdr8" at: 0 duration: 260 target: "hdr8" action: "enter" },
@@ -1465,6 +1614,24 @@ explainer "Velo deep dive" {
         { id: "s8-ann8a" at: 1780 duration: 220 target: "ann8a" action: "enter" },
         { id: "s8-motion8" at: 1940 duration: 500 target: "motion8" action: "draw" },
         { id: "s8-emph" at: 2400 duration: 400 target: "bcast8" action: "emphasis" },
+        { id: "s8-auto-hdr8-text" at: 2480 duration: 200 target: "hdr8-text" action: "enter" },
+        { id: "s8-auto-hdr8-cap" at: 2535 duration: 200 target: "hdr8-cap" action: "enter" },
+        { id: "s8-auto-chunk8-title" at: 2590 duration: 200 target: "chunk8-title" action: "enter" },
+        { id: "s8-auto-chunk8-detail" at: 2645 duration: 200 target: "chunk8-detail" action: "enter" },
+        { id: "s8-auto-bcast8-title" at: 2700 duration: 200 target: "bcast8-title" action: "enter" },
+        { id: "s8-auto-bcast8-detail" at: 2755 duration: 200 target: "bcast8-detail" action: "enter" },
+        { id: "s8-auto-cell80-title" at: 2810 duration: 200 target: "cell80-title" action: "enter" },
+        { id: "s8-auto-cell80-detail" at: 2865 duration: 200 target: "cell80-detail" action: "enter" },
+        { id: "s8-auto-cell81-title" at: 2920 duration: 200 target: "cell81-title" action: "enter" },
+        { id: "s8-auto-cell81-detail" at: 2975 duration: 200 target: "cell81-detail" action: "enter" },
+        { id: "s8-auto-cell82-title" at: 3030 duration: 200 target: "cell82-title" action: "enter" },
+        { id: "s8-auto-cell82-detail" at: 3085 duration: 200 target: "cell82-detail" action: "enter" },
+        { id: "s8-auto-rep8-t" at: 3140 duration: 200 target: "rep8-t" action: "enter" },
+        { id: "s8-auto-live8-t" at: 3195 duration: 200 target: "live8-t" action: "enter" },
+        { id: "s8-auto-idx8-title" at: 3250 duration: 200 target: "idx8-title" action: "enter" },
+        { id: "s8-auto-idx8-detail" at: 3305 duration: 200 target: "idx8-detail" action: "enter" },
+        { id: "s8-auto-ann8a-title" at: 3360 duration: 200 target: "ann8a-title" action: "enter" },
+        { id: "s8-auto-ann8a-detail" at: 3415 duration: 200 target: "ann8a-detail" action: "enter" },
       ]
     }
   }
@@ -1643,7 +1810,7 @@ explainer "Velo deep dive" {
             { id: "tree9-t" capability: "core.text" text: "tree fold" layout: { x: 134, y: 378, width: 82, height: 14 } style: { fontSize: 10, fontWeight: "bold", fill: @theme.ink.primary } }
           ]
         },
-        { id: "motion9" capability: "core.path" d: "M350 320 V156" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "motion9" capability: "core.path" d: "M350 320 V156" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }  accessibility: { label: "motion signal" } }
       ]
       timeline: [
         { id: "s9-hdr9" at: 0 duration: 260 target: "hdr9" action: "enter" },
@@ -1676,6 +1843,32 @@ explainer "Velo deep dive" {
         { id: "s9-note9" at: 2380 duration: 200 target: "note9" action: "enter" },
         { id: "s9-motion9" at: 2520 duration: 500 target: "motion9" action: "draw" },
         { id: "s9-emph" at: 2980 duration: 400 target: "ctrl9" action: "emphasis" },
+        { id: "s9-auto-hdr9-text" at: 3060 duration: 200 target: "hdr9-text" action: "enter" },
+        { id: "s9-auto-hdr9-cap" at: 3115 duration: 200 target: "hdr9-cap" action: "enter" },
+        { id: "s9-auto-ctrl9-title" at: 3170 duration: 200 target: "ctrl9-title" action: "enter" },
+        { id: "s9-auto-ctrl9-detail" at: 3225 duration: 200 target: "ctrl9-detail" action: "enter" },
+        { id: "s9-auto-agg90-title" at: 3280 duration: 200 target: "agg90-title" action: "enter" },
+        { id: "s9-auto-agg90-detail" at: 3335 duration: 200 target: "agg90-detail" action: "enter" },
+        { id: "s9-auto-agg91-title" at: 3390 duration: 200 target: "agg91-title" action: "enter" },
+        { id: "s9-auto-agg91-detail" at: 3445 duration: 200 target: "agg91-detail" action: "enter" },
+        { id: "s9-auto-c90-title" at: 3500 duration: 200 target: "c90-title" action: "enter" },
+        { id: "s9-auto-c90-detail" at: 3555 duration: 200 target: "c90-detail" action: "enter" },
+        { id: "s9-auto-c91-title" at: 3610 duration: 200 target: "c91-title" action: "enter" },
+        { id: "s9-auto-c91-detail" at: 3665 duration: 200 target: "c91-detail" action: "enter" },
+        { id: "s9-auto-c92-title" at: 3720 duration: 200 target: "c92-title" action: "enter" },
+        { id: "s9-auto-c92-detail" at: 3775 duration: 200 target: "c92-detail" action: "enter" },
+        { id: "s9-auto-c93-title" at: 3830 duration: 200 target: "c93-title" action: "enter" },
+        { id: "s9-auto-c93-detail" at: 3885 duration: 200 target: "c93-detail" action: "enter" },
+        { id: "s9-auto-c94-title" at: 3940 duration: 200 target: "c94-title" action: "enter" },
+        { id: "s9-auto-c94-detail" at: 3995 duration: 200 target: "c94-detail" action: "enter" },
+        { id: "s9-auto-c95-title" at: 4050 duration: 200 target: "c95-title" action: "enter" },
+        { id: "s9-auto-c95-detail" at: 4105 duration: 200 target: "c95-detail" action: "enter" },
+        { id: "s9-auto-c96-title" at: 4160 duration: 200 target: "c96-title" action: "enter" },
+        { id: "s9-auto-c96-detail" at: 4215 duration: 200 target: "c96-detail" action: "enter" },
+        { id: "s9-auto-c97-title" at: 4270 duration: 200 target: "c97-title" action: "enter" },
+        { id: "s9-auto-c97-detail" at: 4325 duration: 200 target: "c97-detail" action: "enter" },
+        { id: "s9-auto-flat9-t" at: 4380 duration: 200 target: "flat9-t" action: "enter" },
+        { id: "s9-auto-tree9-t" at: 4435 duration: 200 target: "tree9-t" action: "enter" },
       ]
     }
   }

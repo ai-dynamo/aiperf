@@ -221,6 +221,15 @@ explainer "SLURM + Velo from scratch" {
         { id: "s0-enter-s0-foot", at: 1010, duration: 240, target: "s0-foot", action: "enter" }
         { id: "s0-emph-srv", at: 1130, duration: 360, target: "s0-srv", action: "emphasis" }
         { id: "s0-motion-draw", at: 700, duration: 900, target: "s0-motion-sig", action: "draw" }
+        { id: "s0-auto-s0-gens-t", at: 1210, duration: 200, target: "s0-gens-t", action: "enter" }
+        { id: "s0-auto-s0-gens-s", at: 1265, duration: 200, target: "s0-gens-s", action: "enter" }
+        { id: "s0-auto-s0-gens-b", at: 1320, duration: 200, target: "s0-gens-b", action: "enter" }
+        { id: "s0-auto-s0-chip-0-t", at: 1375, duration: 200, target: "s0-chip-0-t", action: "enter" }
+        { id: "s0-auto-s0-chip-1-t", at: 1430, duration: 200, target: "s0-chip-1-t", action: "enter" }
+        { id: "s0-auto-s0-chip-2-t", at: 1485, duration: 200, target: "s0-chip-2-t", action: "enter" }
+        { id: "s0-auto-s0-srv-t", at: 1540, duration: 200, target: "s0-srv-t", action: "enter" }
+        { id: "s0-auto-s0-srv-s", at: 1595, duration: 200, target: "s0-srv-s", action: "enter" }
+        { id: "s0-auto-s0-srv-b", at: 1650, duration: 200, target: "s0-srv-b", action: "enter" }
       ]
     }
   }
@@ -484,6 +493,24 @@ explainer "SLURM + Velo from scratch" {
         { id: "s1-enter-s1-foot", at: 960, duration: 220, target: "s1-foot", action: "enter" }
         { id: "s1-emph-alloc", at: 1080, duration: 340, target: "s1-alloc", action: "emphasis" }
         { id: "s1-motion-draw", at: 700, duration: 900, target: "s1-motion-sig", action: "draw" }
+        { id: "s1-auto-s1-slurm-t", at: 1160, duration: 200, target: "s1-slurm-t", action: "enter" }
+        { id: "s1-auto-s1-slurm-s", at: 1215, duration: 200, target: "s1-slurm-s", action: "enter" }
+        { id: "s1-auto-s1-slurm-b", at: 1270, duration: 200, target: "s1-slurm-b", action: "enter" }
+        { id: "s1-auto-s1-slurm-c", at: 1325, duration: 200, target: "s1-slurm-c", action: "enter" }
+        { id: "s1-auto-s1-alloc-t", at: 1380, duration: 200, target: "s1-alloc-t", action: "enter" }
+        { id: "s1-auto-s1-task-0-t", at: 1435, duration: 200, target: "s1-task-0-t", action: "enter" }
+        { id: "s1-auto-s1-task-0-n", at: 1490, duration: 200, target: "s1-task-0-n", action: "enter" }
+        { id: "s1-auto-s1-task-0-s", at: 1545, duration: 200, target: "s1-task-0-s", action: "enter" }
+        { id: "s1-auto-s1-task-1-t", at: 1600, duration: 200, target: "s1-task-1-t", action: "enter" }
+        { id: "s1-auto-s1-task-1-n", at: 1655, duration: 200, target: "s1-task-1-n", action: "enter" }
+        { id: "s1-auto-s1-task-1-s", at: 1710, duration: 200, target: "s1-task-1-s", action: "enter" }
+        { id: "s1-auto-s1-task-2-t", at: 1765, duration: 200, target: "s1-task-2-t", action: "enter" }
+        { id: "s1-auto-s1-task-2-n", at: 1820, duration: 200, target: "s1-task-2-n", action: "enter" }
+        { id: "s1-auto-s1-task-2-s", at: 1875, duration: 200, target: "s1-task-2-s", action: "enter" }
+        { id: "s1-auto-s1-task-3-t", at: 1930, duration: 200, target: "s1-task-3-t", action: "enter" }
+        { id: "s1-auto-s1-task-3-n", at: 1985, duration: 200, target: "s1-task-3-n", action: "enter" }
+        { id: "s1-auto-s1-task-3-s", at: 2040, duration: 200, target: "s1-task-3-s", action: "enter" }
+        { id: "s1-auto-s1-alloc-b", at: 2095, duration: 200, target: "s1-alloc-b", action: "enter" }
       ]
     }
   }
@@ -704,6 +731,17 @@ explainer "SLURM + Velo from scratch" {
         { id: "s2-enter-s2-foot", at: 980, duration: 220, target: "s2-foot", action: "enter" }
         { id: "s2-emph-cmd", at: 1080, duration: 320, target: "s2-cmd", action: "emphasis" }
         { id: "s2-motion-draw", at: 700, duration: 900, target: "s2-motion-sig", action: "draw" }
+        { id: "s2-auto-s2-cmd-t", at: 1160, duration: 200, target: "s2-cmd-t", action: "enter" }
+        { id: "s2-auto-s2-cmd-s", at: 1215, duration: 200, target: "s2-cmd-s", action: "enter" }
+        { id: "s2-auto-s2-task-0-t", at: 1270, duration: 200, target: "s2-task-0-t", action: "enter" }
+        { id: "s2-auto-s2-task-0-r", at: 1325, duration: 200, target: "s2-task-0-r", action: "enter" }
+        { id: "s2-auto-s2-task-0-s", at: 1380, duration: 200, target: "s2-task-0-s", action: "enter" }
+        { id: "s2-auto-s2-task-1-t", at: 1435, duration: 200, target: "s2-task-1-t", action: "enter" }
+        { id: "s2-auto-s2-task-1-r", at: 1490, duration: 200, target: "s2-task-1-r", action: "enter" }
+        { id: "s2-auto-s2-task-1-s", at: 1545, duration: 200, target: "s2-task-1-s", action: "enter" }
+        { id: "s2-auto-s2-task-2-t", at: 1600, duration: 200, target: "s2-task-2-t", action: "enter" }
+        { id: "s2-auto-s2-task-2-r", at: 1655, duration: 200, target: "s2-task-2-r", action: "enter" }
+        { id: "s2-auto-s2-task-2-s", at: 1710, duration: 200, target: "s2-task-2-s", action: "enter" }
       ]
     }
   }
@@ -914,6 +952,19 @@ explainer "SLURM + Velo from scratch" {
         { id: "s3-enter-s3-foot", at: 810, duration: 220, target: "s3-foot", action: "enter" }
         { id: "s3-emph-r0", at: 920, duration: 320, target: "s3-r0", action: "emphasis" }
         { id: "s3-motion-draw", at: 700, duration: 900, target: "s3-motion-sig", action: "draw" }
+        { id: "s3-auto-s3-r0-t", at: 1000, duration: 200, target: "s3-r0-t", action: "enter" }
+        { id: "s3-auto-s3-r0-r", at: 1055, duration: 200, target: "s3-r0-r", action: "enter" }
+        { id: "s3-auto-s3-r0-s", at: 1110, duration: 200, target: "s3-r0-s", action: "enter" }
+        { id: "s3-auto-s3-r0-b", at: 1165, duration: 200, target: "s3-r0-b", action: "enter" }
+        { id: "s3-auto-s3-cell-0-t", at: 1220, duration: 200, target: "s3-cell-0-t", action: "enter" }
+        { id: "s3-auto-s3-cell-0-s", at: 1275, duration: 200, target: "s3-cell-0-s", action: "enter" }
+        { id: "s3-auto-s3-cell-0-d", at: 1330, duration: 200, target: "s3-cell-0-d", action: "enter" }
+        { id: "s3-auto-s3-cell-1-t", at: 1385, duration: 200, target: "s3-cell-1-t", action: "enter" }
+        { id: "s3-auto-s3-cell-1-s", at: 1440, duration: 200, target: "s3-cell-1-s", action: "enter" }
+        { id: "s3-auto-s3-cell-1-d", at: 1495, duration: 200, target: "s3-cell-1-d", action: "enter" }
+        { id: "s3-auto-s3-cell-2-t", at: 1550, duration: 200, target: "s3-cell-2-t", action: "enter" }
+        { id: "s3-auto-s3-cell-2-s", at: 1605, duration: 200, target: "s3-cell-2-s", action: "enter" }
+        { id: "s3-auto-s3-cell-2-d", at: 1660, duration: 200, target: "s3-cell-2-d", action: "enter" }
       ]
     }
   }
@@ -1156,6 +1207,21 @@ explainer "SLURM + Velo from scratch" {
         { id: "s4-enter-s4-foot", at: 1020, duration: 220, target: "s4-foot", action: "enter" }
         { id: "s4-emph-coord", at: 1130, duration: 320, target: "s4-coord", action: "emphasis" }
         { id: "s4-motion-draw", at: 700, duration: 900, target: "s4-motion-sig", action: "draw" }
+        { id: "s4-auto-s4-nodes-t", at: 1210, duration: 200, target: "s4-nodes-t", action: "enter" }
+        { id: "s4-auto-s4-nodes-s1", at: 1265, duration: 200, target: "s4-nodes-s1", action: "enter" }
+        { id: "s4-auto-s4-nodes-s2", at: 1320, duration: 200, target: "s4-nodes-s2", action: "enter" }
+        { id: "s4-auto-s4-nodes-s3", at: 1375, duration: 200, target: "s4-nodes-s3", action: "enter" }
+        { id: "s4-auto-s4-coord-t", at: 1430, duration: 200, target: "s4-coord-t", action: "enter" }
+        { id: "s4-auto-s4-coord-a", at: 1485, duration: 200, target: "s4-coord-a", action: "enter" }
+        { id: "s4-auto-s4-coord-s", at: 1540, duration: 200, target: "s4-coord-s", action: "enter" }
+        { id: "s4-auto-s4-coord-b", at: 1595, duration: 200, target: "s4-coord-b", action: "enter" }
+        { id: "s4-auto-s4-dial-t", at: 1650, duration: 200, target: "s4-dial-t", action: "enter" }
+        { id: "s4-auto-s4-dial-s1", at: 1705, duration: 200, target: "s4-dial-s1", action: "enter" }
+        { id: "s4-auto-s4-dial-s2", at: 1760, duration: 200, target: "s4-dial-s2", action: "enter" }
+        { id: "s4-auto-s4-dial-s3", at: 1815, duration: 200, target: "s4-dial-s3", action: "enter" }
+        { id: "s4-auto-s4-chip-0-t", at: 1870, duration: 200, target: "s4-chip-0-t", action: "enter" }
+        { id: "s4-auto-s4-chip-1-t", at: 1925, duration: 200, target: "s4-chip-1-t", action: "enter" }
+        { id: "s4-auto-s4-chip-2-t", at: 1980, duration: 200, target: "s4-chip-2-t", action: "enter" }
       ]
     }
   }
@@ -1397,6 +1463,19 @@ explainer "SLURM + Velo from scratch" {
         { id: "s5-enter-s5-foot", at: 960, duration: 220, target: "s5-foot", action: "enter" }
         { id: "s5-emph-velo", at: 1050, duration: 340, target: "s5-velo", action: "emphasis" }
         { id: "s5-motion-draw", at: 700, duration: 900, target: "s5-motion-sig", action: "draw" }
+        { id: "s5-auto-s5-ctrl-t", at: 1130, duration: 200, target: "s5-ctrl-t", action: "enter" }
+        { id: "s5-auto-s5-ctrl-r", at: 1185, duration: 200, target: "s5-ctrl-r", action: "enter" }
+        { id: "s5-auto-s5-ctrl-s1", at: 1240, duration: 200, target: "s5-ctrl-s1", action: "enter" }
+        { id: "s5-auto-s5-ctrl-s2", at: 1295, duration: 200, target: "s5-ctrl-s2", action: "enter" }
+        { id: "s5-auto-s5-ctrl-s3", at: 1350, duration: 200, target: "s5-ctrl-s3", action: "enter" }
+        { id: "s5-auto-s5-velo-t", at: 1405, duration: 200, target: "s5-velo-t", action: "enter" }
+        { id: "s5-auto-s5-velo-s", at: 1460, duration: 200, target: "s5-velo-s", action: "enter" }
+        { id: "s5-auto-s5-velo-b", at: 1515, duration: 200, target: "s5-velo-b", action: "enter" }
+        { id: "s5-auto-s5-cells-t", at: 1570, duration: 200, target: "s5-cells-t", action: "enter" }
+        { id: "s5-auto-s5-cells-r", at: 1625, duration: 200, target: "s5-cells-r", action: "enter" }
+        { id: "s5-auto-s5-cells-s1", at: 1680, duration: 200, target: "s5-cells-s1", action: "enter" }
+        { id: "s5-auto-s5-cells-s2", at: 1735, duration: 200, target: "s5-cells-s2", action: "enter" }
+        { id: "s5-auto-s5-cells-s3", at: 1790, duration: 200, target: "s5-cells-s3", action: "enter" }
       ]
     }
   }
@@ -1660,6 +1739,22 @@ explainer "SLURM + Velo from scratch" {
         { id: "s6-enter-s6-foot", at: 1010, duration: 200, target: "s6-foot", action: "enter" }
         { id: "s6-emph-connect", at: 1090, duration: 320, target: "s6-step-1", action: "emphasis" }
         { id: "s6-motion-draw", at: 700, duration: 900, target: "s6-motion-sig", action: "draw" }
+        { id: "s6-auto-s6-step-0-t", at: 1170, duration: 200, target: "s6-step-0-t", action: "enter" }
+        { id: "s6-auto-s6-step-0-s", at: 1225, duration: 200, target: "s6-step-0-s", action: "enter" }
+        { id: "s6-auto-s6-step-0-b", at: 1280, duration: 200, target: "s6-step-0-b", action: "enter" }
+        { id: "s6-auto-s6-step-0-n", at: 1335, duration: 200, target: "s6-step-0-n", action: "enter" }
+        { id: "s6-auto-s6-step-1-t", at: 1390, duration: 200, target: "s6-step-1-t", action: "enter" }
+        { id: "s6-auto-s6-step-1-s", at: 1445, duration: 200, target: "s6-step-1-s", action: "enter" }
+        { id: "s6-auto-s6-step-1-b", at: 1500, duration: 200, target: "s6-step-1-b", action: "enter" }
+        { id: "s6-auto-s6-step-1-n", at: 1555, duration: 200, target: "s6-step-1-n", action: "enter" }
+        { id: "s6-auto-s6-step-2-t", at: 1610, duration: 200, target: "s6-step-2-t", action: "enter" }
+        { id: "s6-auto-s6-step-2-s", at: 1665, duration: 200, target: "s6-step-2-s", action: "enter" }
+        { id: "s6-auto-s6-step-2-b", at: 1720, duration: 200, target: "s6-step-2-b", action: "enter" }
+        { id: "s6-auto-s6-step-2-n", at: 1775, duration: 200, target: "s6-step-2-n", action: "enter" }
+        { id: "s6-auto-s6-step-3-t", at: 1830, duration: 200, target: "s6-step-3-t", action: "enter" }
+        { id: "s6-auto-s6-step-3-s", at: 1885, duration: 200, target: "s6-step-3-s", action: "enter" }
+        { id: "s6-auto-s6-step-3-b", at: 1940, duration: 200, target: "s6-step-3-b", action: "enter" }
+        { id: "s6-auto-s6-step-3-n", at: 1995, duration: 200, target: "s6-step-3-n", action: "enter" }
       ]
     }
   }
@@ -1960,6 +2055,27 @@ explainer "SLURM + Velo from scratch" {
         { id: "s7-enter-s7-note", at: 1060, duration: 220, target: "s7-note", action: "enter" }
         { id: "s7-emph-start", at: 1170, duration: 360, target: "s7-step-4", action: "emphasis" }
         { id: "s7-motion-draw", at: 700, duration: 900, target: "s7-motion-sig", action: "draw" }
+        { id: "s7-auto-s7-step-0-t", at: 1250, duration: 200, target: "s7-step-0-t", action: "enter" }
+        { id: "s7-auto-s7-step-0-s", at: 1305, duration: 200, target: "s7-step-0-s", action: "enter" }
+        { id: "s7-auto-s7-step-0-b", at: 1360, duration: 200, target: "s7-step-0-b", action: "enter" }
+        { id: "s7-auto-s7-step-0-n", at: 1415, duration: 200, target: "s7-step-0-n", action: "enter" }
+        { id: "s7-auto-s7-step-1-t", at: 1470, duration: 200, target: "s7-step-1-t", action: "enter" }
+        { id: "s7-auto-s7-step-1-s", at: 1525, duration: 200, target: "s7-step-1-s", action: "enter" }
+        { id: "s7-auto-s7-step-1-b", at: 1580, duration: 200, target: "s7-step-1-b", action: "enter" }
+        { id: "s7-auto-s7-step-1-n", at: 1635, duration: 200, target: "s7-step-1-n", action: "enter" }
+        { id: "s7-auto-s7-step-2-t", at: 1690, duration: 200, target: "s7-step-2-t", action: "enter" }
+        { id: "s7-auto-s7-step-2-s", at: 1745, duration: 200, target: "s7-step-2-s", action: "enter" }
+        { id: "s7-auto-s7-step-2-b", at: 1800, duration: 200, target: "s7-step-2-b", action: "enter" }
+        { id: "s7-auto-s7-step-2-n", at: 1855, duration: 200, target: "s7-step-2-n", action: "enter" }
+        { id: "s7-auto-s7-step-3-t", at: 1910, duration: 200, target: "s7-step-3-t", action: "enter" }
+        { id: "s7-auto-s7-step-3-s", at: 1965, duration: 200, target: "s7-step-3-s", action: "enter" }
+        { id: "s7-auto-s7-step-3-b", at: 2020, duration: 200, target: "s7-step-3-b", action: "enter" }
+        { id: "s7-auto-s7-step-3-n", at: 2075, duration: 200, target: "s7-step-3-n", action: "enter" }
+        { id: "s7-auto-s7-step-4-t", at: 2130, duration: 200, target: "s7-step-4-t", action: "enter" }
+        { id: "s7-auto-s7-step-4-s", at: 2185, duration: 200, target: "s7-step-4-s", action: "enter" }
+        { id: "s7-auto-s7-step-4-b", at: 2240, duration: 200, target: "s7-step-4-b", action: "enter" }
+        { id: "s7-auto-s7-step-4-n", at: 2295, duration: 200, target: "s7-step-4-n", action: "enter" }
+        { id: "s7-auto-s7-barrier-t", at: 2350, duration: 200, target: "s7-barrier-t", action: "enter" }
       ]
     }
   }
@@ -2141,6 +2257,15 @@ explainer "SLURM + Velo from scratch" {
         { id: "s8-enter-s8-foot", at: 730, duration: 220, target: "s8-foot", action: "enter" }
         { id: "s8-emph-hot", at: 820, duration: 320, target: "s8-hot", action: "emphasis" }
         { id: "s8-motion-draw", at: 700, duration: 900, target: "s8-motion-sig", action: "draw" }
+        { id: "s8-auto-s8-cells-t", at: 900, duration: 200, target: "s8-cells-t", action: "enter" }
+        { id: "s8-auto-s8-cells-s1", at: 955, duration: 200, target: "s8-cells-s1", action: "enter" }
+        { id: "s8-auto-s8-cells-s2", at: 1010, duration: 200, target: "s8-cells-s2", action: "enter" }
+        { id: "s8-auto-s8-cells-s3", at: 1065, duration: 200, target: "s8-cells-s3", action: "enter" }
+        { id: "s8-auto-s8-srv-t", at: 1120, duration: 200, target: "s8-srv-t", action: "enter" }
+        { id: "s8-auto-s8-srv-s", at: 1175, duration: 200, target: "s8-srv-s", action: "enter" }
+        { id: "s8-auto-s8-srv-b", at: 1230, duration: 200, target: "s8-srv-b", action: "enter" }
+        { id: "s8-auto-s8-hb-t", at: 1285, duration: 200, target: "s8-hb-t", action: "enter" }
+        { id: "s8-auto-s8-hb-s", at: 1340, duration: 200, target: "s8-hb-s", action: "enter" }
       ]
     }
   }
@@ -2308,6 +2433,21 @@ explainer "SLURM + Velo from scratch" {
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
+,
+{
+          id: "s9-link-0"
+          capability: "core.path"
+          d: "M200 180 H280"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2, opacity: 0.9 }
+        },
+{
+          id: "s9-link-1"
+          capability: "core.path"
+          d: "M420 180 H500"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 2.2, opacity: 0.9 }
+        }
       ]
       timeline: [
         { id: "s9-enter-hdr", at: 0, duration: 280, target: "s9-hdr", action: "enter" }
@@ -2319,6 +2459,20 @@ explainer "SLURM + Velo from scratch" {
         { id: "s9-enter-s9-foot", at: 550, duration: 220, target: "s9-foot", action: "enter" }
         { id: "s9-emph-velo", at: 650, duration: 320, target: "s9-p-0", action: "emphasis" }
         { id: "s9-motion-draw", at: 700, duration: 900, target: "s9-motion-sig", action: "draw" }
+        { id: "s9-draw-link-0", at: 740, duration: 280, target: "s9-link-0", action: "draw" }
+        { id: "s9-draw-link-1", at: 820, duration: 280, target: "s9-link-1", action: "draw" }
+        { id: "s9-auto-s9-p-0-t", at: 900, duration: 200, target: "s9-p-0-t", action: "enter" }
+        { id: "s9-auto-s9-p-0-r", at: 955, duration: 200, target: "s9-p-0-r", action: "enter" }
+        { id: "s9-auto-s9-p-0-badge", at: 1010, duration: 200, target: "s9-p-0-badge", action: "enter" }
+        { id: "s9-auto-s9-p-0-d", at: 1065, duration: 200, target: "s9-p-0-d", action: "enter" }
+        { id: "s9-auto-s9-p-1-t", at: 1120, duration: 200, target: "s9-p-1-t", action: "enter" }
+        { id: "s9-auto-s9-p-1-r", at: 1175, duration: 200, target: "s9-p-1-r", action: "enter" }
+        { id: "s9-auto-s9-p-1-badge", at: 1230, duration: 200, target: "s9-p-1-badge", action: "enter" }
+        { id: "s9-auto-s9-p-1-d", at: 1285, duration: 200, target: "s9-p-1-d", action: "enter" }
+        { id: "s9-auto-s9-p-2-t", at: 1340, duration: 200, target: "s9-p-2-t", action: "enter" }
+        { id: "s9-auto-s9-p-2-r", at: 1395, duration: 200, target: "s9-p-2-r", action: "enter" }
+        { id: "s9-auto-s9-p-2-badge", at: 1450, duration: 200, target: "s9-p-2-badge", action: "enter" }
+        { id: "s9-auto-s9-p-2-d", at: 1505, duration: 200, target: "s9-p-2-d", action: "enter" }
       ]
     }
   }
@@ -2574,6 +2728,22 @@ explainer "SLURM + Velo from scratch" {
         { id: "s10-enter-s10-foot", at: 930, duration: 200, target: "s10-foot", action: "enter" }
         { id: "s10-emph-report", at: 1010, duration: 340, target: "s10-step-3", action: "emphasis" }
         { id: "s10-motion-draw", at: 700, duration: 900, target: "s10-motion-sig", action: "draw" }
+        { id: "s10-auto-s10-step-0-t", at: 1090, duration: 200, target: "s10-step-0-t", action: "enter" }
+        { id: "s10-auto-s10-step-0-s", at: 1145, duration: 200, target: "s10-step-0-s", action: "enter" }
+        { id: "s10-auto-s10-step-0-b", at: 1200, duration: 200, target: "s10-step-0-b", action: "enter" }
+        { id: "s10-auto-s10-step-0-n", at: 1255, duration: 200, target: "s10-step-0-n", action: "enter" }
+        { id: "s10-auto-s10-step-1-t", at: 1310, duration: 200, target: "s10-step-1-t", action: "enter" }
+        { id: "s10-auto-s10-step-1-s", at: 1365, duration: 200, target: "s10-step-1-s", action: "enter" }
+        { id: "s10-auto-s10-step-1-b", at: 1420, duration: 200, target: "s10-step-1-b", action: "enter" }
+        { id: "s10-auto-s10-step-1-n", at: 1475, duration: 200, target: "s10-step-1-n", action: "enter" }
+        { id: "s10-auto-s10-step-2-t", at: 1530, duration: 200, target: "s10-step-2-t", action: "enter" }
+        { id: "s10-auto-s10-step-2-s", at: 1585, duration: 200, target: "s10-step-2-s", action: "enter" }
+        { id: "s10-auto-s10-step-2-b", at: 1640, duration: 200, target: "s10-step-2-b", action: "enter" }
+        { id: "s10-auto-s10-step-2-n", at: 1695, duration: 200, target: "s10-step-2-n", action: "enter" }
+        { id: "s10-auto-s10-step-3-t", at: 1750, duration: 200, target: "s10-step-3-t", action: "enter" }
+        { id: "s10-auto-s10-step-3-s", at: 1805, duration: 200, target: "s10-step-3-s", action: "enter" }
+        { id: "s10-auto-s10-step-3-b", at: 1860, duration: 200, target: "s10-step-3-b", action: "enter" }
+        { id: "s10-auto-s10-step-3-n", at: 1915, duration: 200, target: "s10-step-3-n", action: "enter" }
       ]
     }
   }
@@ -2777,6 +2947,18 @@ explainer "SLURM + Velo from scratch" {
         { id: "s11-enter-s11-note", at: 780, duration: 220, target: "s11-note", action: "enter" }
         { id: "s11-emph-http", at: 870, duration: 320, target: "s11-http", action: "emphasis" }
         { id: "s11-motion-draw", at: 700, duration: 900, target: "s11-motion-sig", action: "draw" }
+        { id: "s11-auto-s11-velo-t", at: 950, duration: 200, target: "s11-velo-t", action: "enter" }
+        { id: "s11-auto-s11-velo-s1", at: 1005, duration: 200, target: "s11-velo-s1", action: "enter" }
+        { id: "s11-auto-s11-velo-s2", at: 1060, duration: 200, target: "s11-velo-s2", action: "enter" }
+        { id: "s11-auto-s11-velo-s3", at: 1115, duration: 200, target: "s11-velo-s3", action: "enter" }
+        { id: "s11-auto-s11-velo-s4", at: 1170, duration: 200, target: "s11-velo-s4", action: "enter" }
+        { id: "s11-auto-s11-http-t", at: 1225, duration: 200, target: "s11-http-t", action: "enter" }
+        { id: "s11-auto-s11-http-s1", at: 1280, duration: 200, target: "s11-http-s1", action: "enter" }
+        { id: "s11-auto-s11-http-s2", at: 1335, duration: 200, target: "s11-http-s2", action: "enter" }
+        { id: "s11-auto-s11-http-s3", at: 1390, duration: 200, target: "s11-http-s3", action: "enter" }
+        { id: "s11-auto-s11-http-s4", at: 1445, duration: 200, target: "s11-http-s4", action: "enter" }
+        { id: "s11-auto-s11-badge-s-t", at: 1500, duration: 200, target: "s11-badge-s-t", action: "enter" }
+        { id: "s11-auto-s11-badge-l-t", at: 1555, duration: 200, target: "s11-badge-l-t", action: "enter" }
       ]
     }
   }
@@ -2964,6 +3146,17 @@ explainer "SLURM + Velo from scratch" {
         { id: "s12-enter-s12-foot", at: 660, duration: 220, target: "s12-foot", action: "enter" }
         { id: "s12-emph-role", at: 750, duration: 320, target: "s12-role", action: "emphasis" }
         { id: "s12-motion-draw", at: 700, duration: 900, target: "s12-motion-sig", action: "draw" }
+        { id: "s12-auto-s12-role-t", at: 830, duration: 200, target: "s12-role-t", action: "enter" }
+        { id: "s12-auto-s12-role-r", at: 885, duration: 200, target: "s12-role-r", action: "enter" }
+        { id: "s12-auto-s12-role-s1", at: 940, duration: 200, target: "s12-role-s1", action: "enter" }
+        { id: "s12-auto-s12-role-s2", at: 995, duration: 200, target: "s12-role-s2", action: "enter" }
+        { id: "s12-auto-s12-role-s3", at: 1050, duration: 200, target: "s12-role-s3", action: "enter" }
+        { id: "s12-auto-s12-node-t", at: 1105, duration: 200, target: "s12-node-t", action: "enter" }
+        { id: "s12-auto-s12-node-r", at: 1160, duration: 200, target: "s12-node-r", action: "enter" }
+        { id: "s12-auto-s12-node-s1", at: 1215, duration: 200, target: "s12-node-s1", action: "enter" }
+        { id: "s12-auto-s12-node-s2", at: 1270, duration: 200, target: "s12-node-s2", action: "enter" }
+        { id: "s12-auto-s12-node-s3", at: 1325, duration: 200, target: "s12-node-s3", action: "enter" }
+        { id: "s12-auto-s12-tip-t", at: 1380, duration: 200, target: "s12-tip-t", action: "enter" }
       ]
     }
   }
@@ -3214,6 +3407,20 @@ explainer "SLURM + Velo from scratch" {
         { id: "s13-enter-s13-foot", at: 1065, duration: 200, target: "s13-foot", action: "enter" }
         { id: "s13-emph-r0", at: 1145, duration: 320, target: "s13-r0", action: "emphasis" }
         { id: "s13-motion-draw", at: 700, duration: 900, target: "s13-motion-sig", action: "draw" }
+        { id: "s13-auto-s13-r0-t", at: 1225, duration: 200, target: "s13-r0-t", action: "enter" }
+        { id: "s13-auto-s13-r0-r", at: 1280, duration: 200, target: "s13-r0-r", action: "enter" }
+        { id: "s13-auto-s13-r0-s", at: 1335, duration: 200, target: "s13-r0-s", action: "enter" }
+        { id: "s13-auto-s13-r0-b", at: 1390, duration: 200, target: "s13-r0-b", action: "enter" }
+        { id: "s13-auto-s13-velo-t", at: 1445, duration: 200, target: "s13-velo-t", action: "enter" }
+        { id: "s13-auto-s13-cell-0-t", at: 1500, duration: 200, target: "s13-cell-0-t", action: "enter" }
+        { id: "s13-auto-s13-cell-0-r", at: 1555, duration: 200, target: "s13-cell-0-r", action: "enter" }
+        { id: "s13-auto-s13-cell-0-s", at: 1610, duration: 200, target: "s13-cell-0-s", action: "enter" }
+        { id: "s13-auto-s13-cell-1-t", at: 1665, duration: 200, target: "s13-cell-1-t", action: "enter" }
+        { id: "s13-auto-s13-cell-1-r", at: 1720, duration: 200, target: "s13-cell-1-r", action: "enter" }
+        { id: "s13-auto-s13-cell-1-s", at: 1775, duration: 200, target: "s13-cell-1-s", action: "enter" }
+        { id: "s13-auto-s13-cell-2-t", at: 1830, duration: 200, target: "s13-cell-2-t", action: "enter" }
+        { id: "s13-auto-s13-cell-2-r", at: 1885, duration: 200, target: "s13-cell-2-r", action: "enter" }
+        { id: "s13-auto-s13-cell-2-s", at: 1940, duration: 200, target: "s13-cell-2-s", action: "enter" }
       ]
     }
   }
@@ -3464,6 +3671,20 @@ explainer "SLURM + Velo from scratch" {
         { id: "s14-enter-s14-foot", at: 1065, duration: 200, target: "s14-foot", action: "enter" }
         { id: "s14-emph-r0", at: 1145, duration: 340, target: "s14-r0", action: "emphasis" }
         { id: "s14-motion-draw", at: 700, duration: 900, target: "s14-motion-sig", action: "draw" }
+        { id: "s14-auto-s14-cell-0-t", at: 1225, duration: 200, target: "s14-cell-0-t", action: "enter" }
+        { id: "s14-auto-s14-cell-0-r", at: 1280, duration: 200, target: "s14-cell-0-r", action: "enter" }
+        { id: "s14-auto-s14-cell-0-s", at: 1335, duration: 200, target: "s14-cell-0-s", action: "enter" }
+        { id: "s14-auto-s14-cell-1-t", at: 1390, duration: 200, target: "s14-cell-1-t", action: "enter" }
+        { id: "s14-auto-s14-cell-1-r", at: 1445, duration: 200, target: "s14-cell-1-r", action: "enter" }
+        { id: "s14-auto-s14-cell-1-s", at: 1500, duration: 200, target: "s14-cell-1-s", action: "enter" }
+        { id: "s14-auto-s14-cell-2-t", at: 1555, duration: 200, target: "s14-cell-2-t", action: "enter" }
+        { id: "s14-auto-s14-cell-2-r", at: 1610, duration: 200, target: "s14-cell-2-r", action: "enter" }
+        { id: "s14-auto-s14-cell-2-s", at: 1665, duration: 200, target: "s14-cell-2-s", action: "enter" }
+        { id: "s14-auto-s14-velo-t", at: 1720, duration: 200, target: "s14-velo-t", action: "enter" }
+        { id: "s14-auto-s14-r0-t", at: 1775, duration: 200, target: "s14-r0-t", action: "enter" }
+        { id: "s14-auto-s14-r0-r", at: 1830, duration: 200, target: "s14-r0-r", action: "enter" }
+        { id: "s14-auto-s14-r0-s", at: 1885, duration: 200, target: "s14-r0-s", action: "enter" }
+        { id: "s14-auto-s14-r0-b", at: 1940, duration: 200, target: "s14-r0-b", action: "enter" }
       ]
     }
   }
@@ -3776,6 +3997,28 @@ explainer "SLURM + Velo from scratch" {
         { id: "s15-enter-s15-foot", at: 1170, duration: 220, target: "s15-foot", action: "enter" }
         { id: "s15-emph-report", at: 1270, duration: 360, target: "s15-step-4", action: "emphasis" }
         { id: "s15-motion-draw", at: 700, duration: 900, target: "s15-motion-sig", action: "draw" }
+        { id: "s15-auto-s15-step-0-t", at: 1350, duration: 200, target: "s15-step-0-t", action: "enter" }
+        { id: "s15-auto-s15-step-0-s", at: 1405, duration: 200, target: "s15-step-0-s", action: "enter" }
+        { id: "s15-auto-s15-step-0-b", at: 1460, duration: 200, target: "s15-step-0-b", action: "enter" }
+        { id: "s15-auto-s15-step-0-n", at: 1515, duration: 200, target: "s15-step-0-n", action: "enter" }
+        { id: "s15-auto-s15-step-1-t", at: 1570, duration: 200, target: "s15-step-1-t", action: "enter" }
+        { id: "s15-auto-s15-step-1-s", at: 1625, duration: 200, target: "s15-step-1-s", action: "enter" }
+        { id: "s15-auto-s15-step-1-b", at: 1680, duration: 200, target: "s15-step-1-b", action: "enter" }
+        { id: "s15-auto-s15-step-1-n", at: 1735, duration: 200, target: "s15-step-1-n", action: "enter" }
+        { id: "s15-auto-s15-step-2-t", at: 1790, duration: 200, target: "s15-step-2-t", action: "enter" }
+        { id: "s15-auto-s15-step-2-s", at: 1845, duration: 200, target: "s15-step-2-s", action: "enter" }
+        { id: "s15-auto-s15-step-2-b", at: 1900, duration: 200, target: "s15-step-2-b", action: "enter" }
+        { id: "s15-auto-s15-step-2-n", at: 1955, duration: 200, target: "s15-step-2-n", action: "enter" }
+        { id: "s15-auto-s15-step-3-t", at: 2010, duration: 200, target: "s15-step-3-t", action: "enter" }
+        { id: "s15-auto-s15-step-3-s", at: 2065, duration: 200, target: "s15-step-3-s", action: "enter" }
+        { id: "s15-auto-s15-step-3-b", at: 2120, duration: 200, target: "s15-step-3-b", action: "enter" }
+        { id: "s15-auto-s15-step-3-n", at: 2175, duration: 200, target: "s15-step-3-n", action: "enter" }
+        { id: "s15-auto-s15-step-4-t", at: 2230, duration: 200, target: "s15-step-4-t", action: "enter" }
+        { id: "s15-auto-s15-step-4-s", at: 2285, duration: 200, target: "s15-step-4-s", action: "enter" }
+        { id: "s15-auto-s15-step-4-b", at: 2340, duration: 200, target: "s15-step-4-b", action: "enter" }
+        { id: "s15-auto-s15-step-4-n", at: 2395, duration: 200, target: "s15-step-4-n", action: "enter" }
+        { id: "s15-auto-s15-cmd1-t", at: 2450, duration: 200, target: "s15-cmd1-t", action: "enter" }
+        { id: "s15-auto-s15-cmd2-t", at: 2505, duration: 200, target: "s15-cmd2-t", action: "enter" }
       ]
     }
   }

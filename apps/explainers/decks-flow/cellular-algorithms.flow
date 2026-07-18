@@ -454,7 +454,8 @@ explainer "Cellular algorithm workbook" {
       d: "M70 132 H630"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-    }
+          accessibility: { label: "motion signal" }
+}
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
@@ -479,7 +480,42 @@ explainer "Cellular algorithm workbook" {
     { id: "t-chip-route", at: 1540, duration: 220, target: "chip-route", action: "enter" }
     { id: "t-chip-evidence", at: 1610, duration: 220, target: "chip-evidence", action: "enter" }
     { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-  ]
+        { id: "s0-auto-ch-eligibility-n", at: 1690, duration: 200, target: "ch-eligibility-n", action: "enter" }
+        { id: "s0-auto-ch-eligibility-title", at: 1745, duration: 200, target: "ch-eligibility-title", action: "enter" }
+        { id: "s0-auto-ch-eligibility-detail", at: 1800, duration: 200, target: "ch-eligibility-detail", action: "enter" }
+        { id: "s0-auto-ch-eligibility-sub", at: 1855, duration: 200, target: "ch-eligibility-sub", action: "enter" }
+        { id: "s0-auto-ch-ownership-n", at: 1910, duration: 200, target: "ch-ownership-n", action: "enter" }
+        { id: "s0-auto-ch-ownership-title", at: 1965, duration: 200, target: "ch-ownership-title", action: "enter" }
+        { id: "s0-auto-ch-ownership-detail", at: 2020, duration: 200, target: "ch-ownership-detail", action: "enter" }
+        { id: "s0-auto-ch-ownership-sub", at: 2075, duration: 200, target: "ch-ownership-sub", action: "enter" }
+        { id: "s0-auto-ch-control-n", at: 2130, duration: 200, target: "ch-control-n", action: "enter" }
+        { id: "s0-auto-ch-control-title", at: 2185, duration: 200, target: "ch-control-title", action: "enter" }
+        { id: "s0-auto-ch-control-detail", at: 2240, duration: 200, target: "ch-control-detail", action: "enter" }
+        { id: "s0-auto-ch-control-sub", at: 2295, duration: 200, target: "ch-control-sub", action: "enter" }
+        { id: "s0-auto-ch-distribution-n", at: 2350, duration: 200, target: "ch-distribution-n", action: "enter" }
+        { id: "s0-auto-ch-distribution-title", at: 2405, duration: 200, target: "ch-distribution-title", action: "enter" }
+        { id: "s0-auto-ch-distribution-detail", at: 2460, duration: 200, target: "ch-distribution-detail", action: "enter" }
+        { id: "s0-auto-ch-distribution-sub", at: 2515, duration: 200, target: "ch-distribution-sub", action: "enter" }
+        { id: "s0-auto-ch-execution-n", at: 2570, duration: 200, target: "ch-execution-n", action: "enter" }
+        { id: "s0-auto-ch-execution-title", at: 2625, duration: 200, target: "ch-execution-title", action: "enter" }
+        { id: "s0-auto-ch-execution-detail", at: 2680, duration: 200, target: "ch-execution-detail", action: "enter" }
+        { id: "s0-auto-ch-execution-sub", at: 2735, duration: 200, target: "ch-execution-sub", action: "enter" }
+        { id: "s0-auto-ch-capture-n", at: 2790, duration: 200, target: "ch-capture-n", action: "enter" }
+        { id: "s0-auto-ch-capture-title", at: 2845, duration: 200, target: "ch-capture-title", action: "enter" }
+        { id: "s0-auto-ch-capture-detail", at: 2900, duration: 200, target: "ch-capture-detail", action: "enter" }
+        { id: "s0-auto-ch-capture-sub", at: 2955, duration: 200, target: "ch-capture-sub", action: "enter" }
+        { id: "s0-auto-ch-merge-n", at: 3010, duration: 200, target: "ch-merge-n", action: "enter" }
+        { id: "s0-auto-ch-merge-title", at: 3065, duration: 200, target: "ch-merge-title", action: "enter" }
+        { id: "s0-auto-ch-merge-detail", at: 3120, duration: 200, target: "ch-merge-detail", action: "enter" }
+        { id: "s0-auto-ch-merge-sub", at: 3175, duration: 200, target: "ch-merge-sub", action: "enter" }
+        { id: "s0-auto-ch-artifacts-n", at: 3230, duration: 200, target: "ch-artifacts-n", action: "enter" }
+        { id: "s0-auto-ch-artifacts-title", at: 3285, duration: 200, target: "ch-artifacts-title", action: "enter" }
+        { id: "s0-auto-ch-artifacts-detail", at: 3340, duration: 200, target: "ch-artifacts-detail", action: "enter" }
+        { id: "s0-auto-ch-artifacts-sub", at: 3395, duration: 200, target: "ch-artifacts-sub", action: "enter" }
+        { id: "s0-auto-chip-route-t", at: 3450, duration: 200, target: "chip-route-t", action: "enter" }
+        { id: "s0-auto-chip-evidence-t", at: 3505, duration: 200, target: "chip-evidence-t", action: "enter" }
+        { id: "s0-auto-emph", at: 3600, duration: 400, target: "chip-evidence", action: "emphasis" }
+      ]
     }
   }
 
@@ -746,6 +782,38 @@ explainer "Cellular algorithm workbook" {
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
         }
       ]
+    },
+{
+      id: "a-built-partial"
+      capability: "core.path"
+      d: "M225 162 H255"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    ,
+{
+      id: "a-partial-gated"
+      capability: "core.path"
+      d: "M445 162 H475"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.caution, strokeWidth: 2.2 }
+    }
+    ,
+{
+      id: "a-to-evidence"
+      capability: "core.path"
+      d: "M350 206 V240"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+    }
+    ,
+{
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M130 162 H570"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
+      accessibility: { label: "motion signal" }
     }
     ]
   timeline: [
@@ -763,7 +831,30 @@ explainer "Cellular algorithm workbook" {
     { id: "t-ev-unit", at: 990, duration: 200, target: "ev-unit", action: "enter" }
     { id: "t-ev-integration", at: 1060, duration: 200, target: "ev-integration", action: "enter" }
     { id: "t-ev-end-to-end", at: 1130, duration: 200, target: "ev-end-to-end", action: "enter" }
-  ]
+    { id: "t-a-built-partial", at: 700, duration: 280, target: "a-built-partial", action: "draw" }
+    { id: "t-a-partial-gated", at: 780, duration: 280, target: "a-partial-gated", action: "draw" }
+    { id: "t-a-to-evidence", at: 860, duration: 300, target: "a-to-evidence", action: "draw" }
+    { id: "t-motion-sig", at: 940, duration: 520, target: "motion-sig", action: "draw" }
+    { id: "t-emphasis", at: 1180, duration: 400, target: "evidence", action: "emphasis" }
+        { id: "s1-auto-algo-built-title", at: 1260, duration: 200, target: "algo-built-title", action: "enter" }
+        { id: "s1-auto-algo-built-detail", at: 1315, duration: 200, target: "algo-built-detail", action: "enter" }
+        { id: "s1-auto-algo-built-sub", at: 1370, duration: 200, target: "algo-built-sub", action: "enter" }
+        { id: "s1-auto-st-algo-built-t", at: 1425, duration: 200, target: "st-algo-built-t", action: "enter" }
+        { id: "s1-auto-algo-partial-title", at: 1480, duration: 200, target: "algo-partial-title", action: "enter" }
+        { id: "s1-auto-algo-partial-detail", at: 1535, duration: 200, target: "algo-partial-detail", action: "enter" }
+        { id: "s1-auto-algo-partial-sub", at: 1590, duration: 200, target: "algo-partial-sub", action: "enter" }
+        { id: "s1-auto-st-algo-partial-t", at: 1645, duration: 200, target: "st-algo-partial-t", action: "enter" }
+        { id: "s1-auto-algo-gated-title", at: 1700, duration: 200, target: "algo-gated-title", action: "enter" }
+        { id: "s1-auto-algo-gated-detail", at: 1755, duration: 200, target: "algo-gated-detail", action: "enter" }
+        { id: "s1-auto-algo-gated-sub", at: 1810, duration: 200, target: "algo-gated-sub", action: "enter" }
+        { id: "s1-auto-st-algo-gated-t", at: 1865, duration: 200, target: "st-algo-gated-t", action: "enter" }
+        { id: "s1-auto-evidence-title", at: 1920, duration: 200, target: "evidence-title", action: "enter" }
+        { id: "s1-auto-evidence-detail", at: 1975, duration: 200, target: "evidence-detail", action: "enter" }
+        { id: "s1-auto-ev-boundary-t", at: 2030, duration: 200, target: "ev-boundary-t", action: "enter" }
+        { id: "s1-auto-ev-unit-t", at: 2085, duration: 200, target: "ev-unit-t", action: "enter" }
+        { id: "s1-auto-ev-integration-t", at: 2140, duration: 200, target: "ev-integration-t", action: "enter" }
+        { id: "s1-auto-ev-end-to-end-t", at: 2195, duration: 200, target: "ev-end-to-end-t", action: "enter" }
+      ]
     }
   }
 
@@ -1045,7 +1136,8 @@ explainer "Cellular algorithm workbook" {
       d: "M85 188 H610"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-    }
+          accessibility: { label: "motion signal" }
+}
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
@@ -1065,7 +1157,25 @@ explainer "Cellular algorithm workbook" {
     { id: "t-foot", at: 1050, duration: 260, target: "foot", action: "enter" }
     { id: "t-chip-backstop", at: 1130, duration: 240, target: "chip-backstop", action: "enter" }
     { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-  ]
+        { id: "s2-auto-dispatch-title", at: 1210, duration: 200, target: "dispatch-title", action: "enter" }
+        { id: "s2-auto-dispatch-detail", at: 1265, duration: 200, target: "dispatch-detail", action: "enter" }
+        { id: "s2-auto-dispatch-sub", at: 1320, duration: 200, target: "dispatch-sub", action: "enter" }
+        { id: "s2-auto-st-dispatch-t", at: 1375, duration: 200, target: "st-dispatch-t", action: "enter" }
+        { id: "s2-auto-promote-title", at: 1430, duration: 200, target: "promote-title", action: "enter" }
+        { id: "s2-auto-promote-detail", at: 1485, duration: 200, target: "promote-detail", action: "enter" }
+        { id: "s2-auto-promote-sub", at: 1540, duration: 200, target: "promote-sub", action: "enter" }
+        { id: "s2-auto-st-promote-t", at: 1595, duration: 200, target: "st-promote-t", action: "enter" }
+        { id: "s2-auto-validate-title", at: 1650, duration: 200, target: "validate-title", action: "enter" }
+        { id: "s2-auto-validate-detail", at: 1705, duration: 200, target: "validate-detail", action: "enter" }
+        { id: "s2-auto-validate-sub", at: 1760, duration: 200, target: "validate-sub", action: "enter" }
+        { id: "s2-auto-st-validate-t", at: 1815, duration: 200, target: "st-validate-t", action: "enter" }
+        { id: "s2-auto-velo-title", at: 1870, duration: 200, target: "velo-title", action: "enter" }
+        { id: "s2-auto-velo-detail", at: 1925, duration: 200, target: "velo-detail", action: "enter" }
+        { id: "s2-auto-velo-sub", at: 1980, duration: 200, target: "velo-sub", action: "enter" }
+        { id: "s2-auto-st-velo-t", at: 2035, duration: 200, target: "st-velo-t", action: "enter" }
+        { id: "s2-auto-chip-backstop-t", at: 2090, duration: 200, target: "chip-backstop-t", action: "enter" }
+        { id: "s2-auto-emph", at: 2185, duration: 400, target: "chip-backstop", action: "emphasis" }
+      ]
     }
   }
 
@@ -1308,7 +1418,8 @@ explainer "Cellular algorithm workbook" {
       d: "M115 190 H585"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-    }
+          accessibility: { label: "motion signal" }
+}
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
@@ -1325,7 +1436,23 @@ explainer "Cellular algorithm workbook" {
     { id: "t-foot", at: 870, duration: 280, target: "foot", action: "enter" }
     { id: "t-chip-tile", at: 950, duration: 220, target: "chip-tile", action: "enter" }
     { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-  ]
+        { id: "s3-auto-mod-title", at: 1030, duration: 200, target: "mod-title", action: "enter" }
+        { id: "s3-auto-mod-detail", at: 1085, duration: 200, target: "mod-detail", action: "enter" }
+        { id: "s3-auto-mod-sub", at: 1140, duration: 200, target: "mod-sub", action: "enter" }
+        { id: "s3-auto-st-mod-t", at: 1195, duration: 200, target: "st-mod-t", action: "enter" }
+        { id: "s3-auto-cell-0-t", at: 1250, duration: 200, target: "cell-0-t", action: "enter" }
+        { id: "s3-auto-cell-0-d", at: 1305, duration: 200, target: "cell-0-d", action: "enter" }
+        { id: "s3-auto-cell-1-t", at: 1360, duration: 200, target: "cell-1-t", action: "enter" }
+        { id: "s3-auto-cell-1-d", at: 1415, duration: 200, target: "cell-1-d", action: "enter" }
+        { id: "s3-auto-cell-2-t", at: 1470, duration: 200, target: "cell-2-t", action: "enter" }
+        { id: "s3-auto-cell-2-d", at: 1525, duration: 200, target: "cell-2-d", action: "enter" }
+        { id: "s3-auto-conv-title", at: 1580, duration: 200, target: "conv-title", action: "enter" }
+        { id: "s3-auto-conv-detail", at: 1635, duration: 200, target: "conv-detail", action: "enter" }
+        { id: "s3-auto-conv-sub", at: 1690, duration: 200, target: "conv-sub", action: "enter" }
+        { id: "s3-auto-st-conv-t", at: 1745, duration: 200, target: "st-conv-t", action: "enter" }
+        { id: "s3-auto-chip-tile-t", at: 1800, duration: 200, target: "chip-tile-t", action: "enter" }
+        { id: "s3-auto-emph", at: 1895, duration: 400, target: "chip-tile", action: "emphasis" }
+      ]
     }
   }
 
@@ -1569,7 +1696,8 @@ explainer "Cellular algorithm workbook" {
       d: "M90 205 H610"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-    }
+          accessibility: { label: "motion signal" }
+}
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
@@ -1587,7 +1715,22 @@ explainer "Cellular algorithm workbook" {
     { id: "t-chip-arb", at: 920, duration: 200, target: "chip-arb", action: "enter" }
     { id: "t-chip-sync", at: 980, duration: 200, target: "chip-sync", action: "enter" }
     { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-  ]
+        { id: "s4-auto-replay-title", at: 1060, duration: 200, target: "replay-title", action: "enter" }
+        { id: "s4-auto-replay-detail", at: 1115, duration: 200, target: "replay-detail", action: "enter" }
+        { id: "s4-auto-replay-sub", at: 1170, duration: 200, target: "replay-sub", action: "enter" }
+        { id: "s4-auto-st-replay-t", at: 1225, duration: 200, target: "st-replay-t", action: "enter" }
+        { id: "s4-auto-phaser-title", at: 1280, duration: 200, target: "phaser-title", action: "enter" }
+        { id: "s4-auto-phaser-detail", at: 1335, duration: 200, target: "phaser-detail", action: "enter" }
+        { id: "s4-auto-phaser-sub", at: 1390, duration: 200, target: "phaser-sub", action: "enter" }
+        { id: "s4-auto-st-phaser-t", at: 1445, duration: 200, target: "st-phaser-t", action: "enter" }
+        { id: "s4-auto-start-title", at: 1500, duration: 200, target: "start-title", action: "enter" }
+        { id: "s4-auto-start-detail", at: 1555, duration: 200, target: "start-detail", action: "enter" }
+        { id: "s4-auto-start-sub", at: 1610, duration: 200, target: "start-sub", action: "enter" }
+        { id: "s4-auto-st-start-t", at: 1665, duration: 200, target: "st-start-t", action: "enter" }
+        { id: "s4-auto-chip-arb-t", at: 1720, duration: 200, target: "chip-arb-t", action: "enter" }
+        { id: "s4-auto-chip-sync-t", at: 1775, duration: 200, target: "chip-sync-t", action: "enter" }
+        { id: "s4-auto-emph", at: 1870, duration: 400, target: "chip-sync", action: "emphasis" }
+      ]
     }
   }
 
@@ -1791,7 +1934,8 @@ explainer "Cellular algorithm workbook" {
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-    }
+          accessibility: { label: "motion signal" }
+}
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
@@ -1806,7 +1950,20 @@ explainer "Cellular algorithm workbook" {
     { id: "t-miss", at: 730, duration: 320, target: "miss", action: "enter" }
     { id: "t-st-miss", at: 820, duration: 200, target: "st-miss", action: "enter" }
     { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-  ]
+        { id: "s5-auto-canon-title", at: 900, duration: 200, target: "canon-title", action: "enter" }
+        { id: "s5-auto-canon-detail", at: 955, duration: 200, target: "canon-detail", action: "enter" }
+        { id: "s5-auto-canon-sub", at: 1010, duration: 200, target: "canon-sub", action: "enter" }
+        { id: "s5-auto-st-canon-t", at: 1065, duration: 200, target: "st-canon-t", action: "enter" }
+        { id: "s5-auto-fanout-title", at: 1120, duration: 200, target: "fanout-title", action: "enter" }
+        { id: "s5-auto-fanout-detail", at: 1175, duration: 200, target: "fanout-detail", action: "enter" }
+        { id: "s5-auto-fanout-sub", at: 1230, duration: 200, target: "fanout-sub", action: "enter" }
+        { id: "s5-auto-st-fanout-t", at: 1285, duration: 200, target: "st-fanout-t", action: "enter" }
+        { id: "s5-auto-miss-title", at: 1340, duration: 200, target: "miss-title", action: "enter" }
+        { id: "s5-auto-miss-detail", at: 1395, duration: 200, target: "miss-detail", action: "enter" }
+        { id: "s5-auto-miss-sub", at: 1450, duration: 200, target: "miss-sub", action: "enter" }
+        { id: "s5-auto-st-miss-t", at: 1505, duration: 200, target: "st-miss-t", action: "enter" }
+        { id: "s5-auto-emph", at: 1600, duration: 400, target: "st-miss", action: "emphasis" }
+      ]
     }
   }
 
@@ -2026,7 +2183,8 @@ explainer "Cellular algorithm workbook" {
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-    }
+          accessibility: { label: "motion signal" }
+}
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
@@ -2043,7 +2201,20 @@ explainer "Cellular algorithm workbook" {
     { id: "t-st-iss", at: 860, duration: 200, target: "st-iss", action: "enter" }
     { id: "t-foot", at: 910, duration: 260, target: "foot", action: "enter" }
     { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-  ]
+        { id: "s6-auto-part-title", at: 990, duration: 200, target: "part-title", action: "enter" }
+        { id: "s6-auto-part-detail", at: 1045, duration: 200, target: "part-detail", action: "enter" }
+        { id: "s6-auto-part-sub", at: 1100, duration: 200, target: "part-sub", action: "enter" }
+        { id: "s6-auto-st-part-t", at: 1155, duration: 200, target: "st-part-t", action: "enter" }
+        { id: "s6-auto-w0-t", at: 1210, duration: 200, target: "w0-t", action: "enter" }
+        { id: "s6-auto-w0-d", at: 1265, duration: 200, target: "w0-d", action: "enter" }
+        { id: "s6-auto-w1-t", at: 1320, duration: 200, target: "w1-t", action: "enter" }
+        { id: "s6-auto-w1-d", at: 1375, duration: 200, target: "w1-d", action: "enter" }
+        { id: "s6-auto-iss-title", at: 1430, duration: 200, target: "iss-title", action: "enter" }
+        { id: "s6-auto-iss-detail", at: 1485, duration: 200, target: "iss-detail", action: "enter" }
+        { id: "s6-auto-iss-sub", at: 1540, duration: 200, target: "iss-sub", action: "enter" }
+        { id: "s6-auto-st-iss-t", at: 1595, duration: 200, target: "st-iss-t", action: "enter" }
+        { id: "s6-auto-emph", at: 1690, duration: 400, target: "foot", action: "emphasis" }
+      ]
     }
   }
 
@@ -2262,7 +2433,8 @@ explainer "Cellular algorithm workbook" {
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-    }
+          accessibility: { label: "motion signal" }
+}
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
@@ -2277,7 +2449,22 @@ explainer "Cellular algorithm workbook" {
     { id: "t-compat", at: 700, duration: 300, target: "compat", action: "enter" }
     { id: "t-st-compat", at: 790, duration: 200, target: "st-compat", action: "enter" }
     { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-  ]
+        { id: "s7-auto-term-title", at: 870, duration: 200, target: "term-title", action: "enter" }
+        { id: "s7-auto-term-detail", at: 925, duration: 200, target: "term-detail", action: "enter" }
+        { id: "s7-auto-term-sub", at: 980, duration: 200, target: "term-sub", action: "enter" }
+        { id: "s7-auto-st-term-t", at: 1035, duration: 200, target: "st-term-t", action: "enter" }
+        { id: "s7-auto-mode-0-t", at: 1090, duration: 200, target: "mode-0-t", action: "enter" }
+        { id: "s7-auto-mode-0-d", at: 1145, duration: 200, target: "mode-0-d", action: "enter" }
+        { id: "s7-auto-mode-1-t", at: 1200, duration: 200, target: "mode-1-t", action: "enter" }
+        { id: "s7-auto-mode-1-d", at: 1255, duration: 200, target: "mode-1-d", action: "enter" }
+        { id: "s7-auto-mode-2-t", at: 1310, duration: 200, target: "mode-2-t", action: "enter" }
+        { id: "s7-auto-mode-2-d", at: 1365, duration: 200, target: "mode-2-d", action: "enter" }
+        { id: "s7-auto-compat-title", at: 1420, duration: 200, target: "compat-title", action: "enter" }
+        { id: "s7-auto-compat-detail", at: 1475, duration: 200, target: "compat-detail", action: "enter" }
+        { id: "s7-auto-compat-sub", at: 1530, duration: 200, target: "compat-sub", action: "enter" }
+        { id: "s7-auto-st-compat-t", at: 1585, duration: 200, target: "st-compat-t", action: "enter" }
+        { id: "s7-auto-emph", at: 1680, duration: 400, target: "st-compat", action: "emphasis" }
+      ]
     }
   }
 
@@ -2481,7 +2668,8 @@ explainer "Cellular algorithm workbook" {
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-    }
+          accessibility: { label: "motion signal" }
+}
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
@@ -2496,7 +2684,20 @@ explainer "Cellular algorithm workbook" {
     { id: "t-asm", at: 740, duration: 320, target: "asm", action: "enter" }
     { id: "t-st-asm", at: 830, duration: 200, target: "st-asm", action: "enter" }
     { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-  ]
+        { id: "s8-auto-ord-title", at: 910, duration: 200, target: "ord-title", action: "enter" }
+        { id: "s8-auto-ord-detail", at: 965, duration: 200, target: "ord-detail", action: "enter" }
+        { id: "s8-auto-ord-sub", at: 1020, duration: 200, target: "ord-sub", action: "enter" }
+        { id: "s8-auto-st-ord-t", at: 1075, duration: 200, target: "st-ord-t", action: "enter" }
+        { id: "s8-auto-fid-title", at: 1130, duration: 200, target: "fid-title", action: "enter" }
+        { id: "s8-auto-fid-detail", at: 1185, duration: 200, target: "fid-detail", action: "enter" }
+        { id: "s8-auto-fid-sub", at: 1240, duration: 200, target: "fid-sub", action: "enter" }
+        { id: "s8-auto-st-fid-t", at: 1295, duration: 200, target: "st-fid-t", action: "enter" }
+        { id: "s8-auto-asm-title", at: 1350, duration: 200, target: "asm-title", action: "enter" }
+        { id: "s8-auto-asm-detail", at: 1405, duration: 200, target: "asm-detail", action: "enter" }
+        { id: "s8-auto-asm-sub", at: 1460, duration: 200, target: "asm-sub", action: "enter" }
+        { id: "s8-auto-st-asm-t", at: 1515, duration: 200, target: "st-asm-t", action: "enter" }
+        { id: "s8-auto-emph", at: 1610, duration: 400, target: "st-asm", action: "emphasis" }
+      ]
     }
   }
 
@@ -2778,7 +2979,8 @@ explainer "Cellular algorithm workbook" {
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-    }
+          accessibility: { label: "motion signal" }
+}
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
@@ -2798,7 +3000,25 @@ explainer "Cellular algorithm workbook" {
     { id: "t-foot", at: 945, duration: 280, target: "foot", action: "enter" }
     { id: "t-chip-fail", at: 1025, duration: 240, target: "chip-fail", action: "enter" }
     { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-  ]
+        { id: "s9-auto-allow-title", at: 1105, duration: 200, target: "allow-title", action: "enter" }
+        { id: "s9-auto-allow-detail", at: 1160, duration: 200, target: "allow-detail", action: "enter" }
+        { id: "s9-auto-allow-sub", at: 1215, duration: 200, target: "allow-sub", action: "enter" }
+        { id: "s9-auto-st-allow-t", at: 1270, duration: 200, target: "st-allow-t", action: "enter" }
+        { id: "s9-auto-upload-title", at: 1325, duration: 200, target: "upload-title", action: "enter" }
+        { id: "s9-auto-upload-detail", at: 1380, duration: 200, target: "upload-detail", action: "enter" }
+        { id: "s9-auto-upload-sub", at: 1435, duration: 200, target: "upload-sub", action: "enter" }
+        { id: "s9-auto-st-upload-t", at: 1490, duration: 200, target: "st-upload-t", action: "enter" }
+        { id: "s9-auto-atomic-title", at: 1545, duration: 200, target: "atomic-title", action: "enter" }
+        { id: "s9-auto-atomic-detail", at: 1600, duration: 200, target: "atomic-detail", action: "enter" }
+        { id: "s9-auto-atomic-sub", at: 1655, duration: 200, target: "atomic-sub", action: "enter" }
+        { id: "s9-auto-st-atomic-t", at: 1710, duration: 200, target: "st-atomic-t", action: "enter" }
+        { id: "s9-auto-barrier-title", at: 1765, duration: 200, target: "barrier-title", action: "enter" }
+        { id: "s9-auto-barrier-detail", at: 1820, duration: 200, target: "barrier-detail", action: "enter" }
+        { id: "s9-auto-barrier-sub", at: 1875, duration: 200, target: "barrier-sub", action: "enter" }
+        { id: "s9-auto-st-barrier-t", at: 1930, duration: 200, target: "st-barrier-t", action: "enter" }
+        { id: "s9-auto-chip-fail-t", at: 1985, duration: 200, target: "chip-fail-t", action: "enter" }
+        { id: "s9-auto-emph", at: 2080, duration: 400, target: "chip-fail", action: "emphasis" }
+      ]
     }
   }
 
@@ -3152,7 +3372,8 @@ explainer "Cellular algorithm workbook" {
       d: "M55 195 H645"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-    }
+          accessibility: { label: "motion signal" }
+}
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
@@ -3179,7 +3400,27 @@ explainer "Cellular algorithm workbook" {
     { id: "t-chip-c", at: 1180, duration: 180, target: "chip-c", action: "enter" }
     { id: "t-sub", at: 1230, duration: 220, target: "sub", action: "enter" }
     { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-  ]
+        { id: "s10-auto-r-eligibility-t", at: 1310, duration: 200, target: "r-eligibility-t", action: "enter" }
+        { id: "s10-auto-r-eligibility-d", at: 1365, duration: 200, target: "r-eligibility-d", action: "enter" }
+        { id: "s10-auto-r-ownership-t", at: 1420, duration: 200, target: "r-ownership-t", action: "enter" }
+        { id: "s10-auto-r-ownership-d", at: 1475, duration: 200, target: "r-ownership-d", action: "enter" }
+        { id: "s10-auto-r-control-t", at: 1530, duration: 200, target: "r-control-t", action: "enter" }
+        { id: "s10-auto-r-control-d", at: 1585, duration: 200, target: "r-control-d", action: "enter" }
+        { id: "s10-auto-r-distribution-t", at: 1640, duration: 200, target: "r-distribution-t", action: "enter" }
+        { id: "s10-auto-r-distribution-d", at: 1695, duration: 200, target: "r-distribution-d", action: "enter" }
+        { id: "s10-auto-r-execution-t", at: 1750, duration: 200, target: "r-execution-t", action: "enter" }
+        { id: "s10-auto-r-execution-d", at: 1805, duration: 200, target: "r-execution-d", action: "enter" }
+        { id: "s10-auto-r-capture-t", at: 1860, duration: 200, target: "r-capture-t", action: "enter" }
+        { id: "s10-auto-r-capture-d", at: 1915, duration: 200, target: "r-capture-d", action: "enter" }
+        { id: "s10-auto-r-merge-t", at: 1970, duration: 200, target: "r-merge-t", action: "enter" }
+        { id: "s10-auto-r-merge-d", at: 2025, duration: 200, target: "r-merge-d", action: "enter" }
+        { id: "s10-auto-r-artifacts-t", at: 2080, duration: 200, target: "r-artifacts-t", action: "enter" }
+        { id: "s10-auto-r-artifacts-d", at: 2135, duration: 200, target: "r-artifacts-d", action: "enter" }
+        { id: "s10-auto-chip-a-t", at: 2190, duration: 200, target: "chip-a-t", action: "enter" }
+        { id: "s10-auto-chip-b-t", at: 2245, duration: 200, target: "chip-b-t", action: "enter" }
+        { id: "s10-auto-chip-c-t", at: 2300, duration: 200, target: "chip-c-t", action: "enter" }
+        { id: "s10-auto-emph", at: 2395, duration: 400, target: "sub", action: "emphasis" }
+      ]
     }
   }
 
@@ -3423,6 +3664,38 @@ explainer "Cellular algorithm workbook" {
       text: "color never replaces the written status contract"
       layout: { x: 80, y: 345, width: 540, height: 16 }
       style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+    },
+{
+      id: "a-canon-gated"
+      capability: "core.path"
+      d: "M230 150 H252"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
+    }
+    ,
+{
+      id: "a-gated-partial"
+      capability: "core.path"
+      d: "M447 150 H469"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.2 }
+    }
+    ,
+{
+      id: "a-to-chips"
+      capability: "core.path"
+      d: "M350 200 V295"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 2.2 }
+    }
+    ,
+{
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M130 150 H580"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
+      accessibility: { label: "motion signal" }
     }
     ]
   timeline: [
@@ -3440,7 +3713,27 @@ explainer "Cellular algorithm workbook" {
     { id: "t-chip-g", at: 855, duration: 180, target: "chip-g", action: "enter" }
     { id: "t-chip-p", at: 905, duration: 180, target: "chip-p", action: "enter" }
     { id: "t-sub", at: 955, duration: 220, target: "sub", action: "enter" }
-  ]
+    { id: "t-a-canon-gated", at: 700, duration: 280, target: "a-canon-gated", action: "draw" }
+    { id: "t-a-gated-partial", at: 780, duration: 280, target: "a-gated-partial", action: "draw" }
+    { id: "t-a-to-chips", at: 860, duration: 300, target: "a-to-chips", action: "draw" }
+    { id: "t-motion-sig", at: 940, duration: 520, target: "motion-sig", action: "draw" }
+    { id: "t-emphasis", at: 1180, duration: 400, target: "canon", action: "emphasis" }
+        { id: "s11-auto-canon-title", at: 1260, duration: 200, target: "canon-title", action: "enter" }
+        { id: "s11-auto-canon-detail", at: 1315, duration: 200, target: "canon-detail", action: "enter" }
+        { id: "s11-auto-canon-sub", at: 1370, duration: 200, target: "canon-sub", action: "enter" }
+        { id: "s11-auto-st-canon-t", at: 1425, duration: 200, target: "st-canon-t", action: "enter" }
+        { id: "s11-auto-gated-title", at: 1480, duration: 200, target: "gated-title", action: "enter" }
+        { id: "s11-auto-gated-detail", at: 1535, duration: 200, target: "gated-detail", action: "enter" }
+        { id: "s11-auto-gated-sub", at: 1590, duration: 200, target: "gated-sub", action: "enter" }
+        { id: "s11-auto-st-gated-t", at: 1645, duration: 200, target: "st-gated-t", action: "enter" }
+        { id: "s11-auto-partial-title", at: 1700, duration: 200, target: "partial-title", action: "enter" }
+        { id: "s11-auto-partial-detail", at: 1755, duration: 200, target: "partial-detail", action: "enter" }
+        { id: "s11-auto-partial-sub", at: 1810, duration: 200, target: "partial-sub", action: "enter" }
+        { id: "s11-auto-st-partial-t", at: 1865, duration: 200, target: "st-partial-t", action: "enter" }
+        { id: "s11-auto-chip-b-t", at: 1920, duration: 200, target: "chip-b-t", action: "enter" }
+        { id: "s11-auto-chip-g-t", at: 1975, duration: 200, target: "chip-g-t", action: "enter" }
+        { id: "s11-auto-chip-p-t", at: 2030, duration: 200, target: "chip-p-t", action: "enter" }
+      ]
     }
   }
 
@@ -3613,7 +3906,8 @@ explainer "Cellular algorithm workbook" {
       d: "M350 125 V320"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-    }
+          accessibility: { label: "motion signal" }
+}
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
@@ -3628,7 +3922,16 @@ explainer "Cellular algorithm workbook" {
     { id: "t-invariant", at: 740, duration: 280, target: "invariant", action: "enter" }
     { id: "t-emphasis", at: 860, duration: 400, target: "decision", action: "emphasis" }
     { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-  ]
+        { id: "s12-auto-decision-title", at: 940, duration: 200, target: "decision-title", action: "enter" }
+        { id: "s12-auto-decision-detail", at: 995, duration: 200, target: "decision-detail", action: "enter" }
+        { id: "s12-auto-chip-dec-t", at: 1050, duration: 200, target: "chip-dec-t", action: "enter" }
+        { id: "s12-auto-left-title", at: 1105, duration: 200, target: "left-title", action: "enter" }
+        { id: "s12-auto-left-detail", at: 1160, duration: 200, target: "left-detail", action: "enter" }
+        { id: "s12-auto-left-sub", at: 1215, duration: 200, target: "left-sub", action: "enter" }
+        { id: "s12-auto-right-title", at: 1270, duration: 200, target: "right-title", action: "enter" }
+        { id: "s12-auto-right-detail", at: 1325, duration: 200, target: "right-detail", action: "enter" }
+        { id: "s12-auto-right-sub", at: 1380, duration: 200, target: "right-sub", action: "enter" }
+      ]
     }
   }
 
@@ -3801,7 +4104,8 @@ explainer "Cellular algorithm workbook" {
       d: "M350 125 V320"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-    }
+          accessibility: { label: "motion signal" }
+}
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
@@ -3816,7 +4120,16 @@ explainer "Cellular algorithm workbook" {
     { id: "t-invariant", at: 740, duration: 280, target: "invariant", action: "enter" }
     { id: "t-emphasis", at: 860, duration: 400, target: "decision", action: "emphasis" }
     { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-  ]
+        { id: "s13-auto-decision-title", at: 940, duration: 200, target: "decision-title", action: "enter" }
+        { id: "s13-auto-decision-detail", at: 995, duration: 200, target: "decision-detail", action: "enter" }
+        { id: "s13-auto-chip-dec-t", at: 1050, duration: 200, target: "chip-dec-t", action: "enter" }
+        { id: "s13-auto-left-title", at: 1105, duration: 200, target: "left-title", action: "enter" }
+        { id: "s13-auto-left-detail", at: 1160, duration: 200, target: "left-detail", action: "enter" }
+        { id: "s13-auto-left-sub", at: 1215, duration: 200, target: "left-sub", action: "enter" }
+        { id: "s13-auto-right-title", at: 1270, duration: 200, target: "right-title", action: "enter" }
+        { id: "s13-auto-right-detail", at: 1325, duration: 200, target: "right-detail", action: "enter" }
+        { id: "s13-auto-right-sub", at: 1380, duration: 200, target: "right-sub", action: "enter" }
+      ]
     }
   }
 
@@ -3989,7 +4302,8 @@ explainer "Cellular algorithm workbook" {
       d: "M350 125 V320"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
-    }
+          accessibility: { label: "motion signal" }
+}
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
@@ -4004,7 +4318,16 @@ explainer "Cellular algorithm workbook" {
     { id: "t-invariant", at: 740, duration: 280, target: "invariant", action: "enter" }
     { id: "t-emphasis", at: 860, duration: 400, target: "decision", action: "emphasis" }
     { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-  ]
+        { id: "s14-auto-decision-title", at: 940, duration: 200, target: "decision-title", action: "enter" }
+        { id: "s14-auto-decision-detail", at: 995, duration: 200, target: "decision-detail", action: "enter" }
+        { id: "s14-auto-chip-dec-t", at: 1050, duration: 200, target: "chip-dec-t", action: "enter" }
+        { id: "s14-auto-left-title", at: 1105, duration: 200, target: "left-title", action: "enter" }
+        { id: "s14-auto-left-detail", at: 1160, duration: 200, target: "left-detail", action: "enter" }
+        { id: "s14-auto-left-sub", at: 1215, duration: 200, target: "left-sub", action: "enter" }
+        { id: "s14-auto-right-title", at: 1270, duration: 200, target: "right-title", action: "enter" }
+        { id: "s14-auto-right-detail", at: 1325, duration: 200, target: "right-detail", action: "enter" }
+        { id: "s14-auto-right-sub", at: 1380, duration: 200, target: "right-sub", action: "enter" }
+      ]
     }
   }
 
@@ -4155,6 +4478,14 @@ explainer "Cellular algorithm workbook" {
           style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.tertiary, textAnchor: "middle" }
         }
       ]
+    },
+{
+      id: "motion-sig"
+      capability: "core.path"
+      d: "M90 200 H560"
+      layout: { x: 0, y: 0, width: 700, height: 400 }
+      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
+      accessibility: { label: "motion signal" }
     }
     ]
   timeline: [
@@ -4168,7 +4499,16 @@ explainer "Cellular algorithm workbook" {
     { id: "t-chip-trace", at: 610, duration: 180, target: "chip-trace", action: "enter" }
     { id: "t-chip-fix", at: 660, duration: 180, target: "chip-fix", action: "enter" }
     { id: "t-emphasis", at: 750, duration: 420, target: "canvas", action: "emphasis" }
-  ]
+    { id: "t-motion-sig", at: 700, duration: 520, target: "motion-sig", action: "draw" }
+        { id: "s15-auto-pages-title", at: 830, duration: 200, target: "pages-title", action: "enter" }
+        { id: "s15-auto-pages-detail", at: 885, duration: 200, target: "pages-detail", action: "enter" }
+        { id: "s15-auto-pages-sub", at: 940, duration: 200, target: "pages-sub", action: "enter" }
+        { id: "s15-auto-canvas-title", at: 995, duration: 200, target: "canvas-title", action: "enter" }
+        { id: "s15-auto-canvas-detail", at: 1050, duration: 200, target: "canvas-detail", action: "enter" }
+        { id: "s15-auto-chip-search-t", at: 1105, duration: 200, target: "chip-search-t", action: "enter" }
+        { id: "s15-auto-chip-trace-t", at: 1160, duration: 200, target: "chip-trace-t", action: "enter" }
+        { id: "s15-auto-chip-fix-t", at: 1215, duration: 200, target: "chip-fix-t", action: "enter" }
+      ]
     }
   }
 }
