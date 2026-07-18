@@ -111,10 +111,13 @@ export function HomePage({ scenesByFlow, onSelectScene, onOpenExplainers }: Home
 
       <style>{`
         .home-page {
+          position: fixed;
+          inset: 0;
+          z-index: 9999;
           padding: 2rem;
           background: var(--preview-board, #0d1117);
           color: var(--preview-chalk, #f0f6fc);
-          min-height: 100vh;
+          overflow-y: auto;
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
 

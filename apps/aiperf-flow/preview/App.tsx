@@ -343,12 +343,8 @@ export function App() {
   const scenesByFlow = useMemo(() => discoverScenesByFlow(), []);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const [showHome, setShowHome] = useState(true);
-  const [activeFlowId, setActiveFlowId] = useState(
-    workspace.navigation.active.flowId,
-  );
-  const [activeSceneId, setActiveSceneId] = useState(
-    workspace.navigation.active.sceneId,
-  );
+  const [activeFlowId, setActiveFlowId] = useState("");
+  const [activeSceneId, setActiveSceneId] = useState("");
   const [reducedMotion, setReducedMotion] = useState(false);
   const [narrowLayout, setNarrowLayout] = useState(false);
   const [kokoroState, setKokoroState] = useState<KokoroNarratorSnapshot | null>(
@@ -373,6 +369,19 @@ export function App() {
     () => createPreviewNarratorBackend(),
     [],
   );
+
+  // Handle URL query parameters for scene selection
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sceneParam = params.get("scene");
+    const flowParam = params.get("flow");
+
+    if (sceneParam) {
+      // If a scene is specified in the URL, select it
+      const targetFlowId = flowParam || workspace.navigation.active.flowId;
+      selectScene(targetFlowId, sceneParam);
+    }
+  }, []); // Only run once on mount
 
   useEffect(() => {
     prewarmPreviewNarrator();
@@ -451,10 +460,21 @@ export function App() {
     setActiveFlowId(flowId);
     setActiveSceneId(sceneId);
     setShowHome(false);
+    // Update URL to reflect scene selection
+    const params = new URLSearchParams();
+    if (flowId !== workspace.navigation.active.flowId) {
+      params.set("flow", flowId);
+    }
+    params.set("scene", sceneId);
+    const queryString = params.toString();
+    const url = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname;
+    window.history.replaceState({}, "", url);
   }
 
   function goHome(): void {
     setShowHome(true);
+    // Clear URL query parameters to reflect home page state
+    window.history.replaceState({}, "", window.location.pathname);
   }
 
   function openExplainerPicker(): void {
