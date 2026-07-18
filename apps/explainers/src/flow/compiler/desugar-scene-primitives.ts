@@ -17,7 +17,7 @@ import type {
   PointIr,
   RenderNodeIr,
   SourceRange,
-} from "@aiperf/flow-schema";
+} from "../schema/index.js";
 
 const unknownRange: SourceRange = {
   source: "<unknown>",

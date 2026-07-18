@@ -514,7 +514,7 @@ explainer "Segment Pools" {
       meaning: "Re-intern conversation handles under a new system/user context root so blake3 ids reflect the injected prefix."
     }
     points: [
-      "`dataset/compose.rs` owns conversation chains and rebase.",
+      "Format composers in `dataset/loader/` build each chain; `dataset/compose.rs` owns rebase.",
       "`graph/recorded/trie/` resolves content parents from hash_ids.",
       "Shared system and user turns store once; branches allocate only novel replies."
     ]
@@ -761,7 +761,7 @@ explainer "Segment Pools" {
         id: "f3"
         capability: "core.panel"
         title: "rust/runtime/src/dataset/compose.rs"
-        detail: "conversation chains · rebase"
+        detail: "cross-format policy · rebase"
         layout: { x: 40, y: 194, width: 620, height: 48 }
         style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
       },

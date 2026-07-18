@@ -15,9 +15,11 @@
     "deploy:pages": "bash scripts/deploy-pages.sh"
   },
   "dependencies": {
+    "chevrotain": "^12.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-router-dom": "^7.6.2"
+    "react-router-dom": "^7.6.2",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.0",

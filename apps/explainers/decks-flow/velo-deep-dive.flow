@@ -413,21 +413,21 @@ explainer "Velo deep dive" {
     }
   }
 
-  slide "Fire-and-forget liveness and live metrics" {
+  slide "One fire-and-forget snapshot before the ship" {
     eyebrow: "5 · Heartbeat"
-    title: "Fire-and-forget liveness and live metrics"
-    lede: "Cells push MetricsHeartbeat snapshots without waiting for a reply. Each snapshot carries counters, mergeable sketches, and an observation time, so the controller reads live progress and detects a lagging or missing cell before the run ends."
-    narration: "Cells push fire-and-forget heartbeat snapshots of counters and sketches. The controller reads live progress and sees a lagging or missing cell as rising lag and a dropped pulse."
+    title: "One fire-and-forget snapshot before the ship"
+    lede: "Each cell ships exactly one MetricsHeartbeat, fire-and-forget with no reply, immediately before its terminal partition. The snapshot carries counters, mergeable sketches, and an observation time, so the controller can merge every cell's final numbers into a live cross-cell view as each cell finishes."
+    narration: "Each cell ships one fire-and-forget heartbeat right before its terminal partition. The controller merges every cell's counters and sketches into a live cross-cell view as each cell finishes; a cell that never ships within the deadline makes the controller abort loudly."
     term: {
       word: "MetricsHeartbeat"
-      meaning: "Periodic cell→controller snapshot of counts and sketches used for a live cross-cell aggregate; enabling the lane forces retain."
+      meaning: "One-shot cell→controller snapshot of counts and sketches, sent immediately before the terminal partition; the controller merges every cell's heartbeat into a live cross-cell aggregate for the report sidecar."
     }
     points: [
-      "Fire-and-forget: heartbeats never block the dispatch hot path.",
-      "A stalled channel surfaces as rising lag and a missing pulse.",
-      "Evidence: `rust/runtime/src/cellular/heartbeat.rs`."
+      "Fire-and-forget: the heartbeat never blocks on a reply, off the per-request hot path.",
+      "Blocking by design — called once, right before the terminal partition ship.",
+      "Evidence: `rust/runtime/src/cellular/heartbeat.rs`, `engine/cellular_controller.rs`."
     ]
-    caption: "snapshot counters + sketches → live aggregate · lag visible."
+    caption: "one snapshot, shipped once → live cross-cell aggregate."
 
     render: @scene {
       roots: [
@@ -438,7 +438,7 @@ explainer "Velo deep dive" {
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "HEARTBEAT LANE" }
           title: "HEARTBEAT LANE"
-          caption: "snapshot counters + sketches → live aggregate · lag visible."
+          caption: "one snapshot, shipped once → live cross-cell aggregate."
         }
         {
           id: "s4-c0"
@@ -463,9 +463,9 @@ explainer "Velo deep dive" {
           capability: "core.panel"
           layout: { x: 40, y: 280, width: 140, height: 64 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "cell 2: pulse missing" }
+          accessibility: { label: "cell 2: snapshot, ships last" }
           title: "cell 2"
-          detail: "pulse missing"
+          detail: "snapshot, ships last"
         }
         { id: "s4-a0" capability: "core.path" d: "M180 132 C300 132 360 200 440 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         { id: "s4-a1" capability: "core.path" d: "M180 222 C300 222 360 200 440 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
@@ -475,11 +475,11 @@ explainer "Velo deep dive" {
           capability: "core.panel"
           layout: { x: 440, y: 160, width: 220, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "Controller aggregate: counters + sketches · lag" }
+          accessibility: { label: "Controller aggregate: counters + sketches · merged" }
           title: "Controller aggregate"
-          detail: "counters + sketches · lag"
+          detail: "counters + sketches · merged"
         }
-        { id: "s4-note" capability: "core.text" text: "fire-and-forget · never blocks dispatch" layout: { x: 110, y: 348, width: 400, height: 16 } style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "start" } }
+        { id: "s4-note" capability: "core.text" text: "fire-and-forget · shipped once, right before the partition" layout: { x: 110, y: 348, width: 400, height: 16 } style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "start" } }
 
         {
           id: "s4-motion-sig"

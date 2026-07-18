@@ -28,7 +28,6 @@ import {
   Pill,
   StartGate,
   Subtitles,
-  Text,
   VoicePicker,
   useCanvasState,
 } from "./ui";

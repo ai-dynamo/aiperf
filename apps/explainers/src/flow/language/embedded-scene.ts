@@ -40,7 +40,7 @@ import type {
   ValueAst,
 } from "./ast.js";
 import type { TokenStream } from "./grammar/explainer.js";
-import type { SourceRange } from "@aiperf/flow-schema";
+import type { SourceRange } from "../schema/index.js";
 
 /** Discriminator for which `@scene` body dialect was authored. */
 export type EmbeddedSceneForm = "native" | "package";

@@ -122,7 +122,7 @@ Read (do not modify):
 9. **Trie chop** — drop nodes with `arrival_offset_us < t*`; re-root survivors from `START` with `min_start_delay_us = arrival - t*`
 10. **Inputs & channels** — drop requirements whose source was chopped (avoid deadlocks)
 11. **Prompt path unchanged** — pre-`t*` segments stay in the path for exact resume prompt
-12. **Cache-pressure warmup** — extended warmup replays post-`t*` under pressure lanes
+12. **Cache-pressure warmup** — extended warmup redispatches `rewrite_for_warmup`'s flattened boundary-priming credit under pressure lanes (not the post-`t*` live set)
 13. **`GraphPressureRecycle` + `PermutationDraw`** — Sequential / Shuffle / Random; shuffle/random child seeds from **run root** (`random_seed`), not `t_star_random_seed`
 
 Reuse the `n0…n3` motif: slides 9–11 should show the cut removing left nodes and re-root edges.
@@ -155,7 +155,7 @@ Read:
 - [ ] **Step 2: Author slides 14–20**
 
 14. **Drain & handoff** — fields: `template_trace_id`, `instance_id`, `t_star_us`, `executed_node_ids`, `return_wall_us`; plus deck-level `drain_end_wall_us`, `corpus_cursor`, `pressure_lane_count`
-15. **Why `instance_id` is reused** — cache-bust marker continuity (digest of `credit.trace_id` / `build_trace_instance_marker`); avoid cold prefill behind fresh `.0`
+15. **Why `instance_id` is reused** — cache-bust marker continuity (`GraphCacheBust::marker` over instance `trace_id`); avoid cold prefill behind fresh `.0`
 16. **Profiling resume** — frontier chop + skip executed; residual delays from return walls
 17. **Lanes with no handoff entry** — completed-at-drain under `pressure_lane_count` → fresh-start next cursor template at `t*=0`
 18. **Corpus cursor** — pressure → profiling continuity; single-pass profiling may ignore for full-corpus coverage

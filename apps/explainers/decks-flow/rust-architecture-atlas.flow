@@ -421,7 +421,7 @@ explainer "Rust Architecture Atlas" {
         {
           id: "req"
           capability: "core.panel"
-          title: "RunnerRequest"
+          title: "BenchmarkRun"
           detail: "protocol v2"
           layout: { x: 230, y: 90, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }

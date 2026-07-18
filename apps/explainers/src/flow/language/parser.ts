@@ -6,7 +6,7 @@ import type {
   Result,
   SourcePosition,
   SourceRange,
-} from "@aiperf/flow-schema";
+} from "../schema/index.js";
 import {
   EmbeddedActionsParser,
   type ILexingError,

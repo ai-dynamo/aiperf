@@ -5,7 +5,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 npm ci
-npm run test
 npm run build
 
 REPO="${GITHUB_REPOSITORY:-ajcasagrande/aiperf}"

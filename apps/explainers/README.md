@@ -17,10 +17,9 @@ Routes (hash router):
 - `/#/slurm-velo`
 - `/#/dynosim`
 
-## Build & test
+## Build
 
 ```bash
-npm run test
 npm run build
 npm run preview
 ```

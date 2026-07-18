@@ -24,10 +24,10 @@ pub struct LaneHandoff {
     pub template_trace_id: String,
     /// The live pressure instance id at drain (e.g. `t-1#0.p2`). The profiling
     /// resume reuses it verbatim as the resumed instance's id so the
-    /// per-instance cache-bust marker (digest of `credit.trace_id`; see
-    /// `build_trace_instance_marker`) is continuous across the handoff and the
-    /// KV built during pressure transfers instead of cold-prefilling behind a
-    /// fresh `.0` marker.
+    /// per-instance cache-bust marker (`GraphCacheBust::marker` over the
+    /// instance `trace_id`) is continuous across the handoff and the KV built
+    /// during pressure transfers instead of cold-prefilling behind a fresh
+    /// `.0` marker.
     pub instance_id: String,
     /// The instance's t* (lane-salted plan for the pressure pass-0 instance;
     /// `0.0` for recycled full-replay instances). Pre-t* nodes are warmup

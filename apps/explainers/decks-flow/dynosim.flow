@@ -336,13 +336,13 @@ explainer "Dynosim" {
   slide "Routing" {
     eyebrow: "Routing"
     title: "Factory bypasses native HTTP execution"
-    lede: "At bootstrap, dynosim registers its own ExecutionSinkBuilder. The coordinator never constructs Hyper or Tonic clients for these runs — preparation builds an EngineHost and DynosimSink instead."
+    lede: "At bootstrap, dynosim registers its own TransportFactory but opts out of native_execution, returning None instead of an ExecutionSinkBuilder. The coordinator never constructs Hyper or Tonic clients for these runs — preparation builds an EngineHost and DynosimSink instead."
 
-    narration: "Registry routing sends dynosim runs down a dedicated factory path. Native HTTP and gRPC clients are never constructed for these transport identifiers."
+    narration: "Registry routing sends dynosim runs down a dedicated factory path that bypasses the shared ExecutionSinkBuilder seam entirely. Native HTTP and gRPC clients are never constructed for these transport identifiers."
 
     term: {
-      word: "ExecutionSinkBuilder"
-      meaning: "Transport hook that produces worker-local sinks; dynosim's builder wires the replay engine seam."
+      word: "TransportFactory::native_execution"
+      meaning: "Registry hook returning an optional native execution binding; dynosim returns None and is prepared through its own module instead of the shared ExecutionSinkBuilder/WorkerSink path."
     }
 
     points: [
@@ -375,7 +375,7 @@ explainer "Dynosim" {
           id: "s3-dyno"
           capability: "core.panel"
           title: "Dynosim factory"
-          detail: "ExecutionSinkBuilder"
+          detail: "own module"
           layout: { x: 430, y: 120, width: 180, height: 110 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
         },

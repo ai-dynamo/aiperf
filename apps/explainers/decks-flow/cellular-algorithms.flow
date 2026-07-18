@@ -298,8 +298,8 @@ explainer "Cellular algorithm workbook" {
   slide "fail-closed-eligibility" {
     eyebrow: "Eligibility · 3 of 16"
     title: "Fail closed before cells launch"
-    lede: "Eligibility begins at execution-mode-dispatch, promotes a multi-cell request with controller-promotion, then validates run kind, budgets, storage, and artifacts. velo-feature-admission is explicitly feature-gated: a lean binary reports an unsupported role instead of silently running direct."
-    narration: "Eligibility fails closed before any cell launches. execution-mode-dispatch enters the private protocol, controller-promotion recognizes a multi-cell request, and run-shape and budget validators admit only supported combinations. velo-feature-admission is feature-gated, so a lean build reports an error rather than silently degrading."
+    lede: "Eligibility begins at execution-mode-dispatch, promotes a multi-cell request with controller-promotion, then requires the Velo transport before any cellular role runs. Only a Velo-bearing build reaches run-kind, budget, storage, and artifact validation. velo-feature-admission is explicitly feature-gated: a lean binary reports an unsupported role instead of silently running direct."
+    narration: "Eligibility fails closed before any cell launches. execution-mode-dispatch enters the private protocol, and controller-promotion recognizes a multi-cell request. velo-feature-admission gates every cellular role next, so a lean build reports an error rather than silently degrading. Only then do the run-shape and budget validators admit only supported combinations."
     term: {
       word: "cellular-run-shape-validation"
       meaning: "Pre-launch admission for supported transport, dataset, workload, and ownership combinations."
@@ -309,7 +309,7 @@ explainer "Cellular algorithm workbook" {
       "velo-feature-admission is feature-gated.",
       "execution-merge-backstops revalidates the payload actually returned by cells."
     ]
-    caption: "dispatch → promote → validate → admit."
+    caption: "dispatch → promote → admit → validate."
 
     render: @scene {
     roots: [
@@ -329,7 +329,7 @@ explainer "Cellular algorithm workbook" {
     {
       id: "note"
       capability: "core.text"
-      text: "dispatch → promote → validate → admit."
+      text: "dispatch → promote → admit → validate."
       layout: { x: 400, y: 28, width: 260, height: 24 }
       style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
     }
@@ -396,23 +396,23 @@ explainer "Cellular algorithm workbook" {
     {
       id: "validate"
       capability: "core.panel"
-      title: "run-shape-validation"
-      detail: "fail closed"
+      title: "velo-feature-admission"
+      detail: "require Velo"
       layout: { x: 388, y: 150, width: 150, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
     }
     {
       id: "st-v"
       capability: "core.rect"
-      layout: { x: 468, y: 138, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      layout: { x: 422, y: 138, width: 116, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
       children: [
         {
           id: "st-v-text"
           capability: "core.text"
-          text: "BUILT"
-          layout: { x: 468, y: 142, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+          text: "FEATURE-GATED"
+          layout: { x: 422, y: 142, width: 116, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
         }
       ]
     }
@@ -426,23 +426,23 @@ explainer "Cellular algorithm workbook" {
     {
       id: "velo"
       capability: "core.panel"
-      title: "Velo roles"
-      detail: "admit"
+      title: "run-shape-validation"
+      detail: "fail closed"
       layout: { x: 570, y: 150, width: 108, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
     }
     {
       id: "st-velo"
       capability: "core.rect"
-      layout: { x: 562, y: 138, width: 116, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
+      layout: { x: 608, y: 138, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
       children: [
         {
           id: "st-velo-text"
           capability: "core.text"
-          text: "FEATURE-GATED"
-          layout: { x: 562, y: 142, width: 116, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+          text: "BUILT"
+          layout: { x: 608, y: 142, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         }
       ]
     }
@@ -932,8 +932,8 @@ explainer "Cellular algorithm workbook" {
   slide "two-level-execution" {
     eyebrow: "Execution · 7 of 16"
     title: "Nest cell and worker shards"
-    lede: "two-level-partition first assigns work to cells and then to thread-per-core workers. scheduled-shard-runtime runs each worker-local sink, while issuance-dispatch-injection carries the global ordinal authority into capture. Graph and scheduled programs branch only after the owned envelope arrives."
-    narration: "Execution nests two deterministic partitions. First the controller assigns a slice to each cell; then thread-per-core workers divide that slice again. The worker-local runtime dispatches through the ordinary sink, while issuance authority carries stable global identity into record capture and later merge."
+    lede: "two-level-partition first assigns work to cells and then to thread-per-core workers. issuance-dispatch-injection then stamps that same nested partition into each worker's sampler and issuer before scheduled-shard-runtime dispatches through its worker-local sink. Graph and scheduled programs branch only after the owned envelope arrives."
+    narration: "Execution nests two deterministic partitions. First the controller assigns a slice to each cell; then thread-per-core workers divide that slice again. Issuance-dispatch-injection stamps the same nested partition into each worker's sampler and issuer, and only then does the worker-local runtime dispatch through the ordinary sink, carrying that stable global identity into record capture and later merge."
     term: {
       word: "two-level-partition"
       meaning: "Deterministic cell ownership followed by disjoint worker ownership inside each cell."
@@ -998,11 +998,48 @@ explainer "Cellular algorithm workbook" {
       style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
     }
     {
+      id: "iss"
+      capability: "core.panel"
+      title: "issuance-dispatch-injection"
+      detail: "global identity"
+      layout: { x: 260, y: 150, width: 170, height: 72 }
+      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
+    }
+    {
+      id: "st-iss"
+      capability: "core.rect"
+      layout: { x: 314, y: 138, width: 70, height: 22 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
+      children: [
+        {
+          id: "st-iss-text"
+          capability: "core.text"
+          text: "BUILT"
+          layout: { x: 314, y: 142, width: 70, height: 16 }
+          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+        }
+      ]
+    }
+    {
+      id: "e2"
+      capability: "core.line"
+      from: { x: 430, y: 140 }
+      to: { x: 500, y: 140 }
+      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
+      id: "e3"
+      capability: "core.line"
+      from: { x: 430, y: 257 }
+      to: { x: 500, y: 257 }
+      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+    }
+    {
       id: "w0"
       capability: "core.panel"
       title: "worker 0"
       detail: "!Send local sink"
-      layout: { x: 260, y: 108, width: 180, height: 64 }
+      layout: { x: 500, y: 108, width: 180, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
     }
     {
@@ -1010,45 +1047,8 @@ explainer "Cellular algorithm workbook" {
       capability: "core.panel"
       title: "worker 1"
       detail: "!Send local sink"
-      layout: { x: 260, y: 225, width: 180, height: 64 }
+      layout: { x: 500, y: 225, width: 180, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "e2"
-      capability: "core.line"
-      from: { x: 440, y: 140 }
-      to: { x: 500, y: 140 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "e3"
-      capability: "core.line"
-      from: { x: 440, y: 257 }
-      to: { x: 500, y: 257 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "iss"
-      capability: "core.panel"
-      title: "issuance-dispatch-injection"
-      detail: "global identity"
-      layout: { x: 500, y: 150, width: 170, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-iss"
-      capability: "core.rect"
-      layout: { x: 554, y: 138, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-iss-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 554, y: 142, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "motion-sig"
@@ -1066,12 +1066,12 @@ explainer "Cellular algorithm workbook" {
     { id: "t-tlp", at: 400, duration: 340, target: "tlp", action: "enter" }
     { id: "t-st-tlp", at: 450, duration: 260, target: "st-tlp", action: "enter" }
     { id: "t-e1", at: 700, duration: 300, target: "e1", action: "draw" }
-    { id: "t-w0", at: 900, duration: 300, target: "w0", action: "enter" }
-    { id: "t-w1", at: 1050, duration: 300, target: "w1", action: "enter" }
-    { id: "t-e2", at: 1250, duration: 280, target: "e2", action: "draw" }
-    { id: "t-e3", at: 1350, duration: 280, target: "e3", action: "draw" }
-    { id: "t-iss", at: 1550, duration: 340, target: "iss", action: "enter" }
-    { id: "t-st-iss", at: 1600, duration: 260, target: "st-iss", action: "enter" }
+    { id: "t-iss", at: 900, duration: 340, target: "iss", action: "enter" }
+    { id: "t-st-iss", at: 950, duration: 260, target: "st-iss", action: "enter" }
+    { id: "t-e2", at: 1150, duration: 280, target: "e2", action: "draw" }
+    { id: "t-e3", at: 1250, duration: 280, target: "e3", action: "draw" }
+    { id: "t-w0", at: 1450, duration: 300, target: "w0", action: "enter" }
+    { id: "t-w1", at: 1600, duration: 300, target: "w1", action: "enter" }
   { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
     ]
     }
@@ -2088,8 +2088,8 @@ explainer "Cellular algorithm workbook" {
   slide "placement-decision" {
     eyebrow: "Decisions · 15 of 16"
     title: "Placement decides topology and shipping"
-    lede: "Same-host routes can concatenate local files directly. Cross-host placement adds Stage G input reconstruction and Stage E artifact upload around the same execution route. A local-tree intent falls back flat without operator wiring, while an external tree requires its DNS tier and explicit placement admission."
-    narration: "Placement adds topology and shipping decisions around the execution route. Cross-host runs reconstruct inputs through Stage G and upload artifacts through Stage E. External trees require operator wiring; without it, local-tree intent falls back flat. Shipping changes byte placement, not measurement meaning."
+    lede: "Same-host routes can concatenate local files directly, and a same-host aggregator tree is always honored without any wiring requirement. Cross-host placement adds Stage G input reconstruction and Stage E artifact upload around the same execution route: an externally placed tree intent falls back flat without operator DNS wiring, so cells never ship into a void."
+    narration: "Placement adds topology and shipping decisions around the execution route. Cross-host runs reconstruct inputs through Stage G and upload artifacts through Stage E. A same-host aggregator tree is always honored, but an externally placed tree requires operator DNS wiring; without it, the controller falls back flat. Shipping changes byte placement, not measurement meaning."
     term: {
       word: "aggregation-topology decision"
       meaning: "Choose flat, local tree, or externally placed tree under deployment constraints."

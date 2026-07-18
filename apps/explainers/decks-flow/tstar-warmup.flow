@@ -1372,24 +1372,24 @@ explainer "t* Warmup" {
 
   slide "Cache-pressure warmup" {
     eyebrow: "Cache-pressure warmup"
-    title: "Extended warmup replays the post-t* remainder under pressure"
-    lede: "Cache-pressure warmup is the extended phase: lanes recycle chopped post-`t*` graphs against the server so KV stays under load before the handoff drain."
+    title: "Extended warmup redispatches the boundary credit under pressure"
+    lede: "Cache-pressure warmup is the extended phase: lanes recycle the SAME lane-salted boundary-priming credit (`rewrite_for_warmup`) against the server so KV stays under load before the handoff drain — not the post-`t*` live set."
 
-    narration: "After the boundary chop, duration-bounded lanes repeatedly dispatch pressure templates — each plan is the post-t* remainder at that lane's salted t*. The goal is cache pressure: keep the inference server's KV busy with live frontier traffic until the clock deadline, then drain into the handoff."
+    narration: "After the boundary rewrite, duration-bounded lanes repeatedly redispatch that flattened, one-node-per-chain priming credit at that lane's salted t* — a fresh instance id each time, no idle delay. The goal is cache pressure: keep the inference server's KV busy with priming traffic until the clock deadline, then drain into the handoff. The real post-t* remainder is not replayed here; profiling's frontier chop resumes it later."
 
     term: {
       word: "cache-pressure warmup"
-      meaning: "Extended warmup that replays post-t* remainders on pressure lanes for a duration budget, building KV load before profiling handoff."
+      meaning: "Extended warmup that redispatches the lane-salted boundary-priming credit (`rewrite_for_warmup`) on pressure lanes for a duration budget, building KV load before profiling handoff."
     }
 
     points: [
       "`GraphPressureRecycle` runs until Clock deadline; lanes share one corpus cursor.",
-      "Each dispatch uses the lane-salted `t*` chop of a pressure template (post-`t*` live set).",
-      "Distinct from ordinary phase warmup and from the later profiling resume.",
-      "Evidence: `rust/runtime/src/engine/graph_phase_runtime.rs` — `GraphPressureRecycle`; `snapshot.rs` extended-warmup docs."
+      "Each dispatch reuses `rewrite_for_warmup`'s flattened boundary credit — one node per live chain, rooted at START with no delay — NOT the post-`t*` live set.",
+      "Distinct from ordinary phase warmup (same rewrite, single pass) and from the later profiling resume (`chop_trie_at_frontier`).",
+      "Evidence: `rust/runtime/src/graph/snapshot.rs` — `rewrite_for_warmup`; `graph_phase_runtime.rs` — `PressureTemplate` / `GraphPressureRecycle`."
     ]
 
-    caption: "Chop · recycle under pressure · then drain."
+    caption: "Boundary credit · recycle under pressure · then drain."
 
     render: @scene {
       roots: [
@@ -1397,15 +1397,15 @@ explainer "t* Warmup" {
           id: "s12-hdr"
           capability: "core.header"
           title: "PRESSURE RECYCLE LOOP"
-          caption: "Chop · recycle under pressure · then drain."
+          caption: "Boundary credit · recycle under pressure · then drain."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
         },
         {
           id: "s12-chop"
           capability: "core.panel"
-          title: "t* chop"
-          detail: "post-t* remainder"
+          title: "Boundary credit"
+          detail: "rewrite_for_warmup"
           layout: { x: 40, y: 110, width: 140, height: 90 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
         },
@@ -1613,7 +1613,7 @@ explainer "t* Warmup" {
 
     term: {
       word: "LaneHandoff"
-      meaning: "Per-lane drain state: template_trace_id, instance_id, t_star_us, executed_node_ids, return_wall_us — plus deck-level drain_end_wall_us, corpus_cursor, pressure_lane_count."
+      meaning: "Per-lane drain state: template_trace_id, instance_id, t_star_us, executed_node_ids, return_wall_us."
     }
 
     points: [
@@ -1742,20 +1742,20 @@ explainer "t* Warmup" {
   slide "Why instance_id is reused" {
     eyebrow: "Why instance_id is reused"
     title: "Cache-bust marker continuity across the handoff"
-    lede: "Profiling reuses the pressure `instance_id` verbatim so the per-instance cache-bust marker (digest of `credit.trace_id` via `build_trace_instance_marker`) stays continuous — KV transfers instead of cold-prefilling behind a fresh `.0`."
+    lede: "Profiling reuses the pressure `instance_id` verbatim so the per-instance cache-bust marker (`GraphCacheBust::marker` over the instance `trace_id`) stays continuous — KV transfers instead of cold-prefilling behind a fresh `.0`."
 
-    narration: "The live pressure id at drain — e.g. t-1#0.p2 — becomes the resumed instance's id. That string feeds the cache-bust marker. A fresh .0 id would look like a new instance to the server, forcing cold prefill and throwing away the KV built under pressure."
+    narration: "The live pressure id at drain — e.g. t-1#0.p2 — becomes the resumed instance's id. That string feeds GraphCacheBust::marker. A fresh .0 id would look like a new instance to the server, forcing cold prefill and throwing away the KV built under pressure."
 
     term: {
-      word: "build_trace_instance_marker"
-      meaning: "Per-instance cache-bust marker derived from a digest of credit.trace_id; continuous only when profiling reuses the pressure instance_id across the handoff."
+      word: "GraphCacheBust::marker"
+      meaning: "Per-instance cache-bust marker derived from a digest over the instance trace_id; continuous only when profiling reuses the pressure instance_id across the handoff."
     }
 
     points: [
       "Resume reuses pressure `instance_id` verbatim (`LaneResumeGraphTraceSource`).",
-      "Marker is a digest of `credit.trace_id` — see `build_trace_instance_marker`.",
+      "Marker is `GraphCacheBust::marker(trace_id)` — digests the instance id.",
       "Fresh `.0` would cold-prefill and discard pressure-built KV.",
-      "Evidence: `rust/runtime/src/graph/warmup_handoff.rs` — `instance_id` docs."
+      "Evidence: `rust/runtime/src/graph/warmup_handoff.rs` — `instance_id` docs; `graph_execution.rs` — `GraphCacheBust::marker`."
     ]
 
     caption: "Same id · same marker · warm KV transfers."

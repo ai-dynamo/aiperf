@@ -82,7 +82,7 @@ Recurring motif: a 4-turn toy DAG (`n0…n3`) on a horizontal arrival timeline w
 9. **Trie chop** — drop `arrival_offset_us < t*`; re-root survivors from `START` with residual delay.
 10. **Inputs & channels** — drop requirements on chopped predecessors; avoid `await_inputs` deadlocks.
 11. **Prompt path unchanged** — pre-`t*` segments remain so the resume prompt is exact.
-12. **Cache-pressure warmup** — replay post-`t*` remainder under pressure lanes / recycle.
+12. **Cache-pressure warmup** — redispatch `rewrite_for_warmup`'s flattened boundary-priming credit under pressure lanes / recycle (not the post-`t*` live set).
 13. **`GraphPressureRecycle` + `PermutationDraw`** — sequential / shuffle / random cursor continuity.
 14. **Drain & handoff** — `LaneHandoff`: template, `instance_id`, `t_star_us`, executed nodes, return walls.
 15. **Why `instance_id` is reused** — cache-bust marker continuity (avoid cold prefill behind a fresh `.0`).
