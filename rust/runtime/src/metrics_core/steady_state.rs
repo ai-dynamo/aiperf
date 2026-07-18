@@ -8,11 +8,12 @@
 //! new admission stops). Summarizing the whole run blends those transients into
 //! the steady interval and biases throughput low and tail latency high.
 //!
-//! This module detects the steady-state window automatically: the interval
-//! during which in-flight concurrency is at or above a configured fraction of
-//! the target. The window opens the first time in-flight concurrency rises to
-//! that threshold and closes the last time it falls back below it, so ramp-up
-//! and drain are excluded. The
+//! This module detects the steady-state window automatically from the same
+//! in-flight request-concurrency step function the rest of the metrics plane
+//! already builds ([`MetricsAccumulator::concurrency_curve`], backed by the
+//! shared sweep-line curves). The window opens the first time that curve rises
+//! to a configured fraction of the target and closes the last time it falls back
+//! below, so ramp-up and drain are excluded. The
 //! steady summary is then computed by the ordinary [`MetricsAccumulator`]
 //! machinery over a half-open `[start, end)` time range, reusing the exact same
 //! record timestamps and summary computation as the whole-run summary — no
@@ -23,6 +24,7 @@
 //! `None` and behavior is unchanged.
 
 use crate::metrics_core::accumulator::{AccumulatorSummary, MetricsAccumulator};
+use crate::metrics_core::sweepline::StepFn;
 use crate::metrics_core::window::{ExportContext, Phase};
 
 /// Wall-clock floor for the steady window before a short-window warning fires.
@@ -128,21 +130,21 @@ impl SteadyStateOutcome {
     }
 }
 
-/// Detects the steady-state window from per-record `[start, end)` intervals.
+/// Detects the steady-state window from an in-flight concurrency step function.
 ///
-/// The sorted start and end events are swept in timestamp order while tracking
-/// the running in-flight count. At tied timestamps starts are applied before
-/// ends so a request that ends exactly as another starts does not create a
-/// spurious dip. The window opens at the first start that lifts the in-flight
-/// count up to the threshold and closes at the last end that drops it from the
-/// threshold back below. Returns `None` when no interval is supplied, the target
+/// `concurrency` is the shared right-continuous request-concurrency curve
+/// (`value` is the in-flight count held after each event timestamp). A single
+/// linear scan finds the first timestamp whose held value reaches the threshold
+/// and the last timestamp at which the value drops from at-or-above the
+/// threshold back below it; when the curve ends while still saturated the window
+/// closes at its final event. Returns `None` when the curve is empty, the target
 /// is zero, or concurrency never reaches the threshold.
 pub fn detect_steady_window(
-    intervals: &[(i64, i64)],
+    concurrency: &StepFn,
     target_concurrency: usize,
     fraction: f64,
 ) -> Option<SteadyWindow> {
-    if intervals.is_empty() || target_concurrency == 0 {
+    if concurrency.is_empty() || target_concurrency == 0 {
         return None;
     }
     let fraction = if fraction.is_finite() && fraction > 0.0 && fraction <= 1.0 {
@@ -152,68 +154,43 @@ pub fn detect_steady_window(
     };
     // ceil(fraction * target) without float rounding surprises; at least 1.
     let threshold = ((fraction * target_concurrency as f64).ceil() as usize).max(1);
+    // Curve values are integer counts stored as f64; compare with a half-unit
+    // margin so residual snapping never flips a boundary.
+    let threshold_level = threshold as f64 - 0.5;
 
-    let mut starts: Vec<i64> = intervals.iter().map(|&(start, _)| start).collect();
-    // Clamp any inverted interval so an end never precedes its own start.
-    let mut ends: Vec<i64> = intervals
-        .iter()
-        .map(|&(start, end)| end.max(start))
-        .collect();
-    starts.sort_unstable();
-    ends.sort_unstable();
+    let timestamps = concurrency.timestamps_ns();
+    let values = concurrency.values();
 
-    let mut active: usize = 0;
-    let mut peak: usize = 0;
+    let mut peak: f64 = 0.0;
     let mut window_start: Option<i64> = None;
     let mut window_end: Option<i64> = None;
-    let (mut i, mut j) = (0usize, 0usize);
+    let mut prev_saturated = false;
 
-    while i < starts.len() || j < ends.len() {
-        // Start-before-end on ties keeps simultaneous hand-offs from dipping.
-        let take_start = match (starts.get(i), ends.get(j)) {
-            (Some(&s), Some(&e)) => s <= e,
-            (Some(_), None) => true,
-            (None, Some(_)) => false,
-            (None, None) => break,
-        };
-
-        if take_start {
-            active += 1;
-            peak = peak.max(active);
-            // First moment the in-flight count reaches the threshold from below.
-            if active == threshold && window_start.is_none() {
-                window_start = Some(starts[i]);
-            }
-            i += 1;
-        } else {
-            let before = active;
-            active = active.saturating_sub(1);
-            // Dropping from exactly the threshold necessarily lands below it.
-            // Keep overwriting so the window closes at the *last* such descent.
-            if before == threshold && window_start.is_some() {
-                window_end = Some(ends[j]);
-            }
-            j += 1;
+    for (&timestamp, &held) in timestamps.iter().zip(values) {
+        peak = peak.max(held);
+        let saturated = held >= threshold_level;
+        // First event whose held value reaches the threshold from below.
+        if saturated && window_start.is_none() {
+            window_start = Some(timestamp as i64);
         }
+        // Held value fell from at-or-above the threshold back below it; keep
+        // overwriting so the window closes at the *last* such descent.
+        if window_start.is_some() && prev_saturated && !saturated {
+            window_end = Some(timestamp as i64);
+        }
+        prev_saturated = saturated;
     }
 
     let start_ns = window_start?;
-    // If concurrency never fell back below threshold after opening (e.g. the run
-    // ended while still saturated), close the window at the last observed event.
-    let end_ns = window_end.unwrap_or_else(|| {
-        starts
-            .last()
-            .copied()
-            .into_iter()
-            .chain(ends.last().copied())
-            .max()
-            .unwrap_or(start_ns)
-    });
+    // If concurrency never fell back below the threshold after opening (e.g. the
+    // run ended while still saturated), close at the last curve event.
+    let end_ns = window_end
+        .unwrap_or_else(|| timestamps.last().map(|&t| t as i64).unwrap_or(start_ns));
     Some(SteadyWindow {
         start_ns,
         end_ns: end_ns.max(start_ns),
         threshold,
-        peak_concurrency: peak,
+        peak_concurrency: peak.round() as usize,
     })
 }
 
@@ -234,31 +211,24 @@ pub fn steady_state_summary(
         return None;
     }
 
-    let store = accumulator.column_store();
-    let starts = store.start_ns();
-    let ends = store.end_ns();
     // Steady-state windowing is a profiling-phase concept: warmup traffic ramps
     // admission separately and must not perturb the concurrency profile.
-    let profiling = store.mask_for(&ExportContext::phase(Phase::Profiling));
-    // Absent rows carry NaN; keep only fully timestamped, finite profiling
-    // intervals.
-    let intervals: Vec<(i64, i64)> = starts
-        .iter()
-        .zip(ends.iter())
-        .enumerate()
-        .filter(|(row, (s, e))| {
-            profiling.get(*row).copied().unwrap_or(false) && s.is_finite() && e.is_finite()
-        })
-        .map(|(_, (&s, &e))| (s as i64, e as i64))
-        .collect();
-    if intervals.is_empty() {
+    let profiling = accumulator
+        .column_store()
+        .mask_for(&ExportContext::phase(Phase::Profiling));
+    // Reuse the shared in-flight concurrency curve rather than re-deriving it
+    // from raw start/end timestamps. The curve skips absent (NaN) rows, so its
+    // first/last event bound the profiling-phase span.
+    let concurrency = accumulator.concurrency_curve(&profiling);
+    if concurrency.is_empty() {
         return None;
     }
 
-    let window = detect_steady_window(&intervals, target_concurrency, config.effective_fraction())?;
+    let window = detect_steady_window(&concurrency, target_concurrency, config.effective_fraction())?;
 
-    let run_start_ns = intervals.iter().map(|&(s, _)| s).min().unwrap_or(0);
-    let run_end_ns = intervals.iter().map(|&(_, e)| e).max().unwrap_or(0);
+    let timestamps = concurrency.timestamps_ns();
+    let run_start_ns = timestamps.first().map(|&t| t as i64).unwrap_or(0);
+    let run_end_ns = timestamps.last().map(|&t| t as i64).unwrap_or(0);
 
     // Reuse the shared summary path over the detected half-open time range.
     let summary =
@@ -293,23 +263,25 @@ pub fn steady_state_summary(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics_core::sweepline::concurrency_sweep_line;
+
+    /// Builds the shared in-flight concurrency step function from `[start, end)`
+    /// intervals, exactly as the accumulator does for real records.
+    fn curve(intervals: &[(i64, i64)]) -> StepFn {
+        let starts: Vec<f64> = intervals.iter().map(|&(s, _)| s as f64).collect();
+        let ends: Vec<f64> = intervals.iter().map(|&(_, e)| e as f64).collect();
+        concurrency_sweep_line(&starts, &ends)
+    }
 
     #[test]
     fn threshold_is_ceil_of_fraction_times_target() {
         // Ten fully-overlapping requests saturate any threshold <= 10.
         let intervals: Vec<(i64, i64)> = (0..10).map(|k| (k, 1000)).collect();
+        let curve = curve(&intervals);
         // target 10, fraction 0.8 -> ceil(8.0) = 8
-        assert_eq!(
-            detect_steady_window(&intervals, 10, 0.8).unwrap().threshold,
-            8
-        );
+        assert_eq!(detect_steady_window(&curve, 10, 0.8).unwrap().threshold, 8);
         // target 10, fraction 0.75 -> ceil(7.5) = 8
-        assert_eq!(
-            detect_steady_window(&intervals, 10, 0.75)
-                .unwrap()
-                .threshold,
-            8
-        );
+        assert_eq!(detect_steady_window(&curve, 10, 0.75).unwrap().threshold, 8);
     }
 
     #[test]
@@ -328,7 +300,7 @@ mod tests {
             (19, 31), // E  (re-saturates after A leaves)
             (40, 45), // late straggler, below threshold, must be excluded
         ];
-        let window = detect_steady_window(&intervals, 4, 0.8).unwrap();
+        let window = detect_steady_window(&curve(&intervals), 4, 0.8).unwrap();
         assert_eq!(window.threshold, 4);
         assert_eq!(
             window.start_ns, 3,
@@ -348,30 +320,30 @@ mod tests {
     fn returns_none_when_threshold_never_reached() {
         // Only ever two concurrent, target 10 -> threshold 8, never met.
         let intervals = vec![(0, 5), (1, 6), (10, 15), (11, 16)];
-        assert!(detect_steady_window(&intervals, 10, 0.8).is_none());
+        assert!(detect_steady_window(&curve(&intervals), 10, 0.8).is_none());
     }
 
     #[test]
     fn gated_off_returns_none() {
-        assert!(detect_steady_window(&[], 10, 0.8).is_none());
-        assert!(detect_steady_window(&[(0, 1)], 0, 0.8).is_none());
+        assert!(detect_steady_window(&StepFn::empty(), 10, 0.8).is_none());
+        assert!(detect_steady_window(&curve(&[(0, 1)]), 0, 0.8).is_none());
     }
 
     #[test]
     fn simultaneous_handoff_does_not_dip_below_threshold() {
-        // target 2, threshold 2. A ends exactly when C starts; concurrency must
-        // be treated as never dropping below 2 across the handoff.
+        // target 2, threshold 2. A ends exactly when C starts; the shared curve
+        // coalesces coincident events to the net level, so concurrency holds at
+        // 2 across the handoff.
         let intervals = vec![
             (0, 10),  // A
             (1, 20),  // B
             (10, 30), // C starts exactly as A ends
         ];
-        let window = detect_steady_window(&intervals, 2, 1.0).unwrap();
+        let window = detect_steady_window(&curve(&intervals), 2, 1.0).unwrap();
         assert_eq!(window.threshold, 2);
         assert_eq!(window.start_ns, 1);
-        // C's start at 10 coincides with A's end, so the handoff holds at 2
-        // (start-before-end). The last descent from 2 to 1 is B ending at 20;
-        // C then runs alone below threshold.
+        // The handoff at t=10 holds at 2. The last descent from 2 to 1 is B
+        // ending at 20; C then runs alone below threshold.
         assert_eq!(window.end_ns, 20);
     }
 }
