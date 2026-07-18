@@ -1324,8 +1324,13 @@ function renderNode(
     const d = arrowPathData(node, index, layoutOrigin);
     if (d !== undefined) {
       const stroke = paintFromStyle(node.style, "stroke", theme, themeAccent);
-      const showMarker = shouldShowArrowhead(node, capability);
+      const wantsMarker = shouldShowArrowhead(node, capability);
       const drawing = drawProgress !== undefined;
+      // SVG marker-end sits at the path tip immediately; only attach it once
+      // the stroke has fully revealed so tips never lead the line.
+      const showMarker =
+        wantsMarker &&
+        (!drawing || drawProgress >= 1 || playback.reducedMotion);
       const authoredDash = authoredStrokeDasharray(node.style);
       const dashed = isDashedStyle(node.style);
       body = (
