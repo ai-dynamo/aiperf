@@ -213,6 +213,7 @@ class TestJobSetSpec:
             namespace="default",
             job_id="test-123",
             image="aiperf:latest",
+            cells=2,
             worker_replicas=2,
             workers_per_pod=2,
             record_processors_per_pod=1,
@@ -238,16 +239,16 @@ class TestJobSetSpec:
         assert manifest["metadata"]["labels"]["app"] == "aiperf"
         assert manifest["metadata"]["labels"]["aiperf.nvidia.com/job-id"] == "test-123"
 
-    def test_to_k8s_manifest_has_controller_and_workers(
+    def test_to_k8s_manifest_has_controller_and_cells(
         self, basic_jobset_spec: AIPerfJobSetSpec
     ) -> None:
-        """Test JobSet manifest contains controller and worker jobs."""
+        """Test JobSet manifest contains the controller and cells jobs."""
         manifest = basic_jobset_spec.to_k8s_manifest()
         jobs = manifest["spec"]["replicatedJobs"]
         assert len(jobs) == 2
         job_names = [j["name"] for j in jobs]
         assert "controller" in job_names
-        assert "workers" in job_names
+        assert "cells" in job_names
 
     def test_to_k8s_manifest_controller_replicas(
         self, basic_jobset_spec: AIPerfJobSetSpec
@@ -259,15 +260,15 @@ class TestJobSetSpec:
         )
         assert controller_job["replicas"] == 1
 
-    def test_to_k8s_manifest_worker_replicas(
+    def test_to_k8s_manifest_cells_replicas(
         self, basic_jobset_spec: AIPerfJobSetSpec
     ) -> None:
-        """Test workers have correct replica count."""
+        """Test the cells job has the correct replica count (one per cell)."""
         manifest = basic_jobset_spec.to_k8s_manifest()
-        worker_job = next(
-            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
+        cells_job = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
         )
-        assert worker_job["replicas"] == 2
+        assert cells_job["replicas"] == 2
 
     def test_to_k8s_manifest_success_policy(
         self, basic_jobset_spec: AIPerfJobSetSpec
@@ -297,20 +298,21 @@ class TestJobSetSpec:
         manifest = basic_jobset_spec.to_k8s_manifest()
         assert "ttlSecondsAfterFinished" in manifest["spec"]
 
-    def test_worker_job_ttl_is_zero_for_immediate_gc(self) -> None:
-        """Worker jobs must GC immediately; the outer JobSet carries the real TTL."""
+    def test_cells_job_ttl_is_zero_for_immediate_gc(self) -> None:
+        """Cell jobs must GC immediately; the outer JobSet carries the real TTL."""
         spec = AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
             image="aiperf:latest",
+            cells=2,
             ttl_seconds=600,
         )
         manifest = spec.to_k8s_manifest()
-        worker_job = next(
-            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
+        cells_job = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
         )
-        assert worker_job["template"]["spec"]["ttlSecondsAfterFinished"] == 0
+        assert cells_job["template"]["spec"]["ttlSecondsAfterFinished"] == 0
 
     def test_to_k8s_manifest_custom_ttl(self) -> None:
         """Test JobSet with custom TTL."""
@@ -376,30 +378,26 @@ class TestJobSetSpec:
         assert worker_job["template"]["spec"]["ttlSecondsAfterFinished"] == 0
         assert manifest["spec"]["ttlSecondsAfterFinished"] == 600
 
-    def test_worker_containers_have_no_probe_timeout_override(self) -> None:
-        """All worker-pod containers honor the default probe timeout uniformly.
+    def test_cell_containers_have_no_probe_timeout_override(self) -> None:
+        """Cell containers carry none of the retired mesh service-probe env.
 
-        Previously WGM and workers received AIPERF_SERVICE_CONNECTION_PROBE_TIMEOUT
-        via extra_env while record-processor did not — an inconsistency that hid
-        the real strategy (fail fast, let Kubernetes restart). The new strategy
-        drops the override entirely; WORKER_BACKOFF_LIMIT absorbs transient
-        startup failures via container restarts, not in-process retries.
+        The native cell runner speaks no ZMQ service-health protocol; the
+        AIPERF_SERVICE_CONNECTION_PROBE_TIMEOUT override is gone. Cells fail fast
+        under the cells-job backoff limit (container restarts), not in-process retries.
         """
         spec = AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
             image="aiperf:latest",
-            worker_replicas=1,
-            workers_per_pod=2,
-            record_processors_per_pod=1,
+            cells=2,
         )
 
         manifest = spec.to_k8s_manifest()
-        worker_job = next(
-            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
+        cells_job = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
         )
-        for container in worker_job["template"]["spec"]["template"]["spec"][
+        for container in cells_job["template"]["spec"]["template"]["spec"][
             "containers"
         ]:
             env_names = {e["name"] for e in container.get("env", [])}
@@ -412,7 +410,8 @@ class TestJobSetSpec:
     ) -> None:
         """Test controller pod has expected containers.
 
-        Each control-plane service runs in its own container plus a results sidecar.
+        The cellular controller pod is one aiperf runner in controller mode plus a
+        results-serving sidecar — no mesh control-plane/event-bus/manager/api containers.
         """
         manifest = basic_jobset_spec.to_k8s_manifest()
         controller_job = next(
@@ -422,73 +421,45 @@ class TestJobSetSpec:
             "containers"
         ]
         container_names = [c["name"] for c in containers]
-        assert set(container_names) == {
-            "event-bus-proxy",
-            "control-plane",
-            "dataset-manager",
-            "timing-manager",
-            "records-manager",
-            "api",
-            "gpu-telemetry-manager",
-            "server-metrics-manager",
-            "results-sidecar",
-        }
-        # Event-bus proxy sidecar must be first so the kubelet begins pulling
-        # and starting it before anything publishes on its pub/sub sockets.
-        assert container_names[0] == "event-bus-proxy"
+        assert container_names == ["controller", "results-sidecar"]
 
-    def test_to_k8s_manifest_worker_containers(
+    def test_to_k8s_manifest_cell_containers(
         self, basic_jobset_spec: AIPerfJobSetSpec
     ) -> None:
-        """Test worker pod has expected containers.
+        """Test the cells pod has exactly the single cell runner container.
 
-        Worker pods keep a worker-group-manager for shared infrastructure, while
-        workers and record processors each run in their own container.
+        A cell pod is one aiperf runner slice; there is no worker-group-manager,
+        per-worker, or per-record-processor container in the cellular topology.
         """
         manifest = basic_jobset_spec.to_k8s_manifest()
-        worker_job = next(
-            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
+        cells_job = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
         )
-        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
-        container_names = [c["name"] for c in containers]
-        assert "worker-group-manager" in container_names
-        assert "worker-0" in container_names
-        assert "worker-1" in container_names
-        assert "record-processor-0" in container_names
-        assert len(containers) == 4
+        containers = cells_job["template"]["spec"]["template"]["spec"]["containers"]
+        assert [c["name"] for c in containers] == ["cell"]
 
-    def test_worker_group_manager_container_uses_new_service_type(self) -> None:
-        """Worker JobSet wiring should use the group-manager service naming."""
+    def test_cell_container_runs_cell_frontend_against_config(self) -> None:
+        """The cell container runs the `aiperf cell` frontend against the mounted Config v2."""
         spec = AIPerfJobSetSpec(
             name="aiperf-test",
             namespace="default",
             job_id="test-123",
             image="aiperf:latest",
-            worker_replicas=1,
-            workers_per_pod=1,
-            record_processors_per_pod=1,
+            cells=1,
         )
 
         manifest = spec.to_k8s_manifest()
-        worker_job = next(
-            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
+        cells_job = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
         )
-        manager_container = next(
-            container
-            for container in worker_job["template"]["spec"]["template"]["spec"][
-                "containers"
-            ]
-            if container["name"] == "worker-group-manager"
-        )
+        cell = cells_job["template"]["spec"]["template"]["spec"]["containers"][0]
 
-        assert manager_container["args"] == [
-            "service",
-            "--type",
-            "worker_group_manager",
-            "--benchmark-run",
-            f"{K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH}/run_config.json",
-            "--health-port",
-            str(K8sEnvironment.PORTS.WORKER_HEALTH),
+        assert cell["name"] == "cell"
+        assert cell["command"] == ["aiperf"]
+        assert cell["args"] == [
+            "cell",
+            "--config",
+            f"{K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH}/config.yaml",
         ]
 
     def test_to_k8s_manifest_containers_have_image(
@@ -530,9 +501,14 @@ class TestJobSetSpec:
         )
         volumes = controller_job["template"]["spec"]["template"]["spec"]["volumes"]
         volume_names = [v["name"] for v in volumes]
+        # Cellular runner volumes: config (mounted Config v2), results, HF cache, scratch.
+        # The retired mesh `ipc` (ZMQ socket dir) and `datasets` (mmap) volumes are gone.
         assert "config" in volume_names
-        assert "ipc" in volume_names
         assert "results" in volume_names
+        assert "tokenizer-cache" in volume_names
+        assert "tmp" in volume_names
+        assert "ipc" not in volume_names
+        assert "datasets" not in volume_names
 
 
 class TestJobSetSpecContainerDetails:
@@ -546,37 +522,32 @@ class TestJobSetSpecContainerDetails:
             namespace="default",
             job_id="test-123",
             image="aiperf:latest",
+            cells=2,
             resource_mode="guaranteed",
         )
         return spec.to_k8s_manifest()
 
-    def test_containers_have_health_probes(
+    def test_only_results_sidecar_has_health_probes(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Controller-side containers keep health probes; worker-side containers skip readiness/liveness."""
+        """Only the always-on results sidecar keeps liveness/readiness probes; the
+        cellular runner containers (controller/cell/aggregator) run to terminal
+        under a fail-fast restart policy and carry no probes.
+        """
         for job in jobset_manifest["spec"]["replicatedJobs"]:
             containers = job["template"]["spec"]["template"]["spec"]["containers"]
             for container in containers:
-                if (
-                    job["name"] == "controller"
-                    and container["name"] not in {"records-manager"}
-                ) or container["name"] == "results-sidecar":
+                if container["name"] == "results-sidecar":
                     assert "livenessProbe" in container, (
                         f"{container['name']} missing livenessProbe"
+                    )
+                    assert "readinessProbe" in container, (
+                        f"{container['name']} missing readinessProbe"
                     )
                 else:
                     assert "livenessProbe" not in container, (
                         f"{container['name']} unexpectedly has livenessProbe"
                     )
-
-                if job["name"] == "controller" and container["name"] not in {
-                    "control-plane",
-                    "records-manager",
-                }:
-                    assert "readinessProbe" in container, (
-                        f"{container['name']} missing readinessProbe"
-                    )
-                else:
                     assert "readinessProbe" not in container, (
                         f"{container['name']} unexpectedly has readinessProbe"
                     )
@@ -701,178 +672,115 @@ class TestJobSetSpecContainerDetails:
                 assert "AIPERF_JOB_ID" in env_names
                 assert "AIPERF_NAMESPACE" in env_names
 
-    def test_worker_containers_have_controller_host(
+    def test_cell_containers_have_controller_addr(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Test worker containers have AIPERF_K8S_ZMQ_CONTROLLER_HOST env var."""
-        worker_job = next(
-            j
-            for j in jobset_manifest["spec"]["replicatedJobs"]
-            if j["name"] == "workers"
+        """Cell containers dial the controller via AIPERF_CELL_CONTROLLER_ADDR (tcp://…:9500),
+        replacing the retired mesh AIPERF_K8S_ZMQ_CONTROLLER_HOST."""
+        cells_job = next(
+            j for j in jobset_manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
         )
-        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
+        containers = cells_job["template"]["spec"]["template"]["spec"]["containers"]
         for container in containers:
-            env_names = [e["name"] for e in container["env"]]
-            assert "AIPERF_K8S_ZMQ_CONTROLLER_HOST" in env_names, (
-                f"{container['name']} missing controller host"
-            )
+            env_dict = {e["name"]: e.get("value") for e in container["env"]}
+            addr = env_dict.get("AIPERF_CELL_CONTROLLER_ADDR")
+            assert addr is not None, f"{container['name']} missing controller addr"
+            assert addr.startswith("tcp://")
+            assert addr.endswith(":9500")
+            assert "AIPERF_K8S_ZMQ_CONTROLLER_HOST" not in env_dict
 
-    def test_worker_service_containers_have_unique_service_ids(
+    def test_cell_containers_get_cell_id_from_job_index(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Test worker and record-processor containers get deterministic service IDs."""
-        worker_job = next(
-            j
-            for j in jobset_manifest["spec"]["replicatedJobs"]
-            if j["name"] == "workers"
+        """Each cell derives its partition index (CELL_ID) from its JobSet job-index
+        label, and knows the total cell count — replacing per-worker service IDs."""
+        cells_job = next(
+            j for j in jobset_manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
         )
-        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
-
-        worker_0 = next(c for c in containers if c["name"] == "worker-0")
-        record_processor_0 = next(
-            c for c in containers if c["name"] == "record-processor-0"
+        cell = cells_job["template"]["spec"]["template"]["spec"]["containers"][0]
+        env_by_name = {e["name"]: e for e in cell["env"]}
+        cell_id = env_by_name["AIPERF_CELL_ID"]
+        assert (
+            cell_id["valueFrom"]["fieldRef"]["fieldPath"]
+            == "metadata.labels['jobset.sigs.k8s.io/job-index']"
         )
+        assert env_by_name["AIPERF_CELL_COUNT"]["value"] == "2"
 
-        assert "--service-id" in worker_0["args"]
-        assert "worker_$(AIPERF_POD_INDEX)_0" in worker_0["args"]
-        assert "--service-id" in record_processor_0["args"]
-        assert "record_processor_$(AIPERF_POD_INDEX)_0" in record_processor_0["args"]
-
-    def test_worker_container_health_ports_are_unique_within_pod(
+    def test_controller_exposes_cell_controller_port(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Test worker pod containers get distinct health ports."""
-        worker_job = next(
-            j
-            for j in jobset_manifest["spec"]["replicatedJobs"]
-            if j["name"] == "workers"
-        )
-        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
-        ports = [
-            container["ports"][0]["containerPort"]
-            for container in containers
-            if container["ports"]
-        ]
-        assert len(ports) == len(set(ports))
-
-    def test_api_container_has_api_port(self, jobset_manifest: dict[str, Any]) -> None:
-        """Test API container exposes only the API port (no separate health port)."""
+        """The controller container exposes its cell-transport bootstrap port (9500)."""
         controller_job = next(
             j
             for j in jobset_manifest["spec"]["replicatedJobs"]
             if j["name"] == "controller"
         )
-        containers = controller_job["template"]["spec"]["template"]["spec"][
-            "containers"
-        ]
-        api_container = next(c for c in containers if c["name"] == "api")
-        port_names = [p["name"] for p in api_container["ports"]]
-        assert "api" in port_names
-        assert "health" not in port_names
-
-    def test_api_container_probes_use_api_port(
-        self, jobset_manifest: dict[str, Any]
-    ) -> None:
-        """Test API container probes hit the FastAPI port, not the disabled health port."""
-        controller_job = next(
-            j
-            for j in jobset_manifest["spec"]["replicatedJobs"]
-            if j["name"] == "controller"
-        )
-        containers = controller_job["template"]["spec"]["template"]["spec"][
-            "containers"
-        ]
-        api_container = next(c for c in containers if c["name"] == "api")
-
-        assert api_container["startupProbe"]["httpGet"]["port"] == 9090
-        assert api_container["livenessProbe"]["httpGet"]["port"] == 9090
-        assert api_container["readinessProbe"]["httpGet"]["port"] == 9090
-
-    def test_controller_records_manager_skips_all_probes(
-        self, jobset_manifest: dict[str, Any]
-    ) -> None:
-        """Records manager should not be restarted by probes during long post-send draining."""
-        controller_job = next(
-            j
-            for j in jobset_manifest["spec"]["replicatedJobs"]
-            if j["name"] == "controller"
-        )
-        records_manager = next(
+        controller = next(
             c
             for c in controller_job["template"]["spec"]["template"]["spec"][
                 "containers"
             ]
-            if c["name"] == "records-manager"
+            if c["name"] == "controller"
         )
-        assert "readinessProbe" not in records_manager
-        assert "startupProbe" not in records_manager
-        assert "livenessProbe" not in records_manager
+        cell_ctl = next(p for p in controller["ports"] if p["name"] == "cell-ctl")
+        assert cell_ctl["containerPort"] == 9500
 
-    def test_worker_containers_skip_readiness_probes(
+    def test_cell_controller_skips_all_probes(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Worker-side containers should not gate pod readiness during slow streaming startup."""
-        worker_job = next(
+        """The controller runner container carries no probes — it runs to terminal
+        under RestartPolicy.NEVER and merges shards; probes are the sidecar's job."""
+        controller_job = next(
             j
             for j in jobset_manifest["spec"]["replicatedJobs"]
-            if j["name"] == "workers"
+            if j["name"] == "controller"
         )
-        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
-        worker_side = {
-            c["name"]
-            for c in containers
-            if c["name"].startswith("worker-")
-            or c["name"].startswith("record-processor-")
-            or c["name"] == "worker-group-manager"
-        }
-        assert worker_side
-        for container in containers:
-            if container["name"] in worker_side:
-                assert "readinessProbe" not in container
+        controller = next(
+            c
+            for c in controller_job["template"]["spec"]["template"]["spec"][
+                "containers"
+            ]
+            if c["name"] == "controller"
+        )
+        assert "readinessProbe" not in controller
+        assert "startupProbe" not in controller
+        assert "livenessProbe" not in controller
 
-    def test_worker_containers_skip_startup_probes(
+    def test_cell_containers_skip_readiness_probes(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Worker-side containers should not be killed by startup probes during slow pod bring-up."""
-        worker_job = next(
-            j
-            for j in jobset_manifest["spec"]["replicatedJobs"]
-            if j["name"] == "workers"
+        """Cell runner containers carry no readiness probe."""
+        cells_job = next(
+            j for j in jobset_manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
         )
-        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
-        worker_side = {
-            c["name"]
-            for c in containers
-            if c["name"].startswith("worker-")
-            or c["name"].startswith("record-processor-")
-            or c["name"] == "worker-group-manager"
-        }
-        assert worker_side
-        for container in containers:
-            if container["name"] in worker_side:
-                assert "startupProbe" not in container
+        for container in cells_job["template"]["spec"]["template"]["spec"][
+            "containers"
+        ]:
+            assert "readinessProbe" not in container
 
-    def test_worker_containers_skip_liveness_probes(
+    def test_cell_containers_skip_startup_probes(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Worker-side containers should not be killed by liveness probes during long bring-up."""
-        worker_job = next(
-            j
-            for j in jobset_manifest["spec"]["replicatedJobs"]
-            if j["name"] == "workers"
+        """Cell runner containers carry no startup probe."""
+        cells_job = next(
+            j for j in jobset_manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
         )
-        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
-        worker_side = {
-            c["name"]
-            for c in containers
-            if c["name"].startswith("worker-")
-            or c["name"].startswith("record-processor-")
-            or c["name"] == "worker-group-manager"
-        }
-        assert worker_side
-        for container in containers:
-            if container["name"] in worker_side:
-                assert "livenessProbe" not in container
+        for container in cells_job["template"]["spec"]["template"]["spec"][
+            "containers"
+        ]:
+            assert "startupProbe" not in container
+
+    def test_cell_containers_skip_liveness_probes(
+        self, jobset_manifest: dict[str, Any]
+    ) -> None:
+        """Cell runner containers carry no liveness probe."""
+        cells_job = next(
+            j for j in jobset_manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
+        )
+        for container in cells_job["template"]["spec"]["template"]["spec"][
+            "containers"
+        ]:
+            assert "livenessProbe" not in container
 
     def test_results_sidecar_exposes_results_port(
         self, jobset_manifest: dict[str, Any]
@@ -982,7 +890,26 @@ class TestContainerSpecImagePullPolicy:
 
 
 class TestJobSetSpecDNSConfiguration:
-    """Tests for AIPerfJobSetSpec DNS naming and configuration."""
+    """Tests for AIPerfJobSetSpec DNS naming and configuration.
+
+    Cells dial the controller pod over the JobSet headless service via
+    ``AIPERF_CELL_CONTROLLER_ADDR = tcp://<controller-dns>:9500`` (replacing the
+    retired mesh ``AIPERF_K8S_ZMQ_CONTROLLER_HOST``).
+    """
+
+    @staticmethod
+    def _cell_controller_host(manifest: dict[str, Any]) -> str:
+        """Extract the controller DNS host a cell dials from AIPERF_CELL_CONTROLLER_ADDR."""
+        cells_job = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
+        )
+        cell = cells_job["template"]["spec"]["template"]["spec"]["containers"][0]
+        addr = next(
+            e for e in cell["env"] if e["name"] == "AIPERF_CELL_CONTROLLER_ADDR"
+        )["value"]
+        # tcp://<host>:<port> -> <host>
+        assert addr.startswith("tcp://")
+        return addr[len("tcp://") :].rsplit(":", 1)[0]
 
     def test_controller_dns_format_includes_full_fqdn(self) -> None:
         """Test that controller DNS includes .svc.cluster.local suffix.
@@ -997,26 +924,10 @@ class TestJobSetSpecDNSConfiguration:
             namespace="test-ns",
             job_id="test-123",
             image="aiperf:latest",
+            cells=2,
         )
-        manifest = spec.to_k8s_manifest()
+        controller_host = self._cell_controller_host(spec.to_k8s_manifest())
 
-        # Find worker-group-manager and check its AIPERF_K8S_ZMQ_CONTROLLER_HOST env var
-        worker_job = next(
-            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
-        )
-        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
-        wpm_container = next(
-            c for c in containers if c["name"] == "worker-group-manager"
-        )
-
-        controller_host_env = next(
-            e
-            for e in wpm_container["env"]
-            if e["name"] == "AIPERF_K8S_ZMQ_CONTROLLER_HOST"
-        )
-        controller_host = controller_host_env["value"]
-
-        # Verify full FQDN format
         assert controller_host.endswith(".svc.cluster.local"), (
             f"DNS should end with .svc.cluster.local, got: {controller_host}"
         )
@@ -1030,23 +941,9 @@ class TestJobSetSpecDNSConfiguration:
             namespace="my-namespace",
             job_id="abc123",
             image="aiperf:latest",
+            cells=2,
         )
-        manifest = spec.to_k8s_manifest()
-
-        worker_job = next(
-            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
-        )
-        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
-        wpm_container = next(
-            c for c in containers if c["name"] == "worker-group-manager"
-        )
-
-        controller_host_env = next(
-            e
-            for e in wpm_container["env"]
-            if e["name"] == "AIPERF_K8S_ZMQ_CONTROLLER_HOST"
-        )
-        controller_host = controller_host_env["value"]
+        controller_host = self._cell_controller_host(spec.to_k8s_manifest())
 
         expected = (
             "aiperf-abc123-controller-0-0.aiperf-abc123.my-namespace.svc.cluster.local"
@@ -1064,25 +961,10 @@ class TestJobSetSpecDNSConfiguration:
             namespace=namespace,
             job_id="test-123",
             image="aiperf:latest",
+            cells=2,
         )
-        manifest = spec.to_k8s_manifest()
+        controller_host = self._cell_controller_host(spec.to_k8s_manifest())
 
-        worker_job = next(
-            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
-        )
-        containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
-        wpm_container = next(
-            c for c in containers if c["name"] == "worker-group-manager"
-        )
-
-        controller_host_env = next(
-            e
-            for e in wpm_container["env"]
-            if e["name"] == "AIPERF_K8S_ZMQ_CONTROLLER_HOST"
-        )
-        controller_host = controller_host_env["value"]
-
-        # Verify namespace is in the DNS
         assert f".{namespace}." in controller_host
         assert controller_host.endswith(".svc.cluster.local")
 
@@ -1166,7 +1048,12 @@ class TestJobSetSpecSecurityContext:
 
 
 class TestJobSetSpecStartupProbes:
-    """Tests for AIPerfJobSetSpec startup probe generation."""
+    """Tests for AIPerfJobSetSpec startup probe generation.
+
+    Cellular runner containers (cell-controller, cell, aggregators) run to
+    terminal under a fail-fast RestartPolicy and carry no probes; only the
+    always-on results-sidecar keeps a startup probe.
+    """
 
     @pytest.fixture
     def jobset_manifest(self) -> dict[str, Any]:
@@ -1176,102 +1063,68 @@ class TestJobSetSpecStartupProbes:
             namespace="default",
             job_id="test-startup",
             image="aiperf:latest",
+            cells=2,
         )
         return spec.to_k8s_manifest()
 
-    def test_controller_containers_have_startup_probes(
-        self, jobset_manifest: dict[str, Any]
-    ) -> None:
-        """Controller-side containers should have startup probes."""
-        for job in jobset_manifest["spec"]["replicatedJobs"]:
-            containers = job["template"]["spec"]["template"]["spec"]["containers"]
-            if job["name"] == "workers":
-                containers = [
-                    c
-                    for c in containers
-                    if not (
-                        c["name"].startswith("worker-")
-                        or c["name"].startswith("record-processor-")
-                        or c["name"] == "worker-group-manager"
-                    )
-                ]
-            if job["name"] == "controller":
-                containers = [c for c in containers if c["name"] != "records-manager"]
-            for container in containers:
-                assert "startupProbe" in container, (
-                    f"{container['name']} missing startupProbe"
-                )
+    @staticmethod
+    def _results_sidecar(manifest: dict[str, Any]) -> dict[str, Any]:
+        controller_job = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "controller"
+        )
+        return next(
+            c
+            for c in controller_job["template"]["spec"]["template"]["spec"][
+                "containers"
+            ]
+            if c["name"] == "results-sidecar"
+        )
 
-    def test_controller_startup_probe_has_zero_initial_delay(
+    def test_runner_containers_have_no_startup_probes(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Controller-side startup probes should check immediately."""
+        """Runner containers (controller/cell/aggregator) carry no startup probe."""
+        runner_names = {"controller", "cell", "aggregator"}
+        seen = 0
         for job in jobset_manifest["spec"]["replicatedJobs"]:
-            containers = job["template"]["spec"]["template"]["spec"]["containers"]
-            if job["name"] == "workers":
-                containers = [
-                    c
-                    for c in containers
-                    if not (
-                        c["name"].startswith("worker-")
-                        or c["name"].startswith("record-processor-")
-                        or c["name"] == "worker-group-manager"
+            for container in job["template"]["spec"]["template"]["spec"]["containers"]:
+                if container["name"] in runner_names:
+                    seen += 1
+                    assert "startupProbe" not in container, (
+                        f"{container['name']} unexpectedly has a startupProbe"
                     )
-                ]
-            if job["name"] == "controller":
-                containers = [c for c in containers if c["name"] != "records-manager"]
-            for container in containers:
-                probe = container["startupProbe"]
-                assert probe["initialDelaySeconds"] == 0
+        assert seen >= 2  # cell-controller + at least one cell
 
-    def test_controller_startup_probe_allows_long_initialization(
+    def test_results_sidecar_has_startup_probe(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Controller-side startup probes should allow long initialization."""
-        for job in jobset_manifest["spec"]["replicatedJobs"]:
-            containers = job["template"]["spec"]["template"]["spec"]["containers"]
-            if job["name"] == "workers":
-                containers = [
-                    c
-                    for c in containers
-                    if not (
-                        c["name"].startswith("worker-")
-                        or c["name"].startswith("record-processor-")
-                        or c["name"] == "worker-group-manager"
-                    )
-                ]
-            if job["name"] == "controller":
-                containers = [c for c in containers if c["name"] != "records-manager"]
-            for container in containers:
-                probe = container["startupProbe"]
-                max_startup_time = probe["failureThreshold"] * probe["periodSeconds"]
-                assert max_startup_time >= 120, (
-                    f"{container['name']} has too short max startup time: "
-                    f"{max_startup_time}s"
-                )
+        """The results sidecar keeps its startup probe."""
+        assert "startupProbe" in self._results_sidecar(jobset_manifest)
 
-    def test_controller_startup_probe_uses_health_endpoint(
+    def test_results_sidecar_startup_probe_has_zero_initial_delay(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Controller-side startup probes should use /healthz."""
-        for job in jobset_manifest["spec"]["replicatedJobs"]:
-            containers = job["template"]["spec"]["template"]["spec"]["containers"]
-            if job["name"] == "workers":
-                containers = [
-                    c
-                    for c in containers
-                    if not (
-                        c["name"].startswith("worker-")
-                        or c["name"].startswith("record-processor-")
-                        or c["name"] == "worker-group-manager"
-                    )
-                ]
-            if job["name"] == "controller":
-                containers = [c for c in containers if c["name"] != "records-manager"]
-            for container in containers:
-                probe = container["startupProbe"]
-                assert probe["httpGet"]["path"] == "/healthz"
-                assert probe["httpGet"]["port"] > 0
+        """Startup probe should check immediately."""
+        probe = self._results_sidecar(jobset_manifest)["startupProbe"]
+        assert probe["initialDelaySeconds"] == 0
+
+    def test_results_sidecar_startup_probe_allows_long_initialization(
+        self, jobset_manifest: dict[str, Any]
+    ) -> None:
+        """Startup probe should allow long initialization."""
+        probe = self._results_sidecar(jobset_manifest)["startupProbe"]
+        max_startup_time = probe["failureThreshold"] * probe["periodSeconds"]
+        assert max_startup_time >= 120, (
+            f"too short max startup time: {max_startup_time}s"
+        )
+
+    def test_results_sidecar_startup_probe_uses_health_endpoint(
+        self, jobset_manifest: dict[str, Any]
+    ) -> None:
+        """Startup probe should use /healthz on a real port."""
+        probe = self._results_sidecar(jobset_manifest)["startupProbe"]
+        assert probe["httpGet"]["path"] == "/healthz"
+        assert probe["httpGet"]["port"] > 0
 
 
 class TestJobSetSpecResourceAggregation:
@@ -1388,34 +1241,41 @@ class TestJobSetSpecEnvVars:
                 )
                 assert ns_env["value"] == "test-namespace"
 
-    def test_containers_have_dataset_path_env(
+    def test_runner_containers_have_hf_home_env(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Test all containers have AIPERF_DATASET_MMAP_BASE_PATH."""
+        """Every cellular runner container tokenizes in-process, so it carries the
+        shared HF cache location (HF_HOME). This replaces the retired mesh
+        AIPERF_DATASET_MMAP_BASE_PATH dataset-manager wiring.
+        """
         for job in jobset_manifest["spec"]["replicatedJobs"]:
             containers = job["template"]["spec"]["template"]["spec"]["containers"]
             for container in containers:
                 if container["name"] == "results-sidecar":
                     continue
-                env_names = [e["name"] for e in container["env"]]
-                assert "AIPERF_DATASET_MMAP_BASE_PATH" in env_names
+                env_dict = {e["name"]: e.get("value") for e in container["env"]}
+                assert env_dict.get("HF_HOME") == "/aiperf/hf_home"
+                # The retired mesh dataset-manager env is gone.
+                assert "AIPERF_DATASET_MMAP_BASE_PATH" not in env_dict
 
-    def test_control_plane_has_realtime_metrics_env(
+    def test_controller_selects_k8s_cell_launcher(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Test control-plane container has realtime metrics enabled."""
+        """The controller pod tells the runner not to spawn cell children
+        (AIPERF_CELL_LAUNCHER=k8s); the JobSet already created the cell pods. This
+        replaces the retired control-plane realtime-metrics env.
+        """
         controller_job = next(
             j
             for j in jobset_manifest["spec"]["replicatedJobs"]
             if j["name"] == "controller"
         )
-        containers = controller_job["template"]["spec"]["template"]["spec"][
+        cell_controller = controller_job["template"]["spec"]["template"]["spec"][
             "containers"
-        ]
-        control_plane = next(c for c in containers if c["name"] == "control-plane")
-
-        env_dict = {e["name"]: e.get("value") for e in control_plane["env"]}
-        assert env_dict["AIPERF_UI_REALTIME_METRICS_ENABLED"] == "true"
+        ][0]
+        assert cell_controller["name"] == "controller"
+        env_dict = {e["name"]: e.get("value") for e in cell_controller["env"]}
+        assert env_dict["AIPERF_CELL_LAUNCHER"] == "k8s"
 
 
 class TestJobSetSpecVolumes:
@@ -1442,15 +1302,19 @@ class TestJobSetSpecVolumes:
             config_vol = next(v for v in volumes if v["name"] == "config")
             assert "configMap" in config_vol
 
-    def test_pods_have_ipc_volume(self, jobset_manifest: dict[str, Any]) -> None:
-        """Test pods have IPC emptyDir volume."""
+    def test_pods_have_tokenizer_cache_volume(
+        self, jobset_manifest: dict[str, Any]
+    ) -> None:
+        """Cellular runner pods carry the shared HF tokenizer-cache emptyDir (the runner
+        tokenizes in-process). This replaces the retired mesh `ipc` ZMQ socket volume."""
         for job in jobset_manifest["spec"]["replicatedJobs"]:
             volumes = job["template"]["spec"]["template"]["spec"]["volumes"]
             volume_names = [v["name"] for v in volumes]
-            assert "ipc" in volume_names
+            assert "tokenizer-cache" in volume_names
+            assert "ipc" not in volume_names
 
-            ipc_vol = next(v for v in volumes if v["name"] == "ipc")
-            assert "emptyDir" in ipc_vol
+            cache_vol = next(v for v in volumes if v["name"] == "tokenizer-cache")
+            assert "emptyDir" in cache_vol
 
     def test_pods_have_results_volume(self, jobset_manifest: dict[str, Any]) -> None:
         """Test pods have results emptyDir volume."""
@@ -1459,12 +1323,16 @@ class TestJobSetSpecVolumes:
             volume_names = [v["name"] for v in volumes]
             assert "results" in volume_names
 
-    def test_pods_have_datasets_volume(self, jobset_manifest: dict[str, Any]) -> None:
-        """Test pods have datasets emptyDir volume."""
+    def test_pods_have_no_datasets_volume(
+        self, jobset_manifest: dict[str, Any]
+    ) -> None:
+        """The mesh dataset-manager mmap `datasets` volume is retired: the cellular
+        runner resolves its dataset in-process, so no shared datasets volume is emitted."""
         for job in jobset_manifest["spec"]["replicatedJobs"]:
             volumes = job["template"]["spec"]["template"]["spec"]["volumes"]
             volume_names = [v["name"] for v in volumes]
-            assert "datasets" in volume_names
+            assert "datasets" not in volume_names
+            assert "tmp" in volume_names
 
     def test_config_volume_is_readonly(self, jobset_manifest: dict[str, Any]) -> None:
         """Test config volume mount is read-only."""
@@ -1527,20 +1395,21 @@ class TestJobSetSpecNetworkConfig:
         ]
         assert restart_policy == "Never"
 
-    def test_workers_have_on_failure_restart_policy(self) -> None:
-        """Test worker pods have OnFailure restart policy."""
+    def test_cells_have_on_failure_restart_policy(self) -> None:
+        """Test cell pods have OnFailure restart policy (restartable stateless slices)."""
         spec = AIPerfJobSetSpec(
             name="restart-test",
             namespace="default",
             job_id="test-restart",
             image="aiperf:latest",
+            cells=2,
         )
         manifest = spec.to_k8s_manifest()
 
-        worker_job = next(
-            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
+        cells_job = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
         )
-        restart_policy = worker_job["template"]["spec"]["template"]["spec"][
+        restart_policy = cells_job["template"]["spec"]["template"]["spec"][
             "restartPolicy"
         ]
         assert restart_policy == "OnFailure"
@@ -1550,21 +1419,21 @@ class TestJobSetSpecWorkerReplicas:
     """Tests for AIPerfJobSetSpec worker replica configuration."""
 
     @pytest.mark.parametrize("replicas", [1, 2, 5, 10, 50])
-    def test_worker_replicas_set_correctly(self, replicas: int) -> None:
-        """Test worker replica count is set correctly in manifest."""
+    def test_cells_replicas_set_correctly(self, replicas: int) -> None:
+        """Test the cells replica count tracks the `cells` field in the manifest."""
         spec = AIPerfJobSetSpec(
             name="replicas-test",
             namespace="default",
             job_id="test-replicas",
             image="aiperf:latest",
-            worker_replicas=replicas,
+            cells=replicas,
         )
         manifest = spec.to_k8s_manifest()
 
-        worker_job = next(
-            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
+        cells_job = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
         )
-        assert worker_job["replicas"] == replicas
+        assert cells_job["replicas"] == replicas
 
     def test_controller_always_has_one_replica(self) -> None:
         """Test controller always has exactly 1 replica regardless of workers."""
@@ -2194,21 +2063,22 @@ class TestJobSetSpecBackoffLimits:
         # Backoff limit is in the Job template spec
         assert controller_job["template"]["spec"]["backoffLimit"] >= 0
 
-    def test_worker_backoff_limit(self) -> None:
-        """Test worker job uses environment backoff limit."""
+    def test_cells_backoff_limit(self) -> None:
+        """Test the cells job uses the environment worker backoff limit for retries."""
         spec = AIPerfJobSetSpec(
             name="backoff-test",
             namespace="default",
             job_id="test-backoff",
             image="aiperf:latest",
+            cells=2,
         )
         manifest = spec.to_k8s_manifest()
 
-        worker_job = next(
-            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "workers"
+        cells_job = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "cells"
         )
-        # Workers should have higher backoff limit for retries
-        assert worker_job["template"]["spec"]["backoffLimit"] >= 0
+        # Cells are restartable stateless slices: higher backoff limit for retries.
+        assert cells_job["template"]["spec"]["backoffLimit"] >= 0
 
 
 # =============================================================================
@@ -2275,8 +2145,10 @@ class TestGetLatestJobsetVersion:
             assert await get_latest_jobset_version() is None
 
 
-class TestJobSetSpecAlwaysBenchmarkRun:
-    """Verify AIPerfJobSetSpec always uses --benchmark-run with run_config.json."""
+class TestJobSetSpecAlwaysConfigFile:
+    """Cellular runner containers always run their frontend subcommand against the
+    mounted Config v2 (`--config <mount>/config.yaml`), never the retired mesh
+    `--benchmark-run run_config.json` invocation."""
 
     @staticmethod
     def _make_spec() -> "AIPerfJobSetSpec":
@@ -2287,38 +2159,51 @@ class TestJobSetSpecAlwaysBenchmarkRun:
             namespace="default",
             job_id="test-001",
             image="aiperf:latest",
+            cells=2,
         )
 
-    def test_uses_benchmark_run_flag(self) -> None:
+    def test_controller_uses_config_flag(self) -> None:
         spec = self._make_spec()
         manifest = spec.to_k8s_manifest()
-        containers = manifest["spec"]["replicatedJobs"][0]["template"]["spec"][
-            "template"
-        ]["spec"]["containers"]
-        args = containers[0]["args"]
-        assert "--benchmark-run" in args
-        assert "--config-file" not in args
+        controller = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "controller"
+        )
+        cell_controller = controller["template"]["spec"]["template"]["spec"][
+            "containers"
+        ][0]
+        args = cell_controller["args"]
+        assert args[0] == "controller"
+        assert "--config" in args
+        assert "--benchmark-run" not in args
 
-    def test_points_to_run_config_json(self) -> None:
+    def test_points_to_config_yaml(self) -> None:
         spec = self._make_spec()
         manifest = spec.to_k8s_manifest()
-        containers = manifest["spec"]["replicatedJobs"][0]["template"]["spec"][
-            "template"
-        ]["spec"]["containers"]
-        args = containers[0]["args"]
-        idx = args.index("--benchmark-run")
-        assert "run_config.json" in args[idx + 1]
+        controller = next(
+            j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "controller"
+        )
+        args = controller["template"]["spec"]["template"]["spec"]["containers"][0][
+            "args"
+        ]
+        idx = args.index("--config")
+        assert args[idx + 1] == f"{K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH}/config.yaml"
 
-    def test_all_containers_use_benchmark_run(self) -> None:
+    def test_all_runner_containers_use_config_not_benchmark_run(self) -> None:
         spec = self._make_spec()
         manifest = spec.to_k8s_manifest()
+        # The runner containers are the frontend subcommands (controller/cell/
+        # aggregator); the results-sidecar runs a distinct `results-sidecar` command.
+        runner_subcommands = {"controller", "cell", "aggregator"}
+        seen = 0
         for rj in manifest["spec"]["replicatedJobs"]:
             containers = rj["template"]["spec"]["template"]["spec"]["containers"]
             for container in containers:
-                if container["name"] == "results-sidecar":
-                    continue
-                assert "--benchmark-run" in container["args"]
-                assert "--config-file" not in container["args"]
+                args = container.get("args", [])
+                if args and args[0] in runner_subcommands:
+                    seen += 1
+                    assert "--config" in args
+                    assert "--benchmark-run" not in args
+        assert seen >= 2  # at least the controller + one cell
 
 
 def test_build_env_vars_controller_pod_emits_marker() -> None:
