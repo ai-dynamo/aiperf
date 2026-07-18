@@ -138,6 +138,10 @@ pub struct MetricsConfig {
     /// into a bounded-memory t-digest instead of retaining it, trading exact
     /// percentiles for O(1) memory. Off by default.
     pub storage_mode: MetricsStorageMode,
+    /// Closed-loop steady-state windowing for concurrency-target runs. Disabled
+    /// by default; when enabled with a positive concurrency target the metrics
+    /// plane also emits a steady-state summary over the auto-detected window.
+    pub steady_state: crate::metrics_core::steady_state::SteadyStateConfig,
 }
 
 impl Default for MetricsConfig {
@@ -150,6 +154,7 @@ impl Default for MetricsConfig {
             osl_mismatch_max_tokens: DEFAULT_OSL_MISMATCH_MAX_TOKENS,
             use_server_token_count: false,
             storage_mode: MetricsStorageMode::Exact,
+            steady_state: crate::metrics_core::steady_state::SteadyStateConfig::default(),
         }
     }
 }
