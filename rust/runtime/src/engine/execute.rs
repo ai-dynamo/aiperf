@@ -34,7 +34,7 @@ use crate::content_server::{
 use crate::dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, ModelId,
     ModelSelector, ModelSelectorFactory, RandomModelSelectorFactory,
-    RoundRobinModelSelectorFactory, SourceImageSampling, SyntheticAudioConfig,
+    RoundRobinModelSelectorFactory, ServerTokenizer, SourceImageSampling, SyntheticAudioConfig,
     SyntheticAudioFormat, SyntheticDatasetConfig, SyntheticImageConfig, SyntheticImageFormat,
     SyntheticImageSource, SyntheticMediaGeneratorFactory, SyntheticPrefixConfig,
     SyntheticPromptConfig, SyntheticRankingsConfig, SyntheticVideoAudioConfig,
@@ -1497,7 +1497,7 @@ async fn execute_graph_native(
     let t_star_window = graph.t_star_window;
     let metrics_config =
         metrics_config(&request.metrics, request.endpoint.use_server_token_count())?;
-    let tokenizer = load_tokenizer(Some(&request.tokenizer.name))?;
+    let tokenizer = build_tokenizer(&request.tokenizer)?;
     let input_token_counter =
         select_input_token_counter(tokenizer.clone(), request.tokenizer.apply_chat_template);
     let input = graph.input.clone();
@@ -2097,7 +2097,7 @@ async fn prepare_static_accuracy(request: &NativeRunSpec) -> Result<Option<Prepa
         .first()
         .map(|item| item.name.as_str())
         .ok_or_else(|| anyhow!("at least one model is required"))?;
-    let tokenizer = load_tokenizer(Some(&request.tokenizer.name))?;
+    let tokenizer = build_tokenizer(&request.tokenizer)?;
     let mut evaluator = spec.evaluator_factory.spawn(&spec.process).await?;
     let preparation = async {
         let evaluator_config = EvaluatorLoadConfig {
@@ -2682,7 +2682,7 @@ async fn execute_native_inner(
         .ok_or_else(|| anyhow!("at least one model is required"))?;
     let tokenizer = match accuracy.as_ref() {
         Some(accuracy) => accuracy.tokenizer.clone(),
-        None => load_tokenizer(Some(&request.tokenizer.name))?,
+        None => build_tokenizer(&request.tokenizer)?,
     };
     let input_token_counter =
         select_input_token_counter(tokenizer.clone(), request.tokenizer.apply_chat_template);
@@ -4984,6 +4984,22 @@ pub(crate) fn load_tokenizer(spec: Option<&str>) -> Result<Arc<dyn TextTokenizer
     }
     let encoding = spec.parse::<TiktokenEncoding>()?;
     Ok(Arc::new(TiktokenTokenizer::new(encoding)))
+}
+
+/// Build the tokenizer selected by a protocol-v2 [`TokenizerSpec`].
+///
+/// A populated `server_url` selects the [`ServerTokenizer`], which offloads
+/// tokenization to the inference server; the spec `name` then carries only the
+/// model selector forwarded to that server. Otherwise the local built-in /
+/// Hugging Face resolution in [`load_tokenizer`] applies.
+pub(crate) fn build_tokenizer(
+    spec: &crate::engine::protocol::TokenizerSpec,
+) -> Result<Arc<dyn TextTokenizer>> {
+    if let Some(server_url) = spec.server_url.as_deref() {
+        let model = (spec.name != "builtin").then(|| spec.name.clone());
+        return Ok(Arc::new(ServerTokenizer::new(server_url, model)?));
+    }
+    load_tokenizer(Some(&spec.name))
 }
 
 /// Select the input-token accounting policy for one native run.

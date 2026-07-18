@@ -560,6 +560,10 @@ struct AuthoredTokenizerV2 {
     trust_remote_code: bool,
     #[serde(default)]
     apply_chat_template: bool,
+    /// Opt-in server-side tokenizer origin; offloads tokenization to the
+    /// inference server's `/tokenize` and `/detokenize` endpoints.
+    #[serde(default)]
+    server_url: Option<String>,
 }
 
 fn default_revision() -> String {
@@ -866,9 +870,20 @@ impl AuthoredTokenizerV2 {
     }
 
     fn lower(&self, resolver: &dyn OnlineTokenizerSourceResolver) -> Result<TokenizerSpec> {
+        // A server-side tokenizer needs no local source resolution: the origin
+        // owns the vocabulary and `name` is only the model selector forwarded to
+        // it. Skip the (possibly network / gated-model) resolve in that case.
+        if let Some(server_url) = self.server_url.clone() {
+            return Ok(TokenizerSpec {
+                name: self.name.clone(),
+                apply_chat_template: self.apply_chat_template,
+                server_url: Some(server_url),
+            });
+        }
         Ok(TokenizerSpec {
             name: resolver.resolve(&self.name, &self.revision, self.trust_remote_code)?,
             apply_chat_template: self.apply_chat_template,
+            server_url: None,
         })
     }
 
@@ -880,6 +895,7 @@ impl AuthoredTokenizerV2 {
         TokenizerSpec {
             name: "builtin".into(),
             apply_chat_template: false,
+            server_url: None,
         }
     }
 }
