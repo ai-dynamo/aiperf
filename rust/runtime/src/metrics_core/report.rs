@@ -10,6 +10,7 @@
 use crate::metrics_core::catalog::{
     AggregationKind, MetricConsoleGroup, MetricFlags, MetricTag, MetricType, spec_for,
 };
+use crate::metrics_core::steady_state::SteadyStateOutcome;
 use crate::metrics_core::{
     AccumulatorSummary, AccuracyAnalysis, AccuracyRecord, MetricResult, MetricResultData,
     MetricValue, SidecarMetric, SidecarStats,
@@ -933,6 +934,50 @@ pub struct EvaluatorReportInfo {
     pub dataset: EvaluatorDatasetReportInfo,
 }
 
+/// Closed-loop steady-state summary emitted for concurrency-target runs.
+///
+/// Present only when steady-state windowing is enabled and a concurrency target
+/// is set. The `metrics` map uses the same [`MetricEntry`] representation as the
+/// whole-run report, computed over the auto-detected saturated window.
+#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
+pub struct ReportSteadyState {
+    /// Inclusive window start in nanoseconds (first time in-flight concurrency
+    /// reaches the threshold).
+    pub window_start_ns: i64,
+    /// Exclusive window end in nanoseconds (last time in-flight concurrency
+    /// falls back below the threshold).
+    pub window_end_ns: i64,
+    /// Window duration in seconds.
+    pub duration_s: f64,
+    /// Concurrency threshold, `ceil(fraction * target_concurrency)`.
+    pub threshold_concurrency: usize,
+    /// Peak in-flight concurrency observed over the profiling phase.
+    pub peak_concurrency: usize,
+    /// True when the window is shorter than `max(10s, 10% of run duration)`.
+    pub short_window: bool,
+    /// Human-readable short-window warning, when one applies.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+    /// Steady-window metrics keyed by stable name.
+    pub metrics: BTreeMap<String, MetricEntry>,
+}
+
+impl ReportSteadyState {
+    /// Builds a report-shaped steady-state block from a detector outcome.
+    pub fn from_outcome(outcome: &SteadyStateOutcome) -> Self {
+        Self {
+            window_start_ns: outcome.window.start_ns,
+            window_end_ns: outcome.window.end_ns,
+            duration_s: outcome.window.duration_ns() as f64 / 1e9,
+            threshold_concurrency: outcome.window.threshold,
+            peak_concurrency: outcome.window.peak_concurrency,
+            short_window: outcome.short_window,
+            warning: outcome.warning(),
+            metrics: build_metric_map(&outcome.summary),
+        }
+    }
+}
+
 /// Runtime facts supplied to a [`Reporter`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RunOutcome {
@@ -958,6 +1003,9 @@ pub struct RunOutcome {
     pub evaluator: Option<EvaluatorReportInfo>,
     /// Grouped run errors.
     pub errors: Vec<ReportError>,
+    /// Closed-loop steady-state summary. Present only when steady-state
+    /// windowing is enabled and a concurrency target is configured.
+    pub steady_state: Option<SteadyStateOutcome>,
 }
 
 /// Borrowed inputs for one IO-free native-v2 report build.
@@ -1015,6 +1063,10 @@ impl Reporter for NativeReporter {
             accuracy_records: outcome.accuracy_records.clone(),
             evaluator: outcome.evaluator.clone(),
             errors: outcome.errors.clone(),
+            steady_state: outcome
+                .steady_state
+                .as_ref()
+                .map(ReportSteadyState::from_outcome),
             // Filled by the runner after report construction (see the online
             // execution path); the aggregate reporter has no per-record samples.
             otel_per_record: None,
@@ -1059,6 +1111,10 @@ pub struct NativeReport {
     /// Grouped run errors.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<ReportError>,
+    /// Closed-loop steady-state summary. Absent unless steady-state windowing is
+    /// enabled and a concurrency target is configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steady_state: Option<ReportSteadyState>,
     /// Transient per-record GenAI-semconv histograms, filled by the runner's
     /// per-record path and consumed by the OTLP sink to emit populated
     /// `bucket_counts`. Never serialized into the committed native-v2 report

@@ -655,6 +655,12 @@ fn validate_metrics(metrics: &MetricsSpec) -> Result<()> {
             "metrics SLO {name:?} must be finite and non-negative"
         );
     }
+    if let Some(fraction) = metrics.steady_state.fraction {
+        ensure!(
+            fraction.is_finite() && fraction > 0.0 && fraction <= 1.0,
+            "metrics.steady_state.fraction must be finite and in (0, 1]"
+        );
+    }
     Ok(())
 }
 

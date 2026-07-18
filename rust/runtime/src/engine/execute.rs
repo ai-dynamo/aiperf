@@ -1831,6 +1831,7 @@ async fn execute_graph_native(
         profiling_server_summary,
         warmup,
         warmup_server_summary,
+        steady_state,
     } = summarize_run_metrics(
         &mut accumulator,
         gpu_telemetry,
@@ -1914,6 +1915,7 @@ async fn execute_graph_native(
             .map(|summary| summary.sidecar_metrics().clone())
             .unwrap_or_default(),
         media_metrics,
+        steady_state,
         ..RunOutcome::default()
     };
     // Cross-host cells ship local per-record artifacts to the controller with
@@ -1935,6 +1937,7 @@ struct RunMetricsSummaries {
     profiling_server_summary: Option<ServerMetricsSummary>,
     warmup: Option<AccumulatorSummary>,
     warmup_server_summary: Option<ServerMetricsSummary>,
+    steady_state: Option<crate::metrics_core::SteadyStateOutcome>,
 }
 
 /// Inject the calibrated network RTT into the accumulator, export the profiling
@@ -1961,18 +1964,28 @@ fn summarize_run_metrics(
     }
     let mut profiling_metrics =
         accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
+    // Profiling-phase concurrency target, shared by GPU-telemetry normalization
+    // and steady-state windowing.
+    let profiling_concurrency = request
+        .phases
+        .iter()
+        .find(|phase| phase.common().name == "profiling")
+        .and_then(PhaseSpec::concurrency);
     if let Some(gpu_telemetry) = gpu_telemetry {
         let total_output_tokens = profiling_metrics.finite_value(MetricTag::TotalOutputTokens);
-        let concurrency = request
-            .phases
-            .iter()
-            .find(|phase| phase.common().name == "profiling")
-            .and_then(PhaseSpec::concurrency)
-            .map(|value| value as u64);
         gpu_telemetry
-            .summarize(total_output_tokens, concurrency)
+            .summarize(
+                total_output_tokens,
+                profiling_concurrency.map(|value| value as u64),
+            )
             .attach_to(&mut profiling_metrics);
     }
+    // Closed-loop steady-state summary over the auto-detected saturated window.
+    // Internally gated: yields None unless enabled with a positive concurrency
+    // target, so disabled runs are unaffected.
+    let steady_state = profiling_concurrency.and_then(|target| {
+        crate::metrics_core::steady_state_summary(accumulator, &metrics_config.steady_state, target)
+    });
     let profiling_server_summary = server_metrics.map(|server_metrics| {
         server_metrics.summarize(MetricsPhase::Profiling, metrics_config.slice_duration_ns)
     });
@@ -1990,6 +2003,7 @@ fn summarize_run_metrics(
         profiling_server_summary,
         warmup,
         warmup_server_summary,
+        steady_state,
     }
 }
 
@@ -3368,6 +3382,7 @@ async fn execute_native_inner(
         profiling_server_summary,
         warmup,
         warmup_server_summary,
+        steady_state,
     } = summarize_run_metrics(
         &mut accumulator,
         gpu_telemetry,
@@ -3480,6 +3495,7 @@ async fn execute_native_inner(
             .unwrap_or_default(),
         media_metrics,
         errors: group_record_errors(&captured),
+        steady_state,
         ..RunOutcome::default()
     };
     if let Some(accuracy) = accuracy.as_mut() {
@@ -4367,11 +4383,19 @@ pub(crate) fn metrics_config(
     } else {
         crate::metrics_core::MetricsStorageMode::Exact
     };
+    let steady_state = crate::metrics_core::SteadyStateConfig {
+        enabled: spec.steady_state.enabled,
+        fraction: spec
+            .steady_state
+            .fraction
+            .unwrap_or(crate::metrics_core::DEFAULT_STEADY_STATE_FRACTION),
+    };
     Ok(MetricsConfig {
         slice_duration_ns,
         slos,
         use_server_token_count,
         storage_mode,
+        steady_state,
         ..MetricsConfig::default()
     })
 }
