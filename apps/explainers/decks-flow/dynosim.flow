@@ -200,7 +200,13 @@ explainer "Dynosim" {
           style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s0-motion"
+          id: "s0-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s0-motion-sig"
           capability: "core.path"
           d: "M145 145 H550"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -287,10 +293,17 @@ explainer "Dynosim" {
           action: "enter"
         },
         {
+          id: "t-s0-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s0-motion-sig-dot"
+          action: "enter"
+        },
+        {
           id: "s0-draw-motion"
           at: 700
           duration: 900
-          target: "s0-motion"
+          target: "s0-motion-sig"
           action: "draw"
         },
         {
@@ -437,7 +450,13 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s1-motion"
+          id: "s1-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s1-motion-sig"
           capability: "core.path"
           d: "M200 165 H480"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -496,10 +515,17 @@ explainer "Dynosim" {
           action: "enter"
         },
         {
+          id: "t-s1-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s1-motion-sig-dot"
+          action: "enter"
+        },
+        {
           id: "s1-draw-motion"
           at: 650
           duration: 900
-          target: "s1-motion"
+          target: "s1-motion-sig"
           action: "draw"
         },
         {
@@ -690,7 +716,13 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s2-motion"
+          id: "s2-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s2-motion-sig"
           capability: "core.path"
           d: "M125 158 H555"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -770,10 +802,17 @@ explainer "Dynosim" {
           action: "enter"
         },
         {
+          id: "t-s2-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s2-motion-sig-dot"
+          action: "enter"
+        },
+        {
           id: "s2-draw-motion"
           at: 700
           duration: 900
-          target: "s2-motion"
+          target: "s2-motion-sig"
           action: "draw"
         },
         {
@@ -913,7 +952,26 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s3-motion"
+          id: "s3-a1"
+          capability: "core.line"
+          from: { x: 270, y: 165 }
+          to: { x: 430, y: 165 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        },
+{
+          id: "s3-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 165, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        },
+{
+          id: "s3-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s3-motion-sig"
           capability: "core.path"
           d: "M170 165 H530"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -964,11 +1022,32 @@ explainer "Dynosim" {
           target: "s3-note"
           action: "enter"
         },
+                {
+          id: "s3-draw-a1"
+          at: 380
+          duration: 280
+          target: "s3-a1"
+          action: "draw"
+        },
+        {
+          id: "s3-enter-dot"
+          at: 520
+          duration: 220
+          target: "s3-dot"
+          action: "enter"
+        },
+{
+          id: "t-s3-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s3-motion-sig-dot"
+          action: "enter"
+        },
         {
           id: "s3-draw-motion"
           at: 700
           duration: 900
-          target: "s3-motion"
+          target: "s3-motion-sig"
           action: "draw"
         },
         {
@@ -1159,7 +1238,13 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s4-motion"
+          id: "s4-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s4-motion-sig"
           capability: "core.path"
           d: "M132 158 H545"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -1239,10 +1324,17 @@ explainer "Dynosim" {
           action: "enter"
         },
         {
+          id: "t-s4-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s4-motion-sig-dot"
+          action: "enter"
+        },
+        {
           id: "s4-draw-motion"
           at: 700
           duration: 900
-          target: "s4-motion"
+          target: "s4-motion-sig"
           action: "draw"
         },
         {
@@ -1389,7 +1481,13 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s5-motion"
+          id: "s5-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s5-motion-sig"
           capability: "core.path"
           d: "M350 150 V285"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -1448,10 +1546,17 @@ explainer "Dynosim" {
           action: "enter"
         },
         {
+          id: "t-s5-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s5-motion-sig-dot"
+          action: "enter"
+        },
+        {
           id: "s5-draw-motion"
           at: 700
           duration: 900
-          target: "s5-motion"
+          target: "s5-motion-sig"
           action: "draw"
         },
         {
@@ -1598,7 +1703,13 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s6-motion"
+          id: "s6-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s6-motion-sig"
           capability: "core.path"
           d: "M350 150 V285"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -1657,10 +1768,17 @@ explainer "Dynosim" {
           action: "enter"
         },
         {
+          id: "t-s6-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s6-motion-sig-dot"
+          action: "enter"
+        },
+        {
           id: "s6-draw-motion"
           at: 700
           duration: 900
-          target: "s6-motion"
+          target: "s6-motion-sig"
           action: "draw"
         },
         {
@@ -1807,7 +1925,26 @@ explainer "Dynosim" {
           style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s7-motion"
+          id: "s7-a1"
+          capability: "core.line"
+          from: { x: 290, y: 168 }
+          to: { x: 410, y: 168 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        },
+{
+          id: "s7-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 168, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        },
+{
+          id: "s7-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s7-motion-sig"
           capability: "core.path"
           d: "M190 168 H510"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -1865,11 +2002,32 @@ explainer "Dynosim" {
           target: "s7-sub"
           action: "enter"
         },
+                {
+          id: "s7-draw-a1"
+          at: 380
+          duration: 280
+          target: "s7-a1"
+          action: "draw"
+        },
+        {
+          id: "s7-enter-dot"
+          at: 520
+          duration: 220
+          target: "s7-dot"
+          action: "enter"
+        },
+{
+          id: "t-s7-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s7-motion-sig-dot"
+          action: "enter"
+        },
         {
           id: "s7-draw-motion"
           at: 700
           duration: 900
-          target: "s7-motion"
+          target: "s7-motion-sig"
           action: "draw"
         },
         {
@@ -2009,7 +2167,26 @@ explainer "Dynosim" {
           style: { fontSize: 13, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         },
 {
-          id: "s8-motion"
+          id: "s8-a1"
+          capability: "core.line"
+          from: { x: 290, y: 158 }
+          to: { x: 410, y: 158 }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
+        },
+{
+          id: "s8-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 158, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.tertiary }
+        },
+{
+          id: "s8-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s8-motion-sig"
           capability: "core.path"
           d: "M180 158 H520"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -2060,11 +2237,32 @@ explainer "Dynosim" {
           target: "s8-rule"
           action: "enter"
         },
+                {
+          id: "s8-draw-a1"
+          at: 380
+          duration: 280
+          target: "s8-a1"
+          action: "draw"
+        },
+        {
+          id: "s8-enter-dot"
+          at: 520
+          duration: 220
+          target: "s8-dot"
+          action: "enter"
+        },
+{
+          id: "t-s8-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s8-motion-sig-dot"
+          action: "enter"
+        },
         {
           id: "s8-draw-motion"
           at: 700
           duration: 900
-          target: "s8-motion"
+          target: "s8-motion-sig"
           action: "draw"
         },
         {
@@ -2284,7 +2482,13 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s9-motion"
+          id: "s9-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s9-motion-sig"
           capability: "core.path"
           d: "M105 168 H585"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -2378,10 +2582,17 @@ explainer "Dynosim" {
           action: "enter"
         },
         {
+          id: "t-s9-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s9-motion-sig-dot"
+          action: "enter"
+        },
+        {
           id: "s9-draw-motion"
           at: 800
           duration: 1100
-          target: "s9-motion"
+          target: "s9-motion-sig"
           action: "draw"
         },
         {
@@ -2521,7 +2732,26 @@ explainer "Dynosim" {
           style: { fontSize: 14, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
         },
 {
-          id: "s10-motion"
+          id: "s10-a1"
+          capability: "core.line"
+          from: { x: 290, y: 170 }
+          to: { x: 410, y: 170 }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+        },
+{
+          id: "s10-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 170, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        },
+{
+          id: "s10-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s10-motion-sig"
           capability: "core.path"
           d: "M200 170 H500"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -2572,11 +2802,32 @@ explainer "Dynosim" {
           target: "s10-rule"
           action: "enter"
         },
+                {
+          id: "s10-draw-a1"
+          at: 380
+          duration: 280
+          target: "s10-a1"
+          action: "draw"
+        },
+        {
+          id: "s10-enter-dot"
+          at: 520
+          duration: 220
+          target: "s10-dot"
+          action: "enter"
+        },
+{
+          id: "t-s10-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s10-motion-sig-dot"
+          action: "enter"
+        },
         {
           id: "s10-draw-motion"
           at: 700
           duration: 900
-          target: "s10-motion"
+          target: "s10-motion-sig"
           action: "draw"
         },
         {
@@ -2767,7 +3018,13 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s11-motion"
+          id: "s11-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s11-motion-sig"
           capability: "core.path"
           d: "M145 168 H565"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -2847,10 +3104,17 @@ explainer "Dynosim" {
           action: "enter"
         },
         {
+          id: "t-s11-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s11-motion-sig-dot"
+          action: "enter"
+        },
+        {
           id: "s11-draw-motion"
           at: 700
           duration: 900
-          target: "s11-motion"
+          target: "s11-motion-sig"
           action: "draw"
         },
         {
@@ -3041,7 +3305,13 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s12-motion"
+          id: "s12-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s12-motion-sig"
           capability: "core.path"
           d: "M132 168 H545"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -3121,10 +3391,17 @@ explainer "Dynosim" {
           action: "enter"
         },
         {
+          id: "t-s12-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s12-motion-sig-dot"
+          action: "enter"
+        },
+        {
           id: "s12-draw-motion"
           at: 700
           duration: 900
-          target: "s12-motion"
+          target: "s12-motion-sig"
           action: "draw"
         },
         {
@@ -3315,7 +3592,13 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s13-motion"
+          id: "s13-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s13-motion-sig"
           capability: "core.path"
           d: "M130 168 H560"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -3395,10 +3678,17 @@ explainer "Dynosim" {
           action: "enter"
         },
         {
+          id: "t-s13-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s13-motion-sig-dot"
+          action: "enter"
+        },
+        {
           id: "s13-draw-motion"
           at: 700
           duration: 900
-          target: "s13-motion"
+          target: "s13-motion-sig"
           action: "draw"
         },
         {
@@ -3589,7 +3879,13 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s14-motion"
+          id: "s14-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s14-motion-sig"
           capability: "core.path"
           d: "M140 168 H555"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -3669,10 +3965,17 @@ explainer "Dynosim" {
           action: "enter"
         },
         {
+          id: "t-s14-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s14-motion-sig-dot"
+          action: "enter"
+        },
+        {
           id: "s14-draw-motion"
           at: 700
           duration: 900
-          target: "s14-motion"
+          target: "s14-motion-sig"
           action: "draw"
         },
         {
@@ -3812,7 +4115,26 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s15-motion"
+          id: "s15-a1"
+          capability: "core.line"
+          from: { x: 310, y: 170 }
+          to: { x: 390, y: 170 }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+        },
+{
+          id: "s15-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 170, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.warning }
+        },
+{
+          id: "s15-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s15-motion-sig"
           capability: "core.path"
           d: "M200 170 H500"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -3863,11 +4185,32 @@ explainer "Dynosim" {
           target: "s15-note"
           action: "enter"
         },
+                {
+          id: "s15-draw-a1"
+          at: 380
+          duration: 280
+          target: "s15-a1"
+          action: "draw"
+        },
+        {
+          id: "s15-enter-dot"
+          at: 520
+          duration: 220
+          target: "s15-dot"
+          action: "enter"
+        },
+{
+          id: "t-s15-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s15-motion-sig-dot"
+          action: "enter"
+        },
         {
           id: "s15-draw-motion"
           at: 700
           duration: 900
-          target: "s15-motion"
+          target: "s15-motion-sig"
           action: "draw"
         },
         {
@@ -4007,7 +4350,26 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s16-motion"
+          id: "s16-a1"
+          capability: "core.line"
+          from: { x: 300, y: 165 }
+          to: { x: 400, y: 165 }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
+        },
+{
+          id: "s16-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 165, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.warning }
+        },
+{
+          id: "s16-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s16-motion-sig"
           capability: "core.path"
           d: "M200 165 H500"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -4058,11 +4420,32 @@ explainer "Dynosim" {
           target: "s16-note"
           action: "enter"
         },
+                {
+          id: "s16-draw-a1"
+          at: 380
+          duration: 280
+          target: "s16-a1"
+          action: "draw"
+        },
+        {
+          id: "s16-enter-dot"
+          at: 520
+          duration: 220
+          target: "s16-dot"
+          action: "enter"
+        },
+{
+          id: "t-s16-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s16-motion-sig-dot"
+          action: "enter"
+        },
         {
           id: "s16-draw-motion"
           at: 700
           duration: 900
-          target: "s16-motion"
+          target: "s16-motion-sig"
           action: "draw"
         },
         {
@@ -4253,7 +4636,13 @@ explainer "Dynosim" {
           style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
         },
 {
-          id: "s17-motion"
+          id: "s17-motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
+          id: "s17-motion-sig"
           capability: "core.path"
           d: "M125 168 H555"
           layout: { x: 0, y: 0, width: 700, height: 400 }
@@ -4333,10 +4722,17 @@ explainer "Dynosim" {
           action: "enter"
         },
         {
+          id: "t-s17-motion-sig-dot"
+          at: 620
+          duration: 220
+          target: "s17-motion-sig-dot"
+          action: "enter"
+        },
+        {
           id: "s17-draw-motion"
           at: 700
           duration: 900
-          target: "s17-motion"
+          target: "s17-motion-sig"
           action: "draw"
         },
         {

@@ -219,6 +219,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M170 190 H530"
@@ -242,7 +248,7 @@ explainer "Rust Architecture" {
         { id: "t-chip-mimalloc", at: 1600, duration: 280, target: "chip-mimalloc", action: "enter" }
         { id: "t-pulse-a", at: 720, duration: 400, target: "pulse-a", action: "enter" }
         { id: "t-pulse-b", at: 900, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
+        { id: "t-motion-sig-dot", at: 620, duration: 220, target: "motion-sig-dot", action: "enter" }, { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
         { id: "t-emphasis", at: 1820, duration: 480, target: "binary", action: "emphasis" }
       ]
     }
@@ -442,6 +448,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M120 190 H580"
@@ -635,6 +647,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M90 190 H610"
@@ -811,6 +829,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M110 190 H590"
@@ -1002,6 +1026,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M130 190 H570"
@@ -1193,6 +1223,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M150 190 H550"
@@ -1384,6 +1420,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M170 190 H530"
@@ -1686,6 +1728,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M190 190 H510"
@@ -1921,6 +1969,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M210 190 H490"
@@ -2101,6 +2155,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M230 190 H470"
@@ -2321,6 +2381,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M250 190 H450"
@@ -2536,6 +2602,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M270 190 H430"
@@ -2728,6 +2800,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M290 190 H410"
@@ -2955,6 +3033,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M310 190 H390"
@@ -3188,6 +3272,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M330 190 H370"
@@ -3375,6 +3465,12 @@ explainer "Rust Architecture" {
           accessibility: { label: "motion pulse B" }
         }
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M350 190 H350"

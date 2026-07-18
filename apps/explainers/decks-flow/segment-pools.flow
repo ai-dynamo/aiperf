@@ -203,6 +203,12 @@ explainer "Segment Pools" {
           style: { fontSize: 10, fill: @theme.ink.tertiary, textAnchor: "end" }
         },
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M120 200 H580"
@@ -232,7 +238,7 @@ explainer "Segment Pools" {
         { id: "t-chip1", at: 2920, duration: 160, target: "chip-serialize", action: "enter" },
         { id: "t-chip2", at: 3040, duration: 160, target: "chip-hot", action: "enter" },
         { id: "t-chip3", at: 3160, duration: 160, target: "chip-blake", action: "enter" },
-        { id: "t-motion", at: 3280, duration: 520, target: "motion-sig", action: "draw" },
+        { id: "t-motion-sig-dot", at: 620, duration: 220, target: "motion-sig-dot", action: "enter" }, { id: "t-motion", at: 3280, duration: 520, target: "motion-sig", action: "draw" },
         { id: "t-emphasis", at: 3760, duration: 420, target: "segment-pool", action: "emphasis" }
       ]
     }
@@ -385,6 +391,12 @@ explainer "Segment Pools" {
           style: { fontSize: 10, fill: @theme.ink.tertiary, textAnchor: "end" }
         },
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M200 170 H500"
@@ -533,6 +545,12 @@ explainer "Segment Pools" {
           style: { fontSize: 10, fill: @theme.ink.tertiary, textAnchor: "middle" }
         },
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M100 195 H600"
@@ -710,6 +728,12 @@ explainer "Segment Pools" {
           style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
         },
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M350 110 V280"
@@ -868,6 +892,12 @@ explainer "Segment Pools" {
           style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
         },
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M190 160 H470"
@@ -1047,6 +1077,12 @@ explainer "Segment Pools" {
           style: { fontSize: 10, fill: @theme.ink.tertiary, textAnchor: "end" }
         },
         {
+          id: "motion-sig-dot"
+          capability: "core.dot"
+          layout: { x: 345, y: 195, width: 10, height: 10 }
+          style: { r: 5, fill: @theme.accent.primary }
+        }
+{
           id: "motion-sig"
           capability: "core.path"
           d: "M210 175 H590"
