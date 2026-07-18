@@ -746,6 +746,17 @@ pub struct ProfileFlags {
     #[arg(long = "prefix-prompt-length", visible_alias = "prompt-prefix-length")]
     pub prefix_prompt_length: Option<u32>,
 
+    /// Fraction of synthetic prompts, in `[0, 1]`, that reuse a shared leading
+    /// token prefix so a server KV cache observes prefix hits
+    /// (`--prefix-reuse-fraction`). Defaults to `0.0` (every prompt unique).
+    #[arg(long = "prefix-reuse-fraction")]
+    pub prefix_reuse_fraction: Option<f64>,
+
+    /// Fraction of each reusing prompt's input length, in `[0, 1]`, occupied by
+    /// the shared prefix (`--prefix-reuse-ratio`). Defaults to `0.5`.
+    #[arg(long = "prefix-reuse-ratio")]
+    pub prefix_reuse_ratio: Option<f64>,
+
     /// Cap on inter-turn delay, seconds (`--inter-turn-delay-cap-seconds`).
     #[arg(long = "inter-turn-delay-cap-seconds")]
     pub inter_turn_delay_cap_seconds: Option<f64>,

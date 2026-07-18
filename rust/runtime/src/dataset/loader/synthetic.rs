@@ -808,6 +808,116 @@ mod tests {
     use crate::dataset::segment::Payload;
     use crate::dataset::tokenizer::TiktokenTokenizer;
 
+    #[test]
+    fn prefix_reuse_shares_exact_token_ids_and_holds_length() {
+        use crate::dataset::prompt::{CorpusPromptGeneratorFactory, PromptGeneratorFactory};
+
+        let tokenizer = TiktokenTokenizer::builtin();
+        let factory = CorpusPromptGeneratorFactory::default();
+        let mut generator = factory.create(&tokenizer, RngRoot::new(Some(19))).unwrap();
+        // A unit reuse fraction forces every prompt onto the warm path, so the
+        // deterministic shared prefix is exercised directly.
+        let mut reuse = PrefixReuse {
+            fraction: 1.0,
+            ratio: 0.5,
+            decision: RandomGenerator::from_seed(RngRoot::new(Some(19)).derive_seed("test.reuse")),
+            shared: Vec::new(),
+        };
+        let first = reuse.prompt_tokens(generator.as_mut(), 10).unwrap();
+        let second = reuse.prompt_tokens(generator.as_mut(), 10).unwrap();
+        assert_eq!(first.len(), 10);
+        assert_eq!(second.len(), 10);
+        // ratio 0.5 of a length-10 prompt reserves a 5-token shared prefix that is
+        // byte-for-byte identical across warm prompts, while the suffix stays unique.
+        assert_eq!(&first[..5], &second[..5]);
+        assert_eq!(&first[..5], &reuse.shared[..5]);
+        assert_ne!(&first[5..], &second[5..]);
+    }
+
+    #[tokio::test]
+    async fn prefix_reuse_fraction_targets_warm_share_and_keeps_isl_exact() {
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(41)));
+        compose.synthetic_config = Some(SyntheticDatasetConfig {
+            entries: 30,
+            turns: SamplingDistribution::fixed(1.0).unwrap(),
+            prompts: Some(SyntheticPromptConfig {
+                input_tokens: SamplingDistribution::fixed(12.0).unwrap(),
+                batch_size: 1,
+                prefix_reuse_fraction: 0.5,
+                prefix_reuse_ratio: 0.5,
+            }),
+            ..SyntheticDatasetConfig::default()
+        });
+        let tokenizer = TiktokenTokenizer::builtin();
+        let dataset = registry
+            .build_dataset(Some("synthetic"), &load, &compose, &tokenizer)
+            .await
+            .unwrap();
+        assert_eq!(dataset.conversations().len(), 30);
+
+        // The shared prefix is the first six tokens (ratio 0.5 of ISL 12). Warm
+        // prompts collapse onto one identical prefix; cold prompts almost surely
+        // differ, so the dominant prefix group counts the warm fraction.
+        let mut counts: std::collections::HashMap<Vec<u32>, usize> = std::collections::HashMap::new();
+        for conversation in dataset.conversations() {
+            let handle = conversation.turns[0].content[0].handles[0];
+            let Payload::Text {
+                bytes, token_count, ..
+            } = dataset.segments().get(handle).unwrap()
+            else {
+                panic!("synthetic prompt must be text");
+            };
+            // Token-native assembly keeps the input length exactly on target.
+            assert_eq!(*token_count, 12);
+            let prefix: Vec<u32> = tokenizer.encode(std::str::from_utf8(bytes).unwrap()).unwrap()
+                [..6]
+                .to_vec();
+            *counts.entry(prefix).or_default() += 1;
+        }
+        let warm = counts.values().copied().max().unwrap();
+        assert!(
+            (9..=21).contains(&warm),
+            "warm share {warm} should be near half of 30"
+        );
+    }
+
+    #[tokio::test]
+    async fn prefix_reuse_default_leaves_prompts_unique() {
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(7)));
+        compose.synthetic_config = Some(SyntheticDatasetConfig {
+            entries: 8,
+            turns: SamplingDistribution::fixed(1.0).unwrap(),
+            prompts: Some(SyntheticPromptConfig {
+                input_tokens: SamplingDistribution::fixed(12.0).unwrap(),
+                batch_size: 1,
+                ..SyntheticPromptConfig::default()
+            }),
+            ..SyntheticDatasetConfig::default()
+        });
+        let tokenizer = TiktokenTokenizer::builtin();
+        let dataset = registry
+            .build_dataset(Some("synthetic"), &load, &compose, &tokenizer)
+            .await
+            .unwrap();
+        let mut prefixes = std::collections::HashSet::new();
+        for conversation in dataset.conversations() {
+            let handle = conversation.turns[0].content[0].handles[0];
+            let Payload::Text { bytes, .. } = dataset.segments().get(handle).unwrap() else {
+                panic!("synthetic prompt must be text");
+            };
+            let head: Vec<u32> =
+                tokenizer.encode(std::str::from_utf8(bytes).unwrap()).unwrap()[..6].to_vec();
+            prefixes.insert(head);
+        }
+        // With the default fraction 0.0 no shared prefix is drawn, so leading
+        // token runs stay distinct across prompts.
+        assert_eq!(prefixes.len(), 8);
+    }
+
     #[tokio::test]
     async fn full_synthetic_pipeline_generates_multiturn_multimodal_context() {
         let registry = LoaderRegistry::with_builtin_formats().unwrap();
