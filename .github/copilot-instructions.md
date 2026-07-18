@@ -35,9 +35,9 @@ The runtime supports these configurations through shared clock, workload, transp
 - Wall-clock Dynamo replay through `dynosim_online`, also enabled by `dynosim`.
 - `dry_run` execution through its registered native transport.
 
-HTTP uses clock-injected Hyper and supports HTTP/1, h2c, UDS, TLS, and SSE. gRPC uses clock-injected Tonic and supports KServe OIP and NVIDIA Riva ASR, TTS, and NLP endpoint families. Registered endpoint, transport, workload, exporter, dataset, sampler, and actuator capabilities are frozen in `Application` at bootstrap; unknown identifiers fail closed.
+HTTP uses clock-injected Hyper and supports HTTP/1, h2c, UDS, TLS, and SSE. gRPC uses clock-injected Tonic and supports KServe OIP and NVIDIA Riva ASR, TTS, and NLP endpoint families. HTTP and gRPC connection establishment retries pre-send connect failures with clock-driven linear backoff, gated by the authored `max_connect_retries` endpoint-profile field (default 0). Registered endpoint, transport, workload, exporter, dataset, sampler, and actuator capabilities are frozen in `Application` at bootstrap; unknown identifiers fail closed.
 
-Scheduled workloads provide request-rate, concurrency, user-centric, and fixed-schedule operation. Phase execution applies warmup and profiling lifecycle policy, grace, cancellation, drain, and force escalation through shared phase orchestration. Graph inputs include `dag_jsonl`, `weka_trace`, and `dynamo_trace`; the engine resolves them into the graph and segment-store path.
+Scheduled workloads provide request-rate, concurrency, user-centric, and fixed-schedule operation. Phase execution applies warmup and profiling lifecycle policy, grace, cancellation, drain, and force escalation through shared phase orchestration. Graph inputs include `dag_jsonl`, `weka_trace`, and `dynamo_trace`; the engine resolves them into the graph and segment-store path. Synthetic prompt generation supports direct prefix-reuse targeting (`--prefix-reuse-fraction`/`--prefix-reuse-ratio`), emitting a shared token-identical warm prefix across a configurable fraction of prompts while holding input length exact.
 
 The native execution model is thread-per-core:
 
@@ -49,7 +49,7 @@ The native execution model is thread-per-core:
 
 Cellular execution is selected with `--cells N` or `runtime.cells`. The controller partitions work across cell processes and merges records or folded metric stores. HTTP and gRPC request-bounded scheduled runs are supported. Graph programs use trace-level ownership. Multi-turn workloads use conversation ownership on supported samplers. The `cellular` feature provides cross-host cell transport (over the `velo` framework).
 
-The native metrics plane computes record, aggregate, derived, phase-window, and sweep metrics. Exact mode retains records as required by configured artifacts. `--sketch-metrics` or `AIPERF_METRICS_SKETCH=1` uses mergeable t-digests: counts, sums, extrema, and rate aggregates remain exact; percentiles and standard deviation are streaming estimates; per-record outputs are unavailable.
+The native metrics plane computes record, aggregate, derived, phase-window, and sweep metrics. `--steady-state` derives a steady-state measurement window from the shared in-flight concurrency sweep-line curve—the first up-crossing and last down-crossing of a fraction of the concurrency target—excludes ramp and drain, and emits a window-scoped summary in the report and `*_aiperf.json`; gated, off by default. Exact mode retains records as required by configured artifacts. `--sketch-metrics` or `AIPERF_METRICS_SKETCH=1` uses mergeable t-digests: counts, sums, extrema, and rate aggregates remain exact; percentiles and standard deviation are streaming estimates; per-record outputs are unavailable.
 
 The exporter plane writes configured JSON, CSV, Parquet, console, timeslice, server-metrics, accuracy, OTLP, MLflow, and W&B outputs. Per-record formats are selected through `artifacts.records`; Parquet requires the `parquet` feature.
 
@@ -117,7 +117,7 @@ Other active implementation seams include `SegmentStore`, `PromptMaterializer`, 
 - Route all measurement and scheduling time through `Clock`.
 - Preserve SSE as bytes until complete lines are available; a UTF-8 code point may span network chunks.
 - HTTP loopback traffic must never use ambient proxy settings.
-- Capture endpoint `usage` verbatim in the `usage_*` metrics; keep absent usage fields absent. The visible token counts (input/output/reasoning sequence lengths) use client tokenization, with endpoint `usage` authoritative for them only under `use_server_token_count`.
+- Capture endpoint `usage` verbatim in the `usage_*` metrics; keep absent usage fields absent. The visible token counts (input/output/reasoning sequence lengths) use client tokenization, with endpoint `usage` authoritative for them only under `use_server_token_count`. A server-side tokenizer that offloads token counting to the endpoint's `/tokenize` and `/detokenize` routes is selectable with `--server-tokenizer-url`; local tokenizers remain the default.
 - Keep numeric values finite or explicitly absent at serialization boundaries.
 - Use strict serde DTOs with unknown-field rejection for protocol-v2 requests.
 - Use `anyhow` in CLI/application layers. Library APIs use explicit error types with `Display` implementations.
