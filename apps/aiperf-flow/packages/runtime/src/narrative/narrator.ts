@@ -282,6 +282,7 @@ export type SpeechSynthesisVoicePort = Readonly<{
 /** Minimal utterance surface required by the browser backend. */
 export type SpeechSynthesisUtterancePort = {
   rate: number;
+  lang: string;
   voice: SpeechSynthesisVoicePort | null;
 };
 
@@ -295,14 +296,31 @@ export type SpeechSynthesisPlatform = Readonly<{
     cancel(): void;
   }>;
   Utterance: new (text: string) => SpeechSynthesisUtterancePort;
+  /**
+   * Schedules speak after cancel. Chrome silently drops speak() when it runs in
+   * the same turn as cancel(); the default uses setTimeout(0).
+   */
+  scheduleSpeak?: (run: () => void) => () => void;
 }>;
+
+const PREFERRED_BROWSER_VOICE_NAME = "Google UK English Male";
+const PREFERRED_BROWSER_VOICE_LANG = "en-GB";
 
 class BrowserSpeechSynthesisBackend implements NarratorBackend {
   readonly available = true;
   readonly #platform: SpeechSynthesisPlatform;
+  readonly #scheduleSpeak: (run: () => void) => () => void;
+  #pending: NarratorUtterance | null = null;
+  #cancelScheduled: (() => void) | null = null;
 
   constructor(platform: SpeechSynthesisPlatform) {
     this.#platform = platform;
+    this.#scheduleSpeak =
+      platform.scheduleSpeak ??
+      ((run) => {
+        const handle = setTimeout(run, 0);
+        return () => clearTimeout(handle);
+      });
   }
 
   voices(): readonly NarratorVoice[] {
@@ -319,13 +337,17 @@ class BrowserSpeechSynthesisBackend implements NarratorBackend {
   }
 
   speak(request: NarratorUtterance): void {
-    const utterance = new this.#platform.Utterance(request.text);
-    utterance.rate = request.rate;
-    utterance.voice =
-      this.#platform.synthesis
-        .getVoices()
-        .find((voice) => voice.voiceURI === request.voiceId) ?? null;
-    this.#platform.synthesis.speak(utterance);
+    this.#pending = request;
+    this.#cancelScheduled?.();
+    this.#cancelScheduled = this.#scheduleSpeak(() => {
+      this.#cancelScheduled = null;
+      const pending = this.#pending;
+      this.#pending = null;
+      if (pending === null) {
+        return;
+      }
+      this.#speakNow(pending);
+    });
   }
 
   pause(): void {
@@ -337,14 +359,83 @@ class BrowserSpeechSynthesisBackend implements NarratorBackend {
   }
 
   cancel(): void {
+    this.#pending = null;
+    this.#cancelScheduled?.();
+    this.#cancelScheduled = null;
     this.#platform.synthesis.cancel();
   }
+
+  #speakNow(request: NarratorUtterance): void {
+    const voices = this.#platform.synthesis.getVoices();
+    const voice = resolveBrowserSpeechVoice(voices, request.voiceId);
+    const utterance = new this.#platform.Utterance(request.text);
+    utterance.rate = request.rate;
+    utterance.lang = voice?.lang ?? PREFERRED_BROWSER_VOICE_LANG;
+    utterance.voice = voice;
+    this.#platform.synthesis.speak(utterance);
+  }
+}
+
+/**
+ * Prefer an explicit browser voice URI, otherwise Chrome's UK English Male
+ * (or the closest en-GB male / en-GB voice available on the platform).
+ */
+export function resolveBrowserSpeechVoice(
+  voices: readonly SpeechSynthesisVoicePort[],
+  voiceId: string | null,
+): SpeechSynthesisVoicePort | null {
+  if (voiceId !== null) {
+    const selected = voices.find((voice) => voice.voiceURI === voiceId);
+    if (selected !== undefined) {
+      return selected;
+    }
+  }
+
+  const exact = voices.find(
+    (voice) =>
+      voice.name === PREFERRED_BROWSER_VOICE_NAME ||
+      voice.voiceURI === PREFERRED_BROWSER_VOICE_NAME,
+  );
+  if (exact !== undefined) {
+    return exact;
+  }
+
+  const ukMale = voices.find((voice) => isUkEnglishMaleVoice(voice));
+  if (ukMale !== undefined) {
+    return ukMale;
+  }
+
+  const enGb = voices.find((voice) =>
+    voice.lang.toLowerCase().startsWith("en-gb"),
+  );
+  return enGb ?? null;
+}
+
+function isUkEnglishMaleVoice(voice: SpeechSynthesisVoicePort): boolean {
+  const name = voice.name.toLowerCase();
+  const lang = voice.lang.toLowerCase();
+  const uri = voice.voiceURI.toLowerCase();
+  const haystack = `${name} ${uri}`;
+  if (/\bfemale\b/.test(haystack)) {
+    return false;
+  }
+  const looksUk =
+    lang.startsWith("en-gb") ||
+    name.includes("uk english") ||
+    name.includes("british") ||
+    uri.includes("en-gb");
+  const looksMale =
+    /\bmale\b/.test(haystack) ||
+    name.includes("daniel") ||
+    name.includes("ravi") ||
+    name.includes("george");
+  return looksUk && looksMale;
 }
 
 function detectBrowserSpeechSynthesis(): SpeechSynthesisPlatform | null {
   const scope = globalThis as typeof globalThis & {
-    speechSynthesis?: unknown;
-    SpeechSynthesisUtterance?: unknown;
+    speechSynthesis?: SpeechSynthesis;
+    SpeechSynthesisUtterance?: new (text: string) => SpeechSynthesisUtterance;
   };
   if (
     typeof scope.speechSynthesis !== "object" ||
@@ -352,6 +443,14 @@ function detectBrowserSpeechSynthesis(): SpeechSynthesisPlatform | null {
     typeof scope.SpeechSynthesisUtterance !== "function"
   ) {
     return null;
+  }
+  // Chrome populates voices asynchronously; prime the list now and on change.
+  scope.speechSynthesis.getVoices();
+  const synthesis = scope.speechSynthesis;
+  if (typeof synthesis.addEventListener === "function") {
+    synthesis.addEventListener("voiceschanged", () => {
+      synthesis.getVoices();
+    });
   }
   return {
     synthesis: scope.speechSynthesis,

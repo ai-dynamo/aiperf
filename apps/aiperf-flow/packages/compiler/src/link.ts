@@ -8,7 +8,9 @@
 //! Linking builds per-scene node symbol tables and a document-level token
 //! table, then validates that every identifier reference (connector
 //! endpoints, camera/timeline/interaction/responsive targets, reading-order
-//! entries, and token references) resolves to a declared symbol. It does not
+//! entries, and token references) resolves to a declared symbol. It also
+//! flattens authored and imported theme declarations into a deterministic
+//! validation set and rejects multiple `use theme` defaults. It does not
 //! transform the AST; lowering consumes the resolved tables it produces.
 
 import type {
@@ -20,6 +22,8 @@ import type {
   RectAst,
   RenderDeclarationAst,
   SymbolBodyStatementAst,
+  ThemeDeclarationAst,
+  UseThemeAst,
   ValueAst,
 } from "@aiperf/flow-language";
 import {
@@ -42,6 +46,10 @@ export type ModuleImportAst = ImportDeclarationAst;
 export type ResolvedModule = Readonly<{
   canonicalUri: string;
   exports: ReadonlySet<string>;
+  /** Theme declarations exported by the module, flattened into validation. */
+  themes?: readonly ThemeDeclarationAst[];
+  /** A `use theme` default declared by the module, if any. */
+  useTheme?: UseThemeAst;
 }>;
 
 /** Input supplied to an injected module resolver. */
@@ -79,6 +87,10 @@ export type LinkedDocument = Readonly<{
   scenes: ReadonlyMap<string, SceneSymbolTable>;
   imports: ReadonlyMap<string, ResolvedModule>;
   qualifiedNames: ReadonlyMap<ComponentInvocationAst, ResolvedQualifiedName>;
+  /** Authored plus imported theme declarations, in primary-then-import order. */
+  themes: readonly ThemeDeclarationAst[];
+  /** The single selected default theme across the linked document, if any. */
+  useTheme?: UseThemeAst;
 }>;
 
 type Identified = Readonly<{ id: string; sourceMap: SourceRange }>;
@@ -369,6 +381,37 @@ export function link(
     document.tokens.map((token) => [token.id, token.value.value]),
   );
 
+  // Flatten in primary-then-import declaration order so validation and later
+  // lowering see a stable theme list independent of Map iteration quirks.
+  const importedModules: ResolvedModule[] = [];
+  for (const declaration of document.imports ?? []) {
+    const resolved = moduleResolution.imports.get(declaration.alias);
+    if (resolved !== undefined) {
+      importedModules.push(resolved);
+    }
+  }
+  const themes: readonly ThemeDeclarationAst[] = [
+    ...(document.themes ?? []),
+    ...importedModules.flatMap((module) => module.themes ?? []),
+  ];
+  const useThemes: readonly UseThemeAst[] = [
+    ...(document.useTheme === undefined ? [] : [document.useTheme]),
+    ...importedModules.flatMap((module) =>
+      module.useTheme === undefined ? [] : [module.useTheme],
+    ),
+  ];
+  for (const extra of useThemes.slice(1)) {
+    diagnostics.push(
+      diagnostic(
+        "THEME_DUPLICATE_DEFAULT",
+        "error",
+        `More than one "use theme" default is declared for the linked document.`,
+        extra.sourceMap,
+        "Declare a single default theme across the document and its imports.",
+      ),
+    );
+  }
+
   const scenes = new Map<string, SceneSymbolTable>();
   for (const scene of document.scenes) {
     diagnostics.push(
@@ -514,6 +557,8 @@ export function link(
       scenes,
       imports: moduleResolution.imports,
       qualifiedNames: qualifiedResolution.qualifiedNames,
+      themes,
+      ...(useThemes[0] === undefined ? {} : { useTheme: useThemes[0] }),
     },
     diagnostics: [],
   };

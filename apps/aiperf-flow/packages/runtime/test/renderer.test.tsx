@@ -224,11 +224,12 @@ describe("FlowApp", () => {
       title: "Results",
     };
     const flow = {
-      irVersion: 1,
+      irVersion: 2,
       id: "request-flow",
       title: "Request flow",
       capabilities: [],
       tokens: {},
+      themes: [],
       scenes: [invalid, next],
       sourceMap,
     } as unknown as FlowIr;
@@ -246,20 +247,21 @@ describe("FlowApp", () => {
 
   test("provides playback controls and scene progress", () => {
     const flow = {
-      irVersion: 1,
+      irVersion: 2,
       id: "request-flow",
       title: "Request flow",
       capabilities: [],
       tokens: {},
+      themes: [],
       scenes: [scene()],
       sourceMap,
     } as unknown as FlowIr;
 
     render(<FlowApp flow={flow} />);
 
-    expect(screen.getByText("Scene 1 of 1")).not.toBeNull();
+    expect(screen.getByText(/Scene 1 of 1/u)).not.toBeNull();
     expect(screen.getByRole("button", { name: "Play" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Restart" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Open commands" })).not.toBeNull();
   });
 });
 

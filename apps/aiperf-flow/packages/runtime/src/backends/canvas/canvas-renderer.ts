@@ -5,6 +5,53 @@ import type { Bounds, DisplayList } from "../../display-list.js";
 import type { CanvasQualityMode } from "./quality.js";
 import { CanvasTextAtlas } from "./text-atlas.js";
 
+/** User Timing measure names collected by Playwright runtime metrics. */
+export const RUNTIME_PERFORMANCE_ENTRY_NAMES = Object.freeze({
+  evaluation: "aiperf-flow:evaluation",
+  draw: "aiperf-flow:draw",
+  total: "aiperf-flow:total",
+});
+
+let runtimeMeasureSequence = 0;
+
+function canRecordRuntimeMeasures(): boolean {
+  return (
+    typeof performance !== "undefined" &&
+    typeof performance.mark === "function" &&
+    typeof performance.measure === "function" &&
+    typeof performance.clearMarks === "function"
+  );
+}
+
+/**
+ * Records one real wall-clock phase as a User Timing measure when available.
+ * Falls through unchanged when the Performance API is absent.
+ */
+export function measureRuntimePhase<T>(
+  phase: keyof typeof RUNTIME_PERFORMANCE_ENTRY_NAMES,
+  work: () => T,
+): T {
+  if (!canRecordRuntimeMeasures()) {
+    return work();
+  }
+  const name = RUNTIME_PERFORMANCE_ENTRY_NAMES[phase];
+  const token = `${name}:${runtimeMeasureSequence++}`;
+  const startMark = `${token}:start`;
+  const endMark = `${token}:end`;
+  performance.mark(startMark);
+  try {
+    return work();
+  } finally {
+    performance.mark(endMark);
+    try {
+      performance.measure(name, startMark, endMark);
+    } finally {
+      performance.clearMarks(startMark);
+      performance.clearMarks(endMark);
+    }
+  }
+}
+
 type CanvasMethod =
   | "beginPath"
   | "clip"
@@ -247,26 +294,36 @@ export function renderDisplayList(
   displayList: DisplayList,
   options: CanvasRenderOptions = {},
 ): CanvasRenderMetrics {
-  const ratio = options.devicePixelRatio ?? 1;
-  if (!Number.isFinite(ratio) || ratio <= 0) {
-    throw new RangeError("devicePixelRatio must be a positive finite number.");
-  }
-  const textAtlas = options.textAtlas ?? new CanvasTextAtlas(context);
+  return measureRuntimePhase("total", () => {
+    const prepared = measureRuntimePhase("evaluation", () => {
+      const ratio = options.devicePixelRatio ?? 1;
+      if (!Number.isFinite(ratio) || ratio <= 0) {
+        throw new RangeError("devicePixelRatio must be a positive finite number.");
+      }
+      return {
+        ratio,
+        textAtlas: options.textAtlas ?? new CanvasTextAtlas(context),
+      };
+    });
 
-  if (ratio !== 1) {
-    context.save();
-    context.scale(ratio, ratio);
-  }
+    return measureRuntimePhase("draw", () => {
+      if (prepared.ratio !== 1) {
+        context.save();
+        context.scale(prepared.ratio, prepared.ratio);
+      }
 
-  const commandCount = displayList.commands.reduce(
-    (count, command) => count + drawCommand(context, textAtlas, command),
-    0,
-  );
+      const commandCount = displayList.commands.reduce(
+        (count, command) =>
+          count + drawCommand(context, prepared.textAtlas, command),
+        0,
+      );
 
-  if (ratio !== 1) {
-    context.restore();
-  }
-  return { commandCount };
+      if (prepared.ratio !== 1) {
+        context.restore();
+      }
+      return { commandCount };
+    });
+  });
 }
 
 /** Renders a display list and returns semantic hit metadata for conformance checks. */

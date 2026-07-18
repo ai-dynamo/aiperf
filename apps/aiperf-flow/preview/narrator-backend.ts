@@ -83,14 +83,14 @@ export function prewarmPreviewNarrator(): void {
 }
 
 /**
- * Unlocks narration from a user gesture: Kokoro Web Audio first, then
- * SpeechSynthesis priming when neural inference is unavailable.
+ * Unlocks narration from a user gesture: awaits Kokoro Web Audio resume, then
+ * primes SpeechSynthesis when needed. Call from the consent/play click itself.
  */
-export function unlockPreviewSpeech(): boolean {
+export async function unlockPreviewSpeech(): Promise<boolean> {
   const kokoro = previewKokoroBackend();
   if (kokoro !== null) {
-    void kokoro.activate();
     void kokoro.prewarm();
+    await kokoro.activate();
   }
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
     return kokoro !== null;
@@ -105,4 +105,51 @@ export function unlockPreviewSpeech(): boolean {
   } catch {
     return kokoro !== null;
   }
+}
+
+/** True when the preferred narrator can accept audible cues now. */
+export function previewNarratorReady(): boolean {
+  const kokoro = previewKokoroBackend();
+  if (kokoro === null) {
+    return typeof window !== "undefined" && "speechSynthesis" in window;
+  }
+  const snapshot = kokoro.snapshot();
+  return (
+    snapshot.status === "ready" ||
+    snapshot.status === "generating" ||
+    snapshot.status === "playing" ||
+    snapshot.status === "paused" ||
+    snapshot.engine === "web-speech"
+  );
+}
+
+/**
+ * Resolves when Kokoro (or its Web Speech fallback) can synthesize. Safe to
+ * call after activate(); does not produce audio by itself.
+ */
+export async function whenPreviewNarratorReady(): Promise<void> {
+  const kokoro = previewKokoroBackend();
+  if (kokoro === null) {
+    return;
+  }
+  if (previewNarratorReady()) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const unsubscribe = kokoro.subscribe((state) => {
+      if (
+        state.status === "ready" ||
+        state.status === "fallback" ||
+        state.engine === "web-speech" ||
+        state.status === "error"
+      ) {
+        unsubscribe();
+        resolve();
+      }
+    });
+    void kokoro.prewarm().catch(() => {
+      unsubscribe();
+      resolve();
+    });
+  });
 }

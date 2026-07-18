@@ -172,14 +172,20 @@ function timedScene(): SceneIr {
 
 function flowWith(scenes: readonly SceneIr[]): FlowIr {
   return {
-    irVersion: 1,
+    irVersion: 2,
     id: "narrative-flow",
     title: "Narrative flow",
     capabilities: [],
     tokens: {},
+    themes: [],
     scenes,
     sourceMap,
   } as unknown as FlowIr;
+}
+
+function runCommand(label: string): void {
+  fireEvent.click(screen.getByRole("button", { name: "Open commands" }));
+  fireEvent.click(screen.getByRole("option", { name: label }));
 }
 
 describe("FlowApp narrative synchronization", () => {
@@ -273,13 +279,9 @@ describe("FlowApp narrative synchronization", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
-    fireEvent.click(screen.getByRole("button", { name: "Mute narration" }));
+    runCommand("Mute narration");
     expect(backend.operations).toContain("cancel");
-    expect(
-      screen.getByRole("button", { name: "Unmute narration" }).getAttribute(
-        "aria-pressed",
-      ),
-    ).toBe("true");
+    runCommand("Unmute narration");
 
     fireEvent.click(screen.getByRole("button", { name: "Turn subtitles off" }));
     expect(document.querySelector(".aiperf-flow__subtitle-cue")).toBeNull();
@@ -309,7 +311,7 @@ describe("FlowApp narrative synchronization", () => {
     fireEvent.click(screen.getByRole("button", { name: "Pause" }));
     expect(backend.operations.at(-1)).toBe("pause");
 
-    fireEvent.click(screen.getByRole("button", { name: "Restart" }));
+    runCommand("Restart");
     expect(backend.operations).toContain("cancel");
     expect(screen.getByText("0 ms")).toBeTruthy();
 
@@ -372,7 +374,7 @@ describe("FlowApp narrative synchronization", () => {
       />,
     );
 
-    expect(screen.getByRole("region", { name: "Scene stage" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Scene field" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Semantic outline" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Subtitles" })).toBeTruthy();
     expect(container.querySelector("svg.aiperf-flow__svg-fallback")).not.toBeNull();

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Lowering from linked `.flow` AST to Flow IR v1.
+//! Lowering from linked `.flow` AST to Flow IR v2.
 //!
 //! Lowering assumes linking and validation already succeeded: every
 //! reference resolves and required accessibility fields are present. It is
@@ -22,6 +22,8 @@ import type {
   ResponsiveAst,
   ResponsiveConditionAst,
   SceneAst,
+  ThemeAssignmentAst,
+  ThemeDeclarationAst,
   TimelineAst,
   ValueAst,
 } from "@aiperf/flow-language";
@@ -31,6 +33,7 @@ import type {
   ComponentNodeIr,
   ConnectorNodeIr,
   FlowIr,
+  FlowThemeIr,
   GeometryIr,
   InteractionIr,
   JsonValue,
@@ -38,6 +41,9 @@ import type {
   RenderNodeIr,
   ResponsiveVariantIr,
   SceneIr,
+  StyleValueIr,
+  ThemeRole,
+  ThemeValueIr,
   TimelineCueIr,
 } from "@aiperf/flow-schema";
 
@@ -50,25 +56,35 @@ function isGeometryKey(value: string): value is GeometryKey {
   return (GEOMETRY_KEYS as readonly string[]).includes(value);
 }
 
-function resolveValue(
+function lowerStyleValue(
   value: ValueAst,
   tokens: ReadonlyMap<string, LiteralAst["value"]>,
-): string | number | boolean {
-  let resolved: LiteralAst["value"] | undefined;
-  if (value.kind === "literal") {
-    resolved = value.value;
-  } else {
-    resolved = tokens.get(value.token);
-    if (resolved === undefined) {
-      throw new Error(
-        `Internal error: token "${value.token}" was not resolved during linking.`,
-      );
+): StyleValueIr {
+  switch (value.kind) {
+    case "literal":
+      if (typeof value.value === "number" && !Number.isFinite(value.value)) {
+        throw new Error(
+          "Internal error: style values must contain only finite numbers.",
+        );
+      }
+      return value.value;
+    case "token-reference": {
+      const resolved = tokens.get(value.token);
+      if (resolved === undefined) {
+        throw new Error(
+          `Internal error: token "${value.token}" was not resolved during linking.`,
+        );
+      }
+      if (typeof resolved === "number" && !Number.isFinite(resolved)) {
+        throw new Error(
+          "Internal error: style values must contain only finite numbers.",
+        );
+      }
+      return resolved;
     }
+    case "theme-role-reference":
+      return { kind: "theme-role", role: value.role as ThemeRole };
   }
-  if (typeof resolved === "number" && !Number.isFinite(resolved)) {
-    throw new Error("Internal error: component values must contain only finite JSON numbers.");
-  }
-  return resolved;
 }
 
 function resolveArgumentValue(
@@ -78,7 +94,7 @@ function resolveArgumentValue(
   switch (value.kind) {
     case "literal":
     case "token-reference":
-      return resolveValue(value, tokens);
+      return lowerStyleValue(value, tokens);
     case "identifier-reference":
       return value.name;
     case "object-literal":
@@ -121,7 +137,12 @@ function lowerRect(
     kind: "rect",
     id: rect.id,
     geometry: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-    style: { fill: resolveValue(rect.fill, tokens) },
+    style: {
+      fill: lowerStyleValue(rect.fill, tokens),
+      ...(rect.stroke === undefined
+        ? {}
+        : { stroke: lowerStyleValue(rect.stroke, tokens) }),
+    },
     accessibility: {
       label: rect.label,
       ...(description.length > 0 ? { description } : {}),
@@ -145,7 +166,7 @@ function lowerConnector(
     kind: "connector",
     id: connector.id,
     geometry: boundingBox(endpointGeometry),
-    style: { stroke: resolveValue(connector.stroke, tokens) },
+    style: { stroke: lowerStyleValue(connector.stroke, tokens) },
     accessibility: { label: connector.label },
     from: { nodeId: connector.from },
     to: { nodeId: connector.to },
@@ -378,6 +399,67 @@ function lowerScene(
   };
 }
 
+function lowerThemeAssignment(assignment: ThemeAssignmentAst): ThemeValueIr {
+  switch (assignment.valueKind) {
+    case "color": {
+      if (assignment.value.kind !== "literal" || typeof assignment.value.value !== "string") {
+        throw new Error(
+          `Internal error: theme role "${assignment.role}" expected a color literal.`,
+        );
+      }
+      return { kind: "color", value: assignment.value.value };
+    }
+    case "font": {
+      if (assignment.value.kind !== "theme-font-literal") {
+        throw new Error(
+          `Internal error: theme role "${assignment.role}" expected a font stack.`,
+        );
+      }
+      return {
+        kind: "font",
+        value: Object.freeze([...assignment.value.families]),
+      };
+    }
+    case "number": {
+      if (assignment.value.kind !== "literal" || typeof assignment.value.value !== "number") {
+        throw new Error(
+          `Internal error: theme role "${assignment.role}" expected a numeric literal.`,
+        );
+      }
+      return { kind: "number", value: assignment.value.value };
+    }
+    case "duration": {
+      if (assignment.value.kind !== "literal" || typeof assignment.value.value !== "number") {
+        throw new Error(
+          `Internal error: theme role "${assignment.role}" expected a duration literal.`,
+        );
+      }
+      return { kind: "duration", valueMs: Math.trunc(assignment.value.value) };
+    }
+    case "enum": {
+      if (assignment.value.kind !== "literal" || typeof assignment.value.value !== "string") {
+        throw new Error(
+          `Internal error: theme role "${assignment.role}" expected an enum literal.`,
+        );
+      }
+      return { kind: "enum", value: assignment.value.value };
+    }
+  }
+}
+
+function lowerTheme(theme: ThemeDeclarationAst): FlowThemeIr {
+  const values: Partial<Record<ThemeRole, ThemeValueIr>> = {};
+  for (const assignment of theme.assignments) {
+    values[assignment.role as ThemeRole] = lowerThemeAssignment(assignment);
+  }
+  return {
+    id: theme.id,
+    extends: theme.extends,
+    values,
+    sourceMap: theme.sourceMap,
+  };
+}
+
 /** Lowers a linked document into a Flow IR value, prior to schema validation. */
 export function lower(linked: LinkedDocument): FlowIr {
   const capabilities: readonly CapabilityRequirement[] = linked.document.requirements
@@ -401,12 +483,20 @@ export function lower(linked: LinkedDocument): FlowIr {
     return lowerScene(scene, symbols, linked.tokens, requiredCapabilities);
   });
 
+  const themes = (linked.themes ?? [])
+    .map(lowerTheme)
+    .sort((left, right) => left.id.localeCompare(right.id, "en", { sensitivity: "variant" }));
+
   return {
-    irVersion: 1,
+    irVersion: 2,
     id: linked.document.id,
     title: linked.document.title,
     capabilities,
     tokens,
+    themes,
+    ...(linked.useTheme === undefined
+      ? {}
+      : { defaultTheme: linked.useTheme.themeId }),
     scenes,
     sourceMap: linked.document.sourceMap,
   };

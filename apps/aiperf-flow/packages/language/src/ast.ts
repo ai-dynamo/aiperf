@@ -14,6 +14,9 @@ export type LiteralAst = AstNode<"literal"> &
 export type TokenReferenceAst = AstNode<"token-reference"> &
   Readonly<{ token: string }>;
 
+export type ThemeRoleReferenceAst = AstNode<"theme-role-reference"> &
+  Readonly<{ role: string }>;
+
 export type IdentifierReferenceAst = AstNode<"identifier-reference"> &
   Readonly<{ name: string }>;
 
@@ -23,7 +26,34 @@ export type ReferenceListAst = AstNode<"reference-list"> &
 export type ReadingOrderAst = AstNode<"reading-order"> &
   Readonly<{ references: readonly string[] }>;
 
-export type ValueAst = LiteralAst | TokenReferenceAst;
+export type ValueAst = LiteralAst | TokenReferenceAst | ThemeRoleReferenceAst;
+
+export type ThemeValueKindAst =
+  | "color"
+  | "number"
+  | "duration"
+  | "font"
+  | "enum";
+
+export type ThemeFontLiteralAst = AstNode<"theme-font-literal"> &
+  Readonly<{ families: readonly string[] }>;
+
+export type ThemeAssignmentAst = AstNode<"theme-assignment"> &
+  Readonly<{
+    valueKind: ThemeValueKindAst;
+    role: string;
+    value: LiteralAst | ThemeFontLiteralAst;
+  }>;
+
+export type ThemeDeclarationAst = AstNode<"theme-declaration"> &
+  Readonly<{
+    id: string;
+    extends: string;
+    assignments: readonly ThemeAssignmentAst[];
+  }>;
+
+export type UseThemeAst = AstNode<"use-theme"> &
+  Readonly<{ themeId: string }>;
 
 export type LanguageDeclarationAst = AstNode<"language"> &
   Readonly<{ version: number }>;
@@ -49,6 +79,7 @@ export type RectAst = AstNode<"rect"> &
     width: number;
     height: number;
     fill: ValueAst;
+    stroke?: ValueAst;
     label: string;
     role: string;
     description: string;
@@ -232,6 +263,8 @@ export type DocumentAst = AstNode<"document"> &
     imports?: readonly ImportDeclarationAst[];
     requirements: readonly RequirementAst[];
     tokens: readonly TokenDeclarationAst[];
+    themes: readonly ThemeDeclarationAst[];
+    useTheme?: UseThemeAst;
     symbols: readonly SymbolDefinitionAst[];
     scenes: readonly SceneAst[];
   }>;

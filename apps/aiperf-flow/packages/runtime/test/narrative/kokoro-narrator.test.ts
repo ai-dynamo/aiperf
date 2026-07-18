@@ -60,6 +60,9 @@ class FakeAudioContext {
 class FakeFallback implements NarratorBackend {
   readonly available = true;
   readonly spoken: NarratorUtterance[] = [];
+  readonly pause = vi.fn();
+  readonly resume = vi.fn();
+  readonly cancel = vi.fn();
 
   voices() {
     return [
@@ -75,10 +78,6 @@ class FakeFallback implements NarratorBackend {
   speak(utterance: NarratorUtterance): void {
     this.spoken.push(utterance);
   }
-
-  pause(): void {}
-  resume(): void {}
-  cancel(): void {}
 }
 
 const utterance = {
@@ -170,7 +169,82 @@ describe("Kokoro narrator backend", () => {
     expect(fallback.spoken).toEqual([]);
   });
 
-  test("uses the injected Web Speech backend only after local loading fails", async () => {
+  test("awaits an async WebGPU probe and starts WASM when the probe fails", async () => {
+    const worker = new FakeWorker();
+    const backend = createKokoroNarratorBackend({
+      workerFactory: () => worker,
+      audioContextFactory: () => new FakeAudioContext() as unknown as AudioContext,
+      webGpuAvailable: async () => false,
+    });
+
+    const prewarm = backend.prewarm();
+    await vi.waitFor(() =>
+      expect(worker.sent).toEqual([
+        {
+          type: "initialize",
+          modelId: "onnx-community/Kokoro-82M-v1.0-ONNX",
+          device: "wasm",
+          dtype: "q8",
+        },
+      ]),
+    );
+
+    worker.emit({ type: "ready", voices: [] });
+    await prewarm;
+    expect(backend.snapshot()).toMatchObject({
+      status: "ready",
+      engine: "wasm",
+    });
+  });
+
+  test("speaks in the browser immediately and hands later cues to Kokoro", async () => {
+    const worker = new FakeWorker();
+    const fallback = new FakeFallback();
+    const backend = createKokoroNarratorBackend({
+      fallback,
+      workerFactory: () => worker,
+      audioContextFactory: () => new FakeAudioContext() as unknown as AudioContext,
+      webGpuAvailable: () => false,
+    });
+    const nextUtterance = {
+      ...utterance,
+      cueId: "complete",
+      text: "Complete the request.",
+    };
+
+    backend.speak(utterance);
+
+    expect(fallback.spoken).toEqual([utterance]);
+    expect(worker.sent).toContainEqual(
+      expect.objectContaining({ type: "initialize", device: "wasm" }),
+    );
+    expect(worker.sent).not.toContainEqual(
+      expect.objectContaining({ type: "synthesize" }),
+    );
+
+    worker.emit({ type: "ready", voices: [] });
+    await vi.waitFor(() => expect(backend.snapshot().status).toBe("ready"));
+    expect(fallback.cancel).not.toHaveBeenCalled();
+
+    backend.cancel();
+    backend.speak(nextUtterance);
+
+    await vi.waitFor(() =>
+      expect(
+        worker.sent.some(
+          (message) =>
+            typeof message === "object" &&
+            message !== null &&
+            (message as { type?: string; cueId?: string }).type ===
+              "synthesize" &&
+            (message as { cueId?: string }).cueId === "complete",
+        ),
+      ).toBe(true),
+    );
+    expect(fallback.spoken).toEqual([utterance]);
+  });
+
+  test("keeps browser transport ownership when Kokoro becomes ready mid-cue", async () => {
     const worker = new FakeWorker();
     const fallback = new FakeFallback();
     const backend = createKokoroNarratorBackend({
@@ -181,6 +255,56 @@ describe("Kokoro narrator backend", () => {
     });
 
     backend.speak(utterance);
+    worker.emit({ type: "ready", voices: [] });
+    await vi.waitFor(() => expect(backend.snapshot().status).toBe("ready"));
+
+    backend.pause();
+    backend.resume();
+
+    expect(fallback.pause).toHaveBeenCalledOnce();
+    expect(fallback.resume).toHaveBeenCalledOnce();
+  });
+
+  test("cancel during prewarm keeps loading state and skips identical listener updates", async () => {
+    const worker = new FakeWorker();
+    const fallback = new FakeFallback();
+    const backend = createKokoroNarratorBackend({
+      fallback,
+      workerFactory: () => worker,
+      audioContextFactory: () => new FakeAudioContext() as unknown as AudioContext,
+      webGpuAvailable: () => false,
+    });
+    const snapshots: string[] = [];
+    backend.subscribe((state) => {
+      snapshots.push(`${state.status}:${state.activeCueId ?? "-"}`);
+    });
+
+    backend.speak(utterance);
+    expect(backend.snapshot().status).toBe("loading");
+
+    const before = snapshots.length;
+    backend.cancel();
+    backend.cancel();
+
+    expect(backend.snapshot()).toMatchObject({
+      status: "loading",
+      activeCueId: null,
+    });
+    expect(snapshots.length).toBe(before);
+  });
+
+  test("keeps browser speech active after local loading fails", async () => {
+    const worker = new FakeWorker();
+    const fallback = new FakeFallback();
+    const backend = createKokoroNarratorBackend({
+      fallback,
+      workerFactory: () => worker,
+      audioContextFactory: () => new FakeAudioContext() as unknown as AudioContext,
+      webGpuAvailable: () => false,
+    });
+
+    backend.speak(utterance);
+    expect(fallback.spoken).toEqual([utterance]);
     worker.emit({ type: "error", message: "WASM unavailable" });
     await vi.waitFor(() => expect(fallback.spoken).toEqual([utterance]));
 

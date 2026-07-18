@@ -2,9 +2,9 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 .aiperf-flow__subtitle-overlay {
-  --flow-subtitle-ink: #fff;
-  --flow-subtitle-surface: rgb(3 8 15 / 94%);
-  --flow-subtitle-edge: #78d7ff;
+  --flow-subtitle-ink: var(--flow-chalk);
+  --flow-subtitle-surface: var(--flow-panel);
+  --flow-subtitle-edge: var(--flow-signal);
   position: absolute;
   z-index: 4;
   inset: 0;
@@ -21,16 +21,17 @@
 }
 
 .aiperf-flow__subtitle-cue {
-  max-width: min(72ch, 86vw);
+  max-width: min(68ch, 86vw);
   margin: 0;
   padding: 0.72rem 1.1rem 0.78rem;
-  border-block-start: 0.2rem solid var(--flow-subtitle-edge);
+  border: var(--flow-stroke) solid var(--flow-guide);
+  border-inline-start: 0.25rem solid var(--flow-subtitle-edge);
+  border-radius: var(--flow-radius);
   color: var(--flow-subtitle-ink);
   background: var(--flow-subtitle-surface);
-  box-shadow: 0 0.8rem 2rem rgb(0 0 0 / 30%);
-  font-family: Inter, "IBM Plex Sans", "Segoe UI", sans-serif;
-  font-size: clamp(1rem, 1.2vw + 0.65rem, 1.55rem);
-  font-weight: 560;
+  font-family: var(--flow-font-body);
+  font-size: clamp(1rem, 1vw + 0.65rem, 1.4rem);
+  font-weight: 580;
   line-height: 1.4;
   letter-spacing: 0.012em;
   text-align: center;
@@ -42,30 +43,30 @@
   display: block;
   margin-block-end: 0.18rem;
   color: var(--flow-subtitle-edge);
-  font-family: "IBM Plex Mono", "Cascadia Code", monospace;
+  font-family: var(--flow-font-data);
   font-size: 0.68em;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.aiperf-flow__subtitle-control {
+.aiperf-flow .aiperf-flow__subtitle-control {
   position: absolute;
   inset-block-start: max(0.75rem, env(safe-area-inset-top));
   inset-inline-end: max(0.75rem, env(safe-area-inset-right));
   min-width: 2.75rem;
   color: var(--flow-subtitle-ink);
-  background: var(--flow-subtitle-surface);
+  background: var(--flow-control-surface);
   border-color: var(--flow-subtitle-edge);
-  font-family: "IBM Plex Mono", "Cascadia Code", monospace;
+  font-family: var(--flow-font-data);
   font-size: 0.78rem;
   font-weight: 750;
   letter-spacing: 0.08em;
   pointer-events: auto;
 }
 
-.aiperf-flow__subtitle-control[aria-pressed="true"] {
-  color: #03111b;
+.aiperf-flow .aiperf-flow__subtitle-control[aria-pressed="true"] {
+  color: var(--flow-board);
   background: var(--flow-subtitle-edge);
 }
 
@@ -82,9 +83,9 @@
 }
 
 .aiperf-flow__subtitle-overlay[data-contrast="high"] {
-  --flow-subtitle-ink: #fff;
-  --flow-subtitle-surface: #000;
-  --flow-subtitle-edge: #ffea00;
+  --flow-subtitle-ink: var(--flow-chalk);
+  --flow-subtitle-surface: var(--flow-board);
+  --flow-subtitle-edge: var(--flow-attention);
 }
 
 .aiperf-flow__subtitle-overlay[data-reduced-motion="true"]
@@ -117,9 +118,9 @@
 
 @media (prefers-contrast: more) {
   .aiperf-flow__subtitle-overlay {
-    --flow-subtitle-ink: #fff;
-    --flow-subtitle-surface: #000;
-    --flow-subtitle-edge: #ffea00;
+    --flow-subtitle-ink: var(--flow-chalk);
+    --flow-subtitle-surface: var(--flow-board);
+    --flow-subtitle-edge: var(--flow-attention);
   }
 }
 

@@ -45,11 +45,12 @@ function flow(): FlowIr {
     sourceMap,
   };
   return {
-    irVersion: 1,
+    irVersion: 2,
     id: "flow",
     title: "Flow",
     capabilities: [],
     tokens: {},
+    themes: [],
     scenes: [scene],
     sourceMap,
   };

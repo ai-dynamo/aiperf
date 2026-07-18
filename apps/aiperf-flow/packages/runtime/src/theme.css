@@ -2,26 +2,45 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 .aiperf-flow {
-  --flow-ink: #eef4ff;
-  --flow-muted: #91a4be;
-  --flow-plane-deep: #07111f;
-  --flow-plane: #0c1a2c;
-  --flow-plane-raised: #13243a;
-  --flow-control: #68a8ff;
-  --flow-execution: #75d59b;
-  --flow-danger: #ff9c9c;
-  --flow-safe-inline: max(1rem, env(safe-area-inset-left, 0px));
-  --flow-safe-block: max(0.75rem, env(safe-area-inset-top, 0px));
+  --flow-board: #232526;
+  --flow-panel: #292c2d;
+  --flow-raised: #303334;
+  --flow-control-surface: #383c3e;
+  --flow-chalk: #f1f3f2;
+  --flow-chalk-muted: #aeb4b5;
+  --flow-structure: #d7dada;
+  --flow-guide: #777d80;
+  --flow-signal: #71d8d0;
+  --flow-beat: #69c8ba;
+  --flow-compute: #77b8de;
+  --flow-attention: #f0cf58;
+  --flow-success: #7dce82;
+  --flow-danger: #f07972;
+  --flow-focus: #9bdbf5;
+  --flow-ink: var(--flow-chalk);
+  --flow-muted: var(--flow-chalk-muted);
+  --flow-plane-deep: var(--flow-board);
+  --flow-plane: var(--flow-panel);
+  --flow-plane-raised: var(--flow-raised);
+  --flow-control: var(--flow-signal);
+  --flow-execution: var(--flow-beat);
+  --flow-font-body: Inter, "IBM Plex Sans", "Segoe UI", sans-serif;
+  --flow-font-data: "IBM Plex Mono", "Cascadia Code", monospace;
+  --flow-stroke: 2px;
+  --flow-radius: 12px;
+  --flow-safe-top: max(0.75rem, env(safe-area-inset-top, 0px));
+  --flow-safe-right: max(1rem, env(safe-area-inset-right, 0px));
+  --flow-safe-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+  --flow-safe-left: max(1rem, env(safe-area-inset-left, 0px));
   box-sizing: border-box;
+  min-width: 0;
   min-height: 100vh;
-  padding: 0;
-  color: var(--flow-ink);
-  background:
-    linear-gradient(115deg, rgb(104 168 255 / 8%), transparent 38%),
-    var(--flow-plane-deep);
-  font-family:
-    Inter, "IBM Plex Sans", "Segoe UI", sans-serif;
+  overflow-x: clip;
+  color: var(--flow-chalk);
+  background: var(--flow-board);
+  font-family: var(--flow-font-body);
   line-height: 1.5;
+  color-scheme: dark;
 }
 
 .aiperf-flow *,
@@ -30,171 +49,305 @@
   box-sizing: inherit;
 }
 
-.aiperf-flow__shell {
+.aiperf-flow__shell,
+.aiperf-flow__causal-field {
   position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  grid-template-rows: minmax(0, 1fr);
   min-height: 100vh;
-}
-
-.aiperf-flow__skip-link {
-  position: fixed;
-  z-index: 20;
-  inset-block-start: var(--flow-safe-block);
-  inset-inline-start: var(--flow-safe-inline);
-  padding: 0.55rem 0.8rem;
-  color: var(--flow-plane-deep);
-  background: var(--flow-control);
-  transform: translateY(-160%);
-}
-
-.aiperf-flow__skip-link:focus {
-  transform: translateY(0);
-}
-
-.aiperf-flow__chrome {
-  position: relative;
-  z-index: 2;
-  max-width: min(36rem, calc(100% - 2 * var(--flow-safe-inline)));
-  margin-inline-start: var(--flow-safe-inline);
-}
-
-.aiperf-flow__header {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-block-start: var(--flow-safe-block);
-  padding: 0.75rem 0 0.5rem;
-}
-
-.aiperf-flow__header h1 {
-  margin: 0;
-  font-family:
-    "IBM Plex Mono", "Cascadia Code", monospace;
-  font-size: clamp(1.1rem, 2.4vw, 1.85rem);
-  font-weight: 520;
-  letter-spacing: -0.045em;
-}
-
-.aiperf-flow__eyebrow {
-  margin: 0 0 0.35rem;
-  color: var(--flow-control);
-  font-family:
-    "IBM Plex Mono", "Cascadia Code", monospace;
-  font-size: 0.75rem;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-
-.aiperf-flow__navigation,
-.aiperf-flow__controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.55rem;
-}
-
-.aiperf-flow__controls {
-  margin: 0.35rem var(--flow-safe-inline) 0.75rem;
-  padding: 0.55rem 0.65rem;
-  border-inline-start: 0.2rem solid var(--flow-execution);
-  background: rgb(12 26 44 / 88%);
-  backdrop-filter: blur(8px);
-}
-
-.aiperf-flow button {
-  min-height: 2.4rem;
-  padding: 0.45rem 0.8rem;
-  border: 1px solid rgb(104 168 255 / 45%);
-  border-radius: 0.25rem;
-  color: var(--flow-ink);
-  background: var(--flow-plane-raised);
-  font: inherit;
-  cursor: pointer;
-}
-
-.aiperf-flow button:hover:not(:disabled) {
-  border-color: var(--flow-control);
-  background: #19304d;
-}
-
-.aiperf-flow button:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
-}
-
-.aiperf-flow :focus-visible {
-  outline: 0.18rem solid var(--flow-control);
-  outline-offset: 0.18rem;
-}
-
-.aiperf-flow__controls output {
-  margin-inline-start: auto;
-  color: var(--flow-muted);
-  font-family:
-    "IBM Plex Mono", "Cascadia Code", monospace;
-  font-size: 0.78rem;
+  min-height: 100dvh;
+  isolation: isolate;
+  overflow: hidden;
+  background: var(--flow-board);
 }
 
 .aiperf-flow__stage-region {
   position: relative;
-  z-index: 1;
-  min-height: min(72vh, 48rem);
-  padding-inline: var(--flow-safe-inline);
+  z-index: 0;
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .aiperf-flow__scene {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.75rem;
   width: 100%;
-  max-width: 96rem;
+  height: 100%;
   min-height: inherit;
-  margin-inline: auto;
-  border: 1px solid rgb(104 168 255 / 20%);
-  background:
-    linear-gradient(rgb(104 168 255 / 5%) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(104 168 255 / 5%) 1px, transparent 1px),
-    var(--flow-plane);
-  background-size: 2rem 2rem;
-  box-shadow: 0 2rem 5rem rgb(0 0 0 / 24%);
+  overflow: hidden;
+  background: var(--flow-board);
 }
 
 .aiperf-flow__stage {
   display: block;
   width: 100%;
-  min-height: 24rem;
-  max-height: 78vh;
+  height: 100%;
+  min-width: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  max-height: none;
 }
 
 .aiperf-flow__canvas {
   width: 100%;
-  height: auto;
-  max-height: 78vh;
+  height: 100%;
+  max-height: none;
   cursor: crosshair;
+  touch-action: none;
 }
 
 .aiperf-flow__stage g {
   cursor: pointer;
 }
 
-.aiperf-flow__semantic-twin {
-  align-self: start;
-  width: min(16rem, 34vw);
-  max-height: 78vh;
-  margin: 0.75rem;
-  padding: 0.65rem 0.75rem;
+.aiperf-flow__chrome {
+  z-index: 5;
+}
+
+.aiperf-flow__header {
+  position: absolute;
+  z-index: 5;
+  inset-block-start: var(--flow-safe-top);
+  inset-inline: var(--flow-safe-left) auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  max-width: min(44rem, calc(100% - var(--flow-safe-left) - var(--flow-safe-right)));
+  padding: 0;
+  pointer-events: none;
+}
+
+.aiperf-flow__header > * {
+  pointer-events: auto;
+}
+
+.aiperf-flow__header > div {
+  padding-inline-start: 0.75rem;
+  border-inline-start: var(--flow-stroke) solid var(--flow-structure);
+}
+
+.aiperf-flow__header h1 {
+  margin: 0;
+  color: var(--flow-chalk);
+  font-size: clamp(1.05rem, 1.8vw, 1.65rem);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+.aiperf-flow__eyebrow {
+  margin: 0 0 0.25rem;
+  color: var(--flow-signal);
+  font-family: var(--flow-font-data);
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.11em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.aiperf-flow__navigation,
+.aiperf-flow__controls,
+.aiperf-flow__immersive-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.aiperf-flow__navigation {
+  align-self: flex-start;
+}
+
+.aiperf-flow__controls,
+.aiperf-flow__immersive-controls {
+  position: absolute;
+  z-index: 6;
+  inset-inline-start: var(--flow-safe-left);
+  inset-block-end: var(--flow-safe-bottom);
+  max-width: calc(100% - var(--flow-safe-left) - var(--flow-safe-right));
+  padding: 0.45rem;
+  border: var(--flow-stroke) solid var(--flow-guide);
+  border-radius: var(--flow-radius);
+  background: var(--flow-panel);
+  transition: opacity 160ms ease-out;
+}
+
+.aiperf-flow button,
+.aiperf-flow input,
+.aiperf-flow [role="button"] {
+  font: inherit;
+}
+
+.aiperf-flow button,
+.aiperf-flow [role="button"] {
+  min-height: 2.5rem;
+  padding: 0.48rem 0.75rem;
+  border: var(--flow-stroke) solid var(--flow-guide);
+  border-radius: calc(var(--flow-radius) - 4px);
+  color: var(--flow-chalk);
+  background: var(--flow-control-surface);
+  cursor: pointer;
+}
+
+.aiperf-flow button:hover:not(:disabled),
+.aiperf-flow [role="button"]:hover {
+  border-color: var(--flow-signal);
+  color: var(--flow-signal);
+}
+
+.aiperf-flow button[aria-pressed="true"],
+.aiperf-flow button[aria-current="true"],
+.aiperf-flow [role="button"][aria-current="true"] {
+  border-color: var(--flow-beat);
+  color: var(--flow-board);
+  background: var(--flow-beat);
+}
+
+.aiperf-flow button:disabled,
+.aiperf-flow [aria-disabled="true"] {
+  color: var(--flow-chalk-muted);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.aiperf-flow :focus-visible {
+  outline: 3px solid var(--flow-focus);
+  outline-offset: 3px;
+}
+
+.aiperf-flow__skip-link {
+  position: fixed;
+  z-index: 50;
+  inset-block-start: var(--flow-safe-top);
+  inset-inline-start: var(--flow-safe-left);
+  padding: 0.6rem 0.85rem;
+  border: var(--flow-stroke) solid var(--flow-board);
+  border-radius: calc(var(--flow-radius) - 4px);
+  color: var(--flow-board);
+  background: var(--flow-focus);
+  font-weight: 700;
+  transform: translateY(calc(-100% - var(--flow-safe-top) - 0.5rem));
+}
+
+.aiperf-flow__skip-link:focus {
+  transform: translateY(0);
+}
+
+.aiperf-flow__controls output,
+.aiperf-flow__immersive-controls output {
+  margin-inline: 0.35rem;
+  color: var(--flow-chalk-muted);
+  font-family: var(--flow-font-data);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.aiperf-flow__causal-path {
+  position: absolute;
+  z-index: 6;
+  inset-inline: var(--flow-safe-left) var(--flow-safe-right);
+  inset-block-end: calc(var(--flow-safe-bottom) + 4.25rem);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(6rem, 1fr));
+  gap: 0;
+  max-width: 72rem;
+  margin-inline: auto;
+  padding: 0;
+  list-style: none;
+  border-block: 1px solid var(--flow-guide);
+}
+
+.aiperf-flow__causal-path ol,
+.aiperf-flow__causal-path ul {
+  display: contents;
+}
+
+.aiperf-flow__causal-beat {
+  position: relative;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.65rem;
+  overflow: hidden;
+  border: 0;
+  border-inline-start: 1px solid var(--flow-guide);
+  border-radius: 0;
+  color: var(--flow-chalk-muted);
+  background: var(--flow-panel);
+  font-family: var(--flow-font-data);
+  font-size: 0.72rem;
+  line-height: 1.25;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiperf-flow__causal-beat:last-child {
+  border-inline-end: 1px solid var(--flow-guide);
+}
+
+.aiperf-flow__causal-beat[data-state="complete"],
+.aiperf-flow__causal-beat--complete {
+  color: var(--flow-structure);
+  background: var(--flow-raised);
+}
+
+.aiperf-flow__causal-beat[aria-current="step"],
+.aiperf-flow__causal-beat[data-state="active"],
+.aiperf-flow__causal-beat--active {
+  color: var(--flow-board);
+  background: var(--flow-beat);
+}
+
+.aiperf-flow__causal-beat[data-state="future"],
+.aiperf-flow__causal-beat--future {
+  color: var(--flow-chalk-muted);
+  background: var(--flow-panel);
+}
+
+.aiperf-flow__semantic-twin,
+.aiperf-flow__context-lens,
+.aiperf-flow__inspector {
+  align-self: stretch;
+  width: min(22rem, 31vw);
+  max-height: calc(100dvh - var(--flow-safe-top) - var(--flow-safe-bottom));
+  margin: var(--flow-safe-top) var(--flow-safe-right) var(--flow-safe-bottom) 0;
+  padding: 1rem;
   overflow: auto;
-  border: 1px solid rgb(104 168 255 / 28%);
-  background: rgb(7 17 31 / 92%);
-  color: var(--flow-ink);
+  overscroll-behavior: contain;
+  border: var(--flow-stroke) solid var(--flow-guide);
+  border-radius: var(--flow-radius);
+  color: var(--flow-chalk);
+  background: var(--flow-panel);
+  scrollbar-color: var(--flow-guide) var(--flow-panel);
+}
+
+.aiperf-flow__inspector,
+.aiperf-flow__context-lens {
+  position: absolute;
+  z-index: 8;
+  inset-block: var(--flow-safe-top) var(--flow-safe-bottom);
+  inset-inline: auto var(--flow-safe-right);
+  height: auto;
+  margin: 0;
+  border-color: var(--flow-beat);
 }
 
 .aiperf-flow__semantic-twin--compact {
-  width: min(12.5rem, 30vw);
+  width: min(18rem, 27vw);
   font-size: 0.85rem;
+}
+
+.aiperf-flow__semantic-twin h2,
+.aiperf-flow__context-lens h2,
+.aiperf-flow__inspector h2 {
+  margin-block-start: 0;
+  font-size: 1rem;
+  line-height: 1.25;
 }
 
 .aiperf-flow__semantic-entities,
@@ -209,52 +362,154 @@
 
 .aiperf-flow__semantic-twin button {
   width: 100%;
-  min-height: 1.9rem;
-  margin-block: 0.2rem;
+  min-height: 2rem;
+  margin-block: 0.15rem;
   text-align: start;
 }
 
+.aiperf-flow__inspector strong,
+.aiperf-flow__context-lens strong {
+  color: var(--flow-beat);
+  font-family: var(--flow-font-data);
+}
+
 .aiperf-flow__connector-label {
-  fill: var(--flow-muted);
-  font-family:
-    "IBM Plex Mono", "Cascadia Code", monospace;
+  fill: var(--flow-chalk-muted);
+  font-family: var(--flow-font-data);
   font-size: 0.72rem;
   text-anchor: middle;
 }
 
-.aiperf-flow__inspector {
-  position: absolute;
-  z-index: 3;
-  inset-block: 1rem;
-  inset-inline-end: 1rem;
-  width: min(20rem, calc(100% - 2rem));
-  padding: 1rem;
-  border: 1px solid rgb(117 213 155 / 52%);
-  background: rgb(7 17 31 / 94%);
-  box-shadow: -1rem 1rem 2.5rem rgb(0 0 0 / 32%);
+.aiperf-flow__command-backdrop,
+.aiperf-flow__command-constellation-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: start center;
+  padding:
+    max(10dvh, var(--flow-safe-top))
+    var(--flow-safe-right)
+    var(--flow-safe-bottom)
+    var(--flow-safe-left);
+  background: rgb(35 37 38 / 82%);
 }
 
-.aiperf-flow__inspector strong {
-  color: var(--flow-execution);
-  font-family:
-    "IBM Plex Mono", "Cascadia Code", monospace;
+.aiperf-flow__command-constellation,
+.aiperf-flow__command-dialog {
+  width: min(42rem, 100%);
+  max-height: min(72dvh, 40rem);
+  overflow: hidden;
+  border: var(--flow-stroke) solid var(--flow-signal);
+  border-radius: var(--flow-radius);
+  color: var(--flow-chalk);
+  background: var(--flow-panel);
+}
+
+.aiperf-flow__command-constellation h2,
+.aiperf-flow__command-dialog h2 {
+  margin: 0;
+  padding: 1rem 1rem 0.65rem;
+  font-size: 1rem;
+}
+
+.aiperf-flow__command-search {
+  width: calc(100% - 2rem);
+  min-height: 3rem;
+  margin: 0 1rem 0.75rem;
+  padding: 0.65rem 0.8rem;
+  border: var(--flow-stroke) solid var(--flow-guide);
+  border-radius: calc(var(--flow-radius) - 4px);
+  color: var(--flow-chalk);
+  background: var(--flow-board);
+}
+
+.aiperf-flow__command-list {
+  max-height: min(52dvh, 30rem);
+  margin: 0;
+  padding: 0 0.5rem 0.5rem;
+  overflow: auto;
+  list-style: none;
+}
+
+.aiperf-flow__command-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.6rem 0.75rem;
+  border-color: transparent;
+  color: var(--flow-chalk);
+  background: transparent;
+  text-align: start;
+}
+
+.aiperf-flow__command-item[aria-selected="true"] {
+  border-color: var(--flow-signal);
+  color: var(--flow-board);
+  background: var(--flow-signal);
+}
+
+.aiperf-flow__command-shortcut,
+.aiperf-flow__command-category {
+  color: var(--flow-chalk-muted);
+  font-family: var(--flow-font-data);
+  font-size: 0.72rem;
+}
+
+.aiperf-flow__command-item[aria-selected="true"]
+  :is(.aiperf-flow__command-shortcut, .aiperf-flow__command-category) {
+  color: var(--flow-board);
 }
 
 .aiperf-flow__node-fallback,
-.aiperf-flow__scene-fallback,
-.aiperf-flow__transcript,
-.aiperf-flow__narration-highlight {
-  color: var(--flow-muted);
-  background: var(--flow-plane);
+.aiperf-flow__scene-fallback {
+  display: grid;
+  place-content: center;
+  min-height: inherit;
+  padding: clamp(1rem, 4vw, 3rem);
+  color: var(--flow-chalk-muted);
+  background: var(--flow-board);
 }
 
-.aiperf-flow__scene-fallback,
-.aiperf-flow__transcript,
+.aiperf-flow__narration-highlight,
+.aiperf-flow__transcript {
+  position: relative;
+  z-index: 4;
+  max-width: min(72ch, calc(100% - var(--flow-safe-left) - var(--flow-safe-right)));
+  margin-inline: auto;
+  padding: 0.75rem 1rem;
+  border-inline-start: var(--flow-stroke) solid var(--flow-signal);
+  color: var(--flow-chalk-muted);
+  background: var(--flow-panel);
+}
+
 .aiperf-flow__narration-highlight {
-  max-width: 96rem;
-  margin: 0.75rem var(--flow-safe-inline);
-  padding: 1rem;
-  border-inline-start: 0.2rem solid var(--flow-control);
+  position: absolute;
+  inset-inline: var(--flow-safe-left) auto;
+  inset-block-end: calc(var(--flow-safe-bottom) + 8rem);
+  margin: 0;
+}
+
+.aiperf-flow__transcript {
+  position: absolute;
+  z-index: 7;
+  inset-inline: auto var(--flow-safe-right);
+  inset-block: auto var(--flow-safe-bottom);
+  width: min(32rem, calc(100% - var(--flow-safe-left) - var(--flow-safe-right)));
+  max-height: min(34dvh, 20rem);
+  margin: 0;
+  overflow: auto;
+}
+
+.aiperf-flow__transcript h2 {
+  margin-block-start: 0;
+  color: var(--flow-chalk);
+  font-family: var(--flow-font-data);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .aiperf-flow__error-detail,
@@ -262,38 +517,307 @@
   color: var(--flow-danger);
 }
 
-.aiperf-flow__transcript h2 {
-  margin-block-start: 0;
-  color: var(--flow-ink);
-  font-family:
-    "IBM Plex Mono", "Cascadia Code", monospace;
-  font-size: 0.9rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.aiperf-flow[data-hud="quiet"] :is(
+    .aiperf-flow__header,
+    .aiperf-flow__controls,
+    .aiperf-flow__immersive-controls,
+    .aiperf-flow__causal-path
+  ) {
+  opacity: 0.42;
 }
 
-@media (width < 720px) {
+.aiperf-flow[data-hud="hidden"] :is(
+    .aiperf-flow__header,
+    .aiperf-flow__controls,
+    .aiperf-flow__immersive-controls,
+    .aiperf-flow__causal-path
+  ) {
+  opacity: 0;
+}
+
+.aiperf-flow[data-hud] :is(
+    .aiperf-flow__header,
+    .aiperf-flow__controls,
+    .aiperf-flow__immersive-controls,
+    .aiperf-flow__causal-path
+  ):focus-within,
+.aiperf-flow[data-hud] :is(
+    .aiperf-flow__header,
+    .aiperf-flow__controls,
+    .aiperf-flow__immersive-controls,
+    .aiperf-flow__causal-path
+  ):hover {
+  opacity: 1;
+}
+
+.aiperf-flow[data-focus-world="true"] .aiperf-flow__scene,
+.aiperf-flow__scene[data-focus-world="true"] {
+  background: var(--flow-board);
+}
+
+.aiperf-flow:fullscreen,
+.aiperf-flow[data-fullscreen="native"],
+.aiperf-flow[data-fullscreen="layout"] {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.aiperf-flow:fullscreen :is(
+    .aiperf-flow__shell,
+    .aiperf-flow__causal-field,
+    .aiperf-flow__stage-region,
+    .aiperf-flow__stage
+  ),
+.aiperf-flow[data-fullscreen="native"] :is(
+    .aiperf-flow__shell,
+    .aiperf-flow__causal-field,
+    .aiperf-flow__stage-region,
+    .aiperf-flow__stage
+  ),
+.aiperf-flow[data-fullscreen="layout"] :is(
+    .aiperf-flow__shell,
+    .aiperf-flow__causal-field,
+    .aiperf-flow__stage-region,
+    .aiperf-flow__stage
+  ) {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.aiperf-flow[data-contrast="high"] {
+  --flow-board: #000;
+  --flow-panel: #000;
+  --flow-raised: #111;
+  --flow-control-surface: #000;
+  --flow-chalk: #fff;
+  --flow-chalk-muted: #fff;
+  --flow-structure: #fff;
+  --flow-guide: #fff;
+  --flow-signal: #7ffff4;
+  --flow-beat: #7ffff4;
+  --flow-focus: #ffea00;
+  --flow-danger: #ff7b72;
+  --flow-stroke: 3px;
+}
+
+@media (width <= 600px) {
+  .aiperf-flow {
+    --flow-safe-right: max(0.65rem, env(safe-area-inset-right, 0px));
+    --flow-safe-left: max(0.65rem, env(safe-area-inset-left, 0px));
+  }
+
   .aiperf-flow__header {
-    align-items: stretch;
-    flex-direction: column;
+    inset-inline-end: var(--flow-safe-right);
+    justify-content: space-between;
+    max-width: none;
+  }
+
+  .aiperf-flow__header h1 {
+    max-width: 18ch;
+    font-size: 1rem;
+  }
+
+  .aiperf-flow__eyebrow {
+    font-size: 0.62rem;
+  }
+
+  .aiperf-flow__navigation {
+    flex-wrap: nowrap;
   }
 
   .aiperf-flow__navigation button {
-    flex: 1;
+    min-width: 2.75rem;
+    padding-inline: 0.55rem;
   }
 
   .aiperf-flow__scene {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .aiperf-flow__stage,
+  .aiperf-flow__canvas {
+    min-height: 100dvh;
+  }
+
+  .aiperf-flow__controls,
+  .aiperf-flow__immersive-controls {
+    inset-inline: var(--flow-safe-left) var(--flow-safe-right);
+    max-width: none;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .aiperf-flow__controls::-webkit-scrollbar,
+  .aiperf-flow__immersive-controls::-webkit-scrollbar {
+    display: none;
+  }
+
+  .aiperf-flow__controls button,
+  .aiperf-flow__immersive-controls button {
+    flex: 0 0 auto;
+  }
+
+  .aiperf-flow__controls output,
+  .aiperf-flow__immersive-controls output {
+    margin-inline-start: auto;
+    white-space: nowrap;
+  }
+
+  .aiperf-flow__causal-path {
+    grid-template-columns: repeat(auto-fit, minmax(4.75rem, 1fr));
+    inset-block-end: calc(var(--flow-safe-bottom) + 4.1rem);
+    overflow-x: auto;
+  }
+
+  .aiperf-flow__causal-beat {
+    min-width: 4.75rem;
+    padding-inline: 0.5rem;
+    font-size: 0.65rem;
   }
 
   .aiperf-flow__semantic-twin,
-  .aiperf-flow__semantic-twin--compact {
+  .aiperf-flow__semantic-twin--compact,
+  .aiperf-flow__context-lens,
+  .aiperf-flow__inspector {
+    inset-block: auto calc(var(--flow-safe-bottom) + 4.25rem);
+    inset-inline: var(--flow-safe-left) var(--flow-safe-right);
     width: auto;
-    max-height: 12rem;
+    max-height: min(44dvh, 22rem);
+    margin: 0;
   }
 
-  .aiperf-flow__stage {
-    min-height: 14rem;
+  .aiperf-flow__narration-highlight {
+    inset-inline-end: var(--flow-safe-right);
+    inset-block-end: calc(var(--flow-safe-bottom) + 7.75rem);
+    max-width: none;
+    padding: 0.55rem 0.7rem;
+    font-size: 0.85rem;
+  }
+
+  .aiperf-flow__transcript {
+    inset-inline: var(--flow-safe-left) var(--flow-safe-right);
+    inset-block-end: calc(var(--flow-safe-bottom) + 4.25rem);
+    width: auto;
+    max-height: min(38dvh, 18rem);
+  }
+
+  .aiperf-flow__command-backdrop,
+  .aiperf-flow__command-constellation-backdrop {
+    place-items: end stretch;
+    padding-inline: 0;
+    padding-block-end: 0;
+  }
+
+  .aiperf-flow__command-constellation,
+  .aiperf-flow__command-dialog {
+    width: 100%;
+    max-height: min(78dvh, 42rem);
+    border-inline: 0;
+    border-block-end: 0;
+    border-radius: var(--flow-radius) var(--flow-radius) 0 0;
+  }
+}
+
+@media (width <= 390px) and (height <= 844px) {
+  .aiperf-flow__header > div {
+    max-width: 14rem;
+  }
+
+  .aiperf-flow__navigation button {
+    font-size: 0.78rem;
+  }
+
+  .aiperf-flow__controls,
+  .aiperf-flow__immersive-controls {
+    gap: 0.3rem;
+    padding: 0.35rem;
+  }
+
+  .aiperf-flow__controls button,
+  .aiperf-flow__immersive-controls button {
+    min-height: 2.75rem;
+    padding-inline: 0.65rem;
+    font-size: 0.82rem;
+  }
+
+  .aiperf-flow__causal-path {
+    inset-block-end: calc(var(--flow-safe-bottom) + 3.85rem);
+  }
+
+  .aiperf-flow__causal-beat {
+    min-height: 2.5rem;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .aiperf-flow {
+    --flow-board: #000;
+    --flow-panel: #000;
+    --flow-raised: #111;
+    --flow-control-surface: #000;
+    --flow-chalk: #fff;
+    --flow-chalk-muted: #fff;
+    --flow-structure: #fff;
+    --flow-guide: #fff;
+    --flow-signal: #7ffff4;
+    --flow-beat: #7ffff4;
+    --flow-focus: #ffea00;
+    --flow-danger: #ff7b72;
+    --flow-stroke: 3px;
+  }
+
+  .aiperf-flow[data-hud="quiet"] :is(
+      .aiperf-flow__header,
+      .aiperf-flow__controls,
+      .aiperf-flow__immersive-controls,
+      .aiperf-flow__causal-path
+    ) {
+    opacity: 0.75;
+  }
+}
+
+@media (forced-colors: active) {
+  .aiperf-flow {
+    --flow-board: Canvas;
+    --flow-panel: Canvas;
+    --flow-raised: Canvas;
+    --flow-control-surface: ButtonFace;
+    --flow-chalk: CanvasText;
+    --flow-chalk-muted: CanvasText;
+    --flow-structure: CanvasText;
+    --flow-guide: CanvasText;
+    --flow-signal: Highlight;
+    --flow-beat: Highlight;
+    --flow-focus: Highlight;
+    --flow-danger: Mark;
+    forced-color-adjust: auto;
+  }
+
+  .aiperf-flow button[aria-pressed="true"],
+  .aiperf-flow button[aria-current="true"],
+  .aiperf-flow__causal-beat[aria-current="step"],
+  .aiperf-flow__causal-beat[data-state="active"],
+  .aiperf-flow__command-item[aria-selected="true"] {
+    color: HighlightText;
+    background: Highlight;
+  }
+
+  .aiperf-flow :focus-visible {
+    outline-color: Highlight;
+  }
+
+  .aiperf-flow[data-hud="hidden"] :is(
+      .aiperf-flow__header,
+      .aiperf-flow__controls,
+      .aiperf-flow__immersive-controls,
+      .aiperf-flow__causal-path
+    ) {
+    opacity: 1;
   }
 }
 
@@ -302,8 +826,25 @@
   .aiperf-flow *::before,
   .aiperf-flow *::after {
     scroll-behavior: auto !important;
+    transition-delay: 0s !important;
     transition-duration: 0.01ms !important;
+    animation-delay: 0s !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+
+  .aiperf-flow__skip-link {
+    transition: none;
+  }
+}
+
+.aiperf-flow[data-reduced-motion="true"] *,
+.aiperf-flow[data-reduced-motion="true"] *::before,
+.aiperf-flow[data-reduced-motion="true"] *::after {
+  scroll-behavior: auto !important;
+  transition-delay: 0s !important;
+  transition-duration: 0.01ms !important;
+  animation-delay: 0s !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
 }

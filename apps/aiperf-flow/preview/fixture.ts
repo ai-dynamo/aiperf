@@ -780,11 +780,12 @@ function previewBrowserNavigation(
 
 function buildRequestFlow(): FlowIr {
   return parseFlowIr({
-    irVersion: 1,
+    irVersion: 2,
     id: "request-flow",
     title: "Request flow",
     capabilities: FOUNDATION_CAPABILITY_REQUIREMENTS,
     tokens: { accent: "#26c6da" },
+    themes: [],
     scenes: requestFlowScenes(),
     sourceMap: requestSourceMap,
   });
@@ -792,11 +793,12 @@ function buildRequestFlow(): FlowIr {
 
 function buildArchitectureFlow(): FlowIr {
   return parseFlowIr({
-    irVersion: 1,
+    irVersion: 2,
     id: "architecture",
     title: "Architecture",
     capabilities: FOUNDATION_CAPABILITY_REQUIREMENTS,
     tokens: {},
+    themes: [],
     scenes: architectureFlowScenes(),
     sourceMap: architectureSourceMap,
   });
@@ -804,11 +806,12 @@ function buildArchitectureFlow(): FlowIr {
 
 function buildEndpointFlow(): FlowIr {
   return parseFlowIr({
-    irVersion: 1,
+    irVersion: 2,
     id: "endpoint-lifecycle",
     title: "Endpoint lifecycle",
     capabilities: FOUNDATION_CAPABILITY_REQUIREMENTS,
     tokens: {},
+    themes: [],
     scenes: endpointFlowScenes(),
     sourceMap: endpointSourceMap,
   });

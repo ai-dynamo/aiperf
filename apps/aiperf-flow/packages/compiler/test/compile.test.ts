@@ -29,7 +29,8 @@ describe("compileSource", () => {
     }
 
     const ir = result.value;
-    expect(ir.irVersion).toBe(1);
+    expect(ir.irVersion).toBe(2);
+    expect(ir.themes).toEqual([]);
     expect(ir.id).toBe("request-flow");
     expect(ir.title).toBe("Request flow");
     expect(ir.capabilities.map((capability) => capability.id)).toEqual([

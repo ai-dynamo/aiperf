@@ -1703,3 +1703,513 @@ a:focus-visible,
     forced-color-adjust: none;
   }
 }
+
+/* Immersive Causal Field -------------------------------------------------- */
+
+:root {
+  --surface-canvas: #232526;
+  --surface-rail: #292c2d;
+  --surface-raised: #303334;
+  --surface-control: #383c3e;
+  --line-subtle: #454a4c;
+  --line-strong: #777d80;
+  --line-structural: #d7dada;
+  --line-guide: #777d80;
+  --text-primary: #f1f3f2;
+  --text-secondary: #d7dada;
+  --text-muted: #aeb4b5;
+  --accent-rust: #7dce82;
+  --accent-flow: #71d8d0;
+  --accent-flow-strong: #9bdbf5;
+  --accent-control: #71d8d0;
+  --accent-attention: #f0cf58;
+  --accent-focus: #9bdbf5;
+  --accent-success: #7dce82;
+  --focus-ring: #9bdbf5;
+  --panel-glass: #292c2d;
+  --panel-border: #777d80;
+  --chip-surface: #383c3e;
+  --semantic-surface: #292c2d;
+  --semantic-selected: rgb(113 216 208 / 0.14);
+  --shadow-2: none;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  max-width: 100%;
+  min-height: 100%;
+  overflow-x: clip;
+}
+
+body {
+  overflow: hidden;
+  background: var(--surface-canvas);
+}
+
+.preview-shell {
+  width: 100%;
+  max-width: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 57% 46%, rgb(113 216 208 / 0.055), transparent 31%),
+    var(--surface-canvas);
+}
+
+.preview-shell::before {
+  position: fixed;
+  opacity: 0.55;
+  background:
+    linear-gradient(rgb(215 218 218 / 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(215 218 218 / 0.035) 1px, transparent 1px);
+  background-size: 3rem 3rem;
+  mask-image: radial-gradient(circle at 55% 50%, black, transparent 74%);
+}
+
+.preview-topbar {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 30;
+  height: 3.5rem;
+  padding-inline: 1rem 1.25rem;
+  border: 0;
+  background: linear-gradient(
+    to bottom,
+    rgb(35 37 38 / 0.96),
+    rgb(35 37 38 / 0.72) 72%,
+    transparent
+  );
+}
+
+.preview-brand-mark {
+  border-color: var(--line-guide, #777d80);
+  border-radius: 0.35rem;
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.preview-status-dot {
+  background: var(--accent-success, #7dce82);
+  box-shadow: none;
+}
+
+.flow-workspace,
+.flow-workspace[data-browser-collapsed="true"] {
+  --preview-drawer-width: min(21rem, calc(100dvw - 1rem));
+  --browser-width: var(--preview-drawer-width);
+  position: relative;
+  isolation: isolate;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+.flow-workspace::after {
+  content: "";
+  position: fixed;
+  z-index: 35;
+  inset: 3.5rem 0 0;
+  pointer-events: none;
+  background: rgb(15 17 18 / 0.58);
+  opacity: 1;
+  transition:
+    opacity 180ms ease,
+    visibility 180ms step-start;
+}
+
+.flow-workspace[data-browser-collapsed="true"]::after {
+  visibility: hidden;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    visibility 140ms step-end;
+}
+
+.flow-browser {
+  position: fixed;
+  z-index: 40;
+  inset: 0 auto 0 0;
+  width: var(--preview-drawer-width);
+  max-width: calc(100dvw - 1rem);
+  height: 100dvh;
+  padding-top: 3.5rem;
+  overflow: hidden;
+  border: 0;
+  border-right: 2px solid var(--line-guide);
+  background: var(--surface-rail);
+  box-shadow: none;
+  translate: 0;
+  visibility: visible;
+  overscroll-behavior: contain;
+  transition:
+    opacity 140ms ease,
+    translate 180ms ease,
+    visibility 180ms step-start;
+}
+
+.flow-workspace[data-browser-collapsed="true"] .flow-browser {
+  visibility: hidden;
+  opacity: 0;
+  translate: -100% 0;
+  transition:
+    opacity 140ms ease,
+    translate 180ms ease,
+    visibility 180ms step-end;
+}
+
+.flow-browser-head,
+.flow-browser-search,
+.flow-tree,
+.flow-browser-foot {
+  width: 100%;
+  min-width: 0;
+}
+
+.flow-browser-head {
+  border-bottom: 1px solid var(--line-subtle);
+}
+
+.flow-browser-head button {
+  border-color: var(--line-guide);
+  color: var(--text-primary);
+  background: var(--surface-control);
+}
+
+.flow-browser-head button:hover {
+  border-color: var(--accent-control);
+  color: var(--accent-control);
+  background: var(--surface-control);
+}
+
+.flow-browser-search {
+  min-width: 0;
+  margin-top: 0.85rem;
+  border-color: var(--line-guide);
+  background: var(--surface-control);
+}
+
+.flow-browser-search:focus-within {
+  border-color: var(--accent-focus);
+  box-shadow: 0 0 0 2px var(--surface-rail), 0 0 0 4px var(--accent-focus);
+}
+
+.flow-tree {
+  scrollbar-color: var(--line-guide) transparent;
+}
+
+.flow-tree summary,
+.flow-tree li button {
+  border-radius: 0.35rem;
+}
+
+.flow-tree summary:hover,
+.flow-tree li button:hover {
+  color: var(--text-primary);
+  background: var(--surface-control);
+}
+
+.flow-tree li button.is-active {
+  color: var(--text-primary);
+  background: color-mix(
+    in srgb,
+    var(--accent-control) 12%,
+    var(--surface-control)
+  );
+}
+
+.flow-tree li button.is-active::before {
+  background: var(--accent-control);
+  box-shadow: none;
+}
+
+.flow-tree li button.is-active > span {
+  color: var(--accent-control);
+}
+
+.flow-browser-foot {
+  border-color: var(--line-guide);
+  background: var(--surface-rail);
+}
+
+.runtime-story {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 100dvh;
+  padding: 0;
+}
+
+.causal-field {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 100dvh;
+  overflow: hidden;
+  background: transparent;
+}
+
+.causal-field::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 4.4rem 1.35rem 3.2rem;
+  pointer-events: none;
+  border: 1px solid rgb(215 218 218 / 0.18);
+  border-radius: 0.75rem;
+}
+
+.causal-field-heading {
+  position: absolute;
+  z-index: 6;
+  inset: 4.85rem auto auto 2rem;
+  width: min(37rem, calc(100vw - 8rem));
+  pointer-events: none;
+}
+
+.story-kicker {
+  margin-bottom: 0.55rem;
+  color: var(--text-muted);
+}
+
+.story-kicker-chapter {
+  padding: 0;
+  border-radius: 0;
+  color: var(--accent-attention);
+  background: transparent;
+}
+
+.story-heading-line {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.story-title {
+  font-size: clamp(1.7rem, 3.6vw, 3.7rem);
+  font-weight: 590;
+  line-height: 0.98;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+
+.story-blurb {
+  max-width: 47ch;
+  font-size: clamp(0.76rem, 1.1vw, 0.92rem);
+  color: var(--text-secondary);
+}
+
+.story-brief-evidence {
+  display: none;
+}
+
+.story-figure {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  min-height: 100dvh;
+}
+
+.story-figure .aiperf-flow__scene {
+  min-height: 100dvh;
+  padding: 4.25rem 1.5rem 3rem;
+}
+
+.story-figure .aiperf-flow__stage {
+  width: 100%;
+  height: calc(100dvh - 7.25rem);
+  filter: none;
+}
+
+.story-figure .preview-canvas-tools {
+  position: fixed;
+  z-index: 15;
+  inset: auto 50% 1rem auto;
+  height: 2.6rem;
+  padding: 0.28rem;
+  border-color: var(--line-strong);
+  border-radius: 0.55rem;
+  background: var(--surface-control, #383c3e);
+  box-shadow: none;
+  backdrop-filter: none;
+  translate: 50% 0;
+}
+
+.preview-canvas-tools button {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.35rem;
+}
+
+.preview-canvas-tools button:hover,
+.preview-canvas-tools button.is-active {
+  color: #232526;
+  background: var(--accent-control);
+}
+
+.story-scene-progress {
+  position: fixed;
+  z-index: 16;
+  inset: auto 0 0;
+  height: 2px;
+  background: rgb(215 218 218 / 0.15);
+}
+
+.story-scene-progress > span {
+  background: var(--accent-attention);
+}
+
+.causal-field-status {
+  position: fixed;
+  z-index: 14;
+  inset: auto 1.35rem 1.1rem;
+  display: grid;
+  grid-template-columns: 2.25rem 1fr 2.25rem;
+  align-items: center;
+  pointer-events: none;
+}
+
+.causal-field-readout {
+  margin: 0;
+  color: var(--text-muted);
+  font: 0.65rem/1 var(--font-data);
+  letter-spacing: 0.045em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.causal-field-nav {
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--text-primary);
+  background: var(--surface-control, #383c3e);
+  font-size: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.causal-field-nav span {
+  font-size: 1rem;
+}
+
+.causal-field-nav-next {
+  justify-self: end;
+}
+
+.causal-field-nav:hover:not(:disabled) {
+  border-color: var(--accent-control);
+  color: var(--accent-control);
+}
+
+.causal-field-nav:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.aiperf-flow__semantic-twin {
+  inset-inline-start: 1.75rem;
+  inset-block-end: 3.7rem;
+  border-color: var(--line-strong);
+  border-radius: 0.5rem;
+  background: var(--surface-rail);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+@media (max-width: 700px) {
+  .flow-workspace,
+  .flow-workspace[data-browser-collapsed="true"] {
+    --preview-drawer-width: calc(100dvw - 0.75rem);
+  }
+
+  .flow-browser {
+    max-width: calc(100dvw - 0.75rem);
+  }
+
+  .preview-status {
+    font-size: 0;
+  }
+
+  .preview-status-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+  }
+
+  .causal-field::before {
+    inset: 3.9rem 0.55rem 3.2rem;
+  }
+
+  .causal-field-heading {
+    inset: 4.25rem 1rem auto;
+    width: auto;
+  }
+
+  .story-title {
+    font-size: clamp(1.55rem, 9vw, 2.5rem);
+  }
+
+  .story-blurb {
+    max-width: 34ch;
+    font-size: 0.72rem;
+  }
+
+  .story-figure .aiperf-flow__scene {
+    padding-inline: 0.7rem;
+  }
+
+  .story-figure .aiperf-flow__stage {
+    height: calc(100dvh - 6.8rem);
+  }
+
+  .causal-field-status {
+    inset-inline: 0.75rem;
+  }
+
+  .causal-field-readout {
+    font-size: 0.55rem;
+  }
+
+  .aiperf-flow__semantic-twin {
+    inset-inline-start: 0.85rem;
+    inset-block-end: 3.8rem;
+    width: min(18rem, calc(100% - 1.7rem));
+  }
+}
+
+@supports not (overflow: clip) {
+  html,
+  body,
+  #root {
+    overflow-x: hidden;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .causal-field::before {
+    border-color: var(--line-strong);
+  }
+}
+
+@media (forced-colors: active) {
+  .preview-shell {
+    background: Canvas;
+  }
+
+  .causal-field::before,
+  .flow-browser,
+  .preview-canvas-tools,
+  .causal-field-nav {
+    border-color: CanvasText;
+  }
+
+  .flow-workspace::after {
+    background: transparent;
+  }
+}

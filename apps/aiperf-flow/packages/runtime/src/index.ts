@@ -5,6 +5,20 @@ export const FLOW_RUNTIME_VERSION = 1 as const;
 
 export * from "./app.js";
 export * from "./backends/canvas/text-atlas.js";
+export * from "./causal-replay.js";
+export * from "./commands.js";
+export * from "./evaluate/frame.js";
+export * from "./fullscreen.js";
+export {
+  hudVisibilityFor,
+  type HudVisibilityInput,
+} from "./hud-policy.js";
+export * from "./immersive/causal-path.js";
+export * from "./immersive/command-constellation.js";
+export * from "./immersive/context-lens.js";
+export * from "./immersive/immersive-controls.js";
+export * from "./immersive-state.js";
+export * from "./immersive-url.js";
 export * from "./leaves/glyph-measure.js";
 export * from "./leaves/queue-policy.js";
 export * from "./leaves/segment-strip-layout.js";

@@ -105,6 +105,20 @@ function resolveValue(
     );
     return undefined;
   }
+  if (value.kind === "theme-role-reference") {
+    diagnostics.push(
+      diagnostic(
+        "SYMBOL_THEME_REFERENCE",
+        "error",
+        "Theme role references are not supported in symbol argument values.",
+        value.sourceMap,
+      ),
+    );
+    return undefined;
+  }
+  if (value.kind !== "object-literal") {
+    return undefined;
+  }
 
   const object: Record<string, JsonValue> = {};
   for (const property of value.properties) {

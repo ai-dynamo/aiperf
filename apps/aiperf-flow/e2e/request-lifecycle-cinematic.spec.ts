@@ -146,17 +146,45 @@ test.describe("RequestLifecycleWaterfall cinematic north star", () => {
     ).toBeVisible();
   });
 
-  test("offers keyboard traversal between semantic entities", () => {
-    test.fixme(
-      true,
-      "The semantic twin exposes keyboard-activatable entities but does not yet implement roving traversal.",
-    );
+  test("offers keyboard traversal between semantic entities", async ({ page }) => {
+    await openRequestLifecycle(page);
+
+    const entities = page
+      .getByRole("region", { name: "Semantic outline" })
+      .getByRole("list", { name: "Entities" })
+      .getByRole("button");
+    const firstEntity = entities.first();
+    const secondEntity = entities.nth(1);
+
+    await firstEntity.focus();
+    await expect(firstEntity).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(secondEntity).toBeFocused();
+    await expect(secondEntity).toHaveAttribute("data-focused", "true");
+
+    await page.keyboard.press("ArrowUp");
+    await expect(firstEntity).toBeFocused();
+    await expect(firstEntity).toHaveAttribute("data-focused", "true");
   });
 
-  test("opens authored evidence from the semantic twin", () => {
-    test.fixme(
-      true,
-      "Evidence IDs are exposed as semantics, but the runtime has no evidence inspector UI yet.",
+  test("opens authored evidence from the semantic twin", async ({ page }) => {
+    await openRequestLifecycle(page);
+
+    const arrivalEvidence = page
+      .getByRole("region", { name: "Semantic outline" })
+      .getByRole("button", { name: "Arrival evidence", exact: true });
+    await arrivalEvidence.focus();
+    await page.keyboard.press("Enter");
+    await expect(arrivalEvidence).toHaveAttribute("aria-selected", "true");
+
+    await page.getByRole("button", { name: "Explore" }).click();
+    await page.getByRole("button", { name: "Inspect", exact: true }).click();
+
+    const inspector = page.getByRole("region", { name: "Node inspector" });
+    await expect(inspector).toBeVisible();
+    await expect(inspector).toContainText("Arrival evidence");
+    await expect(inspector).toContainText(
+      "Evidence ID ev-arrival-req-017, captured from the scheduler at 1200 milliseconds.",
     );
   });
 });

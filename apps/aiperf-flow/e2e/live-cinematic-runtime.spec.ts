@@ -15,6 +15,11 @@ import { promisify } from "node:util";
 
 import { expect, test, type Page } from "@playwright/test";
 
+import {
+  clearRuntimeMetrics,
+  collectRuntimeMetrics,
+} from "./helpers/runtime-metrics.js";
+
 const execFileAsync = promisify(execFile);
 const e2eDir = __dirname;
 const flowRoot = resolve(e2eDir, "..");
@@ -45,6 +50,13 @@ type SemanticSnapshot = Readonly<{
     from: string | null;
     to: string | null;
   }>[];
+}>;
+
+type CinematicBrowserSnapshot = Readonly<{
+  semantics: SemanticSnapshot;
+  activeBeatId: string | null;
+  backend: string | null;
+  subtitleCueId: string | null;
 }>;
 
 let staticSiteRoot: string | undefined;
@@ -131,12 +143,33 @@ async function openCinematicRuntime(
     canvas?: boolean;
     forcedColors?: "active" | "none";
     reducedMotion?: "no-preference" | "reduce";
+    reducedTransparency?: boolean;
   }> = {},
 ): Promise<void> {
   await page.emulateMedia({
     forcedColors: options.forcedColors ?? "none",
     reducedMotion: options.reducedMotion ?? "no-preference",
   });
+  if (options.reducedTransparency === true) {
+    await page.addInitScript(() => {
+      const browserMatchMedia = window.matchMedia.bind(window);
+      window.matchMedia = (query) => {
+        const mediaQuery = browserMatchMedia(query);
+        if (query !== "(prefers-reduced-transparency: reduce)") {
+          return mediaQuery;
+        }
+        return new Proxy(mediaQuery, {
+          get(target, property) {
+            if (property === "matches") {
+              return true;
+            }
+            const value = Reflect.get(target, property, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      };
+    });
+  }
   if (options.canvas === false) {
     await page.addInitScript(() => {
       HTMLCanvasElement.prototype.getContext = () => null;
@@ -147,8 +180,14 @@ async function openCinematicRuntime(
   await expect(
     page.getByRole("heading", { level: 1, name: "Request execution" }),
   ).toBeVisible();
+  await expect(page.getByRole("region", { name: "Scene field" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Causal path" })).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Immersive controls" }),
+  ).toBeVisible();
   await expect(page.getByRole("region", { name: "Scene stage" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Semantic outline" })).toBeVisible();
+  await expect(page.locator('input[type="range"]')).toHaveCount(0);
 }
 
 async function semanticSnapshot(page: Page): Promise<SemanticSnapshot> {
@@ -169,6 +208,37 @@ async function semanticSnapshot(page: Page): Promise<SemanticSnapshot> {
       to: relationElement.getAttribute("data-to"),
     })),
   }));
+}
+
+async function cinematicBrowserSnapshot(
+  page: Page,
+): Promise<CinematicBrowserSnapshot> {
+  const activeBeat = page
+    .getByRole("navigation", { name: "Causal path" })
+    .locator('[aria-current="step"]');
+  const stage = page.getByRole("region", { name: "Scene stage" });
+  const subtitles = page.getByRole("region", { name: "Subtitles" });
+
+  return {
+    semantics: await semanticSnapshot(page),
+    activeBeatId: await activeBeat.getAttribute("data-beat-id"),
+    backend: await stage.getAttribute("data-backend"),
+    subtitleCueId: await subtitles.getAttribute("data-cue-id"),
+  };
+}
+
+async function preparePausedRuntime(page: Page): Promise<void> {
+  const playWithoutAudio = page.getByRole("button", {
+    name: "Play without audio",
+  });
+  if (await playWithoutAudio.isVisible()) {
+    await playWithoutAudio.click();
+  }
+  const pause = page.getByRole("button", { name: "Pause", exact: true });
+  if (await pause.isVisible()) {
+    await pause.click();
+  }
+  await expect(page.getByRole("button", { name: "Play", exact: true })).toBeEnabled();
 }
 
 test.describe("live cinematic runtime", () => {
@@ -295,24 +365,73 @@ test.describe("live cinematic runtime", () => {
     ).toBeVisible();
   });
 
-  test("direct seek and continuous playback produce equal browser state", async () => {
-    test.skip(
-      true,
-      "The packed FlowApp currently exposes playback and restart but no seek or scrub control.",
-    );
+  test("direct seek and continuous playback produce equal browser state", async ({
+    page,
+  }) => {
+    await openCinematicRuntime(page);
+    await preparePausedRuntime(page);
+    const causalPath = page.getByRole("navigation", { name: "Causal path" });
+    const beats = causalPath.getByRole("button");
+    await expect(beats).toHaveCount(3);
+
+    const targetBeat = beats.last();
+    await expect(targetBeat).toHaveAttribute("data-beat-id", /\S/u);
+    const targetBeatId = await targetBeat.getAttribute("data-beat-id");
+    await targetBeat.click();
+    await expect(targetBeat).toHaveAttribute("aria-current", "step");
+    const directState = await cinematicBrowserSnapshot(page);
+    expect(directState.activeBeatId).toBe(targetBeatId);
+
+    await page.getByRole("button", { name: "Restart" }).click();
+    await page.getByRole("button", { name: "Play", exact: true }).click();
+    await expect
+      .poll(async () =>
+        causalPath
+          .locator('[aria-current="step"]')
+          .getAttribute("data-beat-id"),
+      )
+      .toBe(targetBeatId);
+    await page.getByRole("button", { name: "Pause", exact: true }).click();
+
+    expect(await cinematicBrowserSnapshot(page)).toEqual(directState);
   });
 
-  test("applies reduced-transparency and no-depth quality variants", async () => {
-    test.skip(
-      true,
-      "The runtime has no reduced-transparency or no-depth media/query controls to exercise.",
-    );
+  test("applies reduced-transparency and no-depth quality variants", async ({
+    page,
+  }) => {
+    await openCinematicRuntime(page, {
+      forcedColors: "active",
+      reducedMotion: "reduce",
+      reducedTransparency: true,
+    });
+    const sceneField = page.getByRole("region", { name: "Scene field" });
+
+    await expect(sceneField).toHaveAttribute("data-transparency", "reduced");
+    await expect(sceneField).toHaveAttribute("data-depth", "none");
+    await expect(page.getByRole("region", { name: "Semantic outline" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Causal path" })).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Narration transcript" }),
+    ).toBeVisible();
   });
 
-  test("reports evaluation, draw, and total frame metrics", async () => {
-    test.skip(
-      true,
-      "The browser runtime does not expose evaluation/draw timing telemetry; Task 7's measurement script is outside this test's file ownership.",
-    );
+  test("reports evaluation, draw, and total frame metrics", async ({ page }) => {
+    await openCinematicRuntime(page);
+    await preparePausedRuntime(page);
+    await clearRuntimeMetrics(page);
+    await page.getByRole("button", { name: "Play", exact: true }).click();
+    const samples = await collectRuntimeMetrics(page, { sampleCount: 2 });
+    await page.getByRole("button", { name: "Pause", exact: true }).click();
+
+    expect(samples).toHaveLength(2);
+    for (const sample of samples) {
+      expect(
+        [sample.evaluationMs, sample.drawMs, sample.totalMs].every(
+          (duration) => Number.isFinite(duration) && duration >= 0,
+        ),
+      ).toBe(true);
+      expect(sample.totalMs).toBeGreaterThanOrEqual(sample.evaluationMs);
+      expect(sample.totalMs).toBeGreaterThanOrEqual(sample.drawMs);
+    }
   });
 });

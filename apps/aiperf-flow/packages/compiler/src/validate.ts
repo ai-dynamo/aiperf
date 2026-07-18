@@ -7,9 +7,10 @@
 //!
 //! Validation runs after linking and before lowering. It checks that every
 //! `require`d capability is registered, that scenes and render nodes carry
-//! the accessibility metadata the Flow IR schema requires, and that scene
-//! narration meets a minimum length. Narration length is a style warning
-//! that escalates to an error under `--strict` compilation.
+//! the accessibility metadata the Flow IR schema requires, that scene
+//! narration meets a minimum length, and that collected themes are well
+//! formed. Narration length is a style warning that escalates to an error
+//! under `--strict` compilation.
 
 import {
   diagnostic,
@@ -33,6 +34,7 @@ import {
   type PropValueKind,
 } from "./components.js";
 import type { LinkedDocument } from "./link.js";
+import { validateThemes } from "./themes.js";
 
 /** Narration shorter than this character count is flagged as insufficient. */
 const MIN_NARRATION_LENGTH = 20;
@@ -123,7 +125,7 @@ function validateComponentInvocation(
 
 /**
  * Validates capability and optional component availability, component props,
- * accessibility metadata, and narration length.
+ * accessibility metadata, narration length, and linked theme declarations.
  */
 export function validate(
   linked: LinkedDocument,
@@ -200,6 +202,12 @@ export function validate(
       );
     }
   }
+
+  const themeResult = validateThemes({
+    themes: linked.themes ?? [],
+    ...(linked.useTheme === undefined ? {} : { useTheme: linked.useTheme }),
+  });
+  diagnostics.push(...themeResult.diagnostics);
 
   if (hasErrors(diagnostics)) {
     return { ok: false, diagnostics };

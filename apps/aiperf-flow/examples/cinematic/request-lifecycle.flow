@@ -234,7 +234,7 @@ flow "Request lifecycle: queue to record" as request-lifecycle-cinematic {
       fallback "Waterfall lanes: arrival 1200; admission 3000; first token 6700; terminal 9300; record 10400 milliseconds."
     }
 
-    rect evidence-arrival {
+    rect ev-arrival-req-017 {
       x 170
       y 430
       width 180
@@ -246,7 +246,7 @@ flow "Request lifecycle: queue to record" as request-lifecycle-cinematic {
       fallback "ev-arrival-req-017: scheduler arrival at 1200 milliseconds."
     }
 
-    rect evidence-admission {
+    rect ev-admission-req-017 {
       x 385
       y 490
       width 180
@@ -258,7 +258,7 @@ flow "Request lifecycle: queue to record" as request-lifecycle-cinematic {
       fallback "ev-admission-req-017: admission at 3000 milliseconds."
     }
 
-    rect evidence-first-token {
+    rect ev-first-token-req-017 {
       x 600
       y 550
       width 180
@@ -270,7 +270,7 @@ flow "Request lifecycle: queue to record" as request-lifecycle-cinematic {
       fallback "ev-first-token-req-017: first token at 6700 milliseconds."
     }
 
-    rect evidence-terminal {
+    rect ev-terminal-req-017 {
       x 815
       y 610
       width 180
@@ -282,7 +282,7 @@ flow "Request lifecycle: queue to record" as request-lifecycle-cinematic {
       fallback "ev-terminal-req-017: terminal event at 9300 milliseconds."
     }
 
-    rect evidence-record {
+    rect ev-record-req-017 {
       x 1030
       y 670
       width 180
@@ -371,7 +371,7 @@ flow "Request lifecycle: queue to record" as request-lifecycle-cinematic {
       at 2800 frame queue,transport-boundary zoom 1.28
       at 6200 frame model,stream zoom 1.22
       at 9500 frame waterfall-panel zoom 1.08
-      at 11200 frame observer,evidence-record zoom 1.15
+      at 11200 frame observer,ev-record-req-017 zoom 1.15
       at 12600 frame client,observer zoom 0.82
     }
 
@@ -395,11 +395,11 @@ flow "Request lifecycle: queue to record" as request-lifecycle-cinematic {
 
     timeline inspect {
       at 7600 reveal waterfall-panel duration 350
-      at 8000 reveal evidence-arrival duration 200
-      at 8250 reveal evidence-admission duration 200
-      at 8500 reveal evidence-first-token duration 200
-      at 8750 reveal evidence-terminal duration 200
-      at 9000 reveal evidence-record duration 200
+      at 8000 reveal ev-arrival-req-017 duration 200
+      at 8250 reveal ev-admission-req-017 duration 200
+      at 8500 reveal ev-first-token-req-017 duration 200
+      at 8750 reveal ev-terminal-req-017 duration 200
+      at 9000 reveal ev-record-req-017 duration 200
       at 9300 reveal caption-inspect duration 250
     }
 
@@ -422,28 +422,28 @@ flow "Request lifecycle: queue to record" as request-lifecycle-cinematic {
     }
 
     interaction inspect-arrival-evidence {
-      on select evidence-arrival
-      do inspect evidence-arrival
+      on select ev-arrival-req-017
+      do inspect ev-arrival-req-017
     }
 
     interaction inspect-admission-evidence {
-      on select evidence-admission
-      do inspect evidence-admission
+      on select ev-admission-req-017
+      do inspect ev-admission-req-017
     }
 
     interaction inspect-first-token-evidence {
-      on select evidence-first-token
-      do inspect evidence-first-token
+      on select ev-first-token-req-017
+      do inspect ev-first-token-req-017
     }
 
     interaction inspect-terminal-evidence {
-      on select evidence-terminal
-      do inspect evidence-terminal
+      on select ev-terminal-req-017
+      do inspect ev-terminal-req-017
     }
 
     interaction inspect-record-evidence {
-      on select evidence-record
-      do inspect evidence-record
+      on select ev-record-req-017
+      do inspect ev-record-req-017
     }
 
     responsive compact when width < 720 {
@@ -463,16 +463,16 @@ flow "Request lifecycle: queue to record" as request-lifecycle-cinematic {
       set waterfall-panel.y = 100
       set waterfall-panel.width = 390
       set waterfall-panel.height = 650
-      set evidence-arrival.x = 320
-      set evidence-arrival.y = 140
-      set evidence-admission.x = 320
-      set evidence-admission.y = 230
-      set evidence-first-token.x = 320
-      set evidence-first-token.y = 320
-      set evidence-terminal.x = 320
-      set evidence-terminal.y = 410
-      set evidence-record.x = 320
-      set evidence-record.y = 500
+      set ev-arrival-req-017.x = 320
+      set ev-arrival-req-017.y = 140
+      set ev-admission-req-017.x = 320
+      set ev-admission-req-017.y = 230
+      set ev-first-token-req-017.x = 320
+      set ev-first-token-req-017.y = 320
+      set ev-terminal-req-017.x = 320
+      set ev-terminal-req-017.y = 410
+      set ev-record-req-017.x = 320
+      set ev-record-req-017.y = 500
       set caption-inspect.x = 290
       set caption-inspect.y = 780
       set reduced-motion-policy.x = 40
@@ -481,8 +481,8 @@ flow "Request lifecycle: queue to record" as request-lifecycle-cinematic {
       set fallback-policy.y = 990
     }
 
-    narrate "Follow request req-017 from client arrival through FIFO admission, HTTP transport, model service, token streaming, and observation. The synchronized waterfall keeps scheduler arrival at 1200 milliseconds, admission at 3000, first token at 6700, terminal at 9300, and final record at 10400 as separate evidence-backed boundaries. At the inspect beat, pause and examine each stable evidence ID before resuming to see why terminal processing must finish before the measurement record exists."
-    reading-order client,submit,queue,request-arrived,admit,transport-boundary,request-admitted,dispatch,model,request-in-model,emit,stream,request-streaming,observe,observer,request-recorded,waterfall-panel,evidence-arrival,evidence-admission,evidence-first-token,evidence-terminal,evidence-record,caption-establish,caption-teach,caption-inspect,caption-transition,reduced-motion-policy,fallback-policy
+    narrate "Establish follows request req-017 from the client to stable arrival evidence ev-arrival-req-017. Teach separates admission evidence ev-admission-req-017 from first-token evidence ev-first-token-req-017. Inspect pauses on the synchronized waterfall before terminal evidence ev-terminal-req-017. Transition follows observer finalization to record evidence ev-record-req-017 without collapsing terminal and record time."
+    reading-order client,submit,queue,request-arrived,admit,transport-boundary,request-admitted,dispatch,model,request-in-model,emit,stream,request-streaming,observe,observer,request-recorded,waterfall-panel,ev-arrival-req-017,ev-admission-req-017,ev-first-token-req-017,ev-terminal-req-017,ev-record-req-017,caption-establish,caption-teach,caption-inspect,caption-transition,reduced-motion-policy,fallback-policy
     fallback "Request req-017 arrives at 1200 milliseconds, waits in the admission queue until 3000, crosses HTTP transport to the model, produces its first token at 6700, terminates at 9300, and becomes a final observer record at 10400. Stable evidence IDs preserve every boundary. Captions, narration, keyboard reading order, evidence inspection, reduced-motion meaning, and the responsive topology remain available in the semantic and SVG or HTML fallback."
   }
 }

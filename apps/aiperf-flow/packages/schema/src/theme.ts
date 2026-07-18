@@ -146,7 +146,11 @@ const enumValuesByRole = {
   "motion.easing": ["linear", "ease_in", "ease_out", "ease_in_out"],
 } as const satisfies Partial<Record<ThemeRole, readonly string[]>>;
 
-function expectedKind(role: ThemeRole): ThemeValueIr["kind"] {
+/**
+ * The single role → value-kind mapping shared by schema IR validation and
+ * compiler authoring validation. Consumers must not re-derive this mapping.
+ */
+export function themeRoleKind(role: ThemeRole): ThemeValueIr["kind"] {
   if (
     role.startsWith("surface.") ||
     role.startsWith("ink.") ||
@@ -167,6 +171,13 @@ function expectedKind(role: ThemeRole): ThemeValueIr["kind"] {
   return "number";
 }
 
+/** Returns the closed enum vocabulary a role accepts, or `undefined` for non-enum roles. */
+export function themeRoleEnumValues(
+  role: ThemeRole,
+): readonly string[] | undefined {
+  return enumValuesByRole[role as keyof typeof enumValuesByRole];
+}
+
 export const flowThemeIrSchema: z.ZodType<FlowThemeIr> = z
   .strictObject({
     id: z.string().min(1),
@@ -183,7 +194,7 @@ export const flowThemeIrSchema: z.ZodType<FlowThemeIr> = z
       ThemeRole,
       ThemeValueIr,
     ][]) {
-      const kind = expectedKind(role);
+      const kind = themeRoleKind(role);
       if (value.kind !== kind) {
         context.addIssue({
           code: "custom",

@@ -192,6 +192,7 @@ describe("browser speech synthesis backend", () => {
     };
     class FakeUtterance {
       rate = 1;
+      lang = "";
       voice: typeof browserVoice | null = null;
 
       constructor(readonly text: string) {}
@@ -207,6 +208,10 @@ describe("browser speech synthesis backend", () => {
         cancel: () => undefined,
       },
       Utterance: FakeUtterance,
+      scheduleSpeak: (run) => {
+        run();
+        return () => undefined;
+      },
     });
 
     expect(backend).not.toBeNull();
@@ -220,6 +225,7 @@ describe("browser speech synthesis backend", () => {
     expect(spoken[0]).toMatchObject({
       text: "Audible preview.",
       rate: 1.1,
+      lang: "en-US",
       voice: browserVoice,
     });
     expect(backend?.voices()).toEqual([
@@ -230,5 +236,114 @@ describe("browser speech synthesis backend", () => {
         default: true,
       },
     ]);
+  });
+
+  test("defaults to Chrome UK English Male when no voice is selected", () => {
+    const spoken: Array<{
+      voice: { voiceURI: string } | null;
+      lang: string;
+    }> = [];
+    const voices = [
+      {
+        voiceURI: "Google US English",
+        name: "Google US English",
+        lang: "en-US",
+        default: true,
+      },
+      {
+        voiceURI: "Google UK English Female",
+        name: "Google UK English Female",
+        lang: "en-GB",
+        default: false,
+      },
+      {
+        voiceURI: "Google UK English Male",
+        name: "Google UK English Male",
+        lang: "en-GB",
+        default: false,
+      },
+    ] as const;
+    class FakeUtterance {
+      rate = 1;
+      lang = "";
+      voice: (typeof voices)[number] | null = null;
+      constructor(readonly text: string) {}
+    }
+    const backend = createBrowserSpeechSynthesisBackend({
+      synthesis: {
+        getVoices: () => voices,
+        speak: (utterance) => {
+          spoken.push(utterance as FakeUtterance);
+        },
+        pause: () => undefined,
+        resume: () => undefined,
+        cancel: () => undefined,
+      },
+      Utterance: FakeUtterance,
+      scheduleSpeak: (run) => {
+        run();
+        return () => undefined;
+      },
+    });
+
+    backend?.speak({
+      cueId: "intro",
+      text: "Default UK male.",
+      rate: 1,
+      voiceId: null,
+    });
+    backend?.speak({
+      cueId: "kokoro-id",
+      text: "Ignore Kokoro voice ids.",
+      rate: 1,
+      voiceId: "af_heart",
+    });
+
+    expect(spoken[0]?.voice?.voiceURI).toBe("Google UK English Male");
+    expect(spoken[0]?.lang).toBe("en-GB");
+    expect(spoken[1]?.voice?.voiceURI).toBe("Google UK English Male");
+  });
+
+  test("defers speak after cancel so Chrome does not drop the utterance", () => {
+    const events: string[] = [];
+    let runSpeak: (() => void) | null = null;
+    class FakeUtterance {
+      rate = 1;
+      lang = "";
+      voice = null;
+      constructor(readonly text: string) {}
+    }
+    const backend = createBrowserSpeechSynthesisBackend({
+      synthesis: {
+        getVoices: () => [],
+        speak: () => {
+          events.push("speak");
+        },
+        pause: () => undefined,
+        resume: () => undefined,
+        cancel: () => {
+          events.push("cancel");
+        },
+      },
+      Utterance: FakeUtterance,
+      scheduleSpeak: (run) => {
+        runSpeak = run;
+        return () => {
+          runSpeak = null;
+        };
+      },
+    });
+
+    backend?.cancel();
+    backend?.speak({
+      cueId: "cue",
+      text: "After cancel.",
+      rate: 1,
+      voiceId: null,
+    });
+
+    expect(events).toEqual(["cancel"]);
+    runSpeak?.();
+    expect(events).toEqual(["cancel", "speak"]);
   });
 });

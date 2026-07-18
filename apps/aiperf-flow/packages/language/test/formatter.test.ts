@@ -119,4 +119,85 @@ narrate "Narration" reading-order a,b,edge fallback "Fallback"}}
     );
     expect(formatDocument(reparsed.value)).toBe(formatted);
   });
+
+  test("round-trips themes in canonical document order", () => {
+    const source = `flow "Lab" as lab {
+  language 1
+  use theme lab_chalk
+  scene "Main" as main {
+    summary "Lab scene"
+    rect router {
+      x 0
+      y 0
+      width 10
+      height 10
+      fill theme(surface.raised)
+      label "Router"
+      role "group"
+      description "Router"
+      fallback "Router"
+    }
+    reading-order router
+    fallback "Lab fallback"
+  }
+  theme lab_chalk extends systems_chalk {
+    color accent.control = "#78dce8"
+    duration motion.draw = 420ms
+    font font.body = ["Nunito Sans", "Segoe UI", "sans-serif"]
+  }
+  require core.rect "^1.0.0"
+}
+`;
+    const parsed = parseDocument(source, "theme.flow");
+    expect(parsed.ok, JSON.stringify(parsed.diagnostics)).toBe(true);
+    if (!parsed.ok) {
+      return;
+    }
+
+    const formatted = formatDocument(parsed.value);
+    expect(formatted).toBe(`flow "Lab" as lab {
+  language 1
+
+  require core.rect "^1.0.0"
+
+  theme lab_chalk extends systems_chalk {
+    color accent.control = "#78dce8"
+    duration motion.draw = 420ms
+    font font.body = ["Nunito Sans", "Segoe UI", "sans-serif"]
+  }
+
+  use theme lab_chalk
+
+  scene "Main" as main {
+    summary "Lab scene"
+
+    rect router {
+      x 0
+      y 0
+      width 10
+      height 10
+      fill theme(surface.raised)
+      label "Router"
+      role "group"
+      description "Router"
+      fallback "Router"
+    }
+
+    reading-order router
+    fallback "Lab fallback"
+  }
+}
+`);
+
+    const reparsed = parseDocument(formatted, "formatted-theme.flow");
+    expect(reparsed.ok, JSON.stringify(reparsed.diagnostics)).toBe(true);
+    if (!reparsed.ok) {
+      return;
+    }
+
+    expect(withoutSourceMaps(reparsed.value)).toEqual(
+      withoutSourceMaps(parsed.value),
+    );
+    expect(formatDocument(reparsed.value)).toBe(formatted);
+  });
 });

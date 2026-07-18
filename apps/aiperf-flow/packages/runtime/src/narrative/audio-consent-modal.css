@@ -10,31 +10,40 @@
   display: grid;
   place-items: center;
   padding: 1.5rem;
-  background: rgb(8 8 10 / 0.72);
-  backdrop-filter: blur(4px);
+  background: rgb(35 37 38 / 0.88);
 }
 
 .aiperf-flow__audio-consent {
-  width: min(100%, 26rem);
-  padding: 1.5rem;
-  border: 1px solid #2e2e38;
-  border-radius: 12px;
-  background: #17171d;
-  color: #f6f6f8;
-  box-shadow: 0 24px 48px -20px rgb(0 0 0 / 0.8);
+  width: min(100%, 25rem);
+  padding: 1.4rem;
+  border: var(--flow-stroke, 2px) solid var(--flow-guide, #777d80);
+  border-block-start-color: var(--flow-signal, #71d8d0);
+  border-radius: var(--flow-radius, 12px);
+  background: var(--flow-panel, #292c2d);
+  color: var(--flow-chalk, #f1f3f2);
+  font-family: var(
+    --flow-font-body,
+    Inter,
+    "IBM Plex Sans",
+    "Segoe UI",
+    sans-serif
+  );
 }
 
 .aiperf-flow__audio-consent h2 {
-  margin: 0 0 0.5rem;
-  font-size: 1.25rem;
-  line-height: 1.3;
+  margin: 0 0 0.45rem;
+  color: var(--flow-chalk, #f1f3f2);
+  font-size: 1.15rem;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
 }
 
 .aiperf-flow__audio-consent p {
   margin: 0 0 1.25rem;
-  color: #b9b9c3;
-  font-size: 0.95rem;
-  line-height: 1.45;
+  color: var(--flow-chalk-muted, #aeb4b5);
+  font-size: 0.9rem;
+  line-height: 1.5;
 }
 
 .aiperf-flow__audio-consent-actions {
@@ -42,26 +51,54 @@
   gap: 0.75rem;
 }
 
-.aiperf-flow__audio-consent-actions button {
+.aiperf-flow .aiperf-flow__audio-consent-actions button {
   min-height: 2.75rem;
   padding: 0.7rem 1rem;
-  border: 1px solid #33333d;
-  border-radius: 8px;
-  background: #0d0d10;
-  color: #f6f6f8;
+  border: var(--flow-stroke, 2px) solid var(--flow-guide, #777d80);
+  border-radius: calc(var(--flow-radius, 12px) * 0.67);
+  background: var(--flow-control-surface, #383c3e);
+  color: var(--flow-chalk, #f1f3f2);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
 }
 
-.aiperf-flow__audio-consent-actions button:hover,
-.aiperf-flow__audio-consent-actions button:focus-visible {
-  border-color: #26c6da;
-  outline: none;
+.aiperf-flow .aiperf-flow__audio-consent-actions button:hover {
+  border-color: var(--flow-structure, #d7dada);
+  color: var(--flow-chalk, #f1f3f2);
+  background: var(--flow-raised, #303334);
 }
 
-.aiperf-flow__audio-consent-primary {
-  border-color: #26c6da !important;
-  background: #0f2a30 !important;
-  color: #5fd6e6 !important;
+.aiperf-flow .aiperf-flow__audio-consent-actions button:focus-visible {
+  border-color: var(--flow-focus, #9bdbf5);
+  outline: var(--flow-stroke, 2px) solid var(--flow-focus, #9bdbf5);
+  outline-offset: 2px;
+}
+
+.aiperf-flow
+  .aiperf-flow__audio-consent-actions
+  .aiperf-flow__audio-consent-primary {
+  border-color: var(--flow-signal, #71d8d0);
+  background: var(--flow-signal, #71d8d0);
+  color: var(--flow-board, #232526);
+}
+
+.aiperf-flow
+  .aiperf-flow__audio-consent-actions
+  .aiperf-flow__audio-consent-primary:hover {
+  border-color: var(--flow-focus, #9bdbf5);
+  color: var(--flow-board, #232526);
+  background: var(--flow-focus, #9bdbf5);
+}
+
+@media (forced-colors: active) {
+  .aiperf-flow__audio-consent,
+  .aiperf-flow__audio-consent-actions button {
+    border-color: CanvasText;
+  }
+
+  .aiperf-flow__audio-consent-primary {
+    color: HighlightText;
+    background: Highlight;
+  }
 }

@@ -171,7 +171,7 @@ export type FlowIr = Readonly<{
   capabilities: readonly CapabilityRequirement[];
   tokens: Readonly<Record<string, string | number | boolean>>;
   themes: readonly FlowThemeIr[];
-  defaultTheme?: string;
+  defaultTheme?: string | undefined;
   scenes: readonly SceneIr[];
   sourceMap: SourceRange;
 }>;

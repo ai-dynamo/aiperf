@@ -88,8 +88,8 @@ describe("preview narrative adapters", () => {
     );
   });
 
-  test("unlocks speech synthesis when the platform is present", () => {
-    expect(unlockPreviewSpeech()).toBe(true);
+  test("unlocks speech synthesis when the platform is present", async () => {
+    await expect(unlockPreviewSpeech()).resolves.toBe(true);
     expect(window.speechSynthesis.cancel).toHaveBeenCalled();
   });
 });
@@ -114,7 +114,19 @@ describe("preview App narration vertical slice", () => {
     );
   }
 
-  test("asks for audio preference before playback starts", () => {
+  async function chooseAudioAndWait(
+    choice: "with-audio" | "without-audio" = "with-audio",
+  ): Promise<void> {
+    chooseAudio(choice);
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Pause scene" }),
+      ).toBeTruthy();
+    });
+  }
+
+  test("asks for audio preference before playback starts", async () => {
     render(<App />);
 
     expect(
@@ -125,8 +137,7 @@ describe("preview App narration vertical slice", () => {
         .disabled,
     ).toBe(true);
 
-    chooseAudio("with-audio");
-    expect(screen.queryByRole("dialog")).toBeNull();
+    await chooseAudioAndWait("with-audio");
     expect(
       screen.getByRole("button", { name: "Mute narrator" }).getAttribute(
         "data-narrator-mode",
@@ -134,9 +145,9 @@ describe("preview App narration vertical slice", () => {
     ).toBe("on");
   });
 
-  test("renders a visible subtitle overlay for the execution scene", () => {
+  test("renders a visible subtitle overlay for the execution scene", async () => {
     render(<App />);
-    chooseAudio("without-audio");
+    await chooseAudioAndWait("without-audio");
 
     expect(screen.getByRole("region", { name: "Subtitles" })).toBeTruthy();
     expect(
@@ -147,9 +158,9 @@ describe("preview App narration vertical slice", () => {
     ).toBeTruthy();
   });
 
-  test("cycles narrator on, mute, and off from the canvas control", () => {
+  test("cycles narrator on, mute, and off from the canvas control", async () => {
     render(<App />);
-    chooseAudio("with-audio");
+    await chooseAudioAndWait("with-audio");
 
     const narrator = screen.getByRole("button", { name: "Mute narrator" });
     expect(narrator.getAttribute("data-narrator-mode")).toBe("on");
@@ -170,9 +181,9 @@ describe("preview App narration vertical slice", () => {
     ).toBe("off");
   });
 
-  test("pauses narration with exploration and resumes the exact beat", () => {
+  test("pauses narration with exploration and resumes the exact beat", async () => {
     render(<App />);
-    chooseAudio("with-audio");
+    await chooseAudioAndWait("with-audio");
 
     fireEvent.click(screen.getByRole("button", { name: "Select tool" }));
     expect(transportStatus().textContent).toMatch(/exploring/i);
@@ -189,11 +200,11 @@ describe("preview App narration vertical slice", () => {
     expect(pausedProgress).toMatch(/\d+\.\d+s/);
   });
 
-  test("stops narration when the preview shell unmounts", () => {
+  test("stops narration when the preview shell unmounts", async () => {
     const cancel = window.speechSynthesis.cancel as ReturnType<typeof vi.fn>;
     cancel.mockClear();
     const { unmount } = render(<App />);
-    chooseAudio("with-audio");
+    await chooseAudioAndWait("with-audio");
     unmount();
     expect(cancel.mock.calls.length).toBeGreaterThan(0);
   });

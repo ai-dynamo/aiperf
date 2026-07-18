@@ -1,5 +1,5 @@
 {
-  "irVersion": 1,
+  "irVersion": 2,
   "id": "token-span-morph",
   "title": "Token span morph",
   "capabilities": [
@@ -12,6 +12,7 @@
   "tokens": {
     "accent": "#7aa2f7"
   },
+  "themes": [],
   "scenes": [
     {
       "id": "main",
@@ -69,7 +70,8 @@
             "relations": [
               { "id": "r0", "from": "g0", "to": "t0", "kind": "maps-to" },
               { "id": "r1", "from": "g3", "to": "t1", "kind": "maps-to" },
-              { "id": "r2", "from": "g5", "to": "t2", "kind": "maps-to" }
+              { "id": "r2", "from": "g5", "to": "t2", "kind": "maps-to" },
+              { "id": "r3", "from": "g5", "to": "t3", "kind": "maps-to" }
             ],
             "morphs": [
               {
@@ -189,14 +191,87 @@
             "start": { "offset": 350, "line": 15, "column": 7 },
             "end": { "offset": 410, "line": 15, "column": 63 }
           }
+        },
+        {
+          "id": "inspect-accented-grapheme",
+          "at": 2200,
+          "duration": 700,
+          "target": "tok-map",
+          "action": "inspect accented grapheme mapping",
+          "sourceMap": {
+            "source": "token-span-morph.flow",
+            "start": { "offset": 350, "line": 15, "column": 7 },
+            "end": { "offset": 410, "line": 15, "column": 63 }
+          }
+        },
+        {
+          "id": "inspect-rocket-split",
+          "at": 3200,
+          "duration": 900,
+          "target": "tok-map",
+          "action": "inspect rocket token split",
+          "sourceMap": {
+            "source": "token-span-morph.flow",
+            "start": { "offset": 350, "line": 15, "column": 7 },
+            "end": { "offset": 410, "line": 15, "column": 63 }
+          }
+        },
+        {
+          "id": "inspect-special-insert",
+          "at": 4400,
+          "duration": 700,
+          "target": "tok-map",
+          "action": "inspect special token insertion",
+          "sourceMap": {
+            "source": "token-span-morph.flow",
+            "start": { "offset": 350, "line": 15, "column": 7 },
+            "end": { "offset": 410, "line": 15, "column": 63 }
+          }
         }
       ],
       "narration": "Graphemes in café rocket map onto tokenizer spans, including a special insert token.",
+      "narrativeTrack": {
+        "language": "en-US",
+        "cues": [
+          {
+            "id": "narrative-source",
+            "startMs": 0,
+            "endMs": 800,
+            "spokenText": "The source run preserves each grapheme in café rocket before tokenization.",
+            "subtitleText": "Source graphemes remain individually addressable."
+          },
+          {
+            "id": "narrative-correspondence",
+            "startMs": 800,
+            "endMs": 3200,
+            "spokenText": "Correspondence edges distinguish many-to-one, one-to-one, and one-to-many mappings.",
+            "subtitleText": "Each mapping keeps its authored correspondence."
+          },
+          {
+            "id": "narrative-evidence",
+            "startMs": 3200,
+            "endMs": 5200,
+            "spokenText": "The rocket split and special insertion remain inspectable as separate semantic evidence.",
+            "subtitleText": "Inspect the rocket split and special insertion."
+          }
+        ]
+      },
       "interactions": [
         {
           "id": "inspect-tok-map",
           "event": "select",
           "target": "tok-map",
+          "action": "inspect",
+          "sourceMap": {
+            "source": "token-span-morph.flow",
+            "start": { "offset": 430, "line": 17, "column": 5 },
+            "end": { "offset": 490, "line": 17, "column": 65 }
+          }
+        },
+        {
+          "id": "inspect-source-run",
+          "event": "select",
+          "target": "run-cafe-rocket",
           "action": "inspect",
           "sourceMap": {
             "source": "token-span-morph.flow",
@@ -210,7 +285,7 @@
         "label": "Token span morph scene",
         "readingOrder": ["run-cafe-rocket", "tok-map"]
       },
-      "fallback": "Grapheme spans morph into tokenizer token spans for café rocket.",
+      "fallback": "Grapheme spans morph into tokenizer token spans for café rocket. The accented grapheme, rocket split, and special insertion remain available through causal beats, keyboard reading order, semantic inspection, captions, and reduced-motion playback.",
       "sourceMap": {
         "source": "token-span-morph.flow",
         "start": { "offset": 0, "line": 1, "column": 1 },

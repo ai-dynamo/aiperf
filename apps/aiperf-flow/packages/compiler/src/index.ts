@@ -29,6 +29,7 @@ export * from "./expand-symbols.js";
 export * from "./link.js";
 export * from "./pack.js";
 export * from "./symbols.js";
+export * from "./themes.js";
 export * from "./validate.js";
 export { lower } from "./lower.js";
 

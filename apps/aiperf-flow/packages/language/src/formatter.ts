@@ -19,6 +19,8 @@ import type {
   SlotBlockAst,
   SymbolDefinitionAst,
   SymbolBodyStatementAst,
+  ThemeAssignmentAst,
+  ThemeDeclarationAst,
   TimelineAst,
   TypeRefAst,
   ValueAst,
@@ -39,6 +41,8 @@ function formatValue(value: ValueAst): string {
         : String(value.value);
     case "token-reference":
       return `token(${value.token})`;
+    case "theme-role-reference":
+      return `theme(${value.role})`;
     default:
       return assertNever(value);
   }
@@ -55,6 +59,7 @@ function formatArgumentValue(value: ArgumentValueAst): string {
   switch (value.kind) {
     case "literal":
     case "token-reference":
+    case "theme-role-reference":
       return formatValue(value);
     case "identifier-reference":
       return value.name;
@@ -75,6 +80,12 @@ function block(header: string, lines: readonly string[], level: number): string 
 
 function formatRect(rect: RectAst): string {
   const line = indent(3);
+  const style = [
+    `${line}fill ${formatValue(rect.fill)}`,
+    ...(rect.stroke === undefined
+      ? []
+      : [`${line}stroke ${formatValue(rect.stroke)}`]),
+  ];
   return block(
     `rect ${rect.id}`,
     [
@@ -82,7 +93,7 @@ function formatRect(rect: RectAst): string {
       `${line}y ${rect.y}`,
       `${line}width ${rect.width}`,
       `${line}height ${rect.height}`,
-      `${line}fill ${formatValue(rect.fill)}`,
+      ...style,
       `${line}label ${quote(rect.label)}`,
       `${line}role ${quote(rect.role)}`,
       `${line}description ${quote(rect.description)}`,
@@ -109,6 +120,24 @@ function formatConnector(connector: ConnectorAst): string {
 
 function formatImport(declaration: ImportDeclarationAst): string {
   return `${indent(1)}import ${quote(declaration.path)} as ${declaration.alias}`;
+}
+
+function formatThemeAssignment(assignment: ThemeAssignmentAst): string {
+  const value =
+    assignment.value.kind === "theme-font-literal"
+      ? `[${assignment.value.families.map(quote).join(", ")}]`
+      : assignment.valueKind === "duration"
+        ? `${assignment.value.value}ms`
+        : formatValue(assignment.value);
+  return `${indent(2)}${assignment.valueKind} ${assignment.role} = ${value}`;
+}
+
+function formatTheme(theme: ThemeDeclarationAst): string {
+  return block(
+    `theme ${theme.id} extends ${theme.extends}`,
+    theme.assignments.map(formatThemeAssignment),
+    1,
+  );
 }
 
 function formatType(type: TypeRefAst): string {
@@ -293,6 +322,10 @@ export function formatDocument(document: DocumentAst): string {
       (token) =>
         `${indent(1)}token ${token.id} = ${formatValue(token.value)}`,
     ),
+    ...document.themes.map(formatTheme),
+    ...(document.useTheme === undefined
+      ? []
+      : [`${indent(1)}use theme ${document.useTheme.themeId}`]),
     ...document.symbols.map(formatSymbol),
     ...document.scenes.map(formatScene),
   ];

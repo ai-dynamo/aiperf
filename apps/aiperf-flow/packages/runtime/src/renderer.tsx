@@ -27,6 +27,53 @@ import {
   type SceneState,
 } from "./store.js";
 
+/** User Timing measure names collected by Playwright runtime metrics. */
+export const RUNTIME_PERFORMANCE_ENTRY_NAMES = Object.freeze({
+  evaluation: "aiperf-flow:evaluation",
+  draw: "aiperf-flow:draw",
+  total: "aiperf-flow:total",
+});
+
+let runtimeMeasureSequence = 0;
+
+function canRecordRuntimeMeasures(): boolean {
+  return (
+    typeof performance !== "undefined" &&
+    typeof performance.mark === "function" &&
+    typeof performance.measure === "function" &&
+    typeof performance.clearMarks === "function"
+  );
+}
+
+/**
+ * Records one real wall-clock phase as a User Timing measure when available.
+ * Falls through unchanged when the Performance API is absent.
+ */
+export function measureRuntimePhase<T>(
+  phase: keyof typeof RUNTIME_PERFORMANCE_ENTRY_NAMES,
+  work: () => T,
+): T {
+  if (!canRecordRuntimeMeasures()) {
+    return work();
+  }
+  const name = RUNTIME_PERFORMANCE_ENTRY_NAMES[phase];
+  const token = `${name}:${runtimeMeasureSequence++}`;
+  const startMark = `${token}:start`;
+  const endMark = `${token}:end`;
+  performance.mark(startMark);
+  try {
+    return work();
+  } finally {
+    performance.mark(endMark);
+    try {
+      performance.measure(name, startMark, endMark);
+    } finally {
+      performance.clearMarks(startMark);
+      performance.clearMarks(endMark);
+    }
+  }
+}
+
 type UnknownRecord = Readonly<Record<string, unknown>>;
 
 function record(value: unknown): UnknownRecord {
@@ -326,36 +373,51 @@ export function SceneRenderer({
       ? undefined
       : nodes.get(state.inspector.nodeId);
 
-  return (
-    <div className="aiperf-flow__scene">
-      <svg
-        aria-label={string(
-          accessibility.label,
-          string(sceneProperties.title, "Flow scene"),
-        )}
-        className="aiperf-flow__stage"
-        preserveAspectRatio="xMidYMid meet"
-        role="img"
-        viewBox="0 0 640 360"
-      >
-        <desc>{string(sceneProperties.summary)}</desc>
-        {renderTree.map(renderNode)}
-      </svg>
-      {state.inspector.open && inspectedNode !== undefined ? (
-        <aside
-          aria-label="Node inspector"
-          className="aiperf-flow__inspector"
-          ref={inspectorRef}
-          role="region"
-          tabIndex={-1}
+  const stage = measureRuntimePhase("total", () => {
+    const roots = measureRuntimePhase("evaluation", () =>
+      renderTree.map(renderNode),
+    );
+    return measureRuntimePhase("draw", () => (
+      <div className="aiperf-flow__scene">
+        <svg
+          aria-label={string(
+            accessibility.label,
+            string(sceneProperties.title, "Flow scene"),
+          )}
+          className="aiperf-flow__stage"
+          preserveAspectRatio="xMidYMid meet"
+          role="img"
+          viewBox="0 0 640 360"
         >
-          <strong>{string(nodeAccessibility(inspectedNode).label, nodeId(inspectedNode))}</strong>
-          <p>{string(nodeAccessibility(inspectedNode).description)}</p>
-          <button onClick={() => dispatch({ type: "close-inspector" })} type="button">
-            Close inspector
-          </button>
-        </aside>
-      ) : null}
-    </div>
-  );
+          <desc>{string(sceneProperties.summary)}</desc>
+          {roots}
+        </svg>
+        {state.inspector.open && inspectedNode !== undefined ? (
+          <aside
+            aria-label="Node inspector"
+            className="aiperf-flow__inspector"
+            ref={inspectorRef}
+            role="region"
+            tabIndex={-1}
+          >
+            <strong>
+              {string(
+                nodeAccessibility(inspectedNode).label,
+                nodeId(inspectedNode),
+              )}
+            </strong>
+            <p>{string(nodeAccessibility(inspectedNode).description)}</p>
+            <button
+              onClick={() => dispatch({ type: "close-inspector" })}
+              type="button"
+            >
+              Close inspector
+            </button>
+          </aside>
+        ) : null}
+      </div>
+    ));
+  });
+
+  return stage;
 }

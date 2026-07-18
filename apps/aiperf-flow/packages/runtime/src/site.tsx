@@ -118,11 +118,12 @@ export async function loadPackedFlow(
 
   const metadata = record(manifest.flow);
   return {
-    irVersion: 1,
+    irVersion: 2,
     id: text(manifest.id ?? metadata.id, "packed-flow"),
     title: text(manifest.title ?? metadata.title, "AIPerf Flow"),
     capabilities: requirements,
     tokens: record(manifest.tokens),
+    themes: [],
     scenes,
     sourceMap: sourceMap(source),
   } as unknown as FlowIr;

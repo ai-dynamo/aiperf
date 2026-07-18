@@ -6,8 +6,10 @@ import {
   Component,
   type ErrorInfo,
   type ReactNode,
+  type RefObject,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
 } from "react";
@@ -24,11 +26,17 @@ import {
   resumeAuthoredCamera,
   zoomCameraTakeover,
 } from "./camera-policy.js";
-import { buildDisplayList, type DisplayList } from "./display-list.js";
-import { evaluateScene } from "./evaluate/scene-evaluator.js";
+import {
+  activeCausalBeat,
+  projectCausalBeats,
+  type CausalBeat,
+} from "./causal-replay.js";
+import type { FlowCommand } from "./commands.js";
+import type { DisplayList } from "./display-list.js";
+import { evaluateFrame, type EvaluatedFrame } from "./evaluate/frame.js";
+import { qualityPolicyProfile } from "./evaluate/quality-policy.js";
 import type {
   EvaluatedScene,
-  SemanticEntityProjection,
   SemanticProjection,
 } from "./evaluate/types.js";
 import {
@@ -37,6 +45,26 @@ import {
   resumeLesson,
   updateExploration,
 } from "./exploration.js";
+import {
+  createBrowserFullscreenAdapter,
+  type FullscreenAdapter,
+  resolveFullscreenState,
+  toggleFullscreenMode,
+} from "./fullscreen.js";
+import { hudVisibilityFor } from "./hud-policy.js";
+import { CausalPath } from "./immersive/causal-path.js";
+import { CommandConstellation } from "./immersive/command-constellation.js";
+import { ContextLens } from "./immersive/context-lens.js";
+import { ImmersiveControls } from "./immersive/immersive-controls.js";
+import {
+  createImmersiveState,
+  immersiveReducer,
+  type ImmersiveState,
+} from "./immersive-state.js";
+import {
+  parseImmersiveUrl,
+  serializeImmersiveUrl,
+} from "./immersive-url.js";
 import {
   AudioConsentModal,
   type AudioConsentChoice,
@@ -68,6 +96,8 @@ import { createInitialSceneState } from "./store.js";
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
 
+const HUD_INACTIVITY_MS = 3_000;
+
 const unavailableNarratorBackend: NarratorBackend = Object.freeze({
   available: false,
   voices: () => Object.freeze([]),
@@ -79,11 +109,11 @@ const unavailableNarratorBackend: NarratorBackend = Object.freeze({
 
 function unlockSpeechFromGesture(backend: NarratorBackend): void {
   const kokoro = backend as Partial<KokoroNarratorBackend>;
-  if (typeof kokoro.activate === "function") {
-    void Promise.resolve(kokoro.activate()).catch(() => undefined);
-  }
   if (typeof kokoro.prewarm === "function") {
     void Promise.resolve(kokoro.prewarm()).catch(() => undefined);
+  }
+  if (typeof kokoro.activate === "function") {
+    void Promise.resolve(kokoro.activate()).catch(() => undefined);
   }
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
     return;
@@ -147,22 +177,6 @@ function canvas2dAvailable(): boolean {
   }
 }
 
-/** Ensures an evaluated scene always carries a display list for backends. */
-function withDisplayList(evaluated: EvaluatedScene): EvaluatedScene {
-  if (evaluated.displayList !== undefined) {
-    return evaluated;
-  }
-  return {
-    ...evaluated,
-    displayList: buildDisplayList({
-      commands: [],
-      hitRegions: [],
-      paintBounds: { x: 0, y: 0, width: 1, height: 1 },
-      damageBounds: { x: 0, y: 0, width: 1, height: 1 },
-    }),
-  };
-}
-
 /** Projects the active subtitle cue into evaluated scene semantics. */
 function twinProjectionFromEvaluated(
   evaluated: EvaluatedScene,
@@ -180,14 +194,12 @@ function twinProjectionFromEvaluated(
   };
 }
 
-function entityFromProjection(
-  projection: SemanticProjection | null,
-  entityId: string | null,
-): SemanticEntityProjection | undefined {
-  if (projection === null || entityId === null) {
-    return undefined;
-  }
-  return projection.entities.find((entity) => entity.id === entityId);
+function sceneIdOf(scene: SceneIr | undefined): string {
+  return scene === undefined ? "" : text(record(scene).id);
+}
+
+function freezeCommands(commands: FlowCommand[]): readonly FlowCommand[] {
+  return Object.freeze(commands.map((command) => Object.freeze(command)));
 }
 
 type SceneFailureProps = Readonly<{
@@ -297,10 +309,7 @@ function CanvasStage({
       const centerY = paintBounds.y + paintBounds.height / 2;
       context.translate(centerX, centerY);
       context.scale(camera.temporary.zoom, camera.temporary.zoom);
-      context.translate(
-        -camera.temporary.x,
-        -camera.temporary.y,
-      );
+      context.translate(-camera.temporary.x, -camera.temporary.y);
     }
     renderDisplayList(context, displayList, {
       devicePixelRatio: 1,
@@ -351,42 +360,57 @@ function CanvasStage({
   );
 }
 
-type CinematicStageProps = Readonly<{
+type CausalFieldStageProps = Readonly<{
   evaluated: EvaluatedScene;
   projection: SemanticProjection;
   preferCanvas: boolean;
   focusedEntityId: string | null;
   selectedEntityId: string | null;
+  focusWorldEntityId: string | null;
   camera: CameraTakeover | null;
-  inspectorEntity: SemanticEntityProjection | undefined;
-  onCloseInspector(): void;
+  contextLensOpen: boolean;
+  twinCompact: boolean;
+  twinRef: RefObject<HTMLElement | null>;
   subtitleState: SubtitleState;
   reducedMotion: boolean;
   onSubtitlesEnabledChange(enabled: boolean): void;
   onFocus(entityId: string): void;
   onActivate(entityId: string): void;
+  onCloseContext(): void;
+  onFocusWorld(entityId: string): void;
+  onOpenTwin(entityId: string): void;
 }>;
 
-function CinematicStage({
+function CausalFieldStage({
   evaluated,
   projection,
   preferCanvas,
   focusedEntityId,
   selectedEntityId,
+  focusWorldEntityId,
   camera,
-  inspectorEntity,
-  onCloseInspector,
+  contextLensOpen,
+  twinCompact,
+  twinRef,
   subtitleState,
   reducedMotion,
   onSubtitlesEnabledChange,
   onFocus,
   onActivate,
-}: CinematicStageProps): ReactNode {
+  onCloseContext,
+  onFocusWorld,
+  onOpenTwin,
+}: CausalFieldStageProps): ReactNode {
+  const lensEntityId =
+    contextLensOpen && selectedEntityId !== null ? selectedEntityId : null;
+
   return (
     <section
-      aria-label="Scene stage"
+      aria-label="Scene field"
       className="aiperf-flow__scene"
       data-backend={preferCanvas ? "canvas" : "svg"}
+      data-focus-world={focusWorldEntityId === null ? undefined : "true"}
+      data-focus-world-entity={focusWorldEntityId ?? undefined}
     >
       {preferCanvas ? (
         <CanvasStage
@@ -408,29 +432,24 @@ function CinematicStage({
           />
         </div>
       )}
-      <SemanticTwin
-        compact
-        focusedEntityId={focusedEntityId}
-        onActivate={onActivate}
-        onFocus={onFocus}
-        projection={projection}
-        selectedEntityId={selectedEntityId}
-      />
-      {inspectorEntity === undefined ? null : (
-        <aside
-          aria-label="Node inspector"
-          className="aiperf-flow__inspector"
-          role="region"
-          tabIndex={-1}
-        >
-          <strong>{inspectorEntity.label}</strong>
-          {inspectorEntity.description === undefined ? null : (
-            <p>{inspectorEntity.description}</p>
-          )}
-          <button onClick={onCloseInspector} type="button">
-            Close inspector
-          </button>
-        </aside>
+      <div ref={twinRef as RefObject<HTMLDivElement>}>
+        <SemanticTwin
+          compact={twinCompact}
+          focusedEntityId={focusedEntityId}
+          onActivate={onActivate}
+          onFocus={onFocus}
+          projection={projection}
+          selectedEntityId={selectedEntityId}
+        />
+      </div>
+      {lensEntityId === null ? null : (
+        <ContextLens
+          entityId={lensEntityId}
+          onClose={onCloseContext}
+          onFocusWorld={onFocusWorld}
+          onOpenTwin={onOpenTwin}
+          projection={projection}
+        />
       )}
       <SubtitleOverlay
         onEnabledChange={onSubtitlesEnabledChange}
@@ -442,7 +461,7 @@ function CinematicStage({
 }
 
 type EvaluationResult =
-  | { readonly ok: true; readonly scene: EvaluatedScene }
+  | { readonly ok: true; readonly frame: EvaluatedFrame }
   | { readonly ok: false; readonly reason: string };
 
 export type FlowAppProps = Readonly<{
@@ -458,6 +477,8 @@ export type FlowAppProps = Readonly<{
    * "Play with audio" can unlock Web Audio from a user gesture.
    */
   requireAudioConsent?: boolean;
+  /** Injectable Fullscreen API boundary for tests and hosts. */
+  fullscreenAdapter?: FullscreenAdapter;
 }>;
 
 export function FlowApp({
@@ -468,6 +489,7 @@ export function FlowApp({
   reducedMotion = false,
   forceSvgFallback = false,
   requireAudioConsent = suppliedNarratorBackend === undefined && !forceSvgFallback,
+  fullscreenAdapter: suppliedFullscreenAdapter,
 }: FlowAppProps): ReactNode {
   const registry = useMemo(
     () => suppliedRegistry ?? createFoundationRegistry(),
@@ -486,6 +508,10 @@ export function FlowApp({
           unavailableNarratorBackend,
       }),
     [suppliedNarratorBackend],
+  );
+  const fullscreenAdapter = useMemo(
+    () => suppliedFullscreenAdapter ?? createBrowserFullscreenAdapter(),
+    [suppliedFullscreenAdapter],
   );
   const preferCanvas = useMemo(
     () => !forceSvgFallback && canvas2dAvailable(),
@@ -508,19 +534,48 @@ export function FlowApp({
   const [cameraTakeover, setCameraTakeover] = useState<CameraTakeover | null>(
     null,
   );
-  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [focusedEntityId, setFocusedEntityId] = useState<string | null>(null);
-  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+  const [immersive, dispatchImmersive] = useReducer(
+    immersiveReducer,
+    undefined,
+    createImmersiveState,
+  );
+  const [twinCompact, setTwinCompact] = useState(true);
+  const [hudInactive, setHudInactive] = useState(false);
+  const [focusedWithinHud, setFocusedWithinHud] = useState(false);
+  const [liveAnnouncement, setLiveAnnouncement] = useState("");
+  const [urlReady, setUrlReady] = useState(false);
+
+  const rootRef = useRef<HTMLElement | null>(null);
+  const twinRegionRef = useRef<HTMLElement | null>(null);
+  const previousDisplayListRef = useRef<DisplayList | undefined>(undefined);
+  const urlAppliedRef = useRef(false);
+
   const scene = scenes[sceneIndex];
+  const sceneId = sceneIdOf(scene);
   const timeline = scene === undefined ? [] : record(scene).timeline;
   const narrativeCues = useMemo(
     () => (scene === undefined ? [] : sceneNarrativeCues(scene)),
     [scene],
   );
+  const causalBeats = useMemo((): readonly CausalBeat[] => {
+    if (scene === undefined) {
+      return Object.freeze([]);
+    }
+    try {
+      return projectCausalBeats(scene);
+    } catch {
+      return Object.freeze([]);
+    }
+  }, [scene]);
+
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
   const narratorRef = useRef<NarratorController | null>(null);
   const focusCoordinatorRef = useRef<FocusCoordinator | null>(null);
+  const immersiveRef = useRef(immersive);
+  immersiveRef.current = immersive;
+
   const narrator = useMemo(() => {
     const controller = new NarratorController(
       narrativeCues.map((cue) =>
@@ -566,11 +621,18 @@ export function FlowApp({
 
   useEffect(() => {
     setFocusedEntityId(null);
-    setSelectedEntityId(null);
     setExploration(null);
     setCameraTakeover(null);
-    setInspectorOpen(false);
     focusCoordinatorRef.current = null;
+    previousDisplayListRef.current = undefined;
+    dispatchImmersive({ type: "select", entityId: null });
+    dispatchImmersive({ type: "close-context" });
+    if (immersiveRef.current.focusWorldEntityId !== null) {
+      dispatchImmersive({ type: "leave-focus-world" });
+    }
+    if (immersiveRef.current.commandOpen) {
+      dispatchImmersive({ type: "close-command" });
+    }
   }, [sceneIndex]);
 
   useEffect(() => {
@@ -608,6 +670,13 @@ export function FlowApp({
   const evaluationTimeMs = exploring
     ? Math.trunc(exploration.authored.playbackTimeMs)
     : Math.trunc(timeMs);
+  const qualityProfile = useMemo(
+    () =>
+      qualityPolicyProfile("reference", {
+        motion: reducedMotion ? "reduced" : "full",
+      }),
+    [reducedMotion],
+  );
   const narrativeTimeline = useMemo(
     () =>
       evaluateNarrativeTimeline(narrativeCues, evaluationTimeMs, {
@@ -638,7 +707,10 @@ export function FlowApp({
     try {
       return {
         ok: true,
-        scene: withDisplayList(evaluateScene(scene, evaluationTimeMs)),
+        frame: evaluateFrame(scene, evaluationTimeMs, {
+          quality: qualityProfile,
+          previousDisplayList: previousDisplayListRef.current,
+        }),
       };
     } catch (error) {
       return {
@@ -649,13 +721,26 @@ export function FlowApp({
             : "Scene evaluation failed.",
       };
     }
-  }, [scene, evaluationTimeMs, validScene, missing]);
+  }, [
+    scene,
+    sceneId,
+    evaluationTimeMs,
+    validScene,
+    missing,
+    qualityProfile,
+  ]);
+
+  useEffect(() => {
+    if (evaluation?.ok === true) {
+      previousDisplayListRef.current = evaluation.frame.displayList;
+    }
+  }, [evaluation]);
 
   const twinProjection = useMemo(() => {
     if (evaluation?.ok !== true) {
       return null;
     }
-    return twinProjectionFromEvaluated(evaluation.scene, subtitleState);
+    return twinProjectionFromEvaluated(evaluation.frame.scene, subtitleState);
   }, [evaluation, subtitleState]);
 
   useEffect(() => {
@@ -665,6 +750,127 @@ export function FlowApp({
     }
     focusCoordinatorRef.current = createFocusCoordinator(twinProjection);
   }, [twinProjection]);
+
+  const policyHud = hudVisibilityFor({
+    playing,
+    exploring,
+    commandOpen: immersive.commandOpen,
+    focusedWithinHud,
+    inactive: hudInactive,
+  });
+
+  useEffect(() => {
+    if (immersive.hud !== policyHud) {
+      dispatchImmersive({ type: "set-hud", visibility: policyHud });
+    }
+  }, [immersive.hud, policyHud]);
+
+  useEffect(() => {
+    if (!playing || exploring || immersive.commandOpen) {
+      setHudInactive(false);
+      return;
+    }
+    let timer = window.setTimeout(() => {
+      setHudInactive(true);
+    }, HUD_INACTIVITY_MS);
+    const onActivity = (): void => {
+      setHudInactive(false);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        setHudInactive(true);
+      }, HUD_INACTIVITY_MS);
+    };
+    window.addEventListener("pointermove", onActivity);
+    window.addEventListener("pointerdown", onActivity);
+    window.addEventListener("keydown", onActivity);
+    window.addEventListener("touchstart", onActivity);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("pointermove", onActivity);
+      window.removeEventListener("pointerdown", onActivity);
+      window.removeEventListener("keydown", onActivity);
+      window.removeEventListener("touchstart", onActivity);
+    };
+  }, [playing, exploring, immersive.commandOpen]);
+
+  useEffect(() => {
+    const onFullscreenChange = (): void => {
+      const next = resolveFullscreenState(
+        fullscreenAdapter,
+        immersiveRef.current.fullscreen,
+      );
+      if (next !== immersiveRef.current.fullscreen) {
+        dispatchImmersive({ type: "set-fullscreen", state: next });
+      }
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+    };
+  }, [fullscreenAdapter]);
+
+  // Restore shareable scene/beat/entity selections from the URL once.
+  useEffect(() => {
+    if (urlAppliedRef.current || typeof window === "undefined") {
+      return;
+    }
+    urlAppliedRef.current = true;
+    const parsed = parseImmersiveUrl(window.location.search);
+    let nextIndex = 0;
+    if (parsed.sceneId !== null) {
+      const matched = scenes.findIndex(
+        (candidate) => sceneIdOf(candidate) === parsed.sceneId,
+      );
+      if (matched >= 0) {
+        nextIndex = matched;
+      }
+    }
+    if (nextIndex !== sceneIndex) {
+      setSceneIndex(nextIndex);
+    }
+    const targetScene = scenes[nextIndex];
+    if (targetScene !== undefined && parsed.beatId !== null) {
+      try {
+        const beats = projectCausalBeats(targetScene);
+        const beat = beats.find((entry) => entry.id === parsed.beatId);
+        if (beat !== undefined) {
+          const seeked = player.seek(beat.timeMs);
+          setTimeMs(seeked.timeMs);
+          narrator.seek(seeked.timeMs);
+        }
+      } catch {
+        // Invalid beat projection fails closed to the current authored time.
+      }
+    }
+    if (parsed.entityId !== null) {
+      dispatchImmersive({ type: "select", entityId: parsed.entityId });
+      setFocusedEntityId(parsed.entityId);
+    }
+    setUrlReady(true);
+  }, [narrator, player, sceneIndex, scenes]);
+
+  const activeBeat = activeCausalBeat(causalBeats, evaluationTimeMs);
+
+  useEffect(() => {
+    if (!urlReady || typeof window === "undefined") {
+      return;
+    }
+    const nextSearch = serializeImmersiveUrl({
+      sceneId: sceneId === "" ? null : sceneId,
+      beatId: activeBeat?.id ?? null,
+      entityId: immersive.selectedEntityId,
+    });
+    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const desired = `${window.location.pathname}${nextSearch}${window.location.hash}`;
+    if (current !== desired) {
+      window.history.replaceState(null, "", desired);
+    }
+  }, [
+    activeBeat?.id,
+    immersive.selectedEntityId,
+    sceneId,
+    urlReady,
+  ]);
 
   if (scene === undefined) {
     return (
@@ -681,16 +887,13 @@ export function FlowApp({
   const highlightText = subtitleState.enabled
     ? (subtitleState.activeCue?.text ?? "")
     : "";
-  const inspectorEntity = inspectorOpen
-    ? entityFromProjection(twinProjection, selectedEntityId)
-    : undefined;
 
   function applyFocusState(next: {
     focusedEntityId: string | null;
     selectedEntityId: string | null;
   }): void {
     setFocusedEntityId(next.focusedEntityId);
-    setSelectedEntityId(next.selectedEntityId);
+    dispatchImmersive({ type: "select", entityId: next.selectedEntityId });
   }
 
   function navigate(nextIndex: number): void {
@@ -699,7 +902,6 @@ export function FlowApp({
     setTimeMs(0);
     setExploration(null);
     setCameraTakeover(null);
-    setInspectorOpen(false);
     setSceneIndex(nextIndex);
     if (audioConsent !== null && !reducedMotion) {
       setPlaying(true);
@@ -722,6 +924,7 @@ export function FlowApp({
       const snapshot = player.play();
       setTimeMs(snapshot.timeMs);
       if (choice === "with-audio") {
+        narrator.seek(snapshot.timeMs);
         narrator.play(snapshot.timeMs);
       }
       setPlaying(true);
@@ -740,7 +943,7 @@ export function FlowApp({
       return;
     }
     if (!muted) {
-      unlockSpeechFromGesture(narratorBackend);
+      void unlockSpeechFromGesture(narratorBackend);
     }
     const snapshot = player.play();
     narrator.play(snapshot.timeMs);
@@ -754,7 +957,6 @@ export function FlowApp({
     setTimeMs(0);
     setExploration(null);
     setCameraTakeover(null);
-    setInspectorOpen(false);
     setPlaying(false);
   }
 
@@ -773,16 +975,22 @@ export function FlowApp({
     narrator.pause(snapshot.timeMs);
     setTimeMs(snapshot.timeMs);
     setPlaying(false);
+    const immersiveSnapshot: ImmersiveState = immersive;
     setExploration(
       beginExploration({
-        ...createInitialSceneState(text(properties.id)),
-        selectedNodeId: selectedEntityId,
+        ...createInitialSceneState(sceneId),
+        selectedNodeId: immersive.selectedEntityId,
         playbackTimeMs: snapshot.timeMs,
         playbackStatus: wasPlaying ? "playing" : "paused",
+        immersive: immersiveSnapshot,
       }),
     );
     const cameraTrack = Array.isArray(scene?.camera) ? scene.camera : [];
     setCameraTakeover(beginCameraTakeover(cameraTrack, snapshot.timeMs));
+  }
+
+  function restoreImmersiveSnapshot(target: ImmersiveState): void {
+    dispatchImmersive({ type: "replace", state: target });
   }
 
   function resumeFromExploration(): void {
@@ -794,16 +1002,25 @@ export function FlowApp({
       resumeAuthoredCamera(cameraTakeover, { reducedMotion });
     }
     setCameraTakeover(null);
-    setInspectorOpen(false);
+    if (restored.immersive !== undefined) {
+      restoreImmersiveSnapshot(restored.immersive);
+    } else {
+      dispatchImmersive({ type: "close-context" });
+      if (immersive.focusWorldEntityId !== null) {
+        dispatchImmersive({ type: "leave-focus-world" });
+      }
+    }
     const seeked = player.seek(restored.playbackTimeMs);
     setTimeMs(seeked.timeMs);
     setExploration(null);
     const coordinator = focusCoordinatorRef.current;
     if (restored.selectedNodeId === null) {
-      applyFocusState(coordinator?.clear() ?? {
-        focusedEntityId: null,
-        selectedEntityId: null,
-      });
+      applyFocusState(
+        coordinator?.clear() ?? {
+          focusedEntityId: null,
+          selectedEntityId: null,
+        },
+      );
     } else {
       applyFocusState(
         coordinator?.restore(restored.selectedNodeId) ?? {
@@ -821,6 +1038,14 @@ export function FlowApp({
       narrator.seek(seeked.timeMs);
       setPlaying(false);
     }
+  }
+
+  function toggleExploreResume(): void {
+    if (exploring) {
+      resumeFromExploration();
+      return;
+    }
+    startExploration();
   }
 
   function focusEntity(entityId: string): void {
@@ -842,42 +1067,76 @@ export function FlowApp({
         selectedEntityId: entityId,
         visualSelectedEntityId: entityId,
       } as const);
-    applyFocusState(next);
+    setFocusedEntityId(next.focusedEntityId);
+    dispatchImmersive({ type: "open-context", entityId });
     if (exploration !== null) {
       setExploration(
         updateExploration(exploration, {
           ...exploration.exploration,
           selectedNodeId: entityId,
+          immersive: {
+            ...immersive,
+            selectedEntityId: entityId,
+            contextLensOpen: true,
+          },
         }),
       );
     }
   }
 
-  function openInspector(): void {
-    if (selectedEntityId === null) {
+  function closeContextLens(): void {
+    dispatchImmersive({ type: "close-context" });
+    if (exploration !== null) {
+      setExploration(
+        updateExploration(exploration, {
+          ...exploration.exploration,
+          immersive: {
+            ...immersive,
+            contextLensOpen: false,
+          },
+        }),
+      );
+    }
+  }
+
+  function enterFocusWorld(entityId: string): void {
+    dispatchImmersive({ type: "enter-focus-world", entityId });
+    setFocusedEntityId(entityId);
+  }
+
+  function leaveFocusWorld(): void {
+    if (immersive.focusWorldEntityId === null) {
       return;
     }
-    setInspectorOpen(true);
-    if (exploration !== null) {
-      setExploration(
-        updateExploration(exploration, {
-          ...exploration.exploration,
-          selectedNodeId: selectedEntityId,
-          inspector: { open: true, nodeId: selectedEntityId },
-        }),
-      );
+    dispatchImmersive({ type: "leave-focus-world" });
+  }
+
+  function openTwin(entityId: string): void {
+    setTwinCompact(false);
+    applyFocusState({
+      focusedEntityId: entityId,
+      selectedEntityId: entityId,
+    });
+    const twinRoot = twinRegionRef.current;
+    if (twinRoot === null) {
+      return;
+    }
+    for (const node of twinRoot.querySelectorAll<HTMLElement>("[data-entity-id]")) {
+      if (node.getAttribute("data-entity-id") === entityId) {
+        node.focus();
+        break;
+      }
     }
   }
 
-  function closeInspector(): void {
-    setInspectorOpen(false);
-    if (exploration !== null) {
-      setExploration(
-        updateExploration(exploration, {
-          ...exploration.exploration,
-          inspector: { open: false, nodeId: null },
-        }),
-      );
+  function seekBeat(beatTimeMs: number, _beatId: string): void {
+    const seeked = player.seek(beatTimeMs);
+    setTimeMs(seeked.timeMs);
+    if (playing && !exploring) {
+      narrator.seek(seeked.timeMs);
+      narrator.play(seeked.timeMs);
+    } else {
+      narrator.seek(seeked.timeMs);
     }
   }
 
@@ -904,15 +1163,256 @@ export function FlowApp({
     setCameraTakeover(
       fitCameraTakeover(
         cameraTakeover,
-        evaluation.scene.displayList.paintBounds,
+        evaluation.frame.displayList.paintBounds,
         {
-          width: Math.max(evaluation.scene.displayList.paintBounds.width, 1),
-          height: Math.max(evaluation.scene.displayList.paintBounds.height, 1),
+          width: Math.max(evaluation.frame.displayList.paintBounds.width, 1),
+          height: Math.max(evaluation.frame.displayList.paintBounds.height, 1),
         },
         16,
       ),
     );
   }
+
+  async function toggleFullscreen(): Promise<void> {
+    const element = rootRef.current;
+    if (element === null) {
+      return;
+    }
+    const result = await toggleFullscreenMode(
+      fullscreenAdapter,
+      element,
+      immersive.fullscreen,
+    );
+    dispatchImmersive({ type: "set-fullscreen", state: result.state });
+    if (result.announcement !== null) {
+      setLiveAnnouncement(result.announcement);
+    }
+  }
+
+  const commands = ((): readonly FlowCommand[] => {
+    const catalog: FlowCommand[] = [];
+
+    scenes.forEach((candidate, index) => {
+      const id = sceneIdOf(candidate);
+      const title = text(record(candidate).title, id || `Scene ${index + 1}`);
+      catalog.push({
+        id: `scene:${id || String(index)}`,
+        label: title,
+        category: "scene",
+        keywords: Object.freeze(["scene", id, title]),
+        execute: () => {
+          navigate(index);
+          dispatchImmersive({ type: "close-command" });
+        },
+      });
+    });
+
+    for (const beat of causalBeats) {
+      catalog.push({
+        id: `beat:${beat.id}`,
+        label: beat.label,
+        category: "beat",
+        keywords: Object.freeze(["beat", beat.id, beat.label]),
+        execute: () => {
+          seekBeat(beat.timeMs, beat.id);
+          dispatchImmersive({ type: "close-command" });
+        },
+      });
+    }
+
+    if (twinProjection !== null) {
+      for (const entity of twinProjection.entities) {
+        catalog.push({
+          id: `entity:${entity.id}`,
+          label: entity.label,
+          category: "entity",
+          keywords: Object.freeze([
+            "entity",
+            entity.id,
+            entity.label,
+            entity.role ?? "",
+            entity.kind ?? "",
+          ]),
+          execute: () => {
+            activateEntity(entity.id);
+            dispatchImmersive({ type: "close-command" });
+          },
+        });
+        for (const evidenceId of entity.evidenceIds ?? []) {
+          catalog.push({
+            id: `evidence:${evidenceId}`,
+            label: `Evidence ${evidenceId}`,
+            category: "evidence",
+            keywords: Object.freeze(["evidence", evidenceId, entity.label]),
+            execute: () => {
+              activateEntity(entity.id);
+              dispatchImmersive({ type: "close-command" });
+            },
+          });
+        }
+      }
+    }
+
+    catalog.push(
+      {
+        id: "action:play-pause",
+        label: playing ? "Pause" : "Play",
+        category: "action",
+        keywords: Object.freeze(["play", "pause", "playback"]),
+        shortcut: "Space",
+        disabledReason:
+          exploring
+            ? "Pause exploration before changing playback."
+            : audioConsent === null
+              ? "Choose an audio preference first."
+              : undefined,
+        execute: () => {
+          togglePlayback();
+          dispatchImmersive({ type: "close-command" });
+        },
+      },
+      {
+        id: "action:restart",
+        label: "Restart",
+        category: "action",
+        keywords: Object.freeze(["restart", "reset"]),
+        execute: () => {
+          restart();
+          dispatchImmersive({ type: "close-command" });
+        },
+      },
+      {
+        id: "action:explore-resume",
+        label: exploring ? "Resume lesson" : "Explore",
+        category: "action",
+        keywords: Object.freeze(["explore", "resume", "lesson"]),
+        execute: () => {
+          toggleExploreResume();
+          dispatchImmersive({ type: "close-command" });
+        },
+      },
+      {
+        id: "action:mute",
+        label: muted ? "Unmute narration" : "Mute narration",
+        category: "accessibility",
+        keywords: Object.freeze(["mute", "unmute", "narration", "audio"]),
+        execute: () => {
+          toggleMute();
+          dispatchImmersive({ type: "close-command" });
+        },
+      },
+      {
+        id: "action:captions",
+        label: subtitlesEnabled ? "Hide captions" : "Show captions",
+        category: "accessibility",
+        keywords: Object.freeze(["captions", "subtitles"]),
+        execute: () => {
+          setSubtitlesEnabled((enabled) => !enabled);
+          dispatchImmersive({ type: "close-command" });
+        },
+      },
+      {
+        id: "action:twin",
+        label: twinCompact ? "Expand semantic twin" : "Compact semantic twin",
+        category: "accessibility",
+        keywords: Object.freeze(["twin", "semantic", "outline"]),
+        execute: () => {
+          setTwinCompact((compact) => !compact);
+          dispatchImmersive({ type: "close-command" });
+        },
+      },
+      {
+        id: "action:fullscreen",
+        label:
+          immersive.fullscreen === "windowed"
+            ? "Enter fullscreen"
+            : "Exit fullscreen",
+        category: "action",
+        keywords: Object.freeze(["fullscreen", "immersive"]),
+        execute: () => {
+          void toggleFullscreen();
+          dispatchImmersive({ type: "close-command" });
+        },
+      },
+      {
+        id: "action:pan",
+        label: "Pan",
+        category: "action",
+        keywords: Object.freeze(["pan", "camera", "explore"]),
+        disabledReason: exploring ? undefined : "Start exploration to pan.",
+        execute: () => {
+          panExplore();
+          dispatchImmersive({ type: "close-command" });
+        },
+      },
+      {
+        id: "action:zoom",
+        label: "Zoom in",
+        category: "action",
+        keywords: Object.freeze(["zoom", "camera", "explore"]),
+        disabledReason: exploring ? undefined : "Start exploration to zoom.",
+        execute: () => {
+          zoomExplore();
+          dispatchImmersive({ type: "close-command" });
+        },
+      },
+      {
+        id: "action:fit",
+        label: "Fit",
+        category: "action",
+        keywords: Object.freeze(["fit", "camera", "explore"]),
+        disabledReason: exploring ? undefined : "Start exploration to fit.",
+        execute: () => {
+          fitExplore();
+          dispatchImmersive({ type: "close-command" });
+        },
+      },
+      {
+        id: "action:leave-focus-world",
+        label: "Leave Focus World",
+        category: "action",
+        keywords: Object.freeze(["focus", "world", "leave"]),
+        disabledReason:
+          immersive.focusWorldEntityId === null
+            ? "Focus World is not active."
+            : undefined,
+        execute: () => {
+          leaveFocusWorld();
+          dispatchImmersive({ type: "close-command" });
+        },
+      },
+    );
+
+    return freezeCommands(catalog);
+  })();
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const meta = event.metaKey || event.ctrlKey;
+      if (meta && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        dispatchImmersive({ type: "open-command" });
+        return;
+      }
+      if (event.key === "Escape") {
+        if (immersiveRef.current.commandOpen) {
+          dispatchImmersive({ type: "close-command" });
+          return;
+        }
+        if (immersiveRef.current.contextLensOpen) {
+          dispatchImmersive({ type: "close-context" });
+          return;
+        }
+        if (immersiveRef.current.focusWorldEntityId !== null) {
+          dispatchImmersive({ type: "leave-focus-world" });
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
 
   let stage: ReactNode;
   if (!validScene || missing.length > 0) {
@@ -934,26 +1434,39 @@ export function FlowApp({
     stage = <SceneFailure scene={scene} />;
   } else {
     stage = (
-      <CinematicStage
+      <CausalFieldStage
         camera={cameraTakeover}
-        evaluated={evaluation.scene}
+        contextLensOpen={immersive.contextLensOpen}
+        evaluated={evaluation.frame.scene}
         focusedEntityId={focusedEntityId}
-        inspectorEntity={inspectorEntity}
+        focusWorldEntityId={immersive.focusWorldEntityId}
         onActivate={activateEntity}
-        onCloseInspector={closeInspector}
+        onCloseContext={closeContextLens}
         onFocus={focusEntity}
+        onFocusWorld={enterFocusWorld}
+        onOpenTwin={openTwin}
         onSubtitlesEnabledChange={setSubtitlesEnabled}
         preferCanvas={preferCanvas}
         projection={twinProjection}
         reducedMotion={reducedMotion}
-        selectedEntityId={selectedEntityId}
+        selectedEntityId={immersive.selectedEntityId}
         subtitleState={subtitleState}
+        twinCompact={twinCompact}
+        twinRef={twinRegionRef}
       />
     );
   }
 
   return (
-    <main className="aiperf-flow">
+    <main
+      className="aiperf-flow"
+      data-focus-world={
+        immersive.focusWorldEntityId === null ? undefined : "true"
+      }
+      data-fullscreen={immersive.fullscreen}
+      data-hud={policyHud}
+      ref={rootRef}
+    >
       <AudioConsentModal
         onChoose={chooseAudioConsent}
         open={audioConsent === null}
@@ -961,11 +1474,12 @@ export function FlowApp({
       <a className="aiperf-flow__skip-link" href="#flow-transcript">
         Skip to transcript
       </a>
-      <div className="aiperf-flow__shell">
+      <div className="aiperf-flow__shell aiperf-flow__causal-field">
         <header className="aiperf-flow__header aiperf-flow__chrome">
           <div>
             <p className="aiperf-flow__eyebrow">
               Scene {sceneIndex + 1} of {scenes.length}
+              {activeBeat === null ? null : ` · ${activeBeat.label}`}
             </p>
             <h1>{text(properties.title, "Untitled scene")}</h1>
           </div>
@@ -985,63 +1499,73 @@ export function FlowApp({
               Next scene
             </button>
           </nav>
-        </header>
-
-        <section
-          aria-label="Playback controls"
-          className="aiperf-flow__controls aiperf-flow__chrome"
-        >
-          <button
-            disabled={exploring || audioConsent === null}
-            onClick={togglePlayback}
-            type="button"
-          >
-            {playing ? "Pause" : "Play"}
-          </button>
-          <button onClick={restart} type="button">
-            Restart
-          </button>
-          <button aria-pressed={muted} onClick={toggleMute} type="button">
-            {muted ? "Unmute narration" : "Mute narration"}
-          </button>
-          {exploring ? (
-            <>
-              <button onClick={resumeFromExploration} type="button">
-                Resume lesson
-              </button>
-              <button
-                disabled={selectedEntityId === null}
-                onClick={openInspector}
-                type="button"
-              >
-                Inspect
-              </button>
-              <button onClick={panExplore} type="button">
-                Pan
-              </button>
-              <button onClick={zoomExplore} type="button">
-                Zoom in
-              </button>
-              <button onClick={fitExplore} type="button">
-                Fit
-              </button>
-            </>
-          ) : (
-            <button onClick={startExploration} type="button">
-              Explore
-            </button>
-          )}
           <output aria-label="Playback time" aria-live="off" role="status">
             {Math.round(displayTimeMs)} ms
           </output>
-        </section>
+        </header>
 
         <div className="aiperf-flow__stage-region">
-          <SceneErrorBoundary key={text(properties.id)} scene={scene}>
+          <SceneErrorBoundary key={sceneId} scene={scene}>
             {stage}
           </SceneErrorBoundary>
         </div>
 
+        <div
+          onBlur={(event) => {
+            const next = event.relatedTarget;
+            if (
+              next instanceof Node &&
+              event.currentTarget.contains(next)
+            ) {
+              return;
+            }
+            setFocusedWithinHud(false);
+          }}
+          onFocus={() => {
+            setFocusedWithinHud(true);
+          }}
+        >
+          <ImmersiveControls
+            exploring={exploring}
+            fullscreen={immersive.fullscreen}
+            hud={policyHud}
+            onExploreResume={toggleExploreResume}
+            onOpenCommands={() => {
+              dispatchImmersive({ type: "open-command" });
+            }}
+            onPlayPause={togglePlayback}
+            onToggleFullscreen={() => {
+              void toggleFullscreen();
+            }}
+            onToggleTwin={() => {
+              setTwinCompact((compact) => !compact);
+            }}
+            playbackDisabled={audioConsent === null}
+            playing={playing}
+          />
+          <CausalPath
+            beats={causalBeats}
+            onSeek={seekBeat}
+            timeMs={evaluationTimeMs}
+          />
+        </div>
+
+        <CommandConstellation
+          commands={commands}
+          onClose={() => {
+            dispatchImmersive({ type: "close-command" });
+          }}
+          open={immersive.commandOpen}
+        />
+
+        <p
+          aria-atomic="true"
+          aria-live="polite"
+          className="aiperf-flow__live-region"
+          role="status"
+        >
+          {liveAnnouncement}
+        </p>
         <p
           aria-atomic="true"
           aria-live="polite"

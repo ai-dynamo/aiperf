@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { normalizeSceneTimeMs } from "./player.js";
+import type { ImmersiveState } from "./immersive-state.js";
 
 export type PlaybackStatus = "idle" | "playing" | "paused" | "complete";
 
@@ -18,6 +19,7 @@ export type SceneState = Readonly<{
   playbackStatus: PlaybackStatus;
   activeResponsiveVariant: string | null;
   temporaryCameraTakeover: boolean;
+  immersive?: ImmersiveState;
 }>;
 
 export type SceneAction =

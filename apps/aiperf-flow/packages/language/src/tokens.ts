@@ -32,6 +32,10 @@ export const QuotedString = createToken({
   name: "QuotedString",
   pattern: /"(?:\\["\\/bfnrt]|\\u[0-9a-fA-F]{4}|[^"\\\r\n])*"/,
 });
+export const DurationLiteral = createToken({
+  name: "DurationLiteral",
+  pattern: /[0-9]+ms/,
+});
 export const NumberLiteral = createToken({
   name: "NumberLiteral",
   pattern: /(?:0|[1-9]\d*)(?:\.\d+)?/,
@@ -92,6 +96,13 @@ export const For = keyword("For", /for/);
 export const In = keyword("In", /in/);
 export const True = keyword("True", /true/);
 export const False = keyword("False", /false/);
+export const Theme = keyword("Theme", /theme/);
+export const Use = keyword("Use", /use/);
+export const Extends = keyword("Extends", /extends/);
+export const ColorKind = keyword("ColorKind", /color/);
+export const NumberKind = keyword("NumberKind", /number/);
+export const FontKind = keyword("FontKind", /font/);
+export const EnumKind = keyword("EnumKind", /enum/);
 
 export const LessEqual = createToken({ name: "LessEqual", pattern: /<=/ });
 export const GreaterEqual = createToken({ name: "GreaterEqual", pattern: />=/ });
@@ -115,6 +126,7 @@ export const allTokens = [
   BlockComment,
   LineComment,
   QuotedString,
+  DurationLiteral,
   NumberLiteral,
   Flow,
   Import,
@@ -161,6 +173,13 @@ export const allTokens = [
   In,
   True,
   False,
+  Theme,
+  Use,
+  Extends,
+  ColorKind,
+  NumberKind,
+  FontKind,
+  EnumKind,
   LessEqual,
   GreaterEqual,
   EqualEqual,

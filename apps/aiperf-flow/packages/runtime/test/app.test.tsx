@@ -144,11 +144,12 @@ function foundationScene(overrides: Partial<SceneIr> = {}): SceneIr {
 
 function flowWith(scenes: readonly SceneIr[]): FlowIr {
   return {
-    irVersion: 1,
+    irVersion: 2,
     id: "request-flow",
     title: "Request flow",
     capabilities: [],
     tokens: {},
+    themes: [],
     scenes,
     sourceMap,
   } as unknown as FlowIr;
@@ -186,7 +187,7 @@ describe("FlowApp cinematic mount", () => {
       <FlowApp flow={flowWith([foundationScene()])} forceSvgFallback />,
     );
 
-    const stage = screen.getByRole("region", { name: "Scene stage" });
+    const stage = screen.getByRole("region", { name: "Scene field" });
     expect(stage.getAttribute("data-backend")).toBe("svg");
 
     const svg = container.querySelector("svg.aiperf-flow__svg-fallback");
@@ -227,11 +228,12 @@ describe("FlowApp cinematic mount", () => {
   test("keeps shell chrome, playback controls, transcript skip link, and exploration actions", () => {
     render(<FlowApp flow={flowWith([foundationScene()])} forceSvgFallback />);
 
-    expect(screen.getByText("Scene 1 of 1")).not.toBeNull();
+    expect(screen.getByText(/Scene 1 of 1/u)).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Execution boundary" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "Play" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Restart" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "Explore" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Open commands" })).not.toBeNull();
+    expect(screen.getByRole("navigation", { name: "Causal path" })).not.toBeNull();
     expect(screen.getByRole("link", { name: "Skip to transcript" })).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Transcript" })).not.toBeNull();
     expect(
@@ -243,7 +245,7 @@ describe("FlowApp cinematic mount", () => {
     mockCanvas2d();
     const { container } = render(<FlowApp flow={flowWith([foundationScene()])} />);
 
-    const stage = screen.getByRole("region", { name: "Scene stage" });
+    const stage = screen.getByRole("region", { name: "Scene field" });
     expect(stage.getAttribute("data-backend")).toBe("canvas");
     expect(container.querySelector("canvas.aiperf-flow__canvas")).not.toBeNull();
     expect(container.querySelector("svg.aiperf-flow__svg-fallback")).toBeNull();
@@ -256,7 +258,7 @@ describe("FlowApp cinematic mount", () => {
       <FlowApp flow={flowWith([foundationScene()])} forceSvgFallback />,
     );
 
-    expect(screen.getByRole("region", { name: "Scene stage" }).getAttribute("data-backend")).toBe(
+    expect(screen.getByRole("region", { name: "Scene field" }).getAttribute("data-backend")).toBe(
       "svg",
     );
     expect(container.querySelector("svg.aiperf-flow__svg-fallback")).not.toBeNull();
@@ -308,25 +310,23 @@ describe("FlowApp cinematic mount", () => {
     expect(cliButton.getAttribute("data-focused")).toBe("true");
   });
 
-  test("twin keyboard activation selects the visual entity and opens inspect when exploring", () => {
+  test("twin keyboard activation selects the visual entity and opens Context Lens when exploring", () => {
     render(<FlowApp flow={flowWith([foundationScene()])} forceSvgFallback />);
 
     fireEvent.click(screen.getByRole("button", { name: "Explore" }));
     expect(screen.getByRole("button", { name: "Resume lesson" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Inspect" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Pan" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Zoom in" })).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Fit" })).not.toBeNull();
 
     const twin = screen.getByRole("region", { name: "Semantic outline" });
     const runtimeButton = within(twin).getByRole("button", { name: "Runtime" });
     fireEvent.click(runtimeButton);
 
     expect(runtimeButton.getAttribute("data-selected")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Inspect" }));
-    const inspector = screen.getByRole("region", { name: "Node inspector" });
-    expect(inspector).not.toBeNull();
-    expect(within(inspector).getByText("Execution runtime")).not.toBeNull();
+    expect(screen.getByRole("region", { name: "Context Lens" })).not.toBeNull();
+    expect(
+      within(screen.getByRole("region", { name: "Context Lens" })).getByText(
+        "Execution runtime",
+      ),
+    ).not.toBeNull();
   });
 
   test("exploration pause freezes evaluation time and resume restores focus", () => {
@@ -424,7 +424,7 @@ describe("FlowApp cinematic mount", () => {
     expect(screen.getByText("Execution scene summary")).not.toBeNull();
     expect(screen.getByText("Execution scene text fallback")).not.toBeNull();
     expect(screen.queryByRole("region", { name: "Semantic outline" })).toBeNull();
-    expect(screen.queryByRole("region", { name: "Scene stage" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Scene field" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Next scene" }));
     expect(screen.getByRole("heading", { name: "Results" })).not.toBeNull();

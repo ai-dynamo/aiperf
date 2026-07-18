@@ -47,12 +47,17 @@ import type {
   SummaryAst,
   SymbolDefinitionAst,
   SymbolBodyStatementAst,
+  ThemeAssignmentAst,
+  ThemeDeclarationAst,
+  ThemeFontLiteralAst,
+  ThemeRoleReferenceAst,
   TimelineAction,
   TimelineAst,
   TimelineCueAst,
   TokenDeclarationAst,
   TokenReferenceAst,
   TypeRefAst,
+  UseThemeAst,
   ValueAst,
 } from "./ast.js";
 import {
@@ -61,6 +66,7 @@ import {
   At,
   Camera,
   Colon,
+  ColorKind,
   Comma,
   ComponentIdentifier,
   Connector,
@@ -68,11 +74,15 @@ import {
   Do,
   Dot,
   Duration,
+  DurationLiteral,
   EqualEqual,
+  EnumKind,
   Equals,
+  Extends,
   False,
   Fallback,
   Fill,
+  FontKind,
   Flow,
   For,
   Frame,
@@ -94,6 +104,7 @@ import {
   LParen,
   Narrate,
   NotEqual,
+  NumberKind,
   NumberLiteral,
   On,
   QuotedString,
@@ -112,11 +123,13 @@ import {
   Stroke,
   Summary,
   SymbolKeyword,
+  Theme,
   Timeline,
   To,
   Token,
   Trace,
   True,
+  Use,
   When,
   Width,
   X,
@@ -194,6 +207,8 @@ class FlowParser extends EmbeddedActionsParser {
     const imports: ImportDeclarationAst[] = [];
     const requirements: RequirementAst[] = [];
     const tokens: TokenDeclarationAst[] = [];
+    const themes: ThemeDeclarationAst[] = [];
+    let useTheme: UseThemeAst | undefined;
     const symbols: SymbolDefinitionAst[] = [];
     const scenes: SceneAst[] = [];
     this.MANY(() =>
@@ -214,6 +229,20 @@ class FlowParser extends EmbeddedActionsParser {
           ALT: () => {
             const token = this.SUBRULE(this.tokenDeclaration);
             this.ACTION(() => tokens.push(token));
+          },
+        },
+        {
+          ALT: () => {
+            const theme = this.SUBRULE(this.themeDeclaration);
+            this.ACTION(() => themes.push(theme));
+          },
+        },
+        {
+          ALT: () => {
+            const selection = this.SUBRULE(this.useThemeDeclaration);
+            this.ACTION(() => {
+              useTheme = selection;
+            });
           },
         },
         {
@@ -239,6 +268,8 @@ class FlowParser extends EmbeddedActionsParser {
       imports,
       requirements,
       tokens,
+      themes,
+      ...(useTheme === undefined ? {} : { useTheme }),
       symbols,
       scenes,
       sourceMap: rangeBetween(this.sourceName, start, end),
@@ -317,6 +348,155 @@ class FlowParser extends EmbeddedActionsParser {
           stringValue(valueToken),
         ),
         sourceMap: rangeBetween(this.sourceName, start, valueToken),
+      }));
+    },
+  );
+
+  private readonly themeDeclaration = this.RULE(
+    "themeDeclaration",
+    (): ThemeDeclarationAst => {
+      const start = this.CONSUME(Theme);
+      const id = this.CONSUME(Identifier);
+      this.CONSUME(Extends);
+      const parent = this.CONSUME2(Identifier);
+      this.CONSUME(LBrace);
+      const assignments: ThemeAssignmentAst[] = [];
+      this.MANY(() => {
+        const assignment = this.SUBRULE(this.themeAssignment);
+        this.ACTION(() => assignments.push(assignment));
+      });
+      const end = this.CONSUME(RBrace);
+      return this.ACTION(() => ({
+        kind: "theme-declaration",
+        id: id.image,
+        extends: parent.image,
+        assignments,
+        sourceMap: rangeBetween(this.sourceName, start, end),
+      }));
+    },
+  );
+
+  private readonly themeAssignment = this.RULE(
+    "themeAssignment",
+    (): ThemeAssignmentAst =>
+      this.OR([
+        {
+          ALT: () => {
+            const start = this.CONSUME(ColorKind);
+            const role = this.SUBRULE(this.qualifiedName);
+            this.CONSUME(Equals);
+            const value = this.CONSUME(QuotedString);
+            return this.ACTION(() => ({
+              kind: "theme-assignment",
+              valueKind: "color" as const,
+              role,
+              value: literal(this.sourceName, value, stringValue(value)),
+              sourceMap: rangeBetween(this.sourceName, start, value),
+            }));
+          },
+        },
+        {
+          ALT: () => {
+            const start = this.CONSUME(NumberKind);
+            const role = this.SUBRULE2(this.qualifiedName);
+            this.CONSUME2(Equals);
+            const value = this.CONSUME(NumberLiteral);
+            return this.ACTION(() => ({
+              kind: "theme-assignment",
+              valueKind: "number" as const,
+              role,
+              value: literal(this.sourceName, value, numberValue(value)),
+              sourceMap: rangeBetween(this.sourceName, start, value),
+            }));
+          },
+        },
+        {
+          ALT: () => {
+            const start = this.CONSUME(Duration);
+            const role = this.SUBRULE3(this.qualifiedName);
+            this.CONSUME3(Equals);
+            const value = this.CONSUME(DurationLiteral);
+            return this.ACTION(() => ({
+              kind: "theme-assignment",
+              valueKind: "duration" as const,
+              role,
+              value: literal(
+                this.sourceName,
+                value,
+                Number(value.image.slice(0, -2)),
+              ),
+              sourceMap: rangeBetween(this.sourceName, start, value),
+            }));
+          },
+        },
+        {
+          ALT: () => {
+            const start = this.CONSUME(FontKind);
+            const role = this.SUBRULE4(this.qualifiedName);
+            this.CONSUME4(Equals);
+            const value = this.SUBRULE(this.themeFontLiteral);
+            return this.ACTION(() => ({
+              kind: "theme-assignment",
+              valueKind: "font" as const,
+              role,
+              value,
+              sourceMap: {
+                source: this.sourceName,
+                start: tokenRange(this.sourceName, start).start,
+                end: value.sourceMap.end,
+              },
+            }));
+          },
+        },
+        {
+          ALT: () => {
+            const start = this.CONSUME(EnumKind);
+            const role = this.SUBRULE5(this.qualifiedName);
+            this.CONSUME5(Equals);
+            const value = this.CONSUME2(QuotedString);
+            return this.ACTION(() => ({
+              kind: "theme-assignment",
+              valueKind: "enum" as const,
+              role,
+              value: literal(this.sourceName, value, stringValue(value)),
+              sourceMap: rangeBetween(this.sourceName, start, value),
+            }));
+          },
+        },
+      ]),
+  );
+
+  private readonly themeFontLiteral = this.RULE(
+    "themeFontLiteral",
+    (): ThemeFontLiteralAst => {
+      const start = this.CONSUME(LBracket);
+      const families: string[] = [];
+      this.AT_LEAST_ONE_SEP({
+        SEP: Comma,
+        DEF: () => {
+          const family = this.CONSUME(QuotedString);
+          this.ACTION(() => families.push(stringValue(family)));
+        },
+      });
+      const end = this.CONSUME(RBracket);
+      return this.ACTION(() => ({
+        kind: "theme-font-literal",
+        families,
+        sourceMap: rangeBetween(this.sourceName, start, end),
+      }));
+    },
+  );
+
+  private readonly useThemeDeclaration = this.RULE(
+    "useThemeDeclaration",
+    (): UseThemeAst => {
+      const start = this.CONSUME(Use);
+      this.CONSUME(Theme);
+      const themeId = this.CONSUME(Identifier);
+      return this.ACTION(() => ({
+        kind: "use-theme",
+        themeId: themeId.image,
+        sourceMap: rangeBetween(this.sourceName, start, themeId),
       }));
     },
   );
@@ -461,6 +641,7 @@ class FlowParser extends EmbeddedActionsParser {
     let width = 0;
     let height = 0;
     let fill: ValueAst | undefined;
+    let stroke: ValueAst | undefined;
     let label = "";
     let role = "";
     let description = "";
@@ -514,6 +695,15 @@ class FlowParser extends EmbeddedActionsParser {
         },
         {
           ALT: () => {
+            this.CONSUME(Stroke);
+            const value = this.SUBRULE2(this.value);
+            this.ACTION(() => {
+              stroke = value;
+            });
+          },
+        },
+        {
+          ALT: () => {
             this.CONSUME(Label);
             const value = this.CONSUME(QuotedString);
             this.ACTION(() => {
@@ -558,6 +748,7 @@ class FlowParser extends EmbeddedActionsParser {
       width,
       height,
       fill: fill ?? literal(this.sourceName, id, ""),
+      ...(stroke === undefined ? {} : { stroke }),
       label,
       role,
       description,
@@ -677,6 +868,7 @@ class FlowParser extends EmbeddedActionsParser {
         },
       },
       { ALT: () => this.SUBRULE(this.tokenReference) },
+      { ALT: () => this.SUBRULE(this.themeRoleReference) },
     ]),
   );
 
@@ -984,6 +1176,21 @@ class FlowParser extends EmbeddedActionsParser {
       return this.ACTION(() => ({
         kind: "token-reference",
         token: id.image,
+        sourceMap: rangeBetween(this.sourceName, start, end),
+      }));
+    },
+  );
+
+  private readonly themeRoleReference = this.RULE(
+    "themeRoleReference",
+    (): ThemeRoleReferenceAst => {
+      const start = this.CONSUME(Theme);
+      this.CONSUME(LParen);
+      const role = this.SUBRULE(this.qualifiedName);
+      const end = this.CONSUME(RParen);
+      return this.ACTION(() => ({
+        kind: "theme-role-reference",
+        role,
         sourceMap: rangeBetween(this.sourceName, start, end),
       }));
     },

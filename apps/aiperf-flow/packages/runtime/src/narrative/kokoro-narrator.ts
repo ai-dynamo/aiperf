@@ -60,7 +60,8 @@ export type KokoroNarratorOptions = Readonly<{
   modelId?: string;
   workerFactory?: () => KokoroWorkerPort;
   audioContextFactory?: () => AudioContext;
-  webGpuAvailable?: () => boolean;
+  /** Sync or async probe; false skips WebGPU and starts q8 WASM. */
+  webGpuAvailable?: () => boolean | Promise<boolean>;
 }>;
 
 type ActiveRequest = Readonly<{
@@ -92,12 +93,41 @@ function defaultAudioContextFactory(): AudioContext {
   return new AudioContextConstructor();
 }
 
-function defaultWebGpuAvailable(): boolean {
-  return (
-    typeof navigator === "object" &&
-    navigator !== null &&
-    "gpu" in navigator
-  );
+/**
+ * Prefer WebGPU only when a real adapter and device can be created.
+ *
+ * `"gpu" in navigator` is not enough: Chrome may advertise experimental
+ * WebGPU and then fail with "Failed to create WebGPU Context Provider".
+ */
+async function defaultWebGpuAvailable(): Promise<boolean> {
+  if (
+    typeof navigator !== "object" ||
+    navigator === null ||
+    !("gpu" in navigator)
+  ) {
+    return false;
+  }
+  const gpu = (navigator as Navigator & {
+    gpu?: {
+      requestAdapter(): Promise<{
+        requestDevice(): Promise<{ destroy?(): void }>;
+      } | null>;
+    };
+  }).gpu;
+  if (gpu === undefined || typeof gpu.requestAdapter !== "function") {
+    return false;
+  }
+  try {
+    const adapter = await gpu.requestAdapter();
+    if (adapter === null) {
+      return false;
+    }
+    const device = await adapter.requestDevice();
+    device.destroy?.();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function errorMessage(error: unknown): string {
@@ -110,7 +140,7 @@ export class KokoroNarratorBackend implements NarratorBackend {
   readonly #modelId: string;
   readonly #workerFactory: () => KokoroWorkerPort;
   readonly #audioContextFactory: () => AudioContext;
-  readonly #webGpuAvailable: () => boolean;
+  readonly #webGpuAvailable: () => boolean | Promise<boolean>;
   readonly #workerSupported: boolean;
   readonly #listeners = new Set<(state: KokoroNarratorSnapshot) => void>();
   readonly #queue: NarratorUtterance[] = [];
@@ -134,6 +164,7 @@ export class KokoroNarratorBackend implements NarratorBackend {
   #rejectPrewarm: ((error: Error) => void) | null = null;
   #modelReady = false;
   #activated = false;
+  #fallbackOwnsCue = false;
   #requestSequence = 0;
 
   constructor(options: KokoroNarratorOptions = {}) {
@@ -184,9 +215,25 @@ export class KokoroNarratorBackend implements NarratorBackend {
       this.#resolvePrewarm = resolve;
       this.#rejectPrewarm = reject;
     });
-    const device = this.#webGpuAvailable() ? "webgpu" : "wasm";
-    this.#startWorker(device, device === "webgpu" ? "fp32" : "q8");
+    void this.#selectDeviceAndStartWorker();
     return this.#prewarmPromise;
+  }
+
+  async #selectDeviceAndStartWorker(): Promise<void> {
+    let useWebGpu = false;
+    try {
+      const probed = this.#webGpuAvailable();
+      useWebGpu = Boolean(
+        probed instanceof Promise ? await probed : probed,
+      );
+    } catch {
+      useWebGpu = false;
+    }
+    if (this.#modelReady || this.#state.engine === "web-speech") {
+      return;
+    }
+    const device: KokoroDevice = useWebGpu ? "webgpu" : "wasm";
+    this.#startWorker(device, device === "webgpu" ? "fp32" : "q8");
   }
 
   /**
@@ -217,10 +264,13 @@ export class KokoroNarratorBackend implements NarratorBackend {
   }
 
   speak(utterance: NarratorUtterance): void {
-    if (this.#state.engine === "web-speech" && this.#fallback !== null) {
+    if (!this.#modelReady && this.#fallback?.available === true) {
+      this.#fallbackOwnsCue = true;
       this.#fallback.speak(utterance);
+      void this.prewarm().catch(() => undefined);
       return;
     }
+    this.#fallbackOwnsCue = false;
     this.#queue.push(utterance);
     void this.prewarm()
       .then(() => this.#pump())
@@ -228,7 +278,7 @@ export class KokoroNarratorBackend implements NarratorBackend {
   }
 
   pause(): void {
-    if (this.#state.engine === "web-speech") {
+    if (this.#fallbackOwnsCue || this.#state.engine === "web-speech") {
       this.#fallback?.pause();
       return;
     }
@@ -239,7 +289,7 @@ export class KokoroNarratorBackend implements NarratorBackend {
   }
 
   resume(): void {
-    if (this.#state.engine === "web-speech") {
+    if (this.#fallbackOwnsCue || this.#state.engine === "web-speech") {
       this.#fallback?.resume();
       return;
     }
@@ -267,11 +317,30 @@ export class KokoroNarratorBackend implements NarratorBackend {
       this.#source = null;
     }
     this.#fallback?.cancel();
+    this.#fallbackOwnsCue = false;
     this.#update({
-      status: this.#modelReady ? "ready" : "idle",
+      status: this.#cancelStatus(),
       activeCueId: null,
       needsUserActivation: false,
     });
+  }
+
+  #cancelStatus(): KokoroNarratorStatus {
+    if (this.#modelReady) {
+      return "ready";
+    }
+    if (
+      this.#prewarmPromise !== null &&
+      this.#state.engine !== "web-speech" &&
+      this.#state.status !== "error" &&
+      this.#state.status !== "fallback"
+    ) {
+      return "loading";
+    }
+    if (this.#state.engine === "web-speech") {
+      return "fallback";
+    }
+    return "idle";
   }
 
   #startWorker(device: KokoroDevice, dtype: KokoroDtype): void {
@@ -394,6 +463,7 @@ export class KokoroNarratorBackend implements NarratorBackend {
     this.#queue.length = 0;
 
     if (this.#fallback?.available === true) {
+      this.#fallbackOwnsCue ||= pending.length > 0;
       this.#update({
         status: "fallback",
         engine: "web-speech",
@@ -538,7 +608,19 @@ export class KokoroNarratorBackend implements NarratorBackend {
   #update(
     update: Partial<KokoroNarratorSnapshot>,
   ): void {
-    this.#state = Object.freeze({ ...this.#state, ...update });
+    const next = Object.freeze({ ...this.#state, ...update });
+    if (
+      next.status === this.#state.status &&
+      next.engine === this.#state.engine &&
+      next.progress === this.#state.progress &&
+      next.progressFile === this.#state.progressFile &&
+      next.error === this.#state.error &&
+      next.activeCueId === this.#state.activeCueId &&
+      next.needsUserActivation === this.#state.needsUserActivation
+    ) {
+      return;
+    }
+    this.#state = next;
     for (const listener of this.#listeners) {
       listener(this.#state);
     }
