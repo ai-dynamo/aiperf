@@ -20,7 +20,9 @@
 #[cfg(feature = "engine")]
 mod artifact;
 mod cell_controller;
+mod dataset;
 mod discovery;
+mod phaser;
 mod plugin;
 
 use std::collections::BTreeSet;
@@ -34,6 +36,8 @@ use velo::Velo;
 #[cfg(feature = "engine")]
 pub use artifact::{ARTIFACT_PREFIX, ArtifactHubPlugin, ReceiverSlot};
 pub use cell_controller::{CELL_CONTROLLER_PREFIX, CellControllerHubPlugin, TransportSlot};
+pub use dataset::{DATASET_PREFIX, DatasetHubPlugin};
+pub use phaser::{PHASER_PREFIX, PhaserHubPlugin};
 pub use discovery::{
     DiscoveryPlugin, DiscoveryReply, DiscoveryRequest, DiscoveryState, HUB_DISCOVERY,
     handle_discovery,

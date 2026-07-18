@@ -435,16 +435,21 @@ pub fn run_cellular(
         // subscribe. `advance(Started)` below drives the run-wide START through the
         // monotonic phaser. The server (held for the run) keeps its handlers alive via its
         // own velo clone independent of the transport.
+        //
+        // In hub mode the phaser plane is instead mounted as the `/phaser` hub plugin
+        // (below), which binds the identical `PhaserServer` on the same hub velo — so skip
+        // the standalone bind here and let `build_cellular_hub` own it. The phaser itself
+        // is created either way so the `advance` calls below are unchanged.
         let phaser = phaser_start.then(crate::cellular::phaser::Phaser::new);
         let _phaser_server = match &phaser {
-            Some(phaser) => Some(
+            Some(phaser) if !hub_mode => Some(
                 crate::cellular::transport::phaser_velo::PhaserServer::bind(
                     velo.clone(),
                     phaser.clone(),
                 )
                 .context("binding phaser control plane")?,
             ),
-            None => None,
+            _ => None,
         };
 
         // Bind the dataset service, generate the
@@ -453,14 +458,26 @@ pub fn run_cellular(
         // bounded run distributes fully before dispatch; each
         // cell then subscribes and builds its owned index over velo. Held for the run so
         // the service's handlers/pumps stay alive.
+        // In hub mode the dataset fan-out plane is mounted as the `/dataset` hub plugin
+        // (below), which binds the identical `DatasetServer` on the same hub velo. The
+        // publisher is filled and finalized here either way (broadcast is independent of
+        // when the server binds); this slot carries it into `build_cellular_hub` so the
+        // plugin can serve it. Empty in the standalone path.
+        let mut dataset_publisher_for_hub = None;
         let _dataset_server = if dataset_fanout {
             let publisher =
                 crate::cellular::dataset_session::DatasetPublisher::<Vec<u8>>::new();
-            let server = crate::cellular::transport::dataset_velo::DatasetServer::bind(
-                velo.clone(),
-                publisher.clone(),
-            )
-            .context("binding dataset fan-out plane")?;
+            let server = if hub_mode {
+                None
+            } else {
+                Some(
+                    crate::cellular::transport::dataset_velo::DatasetServer::bind(
+                        velo.clone(),
+                        publisher.clone(),
+                    )
+                    .context("binding dataset fan-out plane")?,
+                )
+            };
             let total = profiling_request_budget(envelope).unwrap_or(0);
             // Build each request's endpoint-ready body once on the controller so a cell
             // POSTs exactly what the controller
@@ -514,7 +531,10 @@ pub fn run_cellular(
                 endpoint = %chat_url,
                 "dataset fan-out: broadcast the endpoint-ready request bodies to the cells"
             );
-            Some(server)
+            if hub_mode {
+                dataset_publisher_for_hub = Some(publisher);
+            }
+            server
         } else {
             None
         };
@@ -566,6 +586,8 @@ pub fn run_cellular(
                 start_handle,
                 cell_coordinate.clone(),
                 artifact_mount,
+                phaser.clone(),
+                dataset_publisher_for_hub.take(),
             )
             .await
             .context("standing up cellular velo hub")?;
@@ -1052,12 +1074,16 @@ fn hub_http_bind() -> std::net::SocketAddr {
 }
 
 /// Stand up one per-run velo [`Hub`](crate::hub::Hub) as the cellular anchor: mount the
-/// cell↔controller plugin, the `/artifact` plugin (when `artifact_mount` is `Some`),
-/// and the discovery plugin on `velo`, serve the co-bound axum surface, and return the
-/// captured [`VeloControllerTransport`] + optional [`ArtifactVeloReceiver`] + the live
-/// [`HubServer`] (held for the run). The velo handlers are identical to the standalone
-/// planes; only the mount point moves onto the hub.
+/// cell↔controller plugin, the `/artifact` plugin (when `artifact_mount` is `Some`), the
+/// `/phaser` plugin (when `phaser` is `Some`), the `/dataset` plugin (when
+/// `dataset_publisher` is `Some`), and the discovery plugin on `velo`, serve the co-bound
+/// axum surface, and return the captured [`VeloControllerTransport`] + optional
+/// [`ArtifactVeloReceiver`] + the live [`HubServer`] (held for the run). The velo handlers
+/// are identical to the standalone planes; only the mount point moves onto the hub. With
+/// the phaser and dataset planes mounted, a hub-mode run is a complete replacement of the
+/// standalone control/data planes on the one anchor.
 #[cfg(feature = "cellular")]
+#[allow(clippy::too_many_arguments)]
 async fn build_cellular_hub(
     velo: std::sync::Arc<velo::Velo>,
     spec_for: SpecFor,
@@ -1065,13 +1091,16 @@ async fn build_cellular_hub(
     start_handle: velo::EventHandle,
     endpoint: String,
     artifact_mount: Option<(PathBuf, std::collections::HashSet<String>)>,
+    phaser: Option<crate::cellular::phaser::Phaser>,
+    dataset_publisher: Option<crate::cellular::dataset_session::DatasetPublisher<Vec<u8>>>,
 ) -> Result<(
     VeloControllerTransport,
     Option<crate::engine::artifact_stream_velo::ArtifactVeloReceiver>,
     crate::hub::HubServer,
 )> {
     use crate::hub::{
-        ArtifactHubPlugin, CellControllerHubPlugin, DiscoveryPlugin, DiscoveryState, Hub,
+        ArtifactHubPlugin, CellControllerHubPlugin, DatasetHubPlugin, DiscoveryPlugin,
+        DiscoveryState, Hub, PhaserHubPlugin,
     };
 
     let hub_instance = format!("{:?}", velo.instance_id());
@@ -1093,6 +1122,20 @@ async fn build_cellular_hub(
     } else {
         None
     };
+
+    // `/phaser` plugin (optional): mounts the phaser control plane on the hub velo when
+    // phaser START is selected. The phaser is `advance`d by the bootstrap independently.
+    if let Some(phaser) = phaser {
+        hub.register(Box::new(PhaserHubPlugin::new(phaser)))
+            .context("mounting /phaser hub plugin")?;
+    }
+
+    // `/dataset` plugin (optional): mounts the dataset fan-out data plane on the hub velo
+    // when dataset fan-out is selected. The publisher is already filled and finalized.
+    if let Some(publisher) = dataset_publisher {
+        hub.register(Box::new(DatasetHubPlugin::new(publisher)))
+            .context("mounting /dataset hub plugin")?;
+    }
 
     // Discovery plugin: the connect-by-endpoint anchor, advertising the mounted set.
     let plugins: Vec<String> = hub.prefixes().map(str::to_owned).collect();
@@ -2279,6 +2322,8 @@ mod tests {
             start_handle,
             endpoint.clone(),
             Some((landing.clone(), allowed)),
+            None,
+            None,
         )
         .await
         .expect("build hub");
