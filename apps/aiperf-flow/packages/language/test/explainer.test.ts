@@ -9,20 +9,18 @@ import {
   type TokenStream,
 } from "../src/grammar/explainer.js";
 
-// Mock TokenStream implementation for testing
+/** Mock TokenStream implementation for testing. */
 class MockTokenStream implements TokenStream {
   private tokens: string[] = [];
   private position = 0;
 
   constructor(input: string) {
-    // Tokenize while preserving quoted strings
     const tokens: string[] = [];
     let current = "";
     let inQuotes = false;
 
     for (let i = 0; i < input.length; i++) {
       const char = input[i];
-      const nextChar = input[i + 1];
 
       if (char === '"') {
         inQuotes = !inQuotes;
@@ -90,70 +88,148 @@ class MockTokenStream implements TokenStream {
   }
 }
 
-describe("Explainer Parser", () => {
-  it("parses basic explainer block", () => {
-    const code = `
-      explainer "test-deck" {
-        route: "/test"
-        topic: "intro"
-        eyebrowLabel: "Test"
-        startGateTitle: "Go?"
+const FULL_EXPLAINER = `
+  explainer "Rust Architecture" {
+    id: "rust-architecture"
+    route: "/rust-architecture"
+    topic: "architecture"
+    storagePrefix: "rust-arch-explainer"
+    classPrefix: "rust-arch"
+    eyebrowLabel: "RUST ARCHITECTURE"
+    startGateTitle: "Rust architecture walkthrough"
+    hub: {
+      title: "from scratch"
+      highlight: "Rust architecture"
+      description: "Narrated walkthrough of the native workspace."
+    }
 
-        slide "First Slide" {
-          eyebrow: "Intro"
-          title: "Welcome"
-          lede: "Getting started"
-          narration: "This is the first slide."
-          points: ["Point 1", "Point 2"]
-          caption: "Test slide"
-        }
+    slide "Product shell" {
+      eyebrow: "Product shell"
+      title: "One binary is both CLI and engine"
+      lede: "The product entry point."
+      narration: "AIPerf ships as one native aiperf binary."
+      term: { word: "aiperf-cli", meaning: "CLI and engine crate" }
+      points: ["One binary", "Native profile"]
+      caption: "Product shell overview"
+      render: @scene {
+        roots: []
+        timeline: []
       }
-    `;
+    }
+  }
+`;
 
-    const tokens = new MockTokenStream(code);
-    const ast = parseExplainerBlock(tokens);
-
+describe("Explainer Parser", () => {
+  it("parses id from the id field", () => {
+    const ast = parseExplainerBlock(new MockTokenStream(FULL_EXPLAINER));
     expect(ast.type).toBe("explainer");
-    expect(ast.id).toBe("test-deck");
-    expect(ast.metadata.route).toBe("/test");
-    expect(ast.metadata.topic).toBe("intro");
-    expect(ast.slides).toHaveLength(1);
-    expect(ast.slides[0].narration).toBe("This is the first slide.");
+    expect(ast.id).toBe("rust-architecture");
   });
 
-  it("parses slide with term definition", () => {
-    const code = `
-      explainer "test-term" {
-        route: "/test"
-        topic: "intro"
-        eyebrowLabel: "Test"
-        startGateTitle: "Go?"
+  it("parses route", () => {
+    const ast = parseExplainerBlock(new MockTokenStream(FULL_EXPLAINER));
+    expect(ast.metadata.route).toBe("/rust-architecture");
+  });
 
-        slide "With Term" {
-          eyebrow: "Def"
-          title: "Term Slide"
-          lede: "Learning"
-          narration: "Here we learn a term."
-          term: { word: "Concept", meaning: "An idea" }
+  it("parses topic", () => {
+    const ast = parseExplainerBlock(new MockTokenStream(FULL_EXPLAINER));
+    expect(ast.metadata.topic).toBe("architecture");
+  });
+
+  it("parses storagePrefix", () => {
+    const ast = parseExplainerBlock(new MockTokenStream(FULL_EXPLAINER));
+    expect(ast.metadata.storagePrefix).toBe("rust-arch-explainer");
+  });
+
+  it("parses classPrefix", () => {
+    const ast = parseExplainerBlock(new MockTokenStream(FULL_EXPLAINER));
+    expect(ast.metadata.classPrefix).toBe("rust-arch");
+  });
+
+  it("parses eyebrowLabel", () => {
+    const ast = parseExplainerBlock(new MockTokenStream(FULL_EXPLAINER));
+    expect(ast.metadata.eyebrowLabel).toBe("RUST ARCHITECTURE");
+  });
+
+  it("parses startGateTitle", () => {
+    const ast = parseExplainerBlock(new MockTokenStream(FULL_EXPLAINER));
+    expect(ast.metadata.startGateTitle).toBe("Rust architecture walkthrough");
+  });
+
+  it("parses hub title, highlight, and description", () => {
+    const ast = parseExplainerBlock(new MockTokenStream(FULL_EXPLAINER));
+    expect(ast.metadata.hub).toEqual({
+      title: "from scratch",
+      highlight: "Rust architecture",
+      description: "Narrated walkthrough of the native workspace.",
+    });
+  });
+
+  it("parses slide text fields", () => {
+    const ast = parseExplainerBlock(new MockTokenStream(FULL_EXPLAINER));
+    expect(ast.slides).toHaveLength(1);
+    const slide = ast.slides[0];
+    expect(slide.eyebrow).toBe("Product shell");
+    expect(slide.title).toBe("One binary is both CLI and engine");
+    expect(slide.lede).toBe("The product entry point.");
+    expect(slide.narration).toBe("AIPerf ships as one native aiperf binary.");
+    expect(slide.term).toEqual({
+      word: "aiperf-cli",
+      meaning: "CLI and engine crate",
+    });
+    expect(slide.points).toEqual(["One binary", "Native profile"]);
+    expect(slide.caption).toBe("Product shell overview");
+  });
+
+  it("parses render:@scene into sceneIr", () => {
+    const ast = parseExplainerBlock(new MockTokenStream(FULL_EXPLAINER));
+    expect(ast.slides[0].sceneIr).toEqual({ type: "scene" });
+  });
+
+  it("falls back to header string when id field is absent", () => {
+    const code = `
+      explainer "legacy-deck-id" {
+        route: "/legacy"
+        topic: "intro"
+        storagePrefix: "legacy-store"
+        classPrefix: "legacy"
+        eyebrowLabel: "Legacy"
+        startGateTitle: "Start"
+        hub: {
+          title: "hub"
+          highlight: "hi"
+          description: "desc"
+        }
+
+        slide "Only" {
+          eyebrow: "E"
+          title: "T"
+          lede: "L"
+          narration: "Narration text."
           points: []
-          caption: "Glossary"
+          caption: "C"
         }
       }
     `;
-
-    const tokens = new MockTokenStream(code);
-    const ast = parseExplainerBlock(tokens);
-
-    expect(ast.slides[0].term).toEqual({ word: "Concept", meaning: "An idea" });
+    const ast = parseExplainerBlock(new MockTokenStream(code));
+    expect(ast.id).toBe("legacy-deck-id");
   });
 
   it("rejects missing narration", () => {
     const code = `
       explainer "bad" {
+        id: "bad"
         route: "/bad"
         topic: "intro"
+        storagePrefix: "bad-store"
+        classPrefix: "bad"
         eyebrowLabel: "Bad"
         startGateTitle: "?"
+        hub: {
+          title: "t"
+          highlight: "h"
+          description: "d"
+        }
 
         slide "No Narration" {
           eyebrow: "Bad"
@@ -165,9 +241,66 @@ describe("Explainer Parser", () => {
       }
     `;
 
-    const tokens = new MockTokenStream(code);
-    expect(() => parseExplainerBlock(tokens)).toThrow(
+    expect(() => parseExplainerBlock(new MockTokenStream(code))).toThrow(
       /narration.*required/i,
+    );
+  });
+
+  it("rejects missing hub", () => {
+    const code = `
+      explainer "no-hub" {
+        id: "no-hub"
+        route: "/no-hub"
+        topic: "intro"
+        storagePrefix: "x"
+        classPrefix: "x"
+        eyebrowLabel: "X"
+        startGateTitle: "X"
+
+        slide "S" {
+          eyebrow: "E"
+          title: "T"
+          lede: "L"
+          narration: "N"
+          points: []
+          caption: "C"
+        }
+      }
+    `;
+
+    expect(() => parseExplainerBlock(new MockTokenStream(code))).toThrow(
+      /hub.*required/i,
+    );
+  });
+
+  it("rejects missing storagePrefix", () => {
+    const code = `
+      explainer "missing-prefix" {
+        id: "missing-prefix"
+        route: "/missing"
+        topic: "intro"
+        classPrefix: "x"
+        eyebrowLabel: "X"
+        startGateTitle: "X"
+        hub: {
+          title: "t"
+          highlight: "h"
+          description: "d"
+        }
+
+        slide "S" {
+          eyebrow: "E"
+          title: "T"
+          lede: "L"
+          narration: "N"
+          points: []
+          caption: "C"
+        }
+      }
+    `;
+
+    expect(() => parseExplainerBlock(new MockTokenStream(code))).toThrow(
+      /storagePrefix.*required/i,
     );
   });
 });

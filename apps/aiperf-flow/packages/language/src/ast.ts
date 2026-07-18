@@ -267,14 +267,23 @@ export type SlideAst = AstNode<"slide"> &
     sceneIr?: SceneAst;
   }>;
 
+export type ExplainerHubAst = Readonly<{
+  title: string;
+  highlight: string;
+  description: string;
+}>;
+
 export type ExplainerAst = AstNode<"explainer"> &
   Readonly<{
     id: string;
     metadata: Readonly<{
       route: string;
       topic: string;
+      storagePrefix: string;
+      classPrefix: string;
       eyebrowLabel: string;
       startGateTitle: string;
+      hub: ExplainerHubAst;
     }>;
     slides: readonly SlideAst[];
   }>;

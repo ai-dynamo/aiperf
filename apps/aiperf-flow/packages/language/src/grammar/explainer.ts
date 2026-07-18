@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SlideAst } from "../ast.js";
+import type { ExplainerHubAst, SlideAst } from "../ast.js";
 
 export interface ExplainerAstCompat {
   type: "explainer";
@@ -9,8 +9,11 @@ export interface ExplainerAstCompat {
   metadata: {
     route: string;
     topic: string;
+    storagePrefix: string;
+    classPrefix: string;
     eyebrowLabel: string;
     startGateTitle: string;
+    hub: ExplainerHubAst;
   };
   slides: SlideAst[];
 }
@@ -26,7 +29,7 @@ export interface SlideAstCompat {
   sceneIr?: any;
 }
 
-// Simplified TokenStream-like interface for validation/parsing
+/** Simplified TokenStream-like interface for validation/parsing. */
 export interface TokenStream {
   expect(keyword: string): void;
   expectString(): string;
@@ -35,15 +38,21 @@ export interface TokenStream {
   advance(): void;
 }
 
+type ExplainerMetadata = ExplainerAstCompat["metadata"] & { id?: string };
+
 /**
  * Parses an explainer block from token stream.
  *
  * Expected format:
- * explainer "deck-id" {
+ * explainer "Display Name" {
+ *   id: "deck-id"
  *   route: "/path"
  *   topic: "topic"
+ *   storagePrefix: "prefix"
+ *   classPrefix: "class"
  *   eyebrowLabel: "Label"
  *   startGateTitle: "Title"
+ *   hub: { title: "...", highlight: "...", description: "..." }
  *
  *   slide "title" {
  *     eyebrow: "eyebrow"
@@ -52,40 +61,104 @@ export interface TokenStream {
  *     narration: "narration text"
  *     points: ["p1", "p2"]
  *     caption: "caption"
+ *     render: @scene { ... }
  *   }
  * }
  */
 export function parseExplainerBlock(tokens: TokenStream): ExplainerAstCompat {
-  // Expect: explainer STRING { metadata, slides }
   tokens.expect("explainer");
-  const id = tokens.expectString();
+  const headerName = tokens.expectString();
   tokens.expect("{");
 
-  const metadata = parseExplainerMetadata(tokens);
+  const raw = parseExplainerMetadata(tokens);
   const slides = parseSlides(tokens);
 
   tokens.expect("}");
 
+  const id = raw.id ?? headerName;
+  const { id: _idField, ...metadataFields } = raw;
+  void _idField;
+  const metadata = requireExplainerMetadata(metadataFields);
+
   return { type: "explainer", id, metadata, slides };
 }
 
-function parseExplainerMetadata(
-  tokens: TokenStream,
-): {
-  route: string;
-  topic: string;
-  eyebrowLabel: string;
-  startGateTitle: string;
-} {
-  // Parse: route, topic, eyebrowLabel, startGateTitle
-  const meta: any = {};
+function requireExplainerMetadata(
+  meta: Partial<ExplainerAstCompat["metadata"]>,
+): ExplainerAstCompat["metadata"] {
+  const required = [
+    "route",
+    "topic",
+    "storagePrefix",
+    "classPrefix",
+    "eyebrowLabel",
+    "startGateTitle",
+  ] as const;
+
+  for (const key of required) {
+    if (typeof meta[key] !== "string" || meta[key] === "") {
+      throw new Error(`explainer metadata field "${key}" is required`);
+    }
+  }
+
+  if (!meta.hub) {
+    throw new Error('explainer metadata field "hub" is required');
+  }
+
+  return {
+    route: meta.route!,
+    topic: meta.topic!,
+    storagePrefix: meta.storagePrefix!,
+    classPrefix: meta.classPrefix!,
+    eyebrowLabel: meta.eyebrowLabel!,
+    startGateTitle: meta.startGateTitle!,
+    hub: meta.hub,
+  };
+}
+
+function parseExplainerMetadata(tokens: TokenStream): ExplainerMetadata {
+  const meta: Partial<ExplainerMetadata> = {};
+
   while (!tokens.match("}") && !tokens.match("slide")) {
     const key = tokens.expectIdentifier();
     tokens.expect(":");
-    meta[key] = tokens.expectString();
+
+    if (key === "hub") {
+      meta.hub = parseHubBlock(tokens);
+    } else {
+      (meta as Record<string, string>)[key] = tokens.expectString();
+    }
+
     if (tokens.match(",")) tokens.advance();
   }
-  return meta;
+
+  return meta as ExplainerMetadata;
+}
+
+function parseHubBlock(tokens: TokenStream): ExplainerHubAst {
+  tokens.expect("{");
+  const hub: Partial<ExplainerHubAst> = {};
+
+  while (!tokens.match("}")) {
+    const key = tokens.expectIdentifier();
+    tokens.expect(":");
+    (hub as Record<string, string>)[key] = tokens.expectString();
+    if (tokens.match(",")) tokens.advance();
+  }
+
+  tokens.expect("}");
+
+  for (const key of ["title", "highlight", "description"] as const) {
+    if (typeof hub[key] !== "string" || hub[key] === "") {
+      throw new Error(`hub field "${key}" is required`);
+    }
+  }
+
+  return {
+    title: hub.title!,
+    highlight: hub.highlight!,
+    description: hub.description!,
+  };
 }
 
 function parseSlides(tokens: TokenStream): SlideAst[] {
@@ -97,18 +170,16 @@ function parseSlides(tokens: TokenStream): SlideAst[] {
 }
 
 function parseSlideBlock(tokens: TokenStream): SlideAst {
-  // Expect: slide STRING { fields... }
   tokens.expect("slide");
-  const titleString = tokens.expectString(); // slide title
+  const titleString = tokens.expectString();
   tokens.expect("{");
 
-  const slide: any = { title: titleString };
+  const slide: Record<string, unknown> = { title: titleString };
   while (!tokens.match("}")) {
     const key = tokens.expectIdentifier();
     tokens.expect(":");
 
     if (key === "term") {
-      // Nested object
       tokens.expect("{");
       const term = { word: "", meaning: "" };
       while (!tokens.match("}")) {
@@ -120,7 +191,6 @@ function parseSlideBlock(tokens: TokenStream): SlideAst {
       tokens.expect("}");
       slide.term = term;
     } else if (key === "points") {
-      // Array of strings
       tokens.expect("[");
       const points: string[] = [];
       while (!tokens.match("]")) {
@@ -130,10 +200,9 @@ function parseSlideBlock(tokens: TokenStream): SlideAst {
       tokens.expect("]");
       slide.points = points;
     } else if (key === "render") {
-      // @scene block
       tokens.expect("@");
       tokens.expect("scene");
-      slide.sceneIr = parseSceneBlock(tokens); // delegate to scene parser
+      slide.sceneIr = parseSceneBlock(tokens);
     } else {
       slide[key] = tokens.expectString();
     }
@@ -142,16 +211,27 @@ function parseSlideBlock(tokens: TokenStream): SlideAst {
   }
   tokens.expect("}");
 
-  // Validate narration is non-empty
-  if (!slide.narration || slide.narration.trim() === "") {
+  if (!slide.narration || String(slide.narration).trim() === "") {
     throw new Error("narration field is required and cannot be empty");
   }
 
   return slide as SlideAst;
 }
 
-function parseSceneBlock(_tokens: TokenStream): any {
-  // Delegate to existing scene parser
-  // For now, return a placeholder; will integrate with scene parser
+function parseSceneBlock(tokens: TokenStream): any {
+  // Consume `@scene { ... }` body; scene IR lowering integrates later.
+  tokens.expect("{");
+  let depth = 1;
+  while (depth > 0) {
+    if (tokens.match("{")) {
+      depth++;
+      tokens.advance();
+    } else if (tokens.match("}")) {
+      depth--;
+      tokens.advance();
+    } else {
+      tokens.advance();
+    }
+  }
   return { type: "scene" };
 }
