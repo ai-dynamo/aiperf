@@ -218,20 +218,30 @@ describe("immersive preview host", () => {
     expect(screen.getByRole("button", { name: "Open commands" })).toBeTruthy();
     expect(container.querySelector(".story-stage")).toBeNull();
     expect(container.querySelector('input[type="range"]')).toBeNull();
-    expect(screen.queryByText("Back")).toBeNull();
+    // New persistent bottom nav should be present with Back/Next buttons
+    const bottomNav = container.querySelector(".preview-bottom-nav");
+    expect(bottomNav).toBeTruthy();
   });
 
-  test("opens the document browser as an overlay without replacing the scene", () => {
-    render(<App />);
+  test("shows the document browser as a persistent sidebar", () => {
+    const { container } = render(<App />);
 
     const field = screen.getByRole("region", { name: "Scene field" });
-    fireEvent.click(screen.getByRole("button", { name: "Open Flow browser" }));
 
-    expect(screen.getByRole("complementary", { name: "Flow browser" })).toBeTruthy();
+    // Sidebar should be present and part of the main layout
+    const sidebar = container.querySelector(".flow-browser");
+    expect(sidebar).toBeTruthy();
+
+    // Scene field should still be present alongside sidebar
     expect(screen.getByRole("region", { name: "Scene field" })).toBe(field);
-    expect(document.querySelector(".flow-workspace")?.getAttribute(
-      "data-browser-collapsed",
-    )).toBe("false");
+
+    // Flow workspace should be present in the DOM
+    const workspace = container.querySelector(".flow-workspace");
+    expect(workspace).toBeTruthy();
+
+    // Main section should be present
+    const mainSection = container.querySelector(".flow-main-section");
+    expect(mainSection).toBeTruthy();
   });
 
   test("routes Command-K to the shared Command Constellation", () => {

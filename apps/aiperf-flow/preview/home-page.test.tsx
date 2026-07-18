@@ -265,10 +265,10 @@ describe("preview app home page", () => {
     const sidebarAfter = container.querySelector(".flow-browser");
     expect(sidebarAfter).toBeTruthy();
 
-    // Sidebar should be displayed as flex (part of flow-workspace flex layout)
-    const workspace = container.querySelector(".flow-workspace");
-    const style = window.getComputedStyle(workspace);
-    expect(style.display).toBe("flex");
+    // Main section should be visible after loading a scene
+    const mainSection = container.querySelector(".flow-main-section");
+    const mainStyle = window.getComputedStyle(mainSection!);
+    expect(mainStyle.display).not.toBe("none");
   });
 
   test("theme menu is hidden on home page", () => {

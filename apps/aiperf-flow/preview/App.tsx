@@ -31,8 +31,10 @@ function text(value: unknown, fallback = ""): string {
 }
 
 type Theme = "systems-chalk" | "legacy" | "core";
+type AudioConsent = "yes" | "no" | "unset";
 
 const THEME_STORAGE_KEY = "aiperf-flow-theme";
+const AUDIO_CONSENT_KEY = "aiperf-flow-audio-consent";
 
 function loadThemeFromStorage(): Theme {
   if (typeof localStorage === "undefined") {
@@ -55,6 +57,32 @@ function saveThemeToStorage(theme: Theme): void {
   }
   try {
     localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function loadAudioConsentFromStorage(): AudioConsent {
+  if (typeof localStorage === "undefined") {
+    return "unset";
+  }
+  try {
+    const stored = localStorage.getItem(AUDIO_CONSENT_KEY);
+    if (stored === "yes" || stored === "no") {
+      return stored;
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return "unset";
+}
+
+function saveAudioConsentToStorage(consent: AudioConsent): void {
+  if (typeof localStorage === "undefined") {
+    return;
+  }
+  try {
+    localStorage.setItem(AUDIO_CONSENT_KEY, consent);
   } catch {
     // Ignore storage errors
   }
@@ -325,6 +353,10 @@ export function App() {
   );
   const [theme, setTheme] = useState<Theme>(() => loadThemeFromStorage());
   const [showThemeMenu, setShowThemeMenu] = useState(false);
+  const [audioConsent, setAudioConsent] = useState<AudioConsent>(() =>
+    loadAudioConsentFromStorage(),
+  );
+  const [hasLeftSite, setHasLeftSite] = useState(false);
   const flow = useMemo(() => {
     const base = workspace.flows[activeFlowId] ?? workspace.flow;
     const responsive = narrowLayout
@@ -375,6 +407,22 @@ export function App() {
   useEffect(() => {
     saveThemeToStorage(theme);
   }, [theme]);
+
+  useEffect(() => {
+    saveAudioConsentToStorage(audioConsent);
+  }, [audioConsent]);
+
+  useEffect(() => {
+    const handleVisibilityChange = (): void => {
+      if (document.hidden) {
+        setHasLeftSite(true);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
     if (!showThemeMenu) {
@@ -564,7 +612,6 @@ export function App() {
 
       <div
         className="flow-workspace"
-        style={{ display: showHome ? "none" : "flex" }}
       >
         <DocumentBrowser
           activeFlowId={activeFlowId}
@@ -609,7 +656,11 @@ export function App() {
               flow={flow}
               narratorBackend={narratorBackend}
               reducedMotion={reducedMotion}
-              requireAudioConsent
+              requireAudioConsent={audioConsent === "unset"}
+              onAudioConsentChange={(hasConsented) => {
+                setAudioConsent(hasConsented ? "yes" : "no");
+              }}
+              autoPlay={audioConsent === "yes"}
             />
           </main>
 
