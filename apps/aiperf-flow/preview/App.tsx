@@ -17,7 +17,9 @@ import type { KokoroNarratorSnapshot } from "../packages/runtime/src/narrative/k
 import {
   previewWorkspace,
   type PreviewWorkspace,
+  discoverScenesByFlow,
 } from "./fixture";
+import { HomePage } from "./home-page";
 import {
   createPreviewNarratorBackend,
   prewarmPreviewNarrator,
@@ -218,7 +220,9 @@ function DocumentBrowser({
 /** Preview host: document browser overlay around shared {@link FlowApp}. */
 export function App() {
   const workspace = useMemo(() => previewWorkspace(), []);
+  const scenesByFlow = useMemo(() => discoverScenesByFlow(), []);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const [showHome, setShowHome] = useState(true);
   const [browserCollapsed, setBrowserCollapsed] = useState(true);
   const [activeFlowId, setActiveFlowId] = useState(
     workspace.navigation.active.flowId,
@@ -310,6 +314,11 @@ export function App() {
   function selectScene(flowId: string, sceneId: string): void {
     setActiveFlowId(flowId);
     setActiveSceneId(sceneId);
+    setShowHome(false);
+  }
+
+  function goHome(): void {
+    setShowHome(true);
   }
 
   function handleThemeChange(newTheme: Theme): void {
@@ -353,19 +362,35 @@ export function App() {
             className="flow-browser-trigger"
             onClick={() => setBrowserCollapsed((value) => !value)}
             type="button"
+            style={{ display: showHome ? "none" : "flex" }}
           >
             <span />
             <span />
             <span />
           </button>
-          <a className="preview-study" href="/" aria-label="AIPerf Flow home">
+          <button
+            className="preview-study"
+            aria-label="AIPerf Flow home"
+            onClick={goHome}
+            type="button"
+            style={{
+              background: "none",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
             <span>
               <small>AIPerf Flow · Scene study 02</small>
               <h1>From one request to the whole system</h1>
             </span>
-          </a>
+          </button>
         </div>
-        <div className="preview-theme-cluster">
+        <div
+          className="preview-theme-cluster"
+          style={{ display: showHome ? "none" : "flex" }}
+        >
           {voiceStatus === null ? null : (
             <p className="preview-status" aria-live="polite">
               {voiceStatus}
@@ -466,6 +491,7 @@ export function App() {
       <div
         className="flow-workspace"
         data-browser-collapsed={browserCollapsed ? "true" : "false"}
+        style={{ display: showHome ? "none" : "flex" }}
       >
         <DocumentBrowser
           activeFlowId={activeFlowId}
@@ -508,7 +534,14 @@ export function App() {
           />
         </main>
       </div>
-      {activeSceneId === "request-investigation" ? (
+
+      {showHome && (
+        <HomePage
+          scenesByFlow={scenesByFlow}
+          onSelectScene={selectScene}
+        />
+      )}
+      {!showHome && activeSceneId === "request-investigation" ? (
         <footer className="preview-legend">
           <div aria-label="Semantic legend" className="preview-legend-items">
             <span data-legend="cause">active cause</span>

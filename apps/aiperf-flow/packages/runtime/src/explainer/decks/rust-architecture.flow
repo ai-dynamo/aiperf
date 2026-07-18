@@ -1,0 +1,1356 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+explainer "Rust Architecture" {
+  id: "rust-architecture"
+  route: "/explainers/rust-architecture"
+  topic: "architecture"
+
+  hub: {
+    title: "Rust Architecture"
+    highlight: "Explore AIPerf's native execution engine and composition model"
+    description: "Deep dive into the Rust workspace, module organization, execution model, and scaling patterns that power AIPerf benchmarks."
+  }
+
+  eyebrowLabel: "Architecture"
+  startGateTitle: "Ready to explore AIPerf's Rust architecture?"
+
+  slide "Product shell" {
+    eyebrow: "Product shell"
+    title: "One binary is both CLI and engine"
+    lede: "AIPerf ships as a single native `aiperf` executable from crate `aiperf-cli`. There is no separate runner process—the same binary parses public commands and re-executes itself for benchmark runs."
+
+    narration: "AIPerf ships as one native aiperf binary. That same executable is both the public command line and the hidden execution engine."
+
+    term: {
+      word: "aiperf-cli"
+      meaning: "The product entry crate: public commands, Config v2 loading, and self-spawned execution over stdio."
+    }
+
+    points: [
+      "`rust/cli` builds the `aiperf` binary.",
+      "Global allocator is mimalloc on the hot path.",
+      "Internal modes are intercepted before normal CLI parsing."
+    ]
+
+    caption: "One executable, two hats: operator CLI and execution child."
+
+    render: @scene {
+      roots: [
+        {
+          id: "product-shell-box"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 200 }
+          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+          children: [
+            {
+              id: "binary-label"
+              capability: "core.text"
+              text: "aiperf binary"
+              layout: { x: 60, y: 60, width: 380, height: 40 }
+              style: { fontSize: 20, fontWeight: "bold", fill: @theme.ink.primary }
+            },
+            {
+              id: "cli-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 110, width: 160, height: 60 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "cli-text"
+                  capability: "core.text"
+                  text: "CLI Shell"
+                  layout: { x: 70, y: 125, width: 140, height: 30 }
+                  style: { fontSize: 14, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "engine-box"
+              capability: "core.rect"
+              layout: { x: 230, y: 110, width: 160, height: 60 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "engine-text"
+                  capability: "core.text"
+                  text: "Execution Engine"
+                  layout: { x: 240, y: 125, width: 140, height: 30 }
+                  style: { fontSize: 14, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Workspace map" {
+    eyebrow: "Workspace map"
+    title: "Six crates, one dependency direction"
+    lede: "The Rust workspace is intentionally small. Capability flows cli → runtime → loadgen-core. Mock server and e2e are separate targets; pyext is packaging-only."
+
+    narration: "The Rust workspace stays small. Capability flows from aiperf-cli into aiperf-runtime and then into loadgen-core."
+
+    term: {
+      word: "loadgen-core"
+      meaning: "Transport-neutral observer and sink vocabulary with no HTTP, gRPC, or engine dependencies."
+    }
+
+    points: [
+      "Members: loadgen-core, runtime, cli, mock-server, e2e, pyext.",
+      "aiperf-cli depends on aiperf-runtime with the engine feature.",
+      "aiperf-mock-server is a standalone benchmark target."
+    ]
+
+    caption: "cli → runtime → loadgen-core"
+
+    render: @scene {
+      roots: [
+        {
+          id: "workspace-diagram"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 250 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "loadgen-core-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 190, width: 140, height: 50 }
+              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "loadgen-text"
+                  capability: "core.text"
+                  text: "loadgen-core"
+                  layout: { x: 70, y: 205, width: 120, height: 20 }
+                  style: { fontSize: 12, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "runtime-box"
+              capability: "core.rect"
+              layout: { x: 210, y: 130, width: 140, height: 50 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "runtime-text"
+                  capability: "core.text"
+                  text: "aiperf-runtime"
+                  layout: { x: 220, y: 145, width: 120, height: 20 }
+                  style: { fontSize: 12, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "cli-box-wm"
+              capability: "core.rect"
+              layout: { x: 360, y: 70, width: 140, height: 50 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "cli-text-wm"
+                  capability: "core.text"
+                  text: "aiperf-cli"
+                  layout: { x: 370, y: 85, width: 120, height: 20 }
+                  style: { fontSize: 12, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "arrow1"
+              capability: "core.line"
+              from: { x: 280, y: 165 }
+              to: { x: 350, y: 95 }
+              style: { stroke: @theme.ink.secondary, strokeWidth: 2 }
+            },
+            {
+              id: "arrow2"
+              capability: "core.line"
+              from: { x: 210, y: 160 }
+              to: { x: 140, y: 195 }
+              style: { stroke: @theme.ink.secondary, strokeWidth: 2 }
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Startup order" {
+    eyebrow: "Startup order"
+    title: "Intercept internal modes, then dispatch"
+    lede: "Every process starts the same way: initialize logging, check for hidden execution flags like `--execute`, `--cell`, or `--aggregator`, and only then route public subcommands."
+
+    narration: "Startup always checks hidden execution modes first. Only after that does the process route public subcommands."
+
+    term: {
+      word: "execute_mode"
+      meaning: "Hidden argv surface that runs protocol-v2 children before clap ever sees a public command."
+    }
+
+    points: [
+      "`main.rs` calls `execute_mode::is_execution_mode`.",
+      "Internal handlers never return to public dispatch.",
+      "Everything else goes through `dispatch::run`."
+    ]
+
+    caption: "Hidden modes short-circuit; public commands fall through."
+
+    render: @scene {
+      roots: [
+        {
+          id: "startup-timeline"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 250 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "init-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 60, width: 380, height: 40 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "init-text"
+                  capability: "core.text"
+                  text: "1. Initialize logging"
+                  layout: { x: 70, y: 70, width: 360, height: 20 }
+                  style: { fontSize: 12, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "check-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 110, width: 380, height: 40 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "check-text"
+                  capability: "core.text"
+                  text: "2. Check hidden modes (--execute, --cell, --aggregator)"
+                  layout: { x: 70, y: 120, width: 360, height: 20 }
+                  style: { fontSize: 12, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "dispatch-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 160, width: 380, height: 40 }
+              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "dispatch-text"
+                  capability: "core.text"
+                  text: "3. Dispatch public commands"
+                  layout: { x: 70, y: 170, width: 360, height: 20 }
+                  style: { fontSize: 12, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Command surface" {
+    eyebrow: "Command surface"
+    title: "Native benchmark commands stay in Rust"
+    lede: "`profile`, `config`, cellular roles, `slurm run`, and several utility commands are native. Most operational tooling still delegates to the Python package unless built with pyo3-embed."
+
+    narration: "Core benchmark commands stay native in Rust. Most operational tooling still delegates to Python unless the build embeds it."
+
+    term: {
+      word: "delegate"
+      meaning: "Lean builds shell out to `python -m aiperf`; pyo3-embed runs the same entrypoint in-process."
+    }
+
+    points: [
+      "`dispatch.rs` matches the first argv token.",
+      "Unknown commands delegate to Python.",
+      "Feature gates select gRPC, cellular, dynosim, parquet, and embed modes."
+    ]
+
+    caption: "Benchmark hot path native; extended surface delegated."
+
+    render: @scene {
+      roots: [
+        {
+          id: "command-surface"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 250 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "native-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 60, width: 160, height: 180 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "native-title"
+                  capability: "core.text"
+                  text: "Native (Rust)"
+                  layout: { x: 70, y: 70, width: 140, height: 20 }
+                  style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "native-commands"
+                  capability: "core.text"
+                  text: "profile\nconfig\ncellular\nslurm"
+                  layout: { x: 70, y: 95, width: 140, height: 130 }
+                  style: { fontSize: 10, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "delegated-box"
+              capability: "core.rect"
+              layout: { x: 230, y: 60, width: 160, height: 180 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "delegated-title"
+                  capability: "core.text"
+                  text: "Delegated (Python)"
+                  layout: { x: 240, y: 70, width: 140, height: 20 }
+                  style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "delegated-commands"
+                  capability: "core.text"
+                  text: "Operational\ntooling"
+                  layout: { x: 240, y: 110, width: 140, height: 110 }
+                  style: { fontSize: 10, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Configuration" {
+    eyebrow: "Configuration"
+    title: "Config v2 resolves into BenchmarkRun"
+    lede: "`aiperf profile --config` reads YAML, expands env vars and Jinja, applies CLI overrides, and materializes a strict `BenchmarkRun` object—the wire payload for execution."
+
+    narration: "Profile reads Config v2, expands it, and resolves a strict BenchmarkRun object that describes the whole benchmark."
+
+    term: {
+      word: "BenchmarkRun"
+      meaning: "The authored protocol-v2 request describing workload, transport, endpoints, artifacts, and runtime facts."
+    }
+
+    points: [
+      "`yaml.rs` handles substitution and alias normalization.",
+      "`load.rs` and `model/` build the typed run object.",
+      "`config init|validate|expand` are native helpers."
+    ]
+
+    caption: "YAML in → validated BenchmarkRun out."
+
+    render: @scene {
+      roots: [
+        {
+          id: "config-pipeline"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 200 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "yaml-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 70, width: 80, height: 50 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "yaml-text"
+                  capability: "core.text"
+                  text: "YAML"
+                  layout: { x: 65, y: 85, width: 70, height: 20 }
+                  style: { fontSize: 12, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "expand-box"
+              capability: "core.rect"
+              layout: { x: 160, y: 70, width: 80, height: 50 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "expand-text"
+                  capability: "core.text"
+                  text: "Expand"
+                  layout: { x: 165, y: 85, width: 70, height: 20 }
+                  style: { fontSize: 12, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "validate-box"
+              capability: "core.rect"
+              layout: { x: 260, y: 70, width: 80, height: 50 }
+              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "validate-text"
+                  capability: "core.text"
+                  text: "Validate"
+                  layout: { x: 265, y: 85, width: 70, height: 20 }
+                  style: { fontSize: 12, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "result-box"
+              capability: "core.rect"
+              layout: { x: 360, y: 70, width: 80, height: 50 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "result-text"
+                  capability: "core.text"
+                  text: "BenchmarkRun"
+                  layout: { x: 365, y: 80, width: 70, height: 30 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Self execution" {
+    eyebrow: "Self execution"
+    title: "profile spawns aiperf --execute"
+    lede: "Each run is a fresh child of the same binary. Parent writes JSON to stdin; child returns one terminal JSONL envelope on stdout while stderr carries diagnostics."
+
+    narration: "Each profile run spawns a fresh child of the same binary with aiperf execute over stdio."
+
+    term: {
+      word: "stdio seam"
+      meaning: "The deliberate parent/child boundary that keeps operator UX separate from execution isolation."
+    }
+
+    points: [
+      "`execute::run_once` spawns `current_exe()` with hidden flags.",
+      "Stdout stays reserved for protocol traffic.",
+      "Panics in the child become typed failure envelopes."
+    ]
+
+    caption: "Same binary, new process, protocol on stdio."
+
+    render: @scene {
+      roots: [
+        {
+          id: "stdio-diagram"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 200 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "parent-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 60, width: 160, height: 80 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "parent-text"
+                  capability: "core.text"
+                  text: "Parent Process"
+                  layout: { x: 70, y: 80, width: 140, height: 20 }
+                  style: { fontSize: 12, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "arrow-down"
+              capability: "core.line"
+              from: { x: 250, y: 100 }
+              to: { x: 250, y: 120 }
+              style: { stroke: @theme.ink.secondary, strokeWidth: 2 }
+            },
+            {
+              id: "child-box"
+              capability: "core.rect"
+              layout: { x: 170, y: 130, width: 160, height: 80 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "child-text"
+                  capability: "core.text"
+                  text: "Child Process\n(--execute)"
+                  layout: { x: 180, y: 155, width: 140, height: 30 }
+                  style: { fontSize: 12, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Wire contract" {
+    eyebrow: "Wire contract"
+    title: "Protocol v2 wraps the bare run"
+    lede: "The child accepts protocol version 2 only. It composes a stock `Application` once, then `handle_v2` validates, prepares, executes, and persists results."
+
+    narration: "Protocol version two wraps the run, composes Application once, and returns one terminal envelope."
+
+    term: {
+      word: "Application"
+      meaning: "Frozen runtime composition: registry, coordinator, and factories selected at bootstrap."
+    }
+
+    points: [
+      "`protocol_v2.rs` defines strict authored types.",
+      "Unknown fields fail closed at serde boundaries.",
+      "Factory-owned config stays opaque until registry decode."
+    ]
+
+    caption: "Envelope v2 in → terminal envelope out."
+
+    render: @scene {
+      roots: [
+        {
+          id: "protocol-diagram"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 200 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "input-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 70, width: 100, height: 60 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "input-text"
+                  capability: "core.text"
+                  text: "Protocol v2 In"
+                  layout: { x: 65, y: 90, width: 90, height: 20 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "validate-box-p"
+              capability: "core.rect"
+              layout: { x: 180, y: 70, width: 70, height: 60 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "validate-text-p"
+                  capability: "core.text"
+                  text: "Validate"
+                  layout: { x: 185, y: 95, width: 60, height: 20 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "execute-box-p"
+              capability: "core.rect"
+              layout: { x: 270, y: 70, width: 70, height: 60 }
+              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "execute-text-p"
+                  capability: "core.text"
+                  text: "Execute"
+                  layout: { x: 275, y: 95, width: 60, height: 20 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "output-box"
+              capability: "core.rect"
+              layout: { x: 360, y: 70, width: 90, height: 60 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "output-text"
+                  capability: "core.text"
+                  text: "Terminal Out"
+                  layout: { x: 365, y: 90, width: 80, height: 20 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Bootstrap" {
+    eyebrow: "Bootstrap"
+    title: "AIPerfRegistry freezes capabilities"
+    lede: "At startup one registry is built transactionally from explicit extensions: loaders, samplers, endpoints, transports, workloads, exporters, and actuators. There is no runtime plugin scanning."
+
+    narration: "At bootstrap, AIPerfRegistry freezes loaders, samplers, endpoints, transports, workloads, and exporters."
+
+    term: {
+      word: "AIPerfExtension"
+      meaning: "Compile-time registration hook that adds implementations into the shared registry during Application construction."
+    }
+
+    points: [
+      "Built-ins register HTTP, gRPC, dry_run, dynosim when features are on.",
+      "Duplicate identifiers are rejected.",
+      "Unknown transport or workload IDs fail closed."
+    ]
+
+    caption: "Capabilities are frozen before the first request."
+
+    render: @scene {
+      roots: [
+        {
+          id: "registry-diagram"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 250 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "registry-box"
+              capability: "core.rect"
+              layout: { x: 100, y: 60, width: 300, height: 200 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "registry-title"
+                  capability: "core.text"
+                  text: "AIPerfRegistry"
+                  layout: { x: 110, y: 70, width: 280, height: 20 }
+                  style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "registry-contents"
+                  capability: "core.text"
+                  text: "Loaders • Samplers\nEndpoints • Transports\nWorkloads • Exporters"
+                  layout: { x: 110, y: 100, width: 280, height: 140 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Composition root" {
+    eyebrow: "Composition root"
+    title: "Coordinator validates, prepares, executes, persists"
+    lede: "`Coordinator::handle` is the orchestration spine: validate envelope and endpoint profiles, prepare dataset and sidecars, execute the selected program shape, write `native-v2.json`, then run exporters best-effort."
+
+    narration: "Coordinator is the composition root: validate, prepare, execute, persist native-v2.json, then run exporters."
+
+    term: {
+      word: "Coordinator"
+      meaning: "Engine composition root that owns validate → prepare → execute → persist for a single BenchmarkRun."
+    }
+
+    points: [
+      "Sidecar collectors start only on the primary cell when needed.",
+      "Exporter failures are logged, not run-fatal.",
+      "Cellular and graph runs branch inside the same coordinator."
+    ]
+
+    caption: "One coordinator owns the whole run lifecycle."
+
+    render: @scene {
+      roots: [
+        {
+          id: "coordinator-flow"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 200 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "coord-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 60, width: 380, height: 170 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "coord-title"
+                  capability: "core.text"
+                  text: "Coordinator::handle"
+                  layout: { x: 70, y: 70, width: 360, height: 20 }
+                  style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "coord-steps"
+                  capability: "core.text"
+                  text: "1. Validate\n2. Prepare\n3. Execute\n4. Persist native-v2.json\n5. Run exporters"
+                  layout: { x: 70, y: 100, width: 360, height: 120 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Time seam" {
+    eyebrow: "Time seam"
+    title: "Every schedule uses Clock"
+    lede: "Hot paths never call wall-clock APIs directly. `RealClock` drives online HTTP and gRPC; `SimClock` drives dynosim and graph co-simulation with deterministic ordering."
+
+    narration: "All timing goes through Clock. RealClock drives online traffic; SimClock drives deterministic simulation."
+
+    term: {
+      word: "Clock"
+      meaning: "Injectable time source used for scheduling, measurement gates, backoff, and simulation driving."
+    }
+
+    points: [
+      "Measurement must not use `Instant::now` on hot paths.",
+      "Virtual clocks expose integer-nanosecond time.",
+      "Transport retry backoff is clock-driven too."
+    ]
+
+    caption: "Real time online, virtual time in simulation."
+
+    render: @scene {
+      roots: [
+        {
+          id: "clock-diagram"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 200 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "realclock-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 70, width: 160, height: 120 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "realclock-title"
+                  capability: "core.text"
+                  text: "RealClock"
+                  layout: { x: 70, y: 80, width: 140, height: 20 }
+                  style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "realclock-text"
+                  capability: "core.text"
+                  text: "Online HTTP/gRPC"
+                  layout: { x: 70, y: 110, width: 140, height: 70 }
+                  style: { fontSize: 10, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "simclock-box"
+              capability: "core.rect"
+              layout: { x: 230, y: 70, width: 160, height: 120 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "simclock-title"
+                  capability: "core.text"
+                  text: "SimClock"
+                  layout: { x: 240, y: 80, width: 140, height: 20 }
+                  style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "simclock-text"
+                  capability: "core.text"
+                  text: "Deterministic simulation"
+                  layout: { x: 240, y: 110, width: 140, height: 70 }
+                  style: { fontSize: 10, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Inputs" {
+    eyebrow: "Inputs"
+    title: "Dataset flows load → sample → materialize"
+    lede: "Loaders ingest files and traces, conversations intern into a BLAKE3-addressed segment pool, samplers choose turns, and materializers build wire payloads per endpoint dialect."
+
+    narration: "Datasets load, sample, and materialize into endpoint-ready requests through one shared substrate."
+
+    term: {
+      word: "Segment pool"
+      meaning: "Content-addressed conversation storage shared read-only across worker threads via Arc."
+    }
+
+    points: [
+      "LoaderRegistry and SamplerRegistry live in the frozen registry.",
+      "Synthetic, JSONL, graph, and trace formats share one substrate.",
+      "Prompt materialization stays endpoint-aware."
+    ]
+
+    caption: "Inputs become endpoint-ready requests once, then reuse handles."
+
+    render: @scene {
+      roots: [
+        {
+          id: "input-pipeline"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 200 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "load-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 70, width: 85, height: 50 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "load-text"
+                  capability: "core.text"
+                  text: "Load"
+                  layout: { x: 65, y: 85, width: 75, height: 20 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "pool-box"
+              capability: "core.rect"
+              layout: { x: 160, y: 70, width: 85, height: 50 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "pool-text"
+                  capability: "core.text"
+                  text: "Segment Pool"
+                  layout: { x: 165, y: 85, width: 75, height: 20 }
+                  style: { fontSize: 10, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "sample-box"
+              capability: "core.rect"
+              layout: { x: 260, y: 70, width: 85, height: 50 }
+              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "sample-text"
+                  capability: "core.text"
+                  text: "Sample"
+                  layout: { x: 265, y: 85, width: 75, height: 20 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "material-box"
+              capability: "core.rect"
+              layout: { x: 360, y: 70, width: 85, height: 50 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "material-text"
+                  capability: "core.text"
+                  text: "Materialize"
+                  layout: { x: 365, y: 80, width: 75, height: 30 }
+                  style: { fontSize: 10, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Work generation" {
+    eyebrow: "Work generation"
+    title: "Workloads and phases drive turns"
+    lede: "Scheduled workloads—request rate, concurrency, user-centric, fixed schedule—emit turn schedules. Phase runtime applies warmup, profiling, ramp, drain, and cancellation policy before transport ever sends."
+
+    narration: "Workloads and phase runtime decide when turns fire. Transports only send and observe the wire path."
+
+    term: {
+      word: "phase_runtime"
+      meaning: "Shared lifecycle orchestration that connects schedulers to turn dispatch and terminal drain behavior."
+    }
+
+    points: [
+      "Graph programs use the separate DAG executor.",
+      "`scheduled.rs` bridges Workload to TurnDispatcher.",
+      "Cancellation and grace propagate through shared phase code."
+    ]
+
+    caption: "Scheduling decides when; transport decides how to send."
+
+    render: @scene {
+      roots: [
+        {
+          id: "workload-diagram"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 200 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "workload-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 70, width: 140, height: 110 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "workload-title"
+                  capability: "core.text"
+                  text: "Workload"
+                  layout: { x: 70, y: 80, width: 120, height: 20 }
+                  style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "workload-types"
+                  capability: "core.text"
+                  text: "Request-rate\nConcurrency\nUser-centric"
+                  layout: { x: 70, y: 110, width: 120, height: 60 }
+                  style: { fontSize: 10, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "phase-box"
+              capability: "core.rect"
+              layout: { x: 220, y: 70, width: 140, height: 110 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "phase-title"
+                  capability: "core.text"
+                  text: "Phase Runtime"
+                  layout: { x: 230, y: 80, width: 120, height: 20 }
+                  style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "phase-types"
+                  capability: "core.text"
+                  text: "Warmup\nRamp\nDrain"
+                  layout: { x: 230, y: 110, width: 120, height: 60 }
+                  style: { fontSize: 10, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Observation seam" {
+    eyebrow: "Observation seam"
+    title: "loadgen-core keeps transport neutral"
+    lede: "Transports implement `RequestSink`; observers receive arrival, admission, token, usage, and terminal events. TTFT is the first token observation—there is no separate first-token event."
+
+    narration: "loadgen-core defines the neutral observer seam. Transports implement RequestSink; measurement stays shared."
+
+    term: {
+      word: "RequestObserver"
+      meaning: "Worker-local callback surface with no Send bound, allowing LocalSet-friendly state."
+    }
+
+    points: [
+      "HTTP and gRPC share reduction in `transport::reduce`.",
+      "Measurement accumulates in `transport::measure`.",
+      "Endpoint usage is captured verbatim when present."
+    ]
+
+    caption: "Transport sends; observer measures; sink owns the lifecycle."
+
+    render: @scene {
+      roots: [
+        {
+          id: "observation-diagram"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 200 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "sink-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 60, width: 110, height: 150 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "sink-text"
+                  capability: "core.text"
+                  text: "RequestSink"
+                  layout: { x: 65, y: 75, width: 100, height: 120 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "observer-box"
+              capability: "core.rect"
+              layout: { x: 180, y: 60, width: 110, height: 150 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "observer-text"
+                  capability: "core.text"
+                  text: "RequestObserver"
+                  layout: { x: 185, y: 75, width: 100, height: 120 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "measure-box"
+              capability: "core.rect"
+              layout: { x: 300, y: 60, width: 110, height: 150 }
+              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "measure-text"
+                  capability: "core.text"
+                  text: "Measurement"
+                  layout: { x: 305, y: 75, width: 100, height: 120 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Parallelism" {
+    eyebrow: "Parallelism"
+    title: "Thread-per-core workers, not mutex hot paths"
+    lede: "When `workers == 1`, scheduler and sink co-locate on a current-thread runtime. When `workers > 1`, each OS thread runs a self-contained sub-cell with its own LocalSet and transport sink."
+
+    narration: "Parallelism is thread-per-core. Each worker owns local scheduling, transport, and capture without hot-path mutexes."
+
+    term: {
+      word: "Sub-cell"
+      meaning: "A worker thread that owns scheduling, admission, transport, capture, and local measurement without cross-thread locks on the request path."
+    }
+
+    points: [
+      "Read-only Arc data crosses thread boundaries.",
+      "Per-worker state stays local and merges at boundaries.",
+      "Hyper and SSE paths rely on LocalSet because clients are not Send."
+    ]
+
+    caption: "Scale out by adding worker threads, not shared mutable hot state."
+
+    render: @scene {
+      roots: [
+        {
+          id: "parallelism-diagram"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 250 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "worker1-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 70, width: 100, height: 160 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "worker1-title"
+                  capability: "core.text"
+                  text: "Worker 1"
+                  layout: { x: 65, y: 80, width: 90, height: 20 }
+                  style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "worker1-content"
+                  capability: "core.text"
+                  text: "LocalSet\nTransport\nMeasure"
+                  layout: { x: 65, y: 110, width: 90, height: 110 }
+                  style: { fontSize: 9, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "worker2-box"
+              capability: "core.rect"
+              layout: { x: 170, y: 70, width: 100, height: 160 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "worker2-title"
+                  capability: "core.text"
+                  text: "Worker 2"
+                  layout: { x: 175, y: 80, width: 90, height: 20 }
+                  style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "worker2-content"
+                  capability: "core.text"
+                  text: "LocalSet\nTransport\nMeasure"
+                  layout: { x: 175, y: 110, width: 90, height: 110 }
+                  style: { fontSize: 9, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "worker3-box"
+              capability: "core.rect"
+              layout: { x: 280, y: 70, width: 100, height: 160 }
+              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "worker3-title"
+                  capability: "core.text"
+                  text: "Worker N"
+                  layout: { x: 285, y: 80, width: 90, height: 20 }
+                  style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary }
+                },
+                {
+                  id: "worker3-content"
+                  capability: "core.text"
+                  text: "LocalSet\nTransport\nMeasure"
+                  layout: { x: 285, y: 110, width: 90, height: 110 }
+                  style: { fontSize: 9, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Scale-out" {
+    eyebrow: "Scale-out"
+    title: "Cellular mode adds controller and cells"
+    lede: "`--cells N` promotes the run to a controller that partitions work, launches `aiperf --cell` children, merges records or folded stores over Velo, and writes one authoritative report. SLURM and Kubernetes reuse the same model."
+
+    narration: "Cellular mode adds a controller, remote cells, Velo control traffic, and a single merged report."
+
+    term: {
+      word: "Cell partition"
+      meaning: "Deterministic slice of the global request or conversation budget owned by one remote cell process."
+    }
+
+    points: [
+      "Rank 0 or the controller owns merge and artifact shipping.",
+      "Velo carries control only; HTTP and gRPC carry measured load.",
+      "Bulk artifacts can use a separate HTTP/1 + zstd path."
+    ]
+
+    caption: "Same engine, more processes, partitioned ownership."
+
+    render: @scene {
+      roots: [
+        {
+          id: "cellular-diagram"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 250 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "controller-box"
+              capability: "core.rect"
+              layout: { x: 150, y: 60, width: 120, height: 70 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "controller-text"
+                  capability: "core.text"
+                  text: "Controller"
+                  layout: { x: 160, y: 85, width: 100, height: 20 }
+                  style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "cell1-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 160, width: 80, height: 70 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "cell1-text"
+                  capability: "core.text"
+                  text: "Cell 0"
+                  layout: { x: 65, y: 185, width: 70, height: 20 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "cell2-box"
+              capability: "core.rect"
+              layout: { x: 160, y: 160, width: 80, height: 70 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "cell2-text"
+                  capability: "core.text"
+                  text: "Cell 1"
+                  layout: { x: 165, y: 185, width: 70, height: 20 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "celln-box"
+              capability: "core.rect"
+              layout: { x: 260, y: 160, width: 80, height: 70 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "celln-text"
+                  capability: "core.text"
+                  text: "Cell N"
+                  layout: { x: 265, y: 185, width: 70, height: 20 }
+                  style: { fontSize: 11, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  slide "Outputs & gates" {
+    eyebrow: "Outputs & gates"
+    title: "Metrics merge, exporters fan out, features opt in"
+    lede: "Workers accumulate metrics locally; the report plane writes `native-v2.json` as authoritative truth, then exporters emit JSON, CSV, Parquet, OTLP, and more. Cargo features gate gRPC, cellular, parquet, dynosim, and pyo3-embed."
+
+    narration: "Metrics merge into native-v2.json, exporters fan out artifacts, and Cargo features opt into gRPC, cellular, dynosim, and more."
+
+    term: {
+      word: "native-v2.json"
+      meaning: "Authoritative merged report for a run before optional exporter side outputs."
+    }
+
+    points: [
+      "Sketch mode uses mergeable t-digests for approximate percentiles.",
+      "`--steady-state` derives a measurement window from concurrency crossings.",
+      "Mock server stays outside profile supervision for deterministic tests."
+    ]
+
+    caption: "Measure locally, merge once, export many formats."
+
+    render: @scene {
+      roots: [
+        {
+          id: "output-diagram"
+          capability: "core.rect"
+          layout: { x: 50, y: 50, width: 400, height: 250 }
+          style: { fill: @theme.surface.primary }
+          children: [
+            {
+              id: "metrics-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 70, width: 120, height: 60 }
+              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "metrics-text"
+                  capability: "core.text"
+                  text: "Metrics"
+                  layout: { x: 70, y: 90, width: 100, height: 20 }
+                  style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "report-box"
+              capability: "core.rect"
+              layout: { x: 200, y: 70, width: 140, height: 60 }
+              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }
+              children: [
+                {
+                  id: "report-text"
+                  capability: "core.text"
+                  text: "native-v2.json"
+                  layout: { x: 210, y: 90, width: 120, height: 20 }
+                  style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "export1-box"
+              capability: "core.rect"
+              layout: { x: 60, y: 160, width: 80, height: 50 }
+              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "export1-text"
+                  capability: "core.text"
+                  text: "JSON"
+                  layout: { x: 65, y: 175, width: 70, height: 20 }
+                  style: { fontSize: 10, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "export2-box"
+              capability: "core.rect"
+              layout: { x: 160, y: 160, width: 80, height: 50 }
+              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "export2-text"
+                  capability: "core.text"
+                  text: "CSV"
+                  layout: { x: 165, y: 175, width: 70, height: 20 }
+                  style: { fontSize: 10, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "export3-box"
+              capability: "core.rect"
+              layout: { x: 260, y: 160, width: 80, height: 50 }
+              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "export3-text"
+                  capability: "core.text"
+                  text: "Parquet"
+                  layout: { x: 265, y: 175, width: 70, height: 20 }
+                  style: { fontSize: 10, fill: @theme.ink.primary }
+                }
+              ]
+            },
+            {
+              id: "export4-box"
+              capability: "core.rect"
+              layout: { x: 360, y: 160, width: 80, height: 50 }
+              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+              children: [
+                {
+                  id: "export4-text"
+                  capability: "core.text"
+                  text: "OTLP"
+                  layout: { x: 365, y: 175, width: 70, height: 20 }
+                  style: { fontSize: 10, fill: @theme.ink.primary }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

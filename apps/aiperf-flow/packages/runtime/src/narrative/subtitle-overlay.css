@@ -21,7 +21,8 @@
 }
 
 .aiperf-flow__subtitle-cue {
-  max-width: min(68ch, 86vw);
+  width: min(68ch, 86vw);
+  min-height: 4.25rem;
   margin: 0;
   padding: 0.72rem 1.1rem 0.78rem;
   border: var(--flow-stroke) solid var(--flow-guide);
@@ -35,7 +36,11 @@
   letter-spacing: 0.012em;
   text-align: start;
   text-wrap: pretty;
-  animation: aiperf-flow-subtitle-in 140ms ease-out both;
+}
+
+/* Idle (between cues) keeps the box in place so subtitles never pop in. */
+.aiperf-flow__subtitle-cue[data-idle="true"] {
+  color: var(--flow-chalk-muted);
 }
 
 .aiperf-flow__subtitle-label {
@@ -115,18 +120,6 @@
   --flow-subtitle-edge: var(--flow-attention);
 }
 
-.aiperf-flow__subtitle-overlay[data-reduced-motion="true"]
-  .aiperf-flow__subtitle-cue {
-  animation: none;
-}
-
-@keyframes aiperf-flow-subtitle-in {
-  from {
-    opacity: 0;
-    transform: translateY(0.35rem);
-  }
-}
-
 @media (width < 720px) {
   .aiperf-flow .aiperf-flow__subtitle-control {
     inset-block-start: calc(var(--flow-safe-top, 0.75rem) + 4.5rem);
@@ -162,11 +155,5 @@
     background: Canvas;
     border-color: Highlight;
     forced-color-adjust: auto;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .aiperf-flow__subtitle-cue {
-    animation: none;
   }
 }

@@ -136,20 +136,20 @@ export function SubtitleOverlay({
       </button>
 
       <div className="aiperf-flow__subtitle-safe-area" id={cueContainerId}>
-        {cue === null ? null : (
+        {state.enabled ? (
           <p
             aria-hidden="true"
             className="aiperf-flow__subtitle-cue"
-            key={cue.id}
+            data-idle={cue === null ? "true" : "false"}
           >
             <span className="aiperf-flow__subtitle-label">
-              {cue.speaker ?? "Subtitles"}
+              {cue?.speaker ?? "Subtitles"}
             </span>
             <span className="aiperf-flow__subtitle-words">
-              {karaokeWords(cue.text, cue.progress)}
+              {cue === null ? null : karaokeWords(cue.text, cue.progress)}
             </span>
           </p>
-        )}
+        ) : null}
       </div>
 
       <div

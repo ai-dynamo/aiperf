@@ -507,6 +507,29 @@ a:focus-visible,
   background-size: auto, 30px 30px, 30px 30px, auto;
 }
 
+/* Explainers-deck presentation: keep the scene title, its navigation, and the
+ * subtitles; drop the runtime HUD (beat rail, immersive controls) and the
+ * developer legend so the stage reads as a clean framed slide. */
+.preview-shell .preview-legend,
+.preview-shell .aiperf-flow__causal-path,
+.preview-shell .aiperf-flow__immersive-controls,
+.preview-shell .aiperf-flow__controls {
+  display: none;
+}
+
+/* The semantic twin is an accessibility mirror, so keep it in the a11y tree
+ * (not display:none) while removing it from the visible stage. */
+.preview-shell .aiperf-flow__semantic-twin {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  border: 0;
+}
+
 .preview-shell[data-preview-layout="hub-spoke"] .runtime-story svg[role="img"] {
   width: min(72.5rem, 94vw);
   height: min(43.125rem, 79vh);

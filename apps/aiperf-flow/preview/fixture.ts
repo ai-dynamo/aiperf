@@ -1546,3 +1546,87 @@ export function previewDurationMs(scene: SceneIr): number {
     ) ?? 0;
   return Math.max(timelineEnd, narrativeEnd);
 }
+
+/** Scene card information for home page discovery. */
+export type SceneCardInfo = Readonly<{
+  flowId: string;
+  flowTitle: string;
+  sceneId: string;
+  title: string;
+  description: string;
+  chapterId: string;
+}>;
+
+/**
+ * Discovers all available scenes across all flows for home page display.
+ * Returns scenes in order: request-flow, architecture, endpoint-lifecycle.
+ */
+export function discoverAllScenes(): readonly SceneCardInfo[] {
+  const workspace = previewWorkspace();
+  const scenes: SceneCardInfo[] = [];
+
+  workspace.navigation.files.forEach((file) => {
+    const flow = workspace.flows[file.id];
+    if (!flow) return;
+
+    file.chapters.forEach((chapter) => {
+      chapter.scenes.forEach((scene) => {
+        scenes.push({
+          flowId: file.id,
+          flowTitle: file.sourceName,
+          sceneId: scene.id,
+          title: scene.title,
+          description: flow.scenes.find((s) => s.id === scene.id)?.summary ?? "",
+          chapterId: chapter.id,
+        });
+      });
+    });
+  });
+
+  return scenes;
+}
+
+/**
+ * Groups discovered scenes by flow for card display.
+ */
+export function discoverScenesByFlow(): readonly Readonly<{
+  flowId: string;
+  flowTitle: string;
+  scenes: readonly SceneCardInfo[];
+}>[] {
+  const workspace = previewWorkspace();
+  const groups: Readonly<{
+    flowId: string;
+    flowTitle: string;
+    scenes: readonly SceneCardInfo[];
+  }>[] = [];
+
+  workspace.navigation.files.forEach((file) => {
+    const flow = workspace.flows[file.id];
+    if (!flow) return;
+
+    const scenes: SceneCardInfo[] = [];
+    file.chapters.forEach((chapter) => {
+      chapter.scenes.forEach((scene) => {
+        scenes.push({
+          flowId: file.id,
+          flowTitle: file.sourceName,
+          sceneId: scene.id,
+          title: scene.title,
+          description: flow.scenes.find((s) => s.id === scene.id)?.summary ?? "",
+          chapterId: chapter.id,
+        });
+      });
+    });
+
+    if (scenes.length > 0) {
+      groups.push({
+        flowId: file.id,
+        flowTitle: file.sourceName,
+        scenes: Object.freeze(scenes),
+      });
+    }
+  });
+
+  return Object.freeze(groups);
+}
