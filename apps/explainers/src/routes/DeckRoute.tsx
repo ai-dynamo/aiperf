@@ -1,11 +1,16 @@
-import { Navigate, useParams } from "react-router-dom";
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { Navigate, useLocation } from "react-router-dom";
 import { ExplainerShell } from "../core/ExplainerShell";
 import { deckByRoute } from "../core/deck-registry";
 
+/** Resolve the active deck from the pathname (matches DeckPackage.route). */
 export function DeckRoute() {
-  const { deckId } = useParams<{ deckId: string }>();
-  const route = deckId ? `/${deckId}` : "/";
-  const deck = deckByRoute(route);
+  const { pathname } = useLocation();
+  const deck = deckByRoute(pathname);
 
   if (!deck) {
     return <Navigate to="/" replace />;

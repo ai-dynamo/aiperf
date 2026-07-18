@@ -10,6 +10,7 @@ import {
 } from "./diagram/SceneRenderer";
 import {
   finalCardFromScene,
+  hasRenderableFinalCard,
   type SceneFinalCardRender,
 } from "./final-card-from-scene";
 import type {
@@ -70,6 +71,11 @@ export type DeckPackage = Readonly<{
   glossary: readonly { word: string; meaning: string }[];
 }>;
 
+function trimField(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 function toSlideDefinition(slide: SlidePackage): SlideDefinition {
   return {
     eyebrow: slide.eyebrow,
@@ -95,58 +101,38 @@ export function resolveHubMeta(hub: DeckPackage["hub"]): DeckHubMeta {
 }
 
 /**
- * Prefer an explicit `DeckPackage.finalCard` (scene and/or title/summary/cta);
- * otherwise reuse the last slide's scene so ExplainerShell can mount FinalCard
- * without MentalModel.
+ * Resolve `DeckPackage.finalCard` for ExplainerShell.
+ *
+ * Canonical form is `{ kind: "scene"; scene }` — chrome lives in the scene IR,
+ * so scene `title` / `summary` are not copied into Card chrome (that would
+ * double-render headers already painted by SceneRenderer). Explicit card-level
+ * `title` / `summary` / `cta` are preserved when authored.
+ *
+ * No last-slide fallback: reusing the last slide scene would duplicate the
+ * diagram under the slideshow on the final slide.
  */
 export function resolveFinalCardScene(
   pkg: DeckPackage,
 ): FinalCardPackage | undefined {
   const card = pkg.finalCard;
-  if (card !== undefined) {
-    const scene =
-      card.scene ??
-      (card.kind === "scene" && "scene" in card ? card.scene : undefined);
-    const title =
-      card.title?.trim() ||
-      (scene && "title" in scene && typeof scene.title === "string"
-        ? scene.title
-        : undefined);
-    const summary =
-      card.summary?.trim() ||
-      (scene && "summary" in scene && typeof scene.summary === "string"
-        ? scene.summary
-        : undefined);
-    const cta = card.cta?.trim() || undefined;
-    if (
-      scene !== undefined ||
-      title !== undefined ||
-      summary !== undefined ||
-      cta !== undefined
-    ) {
-      return {
-        ...(card.kind !== undefined ? { kind: card.kind } : { kind: "scene" as const }),
-        ...(title !== undefined ? { title } : {}),
-        ...(summary !== undefined ? { summary } : {}),
-        ...(cta !== undefined ? { cta } : {}),
-        ...(scene !== undefined ? { scene } : {}),
-      };
-    }
+  if (card === undefined) {
+    return undefined;
   }
 
-  const last = pkg.slides[pkg.slides.length - 1];
-  if (last?.render?.kind === "scene" && last.render.scene !== undefined) {
-    return {
-      kind: "scene",
-      scene: last.render.scene,
-      ...(last.render.title !== undefined ? { title: last.render.title } : {}),
-      ...(last.render.summary !== undefined
-        ? { summary: last.render.summary }
-        : {}),
-      ...(last.render.cta !== undefined ? { cta: last.render.cta } : {}),
-    };
-  }
-  return undefined;
+  const scene = card.scene;
+  const title = trimField(card.title);
+  const summary = trimField(card.summary);
+  const cta = trimField(card.cta);
+
+  const resolved: FinalCardPackage = {
+    kind: "scene",
+    ...(title !== undefined ? { title } : {}),
+    ...(summary !== undefined ? { summary } : {}),
+    ...(cta !== undefined ? { cta } : {}),
+    ...(scene !== undefined ? { scene } : {}),
+  };
+
+  return hasRenderableFinalCard(resolved) ? resolved : undefined;
 }
 
 function PackageMentalModel({
@@ -179,8 +165,8 @@ function PackageMentalModel({
  * Maps a flow-backed DeckPackage onto the legacy DeckDefinition consumed by
  * ExplainerShell. MentalModel mounts SceneRenderer from each slide's scene IR,
  * forwarding playing/restartKey/reducedMotion from ExplainerShell so timelines
- * animate with the slideshow. FinalCard mounts title/summary/cta chrome and/or
- * SceneRenderer from finalCard (or the last slide's scene).
+ * animate with the slideshow. FinalCard mounts SceneRenderer (and optional Card
+ * chrome) only when `pkg.finalCard` is present — never a cloned last slide.
  */
 export function packageToDeckDefinition(pkg: DeckPackage): DeckDefinition {
   const slides = pkg.slides.map(toSlideDefinition);
@@ -194,6 +180,7 @@ export function packageToDeckDefinition(pkg: DeckPackage): DeckDefinition {
     startGateTitle: pkg.startGateTitle,
     hub: resolveHubMeta(pkg.hub),
     slides,
+    glossary: pkg.glossary ?? [],
     css: pkg.css ?? "",
     MentalModel: ({ slideIndex, playing, restartKey, reducedMotion }) => (
       <PackageMentalModel

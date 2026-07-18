@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 export const NARRATION_RATE = 1.08;
 const WORDS_PER_MINUTE = 150 * NARRATION_RATE;
 const POST_NARRATION_PAUSE_MS = 600;

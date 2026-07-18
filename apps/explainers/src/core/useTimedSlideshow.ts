@@ -1,6 +1,15 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { useEffect, useRef, useState } from "react";
 import { estimateNarrationMs, speakNarration, stopNarration } from "./narration";
 
+/**
+ * Timed voice + word highlight driver for ExplainerShell.
+ * `restartKey` must bump with SceneRenderer so narration and timelines restart together.
+ */
 export function useTimedSlideshow({
   index,
   playing,
@@ -15,7 +24,11 @@ export function useTimedSlideshow({
   narrationEnabled: boolean;
   voiceURI?: string;
   narrations: readonly string[];
-  /** Bumped to force a fresh narration start on the same slide (e.g. Back). */
+  /**
+   * Bumped with slide changes / revisits / play so narration and SceneRenderer stay
+   * in sync: fresh narration on the same slide (e.g. Back), and a new start
+   * when auto-advance bumps restartKey alongside index (voice continues).
+   */
   restartKey?: number;
   onAdvance: () => void;
 }): { activeWordIndex: number } {

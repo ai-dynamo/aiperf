@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import type { ReactNode } from "react";
 
 export type SlideDefinition = {
@@ -16,6 +21,10 @@ export type DeckHubMeta = {
   description: string;
 };
 
+/**
+ * Props ExplainerShell passes into the deck diagram slot.
+ * Package-backed decks forward playing/restartKey/reducedMotion to SceneRenderer.
+ */
 export type MentalModelProps = {
   slideIndex: number;
   slide: SlideDefinition;
@@ -33,8 +42,10 @@ export type DeckDefinition = {
   startGateTitle: string;
   hub: DeckHubMeta;
   slides: readonly SlideDefinition[];
+  glossary: readonly { word: string; meaning: string }[];
   MentalModel: (props: MentalModelProps) => ReactNode;
   css: string;
+  /** Optional end card; package decks omit this unless DeckPackage.finalCard is set. */
   FinalCard?: () => ReactNode;
 };
 

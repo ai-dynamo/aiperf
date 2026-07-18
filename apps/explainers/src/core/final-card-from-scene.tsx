@@ -10,12 +10,14 @@ import {
   type SceneIrLike,
 } from "./diagram/SceneRenderer";
 import { usePrefersReducedMotion } from "./diagram/usePrefersReducedMotion";
-import { Card, CardBody, CardHeader, Pill } from "./ui";
+import { Card, CardBody, CardHeader, Pill, Stack } from "./ui";
 
 /**
  * Structured or scene-backed `DeckPackage.finalCard` shape.
- * Scene-only packages use `{ kind: "scene"; scene }`; structured end cards may
- * also carry title / summary / cta chrome around an optional scene.
+ *
+ * Canonical packages emit `{ kind: "scene"; scene }` with chrome baked into the
+ * scene IR. Optional `title` / `summary` / `cta` wrap a Card chrome only when
+ * those fields are authored explicitly on the card (not copied from scene IR).
  */
 export type SceneFinalCardRender = Readonly<{
   kind?: "scene";
@@ -25,27 +27,47 @@ export type SceneFinalCardRender = Readonly<{
   scene?: SceneIrLike;
 }>;
 
+function normalizeText(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+/** True when the payload has anything ExplainerShell can mount. */
+export function hasRenderableFinalCard(
+  finalCard: SceneFinalCardRender | undefined,
+): finalCard is SceneFinalCardRender {
+  if (finalCard === undefined) {
+    return false;
+  }
+  return (
+    finalCard.scene !== undefined ||
+    normalizeText(finalCard.title) !== undefined ||
+    normalizeText(finalCard.summary) !== undefined ||
+    normalizeText(finalCard.cta) !== undefined
+  );
+}
+
 /**
  * Builds a `DeckDefinition.FinalCard` from structured FinalCard fields and/or a
  * scene. Returns `undefined` when nothing renderable is present.
+ *
+ * Scene-only cards mount `SceneRenderer` directly (scene IR owns the chrome).
+ * Explicit title/summary/cta add Card chrome around an optional scene.
  */
 export function finalCardFromScene(
   finalCard: SceneFinalCardRender | undefined,
 ): (() => ReactNode) | undefined {
-  if (finalCard === undefined) {
+  if (!hasRenderableFinalCard(finalCard)) {
     return undefined;
   }
 
-  const title = finalCard.title?.trim() || undefined;
-  const summary = finalCard.summary?.trim() || undefined;
-  const cta = finalCard.cta?.trim() || undefined;
-  const scene =
-    finalCard.scene ??
-    (finalCard.kind === "scene" && "scene" in finalCard
-      ? finalCard.scene
-      : undefined);
+  const title = normalizeText(finalCard.title);
+  const summary = normalizeText(finalCard.summary);
+  const cta = normalizeText(finalCard.cta);
+  const scene = finalCard.scene;
+  const hasChrome =
+    title !== undefined || summary !== undefined || cta !== undefined;
 
-  const hasChrome = title !== undefined || summary !== undefined || cta !== undefined;
   if (scene === undefined && !hasChrome) {
     return undefined;
   }
@@ -62,20 +84,41 @@ export function finalCardFromScene(
         />
       ) : null;
 
+    // Canonical package form: scene IR already paints header / paths / pill.
     if (!hasChrome) {
-      return diagram;
+      return (
+        <div
+          className="explainer-final-card explainer-final-card--scene"
+          role="region"
+          aria-label={
+            scene?.accessibility?.label?.trim() ||
+            scene?.title?.trim() ||
+            "Next steps"
+          }
+        >
+          {diagram}
+        </div>
+      );
     }
 
     return (
-      <Card>
-        <CardHeader trailing={cta !== undefined ? <Pill size="sm">{cta}</Pill> : undefined}>
-          {title ?? "Next steps"}
-        </CardHeader>
-        <CardBody>
-          {summary !== undefined ? <p>{summary}</p> : null}
-          {diagram}
-        </CardBody>
-      </Card>
+      <div className="explainer-final-card explainer-final-card--chrome">
+        <Card>
+          <CardHeader
+            trailing={
+              cta !== undefined ? <Pill size="sm">{cta}</Pill> : undefined
+            }
+          >
+            {title ?? "Next steps"}
+          </CardHeader>
+          <CardBody>
+            <Stack gap={12}>
+              {summary !== undefined ? <p style={{ margin: 0 }}>{summary}</p> : null}
+              {diagram}
+            </Stack>
+          </CardBody>
+        </Card>
+      </div>
     );
   };
 }

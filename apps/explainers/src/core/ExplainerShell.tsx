@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { usePrefersReducedMotion } from "./diagram/usePrefersReducedMotion";
@@ -25,6 +30,11 @@ import {
   useHostTheme,
 } from "./ui";
 
+/**
+ * Packages-only playback host: voice (useTimedSlideshow) and SceneRenderer timelines
+ * share `restartKey` so slide changes, revisits, play, and restart stay in sync.
+ * FinalCard mounts only when the DeckPackage authored one — never a last-slide clone.
+ */
 export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
   const t = useHostTheme();
   const location = useLocation();
@@ -47,8 +57,10 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
   const slide = slides[index];
   const speechAvailable = narrationSupported();
   const FinalCard = deck.FinalCard;
-  // Deck MentalModels may ignore playback props; SceneRenderer wrappers consume them.
+  // Package MentalModel forwards playing/restartKey/reducedMotion to SceneRenderer.
   const MentalModel = deck.MentalModel as (props: MentalModelProps) => ReactNode;
+
+  const bumpRestart = () => setRestartKey((key) => key + 1);
 
   useEffect(() => {
     stopNarration();
@@ -62,7 +74,10 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
       setPlaying(false);
       return;
     }
+    // Keep playing so voice continues; bump restartKey so SceneRenderer
+    // timelines restart for the new slide (same contract as goTo).
     setStored(index + 1);
+    bumpRestart();
   };
 
   const { activeWordIndex } = useTimedSlideshow({
@@ -82,7 +97,7 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
     // Revisiting a slide (Back, pill, ←) restarts narration and SVG motion from the top.
     if (started) {
       setPlaying(true);
-      setRestartKey((key) => key + 1);
+      bumpRestart();
     }
   };
 
@@ -91,6 +106,8 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
     setNarrationEnabled(withNarration);
     setStarted(true);
     setPlaying(true);
+    // Align SceneRenderer timeline start with the first narration utterance.
+    bumpRestart();
   };
 
   const onKeyDown = (event: {
@@ -203,6 +220,8 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
               if (nextIndex !== index) setStored(nextIndex);
               setStarted(true);
               setPlaying(true);
+              // Voice restarts with playing; bump so timelines restart in lockstep.
+              bumpRestart();
             }}
           >
             {playing
@@ -219,6 +238,7 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
               setStored(0);
               setStarted(true);
               setPlaying(true);
+              bumpRestart();
             }}
           >
             Restart

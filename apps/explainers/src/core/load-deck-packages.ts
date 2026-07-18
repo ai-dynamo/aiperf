@@ -218,7 +218,7 @@ export function loadDeckPackages<TPkg extends DeckPackageModule>(
 
 /**
  * Load a single generated package by deck id and adapt it.
- * Returns `undefined` when the module is absent (legacy dual-load fallback).
+ * Returns `undefined` when the module is absent (registry fail-closes).
  */
 export function loadDeckPackageById<TPkg extends DeckPackageModule>(
   id: string,
