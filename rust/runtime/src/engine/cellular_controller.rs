@@ -197,10 +197,18 @@ pub fn run_cellular(
     // controller-local `temp_root/cell-{id}` dirs, which the controller concatenates into
     // the real artifact dir at finalize. A cross-host (k8s) pod writes to its
     // own filesystem, so those files stay unreachable by the controller — still dropped.
-    let is_k8s = matches!(
-        std::env::var(crate::engine::cell_launcher::CELL_LAUNCHER_ENV).as_deref(),
-        Ok("k8s")
-    );
+    let launcher =
+        std::env::var(crate::engine::cell_launcher::CELL_LAUNCHER_ENV).unwrap_or_default();
+    let is_k8s = launcher == "k8s";
+    // SLURM places each cell task on its own allocation node, so it is a cross-host
+    // deployment exactly like k8s: cells cannot read the controller's local scratch,
+    // so per-record artifacts and `file` datasets ship over HTTP, and the launcher
+    // "expects, doesn't spawn" (srun already launched the cell tasks). The only k8s
+    // specifics SLURM does NOT share are the operator-wired aggregator DNS (SLURM runs
+    // the flat star) and the operator-injected cell env (the `aiperf slurm run` rank
+    // dispatch injects it from the allocation instead).
+    let is_slurm = launcher == "slurm";
+    let cross_host = is_k8s || is_slurm;
     // Barrier-free start skips the O(N) registration rendezvous.
     let barrier_free = matches!(
         std::env::var(CELL_BARRIER_FREE_ENV)
@@ -250,10 +258,23 @@ pub fn run_cellular(
     // multi-process tests can exercise the shipping mechanism. Off by default,
     // so a normal `--cells N` run keeps shared-filesystem concatenation.
     let force_http = crate::engine::cellular_cell::artifact_http_force_enabled();
-    // `http_shipping` here means "per-record artifacts are shipped cross-host"
-    // (over some transport), gating the barrier + concat-from-landing. The transport
-    // toggle then decides HTTP vs velo for the actual byte movement.
-    let http_shipping = (is_k8s || force_http)
+    // `http_shipping` here means "per-record artifacts are shipped cross-host" (over some
+    // transport), gating the barrier + concat-from-landing; the transport toggle then
+    // decides HTTP vs velo for the actual byte movement.
+    //
+    // A cross-host coordinate that resolves to a LOOPBACK host is really a co-located
+    // deployment: every cell resolves `cell_artifact_authority()` to `None` and uses
+    // its own local writes instead of HTTP. The controller MUST agree — otherwise it
+    // binds the upload server and blocks forever in `wait_for_cells` for uploads no
+    // cell ever sends (the deadlock a same-host SLURM allocation, and the loopback
+    // SLURM simulation, hit). k8s leaves the controller coordinate empty (the routable
+    // pod authority is injected into the cells only), so an empty coordinate is treated
+    // as routable and shipping stays on; a SLURM run sets the coordinate on every task,
+    // so a loopback coordinate co-locates. The `force_http` test seam deliberately ships
+    // over loopback and overrides this.
+    let cross_host_over_http =
+        force_http || (cross_host && !controller_coordinate_is_loopback());
+    let http_shipping = cross_host_over_http
         && crate::engine::cellular_cell::http_artifact_shipping_enabled()
         && !crate::engine::artifact_shipping::shippable_relatives(&artifacts).is_empty();
     // When selected, per-record artifacts ride the shared velo endpoint instead of the
@@ -267,7 +288,7 @@ pub fn run_cellular(
     // dataset and HTTP shipping enabled needs the serve; same-host cells read the
     // controller-local path directly, and synthetic/inline-records/public need no serve.
     let dataset_source = crate::engine::cellular_cell::cellular_file_dataset_path(envelope);
-    let dataset_ship = (is_k8s || force_http)
+    let dataset_ship = cross_host_over_http
         && crate::engine::cellular_cell::http_artifact_shipping_enabled()
         && dataset_source.is_some();
     // Compute the serve plan before binding so an
@@ -296,14 +317,17 @@ pub fn run_cellular(
     // so the shipped bytes (not the local writes) feed the merged report. This holds for
     // BOTH transports: velo same-host shipping needs the separate landing subtree too,
     // otherwise the velo receiver would overwrite each cell file with itself in place.
-    let force_local_http = need_artifact_server && !is_k8s;
+    // Dataset serving reuses the same loopback bind + injected authority. Gated on
+    // `!cross_host` (not `!is_k8s`) so a genuine cross-host SLURM run ships over the real
+    // network rather than forcing a loopback landing.
+    let force_local_http = need_artifact_server && !cross_host;
     let force_local_landing =
-        (need_artifact_server || (http_shipping && velo_artifacts)) && !is_k8s;
+        (need_artifact_server || (http_shipping && velo_artifacts)) && !cross_host;
     warn_dropped_sidecar_telemetry(envelope);
     // Warn about DROPPED per-record artifacts only when they genuinely cannot be
     // delivered — cross-host AND HTTP shipping disabled. When HTTP shipping is active
     // the files ARE collected, so the boundary warning would be misleading.
-    warn_dropped_per_record_artifacts(envelope, is_k8s && !http_shipping);
+    warn_dropped_per_record_artifacts(envelope, cross_host && !http_shipping);
     warn_cellular_approximations(envelope);
     // One shared seed for every cell when the author gave none (else `None` and each
     // cell inherits the authored `run.random_seed` verbatim).
@@ -394,7 +418,7 @@ pub fn run_cellular(
         // Bind the controller's velo transport at a known endpoint cells `connect`
         // to (zero discovery — velo's `_hello` handshake resolves identity on dial).
         // `is_k8s` is resolved once above and moved in here.
-        let (bind, cell_coordinate) = controller_bind_and_endpoint(is_k8s, &temp_root)?;
+        let (bind, cell_coordinate) = controller_bind_and_endpoint(cross_host, &temp_root)?;
         let velo = build_velo(bind).await.context("building controller velo")?;
         // When artifacts ride velo, hang the artifact receive handlers off THIS same
         // control-plane velo instance (no second port): cells stream their zstd chunks
@@ -617,27 +641,32 @@ pub fn run_cellular(
         //   ship-DNS, so the controller must NOT spawn and must NOT inject loopback ship
         //   addresses (`K8sLauncher` ignores `aggregator_count` — the pod env is the pod
         //   spec's). It sizes `expected_partitions` from the top tier and collects those
-        //   merged stores. This k8s "expect, don't spawn" path is gated on the operator
-        //   having signalled it wired the aggregators ([`AGG_DNS_TEMPLATE_ENV`]); a
-        //   fanout-set k8s run without that signal fails closed to the flat star.
+        //   merged stores. This cross-host "expect, don't spawn" path is gated on the
+        //   operator having signalled it wired the aggregators ([`AGG_DNS_TEMPLATE_ENV`]);
+        //   a fanout-set cross-host run without that signal fails closed to the flat star.
+        // - SLURM shares the cross-host "expect, don't spawn" gate: it never sets
+        //   `AGG_DNS_TEMPLATE_ENV`, so a SLURM run always falls closed to the flat star —
+        //   the multi-tier aggregator tree is a k8s-wired capability today (see
+        //   slurm-native.md).
         use crate::engine::cellular_aggregator::{
             aggregator_base_port as agg_base_port, aggregator_count as requested_agg_count,
             tier_counts_from_env, AGG_DNS_TEMPLATE_ENV,
         };
         let aggregator_base_port = agg_base_port();
-        // Both same-host and k8s use the full multi-tier plan. On k8s the plan is honored
-        // only when the operator signalled it built the aggregator pods ([`AGG_DNS_TEMPLATE_ENV`]);
-        // otherwise a fanout-set run falls closed to the flat star (the cells would ship
-        // into pods that do not exist). Off k8s the controller spawns the tiers itself.
-        let tiers: Vec<u32> = if is_k8s {
-            let k8s_wired = std::env::var_os(AGG_DNS_TEMPLATE_ENV).is_some();
-            if k8s_wired {
+        // Both same-host and cross-host use the full multi-tier plan. On a cross-host run
+        // (k8s or SLURM) the plan is honored only when an operator signalled it built the
+        // aggregator pods ([`AGG_DNS_TEMPLATE_ENV`]); otherwise a fanout-set run falls
+        // closed to the flat star (the cells would ship into pods that do not exist).
+        // Off a cross-host deployment the controller spawns the tiers itself.
+        let tiers: Vec<u32> = if cross_host {
+            let aggregators_wired = std::env::var_os(AGG_DNS_TEMPLATE_ENV).is_some();
+            if aggregators_wired {
                 tier_counts_from_env(cell_count)
             } else {
                 if requested_agg_count(cell_count).is_some() {
                     tracing::warn!(
                         "AIPERF_CELL_AGG_FANOUT requests aggregators but the operator did not \
-                         wire the k8s aggregators (AIPERF_CELL_AGG_DNS_TEMPLATE unset); falling \
+                         wire the aggregators (AIPERF_CELL_AGG_DNS_TEMPLATE unset); falling \
                          back to the flat star topology"
                     );
                 }
@@ -660,7 +689,7 @@ pub fn run_cellular(
         // k8s the aggregators are operator-created pods, so the controller expects rather
         // than spawns — `aggregator_children` stays empty and pod liveness is the
         // operator's concern.
-        let mut aggregator_children = if !is_k8s && !tiers.is_empty() {
+        let mut aggregator_children = if !cross_host && !tiers.is_empty() {
             spawn_aggregators(
                 envelope,
                 cell_count,
@@ -972,7 +1001,7 @@ pub fn run_cellular(
         //   landing at the SAME `temp_root/cell-{id}/{rel}` paths.
         // Cross-host with shipping DISABLED still skips the concat (the files never
         // reach the controller) — the shared-storage product boundary, warned at start.
-        if (!is_k8s || http_shipping)
+        if (!cross_host || http_shipping)
             && let Some(artifact_dir) = report_path.parent()
         {
             // Read the SHIPPED copies from the landing subtree when HTTP shipping is
@@ -1035,22 +1064,58 @@ fn controller_artifact_bind() -> std::net::SocketAddr {
 /// `velo.connect` to. The coordinate stays `tcp://` everywhere so the HTTP artifact
 /// plane (which derives its authority by swapping the port on this coordinate) keeps
 /// working — hence local uses a known loopback port, not UDS.
-/// - **k8s**: bind the operator-known port (`AIPERF_CONTROLLER_PORT`, default 9500)
-///   on all interfaces; the cell endpoint is injected into the pods by the operator
-///   (`AIPERF_CELL_CONTROLLER_ADDR`), so the launcher's copy is unused (empty).
+/// - **cross-host (k8s / SLURM)**: bind the well-known port (`AIPERF_CONTROLLER_PORT`,
+///   default 9500) on all interfaces so cells on other hosts can reach it. The cell
+///   endpoint is injected into each cell's environment out of band — by the operator
+///   for k8s, by the `aiperf slurm run` rank dispatch (from the allocation's rank-0
+///   host) for SLURM — as `AIPERF_CELL_CONTROLLER_ADDR`. The returned coordinate is
+///   that same env value (empty for k8s, `tcp://<rank0-host>:<port>` for SLURM); it is
+///   used only for the artifact-authority derivation, not for cell discovery (the
+///   "expect, don't spawn" launchers do not inject it).
 /// - **local**: pre-bind a loopback TCP listener so the actual port is known before
 ///   build; cells connect to `tcp://127.0.0.1:<port>`.
+/// Whether the controller's cell coordinate (`AIPERF_CELL_CONTROLLER_ADDR`, a
+/// `tcp://HOST:PORT` velo endpoint) resolves to a LOOPBACK host — i.e. a co-located
+/// deployment where cells write to a shared filesystem instead of shipping over HTTP.
+/// Mirrors the cell-side loopback carve-out in
+/// [`cell_artifact_authority`](crate::engine::cellular_cell::cell_artifact_authority)
+/// so the controller and its cells always agree on whether HTTP shipping is active.
+/// An unset/empty coordinate (k8s injects the routable authority into the cells only)
+/// is NOT loopback, so cross-host shipping stays on.
 #[cfg(feature = "cellular")]
-fn controller_bind_and_endpoint(is_k8s: bool, temp_root: &Path) -> Result<(BindSpec, String)> {
+fn controller_coordinate_is_loopback() -> bool {
+    let Ok(coordinate) =
+        std::env::var(crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV)
+    else {
+        return false;
+    };
+    let Some(host_port) = coordinate.strip_prefix("tcp://") else {
+        return false;
+    };
+    let host = host_port.rsplit_once(':').map_or(host_port, |(host, _)| host);
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or_else(|_| host.eq_ignore_ascii_case("localhost"))
+}
+
+#[cfg(feature = "cellular")]
+fn controller_bind_and_endpoint(cross_host: bool, temp_root: &Path) -> Result<(BindSpec, String)> {
     let _ = temp_root;
-    if is_k8s {
+    if cross_host {
         let port: u16 = std::env::var("AIPERF_CONTROLLER_PORT")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(9500);
+        // SLURM's rank dispatch sets AIPERF_CELL_CONTROLLER_ADDR on every task
+        // (including the controller) to `tcp://<rank0-host>:<port>`; k8s leaves it
+        // unset here (the operator injects it into the cell pods only), so the
+        // coordinate stays empty and the k8s cells derive their authority from the
+        // operator-injected value instead.
+        let coordinate = std::env::var(crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV)
+            .unwrap_or_default();
         return Ok((
             BindSpec::TcpBind(std::net::SocketAddr::from(([0, 0, 0, 0], port))),
-            String::new(),
+            coordinate,
         ));
     }
     let listener =

@@ -114,7 +114,16 @@ pub fn dispatch(args: &[String]) -> ! {
         && let Ok(run_value) = serde_json::from_slice::<Value>(&input)
     {
         let wrapped = serde_json::json!({ "run": run_value });
-        if aiperf_runtime::engine::cell_launcher::cell_count_from_envelope(&wrapped) > 1 {
+        // Promote to the cellular controller when the run partitions across more than
+        // one cell, OR when a cross-host launcher (k8s/slurm) is active even for a
+        // single cell: there a separate cell task already exists and is dialing this
+        // controller (e.g. a 2-task SLURM allocation, `cells == 1`), so the controller
+        // must bind velo rather than run as a lone single process. The same-host
+        // default keeps `cells == 1` as a plain single-process run.
+        let cells = aiperf_runtime::engine::cell_launcher::cell_count_from_envelope(&wrapped);
+        if cells > 1
+            || (cells >= 1 && aiperf_runtime::engine::cell_launcher::is_cross_host_launcher())
+        {
             run_controller(&wrapped);
         }
     }

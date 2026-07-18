@@ -29,7 +29,7 @@ use crate::engine::cellular_cell::{
     CELL_ARTIFACT_ADDR_ENV, CELL_CONTROLLER_ADDR_ENV, CELL_PHASE_ORDINAL_BASES_ENV,
 };
 
-/// Env var selecting the launcher: `local` (default) or `k8s`.
+/// Env var selecting the launcher: `local` (default), `k8s`, or `slurm`.
 pub const CELL_LAUNCHER_ENV: &str = "AIPERF_CELL_LAUNCHER";
 
 /// Everything a launcher needs to start (or expect) a run's cells. The controller
@@ -183,12 +183,53 @@ impl CellLauncher for K8sLauncher {
     }
 }
 
-/// Select the launcher from [`CELL_LAUNCHER_ENV`] (`local` default, `k8s`).
+/// Expects cells that `srun` already launched as sibling tasks of this allocation.
+///
+/// Like [`K8sLauncher`], it spawns nothing: under SLURM every task of the run is
+/// launched by `srun` at once, so the rank-0 (controller) task only reports how many
+/// cell tasks to expect. Each cell task discovers the controller from the
+/// allocation-derived coordinate (rank-0 node host + velo port), injected into its
+/// environment by the `aiperf slurm run` rank dispatch — not by an operator. Cell
+/// liveness is SLURM's concern (a failed task fails the step); the controller uses
+/// its registration/collect timeout as the backstop, exactly as for k8s.
+pub struct SlurmLauncher;
+
+impl CellLauncher for SlurmLauncher {
+    fn launch(&self, ctx: &CellLaunchContext) -> Result<Vec<CellHandle>> {
+        tracing::info!(
+            cell_count = ctx.cell_count,
+            "cellular slurm launcher: expecting srun-launched cell tasks to register (no local spawn)"
+        );
+        Ok((0..ctx.cell_count)
+            .map(|cell_id| CellHandle {
+                child: None,
+                cell_id,
+            })
+            .collect())
+    }
+}
+
+/// Select the launcher from [`CELL_LAUNCHER_ENV`] (`local` default, `k8s`, `slurm`).
 pub fn select_launcher() -> Box<dyn CellLauncher> {
     match std::env::var(CELL_LAUNCHER_ENV).as_deref() {
         Ok("k8s") => Box::new(K8sLauncher),
+        Ok("slurm") => Box::new(SlurmLauncher),
         _ => Box::new(LocalLauncher),
     }
+}
+
+/// Whether [`CELL_LAUNCHER_ENV`] selects a **cross-host** launcher (`k8s` or
+/// `slurm`), where the cell processes already exist on separate nodes and dial the
+/// controller over velo. This governs whether the runner promotes itself to the
+/// cellular controller: a cross-host launcher must engage the controller even for a
+/// single cell (`cells == 1`, e.g. a 2-task SLURM allocation), because a separate
+/// cell task is already waiting to register, whereas the same-host default treats
+/// `cells == 1` as a plain single-process run with no cell to coordinate.
+pub fn is_cross_host_launcher() -> bool {
+    matches!(
+        std::env::var(CELL_LAUNCHER_ENV).as_deref(),
+        Ok("k8s") | Ok("slurm")
+    )
 }
 
 /// The number of dispatch-stream positions in `[0, total)` that cell `k` owns under
@@ -269,11 +310,38 @@ mod tests {
     }
 
     #[test]
+    fn slurm_launcher_spawns_nothing_but_expects_all_cells() {
+        let handles = SlurmLauncher.launch(&context()).expect("slurm launch");
+        assert_eq!(handles.len(), 2);
+        assert!(handles.iter().all(|handle| handle.child.is_none()));
+    }
+
+    #[test]
     fn owned_positions_sum_to_total_and_tile() {
         for total in [1_u64, 7, 100, 500, 501] {
             for count in 1..=8u32 {
                 let sum: u64 = (0..count).map(|k| owned_positions(total, k, count)).sum();
                 assert_eq!(sum, total, "total {total} count {count}");
+            }
+        }
+    }
+
+    #[test]
+    fn cross_host_launcher_detection() {
+        // SAFETY: single-threaded test body; the variable is restored before return.
+        unsafe {
+            let prior = std::env::var(CELL_LAUNCHER_ENV).ok();
+            std::env::set_var(CELL_LAUNCHER_ENV, "slurm");
+            assert!(is_cross_host_launcher());
+            std::env::set_var(CELL_LAUNCHER_ENV, "k8s");
+            assert!(is_cross_host_launcher());
+            std::env::set_var(CELL_LAUNCHER_ENV, "local");
+            assert!(!is_cross_host_launcher());
+            std::env::remove_var(CELL_LAUNCHER_ENV);
+            assert!(!is_cross_host_launcher());
+            match prior {
+                Some(value) => std::env::set_var(CELL_LAUNCHER_ENV, value),
+                None => std::env::remove_var(CELL_LAUNCHER_ENV),
             }
         }
     }

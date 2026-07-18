@@ -36,6 +36,7 @@ pub mod results_sidecar;
 pub mod search;
 pub mod search_history;
 pub mod signals;
+pub mod slurm;
 pub mod speed_bench;
 pub mod sweep;
 pub mod synthesize;
