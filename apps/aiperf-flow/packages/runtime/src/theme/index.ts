@@ -458,3 +458,19 @@ export {
   resolveTheme,
   setActiveThemeId,
 } from "./runtime-registry.js";
+
+//! Minimal core theme system for bootstrap with light/dark variants and inheritance.
+export {
+  CoreTheme,
+  CoreThemeInheritanceCycleError,
+  CoreThemeNotFoundError,
+  CoreThemeRegistry,
+  CoreThemeRoleNotFoundError,
+  createBootstrapCoreRegistry,
+  createHexColor,
+  type CoreThemeRole,
+  type CoreThemeVariantColors,
+  type CoreThemeVariantConfig,
+  type HexColor,
+  type ThemeVariant,
+} from "./core-system.js";
