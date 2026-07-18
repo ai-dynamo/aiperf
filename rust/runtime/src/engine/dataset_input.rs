@@ -221,6 +221,15 @@ pub struct SyntheticPromptsSpec {
     /// Paired ISL/OSL mixture, which takes precedence over independent lengths.
     #[serde(default)]
     pub sequence_distribution: Option<Vec<SequenceDistributionEntrySpec>>,
+    /// Fraction of prompts, in `[0, 1]`, that reuse a shared leading token prefix
+    /// so a server KV cache observes prefix hits. The default `0.0` keeps every
+    /// prompt unique.
+    #[serde(default)]
+    pub prefix_reuse_fraction: f64,
+    /// Fraction of each reusing prompt's input length, in `[0, 1]`, occupied by
+    /// the shared prefix.
+    #[serde(default = "default_prefix_reuse_ratio")]
+    pub prefix_reuse_ratio: f64,
 }
 
 /// One paired input/output sequence-length bucket.
@@ -578,6 +587,10 @@ const fn one_f64() -> f64 {
 
 const fn one_usize() -> usize {
     1
+}
+
+const fn default_prefix_reuse_ratio() -> f64 {
+    0.5
 }
 
 /// Canonical result of one dataset-input adapter load.

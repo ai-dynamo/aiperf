@@ -576,6 +576,10 @@ struct PromptsSection {
     batch_size: Option<u32>,
     #[serde(default, alias = "blockSize")]
     block_size: Option<u32>,
+    #[serde(default, alias = "prefixReuseFraction")]
+    prefix_reuse_fraction: Option<f64>,
+    #[serde(default, alias = "prefixReuseRatio")]
+    prefix_reuse_ratio: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -971,6 +975,14 @@ impl Benchmark {
             .dataset
             .or_else(|| self.datasets.and_then(|d| d.into_iter().next()));
         let (isl, osl, batch_size, isl_block_size) = extract_prompts(dataset.as_ref());
+        let prefix_reuse_fraction = dataset
+            .as_ref()
+            .and_then(|d| d.prompts.as_ref())
+            .and_then(|p| p.prefix_reuse_fraction);
+        let prefix_reuse_ratio = dataset
+            .as_ref()
+            .and_then(|d| d.prompts.as_ref())
+            .and_then(|p| p.prefix_reuse_ratio);
         let num_conversations = dataset.as_ref().and_then(|d| d.num_conversations);
         let dataset_entries = dataset.as_ref().and_then(|d| d.entries);
         // Per-dataset seed is separate from the top-level run seed.
@@ -1439,6 +1451,8 @@ impl Benchmark {
             model_strategy,
             slice_duration,
             isl_block_size,
+            prefix_reuse_fraction,
+            prefix_reuse_ratio,
             sketch_metrics: false,
             image_spec,
             audio_spec,
