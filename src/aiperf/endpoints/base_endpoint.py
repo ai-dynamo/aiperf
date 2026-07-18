@@ -72,11 +72,13 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         # would always pick the first turn's headers.
         turn_headers = request_info.turns[-1].headers if request_info.turns else None
         if turn_headers:
-            turn_keys_lower = {k.lower() for k in turn_headers}
-            headers = {
-                k: v for k, v in headers.items() if k.lower() not in turn_keys_lower
-            }
-            headers.update(turn_headers)
+            # A trace row may itself carry case variants of the same header
+            # (e.g. `Authorization` and `authorization`); collapse them so the
+            # wire never sees duplicate differing-case headers. Later row entry
+            # wins and keeps its casing.
+            by_lower = {k.lower(): (k, v) for k, v in turn_headers.items()}
+            headers = {k: v for k, v in headers.items() if k.lower() not in by_lower}
+            headers.update(dict(by_lower.values()))
         return headers
 
     def get_endpoint_params(self, request_info: RequestInfo) -> dict[str, str]:

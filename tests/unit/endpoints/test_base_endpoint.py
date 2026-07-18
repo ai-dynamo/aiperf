@@ -191,6 +191,33 @@ class TestBaseEndpoint:
         assert "Baggage" not in headers
         assert "Authorization" not in headers
 
+    def test_get_endpoint_headers_collapses_case_variants_within_turn(
+        self, endpoint, model_endpoint
+    ):
+        """Case variants of the same header inside a single trace row collapse
+        to one wire header; the later row entry wins and keeps its casing.
+        """
+        model_endpoint.endpoint.api_key = "secret"
+        model_endpoint.endpoint.headers = None
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[
+                Turn(
+                    headers={
+                        "Authorization": "Bearer first",
+                        "authorization": "Bearer second",
+                    }
+                )
+            ],
+        )
+
+        headers = endpoint.get_endpoint_headers(request_info)
+
+        keys_lower = [k.lower() for k in headers]
+        assert keys_lower.count("authorization") == 1
+        assert headers["authorization"] == "Bearer second"
+        assert "Authorization" not in headers
+
     @pytest.mark.parametrize(
         "url_params,expected_params",
         [
