@@ -41,6 +41,7 @@ export * from "./explainer/controller.js";
 export * from "./explainer/narrator-binding.js";
 export * from "./explainer/registry.js";
 export * from "./explainer/immersive-integration.js";
+export * from "./explainer/theme-context.js";
 export * from "./player.js";
 export * from "./registry.js";
 export * from "./renderer.js";
