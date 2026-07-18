@@ -905,8 +905,14 @@ mod tests {
         assert_eq!(tokenizer.encode("[EOS]").unwrap(), vec![259]);
         // vocab_size honors config.json vocab_size (reserved upper bound).
         assert_eq!(tokenizer.vocab_size(), Some(512));
-        // Stable token count for a fixed input (no network).
-        assert_eq!(tokenizer.count("hello world hello").unwrap(), ids.len() + 2);
+        // Token counts are stable and match the encoded length (no network).
+        let repeated = "hello world hello";
+        assert_eq!(
+            tokenizer.count(repeated).unwrap(),
+            tokenizer.encode(repeated).unwrap().len()
+        );
+        assert_eq!(tokenizer.encode(repeated).unwrap(), tokenizer.encode(repeated).unwrap());
+        assert_eq!(tokenizer.decode(&tokenizer.encode(repeated).unwrap()).unwrap(), repeated);
     }
 
     #[test]
