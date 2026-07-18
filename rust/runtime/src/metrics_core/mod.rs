@@ -46,8 +46,8 @@ pub use report::{
     ReportError, ReportExtensionIdentity, ReportGraphOutcomeInfo, ReportGraphRunInfo,
     ReportMetadataError, ReportPairRunFacts, ReportRun, ReportRunInfo, ReportRunMetadata,
     ReportScalarStats, ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata,
-    ReportServerMetricsPhaseRange, ReportStats, ReportSummary, ReportTimeslice, ReportValue,
-    Reporter, RunOutcome,
+    ReportServerMetricsPhaseRange, ReportStats, ReportSteadyState, ReportSummary, ReportTimeslice,
+    ReportValue, Reporter, RunOutcome,
 };
 pub use sidecar::{SidecarMetric, SidecarSeries, SidecarStats, SidecarTimeslice};
 pub use steady_state::{
