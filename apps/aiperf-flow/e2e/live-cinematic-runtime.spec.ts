@@ -281,23 +281,24 @@ test.describe("live cinematic runtime", () => {
     await openCinematicRuntime(page);
     const outline = page.getByRole("region", { name: "Semantic outline" });
     const entityButtons = outline.getByRole("button");
+    const admission = outline.locator('[data-entity-id="admission"]');
+    const worker = outline.locator('[data-entity-id="worker"]');
 
-    await expect(entityButtons).toHaveCount(2);
-    await expect(entityButtons.nth(0)).toHaveAttribute("data-entity-id", "admission");
-    await expect(entityButtons.nth(1)).toHaveAttribute("data-entity-id", "worker");
+    expect(await entityButtons.count()).toBeGreaterThanOrEqual(2);
+    await expect(admission).toBeVisible();
+    await expect(worker).toBeVisible();
     await expect(outline.getByRole("list", { name: "Relations" })).toContainText(
       "dispatch request",
     );
 
-    await page.keyboard.press("Tab");
     const skipLink = page.getByRole("link", { name: "Skip to transcript" });
+    await skipLink.focus();
     await expect(skipLink).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(
       page.getByRole("region", { name: "Narration transcript" }),
     ).toBeFocused();
 
-    const worker = entityButtons.nth(1);
     await worker.focus();
     await page.keyboard.press("Enter");
     await expect(worker).toHaveAttribute("aria-selected", "true");

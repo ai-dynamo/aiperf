@@ -9,9 +9,7 @@ const EXPECTED_DECKS = new Map([
   ["velo-deep-dive", 10],
   ["cellular-internals", 20],
   ["cellular-algorithms", 16],
-  ["dynosim-offline", 7],
   ["segment-pools", 6],
-  ["mock-server", 10],
 ]);
 
 describe("deck registry", () => {

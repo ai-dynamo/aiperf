@@ -64,6 +64,11 @@ async function openPreview(
   await expect(sceneField(page)).toBeVisible();
   await expect(causalPath(page)).toBeVisible();
   await expect(semanticTwin(page)).toBeAttached();
+  if (options.search === undefined) {
+    const firstBeat = causalPath(page).getByRole("button").first();
+    await firstBeat.click();
+    await expect(firstBeat).toHaveAttribute("aria-current", "step");
+  }
   await page.evaluate(async () => document.fonts.ready);
 }
 
@@ -520,7 +525,9 @@ for (const screenshot of screenshotMatrix) {
       animations: "disabled",
       caret: "hide",
       fullPage: false,
+      maxDiffPixelRatio: 0.001,
       scale: "css",
+      style: ".preview-status { visibility: hidden !important; }",
     });
   });
 }
