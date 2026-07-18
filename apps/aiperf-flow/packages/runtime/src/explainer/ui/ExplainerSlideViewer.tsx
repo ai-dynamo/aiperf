@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useEffect, useRef, useMemo } from 'react';
-import type { SceneIr, RenderNodeIr } from "@aiperf/flow-schema";
+import React, { useEffect, useRef } from 'react';
 
 interface ExplainerSlideViewerProps {
   deck: any;
@@ -22,12 +21,12 @@ interface NodeStyle {
   strokeWidth?: number;
   fontSize?: number;
   fontWeight?: string;
-  textAnchor?: string;
 }
 
 /**
  * Native Flow IR renderer for explainer slides.
- * Parses sceneBlock JSON and renders Scene IR nodes directly to canvas.
+ * Renders compiled .flow Scene IR objects directly to canvas.
+ * Scene IR is compiled from .flow source through native Flow compiler pipeline.
  */
 export function ExplainerSlideViewer({
   deck,
@@ -40,18 +39,8 @@ export function ExplainerSlideViewer({
     return <div>No slide at index {slideIndex}</div>;
   }
 
-  // Parse sceneBlock JSON into Flow IR SceneIr object
-  const sceneIr = useMemo(() => {
-    if (!slide.sceneBlock) {
-      return null;
-    }
-    try {
-      return JSON.parse(slide.sceneBlock) as SceneIr;
-    } catch (error) {
-      console.error(`Failed to parse sceneBlock for slide ${slide.id}:`, error);
-      return null;
-    }
-  }, [slide.sceneBlock, slide.id]);
+  // Use precompiled Scene IR from sceneBlock
+  const sceneIr = slide.sceneBlock;
 
   // Extract geometry from node
   function getNodeGeometry(node: any): NodeGeometry {
@@ -132,7 +121,7 @@ export function ExplainerSlideViewer({
     if (!ctx) return;
 
     // Set canvas size based on scene bounds
-    const roots = (sceneIr as any).roots || [];
+    const roots = sceneIr.roots || [];
     let maxX = 500, maxY = 500;
 
     roots.forEach((root: any) => {

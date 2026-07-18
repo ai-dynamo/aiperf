@@ -9,7 +9,7 @@
  * compiled at build time to ensure byte-exact rendering from .flow source.
  */
 
-import type { ExplainerDefinition } from './registry.js';
+import type { ExplainerDefinition } from '../runtime/src/explainer/registry';
 
 export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
   id: 'rust-architecture',
@@ -27,7 +27,107 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Internal modes are intercepted before normal CLI parsing."
     ],
     "caption": "One executable, two hats: operator CLI and execution child.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"product-shell-box\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 200 }\n          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n          children: [\n            {\n              id: \"binary-label\"\n              capability: \"core.text\"\n              text: \"aiperf binary\"\n              layout: { x: 60, y: 60, width: 380, height: 40 }\n              style: { fontSize: 20, fontWeight: \"bold\", fill: @theme.ink.primary }\n            },\n            {\n              id: \"cli-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 110, width: 160, height: 60 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"cli-text\"\n                  capability: \"core.text\"\n                  text: \"CLI Shell\"\n                  layout: { x: 70, y: 125, width: 140, height: 30 }\n                  style: { fontSize: 14, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"engine-box\"\n              capability: \"core.rect\"\n              layout: { x: 230, y: 110, width: 160, height: 60 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"engine-text\"\n                  capability: \"core.text\"\n                  text: \"Execution Engine\"\n                  layout: { x: 240, y: 125, width: 140, height: 30 }\n                  style: { fontSize: 14, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "product-shell-box",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 200
+          },
+          "style": {
+            "fill": "#ffffff",
+            "stroke": "#4b5563",
+            "strokeWidth": 2
+          },
+          "children": [
+            {
+              "id": "binary-label",
+              "capability": "core.text",
+              "text": "aiperf binary",
+              "layout": {
+                "x": 60,
+                "y": 60,
+                "width": 380,
+                "height": 40
+              },
+              "style": {
+                "fontSize": 20,
+                "fontWeight": "bold",
+                "fill": "#1f2937"
+              }
+            },
+            {
+              "id": "cli-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 110,
+                "width": 160,
+                "height": 60
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "cli-text",
+                  "capability": "core.text",
+                  "text": "CLI Shell",
+                  "layout": {
+                    "x": 70,
+                    "y": 125,
+                    "width": 140,
+                    "height": 30
+                  },
+                  "style": {
+                    "fontSize": 14,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "engine-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 230,
+                "y": 110,
+                "width": 160,
+                "height": 60
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "engine-text",
+                  "capability": "core.text",
+                  "text": "Execution Engine",
+                  "layout": {
+                    "x": 240,
+                    "y": 125,
+                    "width": 140,
+                    "height": 30
+                  },
+                  "style": {
+                    "fontSize": 14,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "workspace-map",
@@ -41,7 +141,153 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "aiperf-mock-server is a standalone benchmark target."
     ],
     "caption": "cli → runtime → loadgen-core",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"workspace-diagram\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 250 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"loadgen-core-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 190, width: 140, height: 50 }\n              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"loadgen-text\"\n                  capability: \"core.text\"\n                  text: \"loadgen-core\"\n                  layout: { x: 70, y: 205, width: 120, height: 20 }\n                  style: { fontSize: 12, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"runtime-box\"\n              capability: \"core.rect\"\n              layout: { x: 210, y: 130, width: 140, height: 50 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"runtime-text\"\n                  capability: \"core.text\"\n                  text: \"aiperf-runtime\"\n                  layout: { x: 220, y: 145, width: 120, height: 20 }\n                  style: { fontSize: 12, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"cli-box-wm\"\n              capability: \"core.rect\"\n              layout: { x: 360, y: 70, width: 140, height: 50 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"cli-text-wm\"\n                  capability: \"core.text\"\n                  text: \"aiperf-cli\"\n                  layout: { x: 370, y: 85, width: 120, height: 20 }\n                  style: { fontSize: 12, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"arrow1\"\n              capability: \"core.line\"\n              from: { x: 280, y: 165 }\n              to: { x: 350, y: 95 }\n              style: { stroke: @theme.ink.secondary, strokeWidth: 2 }\n            },\n            {\n              id: \"arrow2\"\n              capability: \"core.line\"\n              from: { x: 210, y: 160 }\n              to: { x: 140, y: 195 }\n              style: { stroke: @theme.ink.secondary, strokeWidth: 2 }\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "workspace-diagram",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 250
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "loadgen-core-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 190,
+                "width": 140,
+                "height": 50
+              },
+              "style": {
+                "fill": "#06b6d4",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "loadgen-text",
+                  "capability": "core.text",
+                  "text": "loadgen-core",
+                  "layout": {
+                    "x": 70,
+                    "y": 205,
+                    "width": 120,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "runtime-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 210,
+                "y": 130,
+                "width": 140,
+                "height": 50
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "runtime-text",
+                  "capability": "core.text",
+                  "text": "aiperf-runtime",
+                  "layout": {
+                    "x": 220,
+                    "y": 145,
+                    "width": 120,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "cli-box-wm",
+              "capability": "core.rect",
+              "layout": {
+                "x": 360,
+                "y": 70,
+                "width": 140,
+                "height": 50
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "cli-text-wm",
+                  "capability": "core.text",
+                  "text": "aiperf-cli",
+                  "layout": {
+                    "x": 370,
+                    "y": 85,
+                    "width": 120,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "arrow1",
+              "capability": "core.line",
+              "from": {
+                "x": 280,
+                "y": 165
+              },
+              "to": {
+                "x": 350,
+                "y": 95
+              },
+              "style": {
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              }
+            },
+            {
+              "id": "arrow2",
+              "capability": "core.line",
+              "from": {
+                "x": 210,
+                "y": 160
+              },
+              "to": {
+                "x": 140,
+                "y": 195
+              },
+              "style": {
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              }
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "startup-order",
@@ -55,7 +301,121 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Everything else goes through `dispatch::run`."
     ],
     "caption": "Hidden modes short-circuit; public commands fall through.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"startup-timeline\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 250 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"init-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 60, width: 380, height: 40 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"init-text\"\n                  capability: \"core.text\"\n                  text: \"1. Initialize logging\"\n                  layout: { x: 70, y: 70, width: 360, height: 20 }\n                  style: { fontSize: 12, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"check-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 110, width: 380, height: 40 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"check-text\"\n                  capability: \"core.text\"\n                  text: \"2. Check hidden modes (--execute, --cell, --aggregator)\"\n                  layout: { x: 70, y: 120, width: 360, height: 20 }\n                  style: { fontSize: 12, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"dispatch-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 160, width: 380, height: 40 }\n              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"dispatch-text\"\n                  capability: \"core.text\"\n                  text: \"3. Dispatch public commands\"\n                  layout: { x: 70, y: 170, width: 360, height: 20 }\n                  style: { fontSize: 12, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "startup-timeline",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 250
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "init-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 60,
+                "width": 380,
+                "height": 40
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "init-text",
+                  "capability": "core.text",
+                  "text": "1. Initialize logging",
+                  "layout": {
+                    "x": 70,
+                    "y": 70,
+                    "width": 360,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "check-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 110,
+                "width": 380,
+                "height": 40
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "check-text",
+                  "capability": "core.text",
+                  "text": "2. Check hidden modes (--execute, --cell, --aggregator)",
+                  "layout": {
+                    "x": 70,
+                    "y": 120,
+                    "width": 360,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "dispatch-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 160,
+                "width": 380,
+                "height": 40
+              },
+              "style": {
+                "fill": "#06b6d4",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "dispatch-text",
+                  "capability": "core.text",
+                  "text": "3. Dispatch public commands",
+                  "layout": {
+                    "x": 70,
+                    "y": 170,
+                    "width": 360,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "command-surface",
@@ -69,7 +429,121 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Feature gates select gRPC, cellular, dynosim, parquet, and embed modes."
     ],
     "caption": "Benchmark hot path native; extended surface delegated.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"command-surface\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 250 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"native-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 60, width: 160, height: 180 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"native-title\"\n                  capability: \"core.text\"\n                  text: \"Native (Rust)\"\n                  layout: { x: 70, y: 70, width: 140, height: 20 }\n                  style: { fontSize: 12, fontWeight: \"bold\", fill: @theme.ink.primary }\n                },\n                {\n                  id: \"native-commands\"\n                  capability: \"core.text\"\n                  text: \"profile\\nconfig\\ncellular\\nslurm\"\n                  layout: { x: 70, y: 95, width: 140, height: 130 }\n                  style: { fontSize: 10, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"delegated-box\"\n              capability: \"core.rect\"\n              layout: { x: 230, y: 60, width: 160, height: 180 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"delegated-title\"\n                  capability: \"core.text\"\n                  text: \"Delegated (Python)\"\n                  layout: { x: 240, y: 70, width: 140, height: 20 }\n                  style: { fontSize: 12, fontWeight: \"bold\", fill: @theme.ink.primary }\n                },\n                {\n                  id: \"delegated-commands\"\n                  capability: \"core.text\"\n                  text: \"Operational\\ntooling\"\n                  layout: { x: 240, y: 110, width: 140, height: 110 }\n                  style: { fontSize: 10, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "command-surface",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 250
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "native-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 60,
+                "width": 160,
+                "height": 180
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "native-title",
+                  "capability": "core.text",
+                  "text": "Native (Rust)",
+                  "layout": {
+                    "x": 70,
+                    "y": 70,
+                    "width": 140,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                },
+                {
+                  "id": "native-commands",
+                  "capability": "core.text",
+                  "text": "profile\nconfig\ncellular\nslurm",
+                  "layout": {
+                    "x": 70,
+                    "y": 95,
+                    "width": 140,
+                    "height": 130
+                  },
+                  "style": {
+                    "fontSize": 10,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "delegated-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 230,
+                "y": 60,
+                "width": 160,
+                "height": 180
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "delegated-title",
+                  "capability": "core.text",
+                  "text": "Delegated (Python)",
+                  "layout": {
+                    "x": 240,
+                    "y": 70,
+                    "width": 140,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                },
+                {
+                  "id": "delegated-commands",
+                  "capability": "core.text",
+                  "text": "Operational\ntooling",
+                  "layout": {
+                    "x": 240,
+                    "y": 110,
+                    "width": 140,
+                    "height": 110
+                  },
+                  "style": {
+                    "fontSize": 10,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "configuration",
@@ -83,7 +557,153 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "`config init|validate|expand` are native helpers."
     ],
     "caption": "YAML in → validated BenchmarkRun out.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"config-pipeline\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 200 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"yaml-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 70, width: 80, height: 50 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"yaml-text\"\n                  capability: \"core.text\"\n                  text: \"YAML\"\n                  layout: { x: 65, y: 85, width: 70, height: 20 }\n                  style: { fontSize: 12, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"expand-box\"\n              capability: \"core.rect\"\n              layout: { x: 160, y: 70, width: 80, height: 50 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"expand-text\"\n                  capability: \"core.text\"\n                  text: \"Expand\"\n                  layout: { x: 165, y: 85, width: 70, height: 20 }\n                  style: { fontSize: 12, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"validate-box\"\n              capability: \"core.rect\"\n              layout: { x: 260, y: 70, width: 80, height: 50 }\n              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"validate-text\"\n                  capability: \"core.text\"\n                  text: \"Validate\"\n                  layout: { x: 265, y: 85, width: 70, height: 20 }\n                  style: { fontSize: 12, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"result-box\"\n              capability: \"core.rect\"\n              layout: { x: 360, y: 70, width: 80, height: 50 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"result-text\"\n                  capability: \"core.text\"\n                  text: \"BenchmarkRun\"\n                  layout: { x: 365, y: 80, width: 70, height: 30 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "config-pipeline",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 200
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "yaml-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 70,
+                "width": 80,
+                "height": 50
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "yaml-text",
+                  "capability": "core.text",
+                  "text": "YAML",
+                  "layout": {
+                    "x": 65,
+                    "y": 85,
+                    "width": 70,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "expand-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 160,
+                "y": 70,
+                "width": 80,
+                "height": 50
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "expand-text",
+                  "capability": "core.text",
+                  "text": "Expand",
+                  "layout": {
+                    "x": 165,
+                    "y": 85,
+                    "width": 70,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "validate-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 260,
+                "y": 70,
+                "width": 80,
+                "height": 50
+              },
+              "style": {
+                "fill": "#06b6d4",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "validate-text",
+                  "capability": "core.text",
+                  "text": "Validate",
+                  "layout": {
+                    "x": 265,
+                    "y": 85,
+                    "width": 70,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "result-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 360,
+                "y": 70,
+                "width": 80,
+                "height": 50
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "result-text",
+                  "capability": "core.text",
+                  "text": "BenchmarkRun",
+                  "layout": {
+                    "x": 365,
+                    "y": 80,
+                    "width": 70,
+                    "height": 30
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "self-execution",
@@ -97,7 +717,105 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Panics in the child become typed failure envelopes."
     ],
     "caption": "Same binary, new process, protocol on stdio.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"stdio-diagram\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 200 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"parent-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 60, width: 160, height: 80 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"parent-text\"\n                  capability: \"core.text\"\n                  text: \"Parent Process\"\n                  layout: { x: 70, y: 80, width: 140, height: 20 }\n                  style: { fontSize: 12, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"arrow-down\"\n              capability: \"core.line\"\n              from: { x: 250, y: 100 }\n              to: { x: 250, y: 120 }\n              style: { stroke: @theme.ink.secondary, strokeWidth: 2 }\n            },\n            {\n              id: \"child-box\"\n              capability: \"core.rect\"\n              layout: { x: 170, y: 130, width: 160, height: 80 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"child-text\"\n                  capability: \"core.text\"\n                  text: \"Child Process\\n(--execute)\"\n                  layout: { x: 180, y: 155, width: 140, height: 30 }\n                  style: { fontSize: 12, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "stdio-diagram",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 200
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "parent-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 60,
+                "width": 160,
+                "height": 80
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "parent-text",
+                  "capability": "core.text",
+                  "text": "Parent Process",
+                  "layout": {
+                    "x": 70,
+                    "y": 80,
+                    "width": 140,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "arrow-down",
+              "capability": "core.line",
+              "from": {
+                "x": 250,
+                "y": 100
+              },
+              "to": {
+                "x": 250,
+                "y": 120
+              },
+              "style": {
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              }
+            },
+            {
+              "id": "child-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 170,
+                "y": 130,
+                "width": 160,
+                "height": 80
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "child-text",
+                  "capability": "core.text",
+                  "text": "Child Process\n(--execute)",
+                  "layout": {
+                    "x": 180,
+                    "y": 155,
+                    "width": 140,
+                    "height": 30
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "wire-contract",
@@ -111,7 +829,153 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Factory-owned config stays opaque until registry decode."
     ],
     "caption": "Envelope v2 in → terminal envelope out.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"protocol-diagram\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 200 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"input-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 70, width: 100, height: 60 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"input-text\"\n                  capability: \"core.text\"\n                  text: \"Protocol v2 In\"\n                  layout: { x: 65, y: 90, width: 90, height: 20 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"validate-box-p\"\n              capability: \"core.rect\"\n              layout: { x: 180, y: 70, width: 70, height: 60 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"validate-text-p\"\n                  capability: \"core.text\"\n                  text: \"Validate\"\n                  layout: { x: 185, y: 95, width: 60, height: 20 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"execute-box-p\"\n              capability: \"core.rect\"\n              layout: { x: 270, y: 70, width: 70, height: 60 }\n              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"execute-text-p\"\n                  capability: \"core.text\"\n                  text: \"Execute\"\n                  layout: { x: 275, y: 95, width: 60, height: 20 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"output-box\"\n              capability: \"core.rect\"\n              layout: { x: 360, y: 70, width: 90, height: 60 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"output-text\"\n                  capability: \"core.text\"\n                  text: \"Terminal Out\"\n                  layout: { x: 365, y: 90, width: 80, height: 20 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "protocol-diagram",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 200
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "input-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 70,
+                "width": 100,
+                "height": 60
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "input-text",
+                  "capability": "core.text",
+                  "text": "Protocol v2 In",
+                  "layout": {
+                    "x": 65,
+                    "y": 90,
+                    "width": 90,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "validate-box-p",
+              "capability": "core.rect",
+              "layout": {
+                "x": 180,
+                "y": 70,
+                "width": 70,
+                "height": 60
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "validate-text-p",
+                  "capability": "core.text",
+                  "text": "Validate",
+                  "layout": {
+                    "x": 185,
+                    "y": 95,
+                    "width": 60,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "execute-box-p",
+              "capability": "core.rect",
+              "layout": {
+                "x": 270,
+                "y": 70,
+                "width": 70,
+                "height": 60
+              },
+              "style": {
+                "fill": "#06b6d4",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "execute-text-p",
+                  "capability": "core.text",
+                  "text": "Execute",
+                  "layout": {
+                    "x": 275,
+                    "y": 95,
+                    "width": 60,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "output-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 360,
+                "y": 70,
+                "width": 90,
+                "height": 60
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "output-text",
+                  "capability": "core.text",
+                  "text": "Terminal Out",
+                  "layout": {
+                    "x": 365,
+                    "y": 90,
+                    "width": 80,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "bootstrap",
@@ -125,7 +989,73 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Unknown transport or workload IDs fail closed."
     ],
     "caption": "Capabilities are frozen before the first request.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"registry-diagram\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 250 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"registry-box\"\n              capability: \"core.rect\"\n              layout: { x: 100, y: 60, width: 300, height: 200 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"registry-title\"\n                  capability: \"core.text\"\n                  text: \"AIPerfRegistry\"\n                  layout: { x: 110, y: 70, width: 280, height: 20 }\n                  style: { fontSize: 14, fontWeight: \"bold\", fill: @theme.ink.primary }\n                },\n                {\n                  id: \"registry-contents\"\n                  capability: \"core.text\"\n                  text: \"Loaders • Samplers\\nEndpoints • Transports\\nWorkloads • Exporters\"\n                  layout: { x: 110, y: 100, width: 280, height: 140 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "registry-diagram",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 250
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "registry-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 100,
+                "y": 60,
+                "width": 300,
+                "height": 200
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "registry-title",
+                  "capability": "core.text",
+                  "text": "AIPerfRegistry",
+                  "layout": {
+                    "x": 110,
+                    "y": 70,
+                    "width": 280,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 14,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                },
+                {
+                  "id": "registry-contents",
+                  "capability": "core.text",
+                  "text": "Loaders • Samplers\nEndpoints • Transports\nWorkloads • Exporters",
+                  "layout": {
+                    "x": 110,
+                    "y": 100,
+                    "width": 280,
+                    "height": 140
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "composition-root",
@@ -139,7 +1069,73 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Cellular and graph runs branch inside the same coordinator."
     ],
     "caption": "One coordinator owns the whole run lifecycle.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"coordinator-flow\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 200 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"coord-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 60, width: 380, height: 170 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"coord-title\"\n                  capability: \"core.text\"\n                  text: \"Coordinator::handle\"\n                  layout: { x: 70, y: 70, width: 360, height: 20 }\n                  style: { fontSize: 12, fontWeight: \"bold\", fill: @theme.ink.primary }\n                },\n                {\n                  id: \"coord-steps\"\n                  capability: \"core.text\"\n                  text: \"1. Validate\\n2. Prepare\\n3. Execute\\n4. Persist native-v2.json\\n5. Run exporters\"\n                  layout: { x: 70, y: 100, width: 360, height: 120 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "coordinator-flow",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 200
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "coord-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 60,
+                "width": 380,
+                "height": 170
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "coord-title",
+                  "capability": "core.text",
+                  "text": "Coordinator::handle",
+                  "layout": {
+                    "x": 70,
+                    "y": 70,
+                    "width": 360,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                },
+                {
+                  "id": "coord-steps",
+                  "capability": "core.text",
+                  "text": "1. Validate\n2. Prepare\n3. Execute\n4. Persist native-v2.json\n5. Run exporters",
+                  "layout": {
+                    "x": 70,
+                    "y": 100,
+                    "width": 360,
+                    "height": 120
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "time-seam",
@@ -153,7 +1149,121 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Transport retry backoff is clock-driven too."
     ],
     "caption": "Real time online, virtual time in simulation.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"clock-diagram\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 200 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"realclock-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 70, width: 160, height: 120 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"realclock-title\"\n                  capability: \"core.text\"\n                  text: \"RealClock\"\n                  layout: { x: 70, y: 80, width: 140, height: 20 }\n                  style: { fontSize: 12, fontWeight: \"bold\", fill: @theme.ink.primary }\n                },\n                {\n                  id: \"realclock-text\"\n                  capability: \"core.text\"\n                  text: \"Online HTTP/gRPC\"\n                  layout: { x: 70, y: 110, width: 140, height: 70 }\n                  style: { fontSize: 10, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"simclock-box\"\n              capability: \"core.rect\"\n              layout: { x: 230, y: 70, width: 160, height: 120 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"simclock-title\"\n                  capability: \"core.text\"\n                  text: \"SimClock\"\n                  layout: { x: 240, y: 80, width: 140, height: 20 }\n                  style: { fontSize: 12, fontWeight: \"bold\", fill: @theme.ink.primary }\n                },\n                {\n                  id: \"simclock-text\"\n                  capability: \"core.text\"\n                  text: \"Deterministic simulation\"\n                  layout: { x: 240, y: 110, width: 140, height: 70 }\n                  style: { fontSize: 10, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "clock-diagram",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 200
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "realclock-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 70,
+                "width": 160,
+                "height": 120
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "realclock-title",
+                  "capability": "core.text",
+                  "text": "RealClock",
+                  "layout": {
+                    "x": 70,
+                    "y": 80,
+                    "width": 140,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                },
+                {
+                  "id": "realclock-text",
+                  "capability": "core.text",
+                  "text": "Online HTTP/gRPC",
+                  "layout": {
+                    "x": 70,
+                    "y": 110,
+                    "width": 140,
+                    "height": 70
+                  },
+                  "style": {
+                    "fontSize": 10,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "simclock-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 230,
+                "y": 70,
+                "width": 160,
+                "height": 120
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "simclock-title",
+                  "capability": "core.text",
+                  "text": "SimClock",
+                  "layout": {
+                    "x": 240,
+                    "y": 80,
+                    "width": 140,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                },
+                {
+                  "id": "simclock-text",
+                  "capability": "core.text",
+                  "text": "Deterministic simulation",
+                  "layout": {
+                    "x": 240,
+                    "y": 110,
+                    "width": 140,
+                    "height": 70
+                  },
+                  "style": {
+                    "fontSize": 10,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "inputs",
@@ -167,7 +1277,153 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Prompt materialization stays endpoint-aware."
     ],
     "caption": "Inputs become endpoint-ready requests once, then reuse handles.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"input-pipeline\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 200 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"load-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 70, width: 85, height: 50 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"load-text\"\n                  capability: \"core.text\"\n                  text: \"Load\"\n                  layout: { x: 65, y: 85, width: 75, height: 20 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"pool-box\"\n              capability: \"core.rect\"\n              layout: { x: 160, y: 70, width: 85, height: 50 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"pool-text\"\n                  capability: \"core.text\"\n                  text: \"Segment Pool\"\n                  layout: { x: 165, y: 85, width: 75, height: 20 }\n                  style: { fontSize: 10, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"sample-box\"\n              capability: \"core.rect\"\n              layout: { x: 260, y: 70, width: 85, height: 50 }\n              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"sample-text\"\n                  capability: \"core.text\"\n                  text: \"Sample\"\n                  layout: { x: 265, y: 85, width: 75, height: 20 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"material-box\"\n              capability: \"core.rect\"\n              layout: { x: 360, y: 70, width: 85, height: 50 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"material-text\"\n                  capability: \"core.text\"\n                  text: \"Materialize\"\n                  layout: { x: 365, y: 80, width: 75, height: 30 }\n                  style: { fontSize: 10, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "input-pipeline",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 200
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "load-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 70,
+                "width": 85,
+                "height": 50
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "load-text",
+                  "capability": "core.text",
+                  "text": "Load",
+                  "layout": {
+                    "x": 65,
+                    "y": 85,
+                    "width": 75,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "pool-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 160,
+                "y": 70,
+                "width": 85,
+                "height": 50
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "pool-text",
+                  "capability": "core.text",
+                  "text": "Segment Pool",
+                  "layout": {
+                    "x": 165,
+                    "y": 85,
+                    "width": 75,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 10,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "sample-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 260,
+                "y": 70,
+                "width": 85,
+                "height": 50
+              },
+              "style": {
+                "fill": "#06b6d4",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "sample-text",
+                  "capability": "core.text",
+                  "text": "Sample",
+                  "layout": {
+                    "x": 265,
+                    "y": 85,
+                    "width": 75,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "material-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 360,
+                "y": 70,
+                "width": 85,
+                "height": 50
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "material-text",
+                  "capability": "core.text",
+                  "text": "Materialize",
+                  "layout": {
+                    "x": 365,
+                    "y": 80,
+                    "width": 75,
+                    "height": 30
+                  },
+                  "style": {
+                    "fontSize": 10,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "work-generation",
@@ -181,7 +1437,121 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Cancellation and grace propagate through shared phase code."
     ],
     "caption": "Scheduling decides when; transport decides how to send.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"workload-diagram\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 200 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"workload-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 70, width: 140, height: 110 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"workload-title\"\n                  capability: \"core.text\"\n                  text: \"Workload\"\n                  layout: { x: 70, y: 80, width: 120, height: 20 }\n                  style: { fontSize: 12, fontWeight: \"bold\", fill: @theme.ink.primary }\n                },\n                {\n                  id: \"workload-types\"\n                  capability: \"core.text\"\n                  text: \"Request-rate\\nConcurrency\\nUser-centric\"\n                  layout: { x: 70, y: 110, width: 120, height: 60 }\n                  style: { fontSize: 10, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"phase-box\"\n              capability: \"core.rect\"\n              layout: { x: 220, y: 70, width: 140, height: 110 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"phase-title\"\n                  capability: \"core.text\"\n                  text: \"Phase Runtime\"\n                  layout: { x: 230, y: 80, width: 120, height: 20 }\n                  style: { fontSize: 12, fontWeight: \"bold\", fill: @theme.ink.primary }\n                },\n                {\n                  id: \"phase-types\"\n                  capability: \"core.text\"\n                  text: \"Warmup\\nRamp\\nDrain\"\n                  layout: { x: 230, y: 110, width: 120, height: 60 }\n                  style: { fontSize: 10, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "workload-diagram",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 200
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "workload-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 70,
+                "width": 140,
+                "height": 110
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "workload-title",
+                  "capability": "core.text",
+                  "text": "Workload",
+                  "layout": {
+                    "x": 70,
+                    "y": 80,
+                    "width": 120,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                },
+                {
+                  "id": "workload-types",
+                  "capability": "core.text",
+                  "text": "Request-rate\nConcurrency\nUser-centric",
+                  "layout": {
+                    "x": 70,
+                    "y": 110,
+                    "width": 120,
+                    "height": 60
+                  },
+                  "style": {
+                    "fontSize": 10,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "phase-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 220,
+                "y": 70,
+                "width": 140,
+                "height": 110
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "phase-title",
+                  "capability": "core.text",
+                  "text": "Phase Runtime",
+                  "layout": {
+                    "x": 230,
+                    "y": 80,
+                    "width": 120,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                },
+                {
+                  "id": "phase-types",
+                  "capability": "core.text",
+                  "text": "Warmup\nRamp\nDrain",
+                  "layout": {
+                    "x": 230,
+                    "y": 110,
+                    "width": 120,
+                    "height": 60
+                  },
+                  "style": {
+                    "fontSize": 10,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "observation-seam",
@@ -195,7 +1565,121 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Endpoint usage is captured verbatim when present."
     ],
     "caption": "Transport sends; observer measures; sink owns the lifecycle.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"observation-diagram\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 200 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"sink-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 60, width: 110, height: 150 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"sink-text\"\n                  capability: \"core.text\"\n                  text: \"RequestSink\"\n                  layout: { x: 65, y: 75, width: 100, height: 120 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"observer-box\"\n              capability: \"core.rect\"\n              layout: { x: 180, y: 60, width: 110, height: 150 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"observer-text\"\n                  capability: \"core.text\"\n                  text: \"RequestObserver\"\n                  layout: { x: 185, y: 75, width: 100, height: 120 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"measure-box\"\n              capability: \"core.rect\"\n              layout: { x: 300, y: 60, width: 110, height: 150 }\n              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"measure-text\"\n                  capability: \"core.text\"\n                  text: \"Measurement\"\n                  layout: { x: 305, y: 75, width: 100, height: 120 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "observation-diagram",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 200
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "sink-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 60,
+                "width": 110,
+                "height": 150
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "sink-text",
+                  "capability": "core.text",
+                  "text": "RequestSink",
+                  "layout": {
+                    "x": 65,
+                    "y": 75,
+                    "width": 100,
+                    "height": 120
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "observer-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 180,
+                "y": 60,
+                "width": 110,
+                "height": 150
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "observer-text",
+                  "capability": "core.text",
+                  "text": "RequestObserver",
+                  "layout": {
+                    "x": 185,
+                    "y": 75,
+                    "width": 100,
+                    "height": 120
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "measure-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 300,
+                "y": 60,
+                "width": 110,
+                "height": 150
+              },
+              "style": {
+                "fill": "#06b6d4",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "measure-text",
+                  "capability": "core.text",
+                  "text": "Measurement",
+                  "layout": {
+                    "x": 305,
+                    "y": 75,
+                    "width": 100,
+                    "height": 120
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "parallelism",
@@ -209,7 +1693,169 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Hyper and SSE paths rely on LocalSet because clients are not Send."
     ],
     "caption": "Scale out by adding worker threads, not shared mutable hot state.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"parallelism-diagram\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 250 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"worker1-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 70, width: 100, height: 160 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"worker1-title\"\n                  capability: \"core.text\"\n                  text: \"Worker 1\"\n                  layout: { x: 65, y: 80, width: 90, height: 20 }\n                  style: { fontSize: 11, fontWeight: \"bold\", fill: @theme.ink.primary }\n                },\n                {\n                  id: \"worker1-content\"\n                  capability: \"core.text\"\n                  text: \"LocalSet\\nTransport\\nMeasure\"\n                  layout: { x: 65, y: 110, width: 90, height: 110 }\n                  style: { fontSize: 9, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"worker2-box\"\n              capability: \"core.rect\"\n              layout: { x: 170, y: 70, width: 100, height: 160 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"worker2-title\"\n                  capability: \"core.text\"\n                  text: \"Worker 2\"\n                  layout: { x: 175, y: 80, width: 90, height: 20 }\n                  style: { fontSize: 11, fontWeight: \"bold\", fill: @theme.ink.primary }\n                },\n                {\n                  id: \"worker2-content\"\n                  capability: \"core.text\"\n                  text: \"LocalSet\\nTransport\\nMeasure\"\n                  layout: { x: 175, y: 110, width: 90, height: 110 }\n                  style: { fontSize: 9, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"worker3-box\"\n              capability: \"core.rect\"\n              layout: { x: 280, y: 70, width: 100, height: 160 }\n              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"worker3-title\"\n                  capability: \"core.text\"\n                  text: \"Worker N\"\n                  layout: { x: 285, y: 80, width: 90, height: 20 }\n                  style: { fontSize: 11, fontWeight: \"bold\", fill: @theme.ink.primary }\n                },\n                {\n                  id: \"worker3-content\"\n                  capability: \"core.text\"\n                  text: \"LocalSet\\nTransport\\nMeasure\"\n                  layout: { x: 285, y: 110, width: 90, height: 110 }\n                  style: { fontSize: 9, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "parallelism-diagram",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 250
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "worker1-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 70,
+                "width": 100,
+                "height": 160
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "worker1-title",
+                  "capability": "core.text",
+                  "text": "Worker 1",
+                  "layout": {
+                    "x": 65,
+                    "y": 80,
+                    "width": 90,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                },
+                {
+                  "id": "worker1-content",
+                  "capability": "core.text",
+                  "text": "LocalSet\nTransport\nMeasure",
+                  "layout": {
+                    "x": 65,
+                    "y": 110,
+                    "width": 90,
+                    "height": 110
+                  },
+                  "style": {
+                    "fontSize": 9,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "worker2-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 170,
+                "y": 70,
+                "width": 100,
+                "height": 160
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "worker2-title",
+                  "capability": "core.text",
+                  "text": "Worker 2",
+                  "layout": {
+                    "x": 175,
+                    "y": 80,
+                    "width": 90,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                },
+                {
+                  "id": "worker2-content",
+                  "capability": "core.text",
+                  "text": "LocalSet\nTransport\nMeasure",
+                  "layout": {
+                    "x": 175,
+                    "y": 110,
+                    "width": 90,
+                    "height": 110
+                  },
+                  "style": {
+                    "fontSize": 9,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "worker3-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 280,
+                "y": 70,
+                "width": 100,
+                "height": 160
+              },
+              "style": {
+                "fill": "#06b6d4",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "worker3-title",
+                  "capability": "core.text",
+                  "text": "Worker N",
+                  "layout": {
+                    "x": 285,
+                    "y": 80,
+                    "width": 90,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                },
+                {
+                  "id": "worker3-content",
+                  "capability": "core.text",
+                  "text": "LocalSet\nTransport\nMeasure",
+                  "layout": {
+                    "x": 285,
+                    "y": 110,
+                    "width": 90,
+                    "height": 110
+                  },
+                  "style": {
+                    "fontSize": 9,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "scale-out",
@@ -223,7 +1869,154 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Bulk artifacts can use a separate HTTP/1 + zstd path."
     ],
     "caption": "Same engine, more processes, partitioned ownership.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"cellular-diagram\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 250 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"controller-box\"\n              capability: \"core.rect\"\n              layout: { x: 150, y: 60, width: 120, height: 70 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"controller-text\"\n                  capability: \"core.text\"\n                  text: \"Controller\"\n                  layout: { x: 160, y: 85, width: 100, height: 20 }\n                  style: { fontSize: 12, fontWeight: \"bold\", fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"cell1-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 160, width: 80, height: 70 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"cell1-text\"\n                  capability: \"core.text\"\n                  text: \"Cell 0\"\n                  layout: { x: 65, y: 185, width: 70, height: 20 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"cell2-box\"\n              capability: \"core.rect\"\n              layout: { x: 160, y: 160, width: 80, height: 70 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"cell2-text\"\n                  capability: \"core.text\"\n                  text: \"Cell 1\"\n                  layout: { x: 165, y: 185, width: 70, height: 20 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"celln-box\"\n              capability: \"core.rect\"\n              layout: { x: 260, y: 160, width: 80, height: 70 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"celln-text\"\n                  capability: \"core.text\"\n                  text: \"Cell N\"\n                  layout: { x: 265, y: 185, width: 70, height: 20 }\n                  style: { fontSize: 11, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "cellular-diagram",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 250
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "controller-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 150,
+                "y": 60,
+                "width": 120,
+                "height": 70
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "controller-text",
+                  "capability": "core.text",
+                  "text": "Controller",
+                  "layout": {
+                    "x": 160,
+                    "y": 85,
+                    "width": 100,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 12,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "cell1-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 160,
+                "width": 80,
+                "height": 70
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "cell1-text",
+                  "capability": "core.text",
+                  "text": "Cell 0",
+                  "layout": {
+                    "x": 65,
+                    "y": 185,
+                    "width": 70,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "cell2-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 160,
+                "y": 160,
+                "width": 80,
+                "height": 70
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "cell2-text",
+                  "capability": "core.text",
+                  "text": "Cell 1",
+                  "layout": {
+                    "x": 165,
+                    "y": 185,
+                    "width": 70,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "celln-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 260,
+                "y": 160,
+                "width": 80,
+                "height": 70
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "celln-text",
+                  "capability": "core.text",
+                  "text": "Cell N",
+                  "layout": {
+                    "x": 265,
+                    "y": 185,
+                    "width": 70,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "outputs--gates",
@@ -237,7 +2030,219 @@ export const RUST_ARCHITECTURE_DECK: ExplainerDefinition = {
       "Mock server stays outside profile supervision for deterministic tests."
     ],
     "caption": "Measure locally, merge once, export many formats.",
-    "sceneBlock": "{\n      roots: [\n        {\n          id: \"output-diagram\"\n          capability: \"core.rect\"\n          layout: { x: 50, y: 50, width: 400, height: 250 }\n          style: { fill: @theme.surface.primary }\n          children: [\n            {\n              id: \"metrics-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 70, width: 120, height: 60 }\n              style: { fill: @theme.accent.primary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"metrics-text\"\n                  capability: \"core.text\"\n                  text: \"Metrics\"\n                  layout: { x: 70, y: 90, width: 100, height: 20 }\n                  style: { fontSize: 11, fontWeight: \"bold\", fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"report-box\"\n              capability: \"core.rect\"\n              layout: { x: 200, y: 70, width: 140, height: 60 }\n              style: { fill: @theme.accent.secondary, stroke: @theme.ink.secondary, strokeWidth: 2 }\n              children: [\n                {\n                  id: \"report-text\"\n                  capability: \"core.text\"\n                  text: \"native-v2.json\"\n                  layout: { x: 210, y: 90, width: 120, height: 20 }\n                  style: { fontSize: 11, fontWeight: \"bold\", fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"export1-box\"\n              capability: \"core.rect\"\n              layout: { x: 60, y: 160, width: 80, height: 50 }\n              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"export1-text\"\n                  capability: \"core.text\"\n                  text: \"JSON\"\n                  layout: { x: 65, y: 175, width: 70, height: 20 }\n                  style: { fontSize: 10, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"export2-box\"\n              capability: \"core.rect\"\n              layout: { x: 160, y: 160, width: 80, height: 50 }\n              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"export2-text\"\n                  capability: \"core.text\"\n                  text: \"CSV\"\n                  layout: { x: 165, y: 175, width: 70, height: 20 }\n                  style: { fontSize: 10, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"export3-box\"\n              capability: \"core.rect\"\n              layout: { x: 260, y: 160, width: 80, height: 50 }\n              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"export3-text\"\n                  capability: \"core.text\"\n                  text: \"Parquet\"\n                  layout: { x: 265, y: 175, width: 70, height: 20 }\n                  style: { fontSize: 10, fill: @theme.ink.primary }\n                }\n              ]\n            },\n            {\n              id: \"export4-box\"\n              capability: \"core.rect\"\n              layout: { x: 360, y: 160, width: 80, height: 50 }\n              style: { fill: @theme.accent.tertiary, stroke: @theme.ink.secondary, strokeWidth: 1 }\n              children: [\n                {\n                  id: \"export4-text\"\n                  capability: \"core.text\"\n                  text: \"OTLP\"\n                  layout: { x: 365, y: 175, width: 70, height: 20 }\n                  style: { fontSize: 10, fill: @theme.ink.primary }\n                }\n              ]\n            }\n          ]\n        }\n      ]\n    }"
+    "sceneBlock": {
+      "roots": [
+        {
+          "id": "output-diagram",
+          "capability": "core.rect",
+          "layout": {
+            "x": 50,
+            "y": 50,
+            "width": 400,
+            "height": 250
+          },
+          "style": {
+            "fill": "#ffffff"
+          },
+          "children": [
+            {
+              "id": "metrics-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 70,
+                "width": 120,
+                "height": 60
+              },
+              "style": {
+                "fill": "#2563eb",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "metrics-text",
+                  "capability": "core.text",
+                  "text": "Metrics",
+                  "layout": {
+                    "x": 70,
+                    "y": 90,
+                    "width": 100,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "report-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 200,
+                "y": 70,
+                "width": 140,
+                "height": 60
+              },
+              "style": {
+                "fill": "#7c3aed",
+                "stroke": "#4b5563",
+                "strokeWidth": 2
+              },
+              "children": [
+                {
+                  "id": "report-text",
+                  "capability": "core.text",
+                  "text": "native-v2.json",
+                  "layout": {
+                    "x": 210,
+                    "y": 90,
+                    "width": 120,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 11,
+                    "fontWeight": "bold",
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "export1-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 60,
+                "y": 160,
+                "width": 80,
+                "height": 50
+              },
+              "style": {
+                "fill": "#06b6d4",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "export1-text",
+                  "capability": "core.text",
+                  "text": "JSON",
+                  "layout": {
+                    "x": 65,
+                    "y": 175,
+                    "width": 70,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 10,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "export2-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 160,
+                "y": 160,
+                "width": 80,
+                "height": 50
+              },
+              "style": {
+                "fill": "#06b6d4",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "export2-text",
+                  "capability": "core.text",
+                  "text": "CSV",
+                  "layout": {
+                    "x": 165,
+                    "y": 175,
+                    "width": 70,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 10,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "export3-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 260,
+                "y": 160,
+                "width": 80,
+                "height": 50
+              },
+              "style": {
+                "fill": "#06b6d4",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "export3-text",
+                  "capability": "core.text",
+                  "text": "Parquet",
+                  "layout": {
+                    "x": 265,
+                    "y": 175,
+                    "width": 70,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 10,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "export4-box",
+              "capability": "core.rect",
+              "layout": {
+                "x": 360,
+                "y": 160,
+                "width": 80,
+                "height": 50
+              },
+              "style": {
+                "fill": "#06b6d4",
+                "stroke": "#4b5563",
+                "strokeWidth": 1
+              },
+              "children": [
+                {
+                  "id": "export4-text",
+                  "capability": "core.text",
+                  "text": "OTLP",
+                  "layout": {
+                    "x": 365,
+                    "y": 175,
+                    "width": 70,
+                    "height": 20
+                  },
+                  "style": {
+                    "fontSize": 10,
+                    "fill": "#1f2937"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
   }
 ],
   glossary: [],
