@@ -10,6 +10,8 @@
     "test": "vitest run",
     "assert:no-mentalmodel-registry": "node scripts/assert-no-mentalmodel-registry.mjs",
     "assert:deck-packages": "node scripts/assert-deck-packages.mjs",
+    "flow-verifier": "node scripts/flow-verifier.mjs",
+    "flow-verifier:ir": "node scripts/flow-verifier.mjs --ir-only",
     "deploy:pages": "bash scripts/deploy-pages.sh"
   },
   "dependencies": {

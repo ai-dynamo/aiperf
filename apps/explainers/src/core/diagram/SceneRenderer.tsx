@@ -1544,7 +1544,9 @@ export function SceneRenderer({
           id={arrowMarkerId}
           markerWidth={8}
           markerHeight={8}
-          refX={6}
+          // Attach at the triangle base so the stroke stops before the tip,
+          // instead of continuing through the head (visible under the tip).
+          refX={0}
           refY={3}
           orient="auto"
           markerUnits="strokeWidth"

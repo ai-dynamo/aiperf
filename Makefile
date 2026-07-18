@@ -29,7 +29,8 @@
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
 		check-agent-files-sync build-explainer-packages \
-		assert-deck-packages assert-no-mentalmodel-registry assert-explainer-packages
+		assert-deck-packages assert-no-mentalmodel-registry assert-explainer-packages \
+		flow-verifier
 
 
 # Include user-defined environment variables
@@ -439,6 +440,9 @@ assert-no-mentalmodel-registry: #? fail if deck-registry imports any MentalModel
 	cd apps/aiperf-flow && npm run assert:no-mentalmodel-registry
 
 assert-explainer-packages: build-explainer-packages assert-deck-packages assert-no-mentalmodel-registry #? build + gate flow-backed explainer packages
+
+flow-verifier: #? IR playhead + Playwright full-play gate for explainer decks
+	cd apps/explainers && npm run flow-verifier -- $(FLOW_VERIFIER_ARGS)
 
 add-copyright: #? add the copyright header to the files.
 	$(activate_venv) && ./tools/add_copyright.py

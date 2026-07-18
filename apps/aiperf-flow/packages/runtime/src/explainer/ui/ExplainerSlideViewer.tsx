@@ -263,7 +263,8 @@ export function ExplainerSlideViewer({
             <marker
               id={markerId}
               viewBox="0 0 10 10"
-              refX="8"
+              // Attach at the triangle base so the stroke stops before the tip.
+              refX="0"
               refY="5"
               markerWidth="7"
               markerHeight="7"
