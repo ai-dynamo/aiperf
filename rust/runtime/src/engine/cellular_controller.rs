@@ -51,6 +51,17 @@ pub const CELL_BARRIER_FREE_ENV: &str = "AIPERF_CELL_BARRIER_FREE";
 /// START to phase transitions and dataset-availability signals.
 pub const CELL_PHASER_START_ENV: &str = "AIPERF_CELL_PHASER_START";
 
+/// Env toggle standing up ONE per-run velo [hub](crate::hub) as the cellular anchor
+/// instead of the separate standalone planes. When enabled, the controller mounts the
+/// cell↔controller plugin (register/heartbeat/partition/store-partition), the
+/// `/artifact` plugin (when per-record artifacts ride velo), and the discovery plugin
+/// on a single [`Hub`](crate::hub::Hub) over the same control-plane velo instance, and
+/// serves the hub's axum HTTP surface. Default off — the standalone
+/// [`VeloControllerTransport`] + velo artifact receiver, byte-identical to today. Cells
+/// reach the hub by the same `tcp://HOST:PORT` velo coordinate either way (the hub is
+/// the connect anchor the controller already is).
+pub const CELLULAR_HUB_ENV: &str = "AIPERF_CELLULAR_HUB";
+
 /// Env toggle for the dataset fan-out data plane: the controller
 /// generates the dataset request-ids once and broadcasts them; each cell builds its
 /// owned index over velo and dispatches its owned requests. Default off
@@ -206,6 +217,15 @@ pub fn run_cellular(
             .as_str(),
         "1" | "true" | "on" | "yes"
     );
+    // Hub mode is opt-in: stand up one velo hub as the cellular anchor instead of the
+    // standalone transport + velo artifact receiver. Default off (byte-identical).
+    let hub_mode = matches!(
+        std::env::var(CELLULAR_HUB_ENV)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "on" | "yes"
+    );
     // Dataset fan-out is opt-in. The controller generates the dataset's
     // request-ids once and broadcasts them; each cell builds its owned index over velo
     // and dispatches its owned requests (default off = per-cell seed
@@ -230,9 +250,17 @@ pub fn run_cellular(
     // multi-process tests can exercise the shipping mechanism. Off by default,
     // so a normal `--cells N` run keeps shared-filesystem concatenation.
     let force_http = crate::engine::cellular_cell::artifact_http_force_enabled();
+    // `http_shipping` here means "per-record artifacts are shipped cross-host"
+    // (over some transport), gating the barrier + concat-from-landing. The transport
+    // toggle then decides HTTP vs velo for the actual byte movement.
     let http_shipping = (is_k8s || force_http)
         && crate::engine::cellular_cell::http_artifact_shipping_enabled()
         && !crate::engine::artifact_shipping::shippable_relatives(&artifacts).is_empty();
+    // When selected, per-record artifacts ride the shared velo endpoint instead of the
+    // HTTP artifact server/port (dataset serving stays on HTTP for now).
+    let velo_artifacts = crate::engine::cellular_cell::artifact_transport_is_velo();
+    // The HTTP upload server is only needed for artifacts when NOT using velo.
+    let http_upload = http_shipping && !velo_artifacts;
     // A cross-host cell cannot read a controller-local `file`/`path` dataset
     // source, so the controller serves it over the HTTP+zstd plane and the cell
     // recompiles it locally. Only a cross-host (k8s / force) run with a `file`/`path`
@@ -260,14 +288,17 @@ pub fn run_cellular(
     } else {
         None
     };
-    // One HTTP server handles per-record uploads and dataset serving.
-    let need_artifact_server = http_shipping || dataset_ship;
+    // One HTTP server handles per-record uploads (HTTP transport only) and dataset serving.
+    let need_artifact_server = http_upload || dataset_ship;
     // The force seam only applies to the same-host launcher (k8s already ships): when
     // true, cells write to their own controller-local `temp_root/cell-{id}` scratch AND
-    // ship those files over HTTP to a SEPARATE loopback landing dir, from which the
-    // concat reads — so the shipped bytes (not the local writes) feed the merged report.
-    // Dataset serving reuses the same loopback bind + injected authority.
+    // ship those files to a SEPARATE loopback landing dir, from which the concat reads —
+    // so the shipped bytes (not the local writes) feed the merged report. This holds for
+    // BOTH transports: velo same-host shipping needs the separate landing subtree too,
+    // otherwise the velo receiver would overwrite each cell file with itself in place.
     let force_local_http = need_artifact_server && !is_k8s;
+    let force_local_landing =
+        (need_artifact_server || (http_shipping && velo_artifacts)) && !is_k8s;
     warn_dropped_sidecar_telemetry(envelope);
     // Warn about DROPPED per-record artifacts only when they genuinely cannot be
     // delivered — cross-host AND HTTP shipping disabled. When HTTP shipping is active
@@ -313,7 +344,7 @@ pub fn run_cellular(
         // is a different host, no collision). The same-host force seam MUST land in a
         // SEPARATE subtree, because there the cell's own artifact_dir already IS
         // `temp_root/cell-{id}`; landing there would overwrite each file with itself.
-        let landing_root = if force_local_http {
+        let landing_root = if force_local_landing {
             temp_root.join("http-landing")
         } else {
             temp_root.clone()
@@ -365,6 +396,29 @@ pub fn run_cellular(
         // `is_k8s` is resolved once above and moved in here.
         let (bind, cell_coordinate) = controller_bind_and_endpoint(is_k8s, &temp_root)?;
         let velo = build_velo(bind).await.context("building controller velo")?;
+        // When artifacts ride velo, hang the artifact receive handlers off THIS same
+        // control-plane velo instance (no second port): cells stream their zstd chunks
+        // here and the receiver lands them at `landing_root/cell-{id}/{rel}`, exactly
+        // where the HTTP server would, so the downstream barrier + concat are unchanged.
+        // In hub mode the artifact receiver is mounted as the `/artifact` hub plugin
+        // (below), so skip the standalone registration here; otherwise register it
+        // directly on the control-plane velo as today.
+        let mut velo_artifact_receiver = if !hub_mode && http_shipping && velo_artifacts {
+            let allowed: std::collections::HashSet<String> =
+                crate::engine::artifact_shipping::shippable_relatives(&artifacts)
+                    .into_iter()
+                    .collect();
+            Some(
+                crate::engine::artifact_stream_velo::ArtifactVeloReceiver::register(
+                    velo.clone(),
+                    landing_root.clone(),
+                    allowed,
+                )
+                .context("registering velo artifact receiver")?,
+            )
+        } else {
+            None
+        };
         // The run-wide synchronized-START event: cells await it after registering,
         // and the controller triggers it once every cell has registered so they all
         // begin dispatching together. Created before `velo` moves into the transport;
@@ -381,16 +435,21 @@ pub fn run_cellular(
         // subscribe. `advance(Started)` below drives the run-wide START through the
         // monotonic phaser. The server (held for the run) keeps its handlers alive via its
         // own velo clone independent of the transport.
+        //
+        // In hub mode the phaser plane is instead mounted as the `/phaser` hub plugin
+        // (below), which binds the identical `PhaserServer` on the same hub velo — so skip
+        // the standalone bind here and let `build_cellular_hub` own it. The phaser itself
+        // is created either way so the `advance` calls below are unchanged.
         let phaser = phaser_start.then(crate::cellular::phaser::Phaser::new);
         let _phaser_server = match &phaser {
-            Some(phaser) => Some(
+            Some(phaser) if !hub_mode => Some(
                 crate::cellular::transport::phaser_velo::PhaserServer::bind(
                     velo.clone(),
                     phaser.clone(),
                 )
                 .context("binding phaser control plane")?,
             ),
-            None => None,
+            _ => None,
         };
 
         // Bind the dataset service, generate the
@@ -399,14 +458,26 @@ pub fn run_cellular(
         // bounded run distributes fully before dispatch; each
         // cell then subscribes and builds its owned index over velo. Held for the run so
         // the service's handlers/pumps stay alive.
+        // In hub mode the dataset fan-out plane is mounted as the `/dataset` hub plugin
+        // (below), which binds the identical `DatasetServer` on the same hub velo. The
+        // publisher is filled and finalized here either way (broadcast is independent of
+        // when the server binds); this slot carries it into `build_cellular_hub` so the
+        // plugin can serve it. Empty in the standalone path.
+        let mut dataset_publisher_for_hub = None;
         let _dataset_server = if dataset_fanout {
             let publisher =
                 crate::cellular::dataset_session::DatasetPublisher::<Vec<u8>>::new();
-            let server = crate::cellular::transport::dataset_velo::DatasetServer::bind(
-                velo.clone(),
-                publisher.clone(),
-            )
-            .context("binding dataset fan-out plane")?;
+            let server = if hub_mode {
+                None
+            } else {
+                Some(
+                    crate::cellular::transport::dataset_velo::DatasetServer::bind(
+                        velo.clone(),
+                        publisher.clone(),
+                    )
+                    .context("binding dataset fan-out plane")?,
+                )
+            };
             let total = profiling_request_budget(envelope).unwrap_or(0);
             // Build each request's endpoint-ready body once on the controller so a cell
             // POSTs exactly what the controller
@@ -460,7 +531,10 @@ pub fn run_cellular(
                 endpoint = %chat_url,
                 "dataset fan-out: broadcast the endpoint-ready request bodies to the cells"
             );
-            Some(server)
+            if hub_mode {
+                dataset_publisher_for_hub = Some(publisher);
+            }
+            server
         } else {
             None
         };
@@ -490,68 +564,113 @@ pub fn run_cellular(
             let specs = specs.clone();
             std::sync::Arc::new(move |cell_id: u32| specs.get(cell_id as usize).cloned())
         };
-        let mut transport =
+        // Bind the controller's velo control plane. In hub mode this is done through a
+        // single per-run velo hub (cell↔controller plugin + `/artifact` plugin +
+        // discovery) served over one anchor; otherwise the standalone transport binds
+        // directly on `velo`. Either path yields the same `VeloControllerTransport` the
+        // collect loop drives; hub mode additionally captures the velo artifact
+        // receiver and keeps the served hub alive for the run.
+        let mut _hub_server: Option<crate::hub::HubServer> = None;
+        let mut transport = if hub_mode {
+            let artifact_mount = (http_shipping && velo_artifacts).then(|| {
+                let allowed: std::collections::HashSet<String> =
+                    crate::engine::artifact_shipping::shippable_relatives(&artifacts)
+                        .into_iter()
+                        .collect();
+                (landing_root.clone(), allowed)
+            });
+            let (transport, receiver, server) = build_cellular_hub(
+                velo,
+                spec_for,
+                cell_count,
+                start_handle,
+                cell_coordinate.clone(),
+                artifact_mount,
+                phaser.clone(),
+                dataset_publisher_for_hub.take(),
+            )
+            .await
+            .context("standing up cellular velo hub")?;
+            velo_artifact_receiver = receiver;
+            _hub_server = Some(server);
+            transport
+        } else {
             VeloControllerTransport::bind_controller(velo, spec_for, cell_count, start_handle)
-                .context("binding controller transport")?;
+                .context("binding controller transport")?
+        };
 
-        // Insert `M = ceil(cells / fanout)` aggregators
-        // between the cells and the controller. Each cell ships to its round-robin
-        // aggregator; each aggregator merges its subtree and ships ONE store up, so the
-        // controller collects `M` partitions instead of `cells`. Fold-only (sketch /
-        // exact-fold): the retain path keeps the star topology (needs global order).
+        // Insert a reduction TREE of aggregators between the cells and the controller.
+        // Each cell ships to its round-robin tier-1 aggregator; each aggregator merges
+        // its subtree and ships ONE store up (to a parent aggregator for a lower tier,
+        // the controller for the top tier), so the controller collects only the top
+        // tier's partitions instead of `cells`. Fold-only (sketch / exact-fold): the
+        // retain path keeps the star topology (needs global order).
         //
         // Placement differs by deployment, exactly like the cells:
-        // - SAME-HOST (`!is_k8s`): the controller spawns M `aiperf --aggregator`
-        //   subprocesses at fixed loopback ports and injects each cell's loopback ship
-        //   address (via `CellLaunchContext::aggregator_count`).
-        // - K8S: the operator created the aggregator pods and injected each cell pod's
+        // - SAME-HOST (`!is_k8s`): the controller spawns every tier's `aiperf
+        //   --aggregator` subprocess at a distinct fixed loopback port
+        //   ([`aggregator_nodes`]) and injects each cell's tier-1 loopback ship address
+        //   (via `CellLaunchContext::aggregator_count`). Depth `>= 2` tiers reduce a
+        //   large cell count geometrically.
+        // - K8S: the operator created the aggregator pods (one indexed `aggregators-{tier}`
+        //   replicatedJob per tier of the plan) and injected each cell/aggregator pod's
         //   ship-DNS, so the controller must NOT spawn and must NOT inject loopback ship
-        //   addresses (`K8sLauncher` ignores `aggregator_count` — cell env is the pod
-        //   spec's). It still sizes `expected_partitions = M` and collects the M merged
-        //   stores. This k8s "expect, don't spawn" path is gated on the operator having
-        //   signalled it wired the aggregators ([`AGG_DNS_TEMPLATE_ENV`]); a fanout-set
-        //   k8s run without that signal fails closed to the flat star (cells would
-        //   otherwise ship into a void).
-        let requested_aggregator_count =
-            crate::engine::cellular_aggregator::aggregator_count(cell_count);
-        let k8s_aggregators_wired = std::env::var_os(
-            crate::engine::cellular_aggregator::AGG_DNS_TEMPLATE_ENV,
-        )
-        .is_some();
-        let aggregator_count = crate::engine::cellular_aggregator::effective_aggregator_count(
-            is_k8s,
-            k8s_aggregators_wired,
-            requested_aggregator_count,
-        );
-        if is_k8s && requested_aggregator_count.is_some() && aggregator_count.is_none() {
-            tracing::warn!(
-                "AIPERF_CELL_AGG_FANOUT requests aggregators but the operator did not wire the \
-                 k8s aggregators (AIPERF_CELL_AGG_DNS_TEMPLATE unset); falling back to the \
-                 flat star topology"
-            );
+        //   addresses (`K8sLauncher` ignores `aggregator_count` — the pod env is the pod
+        //   spec's). It sizes `expected_partitions` from the top tier and collects those
+        //   merged stores. This k8s "expect, don't spawn" path is gated on the operator
+        //   having signalled it wired the aggregators ([`AGG_DNS_TEMPLATE_ENV`]); a
+        //   fanout-set k8s run without that signal fails closed to the flat star.
+        use crate::engine::cellular_aggregator::{
+            aggregator_base_port as agg_base_port, aggregator_count as requested_agg_count,
+            tier_counts_from_env, AGG_DNS_TEMPLATE_ENV,
+        };
+        let aggregator_base_port = agg_base_port();
+        // Both same-host and k8s use the full multi-tier plan. On k8s the plan is honored
+        // only when the operator signalled it built the aggregator pods ([`AGG_DNS_TEMPLATE_ENV`]);
+        // otherwise a fanout-set run falls closed to the flat star (the cells would ship
+        // into pods that do not exist). Off k8s the controller spawns the tiers itself.
+        let tiers: Vec<u32> = if is_k8s {
+            let k8s_wired = std::env::var_os(AGG_DNS_TEMPLATE_ENV).is_some();
+            if k8s_wired {
+                tier_counts_from_env(cell_count)
+            } else {
+                if requested_agg_count(cell_count).is_some() {
+                    tracing::warn!(
+                        "AIPERF_CELL_AGG_FANOUT requests aggregators but the operator did not \
+                         wire the k8s aggregators (AIPERF_CELL_AGG_DNS_TEMPLATE unset); falling \
+                         back to the flat star topology"
+                    );
+                }
+                Vec::new()
+            }
+        } else {
+            tier_counts_from_env(cell_count)
+        };
+        // Cells ship to tier 1 (the first tier); the controller collects the top tier.
+        // Both equal `cell_count` for the flat star.
+        let aggregator_count = tiers.first().copied();
+        let expected_partitions = tiers.last().copied().unwrap_or(cell_count);
+        if tiers.len() > 1 {
+            tracing::info!(?tiers, "cellular multi-tier aggregation tree");
         }
-        let aggregator_base_port =
-            crate::engine::cellular_aggregator::aggregator_base_port();
-        // The controller collects one partition per aggregator (tree) or per cell (flat).
-        let expected_partitions = aggregator_count.unwrap_or(cell_count);
-        // Spawn the aggregator subprocesses (same-host only) before the cells so they are
-        // bound and collecting by the time cells ship (cell `connect` also retries). Each
-        // gets the run envelope on stdin (for the merge config) and its subtree parameters
-        // via env. On k8s the aggregators are operator-created pods (fed their envelope by
-        // the `aiperf aggregator` frontend, bound on `0.0.0.0`), so the controller expects
-        // rather than spawns — `aggregator_children` stays empty and pod liveness is the
+        // Spawn every tier's aggregator subprocess (same-host only) before the cells so
+        // they are bound and collecting by the time cells ship (cell `connect` also
+        // retries). Each gets the run envelope on stdin (for the merge config) and its
+        // placement (id, bind port, collect barrier, parent ship coordinate) via env. On
+        // k8s the aggregators are operator-created pods, so the controller expects rather
+        // than spawns — `aggregator_children` stays empty and pod liveness is the
         // operator's concern.
-        let mut aggregator_children = match aggregator_count {
-            Some(agg_count) if !is_k8s => spawn_aggregators(
+        let mut aggregator_children = if !is_k8s && !tiers.is_empty() {
+            spawn_aggregators(
                 envelope,
-                agg_count,
                 cell_count,
                 aggregator_base_port,
                 &cell_coordinate,
             )
             .await
-            .context("spawning aggregators")?,
-            _ => Vec::new(),
+            .context("spawning aggregators")?
+        } else {
+            Vec::new()
         };
 
         // Launch (local subprocesses) or expect (k8s pods) the cells.
@@ -819,13 +938,18 @@ pub fn run_cellular(
         // is already their barrier.)
         // A dataset-serve-only run never POSTs files or `/done`, so
         // there is nothing to wait for and the barrier would spuriously time out.
-        if http_shipping
-            && let Some(server) = artifact_server.as_ref()
-        {
-            server
-                .wait_for_cells(cell_count, artifact_upload_timeout())
-                .await
-                .context("waiting for cellular artifact uploads")?;
+        if http_shipping {
+            if let Some(receiver) = velo_artifact_receiver.as_ref() {
+                receiver
+                    .wait_for_cells(cell_count, artifact_upload_timeout())
+                    .await
+                    .context("waiting for cellular velo artifact streams")?;
+            } else if let Some(server) = artifact_server.as_ref() {
+                server
+                    .wait_for_cells(cell_count, artifact_upload_timeout())
+                    .await
+                    .context("waiting for cellular artifact uploads")?;
+            }
         }
 
         // Per-record artifact concat + inputs.json copy. Each cell ran its ordinary
@@ -935,6 +1059,113 @@ fn controller_bind_and_endpoint(is_k8s: bool, temp_root: &Path) -> Result<(BindS
         .local_addr()
         .context("controller loopback local_addr")?;
     Ok((BindSpec::TcpListener(listener), format!("tcp://{addr}")))
+}
+
+/// The hub's HTTP diagnostic bind. The hub's velo surface is the cellular anchor cells
+/// dial; its axum surface is a co-bound diagnostic (discovery/allowlist/status). Bound
+/// on an OS-assigned loopback port by default, overridable
+/// (`AIPERF_CELLULAR_HUB_HTTP_BIND`, e.g. `0.0.0.0:9700` for k8s).
+#[cfg(feature = "cellular")]
+fn hub_http_bind() -> std::net::SocketAddr {
+    std::env::var("AIPERF_CELLULAR_HUB_HTTP_BIND")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| std::net::SocketAddr::from(([127, 0, 0, 1], 0)))
+}
+
+/// Stand up one per-run velo [`Hub`](crate::hub::Hub) as the cellular anchor: mount the
+/// cell↔controller plugin, the `/artifact` plugin (when `artifact_mount` is `Some`), the
+/// `/phaser` plugin (when `phaser` is `Some`), the `/dataset` plugin (when
+/// `dataset_publisher` is `Some`), and the discovery plugin on `velo`, serve the co-bound
+/// axum surface, and return the captured [`VeloControllerTransport`] + optional
+/// [`ArtifactVeloReceiver`] + the live [`HubServer`] (held for the run). The velo handlers
+/// are identical to the standalone planes; only the mount point moves onto the hub. With
+/// the phaser and dataset planes mounted, a hub-mode run is a complete replacement of the
+/// standalone control/data planes on the one anchor.
+#[cfg(feature = "cellular")]
+#[allow(clippy::too_many_arguments)]
+async fn build_cellular_hub(
+    velo: std::sync::Arc<velo::Velo>,
+    spec_for: SpecFor,
+    cell_count: u32,
+    start_handle: velo::EventHandle,
+    endpoint: String,
+    artifact_mount: Option<(PathBuf, std::collections::HashSet<String>)>,
+    phaser: Option<crate::cellular::phaser::Phaser>,
+    dataset_publisher: Option<crate::cellular::dataset_session::DatasetPublisher<Vec<u8>>>,
+) -> Result<(
+    VeloControllerTransport,
+    Option<crate::engine::artifact_stream_velo::ArtifactVeloReceiver>,
+    crate::hub::HubServer,
+)> {
+    use crate::hub::{
+        ArtifactHubPlugin, CellControllerHubPlugin, DatasetHubPlugin, DiscoveryPlugin,
+        DiscoveryState, Hub, PhaserHubPlugin,
+    };
+
+    let hub_instance = format!("{:?}", velo.instance_id());
+    let mut hub = Hub::new(velo);
+
+    // Cell↔controller plugin: capture its transport for the collect loop to own.
+    let cell_plugin = CellControllerHubPlugin::new(spec_for, cell_count, start_handle);
+    let transport_slot = cell_plugin.transport_slot();
+    hub.register(Box::new(cell_plugin))
+        .context("mounting cell↔controller hub plugin")?;
+
+    // `/artifact` plugin (optional): capture its receiver for the completion barrier.
+    let receiver_slot = if let Some((temp_root, allowed)) = artifact_mount {
+        let plugin = ArtifactHubPlugin::new(temp_root, allowed);
+        let slot = plugin.receiver_slot();
+        hub.register(Box::new(plugin))
+            .context("mounting /artifact hub plugin")?;
+        Some(slot)
+    } else {
+        None
+    };
+
+    // `/phaser` plugin (optional): mounts the phaser control plane on the hub velo when
+    // phaser START is selected. The phaser is `advance`d by the bootstrap independently.
+    if let Some(phaser) = phaser {
+        hub.register(Box::new(PhaserHubPlugin::new(phaser)))
+            .context("mounting /phaser hub plugin")?;
+    }
+
+    // `/dataset` plugin (optional): mounts the dataset fan-out data plane on the hub velo
+    // when dataset fan-out is selected. The publisher is already filled and finalized.
+    if let Some(publisher) = dataset_publisher {
+        hub.register(Box::new(DatasetHubPlugin::new(publisher)))
+            .context("mounting /dataset hub plugin")?;
+    }
+
+    // Discovery plugin: the connect-by-endpoint anchor, advertising the mounted set.
+    let plugins: Vec<String> = hub.prefixes().map(str::to_owned).collect();
+    hub.register(Box::new(DiscoveryPlugin::new(DiscoveryState {
+        hub_instance,
+        endpoint,
+        plugins,
+    })))
+    .context("mounting discovery hub plugin")?;
+
+    let server = hub
+        .serve(hub_http_bind())
+        .await
+        .context("serving cellular hub HTTP surface")?;
+
+    let transport = transport_slot
+        .lock()
+        .expect("cell-controller transport slot poisoned")
+        .take()
+        .context("cell↔controller plugin did not capture a transport")?;
+    let receiver = match receiver_slot {
+        Some(slot) => Some(
+            slot.lock()
+                .expect("artifact receiver slot poisoned")
+                .take()
+                .context("/artifact plugin did not capture a receiver")?,
+        ),
+        None => None,
+    };
+    Ok((transport, receiver, server))
 }
 
 /// The deadline for collecting every cell's partition. Covers the whole run (cells
@@ -1675,53 +1906,67 @@ fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32)
     Ok(())
 }
 
-/// Spawns one `aiperf --aggregator` subprocess per aggregator. Each receives the run
-/// envelope on stdin for `MetricsConfig` and
-/// its subtree parameters via env: its id, the fixed loopback `tcp://` coordinate it
-/// binds (its cells dial it there), how many cells ship to it, and the controller
-/// coordinate it ships its one merged store up to. Returns the children so the
+/// Spawns one `aiperf --aggregator` subprocess per aggregator node across EVERY tier of
+/// the same-host reduction tree ([`aggregator_nodes`]). Each receives the run envelope
+/// on stdin for `MetricsConfig` and its placement via env: its id, the fixed loopback
+/// `tcp://` coordinate it binds (its children dial it there), its collect barrier, and
+/// where it ships its one merged store — a parent aggregator's loopback coordinate for
+/// a lower tier, or the controller for the top tier. Returns the children so the
 /// controller watches them for hard failure. `kill_on_drop` tears them down on any
-/// controller abort.
+/// controller abort. The fanout is read from the environment; a single-tier tree spawns
+/// exactly the original topology.
 async fn spawn_aggregators(
     envelope: &serde_json::Value,
-    agg_count: u32,
     cell_count: u32,
     base_port: u16,
     controller_coordinate: &str,
 ) -> Result<Vec<tokio::process::Child>> {
     use crate::engine::cellular_aggregator::{
-        AGG_BIND_ENV, AGG_CHILD_COUNT_ENV, AGG_ID_ENV, children_of,
+        AGG_BIND_ENV, AGG_CHILD_COUNT_ENV, AGG_ID_ENV, AGG_SHIP_ADDR_ENV, ShipTarget,
+        aggregator_nodes, tier_counts_from_env,
     };
     use crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV;
     use std::process::Stdio;
     use tokio::io::AsyncWriteExt;
 
+    // Recover the fanout the tier plan was sized with (the plan is derived from the same
+    // env), so `aggregator_nodes` computes the identical port/parent layout.
+    let fanout: u32 = std::env::var(crate::engine::cellular_aggregator::CELL_AGG_FANOUT_ENV)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .context("spawn_aggregators called without AIPERF_CELL_AGG_FANOUT")?;
+    debug_assert!(!tier_counts_from_env(cell_count).is_empty());
+    let nodes = aggregator_nodes(cell_count, fanout, base_port);
+
     let envelope_bytes =
         serde_json::to_vec(envelope).context("serializing envelope for aggregators")?;
     let exe = std::env::current_exe().unwrap_or_else(|_| "aiperf runner".into());
-    let mut children = Vec::with_capacity(agg_count as usize);
-    for agg_id in 0..agg_count {
-        let child_count = children_of(agg_id, agg_count, cell_count);
-        let mut child = tokio::process::Command::new(&exe)
+    let mut children = Vec::with_capacity(nodes.len());
+    for node in &nodes {
+        let mut command = tokio::process::Command::new(&exe);
+        command
             .arg("--aggregator")
-            .env(AGG_ID_ENV, agg_id.to_string())
-            .env(
-                AGG_BIND_ENV,
-                format!("tcp://127.0.0.1:{}", base_port + agg_id as u16),
-            )
-            .env(AGG_CHILD_COUNT_ENV, child_count.to_string())
-            .env(CELL_CONTROLLER_ADDR_ENV, controller_coordinate)
+            .env(AGG_ID_ENV, node.id.to_string())
+            .env(AGG_BIND_ENV, format!("tcp://127.0.0.1:{}", node.bind_port))
+            .env(AGG_CHILD_COUNT_ENV, node.child_count.to_string())
+            // The controller coordinate is carried for the top tier (which ships there);
+            // a lower tier ships to its parent via AGG_SHIP_ADDR below and ignores it.
+            .env(CELL_CONTROLLER_ADDR_ENV, controller_coordinate);
+        if let ShipTarget::Aggregator(port) = node.ship {
+            command.env(AGG_SHIP_ADDR_ENV, format!("tcp://127.0.0.1:{port}"));
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .kill_on_drop(true)
             .spawn()
-            .with_context(|| format!("spawning aggregator {agg_id}"))?;
+            .with_context(|| format!("spawning aggregator tier {} id {}", node.tier, node.id))?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin
                 .write_all(&envelope_bytes)
                 .await
-                .with_context(|| format!("writing envelope to aggregator {agg_id}"))?;
+                .with_context(|| format!("writing envelope to aggregator {}", node.id))?;
             // `stdin` drops here → EOF, so the aggregator's `read_to_end` returns.
         }
         children.push(child);
@@ -2037,6 +2282,97 @@ fn write_heartbeat_sidecar(report_path: &Path, heartbeat: &MetricsHeartbeat) -> 
 mod tests {
     use super::*;
     use crate::engine::cellular_kind::is_graph_dataset;
+
+    /// The hub-mode bootstrap (`AIPERF_CELLULAR_HUB` path): `build_cellular_hub` mounts
+    /// the cell↔controller + `/artifact` + discovery plugins on one velo, serves the
+    /// co-bound HTTP surface, and returns a working transport + artifact receiver. A
+    /// real cell dials the SAME `tcp://` coordinate, registers, ships a heartbeat, and
+    /// streams an artifact — all over the single hub anchor, proving the toggle path is
+    /// wire-equivalent to the standalone planes.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn hub_mode_bootstrap_serves_register_and_artifact() {
+        use crate::cellular::transport::CellClient;
+        use crate::cellular::transport::connect::{BindSpec, build_velo, connect_controller};
+        use crate::cellular::transport::velo_transport::VeloCellClient;
+        use crate::cellular::{CellMessage, ControllerTransport};
+        use crate::engine::artifact_stream_velo::ship_cell_artifacts_velo;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("cell-src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let rel = "inputs.json";
+        std::fs::write(src_dir.join(rel), vec![3u8; 50_000]).unwrap();
+        let landing = dir.path().join("landing");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let endpoint = format!("tcp://{addr}");
+        let velo = build_velo(BindSpec::TcpListener(listener))
+            .await
+            .expect("hub velo");
+        let start = velo.event_manager().new_event().expect("start event");
+        let start_handle = start.handle();
+        let spec_for: SpecFor = std::sync::Arc::new(|cell_id: u32| Some(vec![cell_id as u8, 0x5A]));
+        let allowed: std::collections::HashSet<String> = [rel.to_owned()].into_iter().collect();
+
+        let (mut transport, receiver, _server) = build_cellular_hub(
+            velo,
+            spec_for,
+            1,
+            start_handle,
+            endpoint.clone(),
+            Some((landing.clone(), allowed)),
+            None,
+            None,
+        )
+        .await
+        .expect("build hub");
+        let receiver = receiver.expect("artifact receiver mounted");
+
+        // A cell dials the hub by its tcp:// coordinate (the same anchor), registers,
+        // and ships a heartbeat surfaced by the hub-mounted cell↔controller handlers.
+        let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
+        let controller_peer = connect_controller(&cell_velo, &endpoint)
+            .await
+            .expect("connect to hub");
+        let mut cell =
+            VeloCellClient::connect(cell_velo, controller_peer.clone()).expect("connect");
+        let reply = cell.register(0).await.expect("register");
+        assert_eq!(reply.envelope, vec![0_u8, 0x5A]);
+
+        use crate::cellular::heartbeat::HeartbeatAccumulator;
+        let mut acc = HeartbeatAccumulator::new();
+        acc.observe(Some(20.0), Some(5.0), Some(50.0));
+        let hb = acc.snapshot(1, Default::default(), Default::default());
+        cell.send(&CellMessage::Heartbeat {
+            cell_id: 0,
+            heartbeat: Box::new(hb),
+        })
+        .await
+        .expect("ship heartbeat");
+        match transport.recv().await.expect("recv").expect("some") {
+            CellMessage::Heartbeat { cell_id, .. } => assert_eq!(cell_id, 0),
+            other => panic!("expected heartbeat, got {other:?}"),
+        }
+
+        // And the `/artifact` plugin streams a file over the same anchor.
+        let ship_velo = build_velo(BindSpec::TcpLoopback).await.expect("ship velo");
+        let ship_peer = connect_controller(&ship_velo, &endpoint)
+            .await
+            .expect("connect ship");
+        ship_cell_artifacts_velo(&ship_velo, &ship_peer, 0, &src_dir, &[rel.to_owned()])
+            .await
+            .expect("ship artifact over hub");
+        receiver
+            .wait_for_cells(1, std::time::Duration::from_secs(30))
+            .await
+            .expect("artifact barrier");
+        assert_eq!(
+            std::fs::read(landing.join("cell-0").join(rel)).unwrap(),
+            vec![3u8; 50_000],
+            "hub-mode artifact landed byte-identical"
+        );
+    }
 
     #[test]
     fn rejects_non_shipping_run_shapes() {

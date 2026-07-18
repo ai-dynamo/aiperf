@@ -237,7 +237,7 @@ fn decode_channel_to_file(
 /// derived from `cfg.artifacts` (records/raw/CSV/parquet/outputs + `inputs.json`),
 /// so a cell can only ever land bytes at a known per-record artifact location
 /// inside its own `cell-{id}` dir — never traverse out of it.
-fn validate_artifact_relpath(rel: &str, allowed: &HashSet<String>) -> Result<PathBuf> {
+pub(crate) fn validate_artifact_relpath(rel: &str, allowed: &HashSet<String>) -> Result<PathBuf> {
     ensure!(!rel.is_empty(), "empty artifact relative path");
     let path = Path::new(rel);
     ensure!(

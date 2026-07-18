@@ -17,6 +17,7 @@ from aiperf.kubernetes.enums import RestartPolicy
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset_helpers import (
     AGGREGATOR_PORT,
+    ARTIFACT_TRANSPORT_ENV,
     CELL_ARTIFACT_PORT,
     CELL_CONTROLLER_PORT,
     build_aggregator_args,
@@ -99,6 +100,18 @@ class _JobSetManifestBuilder:
             if isinstance(value, str):
                 return value
         return None
+
+    def _artifact_transport_is_velo(self) -> bool:
+        """Whether the per-record artifact plane rides the shared velo transport.
+
+        When ``AIPERF_ARTIFACT_TRANSPORT=velo`` is set on the podTemplate env, artifact
+        bytes collapse onto the 9500 velo plane (rust ``cellular_cell::artifact_transport_is_velo``),
+        so the operator need not expose the HTTP artifact port (9600) cross-host. Any
+        other value (unset / ``http``) keeps the default HTTP artifact plane, which does
+        need 9600 exposed.
+        """
+        value = self._pod_template_env_value(ARTIFACT_TRANSPORT_ENV)
+        return value is not None and value.strip().lower() == "velo"
 
     def _split_worker_pod_resources(
         self,
@@ -534,11 +547,17 @@ class _JobSetManifestBuilder:
             ],
             resources=self._resolve_pod_resources("SYSTEM_CONTROLLER"),
             volume_mounts=build_runner_volume_mounts(self.spec.pod_template),
+            # The controller always binds the velo bootstrap (9500). The HTTP artifact
+            # upload server (9600) is exposed only when the HTTP artifact plane is active;
+            # under `AIPERF_ARTIFACT_TRANSPORT=velo` the artifact bytes ride the 9500 velo
+            # plane, so the second port is not needed cross-host.
             ports=[
                 {"containerPort": CELL_CONTROLLER_PORT, "name": "cell-ctl"},
-                # Stage-E/G artifact HTTP upload server; only bound for artifact/
-                # file-dataset cellular runs, harmless to expose for synthetic ones.
-                {"containerPort": CELL_ARTIFACT_PORT, "name": "cell-artifact"},
+                *(
+                    []
+                    if self._artifact_transport_is_velo()
+                    else [{"containerPort": CELL_ARTIFACT_PORT, "name": "cell-artifact"}]
+                ),
             ],
             security_context=build_security_context(self.spec.pod_template),
         )
@@ -575,6 +594,14 @@ class _JobSetManifestBuilder:
                     controller_dns=controller_dns,
                     agg_fanout=agg_fanout,
                     agg_ship_template=agg_ship_template,
+                    # HTTP artifact plane: name the controller's artifact port explicitly
+                    # so a cell POSTs to `<controller-dns>:9600`. Under the velo transport
+                    # the artifact bytes ride the 9500 plane, so leave it unset.
+                    artifact_http_port=(
+                        None
+                        if self._artifact_transport_is_velo()
+                        else CELL_ARTIFACT_PORT
+                    ),
                 ),
             ],
             resources=self._resolve_pod_resources("WORKER_POD"),
@@ -584,15 +611,22 @@ class _JobSetManifestBuilder:
         return [cell]
 
     def create_aggregator_containers(
-        self, controller_dns: str, *, fanout: int
+        self,
+        controller_dns: str,
+        *,
+        fanout: int,
+        tier_index: int | None = None,
+        ship_template: str | None = None,
     ) -> list[AIPerfContainerSpec]:
-        """One tier-T2 aggregator pod: an aiperf --aggregator that collects its
-        subtree of cells' folded stores, merges them, and ships one store up.
+        """One aggregator pod at one tier: an aiperf --aggregator that collects its
+        subtree's folded stores, merges them, and ships one store up.
 
         The `aiperf aggregator` frontend reads the same mounted Config v2, projects via
         rust_wire, and pipes the envelope to the runner (for the merge MetricsConfig).
-        The runner binds tcp://0.0.0.0:9700 and derives its collect barrier
-        children_of(agg_id, M, cells) from AGG_ID + the static cell-count/fanout.
+        The runner binds tcp://0.0.0.0:9700 and derives its collect barrier from AGG_ID +
+        the static cell-count/fanout (+ AGG_TIER_INDEX for a multi-tier tree). For a lower
+        tier `ship_template` names the parent-tier DNS the runner fills to ship up; the top
+        (or single) tier omits it and ships to the controller.
         """
         aggregator = AIPerfContainerSpec(
             name=Containers.CELL_AGGREGATOR,
@@ -606,6 +640,8 @@ class _JobSetManifestBuilder:
                     cells=self.spec.cells,
                     agg_fanout=fanout,
                     controller_dns=controller_dns,
+                    tier_index=tier_index,
+                    ship_template=ship_template,
                 ),
             ],
             resources=self._resolve_pod_resources("WORKER_POD"),
@@ -670,30 +706,70 @@ class _JobSetManifestBuilder:
             job_id=self.spec.job_id,
         )
 
-    def build_aggregator_replicated_job(
+    def build_aggregator_tier_jobs(
         self,
         volumes: list[dict[str, Any]],
         controller_dns: str,
         *,
-        agg_count: int,
+        tiers: list[int],
         fanout: int,
-    ) -> AIPerfReplicatedJobSpec:
-        """Build the tier-T2 `aggregators` replicatedJob (M replicas) for a cellular run.
+    ) -> list[AIPerfReplicatedJobSpec]:
+        """Build one indexed `aggregators-{tier}` replicatedJob per tier of the tree.
 
-        Like `cells`, each of the M replicas is a distinct indexed job, so the job
-        indices tile `0..M-1` and become each aggregator's AGG_ID
-        (see build_aggregator_env_vars). ON_FAILURE + surfaced by monitor.py, mirroring
-        the cells job (an aggregator is a restartable stateless merge node).
+        ``tiers`` is the ``aggregator_tier_counts`` plan (empty → no aggregator jobs, the
+        flat star). Tier ``k`` (0-based, tier 1 is what the cells ship to) becomes a job
+        of ``tiers[k]`` indexed replicas, so the indices tile ``0..tiers[k]-1`` and become
+        each aggregator's AGG_ID. Each tier reduces the one below by round-robin, so its
+        pods derive their per-pod collect barrier runner-side (AGG_TIER_INDEX + the static
+        cell-count/fanout). A LOWER tier also gets its parent-tier ship-DNS template
+        (``AIPERF_AGG_SHIP_ADDR``); the TOP tier ships to the controller. A single-tier
+        plan yields exactly one job named ``aggregators``, byte-identical to the
+        pre-multi-tier operator. ON_FAILURE + surfaced by monitor.py, mirroring the cells
+        job (an aggregator is a restartable stateless merge node).
         """
-        jobset_config = K8sEnvironment.JOBSET
-        return AIPerfReplicatedJobSpec(
-            name="aggregators",
-            replicas=agg_count,
-            containers=self.create_aggregator_containers(controller_dns, fanout=fanout),
-            volumes=volumes,
-            restart_policy=RestartPolicy.ON_FAILURE,
-            backoff_limit=jobset_config.WORKER_BACKOFF_LIMIT,
-            job_ttl_seconds=None if self.spec.keep_failed_pods else 0,
-            pod_template=self.spec.pod_template,
-            job_id=self.spec.job_id,
+        from aiperf.kubernetes.jobset import (
+            aggregator_ship_template,
+            aggregator_tier_job_name,
         )
+
+        jobset_config = K8sEnvironment.JOBSET
+        num_tiers = len(tiers)
+        jobs: list[AIPerfReplicatedJobSpec] = []
+        for tier_index, count in enumerate(tiers):
+            is_top_tier = tier_index + 1 == num_tiers
+            # A lower tier ships up to its parent tier's pods via that tier's DNS template;
+            # the top tier ships to the controller (no AGG_SHIP_ADDR). The single-tier tree
+            # passes neither tier_index nor ship_template so its manifest is unchanged.
+            if num_tiers <= 1:
+                node_tier_index = None
+                ship_template = None
+            else:
+                node_tier_index = tier_index
+                ship_template = (
+                    None
+                    if is_top_tier
+                    else aggregator_ship_template(
+                        self.spec.name,
+                        self.spec.namespace,
+                        aggregator_tier_job_name(tier_index + 1, num_tiers),
+                    )
+                )
+            jobs.append(
+                AIPerfReplicatedJobSpec(
+                    name=aggregator_tier_job_name(tier_index, num_tiers),
+                    replicas=count,
+                    containers=self.create_aggregator_containers(
+                        controller_dns,
+                        fanout=fanout,
+                        tier_index=node_tier_index,
+                        ship_template=ship_template,
+                    ),
+                    volumes=volumes,
+                    restart_policy=RestartPolicy.ON_FAILURE,
+                    backoff_limit=jobset_config.WORKER_BACKOFF_LIMIT,
+                    job_ttl_seconds=None if self.spec.keep_failed_pods else 0,
+                    pod_template=self.spec.pod_template,
+                    job_id=self.spec.job_id,
+                )
+            )
+        return jobs

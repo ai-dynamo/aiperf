@@ -229,6 +229,24 @@ CELL_AGG_DNS_TEMPLATE_ENV = "AIPERF_CELL_AGG_DNS_TEMPLATE"
 AGGREGATOR_PORT: int = 9700
 AGG_ID_ENV = "AIPERF_AGG_ID"
 AGG_BIND_ENV = "AIPERF_AGG_BIND"
+# Multi-tier tree env (rust: cellular_aggregator). AGG_TIER_INDEX is this pod's 0-based
+# tier in the tier_counts plan; the aggregator derives its collect barrier and parent
+# from it + the static cell-count/fanout (a JobSet indexed replicatedJob shares one env
+# template, so per-pod placement must be derived). AGG_SHIP_ADDR is the DNS *template*
+# (a `{agg_id}` placeholder) a LOWER-tier pod ships its one merged store up to; the pod
+# fills it from its round-robin parent `agg_id % parent_count`. The TOP tier sets no
+# AGG_SHIP_ADDR and ships to the controller. cellular_aggregator::AGG_TIER_INDEX_ENV /
+# AGG_SHIP_ADDR_ENV.
+AGG_TIER_INDEX_ENV = "AIPERF_AGG_TIER_INDEX"
+AGG_SHIP_ADDR_ENV = "AIPERF_AGG_SHIP_ADDR"
+
+# Per-record artifact plane env the runner reads (rust: cellular_cell). The HTTP
+# artifact plane binds CELL_ARTIFACT_PORT on the controller and cells derive its host
+# from their routable controller DNS + this port. The velo artifact transport instead
+# rides the shared 9500 velo plane (no second port). cellular_cell::CELL_ARTIFACT_PORT_ENV
+# / ARTIFACT_TRANSPORT_ENV.
+CELL_ARTIFACT_PORT_ENV = "AIPERF_CELL_ARTIFACT_PORT"
+ARTIFACT_TRANSPORT_ENV = "AIPERF_ARTIFACT_TRANSPORT"
 
 # HF tokenizer cache dir; the runner tokenizes in-process, so it is the one piece
 # of the mesh container env the native pods still need. Matches the tokenizer-cache
@@ -302,6 +320,7 @@ def build_cell_env_vars(
     controller_dns: str,
     agg_fanout: int | None = None,
     agg_ship_template: str | None = None,
+    artifact_http_port: int | None = None,
 ) -> list[dict[str, Any]]:
     """Env for a cell pod: its partition index, the cell count, and the controller.
 
@@ -341,6 +360,12 @@ def build_cell_env_vars(
         env.append(
             {"name": CELL_AGG_DNS_TEMPLATE_ENV, "value": agg_ship_template}
         )
+    if artifact_http_port is not None:
+        # HTTP artifact plane: make the controller's artifact-server port explicit so a
+        # cell POSTs per-record artifacts to `<controller-dns>:<port>` (it otherwise
+        # derives the port from the DEFAULT_ARTIFACT_PORT fallback). Omitted for the velo
+        # artifact transport, which rides the shared 9500 velo plane (no second port).
+        env.append({"name": CELL_ARTIFACT_PORT_ENV, "value": str(artifact_http_port)})
     return env
 
 
@@ -373,22 +398,34 @@ def build_controller_env_vars(
 
 
 def build_aggregator_env_vars(
-    *, cells: int, agg_fanout: int, controller_dns: str
+    *,
+    cells: int,
+    agg_fanout: int,
+    controller_dns: str,
+    tier_index: int | None = None,
+    ship_template: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Env for a tier-T2 aggregator pod.
+    """Env for an aggregator pod at one tier of the reduction tree.
 
     The aggregator binds all interfaces (so its pod DNS resolves to it) and collects
-    its subtree's cells. Its per-pod collect barrier `children_of(agg_id, M, cells)` is
-    derived runner-side from AGG_ID + the static cell-count + fanout (a JobSet indexed
-    replicatedJob shares one env template, so an uneven split cannot be a static value):
+    its subtree. Its per-pod collect barrier is derived runner-side from AGG_ID + the
+    static cell-count + fanout (+ tier for a multi-tier tree); a JobSet indexed
+    replicatedJob shares one env template, so an uneven round-robin split cannot be a
+    static value.
 
     - AGG_ID: the pod's `jobset.sigs.k8s.io/job-index` (like the cell's CELL_ID).
     - AGG_BIND: `tcp://0.0.0.0:{AGGREGATOR_PORT}` (all interfaces, not loopback).
-    - CELL_COUNT + CELL_AGG_FANOUT: static, so the runner derives M and this pod's
-      child count via the same gates as the controller.
-    - CELL_CONTROLLER_ADDR: where the merged store ships up.
+    - CELL_COUNT + CELL_AGG_FANOUT: static, so the runner derives the tier plan and this
+      pod's child count via the same gates as the controller.
+    - CELL_CONTROLLER_ADDR: where the merged store ships up on the TOP tier.
+
+    Multi-tier (`tier_index`/`ship_template` set): AGG_TIER_INDEX locates this pod's tier
+    so the runner picks its tier's node count from the plan; a LOWER tier also gets
+    AGG_SHIP_ADDR — the parent-tier DNS *template* whose `{agg_id}` the runner fills from
+    its round-robin parent `agg_id % parent_count` (the TOP tier omits it and ships to the
+    controller). The single-tier tree passes neither, staying byte-identical.
     """
-    return [
+    env: list[dict[str, Any]] = [
         {
             "name": AGG_ID_ENV,
             "valueFrom": {
@@ -405,6 +442,11 @@ def build_aggregator_env_vars(
             "value": f"tcp://{controller_dns}:{CELL_CONTROLLER_PORT}",
         },
     ]
+    if tier_index is not None:
+        env.append({"name": AGG_TIER_INDEX_ENV, "value": str(tier_index)})
+    if ship_template is not None:
+        env.append({"name": AGG_SHIP_ADDR_ENV, "value": ship_template})
+    return env
 
 
 def build_cr_identity_env(*, job_id: str, namespace: str) -> list[dict[str, Any]]:

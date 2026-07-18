@@ -235,11 +235,12 @@ impl TransportSink {
         // transfers correlate back to this request; external URLs and non-media
         // bodies are untouched. The parse is shared with image counting below.
         let (body, parsed) = match self.content_server_base.as_deref() {
-            Some(base) => super::tag_content_urls(body, base, &uuid.to_string(), super::wall_now_ns()),
+            Some(base) => {
+                super::tag_content_urls(body, base, &uuid.to_string(), super::wall_now_ns())
+            }
             None => (body, None),
         };
-        let payload =
-            parsed.or_else(|| serde_json::from_slice::<Value>(&body).ok());
+        let payload = parsed.or_else(|| serde_json::from_slice::<Value>(&body).ok());
         let mut endpoint_metrics = ObservedEndpointMetrics {
             num_images: payload
                 .as_ref()

@@ -72,6 +72,22 @@ pub const CELL_HTTP_ARTIFACT_SHIPPING_ENV: &str = "AIPERF_CELL_HTTP_ARTIFACT_SHI
 /// The default controller artifact-server port (server bind + cell-derived fetch).
 pub const DEFAULT_ARTIFACT_PORT: u16 = 9600;
 
+/// Env selecting the per-record artifact transport: `http` (default) uses the
+/// raw-hyper HTTP/1 + streaming-zstd plane on the artifact port; `velo` collapses
+/// artifact shipping onto the shared cellular velo instance/endpoint (no second
+/// port), streaming zstd chunks over velo's native backpressured stream primitive.
+/// Any unrecognized value keeps the default HTTP behavior (fail-safe, additive).
+pub const ARTIFACT_TRANSPORT_ENV: &str = "AIPERF_ARTIFACT_TRANSPORT";
+
+/// Whether per-record artifact shipping should ride the velo plane
+/// ([`ARTIFACT_TRANSPORT_ENV`] == `velo`). Default (unset / `http` / anything else)
+/// is `false` — the existing HTTP plane — so this is additive and non-regressing.
+pub fn artifact_transport_is_velo() -> bool {
+    std::env::var(ARTIFACT_TRANSPORT_ENV)
+        .map(|value| value.eq_ignore_ascii_case("velo"))
+        .unwrap_or(false)
+}
+
 /// **Test/dev-only force seam.** Env flag that makes a LOCAL (`--cells N`, same-host)
 /// run drive the cross-host HTTP artifact path over loopback instead of direct
 /// shared-filesystem concatenation: the controller binds its artifact upload server on
@@ -246,6 +262,130 @@ pub fn ship_http_artifacts_if_enabled(
     })
     .join()
     .map_err(|_| anyhow::anyhow!("cell artifact-shipping thread panicked"))?
+}
+
+/// Ship this cell's per-record artifact files (+ `inputs.json`) to the controller
+/// over the **velo** streaming plane (the shared cellular velo endpoint), when
+/// shipping is enabled and this process is a cell. Unlike the HTTP path this needs
+/// no separate artifact host/port: it dials the controller's velo coordinate
+/// ([`CELL_SHIP_ADDR_ENV`] if set, else [`CELL_CONTROLLER_ADDR_ENV`]) — the exact
+/// same endpoint the control plane already uses — and streams zstd chunks over
+/// velo's native backpressured stream primitive (bounded memory).
+///
+/// Runs on a dedicated thread + runtime (off the caller's execute runtime), mirroring
+/// [`ship_http_artifacts_if_enabled`]. A no-op when not a cell, when shipping is
+/// disabled, or when no controller coordinate is set.
+#[cfg(feature = "cellular")]
+pub fn ship_velo_artifacts_if_enabled(
+    cell_dir: &std::path::Path,
+    artifacts: &crate::engine::protocol::ArtifactSpec,
+) -> Result<()> {
+    use anyhow::Context as _;
+
+    use crate::cellular::transport::connect::{build_velo, connect_controller};
+
+    let Some(partition) = ModuloCellPartition::from_env() else {
+        return Ok(()); // not a cell (single-process path)
+    };
+    if !http_artifact_shipping_enabled() {
+        return Ok(()); // shipping disabled
+    }
+    // Prefer the tree-topology ship target, else the controller coordinate.
+    let coordinate = std::env::var(CELL_SHIP_ADDR_ENV)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| std::env::var(CELL_CONTROLLER_ADDR_ENV).ok())
+        .filter(|value| !value.is_empty());
+    let Some(coordinate) = coordinate else {
+        return Ok(()); // no controller coordinate — nothing to ship to
+    };
+    // Same-host gate (mirrors the HTTP `cell_artifact_authority` loopback rule): a
+    // loopback controller coordinate is a co-located run whose cells use shared-FS
+    // concatenation — ship nothing unless the test/dev force seam is engaged. A
+    // routable (k8s) coordinate always ships.
+    let host = coordinate.strip_prefix("tcp://").map(|host_port| {
+        host_port
+            .rsplit_once(':')
+            .map_or(host_port, |(host, _)| host)
+    });
+    let is_loopback = host
+        .map(|host| {
+            host.parse::<std::net::IpAddr>()
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(host.eq_ignore_ascii_case("localhost"))
+        })
+        // A `uds://` coordinate is always a co-located local run.
+        .unwrap_or(true);
+    if is_loopback && !artifact_http_force_enabled() {
+        return Ok(());
+    }
+    let relatives = crate::engine::artifact_stream_velo::shippable_relatives_velo(artifacts);
+    if relatives.is_empty() {
+        return Ok(()); // metrics-only run with no files to ship
+    }
+    let cell_id = partition.cell_id();
+    tracing::debug!(
+        target: "aiperf_cellular_artifact",
+        cell_id,
+        coordinate = %coordinate,
+        files = relatives.len(),
+        "velo artifact shipping starting"
+    );
+    let cell_dir = cell_dir.to_path_buf();
+    std::thread::spawn(move || -> Result<()> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?;
+        let result = runtime.block_on(async move {
+            // A fresh, short-lived shipping velo instance (the same lifecycle the
+            // partition ship uses): bind, dial the controller by endpoint, stream.
+            let bind = cell_bind(&coordinate, "artifact");
+            let velo = build_velo(bind)
+                .await
+                .context("building cell artifact velo")?;
+            let controller = connect_controller(&velo, &coordinate)
+                .await
+                .context("connecting to controller for velo artifact shipping")?;
+            crate::engine::artifact_stream_velo::ship_cell_artifacts_velo(
+                &velo,
+                &controller,
+                cell_id,
+                &cell_dir,
+                &relatives,
+            )
+            .await
+        });
+        match &result {
+            Ok(()) => tracing::debug!(
+                target: "aiperf_cellular_artifact",
+                cell_id,
+                "velo artifact shipping completed"
+            ),
+            Err(error) => {
+                tracing::error!(cell_id, "velo artifact shipping failed: {error:#}")
+            }
+        }
+        result
+    })
+    .join()
+    .map_err(|_| anyhow::anyhow!("cell velo artifact-shipping thread panicked"))?
+}
+
+/// Ship this cell's per-record artifacts over the configured transport
+/// ([`ARTIFACT_TRANSPORT_ENV`]): velo when selected, else the default HTTP plane.
+/// The single dispatch point the execute finalize tail calls, so the transport
+/// choice lives in one place.
+#[cfg(feature = "cellular")]
+pub fn ship_artifacts_if_enabled(
+    cell_dir: &std::path::Path,
+    artifacts: &crate::engine::protocol::ArtifactSpec,
+) -> Result<()> {
+    if artifact_transport_is_velo() {
+        ship_velo_artifacts_if_enabled(cell_dir, artifacts)
+    } else {
+        ship_http_artifacts_if_enabled(cell_dir, artifacts)
+    }
 }
 
 /// The controller-local absolute path of a `file`-type dataset with a `path`

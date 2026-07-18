@@ -40,6 +40,8 @@ __all__ = [
     "aggregator_count",
     "aggregator_dns_name",
     "aggregator_ship_template",
+    "aggregator_tier_counts",
+    "aggregator_tier_job_name",
     "controller_dns_name",
     "get_jobset_install_hint",
     "get_jobset_manifest_url",
@@ -89,20 +91,41 @@ def aggregator_dns_name(jobset_name: str, namespace: str, agg_id: int) -> str:
     )
 
 
-def aggregator_ship_template(jobset_name: str, namespace: str) -> str:
-    """The cell ship-DNS template a cell fills with its round-robin aggregator id.
+def aggregator_tier_job_name(tier_index: int, num_tiers: int) -> str:
+    """The ``aggregators`` replicatedJob name for tier ``tier_index`` of a tree of
+    ``num_tiers`` tiers.
 
-    A JobSet indexed cell replicatedJob shares one env template, so the operator gives
-    every cell the same concrete ``tcp://…svc.cluster.local:PORT`` coordinate with a
-    single ``{agg_id}`` placeholder (jobset/namespace resolved here); each cell
-    substitutes its own ``cell_id % M`` pod-side (rust ``cellular_cell::ship_target``).
-    Set on both the cells (to ship) and the controller (its *presence* is the k8s
-    expect-don't-spawn gate).
+    A single-tier tree keeps the bare ``aggregators`` name so its manifest stays
+    byte-identical to the pre-multi-tier operator. A multi-tier tree names each tier
+    ``aggregators-{k}`` 1-indexed from the tier the cells ship to (tier 1) up to the top
+    tier that ships to the controller, so each tier is its own indexed replicatedJob with
+    a distinct headless-service DNS prefix.
+    """
+    if num_tiers <= 1:
+        return "aggregators"
+    return f"aggregators-{tier_index + 1}"
+
+
+def aggregator_ship_template(
+    jobset_name: str, namespace: str, tier_job_name: str = "aggregators"
+) -> str:
+    """The ship-DNS template a child fills with its round-robin parent id.
+
+    A JobSet indexed replicatedJob shares one env template, so the operator gives every
+    child the same concrete ``tcp://…svc.cluster.local:PORT`` coordinate with a single
+    ``{agg_id}`` placeholder (jobset/namespace/tier resolved here); each child substitutes
+    its own round-robin parent id pod-side (rust ``cellular_cell::ship_target`` for a
+    cell's ``cell_id % M``; ``cellular_aggregator::k8s_tier_parent_id`` for a lower-tier
+    aggregator's ``agg_id % parent_count``). ``tier_job_name`` selects which tier's pods
+    the template points at — the tier-1 ``aggregators``/``aggregators-1`` job for the
+    cells, or a parent-tier job for a lower aggregator tier. Set on the cells (to ship),
+    the controller (its *presence* is the k8s expect-don't-spawn gate), and each
+    lower-tier aggregator (to ship up).
     """
     from aiperf.kubernetes.jobset_helpers import AGGREGATOR_PORT
 
     return (
-        f"tcp://{jobset_name}-aggregators-{{agg_id}}-0."
+        f"tcp://{jobset_name}-{tier_job_name}-{{agg_id}}-0."
         f"{jobset_name}.{namespace}.svc.cluster.local:{AGGREGATOR_PORT}"
     )
 
@@ -130,6 +153,37 @@ def aggregator_children(agg_id: int, agg_count: int, cells: int) -> int:
     if agg_id >= cells:
         return 0
     return -(-(cells - agg_id) // agg_count)  # ceil division
+
+
+def aggregator_tier_counts(cells: int, fanout: int | None) -> list[int]:
+    """Aggregator node counts per tier for ``cells`` reduced by ``fanout``.
+
+    Mirrors Rust ``cellular_aggregator::tier_counts`` exactly. Returns the node count
+    of each aggregator tier from tier 1 (the tier the cells ship to) up to the top tier
+    that ships to the controller, or ``[]`` for the flat star (``fanout`` unset, ``< 2``,
+    or ``>= cells``). Each tier reduces the one below by ``ceil(prev / fanout)``,
+    stopping once a tier is ``<= fanout``. The first element equals
+    :func:`aggregator_count`, so a length-1 plan is the original single-tier tree.
+
+    :meth:`AIPerfJobSetSpec.to_k8s_manifest` (via
+    ``_JobSetManifestBuilder.build_aggregator_tier_jobs``) realizes this plan on
+    Kubernetes: one indexed ``aggregators-{tier}`` replicatedJob per element, each tier's
+    pods deriving their per-pod round-robin barrier runner-side and, for a lower tier,
+    shipping up to their parent tier via an ``AIPERF_AGG_SHIP_ADDR`` DNS template —
+    mirroring the same-host ``aggregator_nodes`` wiring. The single-tier plan keeps the
+    bare ``aggregators`` job so its manifest is byte-identical to the flat-tree layout.
+    """
+    if fanout is None or fanout < 2 or fanout >= cells:
+        return []
+    tiers: list[int] = []
+    prev = cells
+    while True:
+        count = -(-prev // fanout)  # ceil division
+        tiers.append(count)
+        if count <= fanout:
+            break
+        prev = count
+    return tiers
 
 
 class AIPerfJobSetSpec(AIPerfBaseModel):
@@ -336,15 +390,22 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
         controller_dns = controller_dns_name(self.name, self.namespace)
         volumes = build_runner_volumes(self.name, self.pod_template)
 
-        # Tier-T2 aggregator tree: M = ceil(cells / fanout) aggregator pods between the
-        # cells and the controller (fold-only; None keeps the flat star). When present,
-        # cells ship to their round-robin aggregator via the DNS template, aggregators
-        # merge their subtree and ship one store up, and the controller collects M.
-        agg_count = aggregator_count(self.cells, self.cell_agg_fanout)
-        agg_fanout = self.cell_agg_fanout if agg_count is not None else None
+        # Aggregator reduction tree: one indexed `aggregators-{tier}` replicatedJob per
+        # tier of the `tier_counts` plan between the cells and the controller (fold-only;
+        # empty keeps the flat star). Cells ship to their round-robin tier-1 aggregator via
+        # the DNS template; each tier merges its subtree and ships one store up (to its
+        # parent-tier aggregator for a lower tier, the controller for the top tier). A
+        # single-tier plan is byte-identical to the pre-multi-tier topology.
+        agg_tiers = aggregator_tier_counts(self.cells, self.cell_agg_fanout)
+        agg_fanout = self.cell_agg_fanout if agg_tiers else None
+        # The cells ship to tier 1 (the first tier the plan reduces the cells into).
         agg_ship_template = (
-            aggregator_ship_template(self.name, self.namespace)
-            if agg_count is not None
+            aggregator_ship_template(
+                self.name,
+                self.namespace,
+                aggregator_tier_job_name(0, len(agg_tiers)),
+            )
+            if agg_tiers
             else None
         )
 
@@ -393,16 +454,13 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
                     controller_job.to_k8s_spec(),
                     cells_job.to_k8s_spec(),
                     *(
-                        [
-                            builder.build_aggregator_replicated_job(
-                                volumes,
-                                controller_dns,
-                                agg_count=agg_count,
-                                fanout=self.cell_agg_fanout,
-                            ).to_k8s_spec()
-                        ]
-                        if agg_count is not None
-                        else []
+                        job.to_k8s_spec()
+                        for job in builder.build_aggregator_tier_jobs(
+                            volumes,
+                            controller_dns,
+                            tiers=agg_tiers,
+                            fanout=self.cell_agg_fanout,
+                        )
                     ),
                 ],
             },
