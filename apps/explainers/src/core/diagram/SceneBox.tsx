@@ -16,6 +16,10 @@ export type SceneBoxProps = Omit<SVGProps<SVGGElement>, "title"> & {
   accent?: keyof Theme["category"];
 };
 
+/**
+ * Labeled panel primitive used by hand-authored MentalModels and as a
+ * reference shape for SceneRenderer `core.rect` + nested `core.text` pairs.
+ */
 export function SceneBox({
   x,
   y,
@@ -30,7 +34,7 @@ export function SceneBox({
   const stroke = accent ? theme.category[accent] : theme.stroke.secondary;
 
   return (
-    <g aria-label={`${title}: ${detail}`} {...groupProps}>
+    <g aria-label={`${title}: ${detail}`} focusable={false} {...groupProps}>
       <rect
         x={x}
         y={y}
@@ -40,6 +44,8 @@ export function SceneBox({
         fill={theme.bg.elevated}
         stroke={stroke}
         strokeWidth={accent ? 1.8 : 1.3}
+        focusable={false}
+        aria-hidden="true"
       />
       <text
         x={x + width / 2}
@@ -48,6 +54,8 @@ export function SceneBox({
         fill={theme.text.primary}
         fontSize={14}
         fontWeight={700}
+        focusable={false}
+        aria-hidden="true"
       >
         {title}
       </text>
@@ -57,6 +65,8 @@ export function SceneBox({
         textAnchor="middle"
         fill={theme.text.secondary}
         fontSize={11}
+        focusable={false}
+        aria-hidden="true"
       >
         {detail}
       </text>
