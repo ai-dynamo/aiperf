@@ -266,6 +266,36 @@ class TestAnthropicMessagesHeaders:
         assert headers["anthropic-beta"] == "extended-thinking-2025-04-11"
         assert headers["anthropic-version"] == "2023-06-01"
 
+    def test_per_turn_headers_merged(self, endpoint, model_endpoint):
+        turn = Turn(
+            texts=[Text(contents=["Hello!"])],
+            headers={"x-session-token": "abc", "baggage": "trace=1"},
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        headers = endpoint.get_endpoint_headers(request_info)
+
+        assert headers["x-session-token"] == "abc"
+        assert headers["baggage"] == "trace=1"
+        assert headers["content-type"] == "application/json"
+        assert headers["anthropic-version"] == "2023-06-01"
+
+    def test_per_turn_headers_override_case_insensitively(
+        self, endpoint, model_endpoint
+    ):
+        turn = Turn(
+            texts=[Text(contents=["Hello!"])],
+            headers={"Anthropic-Version": "2024-01-01"},
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        headers = endpoint.get_endpoint_headers(request_info)
+
+        # Turn header replaces the config-derived key entirely (no duplicate
+        # differing-case keys on the wire).
+        assert headers["Anthropic-Version"] == "2024-01-01"
+        assert "anthropic-version" not in headers
+
 
 class TestAnthropicMessagesParseResponseNonStreaming:
     """Tests for MessagesEndpoint parse_response (non-streaming)."""

@@ -55,6 +55,18 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         headers = dict(cfg.headers) if cfg.headers else {}
         if cfg.api_key:
             headers["Authorization"] = f"Bearer {cfg.api_key}"
+        return self._apply_turn_headers(headers, request_info)
+
+    def _apply_turn_headers(
+        self, headers: dict[str, str], request_info: RequestInfo
+    ) -> dict[str, str]:
+        """Merge the current turn's headers into ``headers``; turn wins on
+        case-insensitive (RFC 7230) key conflicts.
+
+        Endpoints that override ``get_endpoint_headers`` must funnel their
+        result through this so trace-driven per-turn headers survive the
+        override.
+        """
         # turns[-1] is the current turn; in DELTAS_WITHOUT_RESPONSES mode the
         # worker accumulates prior user/assistant turns in the list, so turns[0]
         # would always pick the first turn's headers.
