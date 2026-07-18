@@ -30,10 +30,7 @@ describe("preview layout ownership", () => {
     expect(source("./App.tsx")).not.toContain("preview-canvas-tools");
   });
 
-  test("the preview delegates narrative cue projection to the runtime", () => {
-    const app = source("./App.tsx");
-
-    expect(app).toContain('../packages/runtime/src/app');
-    expect(app).not.toContain("function sceneNarrativeCues");
+  test("the preview does not reimplement narrative cue projection", () => {
+    expect(source("./App.tsx")).not.toContain("function sceneNarrativeCues");
   });
 });

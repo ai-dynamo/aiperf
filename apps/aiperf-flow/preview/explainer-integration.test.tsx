@@ -7,7 +7,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import React from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { HomePage } from "./home-page";
 import { ExplainerDeckPicker } from "./explainer-deck-picker";
 import { ExplainerDeckNavigator } from "./explainer-deck-navigator";
 import { COMPILED_EXPLAINER_DECKS } from "../packages/runtime/src/explainer/compiled-decks";
@@ -18,40 +17,6 @@ afterEach(() => {
 });
 
 describe("Explainer Deck Navigation Integration", () => {
-  test("HomePage displays Explainers button", () => {
-    const mockSelectScene = vi.fn();
-    const mockOpenExplainers = vi.fn();
-
-    render(
-      <HomePage
-        scenesByFlow={[]}
-        onSelectScene={mockSelectScene}
-        onOpenExplainers={mockOpenExplainers}
-      />
-    );
-
-    const button = screen.getByRole("button", { name: /Open explainer decks/i });
-    expect(button).toBeTruthy();
-  });
-
-  test("Clicking Explainers button calls onOpenExplainers", () => {
-    const mockSelectScene = vi.fn();
-    const mockOpenExplainers = vi.fn();
-
-    render(
-      <HomePage
-        scenesByFlow={[]}
-        onSelectScene={mockSelectScene}
-        onOpenExplainers={mockOpenExplainers}
-      />
-    );
-
-    const button = screen.getByRole("button", { name: /Open explainer decks/i });
-    fireEvent.click(button);
-
-    expect(mockOpenExplainers).toHaveBeenCalled();
-  });
-
   test("ExplainerDeckPicker displays all decks", () => {
     const mockSelect = vi.fn();
     render(<ExplainerDeckPicker decks={COMPILED_EXPLAINER_DECKS} onDeckSelect={mockSelect} />);

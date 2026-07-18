@@ -20,8 +20,6 @@
   --preview-coral: #f58b76;
   --preview-success: #72d6a2;
   --preview-focus: #9bdbf5;
-  --preview-bar-height: 5rem;
-  --preview-drawer-width: 19rem;
   --preview-radius: 12px;
   --preview-font-body: Inter, "IBM Plex Sans", "Segoe UI", sans-serif;
   --preview-font-data: "IBM Plex Mono", "Cascadia Code", monospace;
@@ -157,35 +155,6 @@ a:focus-visible,
   rotate: -4deg;
 }
 
-.flow-browser-trigger {
-  width: 2.25rem;
-  height: 2.25rem;
-  display: grid;
-  align-content: center;
-  gap: 0.22rem;
-  padding: 0 0.55rem;
-  border: 1px solid var(--preview-guide);
-  border-radius: 8px;
-  color: var(--preview-muted);
-  background: var(--preview-control);
-  cursor: pointer;
-}
-
-.flow-browser-trigger:hover {
-  border-color: var(--preview-signal);
-  color: var(--preview-signal);
-}
-
-.flow-browser-trigger span {
-  display: block;
-  height: 1px;
-  background: currentColor;
-}
-
-.flow-browser-trigger span:nth-child(2) {
-  width: 70%;
-}
-
 .preview-brand {
   min-width: 0;
   gap: 0.55rem;
@@ -256,291 +225,6 @@ a:focus-visible,
   text-overflow: ellipsis;
 }
 
-.flow-workspace {
-  display: flex;
-  position: relative;
-  width: 100%;
-  height: calc(100% - 3.5rem);
-  min-width: 0;
-  overflow: hidden;
-  margin-top: 3.5rem;
-}
-
-.flow-browser {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  width: var(--preview-drawer-width);
-  min-width: 0;
-  overflow: hidden;
-  border-inline-end: 1px solid var(--preview-guide);
-  background: var(--preview-panel);
-  flex: 0 0 auto;
-}
-
-.flow-main-section {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  height: 100%;
-}
-
-.flow-browser-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1rem 0.75rem;
-}
-
-.flow-browser-head > div {
-  display: grid;
-  gap: 0.16rem;
-}
-
-.flow-browser-kicker {
-  color: var(--preview-signal);
-  font-family: var(--preview-font-data);
-  font-size: 0.56rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.flow-browser-head strong {
-  color: var(--preview-chalk);
-  font-size: 0.95rem;
-  font-weight: 650;
-}
-
-
-.flow-browser-search {
-  min-width: 0;
-  height: 2.4rem;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0 1rem 0.8rem;
-  padding-inline: 0.7rem;
-  border: 1px solid var(--preview-guide);
-  border-radius: 8px;
-  color: var(--preview-muted);
-  background: var(--preview-board);
-}
-
-.flow-browser-search:focus-within {
-  border-color: var(--preview-focus);
-}
-
-.flow-browser-search input {
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  color: var(--preview-chalk);
-  background: transparent;
-  font-size: 0.74rem;
-}
-
-.flow-browser-search input::placeholder {
-  color: var(--preview-muted);
-}
-
-.flow-browser-search kbd {
-  padding: 0.18rem 0.32rem;
-  border: 1px solid var(--preview-guide);
-  border-radius: 4px;
-  color: var(--preview-muted);
-  background: var(--preview-raised);
-  font: 0.54rem/1 var(--preview-font-data);
-}
-
-.flow-tree {
-  min-width: 0;
-  overflow: auto;
-  padding: 0 0.65rem 1rem;
-  scrollbar-color: var(--preview-guide) transparent;
-}
-
-.flow-tree details {
-  margin-block-end: 0.25rem;
-}
-
-.flow-tree summary {
-  min-height: 2.3rem;
-  display: grid;
-  grid-template-columns: 1rem minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.5rem;
-  padding-inline: 0.55rem;
-  border-radius: 8px;
-  color: var(--preview-chalk);
-  font-family: var(--preview-font-data);
-  font-size: 0.68rem;
-  cursor: pointer;
-  list-style: none;
-}
-
-.flow-tree summary::-webkit-details-marker {
-  display: none;
-}
-
-.flow-tree summary:hover {
-  background: var(--preview-raised);
-}
-
-.flow-file-mark {
-  color: var(--preview-signal);
-  font-size: 0.55rem;
-}
-
-.flow-tree summary small {
-  color: var(--preview-muted);
-  font-size: 0.58rem;
-}
-
-.flow-tree-branch {
-  position: relative;
-  margin: 0.2rem 0 0.5rem 1.05rem;
-  padding-inline-start: 0.75rem;
-  border-inline-start: 1px solid var(--preview-guide);
-}
-
-.flow-tree-branch section > p {
-  margin: 0;
-  padding: 0.45rem 0.5rem 0.3rem;
-  color: var(--preview-muted);
-  font-size: 0.62rem;
-  font-weight: 650;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.flow-tree ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.flow-tree li button {
-  width: 100%;
-  min-height: 2.15rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding-inline: 0.55rem;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  color: var(--preview-muted);
-  background: transparent;
-  font-size: 0.72rem;
-  text-align: start;
-  cursor: pointer;
-}
-
-.flow-tree li button:hover {
-  color: var(--preview-chalk);
-  background: var(--preview-raised);
-}
-
-.flow-tree li button.is-active {
-  border-color: var(--preview-signal);
-  color: var(--preview-chalk);
-  background: var(--preview-control);
-}
-
-.flow-tree li button > span {
-  color: var(--preview-signal);
-  font-size: 0.48rem;
-}
-
-.flow-browser-foot {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.8rem 1rem;
-  border-block-start: 1px solid var(--preview-guide);
-  color: var(--preview-muted);
-  font: 0.58rem/1.2 var(--preview-font-data);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.preview-breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 1rem 1.5rem;
-  background: var(--preview-board);
-  border-bottom: 1px solid var(--preview-guide);
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-color: var(--preview-guide) transparent;
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  flex-shrink: 0;
-}
-
-.breadcrumb-steps {
-  display: flex;
-  gap: 0.5rem;
-  min-width: 0;
-}
-
-.breadcrumb-step {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.5rem 0.75rem;
-  min-width: max-content;
-  border: 1px solid var(--preview-guide);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--preview-muted);
-  cursor: pointer;
-  font-size: 0.75rem;
-  transition: all 160ms ease-out;
-}
-
-.breadcrumb-step:hover {
-  border-color: var(--preview-signal);
-  color: var(--preview-signal);
-  background: var(--preview-control);
-}
-
-.breadcrumb-step.is-active {
-  border-color: var(--preview-signal);
-  background: var(--preview-control);
-  color: var(--preview-chalk);
-}
-
-.breadcrumb-number {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.25rem;
-  height: 1.25rem;
-  border-radius: 50%;
-  background: var(--preview-signal);
-  color: var(--preview-board);
-  font-weight: 700;
-  font-size: 0.65rem;
-}
-
-.breadcrumb-step.is-active .breadcrumb-number {
-  background: var(--preview-success);
-}
-
-.breadcrumb-title {
-  font-weight: 500;
-  line-height: 1.2;
-  max-width: 8rem;
-  white-space: normal;
-  word-break: break-word;
-}
-
 .runtime-story {
   width: 100%;
   flex: 1 1 auto;
@@ -568,89 +252,6 @@ a:focus-visible,
     linear-gradient(90deg, rgb(255 255 255 / 1.8%) 1px, transparent 1px),
     var(--preview-board);
   background-size: auto, 30px 30px, 30px 30px, auto;
-}
-
-/* Explainers-deck presentation: keep the scene title, its navigation, and the
- * subtitles; drop the runtime HUD (beat rail, immersive controls) and the
- * developer legend so the stage reads as a clean framed slide. */
-.preview-shell .preview-legend,
-.preview-shell .aiperf-flow__causal-path,
-.preview-shell .aiperf-flow__immersive-controls,
-.preview-shell .aiperf-flow__controls {
-  display: none;
-}
-
-/* The semantic twin is an accessibility mirror, so keep it in the a11y tree
- * (not display:none) while removing it from the visible stage. */
-.preview-shell .aiperf-flow__semantic-twin {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  border: 0;
-}
-
-.preview-shell[data-preview-layout="hub-spoke"] .runtime-story svg[role="img"] {
-  width: min(72.5rem, 94vw);
-  height: min(43.125rem, 79vh);
-  min-height: 33.125rem;
-  filter: drop-shadow(0 18px 60px rgb(0 0 0 / 24%));
-}
-
-.preview-legend {
-  position: fixed;
-  z-index: 18;
-  inset: auto 1.875rem 1.25rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: #768084;
-  font: 600 0.5625rem/1.2 var(--preview-font-data);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  pointer-events: none;
-}
-
-.preview-legend-items {
-  display: flex;
-  gap: 1rem;
-}
-
-.preview-legend-items span::before {
-  display: inline-block;
-  width: 0.3125rem;
-  height: 0.3125rem;
-  margin-inline-end: 0.375rem;
-  border-radius: 50%;
-  background: var(--legend-dot);
-  box-shadow: 0 0 7px var(--legend-dot);
-  content: "";
-}
-
-.preview-legend-items [data-legend="cause"] {
-  --legend-dot: var(--preview-signal);
-}
-
-.preview-legend-items [data-legend="request"] {
-  --legend-dot: var(--preview-violet);
-}
-
-.preview-legend-items [data-legend="decision"] {
-  --legend-dot: var(--preview-amber);
-}
-
-.preview-bottom-nav {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1.5rem;
-  background: var(--preview-board);
-  border-top: 1px solid var(--preview-guide);
-  flex: 0 0 auto;
 }
 
 .nav-button {
@@ -690,10 +291,6 @@ a:focus-visible,
 }
 
 @media (width <= 860px) {
-  :root {
-    --preview-drawer-width: 15rem;
-  }
-
   .preview-topbar {
     height: auto;
     padding: 0.75rem 1rem;
@@ -719,52 +316,9 @@ a:focus-visible,
     gap: 0;
   }
 
-  .flow-browser {
-    width: var(--preview-drawer-width);
-  }
-
-  .preview-breadcrumb {
-    padding: 0.75rem 1rem;
-  }
-
-  .breadcrumb-step {
-    padding: 0.4rem 0.5rem;
-    font-size: 0.65rem;
-  }
-
-  .preview-bottom-nav {
-    padding: 0.75rem 1rem;
-    gap: 0.75rem;
-  }
-
   .nav-button {
     padding: 0.5rem 1rem;
     font-size: 0.8rem;
-  }
-
-  .preview-shell[data-preview-layout="hub-spoke"] .runtime-story {
-    overflow: auto;
-  }
-
-  .preview-shell[data-preview-layout="hub-spoke"] .runtime-story > main {
-    --flow-safe-top: max(0.75rem, env(safe-area-inset-top, 0px));
-  }
-
-  .preview-shell[data-preview-layout="hub-spoke"] .runtime-story svg[role="img"] {
-    width: 100%;
-    height: auto;
-    min-height: 0;
-    margin-block: 7rem 8rem;
-  }
-
-  .preview-legend {
-    inset-inline: 0.75rem;
-    display: grid;
-    gap: 0.5rem;
-  }
-
-  .preview-legend-items {
-    flex-wrap: wrap;
   }
 
   .preview-status {
@@ -774,12 +328,6 @@ a:focus-visible,
   .preview-status-dot {
     width: 0.5rem;
     height: 0.5rem;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .flow-browser {
-    transition: none;
   }
 }
 
@@ -799,16 +347,11 @@ a:focus-visible,
 }
 
 @media (forced-colors: active) {
-  .preview-topbar,
-  .flow-browser,
-  .flow-browser-search,
-  .flow-browser-head button,
-  .flow-browser-trigger {
+  .preview-topbar {
     border-color: CanvasText;
   }
 
-  .preview-status-dot,
-  .flow-tree li button.is-active {
+  .preview-status-dot {
     forced-color-adjust: none;
     color: HighlightText;
     background: Highlight;
