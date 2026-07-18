@@ -252,6 +252,10 @@ pub(crate) struct Inputs {
     pub slice_duration: Option<f64>,
     /// Synthetic input-token block size.
     pub isl_block_size: Option<u32>,
+    /// Fraction of synthetic prompts drawing the shared reusable prefix.
+    pub prefix_reuse_fraction: Option<f64>,
+    /// Fraction of a reusing prompt's input length occupied by the shared prefix.
+    pub prefix_reuse_ratio: Option<f64>,
     /// Bounded-memory sketch metric retention.
     pub sketch_metrics: bool,
     /// Synthetic image spec (present when any image flag is set).
@@ -590,6 +594,8 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
             .transpose()?,
         slice_duration: flags.slice_duration,
         isl_block_size: flags.isl_block_size,
+        prefix_reuse_fraction: flags.prefix_reuse_fraction,
+        prefix_reuse_ratio: flags.prefix_reuse_ratio,
         sketch_metrics: flags.sketch_metrics,
         image_spec: build_image_spec(flags),
         audio_spec: build_audio_spec(flags),
@@ -779,6 +785,8 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 prefix_prompt_length: None,
                 block_size: inputs.isl_block_size,
                 sequence_distribution: inputs.sequence_distribution.clone(),
+                prefix_reuse_fraction: inputs.prefix_reuse_fraction,
+                prefix_reuse_ratio: inputs.prefix_reuse_ratio,
             },
             prefix_prompts: inputs.prefix_prompts.clone(),
             images: inputs.image_spec.clone(),

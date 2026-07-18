@@ -70,6 +70,12 @@ pub struct Prompts {
     /// Mixed ISL/OSL sequence distribution (`--seq-dist`; present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sequence_distribution: Option<Vec<SeqDistEntry>>,
+    /// Fraction of prompts reusing a shared leading prefix (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_reuse_fraction: Option<f64>,
+    /// Shared-prefix fraction of each reusing prompt's length (present when authored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_reuse_ratio: Option<f64>,
 }
 
 /// One weighted `(isl, osl)` pair of a mixed sequence distribution.
@@ -311,6 +317,8 @@ mod tests {
                 prefix_prompt_length: None,
                 block_size: None,
                 sequence_distribution: None,
+                prefix_reuse_fraction: None,
+                prefix_reuse_ratio: None,
             },
             prefix_prompts: None,
             images: None,

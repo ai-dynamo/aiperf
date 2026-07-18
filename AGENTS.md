@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 
 AIPerf is a load generator and measurement front end for inference servers. The native product entry point is the single `aiperf` binary from crate `aiperf-cli`; it is both the public CLI and the execution engine. `aiperf profile` and `aiperf config` are native Rust commands. A profile invocation resolves Config v2, projects a protocol-v2 benchmark request, and re-executes the same binary in an internal `--execute` mode over stdio. Internal `--cell` and `--aggregator` modes support cellular execution and are intercepted before clap parsing.
 
-Native commands also include `controller`, `cell`, `aggregator`, `results-sidecar`, `analyze-trace`, `chat`, `validate`, `speed-bench-report`, `synthesize`, and `slurm`. Other commands dispatch to `aiperf.entrypoint.main`: builds with `pyo3-embed` invoke it in-process, while lean builds invoke `python -m aiperf`.
+Native commands also include `controller`, `cell`, `aggregator`, `results-sidecar`, `analyze-trace`, `chat`, `validate`, `speed-bench-report`, `synthesize`, `slurm`, and `compare`. Other commands dispatch to `aiperf.entrypoint.main`: builds with `pyo3-embed` invoke it in-process, while lean builds invoke `python -m aiperf`.
 
 `aiperf-mock-server` is a separately launched benchmark and test target. It is not supervised by a profile run.
 

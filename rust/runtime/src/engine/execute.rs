@@ -4076,10 +4076,22 @@ fn synthetic_config(spec: &SyntheticDatasetSpec) -> Result<SyntheticDatasetConfi
         })
         .map(|(prompts, isl)| -> Result<Option<SyntheticPromptConfig>> {
             let input_tokens = distribution(isl)?;
+            ensure!(
+                prompts.prefix_reuse_fraction.is_finite()
+                    && (0.0..=1.0).contains(&prompts.prefix_reuse_fraction),
+                "synthetic prompt prefix_reuse_fraction must be within [0, 1]"
+            );
+            ensure!(
+                prompts.prefix_reuse_ratio.is_finite()
+                    && (0.0..=1.0).contains(&prompts.prefix_reuse_ratio),
+                "synthetic prompt prefix_reuse_ratio must be within [0, 1]"
+            );
             Ok(
                 (input_tokens.expected_value() > 0.0).then_some(SyntheticPromptConfig {
                     input_tokens,
                     batch_size: prompts.batch_size,
+                    prefix_reuse_fraction: prompts.prefix_reuse_fraction,
+                    prefix_reuse_ratio: prompts.prefix_reuse_ratio,
                 }),
             )
         })

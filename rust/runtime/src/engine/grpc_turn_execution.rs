@@ -192,6 +192,10 @@ pub(crate) fn grpc_sink_with_endpoints(
                 // This policy must reach the gRPC TLS builder for self-signed
                 // `grpcs://` endpoints.
                 ssl_verify: transport.client.ssl_verify,
+                // Reuse the authored Config-v2 connect-retry knobs verbatim so
+                // gRPC establishment retries exactly like the HTTP transport.
+                max_connect_retries: transport.client.max_connect_retries,
+                connect_retry_backoff_ns: transport.client.connect_retry_backoff_ns,
                 ..GrpcClientConfig::default()
             },
             connection_reuse: grpc_reuse(transport.connection_reuse),

@@ -31,6 +31,20 @@ pub struct GrpcClientConfig {
     pub max_send_message_size: usize,
     /// Maximum Clock time spent establishing a ready channel.
     pub channel_ready_timeout_ns: i64,
+    /// Number of additional attempts to establish a channel after a
+    /// connect-phase failure (the pre-RPC `Endpoint::connect`). Retries apply
+    /// only before any RPC is dispatched, so a request the server may have
+    /// observed is never re-issued. Channel-ready timeouts, whole-request
+    /// timeouts, and every post-send RPC status are never retried. `0` (the
+    /// default) preserves the historical single-attempt behavior. This mirrors
+    /// the HTTP transport's `ClientConfig::max_connect_retries`.
+    pub max_connect_retries: u32,
+    /// Base linear backoff, in Clock-nanoseconds, slept between connect
+    /// retries. Retry `n` (1-based) waits `connect_retry_backoff_ns * n`, so
+    /// successive waits grow linearly. The sleep is driven through the injected
+    /// [`crate::clock::Clock`] so virtual-time replay stays deterministic.
+    /// Non-positive (the default) disables the wait.
+    pub connect_retry_backoff_ns: i64,
     /// Optional default whole-request timeout.
     pub total_timeout_ns: Option<i64>,
     /// Record per-message size/timestamp pairs in addition to totals.
@@ -48,6 +62,8 @@ impl Default for GrpcClientConfig {
             max_receive_message_size: 256 * 1024 * 1024,
             max_send_message_size: 256 * 1024 * 1024,
             channel_ready_timeout_ns: 30_000_000_000,
+            max_connect_retries: 0,
+            connect_retry_backoff_ns: 0,
             total_timeout_ns: None,
             trace_chunks: true,
             ssl_verify: true,

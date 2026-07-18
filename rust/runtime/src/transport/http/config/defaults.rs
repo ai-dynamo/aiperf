@@ -159,6 +159,23 @@ use crate::transport::http::models::HttpVersion;
 pub struct ClientConfig {
     /// Deadline for DNS, TCP, TLS, and HTTP handshake establishment.
     pub connect_timeout_ns: Option<i64>,
+    /// Number of additional attempts to (re)establish a connection after a
+    /// connect-phase failure (DNS/TCP/TLS/handshake —
+    /// [`crate::transport::core::ErrorKind::Connect`]).
+    ///
+    /// Retries apply *only* to the pre-response connect phase, before any
+    /// request bytes are sent, so a request the server may have partially
+    /// processed is never re-issued. Application HTTP errors, post-send
+    /// failures, and connect *timeouts* are never retried. `0` (the default)
+    /// preserves the historical fail-fast behavior.
+    pub max_connect_retries: u32,
+    /// Base linear backoff, in clock-nanoseconds, slept between connect
+    /// retries. Attempt `n` (1-based) waits `connect_retry_backoff_ns * n`
+    /// before retrying, so successive waits grow linearly. The sleep is driven
+    /// through the injected [`crate::clock::Clock`] so virtual-time replay
+    /// stays deterministic. Non-positive (the default) disables the wait, so
+    /// with the default zero retries the whole feature reads as "off".
+    pub connect_retry_backoff_ns: i64,
     /// Deadline for request send plus the complete response body.
     pub request_timeout_ns: Option<i64>,
     /// One end-to-end request deadline including connection establishment.
@@ -202,6 +219,8 @@ impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             connect_timeout_ns: None,
+            max_connect_retries: 0,
+            connect_retry_backoff_ns: 0,
             request_timeout_ns: None,
             total_timeout_ns: None,
             max_response_body_bytes: None,
@@ -245,6 +264,8 @@ mod tests {
         assert!(c.prepared_tls.is_none());
         assert_eq!(c.http_version, HttpVersion::Auto);
         assert_eq!(c.connect_timeout_ns, None);
+        assert_eq!(c.max_connect_retries, 0);
+        assert_eq!(c.connect_retry_backoff_ns, 0);
         assert_eq!(c.request_timeout_ns, None);
         assert_eq!(c.total_timeout_ns, None);
         assert_eq!(c.max_response_body_bytes, None);
