@@ -272,8 +272,7 @@ pub fn run_cellular(
     // as routable and shipping stays on; a SLURM run sets the coordinate on every task,
     // so a loopback coordinate co-locates. The `force_http` test seam deliberately ships
     // over loopback and overrides this.
-    let cross_host_over_http =
-        force_http || (cross_host && !controller_coordinate_is_loopback());
+    let cross_host_over_http = force_http || (cross_host && !controller_coordinate_is_loopback());
     let http_shipping = cross_host_over_http
         && crate::engine::cellular_cell::http_artifact_shipping_enabled()
         && !crate::engine::artifact_shipping::shippable_relatives(&artifacts).is_empty();
@@ -1084,15 +1083,16 @@ fn controller_artifact_bind() -> std::net::SocketAddr {
 /// is NOT loopback, so cross-host shipping stays on.
 #[cfg(feature = "cellular")]
 fn controller_coordinate_is_loopback() -> bool {
-    let Ok(coordinate) =
-        std::env::var(crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV)
+    let Ok(coordinate) = std::env::var(crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV)
     else {
         return false;
     };
     let Some(host_port) = coordinate.strip_prefix("tcp://") else {
         return false;
     };
-    let host = host_port.rsplit_once(':').map_or(host_port, |(host, _)| host);
+    let host = host_port
+        .rsplit_once(':')
+        .map_or(host_port, |(host, _)| host);
     host.parse::<std::net::IpAddr>()
         .map(|ip| ip.is_loopback())
         .unwrap_or_else(|_| host.eq_ignore_ascii_case("localhost"))
