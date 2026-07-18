@@ -12,6 +12,7 @@ pub mod ingest;
 pub mod kernel;
 pub mod report;
 pub mod sidecar;
+pub mod steady_state;
 pub mod store;
 pub mod sweepline;
 pub mod units;
@@ -45,10 +46,14 @@ pub use report::{
     ReportError, ReportExtensionIdentity, ReportGraphOutcomeInfo, ReportGraphRunInfo,
     ReportMetadataError, ReportPairRunFacts, ReportRun, ReportRunInfo, ReportRunMetadata,
     ReportScalarStats, ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata,
-    ReportServerMetricsPhaseRange, ReportStats, ReportSummary, ReportTimeslice, ReportValue,
-    Reporter, RunOutcome,
+    ReportServerMetricsPhaseRange, ReportStats, ReportSteadyState, ReportSummary, ReportTimeslice,
+    ReportValue, Reporter, RunOutcome,
 };
 pub use sidecar::{SidecarMetric, SidecarSeries, SidecarStats, SidecarTimeslice};
+pub use steady_state::{
+    DEFAULT_STEADY_STATE_FRACTION, SteadyStateConfig, SteadyStateOutcome, SteadyWindow,
+    detect_steady_window, steady_state_summary,
+};
 pub use store::{
     CategoryInterner, ColumnStore, ListMetricBackend, MetricsStorageMode, NumericColumn,
     RaggedReplay, RaggedSeries, SketchColumns, TagSketch,

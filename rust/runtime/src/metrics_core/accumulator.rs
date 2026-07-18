@@ -15,7 +15,7 @@ use crate::metrics_core::ingest::{InferenceDimensions, RecordIngest};
 use crate::metrics_core::kernel::{DistributionStats, linear_distribution, nearest_distribution};
 use crate::metrics_core::sidecar::SidecarMetric;
 use crate::metrics_core::store::{ColumnStore, ListMetricBackend, MetricsStorageMode};
-use crate::metrics_core::sweepline::{IclSeries, SweepLineCurves, SweepMetricResult};
+use crate::metrics_core::sweepline::{IclSeries, StepFn, SweepLineCurves, SweepMetricResult};
 use crate::metrics_core::units::{Unit, UnitConversionError};
 use crate::metrics_core::value::MetricValue;
 use crate::metrics_core::window::{ExportContext, Phase};
@@ -138,6 +138,10 @@ pub struct MetricsConfig {
     /// into a bounded-memory t-digest instead of retaining it, trading exact
     /// percentiles for O(1) memory. Off by default.
     pub storage_mode: MetricsStorageMode,
+    /// Closed-loop steady-state windowing for concurrency-target runs. Disabled
+    /// by default; when enabled with a positive concurrency target the metrics
+    /// plane also emits a steady-state summary over the auto-detected window.
+    pub steady_state: crate::metrics_core::steady_state::SteadyStateConfig,
 }
 
 impl Default for MetricsConfig {
@@ -150,6 +154,7 @@ impl Default for MetricsConfig {
             osl_mismatch_max_tokens: DEFAULT_OSL_MISMATCH_MAX_TOKENS,
             use_server_token_count: false,
             storage_mode: MetricsStorageMode::Exact,
+            steady_state: crate::metrics_core::steady_state::SteadyStateConfig::default(),
         }
     }
 }
@@ -460,6 +465,15 @@ impl MetricsAccumulator {
     /// Returns the underlying read-only column store for analyzers.
     pub fn column_store(&self) -> &ColumnStore {
         &self.store
+    }
+
+    /// Builds the in-flight request-concurrency step function over `mask`.
+    ///
+    /// Reuses the shared sweep-line curve bundle so steady-state detection reads
+    /// the same concurrency-over-time signal every other windowed summary is
+    /// derived from, rather than re-deriving it from raw start/end timestamps.
+    pub(crate) fn concurrency_curve(&self, mask: &[bool]) -> StepFn {
+        self.compute_sweep_curves(mask).concurrency
     }
 
     /// Returns the number of populated request slots.

@@ -566,6 +566,46 @@ fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
         }
     }
 
+    // Closed-loop steady-state summary (declared field), omitted unless the run
+    // enabled it with a concurrency target. Metrics use the same per-metric
+    // object shape as the whole-run summary, scoped to the saturated window.
+    if let Some(steady_state) = &report.steady_state {
+        let mut object = Map::new();
+        object.insert(
+            "window_start_ns".to_owned(),
+            Value::from(steady_state.window_start_ns),
+        );
+        object.insert(
+            "window_end_ns".to_owned(),
+            Value::from(steady_state.window_end_ns),
+        );
+        object.insert(
+            "duration_s".to_owned(),
+            Value::from(steady_state.duration_s),
+        );
+        object.insert(
+            "threshold_concurrency".to_owned(),
+            Value::from(steady_state.threshold_concurrency as u64),
+        );
+        object.insert(
+            "peak_concurrency".to_owned(),
+            Value::from(steady_state.peak_concurrency as u64),
+        );
+        object.insert(
+            "short_window".to_owned(),
+            Value::Bool(steady_state.short_window),
+        );
+        if let Some(warning) = &steady_state.warning {
+            object.insert("warning".to_owned(), Value::String(warning.clone()));
+        }
+        let mut metrics_obj = Map::new();
+        for (name, projected) in collect_metrics(&steady_state.metrics, cfg) {
+            metrics_obj.insert(name, metric_object(&projected));
+        }
+        object.insert("metrics".to_owned(), Value::Object(metrics_obj));
+        root.insert("steady_state".to_owned(), Value::Object(object));
+    }
+
     // Extra (undeclared) metric tags, appended last in alphabetical order.
     for (name, projected) in &collected {
         if !declared.contains(name.as_str()) {

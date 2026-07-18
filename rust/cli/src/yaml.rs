@@ -87,6 +87,14 @@ fn apply_cli_overrides(
     if !flags.server_metrics_formats.is_empty() {
         inputs.server_metrics_formats = Some(flags.server_metrics_formats.clone());
     }
+    // Steady-state windowing: `--steady-state` (+ optional `--steady-state-fraction`)
+    // layers over a config-authored run.
+    if flags.steady_state {
+        inputs.steady_state = true;
+    }
+    if let Some(fraction) = flags.steady_state_fraction {
+        inputs.steady_state_fraction = Some(fraction);
+    }
     // Dry-run dataset-analysis toggles: `--no-dataset-analysis` suppresses the
     // family; the `--kv-*` / `--dataset-analysis-per-conversation` knobs layer
     // over the config-derived defaults when the analysis is active.
@@ -1468,6 +1476,8 @@ impl Benchmark {
             prefix_reuse_fraction,
             prefix_reuse_ratio,
             sketch_metrics: false,
+            steady_state: false,
+            steady_state_fraction: None,
             image_spec,
             audio_spec,
             video_spec,
