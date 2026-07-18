@@ -294,6 +294,22 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
           }}
         />
 
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            width: "100%",
+          }}
+        >
+          <div style={{ width: "100%", maxWidth: 720 }}>
+            <Subtitles
+              text={slide.narration}
+              activeWordIndex={activeWordIndex}
+              visible={started}
+            />
+          </div>
+        </div>
+
         <Divider />
 
         <div key={`slide-${index}-${restartKey}`} className={`${classPrefix}-stage ${classPrefix}-slide`}>
@@ -303,11 +319,6 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
             playing={started && playing}
             restartKey={restartKey}
             reducedMotion={reducedMotion}
-          />
-          <Subtitles
-            text={slide.narration}
-            activeWordIndex={activeWordIndex}
-            visible={started}
           />
           <div className={`${classPrefix}-details`}>
             {slide.term ? (
