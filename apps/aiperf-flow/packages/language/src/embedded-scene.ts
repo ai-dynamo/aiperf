@@ -14,8 +14,9 @@
  * - panel: `title`, `detail`
  * - header: `title`, `caption`
  * - circle / ellipse: `r` / `rx` / `ry`, `center` `{ x, y }`
- * - elbow / connector: `from`, `to`, `via`, `axis`
- * - stack / grid: `direction`, `cols`, `gap` (also via `style`)
+ * - stack / grid / rail: `direction`, `cols`, `gap` (also via `style`)
+ * - lane / band / swimlane / stepper: structure macros (`title`, `steps`, `labels`, `linked`)
+ * - route / elbow / connector: `from`, `to`, `via`, `axis`
  * - motion.signal: `d`, or `from` / `to`
  * - stagger cues: `targets`, `step`, `easing`; actions `stagger` /
  *   `enter-children` / `fade` / `exit` (plus existing `enter` / `draw` / …)

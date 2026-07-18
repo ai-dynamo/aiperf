@@ -37,45 +37,25 @@ explainer "Rust Architecture" {
       roots: [
         {
           id: "header"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "ONE BINARY"
+          caption: "cli is entry + engine"
           layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
         {
-          id: "label"
-          capability: "core.text"
-          text: "ONE BINARY"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "cli is entry + engine"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
+          id: "zone"
+          capability: "core.band"
+          layout: { x: 70, y: 100, width: 560, height: 160 }
+          style: { fill: @theme.surface.secondary, opacity: 0.5 }
         },
         {
           id: "binary"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "aiperf binary"
+          detail: "cli/src/main.rs"
           layout: { x: 250, y: 130, width: 200, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "binary-title"
-              capability: "core.text"
-              text: "aiperf binary"
-              layout: { x: 250, y: 154, width: 200, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "binary-detail"
-              capability: "core.text"
-              text: "cli/src/main.rs"
-              layout: { x: 250, y: 178, width: 200, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "footer"
@@ -86,54 +66,26 @@ explainer "Rust Architecture" {
         },
         {
           id: "cli-hat"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "public CLI"
+          detail: "outside"
           layout: { x: 90, y: 310, width: 180, height: 55 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
-          children: [
-            {
-              id: "cli-hat-title"
-              capability: "core.text"
-              text: "public CLI"
-              layout: { x: 90, y: 326, width: 180, height: 20 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "cli-hat-detail"
-              capability: "core.text"
-              text: "outside"
-              layout: { x: 90, y: 346, width: 180, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
-          capability: "core.line"
-          from: { x: 270, y: 337 }
-          to: { x: 430, y: 337 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
+          capability: "core.route"
+          from: { nodeId: "cli-hat", anchor: "e" }
+          to: { nodeId: "engine-hat", anchor: "w" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
         {
           id: "engine-hat"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "execution child"
+          detail: "inside"
           layout: { x: 430, y: 310, width: 180, height: 55 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-          children: [
-            {
-              id: "engine-hat-title"
-              capability: "core.text"
-              text: "execution child"
-              layout: { x: 430, y: 326, width: 180, height: 20 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "engine-hat-detail"
-              capability: "core.text"
-              text: "inside"
-              layout: { x: 430, y: 346, width: 180, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "pulse-a"
@@ -151,7 +103,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M170 190 H530"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -160,8 +112,7 @@ explainer "Rust Architecture" {
       ]
       timeline: [
         { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
+        { id: "t-zone", at: 80, duration: 200, target: "zone", action: "enter" }
         { id: "t-binary", at: 280, duration: 360, target: "binary", action: "enter" }
         { id: "t-footer", at: 560, duration: 280, target: "footer", action: "enter" }
         { id: "t-cli", at: 760, duration: 280, target: "cli-hat", action: "enter" }
@@ -213,25 +164,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "cli"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "aiperf-cli"
+          detail: "commands + execute"
           layout: { x: 60, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "cli-title"
-              capability: "core.text"
-              text: "aiperf-cli"
-              layout: { x: 60, y: 154, width: 150, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "cli-detail"
-              capability: "core.text"
-              text: "commands + execute"
-              layout: { x: 60, y: 178, width: 150, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
@@ -242,25 +179,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "runtime"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "aiperf-runtime"
+          detail: "engine + transports"
           layout: { x: 250, y: 130, width: 170, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "runtime-title"
-              capability: "core.text"
-              text: "aiperf-runtime"
-              layout: { x: 250, y: 154, width: 170, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "runtime-detail"
-              capability: "core.text"
-              text: "engine + transports"
-              layout: { x: 250, y: 178, width: 170, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a2"
@@ -271,47 +194,19 @@ explainer "Rust Architecture" {
         },
         {
           id: "loadgen"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "loadgen-core"
+          detail: "observer seam"
           layout: { x: 460, y: 130, width: 180, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "loadgen-title"
-              capability: "core.text"
-              text: "loadgen-core"
-              layout: { x: 460, y: 154, width: 180, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "loadgen-detail"
-              capability: "core.text"
-              text: "observer seam"
-              layout: { x: 460, y: 178, width: 180, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "mock"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "mock-server"
+          detail: "separate target"
           layout: { x: 520, y: 280, width: 120, height: 58 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "mock-title"
-              capability: "core.text"
-              text: "mock-server"
-              layout: { x: 520, y: 296, width: 120, height: 20 }
-              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "mock-detail"
-              capability: "core.text"
-              text: "separate target"
-              layout: { x: 520, y: 316, width: 120, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "pulse-a"
@@ -329,7 +224,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M120 190 H580"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -392,25 +287,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "logging"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "logging"
+          detail: "startup"
           layout: { x: 70, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "logging-title"
-              capability: "core.text"
-              text: "logging"
-              layout: { x: 70, y: 154, width: 150, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "logging-detail"
-              capability: "core.text"
-              text: "startup"
-              layout: { x: 70, y: 178, width: 150, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
@@ -421,25 +302,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "execute"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "execute_mode?"
+          detail: "hidden argv"
           layout: { x: 260, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "execute-title"
-              capability: "core.text"
-              text: "execute_mode?"
-              layout: { x: 260, y: 154, width: 150, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "execute-detail"
-              capability: "core.text"
-              text: "hidden argv"
-              layout: { x: 260, y: 178, width: 150, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a2"
@@ -450,25 +317,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "dispatch"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "dispatch::run"
+          detail: "startup"
           layout: { x: 450, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "dispatch-title"
-              capability: "core.text"
-              text: "dispatch::run"
-              layout: { x: 450, y: 154, width: 150, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "dispatch-detail"
-              capability: "core.text"
-              text: "startup"
-              layout: { x: 450, y: 178, width: 150, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "pulse-a"
@@ -486,7 +339,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M90 190 H610"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -548,25 +401,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "native"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Native commands"
+          detail: "profile · config · cell"
           layout: { x: 70, y: 120, width: 220, height: 110 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "native-title"
-              capability: "core.text"
-              text: "Native commands"
-              layout: { x: 70, y: 144, width: 220, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "native-detail"
-              capability: "core.text"
-              text: "profile · config · cell"
-              layout: { x: 70, y: 168, width: 220, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "split"
@@ -577,25 +416,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "delegated"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Delegated commands"
+          detail: "python -m aiperf"
           layout: { x: 410, y: 120, width: 220, height: 110 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.orange, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "delegated-title"
-              capability: "core.text"
-              text: "Delegated commands"
-              layout: { x: 410, y: 144, width: 220, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "delegated-detail"
-              capability: "core.text"
-              text: "python -m aiperf"
-              layout: { x: 410, y: 168, width: 220, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "footer"
@@ -620,7 +445,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 190 H590"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -681,25 +506,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "yaml"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "benchmark.yaml"
+          detail: "Config v2"
           layout: { x: 50, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "yaml-title"
-              capability: "core.text"
-              text: "benchmark.yaml"
-              layout: { x: 50, y: 154, width: 150, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "yaml-detail"
-              capability: "core.text"
-              text: "Config v2"
-              layout: { x: 50, y: 178, width: 150, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
@@ -710,25 +521,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "load"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "yaml + load"
+          detail: "expand + validate"
           layout: { x: 250, y: 130, width: 170, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "load-title"
-              capability: "core.text"
-              text: "yaml + load"
-              layout: { x: 250, y: 154, width: 170, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "load-detail"
-              capability: "core.text"
-              text: "expand + validate"
-              layout: { x: 250, y: 178, width: 170, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a2"
@@ -739,25 +536,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "run"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "BenchmarkRun"
+          detail: "typed wire object"
           layout: { x: 470, y: 130, width: 180, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "run-title"
-              capability: "core.text"
-              text: "BenchmarkRun"
-              layout: { x: 470, y: 154, width: 180, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "run-detail"
-              capability: "core.text"
-              text: "typed wire object"
-              layout: { x: 470, y: 178, width: 180, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "pulse-a"
@@ -775,7 +558,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M130 190 H570"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -837,25 +620,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "parent"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "profile parent"
+          detail: "operator process"
           layout: { x: 70, y: 130, width: 170, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "parent-title"
-              capability: "core.text"
-              text: "profile parent"
-              layout: { x: 70, y: 154, width: 170, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "parent-detail"
-              capability: "core.text"
-              text: "operator process"
-              layout: { x: 70, y: 178, width: 170, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
@@ -866,25 +635,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "spawn"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "spawn child"
+          detail: "current_exe()"
           layout: { x: 290, y: 130, width: 170, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "spawn-title"
-              capability: "core.text"
-              text: "spawn child"
-              layout: { x: 290, y: 154, width: 170, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "spawn-detail"
-              capability: "core.text"
-              text: "current_exe()"
-              layout: { x: 290, y: 178, width: 170, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a2"
@@ -895,25 +650,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "execute"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "--execute"
+          detail: "stdio JSON"
           layout: { x: 510, y: 130, width: 120, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "execute-title"
-              capability: "core.text"
-              text: "--execute"
-              layout: { x: 510, y: 154, width: 120, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "execute-detail"
-              capability: "core.text"
-              text: "stdio JSON"
-              layout: { x: 510, y: 178, width: 120, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "pulse-a"
@@ -931,7 +672,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M150 190 H550"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -993,25 +734,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "envelope"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Envelope v2"
+          detail: "protocol boundary"
           layout: { x: 90, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "envelope-title"
-              capability: "core.text"
-              text: "Envelope v2"
-              layout: { x: 90, y: 154, width: 150, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "envelope-detail"
-              capability: "core.text"
-              text: "protocol boundary"
-              layout: { x: 90, y: 178, width: 150, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
@@ -1022,25 +749,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "app"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Application"
+          detail: "stock composition"
           layout: { x: 290, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "app-title"
-              capability: "core.text"
-              text: "Application"
-              layout: { x: 290, y: 154, width: 150, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "app-detail"
-              capability: "core.text"
-              text: "stock composition"
-              layout: { x: 290, y: 178, width: 150, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a2"
@@ -1051,25 +764,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "terminal"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "terminal"
+          detail: "JSONL out"
           layout: { x: 490, y: 130, width: 120, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "terminal-title"
-              capability: "core.text"
-              text: "terminal"
-              layout: { x: 490, y: 154, width: 120, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "terminal-detail"
-              capability: "core.text"
-              text: "JSONL out"
-              layout: { x: 490, y: 178, width: 120, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "pulse-a"
@@ -1087,7 +786,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M170 190 H530"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -1149,25 +848,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "registry"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "AIPerfRegistry"
+          detail: "transactional build"
           layout: { x: 250, y: 90, width: 200, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "registry-title"
-              capability: "core.text"
-              text: "AIPerfRegistry"
-              layout: { x: 250, y: 114, width: 200, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "registry-detail"
-              capability: "core.text"
-              text: "transactional build"
-              layout: { x: 250, y: 138, width: 200, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
@@ -1178,25 +863,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "loaders"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "loaders"
+          detail: "registered"
           layout: { x: 80, y: 220, width: 110, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "loaders-title"
-              capability: "core.text"
-              text: "loaders"
-              layout: { x: 80, y: 244, width: 110, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "loaders-detail"
-              capability: "core.text"
-              text: "registered"
-              layout: { x: 80, y: 268, width: 110, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a2"
@@ -1207,25 +878,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "samplers"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "samplers"
+          detail: "registered"
           layout: { x: 220, y: 220, width: 110, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "samplers-title"
-              capability: "core.text"
-              text: "samplers"
-              layout: { x: 220, y: 244, width: 110, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "samplers-detail"
-              capability: "core.text"
-              text: "registered"
-              layout: { x: 220, y: 268, width: 110, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a3"
@@ -1236,25 +893,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "endpoints"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "endpoints"
+          detail: "registered"
           layout: { x: 360, y: 220, width: 110, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "endpoints-title"
-              capability: "core.text"
-              text: "endpoints"
-              layout: { x: 360, y: 244, width: 110, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "endpoints-detail"
-              capability: "core.text"
-              text: "registered"
-              layout: { x: 360, y: 268, width: 110, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a4"
@@ -1265,25 +908,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "transports"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "transports"
+          detail: "registered"
           layout: { x: 500, y: 220, width: 110, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "transports-title"
-              capability: "core.text"
-              text: "transports"
-              layout: { x: 500, y: 244, width: 110, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "transports-detail"
-              capability: "core.text"
-              text: "registered"
-              layout: { x: 500, y: 268, width: 110, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "pulse-a"
@@ -1301,7 +930,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M190 190 H510"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -1367,25 +996,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "validate"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "validate"
+          detail: "coordinator"
           layout: { x: 40, y: 130, width: 130, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "validate-title"
-              capability: "core.text"
-              text: "validate"
-              layout: { x: 40, y: 154, width: 130, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "validate-detail"
-              capability: "core.text"
-              text: "coordinator"
-              layout: { x: 40, y: 178, width: 130, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
@@ -1396,25 +1011,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "prepare"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "prepare"
+          detail: "coordinator"
           layout: { x: 200, y: 130, width: 130, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "prepare-title"
-              capability: "core.text"
-              text: "prepare"
-              layout: { x: 200, y: 154, width: 130, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "prepare-detail"
-              capability: "core.text"
-              text: "coordinator"
-              layout: { x: 200, y: 178, width: 130, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a2"
@@ -1425,25 +1026,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "execute"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "execute"
+          detail: "coordinator"
           layout: { x: 360, y: 130, width: 130, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "execute-title"
-              capability: "core.text"
-              text: "execute"
-              layout: { x: 360, y: 154, width: 130, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "execute-detail"
-              capability: "core.text"
-              text: "coordinator"
-              layout: { x: 360, y: 178, width: 130, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a3"
@@ -1454,25 +1041,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "persist"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "persist"
+          detail: "coordinator"
           layout: { x: 520, y: 130, width: 130, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "persist-title"
-              capability: "core.text"
-              text: "persist"
-              layout: { x: 520, y: 154, width: 130, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "persist-detail"
-              capability: "core.text"
-              text: "coordinator"
-              layout: { x: 520, y: 178, width: 130, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "pulse-a"
@@ -1490,7 +1063,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M210 190 H490"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -1554,25 +1127,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "real"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "RealClock"
+          detail: "HTTP / gRPC online"
           layout: { x: 120, y: 130, width: 180, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "real-title"
-              capability: "core.text"
-              text: "RealClock"
-              layout: { x: 120, y: 154, width: 180, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "real-detail"
-              capability: "core.text"
-              text: "HTTP / gRPC online"
-              layout: { x: 120, y: 178, width: 180, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "split"
@@ -1583,25 +1142,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "sim"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "SimClock"
+          detail: "dynosim + graph"
           layout: { x: 400, y: 130, width: 180, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "sim-title"
-              capability: "core.text"
-              text: "SimClock"
-              layout: { x: 400, y: 154, width: 180, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "sim-detail"
-              capability: "core.text"
-              text: "dynosim + graph"
-              layout: { x: 400, y: 178, width: 180, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "footer"
@@ -1626,7 +1171,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M230 190 H470"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -1687,25 +1232,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "load"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "load"
+          detail: "dataset"
           layout: { x: 40, y: 130, width: 120, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "load-title"
-              capability: "core.text"
-              text: "load"
-              layout: { x: 40, y: 154, width: 120, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "load-detail"
-              capability: "core.text"
-              text: "dataset"
-              layout: { x: 40, y: 178, width: 120, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
@@ -1716,25 +1247,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "compose"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "compose"
+          detail: "dataset"
           layout: { x: 190, y: 130, width: 120, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "compose-title"
-              capability: "core.text"
-              text: "compose"
-              layout: { x: 190, y: 154, width: 120, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "compose-detail"
-              capability: "core.text"
-              text: "dataset"
-              layout: { x: 190, y: 178, width: 120, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a2"
@@ -1745,25 +1262,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "sample"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "sample"
+          detail: "dataset"
           layout: { x: 340, y: 130, width: 120, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "sample-title"
-              capability: "core.text"
-              text: "sample"
-              layout: { x: 340, y: 154, width: 120, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "sample-detail"
-              capability: "core.text"
-              text: "dataset"
-              layout: { x: 340, y: 178, width: 120, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a3"
@@ -1774,25 +1277,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "materialize"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "materialize"
+          detail: "dataset"
           layout: { x: 490, y: 130, width: 120, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "materialize-title"
-              capability: "core.text"
-              text: "materialize"
-              layout: { x: 490, y: 154, width: 120, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "materialize-detail"
-              capability: "core.text"
-              text: "dataset"
-              layout: { x: 490, y: 178, width: 120, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "pulse-a"
@@ -1810,7 +1299,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M250 190 H450"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -1874,25 +1363,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "workload"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Workload"
+          detail: "request-rate / graph"
           layout: { x: 80, y: 120, width: 180, height: 110 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "workload-title"
-              capability: "core.text"
-              text: "Workload"
-              layout: { x: 80, y: 144, width: 180, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "workload-detail"
-              capability: "core.text"
-              text: "request-rate / graph"
-              layout: { x: 80, y: 168, width: 180, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
@@ -1903,25 +1378,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "phase"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "phase_runtime"
+          detail: "warmup · drain"
           layout: { x: 310, y: 120, width: 180, height: 110 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "phase-title"
-              capability: "core.text"
-              text: "phase_runtime"
-              layout: { x: 310, y: 144, width: 180, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "phase-detail"
-              capability: "core.text"
-              text: "warmup · drain"
-              layout: { x: 310, y: 168, width: 180, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a2"
@@ -1932,25 +1393,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "turns"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Turns"
+          detail: "dispatch"
           layout: { x: 540, y: 120, width: 90, height: 110 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "turns-title"
-              capability: "core.text"
-              text: "Turns"
-              layout: { x: 540, y: 144, width: 90, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "turns-detail"
-              capability: "core.text"
-              text: "dispatch"
-              layout: { x: 540, y: 168, width: 90, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "pulse-a"
@@ -1968,7 +1415,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M270 190 H430"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -2030,25 +1477,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "dispatcher"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "TurnDispatcher"
+          detail: "scheduler side"
           layout: { x: 70, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "dispatcher-title"
-              capability: "core.text"
-              text: "TurnDispatcher"
-              layout: { x: 70, y: 154, width: 150, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "dispatcher-detail"
-              capability: "core.text"
-              text: "scheduler side"
-              layout: { x: 70, y: 178, width: 150, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
@@ -2059,25 +1492,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "sink"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "RequestSink"
+          detail: "transport side"
           layout: { x: 270, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "sink-title"
-              capability: "core.text"
-              text: "RequestSink"
-              layout: { x: 270, y: 154, width: 150, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "sink-detail"
-              capability: "core.text"
-              text: "transport side"
-              layout: { x: 270, y: 178, width: 150, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a2"
@@ -2088,25 +1507,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "observer"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "RequestObserver"
+          detail: "measurement"
           layout: { x: 470, y: 130, width: 160, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "observer-title"
-              capability: "core.text"
-              text: "RequestObserver"
-              layout: { x: 470, y: 154, width: 160, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "observer-detail"
-              capability: "core.text"
-              text: "measurement"
-              layout: { x: 470, y: 178, width: 160, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "pulse-a"
@@ -2124,7 +1529,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M290 190 H410"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -2186,25 +1591,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "coord"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Coordinator thread"
+          detail: "workers > 1"
           layout: { x: 250, y: 90, width: 200, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "coord-title"
-              capability: "core.text"
-              text: "Coordinator thread"
-              layout: { x: 250, y: 114, width: 200, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "coord-detail"
-              capability: "core.text"
-              text: "workers > 1"
-              layout: { x: 250, y: 138, width: 200, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
@@ -2215,25 +1606,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "w0"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Worker 0"
+          detail: "sub-cell"
           layout: { x: 120, y: 220, width: 110, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "w0-title"
-              capability: "core.text"
-              text: "Worker 0"
-              layout: { x: 120, y: 244, width: 110, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "w0-detail"
-              capability: "core.text"
-              text: "sub-cell"
-              layout: { x: 120, y: 268, width: 110, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a2"
@@ -2244,25 +1621,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "w1"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Worker 1"
+          detail: "sub-cell"
           layout: { x: 290, y: 220, width: 110, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "w1-title"
-              capability: "core.text"
-              text: "Worker 1"
-              layout: { x: 290, y: 244, width: 110, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "w1-detail"
-              capability: "core.text"
-              text: "sub-cell"
-              layout: { x: 290, y: 268, width: 110, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a3"
@@ -2273,25 +1636,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "w2"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Worker 2"
+          detail: "sub-cell"
           layout: { x: 460, y: 220, width: 110, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "w2-title"
-              capability: "core.text"
-              text: "Worker 2"
-              layout: { x: 460, y: 244, width: 110, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "w2-detail"
-              capability: "core.text"
-              text: "sub-cell"
-              layout: { x: 460, y: 268, width: 110, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "pulse-a"
@@ -2309,7 +1658,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M310 190 H390"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -2373,25 +1722,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "controller"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Controller"
+          detail: "rank 0"
           layout: { x: 70, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "controller-title"
-              capability: "core.text"
-              text: "Controller"
-              layout: { x: 70, y: 154, width: 150, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "controller-detail"
-              capability: "core.text"
-              text: "rank 0"
-              layout: { x: 70, y: 178, width: 150, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
@@ -2402,25 +1737,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "velo"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Velo"
+          detail: "control plane"
           layout: { x: 270, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "velo-title"
-              capability: "core.text"
-              text: "Velo"
-              layout: { x: 270, y: 154, width: 150, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "velo-detail"
-              capability: "core.text"
-              text: "control plane"
-              layout: { x: 270, y: 178, width: 150, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a2"
@@ -2431,25 +1752,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "cells"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Cells"
+          detail: "load + results"
           layout: { x: 470, y: 130, width: 160, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "cells-title"
-              capability: "core.text"
-              text: "Cells"
-              layout: { x: 470, y: 154, width: 160, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "cells-detail"
-              capability: "core.text"
-              text: "load + results"
-              layout: { x: 470, y: 178, width: 160, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "pulse-a"
@@ -2467,7 +1774,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M330 190 H370"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -2529,25 +1836,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "workers"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Workers"
+          detail: "local metrics"
           layout: { x: 60, y: 130, width: 130, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          children: [
-            {
-              id: "workers-title"
-              capability: "core.text"
-              text: "Workers"
-              layout: { x: 60, y: 154, width: 130, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "workers-detail"
-              capability: "core.text"
-              text: "local metrics"
-              layout: { x: 60, y: 178, width: 130, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a1"
@@ -2558,25 +1851,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "report"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "native-v2.json"
+          detail: "authoritative"
           layout: { x: 240, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "report-title"
-              capability: "core.text"
-              text: "native-v2.json"
-              layout: { x: 240, y: 154, width: 150, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "report-detail"
-              capability: "core.text"
-              text: "authoritative"
-              layout: { x: 240, y: 178, width: 150, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a2"
@@ -2587,25 +1866,11 @@ explainer "Rust Architecture" {
         },
         {
           id: "exporters"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Exporters"
+          detail: "JSON · CSV · Parquet"
           layout: { x: 440, y: 130, width: 200, height: 96 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          children: [
-            {
-              id: "exporters-title"
-              capability: "core.text"
-              text: "Exporters"
-              layout: { x: 440, y: 154, width: 200, height: 22 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "exporters-detail"
-              capability: "core.text"
-              text: "JSON · CSV · Parquet"
-              layout: { x: 440, y: 178, width: 200, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "footer"
@@ -2630,7 +1895,7 @@ explainer "Rust Architecture" {
         }
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M125 178 H540"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }

@@ -22,6 +22,7 @@ import type {
   ResponsiveAst,
   ResponsiveConditionAst,
   SceneAst,
+  ScenePrimitiveAst,
   ThemeAssignmentAst,
   ThemeDeclarationAst,
   TimelineAst,
@@ -47,6 +48,11 @@ import type {
   TimelineCueIr,
 } from "@aiperf/flow-schema";
 
+import {
+  capabilityKind,
+  desugarPackageNode,
+  lowerFirstClassPackageNode,
+} from "./desugar-scene-primitives.js";
 import type { LinkedDocument, SceneSymbolTable } from "./link.js";
 
 const GEOMETRY_KEYS = ["x", "y", "width", "height"] as const;
@@ -267,6 +273,54 @@ function lowerComponentInvocation(
   };
 }
 
+function lowerScenePrimitive(
+  node: ScenePrimitiveAst,
+  tokens: ReadonlyMap<string, LiteralAst["value"]>,
+  requiredCapabilities: ReadonlySet<string>,
+  nodes: ReadonlyMap<string, RectAst | ConnectorAst>,
+  index: number,
+): RenderNodeIr {
+  const props: Record<string, unknown> = { id: node.id, capability: node.capability };
+  for (const prop of node.props) {
+    props[prop.name] = resolveArgumentValue(prop.value, tokens);
+  }
+  const children =
+    node.children?.map((child, childIndex) =>
+      lowerRenderDeclaration(
+        child,
+        tokens,
+        requiredCapabilities,
+        nodes,
+        index * 1000 + childIndex,
+      ),
+    ) ?? [];
+  const label =
+    typeof props.title === "string"
+      ? props.title
+      : typeof props.text === "string"
+        ? props.text
+        : node.id;
+  const fallback = node.fallback?.text ?? label;
+  const desugared = desugarPackageNode(props, {
+    id: node.id,
+    capability: node.capability,
+    children,
+    label,
+    fallback,
+  });
+  if (desugared !== undefined) {
+    return desugared;
+  }
+  return lowerFirstClassPackageNode(props, {
+    id: node.id,
+    capability: node.capability,
+    kind: capabilityKind(node.capability),
+    children,
+    label,
+    fallback,
+  });
+}
+
 function lowerRenderDeclaration(
   node: RenderDeclarationAst,
   tokens: ReadonlyMap<string, LiteralAst["value"]>,
@@ -276,6 +330,15 @@ function lowerRenderDeclaration(
 ): RenderNodeIr {
   if (node.kind === "component-invocation") {
     return lowerComponentInvocation(node, tokens, requiredCapabilities, index);
+  }
+  if (node.kind === "scene-primitive") {
+    return lowerScenePrimitive(
+      node,
+      tokens,
+      requiredCapabilities,
+      nodes,
+      index,
+    );
   }
   return node.kind === "rect"
     ? lowerRect(node, tokens)
@@ -312,6 +375,9 @@ function lowerTimeline(timeline: TimelineAst): readonly TimelineCueIr[] {
     duration: cue.duration,
     target: cue.target,
     action: cue.action,
+    ...(cue.targets !== undefined ? { targets: cue.targets } : {}),
+    ...(cue.step !== undefined ? { step: cue.step } : {}),
+    ...(cue.easing !== undefined ? { easing: cue.easing } : {}),
     sourceMap: cue.sourceMap,
   }));
 }

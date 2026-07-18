@@ -36,199 +36,95 @@ explainer "Cellular algorithm workbook" {
     roots: [
 {
       id: "header"
-      capability: "core.rect"
+      capability: "core.header"
+      title: "WORKBOOK · CHAPTER MAP"
+      caption: "eight chapters · one derived route."
       layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
+      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
     }
     {
-      id: "label"
-      capability: "core.text"
-      text: "WORKBOOK · CHAPTER MAP"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+      id: "map-band"
+      capability: "core.band"
+      layout: { x: 18, y: 90, width: 664, height: 230 }
+      style: { fill: @theme.surface.secondary, opacity: 0.45 }
     }
     {
-      id: "note"
-      capability: "core.text"
-      text: "eight chapters · one derived route."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+      id: "lanes"
+      capability: "core.swimlane"
+      labels: ["plan", "run"]
+      layout: { x: 18, y: 96, width: 80, height: 210 }
+      style: { gap: 24, labelWidth: 70 }
     }
     {
       id: "ch-eligibility"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "eligibility"
+      detail: "fail closed"
       layout: { x: 25, y: 104, width: 145, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "ch-eligibility-title"
-          capability: "core.text"
-          text: "eligibility"
-          layout: { x: 33, y: 122, width: 129, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "ch-eligibility-detail"
-          capability: "core.text"
-          text: "fail closed"
-          layout: { x: 33, y: 146, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
+    }
+    {
+      id: "ch-link-0"
+      capability: "core.route"
+      from: { nodeId: "ch-eligibility", anchor: "e" }
+      to: { nodeId: "ch-ownership", anchor: "w" }
+      style: { stroke: @theme.accent.secondary, strokeWidth: 1.6, fill: "none", markerEnd: "none" }
     }
     {
       id: "ch-ownership"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "ownership"
+      detail: "tile work"
       layout: { x: 193, y: 104, width: 145, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "ch-ownership-title"
-          capability: "core.text"
-          text: "ownership"
-          layout: { x: 201, y: 122, width: 129, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "ch-ownership-detail"
-          capability: "core.text"
-          text: "tile work"
-          layout: { x: 201, y: 146, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "ch-control"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "control"
+      detail: "coordinate"
       layout: { x: 361, y: 104, width: 145, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "ch-control-title"
-          capability: "core.text"
-          text: "control"
-          layout: { x: 369, y: 122, width: 129, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "ch-control-detail"
-          capability: "core.text"
-          text: "coordinate"
-          layout: { x: 369, y: 146, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "ch-distribution"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "distribution"
+      detail: "deliver"
       layout: { x: 529, y: 104, width: 145, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "ch-distribution-title"
-          capability: "core.text"
-          text: "distribution"
-          layout: { x: 537, y: 122, width: 129, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "ch-distribution-detail"
-          capability: "core.text"
-          text: "deliver"
-          layout: { x: 537, y: 146, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "ch-execution"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "execution"
+      detail: "run shards"
       layout: { x: 25, y: 232, width: 145, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "ch-execution-title"
-          capability: "core.text"
-          text: "execution"
-          layout: { x: 33, y: 250, width: 129, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "ch-execution-detail"
-          capability: "core.text"
-          text: "run shards"
-          layout: { x: 33, y: 274, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "ch-capture"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "capture"
+      detail: "store"
       layout: { x: 193, y: 232, width: 145, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "ch-capture-title"
-          capability: "core.text"
-          text: "capture"
-          layout: { x: 201, y: 250, width: 129, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "ch-capture-detail"
-          capability: "core.text"
-          text: "store"
-          layout: { x: 201, y: 274, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "ch-merge"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "merge"
+      detail: "reduce"
       layout: { x: 361, y: 232, width: 145, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "ch-merge-title"
-          capability: "core.text"
-          text: "merge"
-          layout: { x: 369, y: 250, width: 129, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "ch-merge-detail"
-          capability: "core.text"
-          text: "reduce"
-          layout: { x: 369, y: 274, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "ch-artifacts"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "artifacts"
+      detail: "publish"
       layout: { x: 529, y: 232, width: 145, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "ch-artifacts-title"
-          capability: "core.text"
-          text: "artifacts"
-          layout: { x: 537, y: 250, width: 129, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "ch-artifacts-detail"
-          capability: "core.text"
-          text: "publish"
-          layout: { x: 537, y: 274, width: 129, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "footer"
@@ -239,7 +135,7 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "motion-sig"
-      capability: "core.path"
+      capability: "motion.signal"
       d: "M70 132 H630"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
@@ -248,9 +144,10 @@ explainer "Cellular algorithm workbook" {
     ]
   timeline: [
     { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
+    { id: "t-band", at: 60, duration: 220, target: "map-band", action: "enter" }
+    { id: "t-lanes", at: 100, duration: 220, target: "lanes", action: "enter" }
     { id: "t-ch-eligibility", at: 350, duration: 320, target: "ch-eligibility", action: "enter" }
+    { id: "t-ch-link-0", at: 420, duration: 240, target: "ch-link-0", action: "draw" }
     { id: "t-ch-ownership", at: 470, duration: 320, target: "ch-ownership", action: "enter" }
     { id: "t-ch-control", at: 590, duration: 320, target: "ch-control", action: "enter" }
     { id: "t-ch-distribution", at: 710, duration: 320, target: "ch-distribution", action: "enter" }
@@ -306,25 +203,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "algo-built"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "modulo-cell-ownership"
+      detail: "ordinary route"
       layout: { x: 35, y: 132, width: 190, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "algo-built-title"
-          capability: "core.text"
-          text: "modulo-cell-ownership"
-          layout: { x: 43, y: 150, width: 174, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "algo-built-detail"
-          capability: "core.text"
-          text: "ordinary route"
-          layout: { x: 43, y: 174, width: 174, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-built"
@@ -343,25 +226,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "algo-partial"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "final-report-assembly"
+      detail: "named boundary"
       layout: { x: 255, y: 132, width: 190, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "algo-partial-title"
-          capability: "core.text"
-          text: "final-report-assembly"
-          layout: { x: 263, y: 150, width: 174, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "algo-partial-detail"
-          capability: "core.text"
-          text: "named boundary"
-          layout: { x: 263, y: 174, width: 174, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-partial"
@@ -380,25 +249,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "algo-gated"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "phaser-start"
+      detail: "explicit admission"
       layout: { x: 475, y: 132, width: 190, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "algo-gated-title"
-          capability: "core.text"
-          text: "phaser-start"
-          layout: { x: 483, y: 150, width: 174, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "algo-gated-detail"
-          capability: "core.text"
-          text: "explicit admission"
-          layout: { x: 483, y: 174, width: 174, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-gated"
@@ -417,25 +272,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "evidence"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "Evidence"
+      detail: "boundary · unit · integration · end-to-end"
       layout: { x: 110, y: 275, width: 480, height: 54 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "evidence-title"
-          capability: "core.text"
-          text: "Evidence"
-          layout: { x: 118, y: 293, width: 464, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "evidence-detail"
-          capability: "core.text"
-          text: "boundary · unit · integration · end-to-end"
-          layout: { x: 118, y: 317, width: 464, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     ]
   timeline: [
@@ -494,25 +335,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "dispatch"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "execution-mode-dispatch"
+      detail: "private protocol"
       layout: { x: 22, y: 150, width: 150, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "dispatch-title"
-          capability: "core.text"
-          text: "execution-mode-dispatch"
-          layout: { x: 30, y: 168, width: 134, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "dispatch-detail"
-          capability: "core.text"
-          text: "private protocol"
-          layout: { x: 30, y: 192, width: 134, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-d"
@@ -538,25 +365,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "promote"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "controller-promotion"
+      detail: "cells > 1"
       layout: { x: 205, y: 150, width: 150, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "promote-title"
-          capability: "core.text"
-          text: "controller-promotion"
-          layout: { x: 213, y: 168, width: 134, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "promote-detail"
-          capability: "core.text"
-          text: "cells > 1"
-          layout: { x: 213, y: 192, width: 134, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-p"
@@ -582,25 +395,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "validate"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "run-shape-validation"
+      detail: "fail closed"
       layout: { x: 388, y: 150, width: 150, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "validate-title"
-          capability: "core.text"
-          text: "run-shape-validation"
-          layout: { x: 396, y: 168, width: 134, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "validate-detail"
-          capability: "core.text"
-          text: "fail closed"
-          layout: { x: 396, y: 192, width: 134, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-v"
@@ -626,25 +425,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "velo"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "Velo roles"
+      detail: "admit"
       layout: { x: 570, y: 150, width: 108, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "velo-title"
-          capability: "core.text"
-          text: "Velo roles"
-          layout: { x: 578, y: 168, width: 92, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "velo-detail"
-          capability: "core.text"
-          text: "admit"
-          layout: { x: 578, y: 192, width: 92, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-velo"
@@ -663,7 +448,7 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "motion-sig"
-      capability: "core.path"
+      capability: "motion.signal"
       d: "M85 188 H610"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
@@ -731,25 +516,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "modulo"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "modulo-cell-ownership"
+      detail: "i % N == k"
       layout: { x: 30, y: 145, width: 210, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "modulo-title"
-          capability: "core.text"
-          text: "modulo-cell-ownership"
-          layout: { x: 38, y: 163, width: 194, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "modulo-detail"
-          capability: "core.text"
-          text: "i % N == k"
-          layout: { x: 38, y: 187, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-mod"
@@ -775,91 +546,35 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "c0"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "cell 0"
+      detail: "0, 3, 6, …"
       layout: { x: 290, y: 105, width: 170, height: 58 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "c0-title"
-          capability: "core.text"
-          text: "cell 0"
-          layout: { x: 298, y: 123, width: 154, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "c0-detail"
-          capability: "core.text"
-          text: "0, 3, 6, …"
-          layout: { x: 298, y: 147, width: 154, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "c1"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "cell 1"
+      detail: "1, 4, 7, …"
       layout: { x: 290, y: 181, width: 170, height: 58 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "c1-title"
-          capability: "core.text"
-          text: "cell 1"
-          layout: { x: 298, y: 199, width: 154, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "c1-detail"
-          capability: "core.text"
-          text: "1, 4, 7, …"
-          layout: { x: 298, y: 223, width: 154, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "c2"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "cell 2"
+      detail: "2, 5, 8, …"
       layout: { x: 290, y: 257, width: 170, height: 58 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "c2-title"
-          capability: "core.text"
-          text: "cell 2"
-          layout: { x: 298, y: 275, width: 154, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "c2-detail"
-          capability: "core.text"
-          text: "2, 5, 8, …"
-          layout: { x: 298, y: 299, width: 154, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "conv"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "conversation-ownership"
+      detail: "whole sessions"
       layout: { x: 500, y: 145, width: 170, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "conv-title"
-          capability: "core.text"
-          text: "conversation-ownership"
-          layout: { x: 508, y: 163, width: 154, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "conv-detail"
-          capability: "core.text"
-          text: "whole sessions"
-          layout: { x: 508, y: 187, width: 154, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-conv"
@@ -885,7 +600,7 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "motion-sig"
-      capability: "core.path"
+      capability: "motion.signal"
       d: "M115 190 H585"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
@@ -951,25 +666,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "replay"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "broadcast-attach-replay"
+      detail: "close seam race"
       layout: { x: 22, y: 150, width: 185, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "replay-title"
-          capability: "core.text"
-          text: "broadcast-attach-replay"
-          layout: { x: 30, y: 168, width: 169, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "replay-detail"
-          capability: "core.text"
-          text: "close seam race"
-          layout: { x: 30, y: 192, width: 169, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-r"
@@ -995,25 +696,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "gen"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "phaser-generation-advance"
+      detail: "monotonic"
       layout: { x: 250, y: 150, width: 195, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "gen-title"
-          capability: "core.text"
-          text: "phaser-generation-advance"
-          layout: { x: 258, y: 168, width: 179, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "gen-detail"
-          capability: "core.text"
-          text: "monotonic"
-          layout: { x: 258, y: 192, width: 179, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-g"
@@ -1039,25 +726,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "start"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "phaser-start"
+      detail: "opt-in START"
       layout: { x: 488, y: 150, width: 190, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "start-title"
-          capability: "core.text"
-          text: "phaser-start"
-          layout: { x: 496, y: 168, width: 174, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "start-detail"
-          capability: "core.text"
-          text: "opt-in START"
-          layout: { x: 496, y: 192, width: 174, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-s"
@@ -1083,7 +756,7 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "motion-sig"
-      capability: "core.path"
+      capability: "motion.signal"
       d: "M90 205 H610"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
@@ -1149,25 +822,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "canon"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "canonical-regeneration"
+      detail: "measured data"
       layout: { x: 35, y: 122, width: 220, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "canon-title"
-          capability: "core.text"
-          text: "canonical-regeneration"
-          layout: { x: 43, y: 140, width: 204, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "canon-detail"
-          capability: "core.text"
-          text: "measured data"
-          layout: { x: 43, y: 164, width: 204, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-canon"
@@ -1186,25 +845,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "fanout"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "controller-fanout-generation"
+      detail: "verification overlay"
       layout: { x: 35, y: 245, width: 220, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "fanout-title"
-          capability: "core.text"
-          text: "controller-fanout-generation"
-          layout: { x: 43, y: 263, width: 204, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "fanout-detail"
-          capability: "core.text"
-          text: "verification overlay"
-          layout: { x: 43, y: 287, width: 204, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-fan"
@@ -1237,25 +882,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "miss"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "distribution-miss"
+      detail: "count · surface · recover"
       layout: { x: 440, y: 174, width: 225, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "miss-title"
-          capability: "core.text"
-          text: "distribution-miss"
-          layout: { x: 448, y: 192, width: 209, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "miss-detail"
-          capability: "core.text"
-          text: "count · surface · recover"
-          layout: { x: 448, y: 216, width: 209, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-miss"
@@ -1274,7 +905,7 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "motion-sig"
-      capability: "core.path"
+      capability: "motion.signal"
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
@@ -1338,25 +969,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "tlp"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "two-level-partition"
+      detail: "cell ownership"
       layout: { x: 30, y: 150, width: 175, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "tlp-title"
-          capability: "core.text"
-          text: "two-level-partition"
-          layout: { x: 38, y: 168, width: 159, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "tlp-detail"
-          capability: "core.text"
-          text: "cell ownership"
-          layout: { x: 38, y: 192, width: 159, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-tlp"
@@ -1382,47 +999,19 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "w0"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "worker 0"
+      detail: "!Send local sink"
       layout: { x: 260, y: 108, width: 180, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "w0-title"
-          capability: "core.text"
-          text: "worker 0"
-          layout: { x: 268, y: 126, width: 164, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "w0-detail"
-          capability: "core.text"
-          text: "!Send local sink"
-          layout: { x: 268, y: 150, width: 164, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "w1"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "worker 1"
+      detail: "!Send local sink"
       layout: { x: 260, y: 225, width: 180, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "w1-title"
-          capability: "core.text"
-          text: "worker 1"
-          layout: { x: 268, y: 243, width: 164, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "w1-detail"
-          capability: "core.text"
-          text: "!Send local sink"
-          layout: { x: 268, y: 267, width: 164, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "e2"
@@ -1440,25 +1029,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "iss"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "issuance-dispatch-injection"
+      detail: "global identity"
       layout: { x: 500, y: 150, width: 170, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "iss-title"
-          capability: "core.text"
-          text: "issuance-dispatch-injection"
-          layout: { x: 508, y: 168, width: 154, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "iss-detail"
-          capability: "core.text"
-          text: "global identity"
-          layout: { x: 508, y: 192, width: 154, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-iss"
@@ -1477,7 +1052,7 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "motion-sig"
-      capability: "core.path"
+      capability: "motion.signal"
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
@@ -1542,25 +1117,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "term"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "terminal-record-finalization"
+      detail: "CapturedRecord"
       layout: { x: 20, y: 150, width: 165, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "term-title"
-          capability: "core.text"
-          text: "terminal-record-finalization"
-          layout: { x: 28, y: 168, width: 149, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "term-detail"
-          capability: "core.text"
-          text: "CapturedRecord"
-          layout: { x: 28, y: 192, width: 149, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-term"
@@ -1586,91 +1147,35 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "retain"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "retain-record-capture"
+      detail: "rows + raw artifacts"
       layout: { x: 225, y: 92, width: 210, height: 60 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "retain-title"
-          capability: "core.text"
-          text: "retain-record-capture"
-          layout: { x: 233, y: 110, width: 194, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "retain-detail"
-          capability: "core.text"
-          text: "rows + raw artifacts"
-          layout: { x: 233, y: 134, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "fold"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "streaming-exact-fold"
+      detail: "exact store · drop row"
       layout: { x: 225, y: 170, width: 210, height: 60 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "fold-title"
-          capability: "core.text"
-          text: "streaming-exact-fold"
-          layout: { x: 233, y: 188, width: 194, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "fold-detail"
-          capability: "core.text"
-          text: "exact store · drop row"
-          layout: { x: 233, y: 212, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "sketch"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "tagged-sketch-merge"
+      detail: "bounded percentiles"
       layout: { x: 225, y: 248, width: 210, height: 60 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "sketch-title"
-          capability: "core.text"
-          text: "tagged-sketch-merge"
-          layout: { x: 233, y: 266, width: 194, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "sketch-detail"
-          capability: "core.text"
-          text: "bounded percentiles"
-          layout: { x: 233, y: 290, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "compat"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "storage compatibility"
+      detail: "artifact authority"
       layout: { x: 485, y: 150, width: 190, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "compat-title"
-          capability: "core.text"
-          text: "storage compatibility"
-          layout: { x: 493, y: 168, width: 174, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "compat-detail"
-          capability: "core.text"
-          text: "artifact authority"
-          layout: { x: 493, y: 192, width: 174, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-compat"
@@ -1689,7 +1194,7 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "motion-sig"
-      capability: "core.path"
+      capability: "motion.signal"
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
@@ -1753,25 +1258,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "sgom"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "scheduled-global-ordinal-merge"
+      detail: "dense permutation"
       layout: { x: 25, y: 116, width: 220, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "sgom-title"
-          capability: "core.text"
-          text: "scheduled-global-ordinal-merge"
-          layout: { x: 33, y: 134, width: 204, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "sgom-detail"
-          capability: "core.text"
-          text: "dense permutation"
-          layout: { x: 33, y: 158, width: 204, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-sgom"
@@ -1790,25 +1281,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "fidelity"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "merged-report-fidelity-boundary"
+      detail: "graph · fold · sketch"
       layout: { x: 25, y: 246, width: 220, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "fidelity-title"
-          capability: "core.text"
-          text: "merged-report-fidelity-boundary"
-          layout: { x: 33, y: 264, width: 204, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "fidelity-detail"
-          capability: "core.text"
-          text: "graph · fold · sketch"
-          layout: { x: 33, y: 288, width: 204, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-fid"
@@ -1841,25 +1318,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "report"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "final-report-assembly"
+      detail: "publish merged report"
       layout: { x: 445, y: 165, width: 225, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "report-title"
-          capability: "core.text"
-          text: "final-report-assembly"
-          layout: { x: 453, y: 183, width: 209, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "report-detail"
-          capability: "core.text"
-          text: "publish merged report"
-          layout: { x: 453, y: 207, width: 209, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-rep"
@@ -1878,7 +1341,7 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "motion-sig"
-      capability: "core.path"
+      capability: "motion.signal"
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
@@ -1942,25 +1405,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "allow"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "artifact-authority-allowlist"
+      detail: "relative paths"
       layout: { x: 20, y: 150, width: 160, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "allow-title"
-          capability: "core.text"
-          text: "artifact-authority-allowlist"
-          layout: { x: 28, y: 168, width: 144, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "allow-detail"
-          capability: "core.text"
-          text: "relative paths"
-          layout: { x: 28, y: 192, width: 144, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-allow"
@@ -1986,25 +1435,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "upload"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "HTTP zstd upload"
+      detail: ".partial file"
       layout: { x: 215, y: 150, width: 150, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "upload-title"
-          capability: "core.text"
-          text: "HTTP zstd upload"
-          layout: { x: 223, y: 168, width: 134, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "upload-detail"
-          capability: "core.text"
-          text: ".partial file"
-          layout: { x: 223, y: 192, width: 134, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-up"
@@ -2030,25 +1465,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "atomic"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "atomic replace"
+      detail: "publish"
       layout: { x: 400, y: 150, width: 130, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "atomic-title"
-          capability: "core.text"
-          text: "atomic replace"
-          layout: { x: 408, y: 168, width: 114, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "atomic-detail"
-          capability: "core.text"
-          text: "publish"
-          layout: { x: 408, y: 192, width: 114, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-at"
@@ -2074,25 +1495,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "barrier"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "completion barrier"
+      detail: "all files"
       layout: { x: 565, y: 150, width: 115, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "barrier-title"
-          capability: "core.text"
-          text: "completion barrier"
-          layout: { x: 573, y: 168, width: 99, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "barrier-detail"
-          capability: "core.text"
-          text: "all files"
-          layout: { x: 573, y: 192, width: 99, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-bar"
@@ -2111,7 +1518,7 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "motion-sig"
-      capability: "core.path"
+      capability: "motion.signal"
       d: "M80 195 H620"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
@@ -2178,25 +1585,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-eligibility"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "eligibility"
+      detail: "gate"
       layout: { x: 18, y: 160, width: 74, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "rt-eligibility-title"
-          capability: "core.text"
-          text: "eligibility"
-          layout: { x: 26, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "rt-eligibility-detail"
-          capability: "core.text"
-          text: "gate"
-          layout: { x: 26, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "rt-a0"
@@ -2207,25 +1600,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-ownership"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "ownership"
+      detail: "route"
       layout: { x: 103, y: 160, width: 74, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "rt-ownership-title"
-          capability: "core.text"
-          text: "ownership"
-          layout: { x: 111, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "rt-ownership-detail"
-          capability: "core.text"
-          text: "route"
-          layout: { x: 111, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "rt-a1"
@@ -2236,25 +1615,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-control"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "control"
+      detail: "route"
       layout: { x: 188, y: 160, width: 74, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "rt-control-title"
-          capability: "core.text"
-          text: "control"
-          layout: { x: 196, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "rt-control-detail"
-          capability: "core.text"
-          text: "route"
-          layout: { x: 196, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "rt-a2"
@@ -2265,25 +1630,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-distribution"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "distribution"
+      detail: "route"
       layout: { x: 273, y: 160, width: 74, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "rt-distribution-title"
-          capability: "core.text"
-          text: "distribution"
-          layout: { x: 281, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "rt-distribution-detail"
-          capability: "core.text"
-          text: "route"
-          layout: { x: 281, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "rt-a3"
@@ -2294,25 +1645,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-execution"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "execution"
+      detail: "route"
       layout: { x: 358, y: 160, width: 74, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "rt-execution-title"
-          capability: "core.text"
-          text: "execution"
-          layout: { x: 366, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "rt-execution-detail"
-          capability: "core.text"
-          text: "route"
-          layout: { x: 366, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "rt-a4"
@@ -2323,25 +1660,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-capture"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "capture"
+      detail: "route"
       layout: { x: 443, y: 160, width: 74, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "rt-capture-title"
-          capability: "core.text"
-          text: "capture"
-          layout: { x: 451, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "rt-capture-detail"
-          capability: "core.text"
-          text: "route"
-          layout: { x: 451, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "rt-a5"
@@ -2352,25 +1675,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-merge"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "merge"
+      detail: "route"
       layout: { x: 528, y: 160, width: 74, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "rt-merge-title"
-          capability: "core.text"
-          text: "merge"
-          layout: { x: 536, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "rt-merge-detail"
-          capability: "core.text"
-          text: "route"
-          layout: { x: 536, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "rt-a6"
@@ -2381,25 +1690,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "rt-artifacts"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "artifacts"
+      detail: "route"
       layout: { x: 613, y: 160, width: 74, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "rt-artifacts-title"
-          capability: "core.text"
-          text: "artifacts"
-          layout: { x: 621, y: 178, width: 58, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "rt-artifacts-detail"
-          capability: "core.text"
-          text: "route"
-          layout: { x: 621, y: 202, width: 58, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "route-cap"
@@ -2410,7 +1705,7 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "motion-sig"
-      capability: "core.path"
+      capability: "motion.signal"
       d: "M55 195 H645"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
@@ -2484,25 +1779,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "canon-route"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "canonical route"
+      detail: "ownership + execution"
       layout: { x: 35, y: 118, width: 195, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "canon-route-title"
-          capability: "core.text"
-          text: "canonical route"
-          layout: { x: 43, y: 136, width: 179, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "canon-route-detail"
-          capability: "core.text"
-          text: "ownership + execution"
-          layout: { x: 43, y: 160, width: 179, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-cr"
@@ -2521,25 +1802,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "branches"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "phaser / fan-out / Stage E"
+      detail: "explicit branches"
       layout: { x: 252, y: 118, width: 195, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "branches-title"
-          capability: "core.text"
-          text: "phaser / fan-out / Stage E"
-          layout: { x: 260, y: 136, width: 179, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "branches-detail"
-          capability: "core.text"
-          text: "explicit branches"
-          layout: { x: 260, y: 160, width: 179, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-br"
@@ -2558,25 +1825,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "partials"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "report / telemetry / cancel"
+      detail: "named limitations"
       layout: { x: 469, y: 118, width: 195, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "partials-title"
-          capability: "core.text"
-          text: "report / telemetry / cancel"
-          layout: { x: 477, y: 136, width: 179, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "partials-detail"
-          capability: "core.text"
-          text: "named limitations"
-          layout: { x: 477, y: 160, width: 179, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "st-pa"
@@ -2656,25 +1909,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "decision"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "run-kind-classification"
+      detail: "route selector"
       layout: { x: 245, y: 92, width: 210, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "decision-title"
-          capability: "core.text"
-          text: "run-kind-classification"
-          layout: { x: 253, y: 110, width: 194, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "decision-detail"
-          capability: "core.text"
-          text: "route selector"
-          layout: { x: 253, y: 134, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "dl"
@@ -2692,47 +1931,19 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "left"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "synthetic → scheduled"
+      detail: "left route"
       layout: { x: 45, y: 245, width: 240, height: 70 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "left-title"
-          capability: "core.text"
-          text: "synthetic → scheduled"
-          layout: { x: 53, y: 263, width: 224, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "left-detail"
-          capability: "core.text"
-          text: "left route"
-          layout: { x: 53, y: 287, width: 224, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "right"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "WEKA → graph"
+      detail: "right route"
       layout: { x: 415, y: 245, width: 240, height: 70 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "right-title"
-          capability: "core.text"
-          text: "WEKA → graph"
-          layout: { x: 423, y: 263, width: 224, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "right-detail"
-          capability: "core.text"
-          text: "right route"
-          layout: { x: 423, y: 287, width: 224, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "invariant"
@@ -2743,7 +1954,7 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "motion-sig"
-      capability: "core.path"
+      capability: "motion.signal"
       d: "M350 125 V320"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
@@ -2806,25 +2017,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "decision"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "storage + ownership"
+      detail: "route selector"
       layout: { x: 245, y: 92, width: 210, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "decision-title"
-          capability: "core.text"
-          text: "storage + ownership"
-          layout: { x: 253, y: 110, width: 194, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "decision-detail"
-          capability: "core.text"
-          text: "route selector"
-          layout: { x: 253, y: 134, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "dl"
@@ -2842,47 +2039,19 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "left"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "exact fold · requests"
+      detail: "left route"
       layout: { x: 45, y: 245, width: 240, height: 70 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "left-title"
-          capability: "core.text"
-          text: "exact fold · requests"
-          layout: { x: 53, y: 263, width: 224, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "left-detail"
-          capability: "core.text"
-          text: "left route"
-          layout: { x: 53, y: 287, width: 224, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "right"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "sketch · conversations"
+      detail: "right route"
       layout: { x: 415, y: 245, width: 240, height: 70 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "right-title"
-          capability: "core.text"
-          text: "sketch · conversations"
-          layout: { x: 423, y: 263, width: 224, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "right-detail"
-          capability: "core.text"
-          text: "right route"
-          layout: { x: 423, y: 287, width: 224, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "invariant"
@@ -2893,7 +2062,7 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "motion-sig"
-      capability: "core.path"
+      capability: "motion.signal"
       d: "M350 125 V320"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
@@ -2956,25 +2125,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "decision"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "deployment placement"
+      detail: "route selector"
       layout: { x: 245, y: 92, width: 210, height: 64 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "decision-title"
-          capability: "core.text"
-          text: "deployment placement"
-          layout: { x: 253, y: 110, width: 194, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "decision-detail"
-          capability: "core.text"
-          text: "route selector"
-          layout: { x: 253, y: 134, width: 194, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "dl"
@@ -2992,47 +2147,19 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "left"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "same host · flat/local"
+      detail: "left route"
       layout: { x: 45, y: 245, width: 240, height: 70 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "left-title"
-          capability: "core.text"
-          text: "same host · flat/local"
-          layout: { x: 53, y: 263, width: 224, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "left-detail"
-          capability: "core.text"
-          text: "left route"
-          layout: { x: 53, y: 287, width: 224, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "right"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "cross host · Stage E/G"
+      detail: "right route"
       layout: { x: 415, y: 245, width: 240, height: 70 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "right-title"
-          capability: "core.text"
-          text: "cross host · Stage E/G"
-          layout: { x: 423, y: 263, width: 224, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "right-detail"
-          capability: "core.text"
-          text: "right route"
-          layout: { x: 423, y: 287, width: 224, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "invariant"
@@ -3043,7 +2170,7 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "motion-sig"
-      capability: "core.path"
+      capability: "motion.signal"
       d: "M350 125 V320"
       layout: { x: 0, y: 0, width: 700, height: 400 }
       style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
@@ -3107,25 +2234,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "pages"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "~100 algorithm pages"
+      detail: "pseudocode · frames · gates · failures · evidence"
       layout: { x: 70, y: 110, width: 560, height: 82 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "pages-title"
-          capability: "core.text"
-          text: "~100 algorithm pages"
-          layout: { x: 78, y: 128, width: 544, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "pages-detail"
-          capability: "core.text"
-          text: "pseudocode · frames · gates · failures · evidence"
-          layout: { x: 78, y: 152, width: 544, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     {
       id: "ref-a"
@@ -3136,25 +2249,11 @@ explainer "Cellular algorithm workbook" {
     }
     {
       id: "canvas"
-      capability: "core.rect"
+      capability: "core.panel"
+      title: "docs/canvases/cellular-algorithm-workbook.canvas.tsx"
+      detail: "exhaustive maintainer lookup"
       layout: { x: 70, y: 245, width: 560, height: 72 }
       style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-      children: [
-        {
-          id: "canvas-title"
-          capability: "core.text"
-          text: "docs/canvases/cellular-algorithm-workbook.canvas.tsx"
-          layout: { x: 78, y: 263, width: 544, height: 22 }
-          style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-        }
-        {
-          id: "canvas-detail"
-          capability: "core.text"
-          text: "exhaustive maintainer lookup"
-          layout: { x: 78, y: 287, width: 544, height: 18 }
-          style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" }
-        }
-      ]
     }
     ]
   timeline: [

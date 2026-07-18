@@ -30,7 +30,7 @@
 		check-ruff-baselined regenerate-ruff-baseline \
 		check-agent-files-sync build-explainer-packages \
 		assert-deck-packages assert-no-mentalmodel-registry assert-explainer-packages \
-		flow-verifier
+		flow-verifier flow-verifier-ir
 
 
 # Include user-defined environment variables
@@ -433,13 +433,16 @@ generate-all-docs: #? generate all documentation files.
 build-explainer-packages: #? compile apps/explainers/decks-flow/*.flow into decks-generated packages
 	cd apps/aiperf-flow && npm run build:explainer-packages
 
-assert-deck-packages: #? require eight decks-generated packages with narration + scene timelines
+assert-deck-packages: #? require decks-generated packages with narration + scene timelines
 	cd apps/aiperf-flow && npm run assert:deck-packages
 
 assert-no-mentalmodel-registry: #? fail if deck-registry imports any MentalModel.tsx
 	cd apps/aiperf-flow && npm run assert:no-mentalmodel-registry
 
-assert-explainer-packages: build-explainer-packages assert-deck-packages assert-no-mentalmodel-registry #? build + gate flow-backed explainer packages
+assert-explainer-packages: build-explainer-packages assert-deck-packages assert-no-mentalmodel-registry flow-verifier-ir #? build + gate flow-backed explainer packages (incl. IR verifier)
+
+flow-verifier-ir: #? IR playhead only (no Playwright)
+	cd apps/explainers && npm run flow-verifier:ir -- $(FLOW_VERIFIER_ARGS)
 
 flow-verifier: #? IR playhead + Playwright full-play gate for explainer decks
 	cd apps/explainers && npm run flow-verifier -- $(FLOW_VERIFIER_ARGS)

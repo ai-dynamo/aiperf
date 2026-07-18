@@ -38,108 +38,123 @@ explainer "Segment Pools" {
       roots: [
         {
           id: "header"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "BUILD · FREEZE · DISPATCH"
+          caption: "BUILD → FREEZE → DISPATCH · zero content re-serialize on the hot path."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            { id: "label" capability: "core.text" text: "BUILD · FREEZE · DISPATCH" layout: { x: 38, y: 28, width: 340, height: 24 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr-caption" capability: "core.text" text: "BUILD → FREEZE → DISPATCH · zero content re-serialize on the hot path." layout: { x: 340, y: 28, width: 320, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
         },
-        { id: "phase-build" capability: "core.text" text: "BUILD" layout: { x: 90, y: 76, width: 80, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "phase-freeze" capability: "core.text" text: "FREEZE" layout: { x: 320, y: 76, width: 80, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.tertiary } },
-        { id: "phase-dispatch" capability: "core.text" text: "DISPATCH" layout: { x: 530, y: 76, width: 100, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.tertiary } },
+        {
+          id: "phases"
+          capability: "core.stepper"
+          steps: ["BUILD", "FREEZE", "DISPATCH"]
+          linked: true
+          layout: { x: 90, y: 70, width: 540, height: 28 }
+          style: { gap: 24 }
+        },
         {
           id: "composer"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Composer"
+          detail: "intern rows"
           layout: { x: 30, y: 110, width: 150, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "composer-title" capability: "core.text" text: "Composer" layout: { x: 38, y: 132, width: 134, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "composer-detail" capability: "core.text" text: "intern rows" layout: { x: 38, y: 154, width: 134, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "arrow-composer-pool"
-          capability: "core.path"
-          d: "M180 145 H230"
+          capability: "core.route"
+          from: { nodeId: "composer", anchor: "e" }
+          to: { nodeId: "segment-pool", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
         },
         {
           id: "segment-pool"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "SegmentPool"
+          detail: "arena + ids map"
           layout: { x: 230, y: 100, width: 160, height: 90 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "segment-pool-title" capability: "core.text" text: "SegmentPool" layout: { x: 238, y: 130, width: 144, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "segment-pool-detail" capability: "core.text" text: "arena + ids map" layout: { x: 238, y: 152, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+        },
+        {
+          id: "pool-pulse"
+          capability: "motion.pulse"
+          layout: { x: 230, y: 100, width: 160, height: 90 }
+          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2, opacity: 0.45 }
+          accessibility: { label: "SegmentPool pulse" }
+        },
+        {
+          id: "pool-callout"
+          capability: "core.callout"
+          text: "serialize once"
+          layout: { x: 250, y: 40, width: 120, height: 22 }
+          target: { x: 310, y: 100 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1 }
         },
         {
           id: "arrow-pool-freeze"
-          capability: "core.path"
-          d: "M390 145 H430"
+          capability: "core.route"
+          from: { nodeId: "segment-pool", anchor: "e" }
+          to: { nodeId: "freeze", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
         },
         {
           id: "freeze"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: ".freeze()"
+          detail: "drop ids"
           layout: { x: 430, y: 110, width: 110, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "freeze-title" capability: "core.text" text: ".freeze()" layout: { x: 438, y: 132, width: 94, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "freeze-detail" capability: "core.text" text: "drop ids" layout: { x: 438, y: 154, width: 94, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "arrow-freeze-dispatch"
-          capability: "core.path"
-          d: "M540 145 H570"
+          capability: "core.route"
+          from: { nodeId: "freeze", anchor: "e" }
+          to: { nodeId: "dataset", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.green, strokeWidth: 2.2 }
         },
         {
           id: "dataset"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Dataset"
+          detail: "Arc store"
           layout: { x: 570, y: 90, width: 110, height: 60 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "dataset-title" capability: "core.text" text: "Dataset" layout: { x: 578, y: 108, width: 94, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "dataset-detail" capability: "core.text" text: "Arc store" layout: { x: 578, y: 128, width: 94, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "body-plan"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "BodyPlan"
+          detail: "precompute"
           layout: { x: 570, y: 170, width: 110, height: 60 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "body-plan-title" capability: "core.text" text: "BodyPlan" layout: { x: 578, y: 188, width: 94, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "body-plan-detail" capability: "core.text" text: "precompute" layout: { x: 578, y: 208, width: 94, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "materializer"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Materializer"
+          detail: "→ Bytes"
           layout: { x: 570, y: 250, width: 110, height: 60 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "materializer-title" capability: "core.text" text: "Materializer" layout: { x: 578, y: 268, width: 94, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "materializer-detail" capability: "core.text" text: "→ Bytes" layout: { x: 578, y: 288, width: 94, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+        },
+        {
+          id: "dispatch-bracket"
+          capability: "core.bracket"
+          layout: { x: 555, y: 85, width: 18, height: 230 }
+          side: "left"
+          style: { stroke: @theme.accent.green, strokeWidth: 1.5, fill: "none" }
+          accessibility: { label: "dispatch stack brace" }
         },
         {
           id: "in-memory-store"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "InMemoryStore"
+          detail: "Box<[Segment]>"
           layout: { x: 230, y: 250, width: 160, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "in-memory-store-title" capability: "core.text" text: "InMemoryStore" layout: { x: 238, y: 272, width: 144, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "in-memory-store-detail" capability: "core.text" text: "Box<[Segment]>" layout: { x: 238, y: 294, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M120 200 H580"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
@@ -148,18 +163,17 @@ explainer "Segment Pools" {
       ]
       timeline: [
         { id: "t-header", at: 0, duration: 220, target: "header", action: "enter" },
-        { id: "t-phase-build", at: 120, duration: 160, target: "phase-build", action: "enter" },
-        { id: "t-phase-freeze", at: 200, duration: 160, target: "phase-freeze", action: "enter" },
-        { id: "t-phase-dispatch", at: 280, duration: 160, target: "phase-dispatch", action: "enter" },
+        { id: "t-phases", at: 120, duration: 160, action: "stagger", targets: ["phases-step-0", "phases-step-1", "phases-step-2"], step: 80 },
+        { id: "t-callout", at: 280, duration: 200, target: "pool-callout", action: "enter" },
         { id: "t-composer", at: 400, duration: 280, target: "composer", action: "enter" },
         { id: "t-arrow1", at: 640, duration: 220, target: "arrow-composer-pool", action: "draw" },
         { id: "t-pool", at: 800, duration: 300, target: "segment-pool", action: "enter" },
+        { id: "t-pulse", at: 820, duration: 300, target: "pool-pulse", action: "enter" },
         { id: "t-arrow2", at: 1060, duration: 220, target: "arrow-pool-freeze", action: "draw" },
         { id: "t-freeze", at: 1220, duration: 280, target: "freeze", action: "enter" },
         { id: "t-arrow3", at: 1460, duration: 200, target: "arrow-freeze-dispatch", action: "draw" },
-        { id: "t-dataset", at: 1600, duration: 220, target: "dataset", action: "enter" },
-        { id: "t-body-plan", at: 1760, duration: 220, target: "body-plan", action: "enter" },
-        { id: "t-materializer", at: 1920, duration: 240, target: "materializer", action: "enter" },
+        { id: "t-dispatch-stack", at: 1600, duration: 220, action: "stagger", targets: ["dataset", "body-plan", "materializer"], step: 160 },
+        { id: "t-bracket", at: 1680, duration: 220, target: "dispatch-bracket", action: "draw" },
         { id: "t-store", at: 2120, duration: 260, target: "in-memory-store", action: "enter" },
         { id: "t-motion", at: 700, duration: 900, target: "motion-sig", action: "draw" },
         { id: "t-emphasis", at: 2400, duration: 420, target: "segment-pool", action: "emphasize" }
@@ -187,89 +201,77 @@ explainer "Segment Pools" {
       roots: [
         {
           id: "header"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "SEGMENT POOL INTERN"
+          caption: "Same parent chain + same bytes → same Handle."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            { id: "label" capability: "core.text" text: "SEGMENT POOL INTERN" layout: { x: 38, y: 28, width: 340, height: 24 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr-caption" capability: "core.text" text: "Same parent chain + same bytes → same Handle." layout: { x: 340, y: 28, width: 320, height: 20 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
         },
         {
           id: "intern"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "intern(msg)"
+          detail: "parent + bytes"
           layout: { x: 40, y: 100, width: 160, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "intern-title" capability: "core.text" text: "intern(msg)" layout: { x: 48, y: 126, width: 144, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "intern-detail" capability: "core.text" text: "parent + bytes" layout: { x: 48, y: 148, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "arrow-intern-pool"
-          capability: "core.path"
-          d: "M200 140 H250"
+          capability: "core.route"
+          from: { nodeId: "intern", anchor: "e" }
+          to: { nodeId: "pool", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
         },
         {
           id: "pool"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "SegmentPool"
+          detail: "HashMap → Handle"
           layout: { x: 250, y: 90, width: 200, height: 100 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "pool-title" capability: "core.text" text: "SegmentPool" layout: { x: 258, y: 126, width: 184, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "pool-detail" capability: "core.text" text: "HashMap → Handle" layout: { x: 258, y: 148, width: 184, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "arrow-pool-dedup"
-          capability: "core.path"
-          d: "M450 140 H500"
+          capability: "core.route"
+          from: { nodeId: "pool", anchor: "e" }
+          to: { nodeId: "dedup", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.green, strokeWidth: 2.2 }
         },
         {
           id: "dedup"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "dedup hit?"
+          detail: "reuse Handle"
           layout: { x: 500, y: 100, width: 160, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "dedup-title" capability: "core.text" text: "dedup hit?" layout: { x: 508, y: 126, width: 144, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "dedup-detail" capability: "core.text" text: "reuse Handle" layout: { x: 508, y: 148, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "h0"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "H0 system"
+          detail: "shared"
           layout: { x: 120, y: 240, width: 140, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "h0-title" capability: "core.text" text: "H0 system" layout: { x: 128, y: 262, width: 124, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "h0-detail" capability: "core.text" text: "shared" layout: { x: 128, y: 284, width: 124, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "h1"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "H1 user"
+          detail: "shared"
           layout: { x: 300, y: 240, width: 140, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "h1-title" capability: "core.text" text: "H1 user" layout: { x: 308, y: 262, width: 124, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "h1-detail" capability: "core.text" text: "shared" layout: { x: 308, y: 284, width: 124, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "h23"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "H2 / H3"
+          detail: "novel replies"
           layout: { x: 480, y: 240, width: 140, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "h23-title" capability: "core.text" text: "H2 / H3" layout: { x: 488, y: 262, width: 124, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "h23-detail" capability: "core.text" text: "novel replies" layout: { x: 488, y: 284, width: 124, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M200 180 H500"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
@@ -283,9 +285,7 @@ explainer "Segment Pools" {
         { id: "t-pool", at: 600, duration: 320, target: "pool", action: "enter" },
         { id: "t-arrow2", at: 880, duration: 220, target: "arrow-pool-dedup", action: "draw" },
         { id: "t-dedup", at: 1040, duration: 280, target: "dedup", action: "enter" },
-        { id: "t-h0", at: 1280, duration: 240, target: "h0", action: "enter" },
-        { id: "t-h1", at: 1440, duration: 240, target: "h1", action: "enter" },
-        { id: "t-h23", at: 1600, duration: 260, target: "h23", action: "enter" },
+        { id: "t-handles", at: 1280, duration: 240, action: "stagger", targets: ["h0", "h1", "h23"], step: 160 },
         { id: "t-motion", at: 700, duration: 900, target: "motion-sig", action: "draw" },
         { id: "t-emphasis", at: 1900, duration: 420, target: "pool", action: "emphasize" }
       ]
@@ -312,87 +312,71 @@ explainer "Segment Pools" {
       roots: [
         {
           id: "header"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "PAYLOAD DOMAINS"
+          caption: "HASH_VERSION · domain prefix · parent id · payload recipe → SegmentId."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            { id: "label" capability: "core.text" text: "PAYLOAD DOMAINS" layout: { x: 38, y: 28, width: 340, height: 24 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr-caption" capability: "core.text" text: "HASH_VERSION · domain prefix · parent id · payload recipe → SegmentId." layout: { x: 280, y: 28, width: 380, height: 20 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
         },
         {
           id: "domain-message"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Message"
+          detail: "wire + tokens"
           layout: { x: 30, y: 110, width: 100, height: 90 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "domain-message-title" capability: "core.text" text: "Message" layout: { x: 38, y: 140, width: 84, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "domain-message-detail" capability: "core.text" text: "wire + tokens" layout: { x: 38, y: 162, width: 84, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "domain-text"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Text"
+          detail: "text-only"
           layout: { x: 145, y: 110, width: 100, height: 90 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "domain-text-title" capability: "core.text" text: "Text" layout: { x: 153, y: 140, width: 84, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "domain-text-detail" capability: "core.text" text: "text-only" layout: { x: 153, y: 162, width: 84, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "domain-raw"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Raw"
+          detail: "complete body"
           layout: { x: 260, y: 110, width: 100, height: 90 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "domain-raw-title" capability: "core.text" text: "Raw" layout: { x: 268, y: 140, width: 84, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "domain-raw-detail" capability: "core.text" text: "complete body" layout: { x: 268, y: 162, width: 84, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "domain-token"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "TokenIds"
+          detail: "native path"
           layout: { x: 375, y: 110, width: 100, height: 90 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "domain-token-title" capability: "core.text" text: "TokenIds" layout: { x: 383, y: 140, width: 84, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "domain-token-detail" capability: "core.text" text: "native path" layout: { x: 383, y: 162, width: 84, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "domain-media"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Media"
+          detail: "multimodal"
           layout: { x: 490, y: 110, width: 100, height: 90 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "domain-media-title" capability: "core.text" text: "Media" layout: { x: 498, y: 140, width: 84, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "domain-media-detail" capability: "core.text" text: "multimodal" layout: { x: 498, y: 162, width: 84, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "domain-trace"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "TraceHash"
+          detail: "sim identity"
           layout: { x: 605, y: 110, width: 100, height: 90 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "domain-trace-title" capability: "core.text" text: "TraceHash" layout: { x: 613, y: 140, width: 84, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "domain-trace-detail" capability: "core.text" text: "sim identity" layout: { x: 613, y: 162, width: 84, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "hash-recipe"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "HASH_VERSION + domain + parent id"
+          detail: "blake3 → SegmentId([u8;32])"
           layout: { x: 150, y: 250, width: 400, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "hash-recipe-title" capability: "core.text" text: "HASH_VERSION + domain + parent id" layout: { x: 158, y: 272, width: 384, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "hash-recipe-detail" capability: "core.text" text: "blake3 → SegmentId([u8;32])" layout: { x: 158, y: 294, width: 384, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M100 200 H600"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
@@ -401,12 +385,7 @@ explainer "Segment Pools" {
       ]
       timeline: [
         { id: "t-header", at: 0, duration: 220, target: "header", action: "enter" },
-        { id: "t-msg", at: 180, duration: 200, target: "domain-message", action: "enter" },
-        { id: "t-text", at: 300, duration: 200, target: "domain-text", action: "enter" },
-        { id: "t-raw", at: 420, duration: 200, target: "domain-raw", action: "enter" },
-        { id: "t-token", at: 540, duration: 200, target: "domain-token", action: "enter" },
-        { id: "t-media", at: 660, duration: 200, target: "domain-media", action: "enter" },
-        { id: "t-trace", at: 780, duration: 200, target: "domain-trace", action: "enter" },
+        { id: "t-domains", at: 180, duration: 200, action: "stagger", targets: ["domain-message", "domain-text", "domain-raw", "domain-token", "domain-media", "domain-trace"], step: 120 },
         { id: "t-hash", at: 1000, duration: 320, target: "hash-recipe", action: "enter" },
         { id: "t-motion", at: 700, duration: 900, target: "motion-sig", action: "draw" },
         { id: "t-emphasis", at: 1400, duration: 420, target: "hash-recipe", action: "emphasize" }
@@ -434,89 +413,77 @@ explainer "Segment Pools" {
       roots: [
         {
           id: "header"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "BODYPLAN SPLICE"
+          caption: "literals serialize · segment wires clone · Overrides patch the tail."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            { id: "label" capability: "core.text" text: "BODYPLAN SPLICE" layout: { x: 38, y: 28, width: 340, height: 24 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr-caption" capability: "core.text" text: "literals serialize · segment wires clone · Overrides patch the tail." layout: { x: 300, y: 28, width: 360, height: 20 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
         },
         {
           id: "plan"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "BodyPlan"
+          detail: "shape + slots"
           layout: { x: 40, y: 100, width: 160, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "plan-title" capability: "core.text" text: "BodyPlan" layout: { x: 48, y: 126, width: 144, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "plan-detail" capability: "core.text" text: "shape + slots" layout: { x: 48, y: 148, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "arrow-plan-mat"
-          capability: "core.path"
-          d: "M200 140 H250"
+          capability: "core.route"
+          from: { nodeId: "plan", anchor: "e" }
+          to: { nodeId: "mat", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.2 }
         },
         {
           id: "mat"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "JsonBodyMaterializer"
+          detail: "walk once"
           layout: { x: 250, y: 90, width: 200, height: 100 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "mat-title" capability: "core.text" text: "JsonBodyMaterializer" layout: { x: 258, y: 126, width: 184, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "mat-detail" capability: "core.text" text: "walk once" layout: { x: 258, y: 148, width: 184, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "arrow-mat-bytes"
-          capability: "core.path"
-          d: "M450 140 H500"
+          capability: "core.route"
+          from: { nodeId: "mat", anchor: "e" }
+          to: { nodeId: "bytes", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.green, strokeWidth: 2.2 }
         },
         {
           id: "bytes"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Bytes"
+          detail: "wire body"
           layout: { x: 500, y: 100, width: 160, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "bytes-title" capability: "core.text" text: "Bytes" layout: { x: 508, y: 126, width: 144, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "bytes-detail" capability: "core.text" text: "wire body" layout: { x: 508, y: 148, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "literals"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "literals"
+          detail: "serde_json"
           layout: { x: 80, y: 240, width: 160, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "literals-title" capability: "core.text" text: "literals" layout: { x: 88, y: 262, width: 144, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "literals-detail" capability: "core.text" text: "serde_json" layout: { x: 88, y: 284, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "wires"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "segment wires"
+          detail: "clone Bytes"
           layout: { x: 280, y: 240, width: 160, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "wires-title" capability: "core.text" text: "segment wires" layout: { x: 288, y: 262, width: 144, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "wires-detail" capability: "core.text" text: "clone Bytes" layout: { x: 288, y: 284, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "overrides"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Overrides"
+          detail: "stream · limits"
           layout: { x: 480, y: 240, width: 160, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "overrides-title" capability: "core.text" text: "Overrides" layout: { x: 488, y: 262, width: 144, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "overrides-detail" capability: "core.text" text: "stream · limits" layout: { x: 488, y: 284, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M350 120 V280"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
@@ -530,9 +497,7 @@ explainer "Segment Pools" {
         { id: "t-mat", at: 600, duration: 320, target: "mat", action: "enter" },
         { id: "t-arrow2", at: 880, duration: 220, target: "arrow-mat-bytes", action: "draw" },
         { id: "t-bytes", at: 1040, duration: 280, target: "bytes", action: "enter" },
-        { id: "t-literals", at: 1280, duration: 240, target: "literals", action: "enter" },
-        { id: "t-wires", at: 1440, duration: 240, target: "wires", action: "enter" },
-        { id: "t-overrides", at: 1600, duration: 260, target: "overrides", action: "enter" },
+        { id: "t-slots", at: 1280, duration: 240, action: "stagger", targets: ["literals", "wires", "overrides"], step: 160 },
         { id: "t-motion", at: 700, duration: 900, target: "motion-sig", action: "draw" },
         { id: "t-emphasis", at: 1900, duration: 420, target: "mat", action: "emphasize" }
       ]
@@ -559,39 +524,34 @@ explainer "Segment Pools" {
       roots: [
         {
           id: "header"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "PREFIX CHAINS"
+          caption: "One shared prefix · many conversation branches by handle."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            { id: "label" capability: "core.text" text: "PREFIX CHAINS" layout: { x: 38, y: 28, width: 340, height: 24 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr-caption" capability: "core.text" text: "One shared prefix · many conversation branches by handle." layout: { x: 300, y: 28, width: 360, height: 20 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
         },
         {
           id: "h0"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "H0 system"
+          detail: "shared once"
           layout: { x: 40, y: 140, width: 140, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "h0-title" capability: "core.text" text: "H0 system" layout: { x: 48, y: 162, width: 124, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "h0-detail" capability: "core.text" text: "shared once" layout: { x: 48, y: 184, width: 124, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "arrow-h0-h1"
-          capability: "core.path"
-          d: "M180 175 H220"
+          capability: "core.route"
+          from: { nodeId: "h0", anchor: "e" }
+          to: { nodeId: "h1", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 2.2 }
         },
         {
           id: "h1"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "H1 user"
+          detail: "shared once"
           layout: { x: 220, y: 140, width: 140, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "h1-title" capability: "core.text" text: "H1 user" layout: { x: 228, y: 162, width: 124, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "h1-detail" capability: "core.text" text: "shared once" layout: { x: 228, y: 184, width: 124, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "arrow-h1-h2"
@@ -607,23 +567,19 @@ explainer "Segment Pools" {
         },
         {
           id: "h2"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "H2 assistant"
+          detail: "C1 \"4\""
           layout: { x: 460, y: 70, width: 150, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "h2-title" capability: "core.text" text: "H2 assistant" layout: { x: 468, y: 92, width: 134, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "h2-detail" capability: "core.text" text: "C1 \"4\"" layout: { x: 468, y: 114, width: 134, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "h3"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "H3 assistant"
+          detail: "C2 novel"
           layout: { x: 460, y: 220, width: 150, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "h3-title" capability: "core.text" text: "H3 assistant" layout: { x: 468, y: 242, width: 134, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "h3-detail" capability: "core.text" text: "C2 novel" layout: { x: 468, y: 264, width: 134, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "footnote"
@@ -634,7 +590,7 @@ explainer "Segment Pools" {
         },
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M190 167 H470"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
@@ -677,23 +633,19 @@ explainer "Segment Pools" {
       roots: [
         {
           id: "header"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "DISPATCH PRECEDENCE"
+          caption: "Raw → TokenIds → Messages · domain chooses the materializer path."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            { id: "label" capability: "core.text" text: "DISPATCH PRECEDENCE" layout: { x: 38, y: 28, width: 340, height: 24 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary } },
-            { id: "hdr-caption" capability: "core.text" text: "Raw → TokenIds → Messages · domain chooses the materializer path." layout: { x: 300, y: 28, width: 360, height: 20 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
         },
         {
           id: "turn-body"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Turn.body"
+          detail: "SmallVec handles"
           layout: { x: 30, y: 140, width: 150, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "turn-body-title" capability: "core.text" text: "Turn.body" layout: { x: 38, y: 166, width: 134, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "turn-body-detail" capability: "core.text" text: "SmallVec handles" layout: { x: 38, y: 188, width: 134, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "arrow-raw"
@@ -703,8 +655,9 @@ explainer "Segment Pools" {
         },
         {
           id: "arrow-token"
-          capability: "core.path"
-          d: "M180 180 H280"
+          capability: "core.route"
+          from: { nodeId: "turn-body", anchor: "e" }
+          to: { nodeId: "token", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.green, strokeWidth: 2.2 }
         },
         {
@@ -715,53 +668,46 @@ explainer "Segment Pools" {
         },
         {
           id: "raw"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Raw first?"
+          detail: "complete body"
           layout: { x: 280, y: 70, width: 170, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "raw-title" capability: "core.text" text: "Raw first?" layout: { x: 288, y: 92, width: 154, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "raw-detail" capability: "core.text" text: "complete body" layout: { x: 288, y: 114, width: 154, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "token"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "TokenIds?"
+          detail: "native / validate"
           layout: { x: 280, y: 155, width: 170, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "token-title" capability: "core.text" text: "TokenIds?" layout: { x: 288, y: 177, width: 154, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "token-detail" capability: "core.text" text: "native / validate" layout: { x: 288, y: 199, width: 154, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "messages"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Messages"
+          detail: "format array"
           layout: { x: 280, y: 240, width: 170, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "messages-title" capability: "core.text" text: "Messages" layout: { x: 288, y: 262, width: 154, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "messages-detail" capability: "core.text" text: "format array" layout: { x: 288, y: 284, width: 154, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "arrow-out"
-          capability: "core.path"
-          d: "M450 180 H500"
+          capability: "core.route"
+          from: { nodeId: "token", anchor: "e" }
+          to: { nodeId: "out", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.2 }
         },
         {
           id: "out"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "BodyPlan → Bytes"
+          detail: "domain path"
           layout: { x: 500, y: 140, width: 160, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          children: [
-            { id: "out-title" capability: "core.text" text: "BodyPlan → Bytes" layout: { x: 508, y: 166, width: 144, height: 18 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "out-detail" capability: "core.text" text: "domain path" layout: { x: 508, y: 188, width: 144, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
         },
         {
           id: "motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M210 180 H590"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
@@ -789,72 +735,56 @@ explainer "Segment Pools" {
     roots: [
       {
         id: "final-hdr"
-        capability: "core.rect"
+        capability: "core.header"
+        title: "Live evidence files"
+        caption: "dataset path"
         layout: { x: 18, y: 16, width: 664, height: 44 }
         style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-        children: [
-          { id: "final-hdr-text" capability: "core.text" text: "Live evidence files" layout: { x: 34, y: 32, width: 400, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary } },
-          { id: "final-pill" capability: "core.text" text: "dataset path" layout: { x: 500, y: 32, width: 160, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.accent.secondary } }
-        ]
       },
       {
         id: "f1"
-        capability: "core.rect"
+        capability: "core.panel"
+        title: "rust/runtime/src/dataset/segment.rs"
+        detail: "SegmentPool · Handle · SegmentId"
         layout: { x: 40, y: 78, width: 620, height: 48 }
         style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        children: [
-          { id: "f1-title" capability: "core.text" text: "rust/runtime/src/dataset/segment.rs" layout: { x: 48, y: 90, width: 604, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-          { id: "f1-detail" capability: "core.text" text: "SegmentPool · Handle · SegmentId" layout: { x: 48, y: 110, width: 604, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-        ]
       },
       {
         id: "f2"
-        capability: "core.rect"
+        capability: "core.panel"
+        title: "rust/runtime/src/dataset/model.rs"
+        detail: "Turn.body · dispatch_body precedence"
         layout: { x: 40, y: 136, width: 620, height: 48 }
         style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        children: [
-          { id: "f2-title" capability: "core.text" text: "rust/runtime/src/dataset/model.rs" layout: { x: 48, y: 148, width: 604, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-          { id: "f2-detail" capability: "core.text" text: "Turn.body · dispatch_body precedence" layout: { x: 48, y: 168, width: 604, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-        ]
       },
       {
         id: "f3"
-        capability: "core.rect"
+        capability: "core.panel"
+        title: "rust/runtime/src/dataset/compose.rs"
+        detail: "conversation chains · rebase"
         layout: { x: 40, y: 194, width: 620, height: 48 }
         style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-        children: [
-          { id: "f3-title" capability: "core.text" text: "rust/runtime/src/dataset/compose.rs" layout: { x: 48, y: 206, width: 604, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-          { id: "f3-detail" capability: "core.text" text: "conversation chains · rebase" layout: { x: 48, y: 226, width: 604, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-        ]
       },
       {
         id: "f4"
-        capability: "core.rect"
+        capability: "core.panel"
+        title: "rust/runtime/src/body_plan.rs"
+        detail: "BodyPlan · JsonBodyMaterializer"
         layout: { x: 40, y: 252, width: 620, height: 48 }
         style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-        children: [
-          { id: "f4-title" capability: "core.text" text: "rust/runtime/src/body_plan.rs" layout: { x: 48, y: 264, width: 604, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-          { id: "f4-detail" capability: "core.text" text: "BodyPlan · JsonBodyMaterializer" layout: { x: 48, y: 284, width: 604, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-        ]
       },
       {
         id: "f5"
-        capability: "core.rect"
+        capability: "core.panel"
+        title: "rust/runtime/src/graph/recorded/trie/"
+        detail: "LCP trie over block hashes"
         layout: { x: 40, y: 310, width: 620, height: 48 }
         style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
-        children: [
-          { id: "f5-title" capability: "core.text" text: "rust/runtime/src/graph/recorded/trie/" layout: { x: 48, y: 322, width: 604, height: 18 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-          { id: "f5-detail" capability: "core.text" text: "LCP trie over block hashes" layout: { x: 48, y: 342, width: 604, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-        ]
       }
     ]
     timeline: [
       { id: "tf-hdr", at: 0, duration: 220, target: "final-hdr", action: "enter" },
-      { id: "tf-1", at: 200, duration: 220, target: "f1", action: "enter" },
-      { id: "tf-2", at: 380, duration: 220, target: "f2", action: "enter" },
-      { id: "tf-3", at: 560, duration: 220, target: "f3", action: "enter" },
-      { id: "tf-4", at: 740, duration: 220, target: "f4", action: "enter" },
-      { id: "tf-5", at: 920, duration: 220, target: "f5", action: "enter" },
+      { id: "tf-rows", at: 200, duration: 220, action: "stagger", targets: ["f1", "f2", "f3", "f4", "f5"], step: 180 },
       { id: "tf-emph", at: 1200, duration: 400, target: "f1", action: "emphasize" }
     ]
   }

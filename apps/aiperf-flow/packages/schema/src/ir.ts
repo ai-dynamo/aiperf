@@ -38,6 +38,23 @@ export type PointIr = Readonly<{
   y: number;
 }>;
 
+/**
+ * Connector / line endpoint.
+ *
+ * Explainer package scenes author either a node reference (`nodeId`) or
+ * absolute coordinates (`x`/`y`). SceneRenderer resolves coordinates first.
+ *
+ * Allowed `anchor` values (when `nodeId` is set): `center`, `n` / `s` / `e` /
+ * `w`, `ne` / `nw` / `se` / `sw`, plus aliases `top` / `bottom` / `left` /
+ * `right`. Kept as `string` so packages may pass through unknown anchors.
+ */
+export type ConnectorEndpointIr = Readonly<{
+  nodeId?: string | undefined;
+  anchor?: string | undefined;
+  x?: number | undefined;
+  y?: number | undefined;
+}>;
+
 export type NodeAccessibilityIr = Readonly<{
   label: string;
   description?: string | undefined;
@@ -61,10 +78,19 @@ export type FoundationCapabilityId =
   | "core.elbow"
   | "core.bracket"
   | "core.callout"
+  | "core.chip"
+  | "core.note"
+  | "core.divider"
+  | "core.lane"
+  | "core.band"
+  | "core.swimlane"
+  | "core.stepper"
+  | "core.route"
   | "core.group"
   | "layout.stack"
   | "layout.grid"
   | "layout.pad"
+  | "layout.rail"
   | "motion.signal"
   | "motion.pulse";
 
@@ -92,7 +118,7 @@ export type RenderNodeBaseIr = Readonly<{
   /** SVG path data for connector / arrow / path nodes. */
   path?: string | undefined;
   /** Polyline or control points for path / connector nodes. */
-  points?: readonly PointIr[] | undefined;
+  points?: readonly (PointIr | ConnectorEndpointIr)[] | undefined;
 }>;
 
 export type GroupNodeIr = RenderNodeBaseIr &
@@ -108,23 +134,6 @@ export type TextNodeIr = RenderNodeBaseIr &
     kind: "text";
     text: string;
   }>;
-
-/**
- * Connector / line endpoint.
- *
- * Explainer package scenes author either a node reference (`nodeId`) or
- * absolute coordinates (`x`/`y`). SceneRenderer resolves coordinates first.
- *
- * Allowed `anchor` values (when `nodeId` is set): `center`, `n` / `s` / `e` /
- * `w`, `ne` / `nw` / `se` / `sw`, plus aliases `top` / `bottom` / `left` /
- * `right`. Kept as `string` so packages may pass through unknown anchors.
- */
-export type ConnectorEndpointIr = Readonly<{
-  nodeId?: string | undefined;
-  anchor?: string | undefined;
-  x?: number | undefined;
-  y?: number | undefined;
-}>;
 
 /** Orthogonal elbow routing axis for `core.elbow` / connector bends. */
 export type ConnectorAxisIr = "x" | "y";
@@ -310,44 +319,6 @@ const pointIrSchema = z.strictObject({
   x: z.number().finite(),
   y: z.number().finite(),
 });
-const nodeAccessibilitySchema = z.strictObject({
-  label: z.string().min(1),
-  description: z.string().min(1).optional(),
-  decorative: z.boolean().optional(),
-});
-const foundationCapabilitySchema = z.union([
-  z.literal("core.text"),
-  z.literal("core.rect"),
-  z.literal("core.connector"),
-  z.literal("core.circle"),
-  z.literal("core.ellipse"),
-  z.literal("core.panel"),
-  z.literal("core.header"),
-  z.literal("core.arrow"),
-  z.literal("core.elbow"),
-  z.literal("core.bracket"),
-  z.literal("core.callout"),
-  z.literal("core.group"),
-  z.literal("layout.stack"),
-  z.literal("layout.grid"),
-  z.literal("layout.pad"),
-  z.literal("motion.signal"),
-  z.literal("motion.pulse"),
-  z.string().min(1),
-]);
-
-const renderNodeBaseShape = {
-  id: z.string().min(1),
-  capabilityId: z.string().min(1).optional(),
-  capability: foundationCapabilitySchema.optional(),
-  geometry: geometrySchema,
-  style: styleSchema,
-  accessibility: nodeAccessibilitySchema,
-  fallback: z.string().min(1),
-  sourceMap: sourceRangeSchema,
-  path: z.string().optional(),
-  points: z.array(pointIrSchema).optional(),
-};
 const connectorEndpointSchema = z
   .strictObject({
     nodeId: z.string().min(1).optional(),
@@ -367,6 +338,54 @@ const connectorEndpointSchema = z
       });
     }
   });
+const polylinePointSchema = z.union([pointIrSchema, connectorEndpointSchema]);
+const nodeAccessibilitySchema = z.strictObject({
+  label: z.string().min(1),
+  description: z.string().min(1).optional(),
+  decorative: z.boolean().optional(),
+});
+const foundationCapabilitySchema = z.union([
+  z.literal("core.text"),
+  z.literal("core.rect"),
+  z.literal("core.connector"),
+  z.literal("core.circle"),
+  z.literal("core.ellipse"),
+  z.literal("core.panel"),
+  z.literal("core.header"),
+  z.literal("core.arrow"),
+  z.literal("core.elbow"),
+  z.literal("core.bracket"),
+  z.literal("core.callout"),
+  z.literal("core.chip"),
+  z.literal("core.note"),
+  z.literal("core.divider"),
+  z.literal("core.lane"),
+  z.literal("core.band"),
+  z.literal("core.swimlane"),
+  z.literal("core.stepper"),
+  z.literal("core.route"),
+  z.literal("core.group"),
+  z.literal("layout.stack"),
+  z.literal("layout.grid"),
+  z.literal("layout.pad"),
+  z.literal("layout.rail"),
+  z.literal("motion.signal"),
+  z.literal("motion.pulse"),
+  z.string().min(1),
+]);
+
+const renderNodeBaseShape = {
+  id: z.string().min(1),
+  capabilityId: z.string().min(1).optional(),
+  capability: foundationCapabilitySchema.optional(),
+  geometry: geometrySchema,
+  style: styleSchema,
+  accessibility: nodeAccessibilitySchema,
+  fallback: z.string().min(1),
+  sourceMap: sourceRangeSchema,
+  path: z.string().optional(),
+  points: z.array(polylinePointSchema).optional(),
+};
 const connectorAxisSchema = z.union([z.literal("x"), z.literal("y")]);
 
 /** Timeline cue actions accepted by SceneIr / DeckPackage scenes. */

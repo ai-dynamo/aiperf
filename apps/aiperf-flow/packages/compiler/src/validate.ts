@@ -175,6 +175,31 @@ export function validate(
         }
         continue;
       }
+      if (node.kind === "scene-primitive") {
+        const titleProp = node.props.find((prop) => prop.name === "title");
+        const textProp = node.props.find((prop) => prop.name === "text");
+        const hasLabel =
+          (titleProp !== undefined &&
+            titleProp.value.kind === "literal" &&
+            String(titleProp.value.value).trim().length > 0) ||
+          (textProp !== undefined &&
+            textProp.value.kind === "literal" &&
+            String(textProp.value.value).trim().length > 0) ||
+          (node.fallback?.text.trim().length ?? 0) > 0;
+        if (hasLabel) {
+          continue;
+        }
+        diagnostics.push(
+          diagnostic(
+            "ACCESSIBILITY_REQUIRED",
+            "error",
+            `Node "${node.id}" in scene "${scene.id}" is missing an accessible label.`,
+            node.sourceMap,
+            "Add a `title`, `text`, or `fallback` declaration for this node.",
+          ),
+        );
+        continue;
+      }
       if (node.label.trim().length > 0) {
         continue;
       }

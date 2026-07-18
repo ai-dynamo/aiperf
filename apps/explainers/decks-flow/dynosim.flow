@@ -38,128 +38,131 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s0-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "NO SERVING SOCKET"
+          caption: "No serving socket on the hot path."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s0-band"
+          capability: "core.band"
+          title: "in-process hot path"
+          layout: { x: 60, y: 100, width: 580, height: 140 }
+          style: { fill: @theme.surface.secondary, opacity: 0.55 }
+        },
+        {
+          id: "s0-modes"
+          capability: "layout.rail"
+          layout: { x: 80, y: 78, width: 540, height: 22 }
+          style: { direction: "row", gap: 16 }
           children: [
             {
-              id: "s0-hdr-label"
-              capability: "core.text"
-              text: "NO SERVING SOCKET"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
+              id: "s0-chip-off"
+              capability: "core.chip"
+              text: "offline"
+              layout: { x: 0, y: 0, width: 100, height: 22 }
+              style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.1 }
             },
             {
-              id: "s0-hdr-caption"
-              capability: "core.text"
-              text: "No serving socket on the hot path."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
+              id: "s0-chip-on"
+              capability: "core.chip"
+              text: "online"
+              layout: { x: 0, y: 0, width: 100, height: 22 }
+              style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.1 }
+            },
+            {
+              id: "s0-chip-sim"
+              capability: "core.chip"
+              text: "SimClock"
+              layout: { x: 0, y: 0, width: 100, height: 22 }
+              style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.1 }
             }
           ]
         },
-{
+        {
           id: "s0-aiperf"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "AIPerf workload"
+          detail: "schedule + observe"
           layout: { x: 80, y: 130, width: 160, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s0-aiperf-title"
-              capability: "core.text"
-              text: "AIPerf workload"
-              layout: { x: 88, y: 158, width: 144, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s0-aiperf-detail"
-              capability: "core.text"
-              text: "schedule + observe"
-              layout: { x: 88, y: 182, width: 144, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s0-a1"
-          capability: "core.path"
-          d: "M240 178 H280"
+          capability: "core.connector"
+          from: { nodeId: "s0-aiperf", anchor: "e" }
+          to: { nodeId: "s0-sink", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s0-sink"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "DynosimSink"
+          detail: "in-process"
           layout: { x: 280, y: 130, width: 160, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s0-sink-title"
-              capability: "core.text"
-              text: "DynosimSink"
-              layout: { x: 288, y: 158, width: 144, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s0-sink-detail"
-              capability: "core.text"
-              text: "in-process"
-              layout: { x: 288, y: 182, width: 144, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s0-a2"
-          capability: "core.path"
-          d: "M440 178 H480"
+          capability: "core.route"
+          from: { nodeId: "s0-sink", anchor: "e" }
+          to: { nodeId: "s0-replay", anchor: "w" }
           style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s0-replay"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "SteppableReplay"
+          detail: "Dynamo mocker"
           layout: { x: 480, y: 130, width: 140, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s0-replay-title"
-              capability: "core.text"
-              text: "SteppableReplay"
-              layout: { x: 488, y: 158, width: 124, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s0-replay-detail"
-              capability: "core.text"
-              text: "Dynamo mocker"
-              layout: { x: 488, y: 182, width: 124, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+                {
+          id: "s0-divider"
+          capability: "core.divider"
+          layout: { x: 80, y: 250, width: 540, height: 2 }
+          axis: "x"
+          style: { stroke: @theme.ink.tertiary, strokeWidth: 1.2, fill: "none", markerEnd: "none" }
+          accessibility: { label: "note divider" }
+        },
+        {
+          id: "s0-callout"
+          capability: "core.callout"
+          text: "no socket I/O"
+          layout: { x: 300, y: 70, width: 110, height: 22 }
+          target: { x: 355, y: 130 }
+          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1 }
+        },
+        {
           id: "s0-note"
-          capability: "core.text"
-          text: "HTTP/gRPC socket omitted on the hot path"
-          layout: { x: 80, y: 280, width: 540, height: 24 }
-          style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+          capability: "core.note"
+          caption: "HTTP/gRPC socket omitted on the hot path"
+          layout: { x: 80, y: 280, width: 540, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
         },
-{
+        {
           id: "s0-motion-sig"
-          capability: "core.path"
-          d: "M145 178 H550"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s0-aiperf", anchor: "center" }
+          to: { nodeId: "s0-replay", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
         { id: "s0-enter-hdr", at: 0, duration: 260, target: "s0-hdr", action: "enter" },
+        { id: "s0-enter-band", at: 80, duration: 200, target: "s0-band", action: "enter" },
+        { id: "s0-enter-modes", at: 120, duration: 200, action: "stagger", targets: ["s0-chip-off", "s0-chip-on", "s0-chip-sim"], step: 60 },
         { id: "s0-enter-aiperf", at: 180, duration: 280, target: "s0-aiperf", action: "enter" },
         { id: "s0-draw-a1", at: 420, duration: 320, target: "s0-a1", action: "draw" },
         { id: "s0-enter-sink", at: 560, duration: 280, target: "s0-sink", action: "enter" },
         { id: "s0-draw-a2", at: 780, duration: 320, target: "s0-a2", action: "draw" },
         { id: "s0-enter-replay", at: 920, duration: 280, target: "s0-replay", action: "enter" },
+        { id: "s0-enter-divider", at: 1100, duration: 200, target: "s0-divider", action: "draw" },
+        { id: "s0-enter-callout", at: 1140, duration: 200, target: "s0-callout", action: "enter" },
         { id: "s0-enter-note", at: 1180, duration: 280, target: "s0-note", action: "enter" },
         { id: "s0-draw-motion", at: 1400, duration: 900, target: "s0-motion-sig", action: "draw" },
         { id: "s0-emph", at: 2200, duration: 400, target: "s0-sink", action: "emphasis" }
@@ -189,83 +192,43 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s1-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "FEATURE GATE"
+          caption: "Opt-in at compile time, selected at config time."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s1-hdr-label"
-              capability: "core.text"
-              text: "FEATURE GATE"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s1-hdr-caption"
-              capability: "core.text"
-              text: "Opt-in at compile time, selected at config time."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s1-feat"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Cargo feature"
+          detail: "dynosim"
           layout: { x: 120, y: 120, width: 200, height: 110 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s1-feat-title"
-              capability: "core.text"
-              text: "Cargo feature"
-              layout: { x: 128, y: 148, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s1-feat-detail"
-              capability: "core.text"
-              text: "dynosim"
-              layout: { x: 128, y: 172, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s1-a1"
-          capability: "core.path"
-          d: "M320 175 H380"
+          capability: "core.connector"
+          from: { nodeId: "s1-feat", anchor: "e" }
+          to: { nodeId: "s1-ids", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s1-ids"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Registry IDs"
+          detail: "offline · online"
           layout: { x: 380, y: 120, width: 200, height: 110 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s1-ids-title"
-              capability: "core.text"
-              text: "Registry IDs"
-              layout: { x: 388, y: 148, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s1-ids-detail"
-              capability: "core.text"
-              text: "offline · online"
-              layout: { x: 388, y: 172, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s1-motion-sig"
-          capability: "core.path"
-          d: "M200 175 H500"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s1-feat", anchor: "center" }
+          to: { nodeId: "s1-ids", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
@@ -302,111 +265,58 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s2-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "TRANSPORT → CLOCK"
+          caption: "Config is shared; transport picks real vs. virtual time."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s2-hdr-label"
-              capability: "core.text"
-              text: "TRANSPORT → CLOCK"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s2-hdr-caption"
-              capability: "core.text"
-              text: "Config is shared; transport picks real vs. virtual time."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s2-run"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "BenchmarkRun"
+          detail: "Config v2"
           layout: { x: 60, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
-          children: [
-            {
-              id: "s2-run-title"
-              capability: "core.text"
-              text: "BenchmarkRun"
-              layout: { x: 68, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s2-run-detail"
-              capability: "core.text"
-              text: "Config v2"
-              layout: { x: 68, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s2-a1"
-          capability: "core.path"
-          d: "M210 178 H260"
+          capability: "core.connector"
+          from: { nodeId: "s2-run", anchor: "e" }
+          to: { nodeId: "s2-tr", anchor: "w" }
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s2-tr"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "transport.type"
+          detail: "selects driver"
           layout: { x: 260, y: 130, width: 180, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s2-tr-title"
-              capability: "core.text"
-              text: "transport.type"
-              layout: { x: 268, y: 158, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s2-tr-detail"
-              capability: "core.text"
-              text: "selects driver"
-              layout: { x: 268, y: 182, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s2-a2"
-          capability: "core.path"
-          d: "M440 178 H490"
+          capability: "core.connector"
+          from: { nodeId: "s2-tr", anchor: "e" }
+          to: { nodeId: "s2-clk", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s2-clk"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Clock"
+          detail: "Sim or Real"
           layout: { x: 490, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s2-clk-title"
-              capability: "core.text"
-              text: "Clock"
-              layout: { x: 498, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s2-clk-detail"
-              capability: "core.text"
-              text: "Sim or Real"
-              layout: { x: 498, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s2-motion-sig"
-          capability: "core.path"
-          d: "M120 178 H565"
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s2-run", anchor: "center" }
+          to: { nodeId: "s2-clk", anchor: "center" }
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
@@ -445,92 +355,48 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s3-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "REGISTRY ROUTE"
+          caption: "Transport ID → dynosim factory, not HTTP stack."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s3-hdr-label"
-              capability: "core.text"
-              text: "REGISTRY ROUTE"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s3-hdr-caption"
-              capability: "core.text"
-              text: "Transport ID → dynosim factory, not HTTP stack."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s3-http"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "HTTP factory"
+          detail: "not used"
           layout: { x: 90, y: 120, width: 180, height: 110 }
           style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
-          children: [
-            {
-              id: "s3-http-title"
-              capability: "core.text"
-              text: "HTTP factory"
-              layout: { x: 98, y: 148, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s3-http-detail"
-              capability: "core.text"
-              text: "not used"
-              layout: { x: 98, y: 172, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s3-dyno"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Dynosim factory"
+          detail: "ExecutionSinkBuilder"
           layout: { x: 430, y: 120, width: 180, height: 110 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s3-dyno-title"
-              capability: "core.text"
-              text: "Dynosim factory"
-              layout: { x: 438, y: 148, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s3-dyno-detail"
-              capability: "core.text"
-              text: "ExecutionSinkBuilder"
-              layout: { x: 438, y: 172, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s3-note"
-          capability: "core.text"
-          text: "transport ID routes before Hyper/Tonic clients build"
-          layout: { x: 80, y: 280, width: 540, height: 24 }
-          style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+          capability: "core.note"
+          caption: "transport ID routes before Hyper/Tonic clients build"
+          layout: { x: 80, y: 280, width: 540, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
         },
-{
+        {
           id: "s3-motion-sig"
-          capability: "core.path"
-          d: "M170 175 H530"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s3-http", anchor: "center" }
+          to: { nodeId: "s3-dyno", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        { id: "s3-enter-hdr", at: 0, duration: 260, target: "s3-hdr", action: "enter" },
-        { id: "s3-enter-http", at: 180, duration: 280, target: "s3-http", action: "enter" },
-        { id: "s3-enter-dyno", at: 400, duration: 280, target: "s3-dyno", action: "enter" },
-        { id: "s3-enter-note", at: 700, duration: 280, target: "s3-note", action: "enter" },
+        { id: "s3-enter", at: 0, duration: 280, target: "s3-hdr", action: "stagger", targets: ["s3-hdr", "s3-http", "s3-dyno", "s3-note"], step: 220 },
         { id: "s3-draw-motion", at: 1000, duration: 900, target: "s3-motion-sig", action: "draw" },
         { id: "s3-emph", at: 1800, duration: 400, target: "s3-dyno", action: "emphasis" }
       ]
@@ -559,111 +425,58 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s4-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "HOST + SINK"
+          caption: "Same observation vocabulary, different dispatch backend."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s4-hdr-label"
-              capability: "core.text"
-              text: "HOST + SINK"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s4-hdr-caption"
-              capability: "core.text"
-              text: "Same observation vocabulary, different dispatch backend."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s4-host"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "EngineHost"
+          detail: "SteppableReplay"
           layout: { x: 70, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s4-host-title"
-              capability: "core.text"
-              text: "EngineHost"
-              layout: { x: 78, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s4-host-detail"
-              capability: "core.text"
-              text: "SteppableReplay"
-              layout: { x: 78, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s4-a1"
-          capability: "core.path"
-          d: "M220 178 H270"
+          capability: "core.connector"
+          from: { nodeId: "s4-host", anchor: "e" }
+          to: { nodeId: "s4-sink", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s4-sink"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "DynosimSink"
+          detail: "RequestSink"
           layout: { x: 270, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s4-sink-title"
-              capability: "core.text"
-              text: "DynosimSink"
-              layout: { x: 278, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s4-sink-detail"
-              capability: "core.text"
-              text: "RequestSink"
-              layout: { x: 278, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s4-a2"
-          capability: "core.path"
-          d: "M420 178 H470"
+          capability: "core.connector"
+          from: { nodeId: "s4-sink", anchor: "e" }
+          to: { nodeId: "s4-obs", anchor: "w" }
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s4-obs"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "RequestObserver"
+          detail: "metrics"
           layout: { x: 470, y: 130, width: 160, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s4-obs-title"
-              capability: "core.text"
-              text: "RequestObserver"
-              layout: { x: 478, y: 158, width: 144, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s4-obs-detail"
-              capability: "core.text"
-              text: "metrics"
-              layout: { x: 478, y: 182, width: 144, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s4-motion-sig"
-          capability: "core.path"
-          d: "M130 178 H550"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s4-host", anchor: "center" }
+          to: { nodeId: "s4-obs", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
@@ -702,83 +515,43 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s5-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "OFFLINE · SIMCLOCK"
+          caption: "Deterministic virtual time drives offline replay."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s5-hdr-label"
-              capability: "core.text"
-              text: "OFFLINE · SIMCLOCK"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s5-hdr-caption"
-              capability: "core.text"
-              text: "Deterministic virtual time drives offline replay."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s5-off"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "dynosim_offline"
+          detail: "SimClock"
           layout: { x: 250, y: 100, width: 200, height: 110 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s5-off-title"
-              capability: "core.text"
-              text: "dynosim_offline"
-              layout: { x: 258, y: 128, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s5-off-detail"
-              capability: "core.text"
-              text: "SimClock"
-              layout: { x: 258, y: 152, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s5-a1"
-          capability: "core.path"
-          d: "M350 210 V250"
+          capability: "core.connector"
+          from: { nodeId: "s5-off", anchor: "s" }
+          to: { nodeId: "s5-drive", anchor: "n" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s5-drive"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "drive_sim_with_source"
+          detail: "virtual pump"
           layout: { x: 250, y: 250, width: 200, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s5-drive-title"
-              capability: "core.text"
-              text: "drive_sim_with_source"
-              layout: { x: 258, y: 278, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s5-drive-detail"
-              capability: "core.text"
-              text: "virtual pump"
-              layout: { x: 258, y: 302, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s5-motion-sig"
-          capability: "core.path"
-          d: "M350 140 V285"
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s5-off", anchor: "center" }
+          to: { nodeId: "s5-drive", anchor: "center" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
@@ -815,83 +588,43 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s6-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "ONLINE · REALCLOCK"
+          caption: "Same engine contract; clock switches to wall time."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s6-hdr-label"
-              capability: "core.text"
-              text: "ONLINE · REALCLOCK"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s6-hdr-caption"
-              capability: "core.text"
-              text: "Same engine contract; clock switches to wall time."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s6-on"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "dynosim_online"
+          detail: "RealClock"
           layout: { x: 250, y: 100, width: 200, height: 110 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s6-on-title"
-              capability: "core.text"
-              text: "dynosim_online"
-              layout: { x: 258, y: 128, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s6-on-detail"
-              capability: "core.text"
-              text: "RealClock"
-              layout: { x: 258, y: 152, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s6-a1"
-          capability: "core.path"
-          d: "M350 210 V250"
+          capability: "core.connector"
+          from: { nodeId: "s6-on", anchor: "s" }
+          to: { nodeId: "s6-drive", anchor: "n" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s6-drive"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "drive_real_with_source"
+          detail: "wall pump"
           layout: { x: 250, y: 250, width: 200, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s6-drive-title"
-              capability: "core.text"
-              text: "drive_real_with_source"
-              layout: { x: 258, y: 278, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s6-drive-detail"
-              capability: "core.text"
-              text: "wall pump"
-              layout: { x: 258, y: 302, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s6-motion-sig"
-          capability: "core.path"
-          d: "M350 140 V285"
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s6-on", anchor: "center" }
+          to: { nodeId: "s6-drive", anchor: "center" }
+          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
@@ -928,92 +661,48 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s7-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "CLOCK COMPARE"
+          caption: "One Clock trait; two time domains."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s7-hdr-label"
-              capability: "core.text"
-              text: "CLOCK COMPARE"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s7-hdr-caption"
-              capability: "core.text"
-              text: "One Clock trait; two time domains."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s7-real"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "RealClock"
+          detail: "wall nanoseconds"
           layout: { x: 100, y: 130, width: 200, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s7-real-title"
-              capability: "core.text"
-              text: "RealClock"
-              layout: { x: 108, y: 158, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s7-real-detail"
-              capability: "core.text"
-              text: "wall nanoseconds"
-              layout: { x: 108, y: 182, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s7-sim"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "SimClock"
+          detail: "virtual nanoseconds"
           layout: { x: 400, y: 130, width: 200, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s7-sim-title"
-              capability: "core.text"
-              text: "SimClock"
-              layout: { x: 408, y: 158, width: 184, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s7-sim-detail"
-              capability: "core.text"
-              text: "virtual nanoseconds"
-              layout: { x: 408, y: 182, width: 184, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s7-note"
-          capability: "core.text"
-          text: "Clock::is_virtual() selects reactor vs. simulation driver"
-          layout: { x: 80, y: 280, width: 540, height: 24 }
-          style: { fontSize: 13, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
+          capability: "core.note"
+          caption: "Clock::is_virtual() selects reactor vs. simulation driver"
+          layout: { x: 80, y: 280, width: 540, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
         },
-{
+        {
           id: "s7-motion-sig"
-          capability: "core.path"
-          d: "M180 178 H520"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s7-real", anchor: "center" }
+          to: { nodeId: "s7-sim", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        { id: "s7-enter-hdr", at: 0, duration: 260, target: "s7-hdr", action: "enter" },
-        { id: "s7-enter-real", at: 180, duration: 280, target: "s7-real", action: "enter" },
-        { id: "s7-enter-sim", at: 400, duration: 280, target: "s7-sim", action: "enter" },
-        { id: "s7-enter-note", at: 700, duration: 280, target: "s7-note", action: "enter" },
+        { id: "s7-enter", at: 0, duration: 280, target: "s7-hdr", action: "stagger", targets: ["s7-hdr", "s7-real", "s7-sim", "s7-note"], step: 220 },
         { id: "s7-draw-motion", at: 1000, duration: 900, target: "s7-motion-sig", action: "draw" },
         { id: "s7-emph", at: 1800, duration: 400, target: "s7-sim", action: "emphasis" }
       ]
@@ -1042,92 +731,48 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s8-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "DUAL QUEUES"
+          caption: "Earliest event wins; clock wins ties at the same t."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s8-hdr-label"
-              capability: "core.text"
-              text: "DUAL QUEUES"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s8-hdr-caption"
-              capability: "core.text"
-              text: "Earliest event wins; clock wins ties at the same t."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s8-clkq"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "SimClock queue"
+          detail: "arrivals · phases"
           layout: { x: 80, y: 130, width: 220, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s8-clkq-title"
-              capability: "core.text"
-              text: "SimClock queue"
-              layout: { x: 88, y: 158, width: 204, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s8-clkq-detail"
-              capability: "core.text"
-              text: "arrivals · phases"
-              layout: { x: 88, y: 182, width: 204, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s8-srcq"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "SimEventSource"
+          detail: "engine events"
           layout: { x: 400, y: 130, width: 220, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s8-srcq-title"
-              capability: "core.text"
-              text: "SimEventSource"
-              layout: { x: 408, y: 158, width: 204, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s8-srcq-detail"
-              capability: "core.text"
-              text: "engine events"
-              layout: { x: 408, y: 182, width: 204, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s8-rule"
-          capability: "core.text"
-          text: "min(clock, source) · clock wins ties"
-          layout: { x: 80, y: 280, width: 540, height: 24 }
-          style: { fontSize: 13, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+          capability: "core.note"
+          caption: "min(clock, source) · clock wins ties"
+          layout: { x: 80, y: 280, width: 540, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.3, radius: 6 }
         },
-{
+        {
           id: "s8-motion-sig"
-          capability: "core.path"
-          d: "M170 178 H530"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s8-clkq", anchor: "center" }
+          to: { nodeId: "s8-srcq", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        { id: "s8-enter-hdr", at: 0, duration: 260, target: "s8-hdr", action: "enter" },
-        { id: "s8-enter-clkq", at: 180, duration: 280, target: "s8-clkq", action: "enter" },
-        { id: "s8-enter-srcq", at: 400, duration: 280, target: "s8-srcq", action: "enter" },
-        { id: "s8-enter-rule", at: 700, duration: 280, target: "s8-rule", action: "enter" },
+        { id: "s8-enter", at: 0, duration: 280, target: "s8-hdr", action: "stagger", targets: ["s8-hdr", "s8-clkq", "s8-srcq", "s8-rule"], step: 220 },
         { id: "s8-draw-motion", at: 1000, duration: 900, target: "s8-motion-sig", action: "draw" },
         { id: "s8-emph", at: 1800, duration: 400, target: "s8-rule", action: "emphasis" }
       ]
@@ -1156,139 +801,73 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s9-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "SIM PUMP LOOP"
+          caption: "Poll → idle → advance → poll again."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s9-hdr-label"
-              capability: "core.text"
-              text: "SIM PUMP LOOP"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s9-hdr-caption"
-              capability: "core.text"
-              text: "Poll → idle → advance → poll again."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s9-p0"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "poll future"
+          detail: "sim pump"
           layout: { x: 40, y: 130, width: 130, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
-          children: [
-            {
-              id: "s9-p0-title"
-              capability: "core.text"
-              text: "poll future"
-              layout: { x: 48, y: 158, width: 114, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s9-p0-detail"
-              capability: "core.text"
-              text: "sim pump"
-              layout: { x: 48, y: 182, width: 114, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s9-a0"
-          capability: "core.path"
-          d: "M170 178 H200"
+          capability: "core.connector"
+          from: { nodeId: "s9-p0", anchor: "e" }
+          to: { nodeId: "s9-p1", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s9-p1"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "idle?"
+          detail: "sim pump"
           layout: { x: 200, y: 130, width: 130, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
-          children: [
-            {
-              id: "s9-p1-title"
-              capability: "core.text"
-              text: "idle?"
-              layout: { x: 208, y: 158, width: 114, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s9-p1-detail"
-              capability: "core.text"
-              text: "sim pump"
-              layout: { x: 208, y: 182, width: 114, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s9-a1"
-          capability: "core.path"
-          d: "M330 178 H360"
+          capability: "core.connector"
+          from: { nodeId: "s9-p1", anchor: "e" }
+          to: { nodeId: "s9-p2", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s9-p2"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "advance t"
+          detail: "sim pump"
           layout: { x: 360, y: 130, width: 130, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s9-p2-title"
-              capability: "core.text"
-              text: "advance t"
-              layout: { x: 368, y: 158, width: 114, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s9-p2-detail"
-              capability: "core.text"
-              text: "sim pump"
-              layout: { x: 368, y: 182, width: 114, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s9-a2"
-          capability: "core.path"
-          d: "M490 178 H520"
+          capability: "core.connector"
+          from: { nodeId: "s9-p2", anchor: "e" }
+          to: { nodeId: "s9-p3", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s9-p3"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "repeat"
+          detail: "sim pump"
           layout: { x: 520, y: 130, width: 130, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
-          children: [
-            {
-              id: "s9-p3-title"
-              capability: "core.text"
-              text: "repeat"
-              layout: { x: 528, y: 158, width: 114, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s9-p3-detail"
-              capability: "core.text"
-              text: "sim pump"
-              layout: { x: 528, y: 182, width: 114, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s9-motion-sig"
-          capability: "core.path"
-          d: "M105 178 H585"
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s9-p0", anchor: "center" }
+          to: { nodeId: "s9-p3", anchor: "center" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
@@ -1329,92 +908,48 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s10-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "CLOCK WINS TIES"
+          caption: "Clock-wins-ties keeps scheduling backend-independent."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s10-hdr-label"
-              capability: "core.text"
-              text: "CLOCK WINS TIES"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s10-hdr-caption"
-              capability: "core.text"
-              text: "Clock-wins-ties keeps scheduling backend-independent."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s10-arr"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "arrival @ t"
+          detail: "clock queue"
           layout: { x: 120, y: 140, width: 180, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s10-arr-title"
-              capability: "core.text"
-              text: "arrival @ t"
-              layout: { x: 128, y: 168, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s10-arr-detail"
-              capability: "core.text"
-              text: "clock queue"
-              layout: { x: 128, y: 192, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s10-eng"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "engine pass @ t"
+          detail: "source queue"
           layout: { x: 400, y: 140, width: 180, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s10-eng-title"
-              capability: "core.text"
-              text: "engine pass @ t"
-              layout: { x: 408, y: 168, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s10-eng-detail"
-              capability: "core.text"
-              text: "source queue"
-              layout: { x: 408, y: 192, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s10-rule"
-          capability: "core.text"
-          text: "clock fires first at equal t"
-          layout: { x: 80, y: 260, width: 540, height: 24 }
-          style: { fontSize: 13, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
+          capability: "core.note"
+          caption: "clock fires first at equal t"
+          layout: { x: 80, y: 260, width: 540, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.3, radius: 6 }
         },
-{
+        {
           id: "s10-motion-sig"
-          capability: "core.path"
-          d: "M190 180 H510"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s10-arr", anchor: "center" }
+          to: { nodeId: "s10-eng", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        { id: "s10-enter-hdr", at: 0, duration: 260, target: "s10-hdr", action: "enter" },
-        { id: "s10-enter-arr", at: 180, duration: 280, target: "s10-arr", action: "enter" },
-        { id: "s10-enter-eng", at: 400, duration: 280, target: "s10-eng", action: "enter" },
-        { id: "s10-enter-rule", at: 700, duration: 280, target: "s10-rule", action: "enter" },
+        { id: "s10-enter", at: 0, duration: 280, target: "s10-hdr", action: "stagger", targets: ["s10-hdr", "s10-arr", "s10-eng", "s10-rule"], step: 220 },
         { id: "s10-draw-motion", at: 1000, duration: 900, target: "s10-motion-sig", action: "draw" },
         { id: "s10-emph", at: 1800, duration: 400, target: "s10-rule", action: "emphasis" }
       ]
@@ -1443,111 +978,58 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s11-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "STEP BOUNDS"
+          caption: "Monotonic virtual time with overshoot protection."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s11-hdr-label"
-              capability: "core.text"
-              text: "STEP BOUNDS"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s11-hdr-caption"
-              capability: "core.text"
-              text: "Monotonic virtual time with overshoot protection."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s11-step"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "source.step"
+          detail: "[at, end_ns)"
           layout: { x: 80, y: 130, width: 170, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s11-step-title"
-              capability: "core.text"
-              text: "source.step"
-              layout: { x: 88, y: 158, width: 154, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s11-step-detail"
-              capability: "core.text"
-              text: "[at, end_ns)"
-              layout: { x: 88, y: 182, width: 154, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s11-a1"
-          capability: "core.path"
-          d: "M250 178 H300"
+          capability: "core.connector"
+          from: { nodeId: "s11-step", anchor: "e" }
+          to: { nodeId: "s11-guards", anchor: "w" }
           style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s11-guards"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "guards"
+          detail: "regression · overshoot"
           layout: { x: 300, y: 130, width: 170, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s11-guards-title"
-              capability: "core.text"
-              text: "guards"
-              layout: { x: 308, y: 158, width: 154, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s11-guards-detail"
-              capability: "core.text"
-              text: "regression · overshoot"
-              layout: { x: 308, y: 182, width: 154, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s11-a2"
-          capability: "core.path"
-          d: "M470 178 H520"
+          capability: "core.connector"
+          from: { nodeId: "s11-guards", anchor: "e" }
+          to: { nodeId: "s11-adv", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s11-adv"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "advance"
+          detail: "SimClock"
           layout: { x: 520, y: 130, width: 100, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s11-adv-title"
-              capability: "core.text"
-              text: "advance"
-              layout: { x: 528, y: 158, width: 84, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s11-adv-detail"
-              capability: "core.text"
-              text: "SimClock"
-              layout: { x: 528, y: 182, width: 84, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s11-motion-sig"
-          capability: "core.path"
-          d: "M145 178 H570"
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s11-step", anchor: "center" }
+          to: { nodeId: "s11-adv", anchor: "center" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
@@ -1586,111 +1068,58 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s12-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "DIRECT REQUEST"
+          caption: "In-process submission; mailbox completion."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s12-hdr-label"
-              capability: "core.text"
-              text: "DIRECT REQUEST"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s12-hdr-caption"
-              capability: "core.text"
-              text: "In-process submission; mailbox completion."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s12-turn"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Turn dispatch"
+          detail: "workload"
           layout: { x: 70, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s12-turn-title"
-              capability: "core.text"
-              text: "Turn dispatch"
-              layout: { x: 78, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s12-turn-detail"
-              capability: "core.text"
-              text: "workload"
-              layout: { x: 78, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s12-a1"
-          capability: "core.path"
-          d: "M220 178 H270"
+          capability: "core.connector"
+          from: { nodeId: "s12-turn", anchor: "e" }
+          to: { nodeId: "s12-req", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s12-req"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "DirectRequest"
+          detail: "submit"
           layout: { x: 270, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s12-req-title"
-              capability: "core.text"
-              text: "DirectRequest"
-              layout: { x: 278, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s12-req-detail"
-              capability: "core.text"
-              text: "submit"
-              layout: { x: 278, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s12-a2"
-          capability: "core.path"
-          d: "M420 178 H470"
+          capability: "core.connector"
+          from: { nodeId: "s12-req", anchor: "e" }
+          to: { nodeId: "s12-mail", anchor: "w" }
           style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s12-mail"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "waiter mailbox"
+          detail: "completion"
           layout: { x: 470, y: 130, width: 160, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s12-mail-title"
-              capability: "core.text"
-              text: "waiter mailbox"
-              layout: { x: 478, y: 158, width: 144, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s12-mail-detail"
-              capability: "core.text"
-              text: "completion"
-              layout: { x: 478, y: 182, width: 144, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s12-motion-sig"
-          capability: "core.path"
-          d: "M130 178 H550"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s12-turn", anchor: "center" }
+          to: { nodeId: "s12-mail", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
@@ -1729,111 +1158,58 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s13-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "OBSERVER PATH"
+          caption: "Observer seam is transport-neutral."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s13-hdr-label"
-              capability: "core.text"
-              text: "OBSERVER PATH"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s13-hdr-caption"
-              capability: "core.text"
-              text: "Observer seam is transport-neutral."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s13-evt"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "EngineEvent"
+          detail: "token · usage"
           layout: { x: 60, y: 130, width: 160, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s13-evt-title"
-              capability: "core.text"
-              text: "EngineEvent"
-              layout: { x: 68, y: 158, width: 144, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s13-evt-detail"
-              capability: "core.text"
-              text: "token · usage"
-              layout: { x: 68, y: 182, width: 144, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s13-a1"
-          capability: "core.path"
-          d: "M220 178 H280"
+          capability: "core.connector"
+          from: { nodeId: "s13-evt", anchor: "e" }
+          to: { nodeId: "s13-sink", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s13-sink"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "DynosimSink"
+          detail: "translate"
           layout: { x: 280, y: 130, width: 160, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s13-sink-title"
-              capability: "core.text"
-              text: "DynosimSink"
-              layout: { x: 288, y: 158, width: 144, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s13-sink-detail"
-              capability: "core.text"
-              text: "translate"
-              layout: { x: 288, y: 182, width: 144, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s13-a2"
-          capability: "core.path"
-          d: "M440 178 H500"
+          capability: "core.connector"
+          from: { nodeId: "s13-sink", anchor: "e" }
+          to: { nodeId: "s13-obs", anchor: "w" }
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s13-obs"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Observer"
+          detail: "TTFT · terminal"
           layout: { x: 500, y: 130, width: 140, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s13-obs-title"
-              capability: "core.text"
-              text: "Observer"
-              layout: { x: 508, y: 158, width: 124, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s13-obs-detail"
-              capability: "core.text"
-              text: "TTFT · terminal"
-              layout: { x: 508, y: 182, width: 124, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s13-motion-sig"
-          capability: "core.path"
-          d: "M120 178 H570"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s13-evt", anchor: "center" }
+          to: { nodeId: "s13-obs", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
@@ -1872,111 +1248,58 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s14-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "METRICS MERGE"
+          caption: "Same metric plane; source is replay instead of wire."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s14-hdr-label"
-              capability: "core.text"
-              text: "METRICS MERGE"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s14-hdr-caption"
-              capability: "core.text"
-              text: "Same metric plane; source is replay instead of wire."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s14-obs"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Observer events"
+          detail: "per worker"
           layout: { x: 80, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
-          children: [
-            {
-              id: "s14-obs-title"
-              capability: "core.text"
-              text: "Observer events"
-              layout: { x: 88, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s14-obs-detail"
-              capability: "core.text"
-              text: "per worker"
-              layout: { x: 88, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s14-a1"
-          capability: "core.path"
-          d: "M230 178 H280"
+          capability: "core.connector"
+          from: { nodeId: "s14-obs", anchor: "e" }
+          to: { nodeId: "s14-core", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s14-core"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "metrics_core"
+          detail: "accumulate"
           layout: { x: 280, y: 130, width: 170, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s14-core-title"
-              capability: "core.text"
-              text: "metrics_core"
-              layout: { x: 288, y: 158, width: 154, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s14-core-detail"
-              capability: "core.text"
-              text: "accumulate"
-              layout: { x: 288, y: 182, width: 154, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s14-a2"
-          capability: "core.path"
-          d: "M450 178 H500"
+          capability: "core.connector"
+          from: { nodeId: "s14-core", anchor: "e" }
+          to: { nodeId: "s14-rec", anchor: "w" }
           style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s14-rec"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "records"
+          detail: "exact / sketch"
           layout: { x: 500, y: 130, width: 120, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s14-rec-title"
-              capability: "core.text"
-              text: "records"
-              layout: { x: 508, y: 158, width: 104, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s14-rec-detail"
-              capability: "core.text"
-              text: "exact / sketch"
-              layout: { x: 508, y: 182, width: 104, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s14-motion-sig"
-          capability: "core.path"
-          d: "M140 178 H560"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s14-obs", anchor: "center" }
+          to: { nodeId: "s14-rec", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
@@ -2015,84 +1338,41 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s15-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "DELIVERY MODE"
+          caption: "Delivery shape follows config, not transport family."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s15-hdr-label"
-              capability: "core.text"
-              text: "DELIVERY MODE"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s15-hdr-caption"
-              capability: "core.text"
-              text: "Delivery shape follows config, not transport family."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s15-inc"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Incremental"
+          detail: "token → token"
           layout: { x: 100, y: 130, width: 220, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s15-inc-title"
-              capability: "core.text"
-              text: "Incremental"
-              layout: { x: 108, y: 158, width: 204, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s15-inc-detail"
-              capability: "core.text"
-              text: "token → token"
-              layout: { x: 108, y: 182, width: 204, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s15-coa"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Coalesced"
+          detail: "terminal batch"
           layout: { x: 380, y: 130, width: 220, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s15-coa-title"
-              capability: "core.text"
-              text: "Coalesced"
-              layout: { x: 388, y: 158, width: 204, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s15-coa-detail"
-              capability: "core.text"
-              text: "terminal batch"
-              layout: { x: 388, y: 182, width: 204, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s15-motion-sig"
-          capability: "core.path"
-          d: "M190 178 H510"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s15-inc", anchor: "center" }
+          to: { nodeId: "s15-coa", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        { id: "s15-enter-hdr", at: 0, duration: 260, target: "s15-hdr", action: "enter" },
-        { id: "s15-enter-inc", at: 180, duration: 280, target: "s15-inc", action: "enter" },
-        { id: "s15-enter-coa", at: 400, duration: 280, target: "s15-coa", action: "enter" },
+        { id: "s15-enter", at: 0, duration: 280, target: "s15-hdr", action: "stagger", targets: ["s15-hdr", "s15-inc", "s15-coa"], step: 200 },
         { id: "s15-draw-motion", at: 700, duration: 900, target: "s15-motion-sig", action: "draw" },
         { id: "s15-emph", at: 1500, duration: 400, target: "s15-inc", action: "emphasis" }
       ]
@@ -2121,84 +1401,41 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s16-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "DRAIN + STALL"
+          caption: "Clean termination with explicit stall signals."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s16-hdr-label"
-              capability: "core.text"
-              text: "DRAIN + STALL"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s16-hdr-caption"
-              capability: "core.text"
-              text: "Clean termination with explicit stall signals."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s16-ready"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Ready future"
+          detail: "drain source"
           layout: { x: 120, y: 120, width: 180, height: 110 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s16-ready-title"
-              capability: "core.text"
-              text: "Ready future"
-              layout: { x: 128, y: 148, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s16-ready-detail"
-              capability: "core.text"
-              text: "drain source"
-              layout: { x: 128, y: 172, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s16-stall"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "No progress"
+          detail: "stall / deadlock"
           layout: { x: 400, y: 120, width: 180, height: 110 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s16-stall-title"
-              capability: "core.text"
-              text: "No progress"
-              layout: { x: 408, y: 148, width: 164, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s16-stall-detail"
-              capability: "core.text"
-              text: "stall / deadlock"
-              layout: { x: 408, y: 172, width: 164, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s16-motion-sig"
-          capability: "core.path"
-          d: "M190 175 H510"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s16-ready", anchor: "center" }
+          to: { nodeId: "s16-stall", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]
       timeline: [
-        { id: "s16-enter-hdr", at: 0, duration: 260, target: "s16-hdr", action: "enter" },
-        { id: "s16-enter-ready", at: 180, duration: 280, target: "s16-ready", action: "enter" },
-        { id: "s16-enter-stall", at: 400, duration: 280, target: "s16-stall", action: "enter" },
+        { id: "s16-enter", at: 0, duration: 280, target: "s16-hdr", action: "stagger", targets: ["s16-hdr", "s16-ready", "s16-stall"], step: 200 },
         { id: "s16-draw-motion", at: 700, duration: 900, target: "s16-motion-sig", action: "draw" },
         { id: "s16-emph", at: 1500, duration: 400, target: "s16-ready", action: "emphasis" }
       ]
@@ -2227,111 +1464,58 @@ explainer "Dynosim" {
 
     render: @scene {
       roots: [
-{
+        {
           id: "s17-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "MODE RECAP"
+          caption: "Pick the clock; keep the rest of AIPerf unchanged."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s17-hdr-label"
-              capability: "core.text"
-              text: "MODE RECAP"
-              layout: { x: 38, y: 28, width: 320, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "s17-hdr-caption"
-              capability: "core.text"
-              text: "Pick the clock; keep the rest of AIPerf unchanged."
-              layout: { x: 360, y: 28, width: 300, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
-{
+        {
           id: "s17-off"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Offline"
+          detail: "SimClock"
           layout: { x: 60, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s17-off-title"
-              capability: "core.text"
-              text: "Offline"
-              layout: { x: 68, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s17-off-detail"
-              capability: "core.text"
-              text: "SimClock"
-              layout: { x: 68, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s17-a1"
-          capability: "core.path"
-          d: "M210 178 H275"
+          capability: "core.connector"
+          from: { nodeId: "s17-off", anchor: "e" }
+          to: { nodeId: "s17-on", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s17-on"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Online"
+          detail: "RealClock"
           layout: { x: 275, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s17-on-title"
-              capability: "core.text"
-              text: "Online"
-              layout: { x: 283, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s17-on-detail"
-              capability: "core.text"
-              text: "RealClock"
-              layout: { x: 283, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s17-a2"
-          capability: "core.path"
-          d: "M425 178 H490"
+          capability: "core.connector"
+          from: { nodeId: "s17-on", anchor: "e" }
+          to: { nodeId: "s17-json", anchor: "w" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         },
-{
+        {
           id: "s17-json"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "native-v2.json"
+          detail: "same persist"
           layout: { x: 490, y: 130, width: 150, height: 96 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s17-json-title"
-              capability: "core.text"
-              text: "native-v2.json"
-              layout: { x: 498, y: 158, width: 134, height: 22 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s17-json-detail"
-              capability: "core.text"
-              text: "same persist"
-              layout: { x: 498, y: 182, width: 134, height: 20 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
-{
+        {
           id: "s17-motion-sig"
-          capability: "core.path"
-          d: "M120 178 H565"
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
+          capability: "motion.signal"
+          from: { nodeId: "s17-off", anchor: "center" }
+          to: { nodeId: "s17-json", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
         }
       ]

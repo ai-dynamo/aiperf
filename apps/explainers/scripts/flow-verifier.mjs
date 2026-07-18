@@ -84,9 +84,12 @@ Options:
   --play-only          Skip IR playhead pass
   --base-url <url>     Reuse an existing Vite server (skip spawn)
   --from-flow          Rebuild decks-generated from decks-flow/*.flow first
-  --strict-draw        Emit IR warn for mid-draw arrow moments
+  --strict-draw        Emit IR warn for mid-draw arrow moments (SceneRenderer defers heads)
   --warn               Treat warnings as failures (exit non-zero)
   -h, --help           Show this help
+
+Playwright resolves from apps/aiperf-flow; install browsers with:
+  cd apps/aiperf-flow && npx playwright install chromium
 `);
 }
 

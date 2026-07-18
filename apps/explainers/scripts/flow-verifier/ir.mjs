@@ -4,7 +4,6 @@
  */
 
 import {
-  DEFAULT_VIEWPORT,
   SNAP_PX,
   arrowPathData,
   drawProgress,
@@ -12,10 +11,16 @@ import {
   inViewport,
   isArrowLike,
   isBoxLike,
+  isDirectedConnector,
   isDotLike,
+  isDrawAction,
+  isLegendDot,
+  isMotionCompanionDot,
   nodeIds,
   pathPoints,
   pointNearBox,
+  sceneViewport,
+  timelineDurationMs,
   walkNodes,
 } from "./geometry.mjs";
 
@@ -25,6 +30,20 @@ import {
 
 function finding(severity, deck, slide, code, message) {
   return { severity, deck, slide, code, message };
+}
+
+/** Timeline cue target ids (`target` and/or stagger `targets`). */
+function cueTargets(cue) {
+  const out = [];
+  if (typeof cue?.target === "string" && cue.target.length > 0) {
+    out.push(cue.target);
+  }
+  if (Array.isArray(cue?.targets)) {
+    for (const t of cue.targets) {
+      if (typeof t === "string" && t.length > 0) out.push(t);
+    }
+  }
+  return out;
 }
 
 function boxGeoms(nodes) {
@@ -64,19 +83,17 @@ function pointNearPath(point, points, snap = SNAP_PX) {
   return false;
 }
 
-function isDrawActionSafe(action) {
-  const a = String(action ?? "").toLowerCase();
-  return a === "draw" || a === "trace" || a === "reveal-stroke";
-}
-
 /**
  * Verify one DeckPackage's scenes (static + optional mid-draw contract samples).
+ *
+ * SceneRenderer contract: arrowheads appear only when drawProgress >= 1
+ * (or reduced motion / no draw cue). Play layer asserts the live SVG side.
+ *
  * @returns {Finding[]}
  */
 export function verifyPackageIr(pkg, options = {}) {
   const deck = pkg?.id ?? "unknown";
   const findings = [];
-  const viewport = { ...DEFAULT_VIEWPORT, ...(options.viewport ?? {}) };
   const slides = Array.isArray(pkg?.slides) ? pkg.slides : [];
 
   if (slides.length === 0) {
@@ -107,6 +124,7 @@ export function verifyPackageIr(pkg, options = {}) {
 
     const roots = scene.roots;
     const timeline = scene.timeline;
+    const viewport = sceneViewport(scene, options.viewport);
     if (!Array.isArray(roots) || roots.length === 0) {
       findings.push(
         finding(
@@ -134,10 +152,22 @@ export function verifyPackageIr(pkg, options = {}) {
     const nodes = walkNodes(roots);
     const ids = nodeIds(roots);
     const boxes = boxGeoms(nodes);
+    const drawTargets = new Set(
+      (timeline ?? [])
+        .filter((c) => isDrawAction(c?.action))
+        .map((c) => c.target)
+        .filter((t) => typeof t === "string" && t.length > 0),
+    );
+
+    const nodesById = new Map(
+      nodes
+        .filter((n) => typeof n?.id === "string" && n.id.length > 0)
+        .map((n) => [n.id, n]),
+    );
 
     for (const cue of timeline ?? []) {
-      const target = cue?.target;
-      if (typeof target !== "string" || target.length === 0) {
+      const targets = cueTargets(cue);
+      if (targets.length === 0) {
         findings.push(
           finding(
             "error",
@@ -149,28 +179,32 @@ export function verifyPackageIr(pkg, options = {}) {
         );
         continue;
       }
-      if (!ids.has(target)) {
-        findings.push(
-          finding(
-            "error",
-            deck,
-            slideLabel,
-            "cue-unknown-target",
-            `timeline target "${target}" not in scene roots`,
-          ),
-        );
+      for (const target of targets) {
+        if (!ids.has(target)) {
+          findings.push(
+            finding(
+              "error",
+              deck,
+              slideLabel,
+              "cue-unknown-target",
+              `timeline target "${target}" not in scene roots`,
+            ),
+          );
+        }
       }
     }
 
     const pathPolylines = [];
-    /** @type {Map<string, {x:number,y:number}>} */
+    /** @type {Map<string, {x:number,y:number, node: object}>} */
     const dotCenters = new Map();
+    /** @type {string[]} */
+    const directedArrowIds = [];
 
     for (const node of nodes) {
       const id = node.id ?? "?";
 
       if (isArrowLike(node)) {
-        const path = arrowPathData(node);
+        const path = arrowPathData(node, nodesById);
         if (!path) {
           findings.push(
             finding(
@@ -197,6 +231,13 @@ export function verifyPackageIr(pkg, options = {}) {
           continue;
         }
         pathPolylines.push(pts);
+
+        // Motion guides and headless dividers are not connectors.
+        if (!isDirectedConnector(node)) {
+          continue;
+        }
+        directedArrowIds.push(id);
+
         const start = pts[0];
         const end = pts[pts.length - 1];
         if (boxes.length > 0) {
@@ -241,10 +282,28 @@ export function verifyPackageIr(pkg, options = {}) {
           );
           continue;
         }
-        dotCenters.set(id, {
-          x: g.x + g.width / 2,
-          y: g.y + g.height / 2,
-        });
+        // Legacy motion companions are dropped by SceneRenderer — flag once
+        // so packages/authoring can delete them, then skip proximity checks.
+        if (isMotionCompanionDot(node)) {
+          findings.push(
+            finding(
+              "warn",
+              deck,
+              slideLabel,
+              "obsolete-motion-companion",
+              `dot "${id}" is a legacy motion companion; remove it (MotionSignal on the path owns the visual)`,
+            ),
+          );
+          continue;
+        }
+        // Legend chips may float; other dots should sit near a stroke.
+        if (!isLegendDot(node)) {
+          dotCenters.set(id, {
+            x: g.x + g.width / 2,
+            y: g.y + g.height / 2,
+            node,
+          });
+        }
         continue;
       }
 
@@ -288,8 +347,8 @@ export function verifyPackageIr(pkg, options = {}) {
       }
     }
 
-    for (const [id, center] of dotCenters) {
-      if (/motion/i.test(id)) continue;
+    for (const [id, entry] of dotCenters) {
+      const center = { x: entry.x, y: entry.y };
       if (pathPolylines.length === 0) continue;
       const near = pathPolylines.some((pts) => pointNearPath(center, pts));
       if (!near) {
@@ -305,31 +364,56 @@ export function verifyPackageIr(pkg, options = {}) {
       }
     }
 
-    // Optional mid-draw contract samples (one warn per arrow) when --strict-draw.
-    if (options.strictDraw) {
-      const seen = new Set();
-      for (const cue of timeline ?? []) {
-        if (!isDrawActionSafe(cue.action)) continue;
-        const at = Number(cue.at) || 0;
-        const dur = Number(cue.duration) || 0;
-        const t = at + Math.floor(dur * 0.5);
-        const progress = drawProgress(timeline, cue.target, t);
-        if (
-          progress !== undefined &&
-          progress > 0 &&
-          progress < 1 &&
-          !seen.has(cue.target)
-        ) {
-          seen.add(cue.target);
+    // When the scene uses draw reveals, every directed connector should have one
+    // so tips are deferred consistently (SceneRenderer drawProgress contract).
+    if (drawTargets.size > 0) {
+      for (const id of directedArrowIds) {
+        if (!drawTargets.has(id)) {
           findings.push(
             finding(
               "warn",
               deck,
               slideLabel,
-              "draw-in-flight",
-              `t=${t}ms arrow "${cue.target}" mid-draw; UI must defer arrowhead`,
+              "missing-draw-cue",
+              `directed arrow "${id}" has no draw/trace/reveal-stroke cue while siblings do`,
             ),
           );
+        }
+      }
+    }
+
+    // Playhead samples across the timeline: mid-draw moments must defer heads.
+    if (options.strictDraw) {
+      const duration = timelineDurationMs(timeline);
+      const seen = new Set();
+      const samples = new Set([0, Math.floor(duration / 2), duration]);
+      for (const cue of timeline ?? []) {
+        if (!isDrawAction(cue?.action)) continue;
+        const at = Number(cue.at) || 0;
+        const dur = Number(cue.duration) || 0;
+        samples.add(at + Math.floor(dur * 0.5));
+      }
+      for (const t of samples) {
+        for (const cue of timeline ?? []) {
+          if (!isDrawAction(cue?.action)) continue;
+          const progress = drawProgress(timeline, cue.target, t);
+          if (
+            progress !== undefined &&
+            progress > 0 &&
+            progress < 1 &&
+            !seen.has(cue.target)
+          ) {
+            seen.add(cue.target);
+            findings.push(
+              finding(
+                "warn",
+                deck,
+                slideLabel,
+                "draw-in-flight",
+                `t=${t}ms arrow "${cue.target}" mid-draw; UI must defer arrowhead (drawProgress>=1)`,
+              ),
+            );
+          }
         }
       }
     }

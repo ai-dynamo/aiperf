@@ -11,18 +11,25 @@
 //!   `parseNativeEmbeddedScene`)
 //! - decks-flow `package-scene` (`roots` / `timeline` / `camera`)
 //!
-//! Native paths reuse the document scene lowerer. Package paths normalize the
-//! JSON-ish authoring shape into strict `SceneIr`.
+//! Native paths reuse the document scene lowerer when only rect/connector
+//! nodes are present. Package paths (and native scenes with Task-2 primitives
+//! / extended timeline cues) normalize into strict `SceneIr`, desugaring
+//! geometry macros and preserving first-class layout / motion / stagger.
 
 import {
   parseNativeEmbeddedScene,
+  type ArgumentValueAst,
   type EmbeddedSceneSource,
   type PackageSceneAst,
   type SceneAst,
   type ConnectorAst,
   type DocumentAst,
   type LiteralAst,
+  type PropAssignmentAst,
   type RectAst,
+  type RenderDeclarationAst,
+  type ScenePrimitiveAst,
+  type TimelineCueEasing,
 } from "@aiperf/flow-language";
 import {
   diagnostic,
@@ -35,6 +42,12 @@ import {
   type TimelineCueIr,
 } from "@aiperf/flow-schema";
 
+import {
+  asRecord,
+  capabilityKind,
+  desugarPackageNode,
+  lowerFirstClassPackageNode,
+} from "./desugar-scene-primitives.js";
 import type { LinkedDocument, SceneSymbolTable } from "./link.js";
 import { lower } from "./lower.js";
 
@@ -60,6 +73,13 @@ const unknownRange: SourceRange = {
   start: { offset: 0, line: 1, column: 1 },
   end: { offset: 0, line: 1, column: 1 },
 };
+
+const TIMELINE_EASINGS = new Set<TimelineCueEasing>([
+  "linear",
+  "ease-in",
+  "ease-out",
+  "ease-in-out",
+]);
 
 function isSceneAst(value: unknown): value is SceneAst {
   return (
@@ -205,10 +225,184 @@ function emptySceneField(
   };
 }
 
+function resolveArgumentValue(value: ArgumentValueAst): unknown {
+  switch (value.kind) {
+    case "literal":
+      return value.value;
+    case "token-reference":
+      return `@${value.token}`;
+    case "identifier-reference":
+      return value.name;
+    case "object-literal":
+      return Object.fromEntries(
+        value.properties.map((property) => [
+          property.name,
+          resolveArgumentValue(property.value as ArgumentValueAst),
+        ]),
+      );
+  }
+}
+
+function propsToRecord(
+  props: readonly PropAssignmentAst[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const prop of props) {
+    out[prop.name] = resolveArgumentValue(prop.value);
+  }
+  return out;
+}
+
+function renderDeclarationToPackage(
+  node: RenderDeclarationAst,
+): Record<string, unknown> {
+  if (node.kind === "rect") {
+    return {
+      id: node.id,
+      capability: "core.rect",
+      layout: { x: node.x, y: node.y, width: node.width, height: node.height },
+      style: {
+        ...(node.fill.kind === "literal"
+          ? { fill: node.fill.value }
+          : node.fill.kind === "token-reference"
+            ? { fill: `@${node.fill.token}` }
+            : {}),
+        ...(node.stroke === undefined
+          ? {}
+          : node.stroke.kind === "literal"
+            ? { stroke: node.stroke.value }
+            : node.stroke.kind === "token-reference"
+              ? { stroke: `@${node.stroke.token}` }
+              : {}),
+      },
+      text: node.label,
+      accessibility: {
+        label: node.label,
+        ...(node.description.trim().length > 0
+          ? { description: node.description }
+          : {}),
+      },
+      fallback: node.fallback.text,
+    };
+  }
+  if (node.kind === "connector") {
+    return {
+      id: node.id,
+      capability: "core.connector",
+      from: { nodeId: node.from },
+      to: { nodeId: node.to },
+      style: {
+        ...(node.stroke.kind === "literal"
+          ? { stroke: node.stroke.value }
+          : node.stroke.kind === "token-reference"
+            ? { stroke: `@${node.stroke.token}` }
+            : {}),
+      },
+      accessibility: { label: node.label },
+      fallback: node.fallback.text,
+    };
+  }
+  if (node.kind === "scene-primitive") {
+    return scenePrimitiveToPackage(node);
+  }
+  // Component invocations fall through as opaque capability-bearing nodes.
+  const idProp = node.props.find((prop) => prop.name === "id");
+  return {
+    id:
+      idProp !== undefined
+        ? String(resolveArgumentValue(idProp.value))
+        : node.name,
+    capability:
+      node.namespace !== undefined
+        ? `${node.namespace}.${node.name}`
+        : node.name,
+    ...propsToRecord(node.props),
+  };
+}
+
+function scenePrimitiveToPackage(
+  node: ScenePrimitiveAst,
+): Record<string, unknown> {
+  const props = propsToRecord(node.props);
+  return {
+    id: node.id,
+    capability: node.capability,
+    ...props,
+    ...(node.children !== undefined
+      ? { children: node.children.map(renderDeclarationToPackage) }
+      : {}),
+    ...(node.fallback !== undefined ? { fallback: node.fallback.text } : {}),
+  };
+}
+
+function nativeSceneNeedsPackageLower(scene: SceneAst): boolean {
+  for (const node of scene.renderDeclarations) {
+    if (node.kind === "scene-primitive") {
+      return true;
+    }
+  }
+  for (const timeline of scene.timelines) {
+    for (const cue of timeline.cues) {
+      if (
+        cue.action === "stagger" ||
+        cue.action === "enter-children" ||
+        cue.action === "fade" ||
+        cue.action === "exit" ||
+        cue.targets !== undefined ||
+        cue.step !== undefined ||
+        cue.easing !== undefined
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function nativeSceneToPackageScene(scene: SceneAst): PackageSceneAst {
+  const timeline = scene.timelines.flatMap((timelineAst) =>
+    timelineAst.cues.map((cue, index) => ({
+      id: `${timelineAst.id}-${index}`,
+      at: cue.time,
+      duration: cue.duration,
+      target: cue.target,
+      action: cue.action,
+      ...(cue.targets !== undefined ? { targets: cue.targets } : {}),
+      ...(cue.step !== undefined ? { step: cue.step } : {}),
+      ...(cue.easing !== undefined ? { easing: cue.easing } : {}),
+    })),
+  );
+  return {
+    kind: "package-scene",
+    id: scene.id,
+    title: scene.title,
+    ...(scene.summary?.text !== undefined
+      ? { summary: scene.summary.text }
+      : {}),
+    ...(scene.narration?.text !== undefined
+      ? { narration: scene.narration.text }
+      : {}),
+    ...(scene.fallback?.text !== undefined
+      ? { fallback: scene.fallback.text }
+      : {}),
+    roots: scene.renderDeclarations.map(renderDeclarationToPackage),
+    timeline,
+    camera: [],
+    accessibility: {
+      label: scene.title,
+      readingOrder: scene.readingOrder?.references ?? [],
+    },
+  };
+}
+
 function lowerNativeSceneAst(
   scene: SceneAst,
   options: LowerExplainerSceneOptions,
 ): Result<SceneRender> {
+  if (nativeSceneNeedsPackageLower(scene)) {
+    return lowerPackageScene(nativeSceneToPackageScene(scene), options);
+  }
+
   let lowered;
   try {
     lowered = lower(wrapSceneDocument(scene, options.tokens ?? new Map()));
@@ -263,167 +457,6 @@ function validateSceneRender(
   };
 }
 
-function capabilityKind(capability: string): RenderNodeIr["kind"] {
-  const leaf = capability.includes(".")
-    ? capability.slice(capability.lastIndexOf(".") + 1)
-    : capability;
-  switch (leaf) {
-    case "text":
-      return "text";
-    case "connector":
-    case "line":
-    case "arrow":
-    case "path":
-      return "connector";
-    case "group":
-      return "group";
-    default:
-      return "rect";
-  }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return undefined;
-}
-
-function geometryOf(node: Record<string, unknown>): SceneIr["roots"][number]["geometry"] {
-  const geometry = asRecord(node.geometry) ?? asRecord(node.layout) ?? {};
-  return {
-    x: Number(geometry.x ?? 0),
-    y: Number(geometry.y ?? 0),
-    width: Number(geometry.width ?? 0),
-    height: Number(geometry.height ?? 0),
-  };
-}
-
-function styleOf(node: Record<string, unknown>): Record<string, string | number | boolean> {
-  const style = asRecord(node.style) ?? {};
-  const out: Record<string, string | number | boolean> = {};
-  for (const [key, value] of Object.entries(style)) {
-    if (
-      typeof value === "string" ||
-      typeof value === "number" ||
-      typeof value === "boolean"
-    ) {
-      out[key] = value;
-    }
-  }
-  return out;
-}
-
-function finiteOrUndefined(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-/** Preserve authored SVG path data (`d` authoring alias → IR `path`). */
-function pathOf(node: Record<string, unknown>): string | undefined {
-  if (typeof node.path === "string" && node.path.length > 0) {
-    return node.path;
-  }
-  if (typeof node.d === "string" && node.d.length > 0) {
-    return node.d;
-  }
-  return undefined;
-}
-
-function pointsOf(
-  node: Record<string, unknown>,
-): ReadonlyArray<{ x: number; y: number }> | undefined {
-  if (!Array.isArray(node.points) || node.points.length === 0) {
-    return undefined;
-  }
-  const points: Array<{ x: number; y: number }> = [];
-  for (const point of node.points) {
-    const record = asRecord(point);
-    if (record === undefined) {
-      continue;
-    }
-    const x = finiteOrUndefined(record.x);
-    const y = finiteOrUndefined(record.y);
-    if (x === undefined || y === undefined) {
-      continue;
-    }
-    points.push({ x, y });
-  }
-  return points.length > 0 ? points : undefined;
-}
-
-/**
- * Normalize package `from`/`to` endpoints.
- *
- * Decks-flow lines use `{ x, y }`; cinematic connectors use `{ nodeId, anchor? }`.
- * Path-only nodes without endpoints get a zero-point stub so schema stays
- * satisfiable while SceneRenderer prefers authored `path` / `d`.
- */
-function connectorEndpointOf(
-  value: unknown,
-  fallback: "from" | "to",
-): {
-  nodeId?: string;
-  anchor?: string;
-  x?: number;
-  y?: number;
-} {
-  const record = asRecord(value);
-  if (record === undefined) {
-    return { x: 0, y: 0 };
-  }
-  const x = finiteOrUndefined(record.x);
-  const y = finiteOrUndefined(record.y);
-  const nodeId =
-    typeof record.nodeId === "string" && record.nodeId.length > 0
-      ? record.nodeId
-      : typeof record.id === "string" && record.id.length > 0
-        ? record.id
-        : undefined;
-  const anchor =
-    typeof record.anchor === "string" && record.anchor.length > 0
-      ? record.anchor
-      : undefined;
-  if (x !== undefined && y !== undefined) {
-    return {
-      x,
-      y,
-      ...(nodeId !== undefined ? { nodeId } : {}),
-      ...(anchor !== undefined ? { anchor } : {}),
-    };
-  }
-  if (nodeId !== undefined) {
-    return {
-      nodeId,
-      ...(anchor !== undefined ? { anchor } : {}),
-    };
-  }
-  void fallback;
-  return { x: 0, y: 0 };
-}
-
-function geometryFromEndpoints(
-  from: { x?: number; y?: number },
-  to: { x?: number; y?: number },
-  fallback: SceneIr["roots"][number]["geometry"],
-): SceneIr["roots"][number]["geometry"] {
-  if (
-    typeof from.x !== "number" ||
-    typeof from.y !== "number" ||
-    typeof to.x !== "number" ||
-    typeof to.y !== "number"
-  ) {
-    return fallback;
-  }
-  const x = Math.min(from.x, to.x);
-  const y = Math.min(from.y, to.y);
-  return {
-    x,
-    y,
-    width: Math.max(Math.abs(to.x - from.x), 0),
-    height: Math.max(Math.abs(to.y - from.y), 0),
-  };
-}
-
 function normalizePackageNode(value: unknown): RenderNodeIr {
   const node = asRecord(value);
   if (node === undefined) {
@@ -442,81 +475,118 @@ function normalizePackageNode(value: unknown): RenderNodeIr {
           : "core.rect";
   const children = Array.isArray(node.children)
     ? node.children.map(normalizePackageNode)
-    : undefined;
-  const kind =
-    children !== undefined && children.length > 0
-      ? "group"
-      : capabilityKind(capability);
+    : [];
   const accessibilityRecord = asRecord(node.accessibility) ?? {};
   const label =
     typeof node.text === "string"
       ? node.text
-      : typeof accessibilityRecord.label === "string"
-        ? accessibilityRecord.label
-        : id;
+      : typeof node.title === "string"
+        ? node.title
+        : typeof accessibilityRecord.label === "string"
+          ? accessibilityRecord.label
+          : id;
   const description =
     typeof accessibilityRecord.description === "string" &&
     accessibilityRecord.description.length > 0
       ? accessibilityRecord.description
       : undefined;
-  const path = pathOf(node);
-  const points = pointsOf(node);
-  let geometry = geometryOf(node);
-  const base = {
-    id,
-    capabilityId: capability,
-    geometry,
-    style: styleOf(node),
-    accessibility: {
-      label,
-      ...(description !== undefined ? { description } : {}),
-    },
-    fallback: typeof node.fallback === "string" ? node.fallback : label,
-    sourceMap: unknownRange,
-    ...(path !== undefined ? { path } : {}),
-    ...(points !== undefined ? { points } : {}),
-  };
+  const fallback =
+    typeof node.fallback === "string" ? node.fallback : label;
 
-  if (kind === "group") {
-    return { ...base, kind: "group", children: children ?? [] };
+  const common = {
+    id,
+    capability,
+    children,
+    label,
+    fallback,
+    ...(description !== undefined ? { description } : {}),
+  };
+  const desugared = desugarPackageNode(node, common);
+  if (desugared !== undefined) {
+    return desugared;
   }
-  if (kind === "text") {
-    return {
-      ...base,
-      kind: "text",
-      text: typeof node.text === "string" ? node.text : label,
-    };
-  }
-  if (kind === "connector") {
-    const from = connectorEndpointOf(node.from, "from");
-    const to = connectorEndpointOf(node.to, "to");
-    if (
-      geometry.width === 0 &&
-      geometry.height === 0 &&
-      geometry.x === 0 &&
-      geometry.y === 0
-    ) {
-      geometry = geometryFromEndpoints(from, to, geometry);
-    }
-    return {
-      ...base,
-      geometry,
-      kind: "connector",
-      from,
-      to,
-    };
-  }
-  return { ...base, kind: "rect" };
+
+  return lowerFirstClassPackageNode(node, {
+    ...common,
+    kind: capabilityKind(capability),
+  });
 }
 
-function normalizePackageTimeline(value: unknown, index: number): TimelineCueIr {
+function findNodeById(
+  nodes: readonly RenderNodeIr[],
+  id: string,
+): RenderNodeIr | undefined {
+  for (const node of nodes) {
+    if (node.id === id) {
+      return node;
+    }
+    if (node.kind === "group" || node.kind === "component") {
+      const nested = findNodeById(node.children, id);
+      if (nested !== undefined) {
+        return nested;
+      }
+    }
+  }
+  return undefined;
+}
+
+function normalizeEasing(value: unknown): TimelineCueEasing | undefined {
+  return typeof value === "string" &&
+    TIMELINE_EASINGS.has(value as TimelineCueEasing)
+    ? (value as TimelineCueEasing)
+    : undefined;
+}
+
+function normalizePackageTimeline(
+  value: unknown,
+  index: number,
+  roots: readonly RenderNodeIr[],
+): TimelineCueIr {
   const cue = asRecord(value) ?? {};
+  const action = String(cue.action ?? "enter");
+  const target = String(cue.target ?? "");
+  const easing = normalizeEasing(cue.easing);
+  const step =
+    typeof cue.step === "number" && Number.isFinite(cue.step)
+      ? cue.step
+      : undefined;
+  let targets: readonly string[] | undefined;
+  if (Array.isArray(cue.targets)) {
+    targets = cue.targets
+      .filter((item): item is string => typeof item === "string" && item.length > 0);
+  }
+
+  // Expand enter-children into a compact stagger when child ids are known.
+  if (action === "enter-children" && target.length > 0) {
+    const group = findNodeById(roots, target);
+    if (
+      group !== undefined &&
+      (group.kind === "group" || group.kind === "component") &&
+      group.children.length > 0
+    ) {
+      return {
+        id: String(cue.id ?? `cue-${index}`),
+        at: Number(cue.at ?? 0),
+        duration: Number(cue.duration ?? 0),
+        target,
+        action: "stagger",
+        targets: group.children.map((child) => child.id),
+        step: step ?? 80,
+        ...(easing !== undefined ? { easing } : {}),
+        sourceMap: unknownRange,
+      };
+    }
+  }
+
   return {
     id: String(cue.id ?? `cue-${index}`),
     at: Number(cue.at ?? 0),
     duration: Number(cue.duration ?? 0),
-    target: String(cue.target ?? ""),
-    action: String(cue.action ?? "enter"),
+    target,
+    action,
+    ...(targets !== undefined && targets.length > 0 ? { targets } : {}),
+    ...(step !== undefined ? { step } : {}),
+    ...(easing !== undefined ? { easing } : {}),
     sourceMap: unknownRange,
   };
 }
@@ -527,7 +597,9 @@ function lowerPackageScene(
 ): Result<SceneRender> {
   const defaults = options.defaults ?? {};
   const roots = scene.roots.map(normalizePackageNode);
-  const timeline = (scene.timeline ?? []).map(normalizePackageTimeline);
+  const timeline = (scene.timeline ?? []).map((cue, index) =>
+    normalizePackageTimeline(cue, index, roots),
+  );
   if (roots.length === 0) {
     return emptySceneField("roots", options);
   }
@@ -568,6 +640,11 @@ function lowerPackageScene(
     accessibilityRecord.label.length > 0
       ? accessibilityRecord.label
       : title;
+  const readingOrder = Array.isArray(accessibilityRecord.readingOrder)
+    ? accessibilityRecord.readingOrder.filter(
+        (item): item is string => typeof item === "string",
+      )
+    : roots.map((node) => node.id);
   const viewportRecord = asRecord(scene.viewport);
   const viewport =
     viewportRecord !== undefined
@@ -589,7 +666,8 @@ function lowerPackageScene(
     responsive: [],
     accessibility: {
       label: accessibilityLabel,
-      readingOrder: roots.map((node) => node.id),
+      readingOrder:
+        readingOrder.length > 0 ? readingOrder : roots.map((node) => node.id),
     },
     fallback,
     sourceMap: unknownRange,
@@ -653,3 +731,6 @@ export function lowerExplainerScene(
 
   return lowerNativeSceneAst(scene, options);
 }
+
+/** Re-export for callers / tests that inspect kind mapping. */
+export { capabilityKind };

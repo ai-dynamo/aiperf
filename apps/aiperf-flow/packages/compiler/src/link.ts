@@ -461,6 +461,9 @@ export function link(
           ].filter((entry): entry is Diagnostic => entry !== undefined),
         );
       }
+      if (node.kind === "scene-primitive") {
+        continue;
+      }
       const value = node.kind === "rect" ? node.fill : node.stroke;
       const valueDiagnostic = checkValueReference(value, tokens);
       if (valueDiagnostic !== undefined) {

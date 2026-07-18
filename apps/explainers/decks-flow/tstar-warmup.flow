@@ -1,0 +1,2470 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+explainer "t* Warmup" {
+  id: "tstar-warmup"
+  route: "/tstar-warmup"
+  topic: "graph-runtime"
+  storagePrefix: "tstar-warmup-explainer"
+  classPrefix: "deck-tstar-warmup"
+  eyebrowLabel: "T* WARMUP"
+  startGateTitle: "t* warmup & cache-pressure handoff"
+
+  hub: {
+    highlight: "t* warmup"
+    title: "snapshot · pressure · handoff"
+    description: "How graph runs warm KV via a deterministic t* chop, cache-pressure recycle, and resume handoff — vs ordinary request-count warmup."
+  }
+
+  slide "Why graph warmup" {
+    eyebrow: "Why graph warmup"
+    title: "Cold KV vs measuring a mid-trace resume"
+    lede: "A recorded multi-turn trace arrives with cold prefix and cold KV. Graph warmup exists so profiling can measure from a mid-trace frontier — not from an empty cache."
+
+    narration: "Graph runs often care about mid-trace resume, not cold-start TTFT. Without warmup, every lane starts with a cold prefix and empty server KV. Trajectory t* warmup builds that history first, then profiles from the live frontier."
+
+    term: {
+      word: "mid-trace resume"
+      meaning: "Profiling starts after a deterministic prefix of a recorded trajectory has already executed, so the server holds KV for that history and the client resumes the remaining live nodes."
+    }
+
+    points: [
+      "Cold start: empty server KV and a cold prompt prefix on every lane.",
+      "Graph profiling often wants steady mid-trace behavior, not first-token cold start.",
+      "Evidence: `rust/runtime/src/graph/tstar.rs` — t* splits firings into a warmup prefix and a profiled set."
+    ]
+
+    caption: "Warm history first; measure from the frontier."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s1-hdr"
+          capability: "core.header"
+          title: "COLD START ≠ MID-TRACE"
+          caption: "Warm history first; measure from the frontier."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s1-cold"
+          capability: "core.panel"
+          title: "Cold start"
+          detail: "empty KV · cold prefix"
+          layout: { x: 60, y: 110, width: 200, height: 110 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.5, radius: 10 }
+        },
+        {
+          id: "s1-a1"
+          capability: "core.connector"
+          from: { nodeId: "s1-cold", anchor: "e" }
+          to: { nodeId: "s1-warm", anchor: "w" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s1-warm"
+          capability: "core.panel"
+          title: "t* warmup"
+          detail: "execute prefix"
+          layout: { x: 320, y: 110, width: 160, height: 110 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s1-a2"
+          capability: "core.connector"
+          from: { nodeId: "s1-warm", anchor: "e" }
+          to: { nodeId: "s1-resume", anchor: "w" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s1-resume"
+          capability: "core.panel"
+          title: "Mid-trace resume"
+          detail: "warm KV · live set"
+          layout: { x: 540, y: 110, width: 120, height: 110 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s1-note"
+          capability: "core.note"
+          caption: "Profiling measures from the frontier, not from empty cache"
+          layout: { x: 60, y: 260, width: 600, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s1-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s1-cold", anchor: "center" }
+          to: { nodeId: "s1-resume", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
+          accessibility: { label: "cold to resume" }
+        }
+      ]
+      timeline: [
+        { id: "s1-enter-hdr", at: 0, duration: 260, target: "s1-hdr", action: "enter" },
+        { id: "s1-enter-cold", at: 180, duration: 280, target: "s1-cold", action: "enter" },
+        { id: "s1-draw-a1", at: 420, duration: 320, target: "s1-a1", action: "draw" },
+        { id: "s1-enter-warm", at: 560, duration: 280, target: "s1-warm", action: "enter" },
+        { id: "s1-draw-a2", at: 780, duration: 320, target: "s1-a2", action: "draw" },
+        { id: "s1-enter-resume", at: 920, duration: 280, target: "s1-resume", action: "enter" },
+        { id: "s1-enter-note", at: 1140, duration: 280, target: "s1-note", action: "enter" },
+        { id: "s1-draw-motion", at: 1400, duration: 900, target: "s1-motion", action: "draw" },
+        { id: "s1-emph", at: 2200, duration: 400, target: "s1-resume", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Ordinary warmup ≠ t*" {
+    eyebrow: "Ordinary warmup ≠ t*"
+    title: "Request-count phases vs a trajectory partition"
+    lede: "Ordinary `--warmup-request-count` / duration phases burn requests and discard metrics. Trajectory `t*` partitions one recorded graph into a warmup prefix and a live profiling set."
+
+    narration: "Ordinary warmup is a separate phase that sends N requests or runs for a duration, then throws those metrics away. Trajectory t* is different: it chops a recorded multi-turn graph at a deterministic instant so the same plan warms and profiles one trajectory."
+
+    term: {
+      word: "ordinary phase warmup"
+      meaning: "Lifecycle warmup driven by `--warmup-request-count` or a duration stop; metrics from that phase are discarded before profiling begins."
+    }
+
+    points: [
+      "`--warmup-request-count` / duration phases warm the system, then discard warmup metrics.",
+      "`t*` partitions a recorded trajectory: arrivals before `t*` are history; arrivals at/after `t*` are the live set.",
+      "Keep three ideas distinct: phase warmup, trajectory chop, and later cache-pressure handoff.",
+      "Evidence: `docs/tutorials/warmup.md`; `rust/runtime/src/graph/tstar.rs`."
+    ]
+
+    caption: "Phase warmup burns requests; t* chops a trajectory."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s2-hdr"
+          capability: "core.header"
+          title: "TWO DIFFERENT WARMUPS"
+          caption: "Phase warmup burns requests; t* chops a trajectory."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s2-steps"
+          capability: "core.stepper"
+          steps: ["phase warmup", "t* chop", "handoff"]
+          linked: true
+          layout: { x: 80, y: 68, width: 540, height: 26 }
+          style: { gap: 18 }
+        },
+        {
+          id: "s2-ord"
+          capability: "core.panel"
+          title: "Ordinary phase warmup"
+          detail: "count / duration · discard metrics"
+          layout: { x: 40, y: 110, width: 280, height: 110 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.5, radius: 10 }
+        },
+        {
+          id: "s2-ord-a"
+          capability: "core.panel"
+          title: "Warmup phase"
+          detail: "N requests"
+          layout: { x: 60, y: 250, width: 110, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.tertiary, strokeWidth: 1.3, radius: 8 }
+        },
+        {
+          id: "s2-ord-b"
+          capability: "core.panel"
+          title: "Profiling"
+          detail: "fresh metrics"
+          layout: { x: 200, y: 250, width: 110, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.5, radius: 8 }
+        },
+        {
+          id: "s2-ord-link"
+          capability: "core.route"
+          from: { nodeId: "s2-ord-a", anchor: "e" }
+          to: { nodeId: "s2-ord-b", anchor: "w" }
+          style: { stroke: @theme.ink.secondary, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s2-div"
+          capability: "core.divider"
+          layout: { x: 350, y: 100, width: 2, height: 230 }
+          axis: "y"
+          style: { stroke: @theme.ink.tertiary, strokeWidth: 1.2, fill: "none", markerEnd: "none" }
+          accessibility: { label: "column divider" }
+        },
+        {
+          id: "s2-tstar"
+          capability: "core.panel"
+          title: "Trajectory t*"
+          detail: "partition one recorded graph"
+          layout: { x: 380, y: 110, width: 280, height: 110 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s2-ts-a"
+          capability: "core.panel"
+          title: "Prefix < t*"
+          detail: "warmup history"
+          layout: { x: 400, y: 250, width: 110, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 8 }
+        },
+        {
+          id: "s2-ts-b"
+          capability: "core.panel"
+          title: "Live ≥ t*"
+          detail: "profile set"
+          layout: { x: 540, y: 250, width: 110, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.5, radius: 8 }
+        },
+        {
+          id: "s2-ts-link"
+          capability: "core.route"
+          from: { nodeId: "s2-ts-a", anchor: "e" }
+          to: { nodeId: "s2-ts-b", anchor: "w" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s2-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s2-ord", anchor: "center" }
+          to: { nodeId: "s2-tstar", anchor: "center" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none", opacity: 0.45 }
+          accessibility: { label: "contrast signal" }
+        }
+      ]
+      timeline: [
+        { id: "s2-enter-hdr", at: 0, duration: 260, target: "s2-hdr", action: "enter" },
+        { id: "s2-enter-steps", at: 80, duration: 200, action: "stagger", targets: ["s2-steps-step-0", "s2-steps-step-1", "s2-steps-step-2"], step: 70 },
+        { id: "s2-enter-ord", at: 160, duration: 280, target: "s2-ord", action: "enter" },
+        { id: "s2-enter-tstar", at: 280, duration: 280, target: "s2-tstar", action: "enter" },
+        { id: "s2-draw-div", at: 480, duration: 200, target: "s2-div", action: "draw" },
+        { id: "s2-enter-orda", at: 560, duration: 240, target: "s2-ord-a", action: "enter" },
+        { id: "s2-draw-ordlink", at: 720, duration: 280, target: "s2-ord-link", action: "draw" },
+        { id: "s2-enter-ordb", at: 820, duration: 240, target: "s2-ord-b", action: "enter" },
+        { id: "s2-enter-tsa", at: 900, duration: 240, target: "s2-ts-a", action: "enter" },
+        { id: "s2-draw-tslink", at: 1060, duration: 280, target: "s2-ts-link", action: "draw" },
+        { id: "s2-enter-tsb", at: 1160, duration: 240, target: "s2-ts-b", action: "enter" },
+        { id: "s2-draw-motion", at: 1400, duration: 800, target: "s2-motion", action: "draw" },
+        { id: "s2-emph", at: 2100, duration: 400, target: "s2-tstar", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "The t* picture" {
+    eyebrow: "The t* picture"
+    title: "Four arrivals, one vertical cut"
+    lede: "A toy four-turn trace (`n0…n3`) sits on a horizontal arrival timeline. A vertical `t*` rule chops history on the left from the live frontier on the right."
+
+    narration: "Picture a recorded multi-turn graph as four nodes on an arrival timeline. t* is a vertical cut: arrivals before t* are warmup history; arrivals at or after t* are the live set that profiling will resume."
+
+    term: {
+      word: "t*"
+      meaning: "A deterministic per-(trace, lane) sampling instant in microseconds that splits a trajectory into a warmup prefix and a profiled live set."
+    }
+
+    points: [
+      "Motif: horizontal arrivals `n0…n3`; vertical `t*` rule in warning accent.",
+      "Pre-`t*` history is muted; post-`t*` live nodes stay primary/green.",
+      "Evidence: `rust/runtime/src/graph/snapshot.rs` — drop `arrival_offset_us < t*`, re-root survivors from `START`."
+    ]
+
+    caption: "n0 · n1 | t* | n2 · n3 — history left, live right."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s3-hdr"
+          capability: "core.header"
+          title: "ARRIVALS TIMELINE · t* CUT"
+          caption: "n0 · n1 | t* | n2 · n3 — history left, live right."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s3-n0"
+          capability: "core.panel"
+          title: "n0"
+          detail: "turn 0"
+          layout: { x: 40, y: 140, width: 100, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
+        },
+        {
+          id: "s3-e01"
+          capability: "core.connector"
+          from: { nodeId: "s3-n0", anchor: "e" }
+          to: { nodeId: "s3-n1", anchor: "w" }
+          style: { stroke: @theme.ink.secondary, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s3-n1"
+          capability: "core.panel"
+          title: "n1"
+          detail: "turn 1"
+          layout: { x: 180, y: 140, width: 100, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10 }
+        },
+        {
+          id: "s3-cut"
+          capability: "core.path"
+          d: "M340 80 V300"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 3 }
+        },
+        {
+          id: "s3-cut-l"
+          capability: "core.text"
+          text: "t*"
+          layout: { x: 318, y: 56, width: 44, height: 20 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        },
+        {
+          id: "s3-n2"
+          capability: "core.panel"
+          title: "n2"
+          detail: "turn 2"
+          layout: { x: 380, y: 140, width: 100, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s3-e23"
+          capability: "core.connector"
+          from: { nodeId: "s3-n2", anchor: "e" }
+          to: { nodeId: "s3-n3", anchor: "w" }
+          style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s3-n3"
+          capability: "core.panel"
+          title: "n3"
+          detail: "turn 3"
+          layout: { x: 520, y: 140, width: 100, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s3-hist"
+          capability: "core.note"
+          caption: "pre-t* history (warmup)"
+          layout: { x: 40, y: 270, width: 240, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s3-live"
+          capability: "core.note"
+          caption: "post-t* live set (profile)"
+          layout: { x: 380, y: 270, width: 240, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s3-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s3-n0", anchor: "center" }
+          to: { nodeId: "s3-n3", anchor: "center" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none", opacity: 0.45 }
+          accessibility: { label: "timeline motion" }
+        }
+      ]
+      timeline: [
+        { id: "s3-enter-hdr", at: 0, duration: 260, target: "s3-hdr", action: "enter" },
+        { id: "s3-enter-n0", at: 160, duration: 240, target: "s3-n0", action: "enter" },
+        { id: "s3-draw-e01", at: 360, duration: 260, target: "s3-e01", action: "draw" },
+        { id: "s3-enter-n1", at: 480, duration: 240, target: "s3-n1", action: "enter" },
+        { id: "s3-draw-cut", at: 680, duration: 360, target: "s3-cut", action: "draw" },
+        { id: "s3-enter-cutl", at: 780, duration: 200, target: "s3-cut-l", action: "enter" },
+        { id: "s3-enter-n2", at: 960, duration: 240, target: "s3-n2", action: "enter" },
+        { id: "s3-draw-e23", at: 1140, duration: 260, target: "s3-e23", action: "draw" },
+        { id: "s3-enter-n3", at: 1260, duration: 240, target: "s3-n3", action: "enter" },
+        { id: "s3-enter-hist", at: 1480, duration: 240, target: "s3-hist", action: "enter" },
+        { id: "s3-enter-live", at: 1580, duration: 240, target: "s3-live", action: "enter" },
+        { id: "s3-draw-motion", at: 1800, duration: 900, target: "s3-motion", action: "draw" },
+        { id: "s3-emph", at: 2500, duration: 400, target: "s3-cut", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "What stays warm" {
+    eyebrow: "What stays warm"
+    title: "Server KV warms; the client still materializes the full prompt"
+    lede: "Executed pre-`t*` turns leave KV on the server. The snapshot chop still keeps the full prompt segment path so the worker materializes the exact resume prompt."
+
+    narration: "Warmup executes the prefix so the inference server holds KV for that history. On the client side, the snapshot chop leaves each survivor's prompt program unchanged — the pre-t* segments stay in the path so resume materializes the exact prompt, not a truncated one."
+
+    term: {
+      word: "prompt path unchanged"
+      meaning: "After the trie chop, surviving nodes keep their full pre-t* segment program so BodyPlan materialization still rebuilds the exact resume prompt."
+    }
+
+    points: [
+      "Server: KV for executed prefix turns stays warm across the handoff.",
+      "Client: survivors keep the full prompt segment path — resume is exact, not truncated.",
+      "Evidence: `rust/runtime/src/graph/snapshot.rs` — \"Leaves each surviving node's prompt segment program unchanged.\""
+    ]
+
+    caption: "Warm KV on the server · full prompt path on the client."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s4-hdr"
+          capability: "core.header"
+          title: "SERVER KV · CLIENT PROMPT PATH"
+          caption: "Warm KV on the server · full prompt path on the client."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s4-server"
+          capability: "core.panel"
+          title: "Inference server"
+          detail: "KV for n0 · n1"
+          layout: { x: 50, y: 110, width: 220, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s4-kv"
+          capability: "core.panel"
+          title: "Warm KV"
+          detail: "executed prefix"
+          layout: { x: 80, y: 240, width: 160, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s4-sv-link"
+          capability: "core.route"
+          from: { nodeId: "s4-server", anchor: "s" }
+          to: { nodeId: "s4-kv", anchor: "n" }
+          style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s4-client"
+          capability: "core.panel"
+          title: "AIPerf worker"
+          detail: "materialize resume"
+          layout: { x: 400, y: 110, width: 240, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s4-path"
+          capability: "core.panel"
+          title: "Full prompt path"
+          detail: "pre-t* segments kept"
+          layout: { x: 430, y: 240, width: 180, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s4-cl-link"
+          capability: "core.route"
+          from: { nodeId: "s4-client", anchor: "s" }
+          to: { nodeId: "s4-path", anchor: "n" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s4-bridge"
+          capability: "core.connector"
+          from: { nodeId: "s4-server", anchor: "e" }
+          to: { nodeId: "s4-client", anchor: "w" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s4-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s4-kv", anchor: "center" }
+          to: { nodeId: "s4-path", anchor: "center" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none", opacity: 0.5 }
+          accessibility: { label: "kv to prompt path" }
+        }
+      ]
+      timeline: [
+        { id: "s4-enter-hdr", at: 0, duration: 260, target: "s4-hdr", action: "enter" },
+        { id: "s4-enter-server", at: 180, duration: 280, target: "s4-server", action: "enter" },
+        { id: "s4-draw-bridge", at: 420, duration: 320, target: "s4-bridge", action: "draw" },
+        { id: "s4-enter-client", at: 560, duration: 280, target: "s4-client", action: "enter" },
+        { id: "s4-draw-sv", at: 800, duration: 280, target: "s4-sv-link", action: "draw" },
+        { id: "s4-enter-kv", at: 920, duration: 260, target: "s4-kv", action: "enter" },
+        { id: "s4-draw-cl", at: 1100, duration: 280, target: "s4-cl-link", action: "draw" },
+        { id: "s4-enter-path", at: 1220, duration: 260, target: "s4-path", action: "enter" },
+        { id: "s4-draw-motion", at: 1500, duration: 900, target: "s4-motion", action: "draw" },
+        { id: "s4-emph", at: 2300, duration: 400, target: "s4-path", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Two phases, one plan" {
+    eyebrow: "Two phases, one plan"
+    title: "Warmup builds state; profiling resumes the same seeded t*"
+    lede: "Warmup drains into a handoff payload. Both phases share the same seeded `t*` plan — profiling does not re-draw a new cut."
+
+    narration: "Warmup executes the chopped prefix, pressure-recycles as configured, then builds a handoff payload. Profiling consumes that handoff once. Both phases share the same seeded t* plan and do not re-draw a new cut; the handoff still records the instance's t* instant plus frontier state the seed alone cannot reproduce."
+
+    term: {
+      word: "seeded t* plan"
+      meaning: "Per-(trace, lane) t* drawn from WindowTStarSampler with a lane-salted SHA-256 seed; warmup and profiling share the same draw (not a new sample). LaneHandoff still records the instance's t_star_us plus frontier state the seed alone cannot reproduce."
+    }
+
+    points: [
+      "Warmup builds `GraphWarmupHandoff` (template, `instance_id`, `t_star_us`, executed nodes, return walls).",
+      "Same seed · not a new draw: both phases share the seeded t* plan; the handoff still records instance `t_star_us` plus frontier state the seed alone cannot reproduce.",
+      "Profiling resumes at the recorded frontier; it does not sample a new t*.",
+      "Evidence: `rust/runtime/src/graph/warmup_handoff.rs`; `rust/runtime/src/graph/tstar.rs`."
+    ]
+
+    caption: "Same seed · not a new draw · handoff records t_star_us + frontier."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s5-hdr"
+          capability: "core.header"
+          title: "WARMUP → HANDOFF → PROFILE"
+          caption: "Same seed · not a new draw · handoff records t_star_us + frontier."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s5-warm"
+          capability: "core.panel"
+          title: "Warmup phase"
+          detail: "chop · execute · drain"
+          layout: { x: 40, y: 120, width: 160, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s5-a1"
+          capability: "core.connector"
+          from: { nodeId: "s5-warm", anchor: "e" }
+          to: { nodeId: "s5-hand", anchor: "w" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s5-hand"
+          capability: "core.panel"
+          title: "Handoff"
+          detail: "LaneHandoff payload"
+          layout: { x: 260, y: 120, width: 160, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s5-a2"
+          capability: "core.connector"
+          from: { nodeId: "s5-hand", anchor: "e" }
+          to: { nodeId: "s5-prof", anchor: "w" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s5-prof"
+          capability: "core.panel"
+          title: "Profiling"
+          detail: "resume frontier"
+          layout: { x: 480, y: 120, width: 160, height: 100 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s5-seed"
+          capability: "core.panel"
+          title: "Shared seeded sampler"
+          detail: "same t* · not re-drawn"
+          layout: { x: 200, y: 260, width: 280, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s5-seed-w"
+          capability: "core.route"
+          from: { nodeId: "s5-seed", anchor: "w" }
+          to: { nodeId: "s5-warm", anchor: "s" }
+          style: { stroke: @theme.accent.green, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s5-seed-p"
+          capability: "core.route"
+          from: { nodeId: "s5-seed", anchor: "e" }
+          to: { nodeId: "s5-prof", anchor: "s" }
+          style: { stroke: @theme.accent.green, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s5-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s5-warm", anchor: "center" }
+          to: { nodeId: "s5-prof", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
+          accessibility: { label: "warmup to profiling" }
+        }
+      ]
+      timeline: [
+        { id: "s5-enter-hdr", at: 0, duration: 260, target: "s5-hdr", action: "enter" },
+        { id: "s5-enter-warm", at: 180, duration: 280, target: "s5-warm", action: "enter" },
+        { id: "s5-draw-a1", at: 420, duration: 320, target: "s5-a1", action: "draw" },
+        { id: "s5-enter-hand", at: 560, duration: 280, target: "s5-hand", action: "enter" },
+        { id: "s5-draw-a2", at: 780, duration: 320, target: "s5-a2", action: "draw" },
+        { id: "s5-enter-prof", at: 920, duration: 280, target: "s5-prof", action: "enter" },
+        { id: "s5-enter-seed", at: 1160, duration: 280, target: "s5-seed", action: "enter" },
+        { id: "s5-draw-sw", at: 1360, duration: 300, target: "s5-seed-w", action: "draw" },
+        { id: "s5-draw-sp", at: 1480, duration: 300, target: "s5-seed-p", action: "draw" },
+        { id: "s5-draw-motion", at: 1700, duration: 900, target: "s5-motion", action: "draw" },
+        { id: "s5-emph", at: 2500, duration: 400, target: "s5-seed", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Duration & window" {
+    eyebrow: "Duration & window"
+    title: "Max arrival defines the span; ratios scale the window"
+    lede: "`trace_duration_us` is the max `arrival_offset_us` across nodes. The sampling window is `[trajectory_start_min_ratio, trajectory_start_max_ratio] × duration`."
+
+    narration: "Before drawing t*, the runtime measures how long the recorded trajectory spans — the latest arrival across nodes, or zero when no node carries timing. Config ratios then scale that duration into a closed sampling window for the t* draw."
+
+    term: {
+      word: "trace_duration_us"
+      meaning: "Largest arrival_offset_us across the resolved trace graph's nodes; zero when no node carries timing metadata."
+    }
+
+    points: [
+      "`trace_duration_us` = max node `arrival_offset_us` (else `0.0`).",
+      "Window bounds: `lo = trajectory_start_min_ratio × duration`, `hi = trajectory_start_max_ratio × duration`.",
+      "Default ratios `[0, 0]` collapse the window to an exact instant at the start.",
+      "Evidence: `rust/runtime/src/graph/tstar.rs` — `trace_duration_us`, `WindowTStarSampler`."
+    ]
+
+    caption: "duration = max arrival · window = ratios × duration."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s6-hdr"
+          capability: "core.header"
+          title: "DURATION → WINDOW"
+          caption: "duration = max arrival · window = ratios × duration."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s6-n0"
+          capability: "core.panel"
+          title: "n0"
+          detail: "0 µs"
+          layout: { x: 40, y: 100, width: 90, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 8 }
+        },
+        {
+          id: "s6-n1"
+          capability: "core.panel"
+          title: "n1"
+          detail: "mid"
+          layout: { x: 160, y: 100, width: 90, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 8 }
+        },
+        {
+          id: "s6-n2"
+          capability: "core.panel"
+          title: "n2"
+          detail: "later"
+          layout: { x: 280, y: 100, width: 90, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.5, radius: 8 }
+        },
+        {
+          id: "s6-n3"
+          capability: "core.panel"
+          title: "n3"
+          detail: "max = dur"
+          layout: { x: 400, y: 100, width: 100, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 8 }
+        },
+        {
+          id: "s6-e01"
+          capability: "core.connector"
+          from: { nodeId: "s6-n0", anchor: "e" }
+          to: { nodeId: "s6-n1", anchor: "w" }
+          style: { stroke: @theme.ink.secondary, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s6-e12"
+          capability: "core.connector"
+          from: { nodeId: "s6-n1", anchor: "e" }
+          to: { nodeId: "s6-n2", anchor: "w" }
+          style: { stroke: @theme.ink.secondary, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s6-e23"
+          capability: "core.connector"
+          from: { nodeId: "s6-n2", anchor: "e" }
+          to: { nodeId: "s6-n3", anchor: "w" }
+          style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s6-dur"
+          capability: "core.panel"
+          title: "trace_duration_us"
+          detail: "max arrival_offset_us"
+          layout: { x: 520, y: 100, width: 150, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 8 }
+        },
+        {
+          id: "s6-dur-link"
+          capability: "core.route"
+          from: { nodeId: "s6-n3", anchor: "e" }
+          to: { nodeId: "s6-dur", anchor: "w" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s6-lo"
+          capability: "core.panel"
+          title: "lo"
+          detail: "min_ratio × dur"
+          layout: { x: 80, y: 230, width: 200, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.5, radius: 8 }
+        },
+        {
+          id: "s6-hi"
+          capability: "core.panel"
+          title: "hi"
+          detail: "max_ratio × dur"
+          layout: { x: 400, y: 230, width: 200, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.5, radius: 8 }
+        },
+        {
+          id: "s6-win"
+          capability: "core.connector"
+          from: { nodeId: "s6-lo", anchor: "e" }
+          to: { nodeId: "s6-hi", anchor: "w" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.4, fill: "none" }
+        },
+        {
+          id: "s6-knobs"
+          capability: "core.note"
+          caption: "trajectory_start_min_ratio · trajectory_start_max_ratio"
+          layout: { x: 120, y: 320, width: 460, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s6-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s6-n0", anchor: "center" }
+          to: { nodeId: "s6-dur", anchor: "center" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none", opacity: 0.45 }
+          accessibility: { label: "arrivals to duration" }
+        }
+      ]
+      timeline: [
+        { id: "s6-enter-hdr", at: 0, duration: 260, target: "s6-hdr", action: "enter" },
+        { id: "s6-enter-n0", at: 140, duration: 220, target: "s6-n0", action: "enter" },
+        { id: "s6-draw-e01", at: 320, duration: 220, target: "s6-e01", action: "draw" },
+        { id: "s6-enter-n1", at: 420, duration: 220, target: "s6-n1", action: "enter" },
+        { id: "s6-draw-e12", at: 580, duration: 220, target: "s6-e12", action: "draw" },
+        { id: "s6-enter-n2", at: 680, duration: 220, target: "s6-n2", action: "enter" },
+        { id: "s6-draw-e23", at: 840, duration: 220, target: "s6-e23", action: "draw" },
+        { id: "s6-enter-n3", at: 940, duration: 220, target: "s6-n3", action: "enter" },
+        { id: "s6-draw-durlink", at: 1100, duration: 260, target: "s6-dur-link", action: "draw" },
+        { id: "s6-enter-dur", at: 1220, duration: 240, target: "s6-dur", action: "enter" },
+        { id: "s6-enter-lo", at: 1440, duration: 240, target: "s6-lo", action: "enter" },
+        { id: "s6-draw-win", at: 1600, duration: 280, target: "s6-win", action: "draw" },
+        { id: "s6-enter-hi", at: 1720, duration: 240, target: "s6-hi", action: "enter" },
+        { id: "s6-enter-knobs", at: 1940, duration: 240, target: "s6-knobs", action: "enter" },
+        { id: "s6-draw-motion", at: 2100, duration: 800, target: "s6-motion", action: "draw" },
+        { id: "s6-emph", at: 2700, duration: 400, target: "s6-dur", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "WindowTStarSampler" {
+    eyebrow: "WindowTStarSampler"
+    title: "Uniform draw in [lo, hi]; collapsed windows skip RNG"
+    lede: "`WindowTStarSampler` draws uniformly in `[lo, hi]`. Non-positive duration or `hi ≤ lo` returns an exact instant — float microseconds, no integer truncation."
+
+    narration: "When the trajectory duration is positive and the window upper bound is strictly above the lower bound, t* is a uniform random instant inside that open window. Otherwise the sampler returns an exact instant: zero for a non-positive duration, or the clamped lower bound when the window collapses — including the default ratios that pin both ends at zero."
+
+    term: {
+      word: "WindowTStarSampler"
+      meaning: "Window policy for t*: t* = uniform(min×dur, max×dur) when the window is open; otherwise an exact instant with no RNG draw."
+    }
+
+    points: [
+      "Open window: `NumpyPcg64` uniform in `[lo, hi]`, then `t.max(0.0)` — float µs, no integer truncation.",
+      "`duration_us ≤ 0` → `0.0`; `hi ≤ lo` → `lo.max(0.0)` with no draw.",
+      "Knobs feed the sampler: `trajectory_start_*_ratio` and `t_star_random_seed`.",
+      "Evidence: `rust/runtime/src/graph/tstar.rs` — `WindowTStarSampler::sample_t_star`."
+    ]
+
+    caption: "Open window draws · collapsed window is exact."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s7-hdr"
+          capability: "core.header"
+          title: "UNIFORM · OR EXACT INSTANT"
+          caption: "Open window draws · collapsed window is exact."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s7-open"
+          capability: "core.panel"
+          title: "Open window"
+          detail: "hi > lo · dur > 0"
+          layout: { x: 40, y: 100, width: 280, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s7-draw"
+          capability: "core.panel"
+          title: "uniform(lo, hi)"
+          detail: "NumPy PCG64 · float µs"
+          layout: { x: 70, y: 220, width: 220, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s7-open-link"
+          capability: "core.route"
+          from: { nodeId: "s7-open", anchor: "s" }
+          to: { nodeId: "s7-draw", anchor: "n" }
+          style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s7-div"
+          capability: "core.divider"
+          layout: { x: 350, y: 90, width: 2, height: 220 }
+          axis: "y"
+          style: { stroke: @theme.ink.tertiary, strokeWidth: 1.2, fill: "none", markerEnd: "none" }
+          accessibility: { label: "column divider" }
+        },
+        {
+          id: "s7-coll"
+          capability: "core.panel"
+          title: "Collapsed / empty"
+          detail: "dur ≤ 0 or hi ≤ lo"
+          layout: { x: 380, y: 100, width: 280, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s7-exact"
+          capability: "core.panel"
+          title: "Exact instant"
+          detail: "0.0 or lo.max(0) · no RNG"
+          layout: { x: 410, y: 220, width: 220, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.5, radius: 8 }
+        },
+        {
+          id: "s7-coll-link"
+          capability: "core.route"
+          from: { nodeId: "s7-coll", anchor: "s" }
+          to: { nodeId: "s7-exact", anchor: "n" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s7-note"
+          capability: "core.note"
+          caption: "Default [0, 0] ratios → exact t* = 0 · full replay"
+          layout: { x: 120, y: 320, width: 460, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s7-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s7-open", anchor: "center" }
+          to: { nodeId: "s7-coll", anchor: "center" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none", opacity: 0.4 }
+          accessibility: { label: "open vs collapsed" }
+        }
+      ]
+      timeline: [
+        { id: "s7-enter-hdr", at: 0, duration: 260, target: "s7-hdr", action: "enter" },
+        { id: "s7-enter-open", at: 160, duration: 280, target: "s7-open", action: "enter" },
+        { id: "s7-enter-coll", at: 280, duration: 280, target: "s7-coll", action: "enter" },
+        { id: "s7-draw-div", at: 480, duration: 200, target: "s7-div", action: "draw" },
+        { id: "s7-draw-ol", at: 600, duration: 280, target: "s7-open-link", action: "draw" },
+        { id: "s7-enter-draw", at: 720, duration: 260, target: "s7-draw", action: "enter" },
+        { id: "s7-draw-cl", at: 900, duration: 280, target: "s7-coll-link", action: "draw" },
+        { id: "s7-enter-exact", at: 1020, duration: 260, target: "s7-exact", action: "enter" },
+        { id: "s7-enter-note", at: 1260, duration: 260, target: "s7-note", action: "enter" },
+        { id: "s7-draw-motion", at: 1500, duration: 800, target: "s7-motion", action: "draw" },
+        { id: "s7-emph", at: 2200, duration: 400, target: "s7-draw", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Lane-salted seed" {
+    eyebrow: "Lane-salted seed"
+    title: "SHA-256 of base:trace:lane seeds NumPy PCG64"
+    lede: "`seed_for_trace_lane` hashes `\"{base}:{trace_id}:{lane}\"` (SHA-256, first 8 bytes BE). Base is `t_star_random_seed` — decorrelated per trace and lane."
+
+    narration: "Each open-window draw salts the dedicated t* random seed with the trace id and lane index. The salted string is hashed, and the digest becomes the per-lane RNG seed. Same seed and inputs always reproduce the same t*; different traces or lanes decorrelate."
+
+    term: {
+      word: "seed_for_trace_lane"
+      meaning: "SHA-256(\"{base_seed}:{trace_id}:{lane}\") → first 8 bytes big-endian as the per-(trace, lane) NumPy PCG64 seed. Base is t_star_random_seed."
+    }
+
+    points: [
+      "Formula: `SHA256(\"{base}:{trace_id}:{lane}\")` → low 8 bytes BE → `u64` seed.",
+      "Base seed is config `t_star_random_seed` (not the run-root `random_seed`).",
+      "Open draws use `NumpyPcg64::from_u64_seed(seed).uniform(lo, hi)`.",
+      "Evidence: `rust/runtime/src/graph/tstar.rs` — `seed_for_trace_lane`."
+    ]
+
+    caption: "t_star_random_seed · salted per (trace, lane) · PCG64."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s8-hdr"
+          capability: "core.header"
+          title: "BASE → HASH → PCG64"
+          caption: "t_star_random_seed · salted per (trace, lane) · PCG64."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s8-base"
+          capability: "core.panel"
+          title: "t_star_random_seed"
+          detail: "config base"
+          layout: { x: 40, y: 110, width: 160, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s8-a1"
+          capability: "core.connector"
+          from: { nodeId: "s8-base", anchor: "e" }
+          to: { nodeId: "s8-hash", anchor: "w" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s8-hash"
+          capability: "core.panel"
+          title: "SHA-256"
+          detail: "base:trace_id:lane"
+          layout: { x: 260, y: 110, width: 180, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s8-a2"
+          capability: "core.connector"
+          from: { nodeId: "s8-hash", anchor: "e" }
+          to: { nodeId: "s8-pcg", anchor: "w" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s8-pcg"
+          capability: "core.panel"
+          title: "NumPy PCG64"
+          detail: "uniform(lo, hi)"
+          layout: { x: 500, y: 110, width: 160, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s8-salt"
+          capability: "core.panel"
+          title: "Lane salt"
+          detail: "trace_id + lane"
+          layout: { x: 260, y: 250, width: 180, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.5, radius: 8 }
+        },
+        {
+          id: "s8-salt-link"
+          capability: "core.route"
+          from: { nodeId: "s8-salt", anchor: "n" }
+          to: { nodeId: "s8-hash", anchor: "s" }
+          style: { stroke: @theme.ink.secondary, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s8-note"
+          capability: "core.note"
+          caption: "Same (seed, trace, lane) → same t* · different lanes decorrelate"
+          layout: { x: 80, y: 340, width: 540, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s8-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s8-base", anchor: "center" }
+          to: { nodeId: "s8-pcg", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.5 }
+          accessibility: { label: "seed to pcg" }
+        }
+      ]
+      timeline: [
+        { id: "s8-enter-hdr", at: 0, duration: 260, target: "s8-hdr", action: "enter" },
+        { id: "s8-enter-base", at: 180, duration: 280, target: "s8-base", action: "enter" },
+        { id: "s8-draw-a1", at: 420, duration: 300, target: "s8-a1", action: "draw" },
+        { id: "s8-enter-hash", at: 560, duration: 280, target: "s8-hash", action: "enter" },
+        { id: "s8-draw-a2", at: 780, duration: 300, target: "s8-a2", action: "draw" },
+        { id: "s8-enter-pcg", at: 920, duration: 280, target: "s8-pcg", action: "enter" },
+        { id: "s8-enter-salt", at: 1160, duration: 260, target: "s8-salt", action: "enter" },
+        { id: "s8-draw-sl", at: 1340, duration: 280, target: "s8-salt-link", action: "draw" },
+        { id: "s8-enter-note", at: 1560, duration: 260, target: "s8-note", action: "enter" },
+        { id: "s8-draw-motion", at: 1760, duration: 900, target: "s8-motion", action: "draw" },
+        { id: "s8-emph", at: 2500, duration: 400, target: "s8-hash", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Trie chop" {
+    eyebrow: "Trie chop"
+    title: "Drop pre-t* nodes; re-root survivors from START"
+    lede: "`chop_trie_at_tstar` drops `arrival_offset_us < t*`, then re-roots survivors that lost all predecessors from `START` with `min_start_delay_us = arrival − t*`."
+
+    narration: "The snapshot chop removes every node whose arrival is strictly before t*. Survivors that still have a surviving predecessor keep their inter-turn edge. Survivors that lost all real predecessors get a synthetic start edge whose delay is the residual arrival minus t*. Edges between survivors stay as recorded."
+
+    term: {
+      word: "chop_trie_at_tstar"
+      meaning: "Format-agnostic segment-trie chop: drop arrivals before t*, re-root orphan survivors from START at residual delay arrival − t*, leave prompt paths intact."
+    }
+
+    points: [
+      "Drop nodes with `arrival_offset_us < t*` (motif: mute/remove `n0` · `n1`).",
+      "Re-root orphans from `START` with `min_start_delay_us = arrival − t*`.",
+      "`t* ≤ 0` returns the graph unchanged (full replay).",
+      "Evidence: `rust/runtime/src/graph/snapshot.rs` — `chop_trie_at_tstar`."
+    ]
+
+    caption: "n0 · n1 dropped · START → n2 · n3 live."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s9-hdr"
+          capability: "core.header"
+          title: "CHOP · DROP · RE-ROOT"
+          caption: "n0 · n1 dropped · START → n2 · n3 live."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s9-n0"
+          capability: "core.panel"
+          title: "n0"
+          detail: "dropped"
+          layout: { x: 40, y: 140, width: 90, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.tertiary, strokeWidth: 1.2, radius: 8, opacity: 0.45 }
+        },
+        {
+          id: "s9-n1"
+          capability: "core.panel"
+          title: "n1"
+          detail: "dropped"
+          layout: { x: 150, y: 140, width: 90, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.tertiary, strokeWidth: 1.2, radius: 8, opacity: 0.45 }
+        },
+        {
+          id: "s9-cut"
+          capability: "core.path"
+          d: "M280 80 V300"
+          layout: { x: 0, y: 0, width: 700, height: 400 }
+          style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 3 }
+        },
+        {
+          id: "s9-cut-l"
+          capability: "core.text"
+          text: "t*"
+          layout: { x: 258, y: 56, width: 44, height: 20 }
+          style: { fontSize: 14, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        },
+        {
+          id: "s9-start"
+          capability: "core.panel"
+          title: "START"
+          detail: "re-root"
+          layout: { x: 310, y: 100, width: 100, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s9-n2"
+          capability: "core.panel"
+          title: "n2"
+          detail: "survivor"
+          layout: { x: 460, y: 100, width: 100, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s9-n3"
+          capability: "core.panel"
+          title: "n3"
+          detail: "survivor"
+          layout: { x: 580, y: 220, width: 100, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s9-reroot"
+          capability: "core.connector"
+          from: { nodeId: "s9-start", anchor: "e" }
+          to: { nodeId: "s9-n2", anchor: "w" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.4, fill: "none" }
+        },
+        {
+          id: "s9-e23"
+          capability: "core.route"
+          from: { nodeId: "s9-n2", anchor: "s" }
+          to: { nodeId: "s9-n3", anchor: "n" }
+          style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s9-delay"
+          capability: "core.note"
+          caption: "min_start_delay_us = arrival(n2) − t*"
+          layout: { x: 310, y: 320, width: 320, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s9-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s9-start", anchor: "center" }
+          to: { nodeId: "s9-n3", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.5 }
+          accessibility: { label: "reroot to live" }
+        }
+      ]
+      timeline: [
+        { id: "s9-enter-hdr", at: 0, duration: 260, target: "s9-hdr", action: "enter" },
+        { id: "s9-enter-n0", at: 140, duration: 220, target: "s9-n0", action: "enter" },
+        { id: "s9-enter-n1", at: 240, duration: 220, target: "s9-n1", action: "enter" },
+        { id: "s9-draw-cut", at: 420, duration: 360, target: "s9-cut", action: "draw" },
+        { id: "s9-enter-cutl", at: 520, duration: 200, target: "s9-cut-l", action: "enter" },
+        { id: "s9-enter-start", at: 700, duration: 260, target: "s9-start", action: "enter" },
+        { id: "s9-draw-rr", at: 900, duration: 300, target: "s9-reroot", action: "draw" },
+        { id: "s9-enter-n2", at: 1040, duration: 260, target: "s9-n2", action: "enter" },
+        { id: "s9-draw-e23", at: 1240, duration: 300, target: "s9-e23", action: "draw" },
+        { id: "s9-enter-n3", at: 1380, duration: 260, target: "s9-n3", action: "enter" },
+        { id: "s9-enter-delay", at: 1600, duration: 260, target: "s9-delay", action: "enter" },
+        { id: "s9-draw-motion", at: 1800, duration: 900, target: "s9-motion", action: "draw" },
+        { id: "s9-emph", at: 2500, duration: 400, target: "s9-reroot", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Inputs & channels" {
+    eyebrow: "Inputs & channels"
+    title: "Drop requirements whose source was chopped"
+    lede: "Survivors must not await `{src}_out` channels from dropped predecessors — that would deadlock `await_inputs`. The chop keeps only requirements whose source survives."
+
+    narration: "Fan-in nodes wait on named output channels from their predecessors. After the chop, a dropped predecessor never writes that channel. The chop keeps only input requirements whose source still exists — a fully re-rooted node can end with no remaining inputs."
+
+    term: {
+      word: "survivor_out_channels"
+      meaning: "The set of `{nid}_out` channels for nodes that survived the t* chop; only input requirements targeting those channels are kept."
+    }
+
+    points: [
+      "Dropped predecessors never write `{src}_out` post-chop.",
+      "Keep only `inputs` requirements whose channel is in the survivor out-set.",
+      "A node re-rooted entirely from `START` may end with empty `inputs`.",
+      "Evidence: `rust/runtime/src/graph/snapshot.rs` — `chop_node_inputs` / deadlock note."
+    ]
+
+    caption: "No await on chopped sources · avoid deadlocks."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s10-hdr"
+          capability: "core.header"
+          title: "RESCIND DEAD CHANNELS"
+          caption: "No await on chopped sources · avoid deadlocks."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s10-n0"
+          capability: "core.panel"
+          title: "n0"
+          detail: "chopped"
+          layout: { x: 40, y: 120, width: 110, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.tertiary, strokeWidth: 1.2, radius: 8, opacity: 0.4 }
+        },
+        {
+          id: "s10-ch"
+          capability: "core.panel"
+          title: "n0_out"
+          detail: "never written"
+          layout: { x: 200, y: 120, width: 140, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s10-dead"
+          capability: "core.connector"
+          from: { nodeId: "s10-n0", anchor: "e" }
+          to: { nodeId: "s10-ch", anchor: "w" }
+          style: { stroke: @theme.ink.tertiary, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s10-x"
+          capability: "core.text"
+          text: "✗ drop req"
+          layout: { x: 360, y: 145, width: 100, height: 24 }
+          style: { fontSize: 13, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
+        },
+        {
+          id: "s10-n2"
+          capability: "core.panel"
+          title: "n2"
+          detail: "survivor"
+          layout: { x: 500, y: 120, width: 140, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s10-n3"
+          capability: "core.panel"
+          title: "n3"
+          detail: "keeps n2_out"
+          layout: { x: 500, y: 250, width: 140, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 8 }
+        },
+        {
+          id: "s10-keep"
+          capability: "core.route"
+          from: { nodeId: "s10-n2", anchor: "s" }
+          to: { nodeId: "s10-n3", anchor: "n" }
+          style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s10-note"
+          capability: "core.note"
+          caption: "Filter inputs to survivor_out_channels · empty inputs OK after full re-root"
+          layout: { x: 40, y: 340, width: 480, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s10-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s10-ch", anchor: "center" }
+          to: { nodeId: "s10-n2", anchor: "center" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none", opacity: 0.45 }
+          accessibility: { label: "drop dead channel" }
+        }
+      ]
+      timeline: [
+        { id: "s10-enter-hdr", at: 0, duration: 260, target: "s10-hdr", action: "enter" },
+        { id: "s10-enter-n0", at: 160, duration: 260, target: "s10-n0", action: "enter" },
+        { id: "s10-draw-dead", at: 380, duration: 280, target: "s10-dead", action: "draw" },
+        { id: "s10-enter-ch", at: 500, duration: 260, target: "s10-ch", action: "enter" },
+        { id: "s10-enter-x", at: 700, duration: 220, target: "s10-x", action: "enter" },
+        { id: "s10-enter-n2", at: 900, duration: 260, target: "s10-n2", action: "enter" },
+        { id: "s10-draw-keep", at: 1100, duration: 280, target: "s10-keep", action: "draw" },
+        { id: "s10-enter-n3", at: 1240, duration: 260, target: "s10-n3", action: "enter" },
+        { id: "s10-enter-note", at: 1480, duration: 260, target: "s10-note", action: "enter" },
+        { id: "s10-draw-motion", at: 1680, duration: 800, target: "s10-motion", action: "draw" },
+        { id: "s10-emph", at: 2400, duration: 400, target: "s10-ch", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Prompt path unchanged" {
+    eyebrow: "Prompt path unchanged"
+    title: "Pre-t* segments stay so resume materializes exactly"
+    lede: "Topology chops arrivals and edges, but each surviving node's prompt segment program is left unchanged — the full pre-`t*` prefix stays in the path for the exact resume prompt."
+
+    narration: "Dropping early turns from the live graph does not truncate the prompt program on later survivors. Materialization still walks the full segment path including pre-t* history, so the worker builds the same resume prompt the recorded turn would have sent — exact content, not a chopped stub."
+
+    term: {
+      word: "unchanged prompt program"
+      meaning: "After chop_trie_at_tstar, survivor LlmNode prompt/segment paths still include the full pre-t* prefix so materialization rebuilds the exact resume prompt."
+    }
+
+    points: [
+      "Chop mutates nodes/edges/inputs — not the survivor's prompt segment program.",
+      "Pre-`t*` segments remain in the path (motif: path still lists `n0` · `n1` content).",
+      "Exact resume prompt ≠ truncated frontier-only prompt.",
+      "Evidence: `rust/runtime/src/graph/snapshot.rs` — \"Leaves each surviving node's prompt segment program unchanged.\""
+    ]
+
+    caption: "Live frontier nodes · full historical prompt path."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s11-hdr"
+          capability: "core.header"
+          title: "TOPOLOGY CHOP · PROMPT KEPT"
+          caption: "Live frontier nodes · full historical prompt path."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s11-live"
+          capability: "core.panel"
+          title: "Live graph"
+          detail: "START → n2 → n3"
+          layout: { x: 40, y: 100, width: 260, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s11-n2"
+          capability: "core.panel"
+          title: "n2"
+          detail: "survivor node"
+          layout: { x: 70, y: 220, width: 100, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s11-n3"
+          capability: "core.panel"
+          title: "n3"
+          detail: "survivor node"
+          layout: { x: 190, y: 220, width: 100, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s11-live-link"
+          capability: "core.connector"
+          from: { nodeId: "s11-n2", anchor: "e" }
+          to: { nodeId: "s11-n3", anchor: "w" }
+          style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s11-path"
+          capability: "core.panel"
+          title: "Prompt path"
+          detail: "n0 · n1 · n2 · n3 segs"
+          layout: { x: 380, y: 100, width: 280, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s11-seg"
+          capability: "core.panel"
+          title: "Full prefix kept"
+          detail: "pre-t* segments intact"
+          layout: { x: 420, y: 220, width: 200, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s11-path-link"
+          capability: "core.route"
+          from: { nodeId: "s11-path", anchor: "s" }
+          to: { nodeId: "s11-seg", anchor: "n" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s11-bridge"
+          capability: "core.connector"
+          from: { nodeId: "s11-live", anchor: "e" }
+          to: { nodeId: "s11-path", anchor: "w" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s11-note"
+          capability: "core.note"
+          caption: "Topology dropped n0/n1 · prompt path still carries their segments"
+          layout: { x: 80, y: 320, width: 540, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s11-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s11-n2", anchor: "center" }
+          to: { nodeId: "s11-seg", anchor: "center" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none", opacity: 0.5 }
+          accessibility: { label: "node to prompt path" }
+        }
+      ]
+      timeline: [
+        { id: "s11-enter-hdr", at: 0, duration: 260, target: "s11-hdr", action: "enter" },
+        { id: "s11-enter-live", at: 160, duration: 280, target: "s11-live", action: "enter" },
+        { id: "s11-draw-bridge", at: 400, duration: 300, target: "s11-bridge", action: "draw" },
+        { id: "s11-enter-path", at: 540, duration: 280, target: "s11-path", action: "enter" },
+        { id: "s11-enter-n2", at: 780, duration: 240, target: "s11-n2", action: "enter" },
+        { id: "s11-draw-ll", at: 960, duration: 260, target: "s11-live-link", action: "draw" },
+        { id: "s11-enter-n3", at: 1080, duration: 240, target: "s11-n3", action: "enter" },
+        { id: "s11-draw-pl", at: 1260, duration: 280, target: "s11-path-link", action: "draw" },
+        { id: "s11-enter-seg", at: 1400, duration: 260, target: "s11-seg", action: "enter" },
+        { id: "s11-enter-note", at: 1640, duration: 260, target: "s11-note", action: "enter" },
+        { id: "s11-draw-motion", at: 1840, duration: 900, target: "s11-motion", action: "draw" },
+        { id: "s11-emph", at: 2600, duration: 400, target: "s11-path", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Cache-pressure warmup" {
+    eyebrow: "Cache-pressure warmup"
+    title: "Extended warmup replays the post-t* remainder under pressure"
+    lede: "Cache-pressure warmup is the extended phase: lanes recycle chopped post-`t*` graphs against the server so KV stays under load before the handoff drain."
+
+    narration: "After the boundary chop, duration-bounded lanes repeatedly dispatch pressure templates — each plan is the post-t* remainder at that lane's salted t*. The goal is cache pressure: keep the inference server's KV busy with live frontier traffic until the clock deadline, then drain into the handoff."
+
+    term: {
+      word: "cache-pressure warmup"
+      meaning: "Extended warmup that replays post-t* remainders on pressure lanes for a duration budget, building KV load before profiling handoff."
+    }
+
+    points: [
+      "`GraphPressureRecycle` runs until Clock deadline; lanes share one corpus cursor.",
+      "Each dispatch uses the lane-salted `t*` chop of a pressure template (post-`t*` live set).",
+      "Distinct from ordinary phase warmup and from the later profiling resume.",
+      "Evidence: `rust/runtime/src/engine/graph_phase_runtime.rs` — `GraphPressureRecycle`; `snapshot.rs` extended-warmup docs."
+    ]
+
+    caption: "Chop · recycle under pressure · then drain."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s12-hdr"
+          capability: "core.header"
+          title: "PRESSURE RECYCLE LOOP"
+          caption: "Chop · recycle under pressure · then drain."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s12-chop"
+          capability: "core.panel"
+          title: "t* chop"
+          detail: "post-t* remainder"
+          layout: { x: 40, y: 110, width: 140, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s12-a1"
+          capability: "core.connector"
+          from: { nodeId: "s12-chop", anchor: "e" }
+          to: { nodeId: "s12-press", anchor: "w" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s12-press"
+          capability: "core.panel"
+          title: "Pressure lanes"
+          detail: "recycle until deadline"
+          layout: { x: 240, y: 110, width: 180, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s12-a2"
+          capability: "core.connector"
+          from: { nodeId: "s12-press", anchor: "e" }
+          to: { nodeId: "s12-kv", anchor: "w" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s12-kv"
+          capability: "core.panel"
+          title: "Server KV"
+          detail: "under load"
+          layout: { x: 480, y: 110, width: 160, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s12-loop"
+          capability: "core.panel"
+          title: "Shared cursor"
+          detail: "draw → dispatch → repeat"
+          layout: { x: 240, y: 240, width: 180, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s12-loop-link"
+          capability: "core.route"
+          from: { nodeId: "s12-press", anchor: "s" }
+          to: { nodeId: "s12-loop", anchor: "n" }
+          style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s12-note"
+          capability: "core.note"
+          caption: "Deadline from injected Clock · then drain to handoff (next act)"
+          layout: { x: 80, y: 340, width: 520, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s12-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s12-chop", anchor: "center" }
+          to: { nodeId: "s12-kv", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.5 }
+          accessibility: { label: "pressure to kv" }
+        }
+      ]
+      timeline: [
+        { id: "s12-enter-hdr", at: 0, duration: 260, target: "s12-hdr", action: "enter" },
+        { id: "s12-enter-chop", at: 180, duration: 280, target: "s12-chop", action: "enter" },
+        { id: "s12-draw-a1", at: 420, duration: 300, target: "s12-a1", action: "draw" },
+        { id: "s12-enter-press", at: 560, duration: 280, target: "s12-press", action: "enter" },
+        { id: "s12-draw-a2", at: 780, duration: 300, target: "s12-a2", action: "draw" },
+        { id: "s12-enter-kv", at: 920, duration: 280, target: "s12-kv", action: "enter" },
+        { id: "s12-draw-ll", at: 1160, duration: 280, target: "s12-loop-link", action: "draw" },
+        { id: "s12-enter-loop", at: 1280, duration: 260, target: "s12-loop", action: "enter" },
+        { id: "s12-enter-note", at: 1520, duration: 260, target: "s12-note", action: "enter" },
+        { id: "s12-draw-motion", at: 1720, duration: 900, target: "s12-motion", action: "draw" },
+        { id: "s12-emph", at: 2500, duration: 400, target: "s12-press", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "PermutationDraw" {
+    eyebrow: "GraphPressureRecycle + PermutationDraw"
+    title: "Sequential · Shuffle · Random — child seeds from run root"
+    lede: "`PermutationDraw` remaps the shared corpus cursor: Sequential (`x % n`), Shuffle (persistent epoch), or Random (MT19937 choice). Shuffle/Random child seeds derive from run-root `random_seed` — not `t_star_random_seed`."
+
+    narration: "Pressure and profiling share one strategy-aware corpus draw. Sequential walks the corpus in order. Shuffle uses a persistent without-replacement epoch. Random picks with replacement. Those child seeds come from the run-root random seed — explicitly not from the dedicated t* seed, which only salts per-lane t* draws."
+
+    term: {
+      word: "PermutationDraw"
+      meaning: "Corpus-index remap: Sequential x%total; Shuffle persistent-epoch without replacement; Random with-replacement MT19937 choice. Shuffle/Random seeds via sampler_*_seed(run root)."
+    }
+
+    points: [
+      "Modes: `Sequential` · `Shuffle` · `Random` (`GraphSamplingStrategy` / `RecycleDrawMode`).",
+      "Shuffle child seed: `SHA256(\"{root}:dataset.sampler.shuffle\")` → NumPy PCG64 epochs.",
+      "Random child seed: `SHA256(\"{root}:dataset.sampler.random\")` → Python MT19937 — root is `random_seed`, not `t_star_random_seed`.",
+      "Evidence: `rust/runtime/src/graph/tstar.rs` — `sampler_shuffle_seed` / `sampler_random_seed`; `graph_input.rs` — `TStarWindow::recycle_draw`."
+    ]
+
+    caption: "t* uses t_star_random_seed · recycle uses run-root random_seed."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s13-hdr"
+          capability: "core.header"
+          title: "TWO SEEDS · TWO JOBS"
+          caption: "t* uses t_star_random_seed · recycle uses run-root random_seed."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s13-tstar"
+          capability: "core.panel"
+          title: "t_star_random_seed"
+          detail: "lane-salted t* only"
+          layout: { x: 40, y: 100, width: 200, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s13-root"
+          capability: "core.panel"
+          title: "random_seed"
+          detail: "run root · recycle draw"
+          layout: { x: 280, y: 100, width: 200, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s13-modes"
+          capability: "core.panel"
+          title: "PermutationDraw"
+          detail: "seq · shuffle · random"
+          layout: { x: 520, y: 100, width: 150, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s13-a1"
+          capability: "core.connector"
+          from: { nodeId: "s13-root", anchor: "e" }
+          to: { nodeId: "s13-modes", anchor: "w" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s13-seq"
+          capability: "core.panel"
+          title: "Sequential"
+          detail: "x % total"
+          layout: { x: 40, y: 230, width: 180, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.5, radius: 8 }
+        },
+        {
+          id: "s13-shuf"
+          capability: "core.panel"
+          title: "Shuffle"
+          detail: "PCG64 epochs"
+          layout: { x: 250, y: 230, width: 180, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.5, radius: 8 }
+        },
+        {
+          id: "s13-rand"
+          capability: "core.panel"
+          title: "Random"
+          detail: "MT19937 choice"
+          layout: { x: 460, y: 230, width: 180, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.5, radius: 8 }
+        },
+        {
+          id: "s13-note"
+          capability: "core.note"
+          caption: "NOT t_star_random_seed for shuffle/random child seeds"
+          layout: { x: 100, y: 330, width: 500, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s13-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s13-root", anchor: "center" }
+          to: { nodeId: "s13-modes", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
+          accessibility: { label: "run root to draw" }
+        }
+      ]
+      timeline: [
+        { id: "s13-enter-hdr", at: 0, duration: 260, target: "s13-hdr", action: "enter" },
+        { id: "s13-enter-tstar", at: 160, duration: 260, target: "s13-tstar", action: "enter" },
+        { id: "s13-enter-root", at: 280, duration: 260, target: "s13-root", action: "enter" },
+        { id: "s13-draw-a1", at: 500, duration: 300, target: "s13-a1", action: "draw" },
+        { id: "s13-enter-modes", at: 640, duration: 260, target: "s13-modes", action: "enter" },
+        { id: "s13-enter-seq", at: 880, duration: 240, target: "s13-seq", action: "enter" },
+        { id: "s13-enter-shuf", at: 1000, duration: 240, target: "s13-shuf", action: "enter" },
+        { id: "s13-enter-rand", at: 1120, duration: 240, target: "s13-rand", action: "enter" },
+        { id: "s13-enter-note", at: 1360, duration: 260, target: "s13-note", action: "enter" },
+        { id: "s13-draw-motion", at: 1560, duration: 900, target: "s13-motion", action: "draw" },
+        { id: "s13-emph", at: 2300, duration: 400, target: "s13-root", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Drain & handoff" {
+    eyebrow: "Drain & handoff"
+    title: "LaneHandoff carries what the seed cannot replay"
+    lede: "After every credit return lands, warmup stashes one `GraphWarmupHandoff`. Profiling consumes it once and resumes each live lane at its recorded frontier."
+
+    narration: "The seeded t* plan is shared across phases, so the handoff only carries what determinism cannot reproduce: which template each lane was mid-flight on, which nodes actually executed, and when their returns landed. Deck-level fields stamp the drain wall, the next corpus cursor, and how many pressure lanes ran."
+
+    term: {
+      word: "LaneHandoff"
+      meaning: "Per-lane drain state: template_trace_id, instance_id, t_star_us, executed_node_ids, return_wall_us — plus deck-level drain_end_wall_us, corpus_cursor, pressure_lane_count."
+    }
+
+    points: [
+      "`LaneHandoff`: `template_trace_id`, `instance_id`, `t_star_us`, `executed_node_ids`, `return_wall_us`.",
+      "`GraphWarmupHandoff`: `lanes`, `drain_end_wall_us`, `corpus_cursor`, `pressure_lane_count`.",
+      "t* plan is not carried — both phases derive it from the seeded sampler.",
+      "Evidence: `rust/runtime/src/graph/warmup_handoff.rs`; `graph_phase_runtime.rs` — `build_warmup_handoff`."
+    ]
+
+    caption: "Drain stamp · per-lane frontier · shared cursor."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s14-hdr"
+          capability: "core.header"
+          title: "HANDOFF PAYLOAD"
+          caption: "Drain stamp · per-lane frontier · shared cursor."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s14-deck"
+          capability: "core.panel"
+          title: "GraphWarmupHandoff"
+          detail: "lanes · drain · cursor · K"
+          layout: { x: 40, y: 90, width: 220, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s14-a1"
+          capability: "core.connector"
+          from: { nodeId: "s14-deck", anchor: "e" }
+          to: { nodeId: "s14-lane", anchor: "w" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s14-lane"
+          capability: "core.panel"
+          title: "LaneHandoff"
+          detail: "one live lane"
+          layout: { x: 320, y: 90, width: 180, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s14-fields"
+          capability: "core.panel"
+          title: "Fields"
+          detail: "template · id · t* · exec · walls"
+          layout: { x: 540, y: 90, width: 130, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s14-a2"
+          capability: "core.connector"
+          from: { nodeId: "s14-lane", anchor: "e" }
+          to: { nodeId: "s14-fields", anchor: "w" }
+          style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s14-tpl"
+          capability: "core.panel"
+          title: "template_trace_id"
+          detail: "mid-flight template"
+          layout: { x: 40, y: 220, width: 150, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.4, radius: 8 }
+        },
+        {
+          id: "s14-iid"
+          capability: "core.panel"
+          title: "instance_id"
+          detail: "e.g. t-1#0.p2"
+          layout: { x: 210, y: 220, width: 140, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.4, radius: 8 }
+        },
+        {
+          id: "s14-ts"
+          capability: "core.panel"
+          title: "t_star_us"
+          detail: "lane plan"
+          layout: { x: 370, y: 220, width: 120, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.4, radius: 8 }
+        },
+        {
+          id: "s14-exec"
+          capability: "core.panel"
+          title: "executed · walls"
+          detail: "KV held · residuals"
+          layout: { x: 510, y: 220, width: 160, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.4, radius: 8 }
+        },
+        {
+          id: "s14-note"
+          capability: "core.note"
+          caption: "drain_end_wall_us · corpus_cursor · pressure_lane_count on the deck"
+          layout: { x: 60, y: 310, width: 580, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s14-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s14-deck", anchor: "center" }
+          to: { nodeId: "s14-fields", anchor: "center" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none", opacity: 0.5 }
+          accessibility: { label: "handoff to fields" }
+        }
+      ]
+      timeline: [
+        { id: "s14-enter-hdr", at: 0, duration: 260, target: "s14-hdr", action: "enter" },
+        { id: "s14-enter-deck", at: 160, duration: 260, target: "s14-deck", action: "enter" },
+        { id: "s14-draw-a1", at: 380, duration: 280, target: "s14-a1", action: "draw" },
+        { id: "s14-enter-lane", at: 520, duration: 260, target: "s14-lane", action: "enter" },
+        { id: "s14-draw-a2", at: 740, duration: 280, target: "s14-a2", action: "draw" },
+        { id: "s14-enter-fields", at: 880, duration: 260, target: "s14-fields", action: "enter" },
+        { id: "s14-enter-tpl", at: 1100, duration: 220, target: "s14-tpl", action: "enter" },
+        { id: "s14-enter-iid", at: 1220, duration: 220, target: "s14-iid", action: "enter" },
+        { id: "s14-enter-ts", at: 1340, duration: 220, target: "s14-ts", action: "enter" },
+        { id: "s14-enter-exec", at: 1460, duration: 220, target: "s14-exec", action: "enter" },
+        { id: "s14-enter-note", at: 1680, duration: 260, target: "s14-note", action: "enter" },
+        { id: "s14-draw-motion", at: 1880, duration: 900, target: "s14-motion", action: "draw" },
+        { id: "s14-emph", at: 2600, duration: 400, target: "s14-lane", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Why instance_id is reused" {
+    eyebrow: "Why instance_id is reused"
+    title: "Cache-bust marker continuity across the handoff"
+    lede: "Profiling reuses the pressure `instance_id` verbatim so the per-instance cache-bust marker (digest of `credit.trace_id` via `build_trace_instance_marker`) stays continuous — KV transfers instead of cold-prefilling behind a fresh `.0`."
+
+    narration: "The live pressure id at drain — e.g. t-1#0.p2 — becomes the resumed instance's id. That string feeds the cache-bust marker. A fresh .0 id would look like a new instance to the server, forcing cold prefill and throwing away the KV built under pressure."
+
+    term: {
+      word: "build_trace_instance_marker"
+      meaning: "Per-instance cache-bust marker derived from a digest of credit.trace_id; continuous only when profiling reuses the pressure instance_id across the handoff."
+    }
+
+    points: [
+      "Resume reuses pressure `instance_id` verbatim (`LaneResumeGraphTraceSource`).",
+      "Marker is a digest of `credit.trace_id` — see `build_trace_instance_marker`.",
+      "Fresh `.0` would cold-prefill and discard pressure-built KV.",
+      "Evidence: `rust/runtime/src/graph/warmup_handoff.rs` — `instance_id` docs."
+    ]
+
+    caption: "Same id · same marker · warm KV transfers."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s15-hdr"
+          capability: "core.header"
+          title: "REUSE THE PRESSURE ID"
+          caption: "Same id · same marker · warm KV transfers."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s15-press"
+          capability: "core.panel"
+          title: "Pressure id"
+          detail: "t-1#0.p2"
+          layout: { x: 40, y: 110, width: 160, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s15-a1"
+          capability: "core.connector"
+          from: { nodeId: "s15-press", anchor: "e" }
+          to: { nodeId: "s15-resume", anchor: "w" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s15-resume"
+          capability: "core.panel"
+          title: "Resume id"
+          detail: "verbatim reuse"
+          layout: { x: 260, y: 110, width: 160, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s15-a2"
+          capability: "core.connector"
+          from: { nodeId: "s15-resume", anchor: "e" }
+          to: { nodeId: "s15-mark", anchor: "w" }
+          style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s15-mark"
+          capability: "core.panel"
+          title: "Cache-bust marker"
+          detail: "digest(credit.trace_id)"
+          layout: { x: 480, y: 110, width: 180, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s15-bad"
+          capability: "core.panel"
+          title: "Fresh .0"
+          detail: "cold prefill · KV lost"
+          layout: { x: 180, y: 240, width: 200, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s15-good"
+          capability: "core.panel"
+          title: "Reuse id"
+          detail: "KV transfers"
+          layout: { x: 420, y: 240, width: 200, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s15-note"
+          capability: "core.note"
+          caption: "Avoid cold prefill behind a fresh .0 marker"
+          layout: { x: 120, y: 340, width: 460, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s15-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s15-press", anchor: "center" }
+          to: { nodeId: "s15-mark", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.5 }
+          accessibility: { label: "id to marker" }
+        }
+      ]
+      timeline: [
+        { id: "s15-enter-hdr", at: 0, duration: 260, target: "s15-hdr", action: "enter" },
+        { id: "s15-enter-press", at: 160, duration: 260, target: "s15-press", action: "enter" },
+        { id: "s15-draw-a1", at: 380, duration: 280, target: "s15-a1", action: "draw" },
+        { id: "s15-enter-resume", at: 520, duration: 260, target: "s15-resume", action: "enter" },
+        { id: "s15-draw-a2", at: 740, duration: 280, target: "s15-a2", action: "draw" },
+        { id: "s15-enter-mark", at: 880, duration: 260, target: "s15-mark", action: "enter" },
+        { id: "s15-enter-bad", at: 1120, duration: 240, target: "s15-bad", action: "enter" },
+        { id: "s15-enter-good", at: 1260, duration: 240, target: "s15-good", action: "enter" },
+        { id: "s15-enter-note", at: 1500, duration: 260, target: "s15-note", action: "enter" },
+        { id: "s15-draw-motion", at: 1700, duration: 900, target: "s15-motion", action: "draw" },
+        { id: "s15-emph", at: 2500, duration: 400, target: "s15-mark", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Profiling resume" {
+    eyebrow: "Profiling resume"
+    title: "Frontier chop · skip executed · residual from return walls"
+    lede: "`chop_trie_at_frontier` drops pre-`t*` history and executed nodes, then re-roots survivors with residual delays from `return_wall_us` vs `drain_end_wall_us` (capped by `HANDOFF_RESIDUAL_CAP_SEC`)."
+
+    narration: "For each handoff lane, profiling loads the original template, chops at the frontier with the executed set and return walls, and keeps the pressure instance id. Survivors that lost predecessors re-root from START; residual delay is derived from how long ago each predecessor returned relative to drain — not a fresh t* draw."
+
+    term: {
+      word: "chop_trie_at_frontier"
+      meaning: "Resume chop: drop pre-t* and executed nodes; re-root survivors using residual delays from return walls and drain_end_wall_us; do not refire server-held KV."
+    }
+
+    points: [
+      "Drop `arrival_offset_us < t*` and every id in `executed_node_ids`.",
+      "Re-root residuals from `return_wall_us` vs `drain_end_wall_us` (cap 60s).",
+      "Server already holds executed KV — profiling must not refire those nodes.",
+      "Evidence: `snapshot.rs` — `chop_trie_at_frontier`; `graph_phase_runtime.rs` — `build_profiling_resume_lane_plans`."
+    ]
+
+    caption: "n0 · n1 history · n2 executed · n3 residual live."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s16-hdr"
+          capability: "core.header"
+          title: "FRONTIER RESUME"
+          caption: "n0 · n1 history · n2 executed · n3 residual live."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s16-n0"
+          capability: "core.panel"
+          title: "n0"
+          detail: "pre-t* drop"
+          layout: { x: 40, y: 120, width: 100, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.tertiary, strokeWidth: 1.2, radius: 8, opacity: 0.4 }
+        },
+        {
+          id: "s16-n1"
+          capability: "core.panel"
+          title: "n1"
+          detail: "pre-t* drop"
+          layout: { x: 160, y: 120, width: 100, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.tertiary, strokeWidth: 1.2, radius: 8, opacity: 0.4 }
+        },
+        {
+          id: "s16-n2"
+          capability: "core.panel"
+          title: "n2"
+          detail: "executed · skip"
+          layout: { x: 300, y: 120, width: 120, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.6, radius: 8, opacity: 0.55 }
+        },
+        {
+          id: "s16-start"
+          capability: "core.panel"
+          title: "START"
+          detail: "re-root"
+          layout: { x: 460, y: 100, width: 100, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s16-n3"
+          capability: "core.panel"
+          title: "n3"
+          detail: "residual live"
+          layout: { x: 580, y: 200, width: 100, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s16-rr"
+          capability: "core.connector"
+          from: { nodeId: "s16-start", anchor: "s" }
+          to: { nodeId: "s16-n3", anchor: "n" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.4, fill: "none" }
+        },
+        {
+          id: "s16-walls"
+          capability: "core.panel"
+          title: "return_wall_us"
+          detail: "vs drain_end_wall_us"
+          layout: { x: 40, y: 240, width: 220, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s16-note"
+          capability: "core.note"
+          caption: "Residual delay from return walls · do not refire executed KV"
+          layout: { x: 80, y: 340, width: 540, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s16-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s16-walls", anchor: "center" }
+          to: { nodeId: "s16-n3", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.5 }
+          accessibility: { label: "walls to residual" }
+        }
+      ]
+      timeline: [
+        { id: "s16-enter-hdr", at: 0, duration: 260, target: "s16-hdr", action: "enter" },
+        { id: "s16-enter-n0", at: 140, duration: 220, target: "s16-n0", action: "enter" },
+        { id: "s16-enter-n1", at: 240, duration: 220, target: "s16-n1", action: "enter" },
+        { id: "s16-enter-n2", at: 360, duration: 240, target: "s16-n2", action: "enter" },
+        { id: "s16-enter-start", at: 560, duration: 260, target: "s16-start", action: "enter" },
+        { id: "s16-draw-rr", at: 780, duration: 300, target: "s16-rr", action: "draw" },
+        { id: "s16-enter-n3", at: 920, duration: 260, target: "s16-n3", action: "enter" },
+        { id: "s16-enter-walls", at: 1160, duration: 260, target: "s16-walls", action: "enter" },
+        { id: "s16-enter-note", at: 1400, duration: 260, target: "s16-note", action: "enter" },
+        { id: "s16-draw-motion", at: 1600, duration: 900, target: "s16-motion", action: "draw" },
+        { id: "s16-emph", at: 2400, duration: 400, target: "s16-n3", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Lanes with no handoff entry" {
+    eyebrow: "Lanes with no handoff entry"
+    title: "Completed-at-drain → fresh-start next cursor at t*=0"
+    lede: "A lane index below `pressure_lane_count` with no entry in `lanes` completed exactly at drain. Profiling must fresh-start it: next cursor template, full `t*=0` replay — not a t* resume."
+
+    narration: "Absence from the handoff map is load-bearing. Pressure already finished that lane's work; re-running a t* resume would duplicate executed history. Bounded profiling draws the next corpus template and dispatches the full original plan at t*=0 with a new instance id."
+
+    term: {
+      word: "completed-at-drain"
+      meaning: "Lane index < pressure_lane_count with no LaneHandoff entry: profiling fresh-starts the next cursor template at full t*=0 replay."
+    }
+
+    points: [
+      "`pressure_lane_count` bounds which missing keys mean completed-at-drain.",
+      "Fresh-start: next shared-cursor template · full original plan · `t*=0`.",
+      "Do not invent a frontier resume for an empty handoff slot.",
+      "Evidence: `warmup_handoff.rs` — `pressure_lane_count`; `build_profiling_resume_lane_plans`."
+    ]
+
+    caption: "Missing entry under K · next cursor · t*=0."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s17-hdr"
+          capability: "core.header"
+          title: "EMPTY SLOT · FRESH START"
+          caption: "Missing entry under K · next cursor · t*=0."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s17-k"
+          capability: "core.panel"
+          title: "pressure_lane_count"
+          detail: "K = 4 · lanes 0..3"
+          layout: { x: 40, y: 100, width: 200, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s17-l0"
+          capability: "core.panel"
+          title: "lane 0"
+          detail: "handoff ✓"
+          layout: { x: 280, y: 100, width: 100, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s17-l1"
+          capability: "core.panel"
+          title: "lane 1"
+          detail: "missing ✗"
+          layout: { x: 400, y: 100, width: 100, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 8 }
+        },
+        {
+          id: "s17-l2"
+          capability: "core.panel"
+          title: "lane 2"
+          detail: "missing ✗"
+          layout: { x: 520, y: 100, width: 100, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 8 }
+        },
+        {
+          id: "s17-a1"
+          capability: "core.connector"
+          from: { nodeId: "s17-l1", anchor: "s" }
+          to: { nodeId: "s17-fresh", anchor: "n" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s17-fresh"
+          capability: "core.panel"
+          title: "Fresh-start"
+          detail: "next cursor · t*=0"
+          layout: { x: 360, y: 230, width: 200, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s17-note"
+          capability: "core.note"
+          caption: "Completed at drain · do not re-run a t* resume"
+          layout: { x: 80, y: 340, width: 540, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s17-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s17-l1", anchor: "center" }
+          to: { nodeId: "s17-fresh", anchor: "center" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none", opacity: 0.5 }
+          accessibility: { label: "missing to fresh" }
+        }
+      ]
+      timeline: [
+        { id: "s17-enter-hdr", at: 0, duration: 260, target: "s17-hdr", action: "enter" },
+        { id: "s17-enter-k", at: 160, duration: 260, target: "s17-k", action: "enter" },
+        { id: "s17-enter-l0", at: 360, duration: 220, target: "s17-l0", action: "enter" },
+        { id: "s17-enter-l1", at: 480, duration: 220, target: "s17-l1", action: "enter" },
+        { id: "s17-enter-l2", at: 600, duration: 220, target: "s17-l2", action: "enter" },
+        { id: "s17-draw-a1", at: 820, duration: 300, target: "s17-a1", action: "draw" },
+        { id: "s17-enter-fresh", at: 1000, duration: 280, target: "s17-fresh", action: "enter" },
+        { id: "s17-enter-note", at: 1280, duration: 260, target: "s17-note", action: "enter" },
+        { id: "s17-draw-motion", at: 1480, duration: 900, target: "s17-motion", action: "draw" },
+        { id: "s17-emph", at: 2300, duration: 400, target: "s17-fresh", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Corpus cursor" {
+    eyebrow: "Corpus cursor"
+    title: "Pressure → profiling continuity; single-pass may ignore"
+    lede: "`corpus_cursor` is the next undrawn corpus index after pressure's last recycle draw. Bounded profiling continues the wrap from here; single-pass profiling (no stop conditions) deliberately ignores it for full-corpus coverage."
+
+    narration: "One sampler is shared across pressure, handoff, and profiling draws. When profiling is bounded, freed lanes keep walking from the stamped cursor so they don't re-serve templates pressure just replayed. Unbounded single-pass profiling prefers covering the whole corpus over cursor continuity."
+
+    term: {
+      word: "corpus_cursor"
+      meaning: "Next corpus draw index after pressure warmup; bounded profiling continues from it; single-pass profiling ignores it for full coverage."
+    }
+
+    points: [
+      "Stamped at drain from the shared lane ledger cursor.",
+      "Bounded recycle: continue wrap so freed lanes skip just-replayed templates.",
+      "Single-pass profiling (no stop conditions) ignores cursor — full-corpus coverage wins.",
+      "Evidence: `warmup_handoff.rs` — `corpus_cursor`; `build_profiling_resume_lane_plans`."
+    ]
+
+    caption: "Shared sampler · bounded continues · single-pass covers all."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s18-hdr"
+          capability: "core.header"
+          title: "CURSOR CONTINUITY"
+          caption: "Shared sampler · bounded continues · single-pass covers all."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s18-press"
+          capability: "core.panel"
+          title: "Pressure"
+          detail: "draws → cursor N"
+          layout: { x: 40, y: 110, width: 160, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s18-a1"
+          capability: "core.connector"
+          from: { nodeId: "s18-press", anchor: "e" }
+          to: { nodeId: "s18-hand", anchor: "w" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s18-hand"
+          capability: "core.panel"
+          title: "Handoff"
+          detail: "corpus_cursor = N"
+          layout: { x: 260, y: 110, width: 170, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s18-a2"
+          capability: "core.connector"
+          from: { nodeId: "s18-hand", anchor: "e" }
+          to: { nodeId: "s18-prof", anchor: "w" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
+        },
+        {
+          id: "s18-prof"
+          capability: "core.panel"
+          title: "Bounded profiling"
+          detail: "continue from N"
+          layout: { x: 490, y: 110, width: 170, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s18-single"
+          capability: "core.panel"
+          title: "Single-pass profiling"
+          detail: "ignore cursor · full corpus"
+          layout: { x: 200, y: 240, width: 300, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s18-note"
+          capability: "core.note"
+          caption: "One sampler across pressure · handoff · profiling draws"
+          layout: { x: 100, y: 340, width: 500, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s18-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s18-press", anchor: "center" }
+          to: { nodeId: "s18-prof", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.5 }
+          accessibility: { label: "cursor continuity" }
+        }
+      ]
+      timeline: [
+        { id: "s18-enter-hdr", at: 0, duration: 260, target: "s18-hdr", action: "enter" },
+        { id: "s18-enter-press", at: 160, duration: 260, target: "s18-press", action: "enter" },
+        { id: "s18-draw-a1", at: 380, duration: 280, target: "s18-a1", action: "draw" },
+        { id: "s18-enter-hand", at: 520, duration: 260, target: "s18-hand", action: "enter" },
+        { id: "s18-draw-a2", at: 740, duration: 280, target: "s18-a2", action: "draw" },
+        { id: "s18-enter-prof", at: 880, duration: 260, target: "s18-prof", action: "enter" },
+        { id: "s18-enter-single", at: 1140, duration: 260, target: "s18-single", action: "enter" },
+        { id: "s18-enter-note", at: 1400, duration: 260, target: "s18-note", action: "enter" },
+        { id: "s18-draw-motion", at: 1600, duration: 900, target: "s18-motion", action: "draw" },
+        { id: "s18-emph", at: 2400, duration: 400, target: "s18-hand", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Abort / edge cases" {
+    eyebrow: "Abort / edge cases"
+    title: "Warmup abort · t*≤0 unchanged · collapsed [0,0] window"
+    lede: "Terminal warmup failures abort before profiling. `chop_trie_at_tstar` with `t* ≤ 0` returns the graph unchanged. A collapsed window (`hi ≤ lo`, default `[0,0]`) yields an exact no-draw instant."
+
+    narration: "Warmup trace failures populate a run-scoped ledger; after drain the run aborts with trajectory_warmup_failed rather than profiling on a corrupt frontier. A non-positive t* skips the topology chop entirely — full replay. The default zero window collapses to t*=0 without drawing RNG."
+
+    term: {
+      word: "trajectory_warmup_failed"
+      meaning: "Execution envelope when warmup recorded terminal trace failures; profiling is aborted to preserve metrics integrity."
+    }
+
+    points: [
+      "Warmup abort: terminal failures → abort before profiling (`trajectory_warmup_failed`).",
+      "`t* ≤ 0`: `chop_trie_at_tstar` returns the graph unchanged (full replay).",
+      "Collapsed window `[0,0]` (or `hi ≤ lo`): exact instant, no RNG draw.",
+      "Evidence: `graph_phase_runtime.rs` abort gate; `snapshot.rs` / `tstar.rs` edge paths."
+    ]
+
+    caption: "Fail closed · full replay · no-draw window."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s19-hdr"
+          capability: "core.header"
+          title: "EDGE PATHS"
+          caption: "Fail closed · full replay · no-draw window."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s19-abort"
+          capability: "core.panel"
+          title: "Warmup abort"
+          detail: "trajectory_warmup_failed"
+          layout: { x: 40, y: 110, width: 200, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s19-t0"
+          capability: "core.panel"
+          title: "t* ≤ 0"
+          detail: "graph unchanged"
+          layout: { x: 280, y: 110, width: 180, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s19-win"
+          capability: "core.panel"
+          title: "Collapsed [0,0]"
+          detail: "exact instant · no draw"
+          layout: { x: 500, y: 110, width: 170, height: 90 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s19-gate"
+          capability: "core.panel"
+          title: "Pre-profiling gate"
+          detail: "no corrupt frontier"
+          layout: { x: 40, y: 240, width: 200, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s19-full"
+          capability: "core.panel"
+          title: "Full replay"
+          detail: "no topology chop"
+          layout: { x: 280, y: 240, width: 180, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s19-lo"
+          capability: "core.panel"
+          title: "t* = lo"
+          detail: "WindowTStarSampler"
+          layout: { x: 500, y: 240, width: 170, height: 70 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8 }
+        },
+        {
+          id: "s19-a1"
+          capability: "core.connector"
+          from: { nodeId: "s19-abort", anchor: "s" }
+          to: { nodeId: "s19-gate", anchor: "n" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s19-a2"
+          capability: "core.connector"
+          from: { nodeId: "s19-t0", anchor: "s" }
+          to: { nodeId: "s19-full", anchor: "n" }
+          style: { stroke: @theme.accent.tertiary, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s19-a3"
+          capability: "core.connector"
+          from: { nodeId: "s19-win", anchor: "s" }
+          to: { nodeId: "s19-lo", anchor: "n" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s19-note"
+          capability: "core.note"
+          caption: "Abort preserves metrics integrity · edges short-circuit the chop path"
+          layout: { x: 60, y: 340, width: 580, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s19-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s19-abort", anchor: "center" }
+          to: { nodeId: "s19-win", anchor: "center" }
+          style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none", opacity: 0.45 }
+          accessibility: { label: "edge cases sweep" }
+        }
+      ]
+      timeline: [
+        { id: "s19-enter-hdr", at: 0, duration: 260, target: "s19-hdr", action: "enter" },
+        { id: "s19-enter-abort", at: 160, duration: 240, target: "s19-abort", action: "enter" },
+        { id: "s19-enter-t0", at: 300, duration: 240, target: "s19-t0", action: "enter" },
+        { id: "s19-enter-win", at: 440, duration: 240, target: "s19-win", action: "enter" },
+        { id: "s19-draw-a1", at: 660, duration: 260, target: "s19-a1", action: "draw" },
+        { id: "s19-enter-gate", at: 780, duration: 240, target: "s19-gate", action: "enter" },
+        { id: "s19-draw-a2", at: 960, duration: 260, target: "s19-a2", action: "draw" },
+        { id: "s19-enter-full", at: 1080, duration: 240, target: "s19-full", action: "enter" },
+        { id: "s19-draw-a3", at: 1260, duration: 260, target: "s19-a3", action: "draw" },
+        { id: "s19-enter-lo", at: 1380, duration: 240, target: "s19-lo", action: "enter" },
+        { id: "s19-enter-note", at: 1600, duration: 260, target: "s19-note", action: "enter" },
+        { id: "s19-draw-motion", at: 1800, duration: 900, target: "s19-motion", action: "draw" },
+        { id: "s19-emph", at: 2600, duration: 400, target: "s19-abort", action: "emphasis" }
+      ]
+    }
+  }
+
+  slide "Source map" {
+    eyebrow: "Source map"
+    title: "Where the machinery lives — and the real knobs"
+    lede: "Sampler, chop, handoff, and phase resume map to four runtime files. Config knobs are `trajectory_start_min_ratio`, `trajectory_start_max_ratio`, and `t_star_random_seed`."
+
+    narration: "tstar.rs owns duration and window sampling. snapshot.rs owns trie chops and frontier residuals. warmup_handoff.rs defines the payload. graph_phase_runtime.rs drains, builds the handoff, and resumes profiling lanes. Only those three trajectory knobs configure the window and seed — no invented names."
+
+    term: {
+      word: "trajectory knobs"
+      meaning: "Config v2 fields trajectory_start_min_ratio, trajectory_start_max_ratio, and t_star_random_seed — the real controls for the t* window and lane-salted RNG base."
+    }
+
+    points: [
+      "`rust/runtime/src/graph/tstar.rs` — window sampler · lane salt · PermutationDraw.",
+      "`rust/runtime/src/graph/snapshot.rs` — `chop_trie_at_tstar` · `chop_trie_at_frontier`.",
+      "`rust/runtime/src/graph/warmup_handoff.rs` + `engine/graph_phase_runtime.rs` — payload · drain · resume.",
+      "Knobs: `trajectory_start_min_ratio` · `trajectory_start_max_ratio` · `t_star_random_seed`."
+    ]
+
+    caption: "Four files · three knobs · one seeded plan."
+
+    render: @scene {
+      roots: [
+        {
+          id: "s20-hdr"
+          capability: "core.header"
+          title: "SOURCE MAP"
+          caption: "Four files · three knobs · one seeded plan."
+          layout: { x: 18, y: 16, width: 664, height: 44 }
+          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+        },
+        {
+          id: "s20-tstar"
+          capability: "core.panel"
+          title: "tstar.rs"
+          detail: "sample · salt · draw"
+          layout: { x: 40, y: 90, width: 150, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s20-snap"
+          capability: "core.panel"
+          title: "snapshot.rs"
+          detail: "chop · frontier"
+          layout: { x: 210, y: 90, width: 150, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s20-hand"
+          capability: "core.panel"
+          title: "warmup_handoff.rs"
+          detail: "LaneHandoff"
+          layout: { x: 380, y: 90, width: 150, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s20-phase"
+          capability: "core.panel"
+          title: "graph_phase_runtime"
+          detail: "drain · resume"
+          layout: { x: 550, y: 90, width: 120, height: 80 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
+        },
+        {
+          id: "s20-a1"
+          capability: "core.connector"
+          from: { nodeId: "s20-tstar", anchor: "e" }
+          to: { nodeId: "s20-snap", anchor: "w" }
+          style: { stroke: @theme.ink.secondary, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s20-a2"
+          capability: "core.connector"
+          from: { nodeId: "s20-snap", anchor: "e" }
+          to: { nodeId: "s20-hand", anchor: "w" }
+          style: { stroke: @theme.ink.secondary, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s20-a3"
+          capability: "core.connector"
+          from: { nodeId: "s20-hand", anchor: "e" }
+          to: { nodeId: "s20-phase", anchor: "w" }
+          style: { stroke: @theme.ink.secondary, strokeWidth: 2, fill: "none" }
+        },
+        {
+          id: "s20-min"
+          capability: "core.panel"
+          title: "trajectory_start_min_ratio"
+          detail: "window lo"
+          layout: { x: 40, y: 210, width: 200, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.5, radius: 8 }
+        },
+        {
+          id: "s20-max"
+          capability: "core.panel"
+          title: "trajectory_start_max_ratio"
+          detail: "window hi"
+          layout: { x: 260, y: 210, width: 200, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.5, radius: 8 }
+        },
+        {
+          id: "s20-seed"
+          capability: "core.panel"
+          title: "t_star_random_seed"
+          detail: "lane-salted base"
+          layout: { x: 480, y: 210, width: 190, height: 60 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.5, radius: 8 }
+        },
+        {
+          id: "s20-note"
+          capability: "core.note"
+          caption: "Real Config v2 knobs only · recycle shuffle/random use run-root random_seed"
+          layout: { x: 60, y: 300, width: 580, height: 28 }
+          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+        },
+        {
+          id: "s20-motion"
+          capability: "motion.signal"
+          from: { nodeId: "s20-tstar", anchor: "center" }
+          to: { nodeId: "s20-phase", anchor: "center" }
+          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.5 }
+          accessibility: { label: "source pipeline" }
+        }
+      ]
+      timeline: [
+        { id: "s20-enter-hdr", at: 0, duration: 260, target: "s20-hdr", action: "enter" },
+        { id: "s20-enter-tstar", at: 140, duration: 220, target: "s20-tstar", action: "enter" },
+        { id: "s20-draw-a1", at: 320, duration: 240, target: "s20-a1", action: "draw" },
+        { id: "s20-enter-snap", at: 420, duration: 220, target: "s20-snap", action: "enter" },
+        { id: "s20-draw-a2", at: 600, duration: 240, target: "s20-a2", action: "draw" },
+        { id: "s20-enter-hand", at: 700, duration: 220, target: "s20-hand", action: "enter" },
+        { id: "s20-draw-a3", at: 880, duration: 240, target: "s20-a3", action: "draw" },
+        { id: "s20-enter-phase", at: 980, duration: 220, target: "s20-phase", action: "enter" },
+        { id: "s20-enter-min", at: 1200, duration: 220, target: "s20-min", action: "enter" },
+        { id: "s20-enter-max", at: 1320, duration: 220, target: "s20-max", action: "enter" },
+        { id: "s20-enter-seed", at: 1440, duration: 220, target: "s20-seed", action: "enter" },
+        { id: "s20-enter-note", at: 1660, duration: 260, target: "s20-note", action: "enter" },
+        { id: "s20-draw-motion", at: 1860, duration: 900, target: "s20-motion", action: "draw" },
+        { id: "s20-emph", at: 2600, duration: 400, target: "s20-seed", action: "emphasis" }
+      ]
+    }
+  }
+}

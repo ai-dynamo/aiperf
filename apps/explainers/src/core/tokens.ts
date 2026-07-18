@@ -7,33 +7,33 @@
  * Visual tokens for explainers chrome and diagram defaults.
  * Keep hex values in sync with `:root` custom properties in `index.css`.
  *
+ * Green walkthrough skin: solid green = current, soft green = done.
  * Layering (dark → light): page < chrome/stage < elevated/box.
- * Boxes must sit above the stage fill or they disappear.
  */
 export const tokens = {
   text: {
-    primary: "#FFFFFF",
-    secondary: "#A3A3A3",
-    tertiary: "#8A8A8A",
-    quaternary: "#6B6B6B",
-    link: "#87C3FF",
-    onAccent: "#0C0C0C",
+    primary: "#F4F4F5",
+    secondary: "#A1A1AA",
+    tertiary: "#71717A",
+    quaternary: "#52525B",
+    link: "#86EFAC",
+    onAccent: "#052e16",
   },
   bg: {
-    page: "#0C0C0C",
-    chrome: "#141416",
-    elevated: "#222226",
+    page: "#09090B",
+    chrome: "#0F0F12",
+    elevated: "#18181B",
   },
   fill: {
-    primary: "rgba(255, 255, 255, 0.16)",
-    secondary: "rgba(255, 255, 255, 0.10)",
-    tertiary: "rgba(255, 255, 255, 0.06)",
-    quaternary: "rgba(255, 255, 255, 0.04)",
+    primary: "rgba(244, 244, 245, 0.14)",
+    secondary: "rgba(244, 244, 245, 0.09)",
+    tertiary: "rgba(244, 244, 245, 0.05)",
+    quaternary: "rgba(244, 244, 245, 0.03)",
   },
   stroke: {
-    primary: "rgba(255, 255, 255, 0.28)",
-    secondary: "rgba(255, 255, 255, 0.18)",
-    tertiary: "rgba(255, 255, 255, 0.10)",
+    primary: "rgba(244, 244, 245, 0.22)",
+    secondary: "rgba(244, 244, 245, 0.12)",
+    tertiary: "rgba(244, 244, 245, 0.07)",
   },
   accent: {
     primary: "#3FA266",
@@ -41,17 +41,17 @@ export const tokens = {
   },
   category: {
     green: "#3FA266",
-    yellow: "#F1B467",
-    purple: "#9386F2",
-    blue: "#599CE7",
-    red: "#FC6B83",
-    orange: "#F0A060",
-    cyan: "#5BC0DE",
+    yellow: "#EAB308",
+    purple: "#A78BFA",
+    blue: "#60A5FA",
+    red: "#FB7185",
+    orange: "#FB923C",
+    cyan: "#22D3EE",
     gray: "#8A8A8A",
   },
   radius: {
     control: 10,
-    card: 16,
+    card: 20,
     stage: 16,
     pill: 999,
     box: 14,

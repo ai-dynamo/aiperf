@@ -23,6 +23,12 @@ const ARROW_KINDS = new Set(["line", "path", "arrow", "connector"]);
 const DOT_CAPS = new Set(["core.dot", "core.circle"]);
 const DOT_KINDS = new Set(["dot", "circle"]);
 const BOX_CAPS = new Set(["core.rect", "core.text"]);
+const MOTION_CAPS = new Set([
+  "motion.signal",
+  "motion.dot",
+  "core.motion",
+  "motion.motion-signal",
+]);
 
 export function capabilityOf(node) {
   return String(node?.capabilityId ?? node?.capability ?? "");
@@ -38,12 +44,113 @@ export function isArrowLike(node) {
   return ARROW_CAPS.has(cap) || ARROW_KINDS.has(kind);
 }
 
+/**
+ * Mirror SceneRenderer motion-signal classification so guide strokes are not
+ * treated as orphan connectors. Dots are never motion guides.
+ */
+export function isMotionSignalNode(node) {
+  if (isDotLike(node)) return false;
+  const cap = capabilityOf(node);
+  if (MOTION_CAPS.has(cap)) return true;
+  const id = String(node?.id ?? "");
+  if (/motion[-_]?sig/i.test(id) || /^motion\d+$/i.test(id)) return true;
+  if (/motion/i.test(id) && isArrowLike(node)) return true;
+  const label = String(node?.accessibility?.label ?? "").toLowerCase();
+  if (label.includes("motion signal")) return true;
+  const style = node?.style ?? {};
+  const motion = style.motion;
+  const role = style.role;
+  return (
+    motion === true ||
+    motion === 1 ||
+    motion === "signal" ||
+    motion === "dot" ||
+    role === "motion" ||
+    role === "motion-signal"
+  );
+}
+
+/** True when the author disabled arrowheads (undirected divider / guide). */
+export function markerEndDisabled(node) {
+  const markerEnd = node?.style?.markerEnd;
+  if (markerEnd === undefined || markerEnd === null) return false;
+  if (markerEnd === false || markerEnd === 0) return true;
+  if (typeof markerEnd === "string") {
+    const token = markerEnd.trim().toLowerCase();
+    return token === "none" || token === "false" || token === "0";
+  }
+  if (typeof markerEnd === "object" && markerEnd !== null) {
+    const kind = markerEnd.kind;
+    if (typeof kind === "string") {
+      const token = kind.trim().toLowerCase();
+      return token === "none" || token === "false";
+    }
+  }
+  return false;
+}
+
+/** Directed connectors that should snap to boxes (excludes motion + headless). */
+export function isDirectedConnector(node) {
+  if (!isArrowLike(node) || isMotionSignalNode(node) || markerEndDisabled(node)) {
+    return false;
+  }
+  if (
+    node?.style?.arrowhead === false ||
+    node?.style?.arrowhead === 0 ||
+    node?.style?.arrowhead === "false"
+  ) {
+    return false;
+  }
+  const id = String(node?.id ?? "").toLowerCase();
+  // Visual dividers / rules are not box-to-box connectors.
+  if (/^(split|divider|rule|sep|guide)([-_]|$)/.test(id)) {
+    return false;
+  }
+  const cap = capabilityOf(node);
+  // Braces are undirected (mirror SceneRenderer / desugar markerEnd: none).
+  if (cap === "core.bracket") {
+    return false;
+  }
+  return true;
+}
+
 export function isDotLike(node) {
   const cap = capabilityOf(node);
   const kind = kindOf(node);
   if (DOT_CAPS.has(cap) || DOT_KINDS.has(kind)) return true;
   const r = node?.style?.r;
   return typeof r === "number" && r > 0 && r <= 12;
+}
+
+/**
+ * Legacy companion dots authored beside a motion path (`s9-motion-sig-dot`).
+ * SceneRenderer drops these; verifier flags them as obsolete dead IR.
+ */
+export function isMotionCompanionDot(node) {
+  if (!isDotLike(node)) return false;
+  const role = String(node?.style?.role ?? "").toLowerCase();
+  if (role === "motion-signal" || role === "motion-dot") return true;
+  const id = String(node?.id ?? "");
+  return /motion[-_]?sig/i.test(id) && /-dot$/i.test(id);
+}
+
+/** Id of the motion path a companion dot is paired with (`…-dot` → stem). */
+export function motionCompanionPathId(dotId) {
+  const id = String(dotId ?? "");
+  const m = /^(.*)-dot$/i.exec(id);
+  if (!m || !/motion[-_]?sig/i.test(m[1])) return null;
+  return m[1];
+}
+
+/** Static legend chips: skip orphan-dot proximity. */
+export function isLegendDot(node) {
+  if (!isDotLike(node) || isMotionCompanionDot(node)) return false;
+  const role = String(node?.style?.role ?? "").toLowerCase();
+  const legend = node?.style?.legend;
+  if (role === "legend" || role === "legend-chip" || legend === true) return true;
+  const id = String(node?.id ?? "").toLowerCase();
+  const label = String(node?.accessibility?.label ?? "").toLowerCase();
+  return id.includes("legend") || label.includes("legend");
 }
 
 export function isBoxLike(node) {
@@ -90,6 +197,62 @@ export function boxCenter(geom) {
   return { x: geom.x + geom.width / 2, y: geom.y + geom.height / 2 };
 }
 
+/** Edge / corner / center point on a box (SceneRenderer anchor parity). */
+export function nodeAnchorPoint(geom, anchor) {
+  const center = boxCenter(geom);
+  const left = geom.x;
+  const right = geom.x + geom.width;
+  const top = geom.y;
+  const bottom = geom.y + geom.height;
+  switch (String(anchor ?? "center").toLowerCase()) {
+    case "left":
+    case "west":
+    case "w":
+      return { x: left, y: center.y };
+    case "right":
+    case "east":
+    case "e":
+      return { x: right, y: center.y };
+    case "top":
+    case "north":
+    case "n":
+      return { x: center.x, y: top };
+    case "bottom":
+    case "south":
+    case "s":
+      return { x: center.x, y: bottom };
+    case "ne":
+      return { x: right, y: top };
+    case "nw":
+      return { x: left, y: top };
+    case "se":
+      return { x: right, y: bottom };
+    case "sw":
+      return { x: left, y: bottom };
+    case "center":
+    default:
+      return center;
+  }
+}
+
+/**
+ * Resolve a connector endpoint to a point. Supports absolute `{x,y}` and
+ * node-anchored `{nodeId, anchor}` when `nodesById` is provided.
+ */
+export function resolveEndpoint(endpoint, nodesById) {
+  if (!endpoint || typeof endpoint !== "object") return null;
+  const nodeId = endpoint.nodeId;
+  if (typeof nodeId === "string" && nodeId.length > 0 && nodesById) {
+    const target = nodesById.get(nodeId);
+    const g = target ? geomOf(target) : null;
+    if (g) return nodeAnchorPoint(g, endpoint.anchor);
+  }
+  if (Number.isFinite(endpoint.x) && Number.isFinite(endpoint.y)) {
+    return { x: endpoint.x, y: endpoint.y };
+  }
+  return null;
+}
+
 export function dist(a, b) {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
@@ -103,12 +266,13 @@ export function pointNearBox(point, geom, snap = SNAP_PX) {
 }
 
 /**
- * Parse simple SVG path commands into polyline points (M/L/H/V/absolute).
- * Enough for decks-flow authored connectors.
+ * Parse SVG path commands into polyline points.
+ * Supports M/L/H/V (abs/rel) and records endpoints of C/S/Q/T/A so cubic
+ * connectors still yield usable start/end for snap checks.
  */
 export function pathPoints(pathData) {
   if (typeof pathData !== "string" || pathData.trim() === "") return [];
-  const tokens = pathData.match(/[MLHVZmlhvz]|-?\d*\.?\d+(?:e[-+]?\d+)?/gi);
+  const tokens = pathData.match(/[MLHVCSQTAZmlhvcsqtaz]|-?\d*\.?\d+(?:e[-+]?\d+)?/gi);
   if (!tokens) return [];
   const points = [];
   let i = 0;
@@ -116,9 +280,14 @@ export function pathPoints(pathData) {
   let y = 0;
   let cmd = "M";
   const num = () => Number(tokens[i++]);
+  const push = (px, py) => {
+    if (Number.isFinite(px) && Number.isFinite(py)) {
+      points.push({ x: px, y: py });
+    }
+  };
   while (i < tokens.length) {
     const t = tokens[i];
-    if (/^[MLHVZmlhvz]$/.test(t)) {
+    if (/^[MLHVCSQTAZmlhvcsqtaz]$/.test(t)) {
       cmd = t;
       i += 1;
       if (cmd === "Z" || cmd === "z") continue;
@@ -126,33 +295,87 @@ export function pathPoints(pathData) {
     if (cmd === "M" || cmd === "L") {
       x = num();
       y = num();
-      points.push({ x, y });
+      push(x, y);
       cmd = cmd === "M" ? "L" : cmd;
     } else if (cmd === "m" || cmd === "l") {
       x += num();
       y += num();
-      points.push({ x, y });
+      push(x, y);
       cmd = cmd === "m" ? "l" : cmd;
     } else if (cmd === "H") {
       x = num();
-      points.push({ x, y });
+      push(x, y);
     } else if (cmd === "h") {
       x += num();
-      points.push({ x, y });
+      push(x, y);
     } else if (cmd === "V") {
       y = num();
-      points.push({ x, y });
+      push(x, y);
     } else if (cmd === "v") {
       y += num();
-      points.push({ x, y });
+      push(x, y);
+    } else if (cmd === "C") {
+      num();
+      num();
+      num();
+      num();
+      x = num();
+      y = num();
+      push(x, y);
+    } else if (cmd === "c") {
+      num();
+      num();
+      num();
+      num();
+      x += num();
+      y += num();
+      push(x, y);
+    } else if (cmd === "S" || cmd === "Q") {
+      num();
+      num();
+      x = num();
+      y = num();
+      push(x, y);
+    } else if (cmd === "s" || cmd === "q") {
+      num();
+      num();
+      x += num();
+      y += num();
+      push(x, y);
+    } else if (cmd === "T") {
+      x = num();
+      y = num();
+      push(x, y);
+    } else if (cmd === "t") {
+      x += num();
+      y += num();
+      push(x, y);
+    } else if (cmd === "A") {
+      num();
+      num();
+      num();
+      num();
+      num();
+      x = num();
+      y = num();
+      push(x, y);
+    } else if (cmd === "a") {
+      num();
+      num();
+      num();
+      num();
+      num();
+      x += num();
+      y += num();
+      push(x, y);
     } else {
       i += 1;
     }
   }
-  return points.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  return points;
 }
 
-export function arrowPathData(node) {
+export function arrowPathData(node, nodesById) {
   if (typeof node?.path === "string" && node.path.trim()) return node.path;
   if (typeof node?.d === "string" && node.d.trim()) return node.d;
   const from = node?.from;
@@ -167,6 +390,11 @@ export function arrowPathData(node) {
     !(from.x === 0 && from.y === 0 && to.x === 0 && to.y === 0)
   ) {
     return `M${from.x} ${from.y} L${to.x} ${to.y}`;
+  }
+  const start = resolveEndpoint(from, nodesById);
+  const end = resolveEndpoint(to, nodesById);
+  if (start && end) {
+    return `M${start.x} ${start.y} L${end.x} ${end.y}`;
   }
   return null;
 }
@@ -197,6 +425,28 @@ export function drawProgress(timeline, nodeId, tMs) {
   if (tMs <= at) return 0;
   if (dur <= 0) return 1;
   return Math.min(1, Math.max(0, (tMs - at) / dur));
+}
+
+/** Resolve viewport from scene.viewport with DEFAULT_VIEWPORT fallback. */
+export function sceneViewport(scene, override) {
+  const authored = scene?.viewport;
+  const width =
+    typeof authored?.width === "number" && Number.isFinite(authored.width)
+      ? authored.width
+      : DEFAULT_VIEWPORT.width;
+  const height =
+    typeof authored?.height === "number" && Number.isFinite(authored.height)
+      ? authored.height
+      : DEFAULT_VIEWPORT.height;
+  const margin =
+    typeof override?.margin === "number"
+      ? override.margin
+      : DEFAULT_VIEWPORT.margin;
+  return {
+    width: override?.width ?? width,
+    height: override?.height ?? height,
+    margin,
+  };
 }
 
 export function inViewport(geom, viewport = DEFAULT_VIEWPORT) {

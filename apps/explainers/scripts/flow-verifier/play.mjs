@@ -27,7 +27,9 @@ const DECK_ROUTES = [
 function resolvePlaywright() {
   const require = createRequire(import.meta.url);
   try {
-    return require.resolve("playwright", { paths: [AIPERF_FLOW_ROOT, EXPLAINERS_ROOT] });
+    return require.resolve("playwright", {
+      paths: [AIPERF_FLOW_ROOT, EXPLAINERS_ROOT],
+    });
   } catch {
     return null;
   }
@@ -37,7 +39,7 @@ async function loadChromium() {
   const id = resolvePlaywright();
   if (!id) {
     throw new Error(
-      "playwright not found; install in apps/aiperf-flow or pass --ir-only",
+      "playwright not found; install in apps/aiperf-flow (`npx playwright install chromium`) or pass --ir-only",
     );
   }
   const mod = await import(pathToFileURL(id).href);
@@ -135,7 +137,9 @@ async function dismissStartGate(page) {
 }
 
 async function clickPlay(page) {
-  const play = page.getByRole("button", { name: /Play slideshow|Replay slideshow/i });
+  const play = page.getByRole("button", {
+    name: /Play slideshow|Replay slideshow/i,
+  });
   if (await play.count()) {
     await play.first().click();
     return;
@@ -145,11 +149,15 @@ async function clickPlay(page) {
   throw new Error("Play slideshow control not found");
 }
 
+/**
+ * Live SVG assertions (design layer B).
+ * Samples while playing so mid-draw arrowhead deferral is actually exercised.
+ */
 async function collectSvgFindings(page, deckRoute, slideIndex) {
   return await page.evaluate(
     ({ route, slide }) => {
       const findings = [];
-      const svg = document.querySelector("svg");
+      const svg = document.querySelector("svg.scene-renderer, svg");
       if (!svg) {
         findings.push({
           severity: "error",
@@ -165,6 +173,8 @@ async function collectSvgFindings(page, deckRoute, slideIndex) {
         ? { x: viewBox.x, y: viewBox.y, w: viewBox.width, h: viewBox.height }
         : { x: 0, y: 0, w: 700, h: 400 };
 
+      const reduced =
+        svg.getAttribute("data-scene-reduced-motion") === "true";
       const nodes = svg.querySelectorAll("[data-flow-node-id]");
       if (nodes.length === 0) {
         findings.push({
@@ -176,24 +186,30 @@ async function collectSvgFindings(page, deckRoute, slideIndex) {
         });
       }
 
-      for (const el of svg.querySelectorAll("path[data-flow-arrowhead]")) {
-        const head = el.getAttribute("data-flow-arrowhead");
-        const dashoffset = el.getAttribute("stroke-dashoffset");
-        if (head === "true" && dashoffset != null) {
-          const off = Number(dashoffset);
-          if (Number.isFinite(off) && off > 0.02 && off < 0.98) {
-            findings.push({
-              severity: "error",
-              deck: route,
-              slide: String(slide),
-              code: "arrowhead-leads-stroke",
-              message: `path shows arrowhead while stroke-dashoffset=${off}`,
-            });
+      // SceneRenderer contract: heads only when draw is complete (unless reduced).
+      if (!reduced) {
+        for (const el of svg.querySelectorAll("path[data-flow-arrowhead]")) {
+          const head = el.getAttribute("data-flow-arrowhead");
+          const dashoffset = el.getAttribute("stroke-dashoffset");
+          if (head === "true" && dashoffset != null) {
+            const off = Number(dashoffset);
+            if (Number.isFinite(off) && off > 0.02 && off < 0.98) {
+              findings.push({
+                severity: "error",
+                deck: route,
+                slide: String(slide),
+                code: "arrowhead-leads-stroke",
+                message: `path shows arrowhead while stroke-dashoffset=${off}`,
+              });
+            }
           }
         }
       }
 
-      for (const el of svg.querySelectorAll("[data-flow-dot], [data-flow-motion-signal]")) {
+      const ctm = svg.getScreenCTM?.();
+      for (const el of svg.querySelectorAll(
+        "[data-flow-dot], [data-flow-motion-signal], circle.motion-signal",
+      )) {
         const box = el.getBoundingClientRect();
         if (!Number.isFinite(box.x) || !Number.isFinite(box.y)) {
           findings.push({
@@ -206,14 +222,45 @@ async function collectSvgFindings(page, deckRoute, slideIndex) {
           continue;
         }
         if (box.width === 0 && box.height === 0) {
-          // Hidden is ok during enter.
           continue;
+        }
+        // Map screen center into SVG user space when CTM is available.
+        if (ctm && typeof DOMPointReadOnly !== "undefined") {
+          try {
+            const inv = ctm.inverse();
+            const pt = new DOMPointReadOnly(
+              box.left + box.width / 2,
+              box.top + box.height / 2,
+            ).matrixTransform(inv);
+            const margin = 48;
+            const outside =
+              pt.x < vb.x - margin ||
+              pt.y < vb.y - margin ||
+              pt.x > vb.x + vb.w + margin ||
+              pt.y > vb.y + vb.h + margin;
+            if (outside) {
+              findings.push({
+                severity: "warn",
+                deck: route,
+                slide: String(slide),
+                code: "dot-out-of-viewbox",
+                message: `motion dot at (${pt.x.toFixed(1)},${pt.y.toFixed(1)}) outside viewBox`,
+              });
+            }
+          } catch {
+            // CTM inverse can fail on detached nodes; skip.
+          }
         }
       }
 
       for (const el of nodes) {
         const kind = el.getAttribute("data-flow-kind") ?? "";
-        if (kind === "path" || kind === "line" || kind === "arrow" || kind === "connector") {
+        if (
+          kind === "path" ||
+          kind === "line" ||
+          kind === "arrow" ||
+          kind === "connector"
+        ) {
           continue;
         }
         const box = el.getBoundingClientRect();
@@ -235,7 +282,6 @@ async function collectSvgFindings(page, deckRoute, slideIndex) {
         }
       }
 
-      // viewBox sanity
       if (!(vb.w > 0 && vb.h > 0)) {
         findings.push({
           severity: "error",
@@ -252,7 +298,11 @@ async function collectSvgFindings(page, deckRoute, slideIndex) {
 }
 
 async function slideCount(page) {
-  const text = await page.locator("text=/\\d+\\s*\\/\\s*\\d+/").first().textContent().catch(() => null);
+  const text = await page
+    .locator("text=/\\d+\\s*\\/\\s*\\d+/")
+    .first()
+    .textContent()
+    .catch(() => null);
   if (!text) return null;
   const m = text.match(/(\d+)\s*\/\s*(\d+)/);
   return m ? Number(m[2]) : null;
@@ -270,6 +320,13 @@ async function goNext(page) {
   return false;
 }
 
+async function sampleWhilePlaying(page, deckRoute, slideIndex, findings) {
+  // Two samples spaced so a draw cue mid-flight is likely caught.
+  findings.push(...(await collectSvgFindings(page, deckRoute, slideIndex)));
+  await page.waitForTimeout(350);
+  findings.push(...(await collectSvgFindings(page, deckRoute, slideIndex)));
+}
+
 /**
  * Play every deck route and collect live SVG findings.
  */
@@ -277,7 +334,9 @@ export async function verifyPlayAll(options = {}) {
   const findings = [];
   const deckFilter = options.deckRoute ?? null;
   const routes = deckFilter
-    ? DECK_ROUTES.filter((r) => r.includes(deckFilter.replace(/^\/?#?\/?/, "")))
+    ? DECK_ROUTES.filter((r) =>
+        r.includes(deckFilter.replace(/^\/?#?\/?/, "")),
+      )
     : DECK_ROUTES;
 
   let stop = null;
@@ -289,18 +348,26 @@ export async function verifyPlayAll(options = {}) {
   }
 
   const chromium = await loadChromium();
+  // Force full motion so arrowhead-deferral checks are meaningful.
   const browser = await chromium.launch({ headless: true });
   try {
     for (const route of routes) {
       const page = await browser.newPage();
+      await page.emulateMedia({ reducedMotion: "no-preference" });
       try {
-        await page.goto(`${baseUrl}${route}`, { waitUntil: "networkidle", timeout: 60_000 });
-        // HashRouter: wait for deck chrome after hash navigation.
+        await page.goto(`${baseUrl}${route}`, {
+          waitUntil: "networkidle",
+          timeout: 60_000,
+        });
         await page.waitForTimeout(500);
         await dismissStartGate(page);
-        await page.getByRole("button", { name: /Play slideshow|Pause slideshow|Replay slideshow/i }).first().waitFor({
-          timeout: 15_000,
-        }).catch(() => {});
+        await page
+          .getByRole("button", {
+            name: /Play slideshow|Pause slideshow|Replay slideshow/i,
+          })
+          .first()
+          .waitFor({ timeout: 15_000 })
+          .catch(() => {});
         await clickPlay(page).catch((error) => {
           findings.push({
             severity: "error",
@@ -313,13 +380,10 @@ export async function verifyPlayAll(options = {}) {
 
         const total = (await slideCount(page)) ?? 1;
         for (let i = 0; i < total; i += 1) {
-          await page.waitForTimeout(400);
-          const slice = await collectSvgFindings(page, route, i);
-          findings.push(...slice);
+          await sampleWhilePlaying(page, route, i, findings);
           if (i < total - 1) {
             const moved = await goNext(page);
             if (!moved) break;
-            // Restart play on new slide if paused.
             await clickPlay(page).catch(() => {});
           }
         }

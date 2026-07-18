@@ -77,6 +77,24 @@ export const Elbow = keyword("Elbow", /elbow/);
 export const Bracket = keyword("Bracket", /bracket/);
 /** Native `callout` → `core.callout`. */
 export const Callout = keyword("Callout", /callout/);
+/** Native `chip` → `core.chip`. */
+export const Chip = keyword("Chip", /chip/);
+/** Native `note` → `core.note`. */
+export const Note = keyword("Note", /note/);
+/** Native `divider` → `core.divider`. */
+export const Divider = keyword("Divider", /divider/);
+/** Native `rail` → `layout.rail`. */
+export const Rail = keyword("Rail", /rail/);
+/** Native `lane` → `core.lane`. */
+export const Lane = keyword("Lane", /lane/);
+/** Native `band` → `core.band`. */
+export const Band = keyword("Band", /band/);
+/** Native `swimlane` → `core.swimlane`. */
+export const Swimlane = keyword("Swimlane", /swimlane/);
+/** Native `stepper` → `core.stepper`. */
+export const Stepper = keyword("Stepper", /stepper/);
+/** Native `route` → `core.route`. */
+export const Route = keyword("Route", /route/);
 /** Native `stack` → `layout.stack`. */
 export const Stack = keyword("Stack", /stack/);
 /** Native `grid` → `layout.grid`. */
@@ -217,6 +235,15 @@ export const allTokens = [
   Elbow,
   Bracket,
   Callout,
+  Chip,
+  Note,
+  Divider,
+  Rail,
+  Lane,
+  Band,
+  Swimlane,
+  Stepper,
+  Route,
   Stack,
   Grid,
   Pad,

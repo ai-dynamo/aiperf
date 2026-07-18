@@ -109,6 +109,15 @@ export type ScenePrimitiveKeyword =
   | "elbow"
   | "bracket"
   | "callout"
+  | "chip"
+  | "note"
+  | "divider"
+  | "rail"
+  | "lane"
+  | "band"
+  | "swimlane"
+  | "stepper"
+  | "route"
   | "stack"
   | "grid"
   | "pad"
@@ -124,6 +133,15 @@ export const SCENE_PRIMITIVE_CAPABILITIES = {
   elbow: "core.elbow",
   bracket: "core.bracket",
   callout: "core.callout",
+  chip: "core.chip",
+  note: "core.note",
+  divider: "core.divider",
+  rail: "layout.rail",
+  lane: "core.lane",
+  band: "core.band",
+  swimlane: "core.swimlane",
+  stepper: "core.stepper",
+  route: "core.route",
   stack: "layout.stack",
   grid: "layout.grid",
   pad: "layout.pad",

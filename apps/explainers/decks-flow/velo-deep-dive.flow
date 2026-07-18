@@ -41,71 +41,63 @@ explainer "Velo deep dive" {
       roots: [
         {
           id: "s0-hdr"
-          capability: "core.rect"
+          capability: "core.header"
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "CONNECTION RESOLVE" }
-          children: [
-            { id: "s0-hdr-l" capability: "core.text" text: "CONNECTION RESOLVE" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
-            { id: "s0-hdr-c" capability: "core.text" text: "endpoint → _hello → register_peer(controller)." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
+          title: "CONNECTION RESOLVE"
+          caption: "endpoint → _hello → register_peer(controller)."
         }
         {
           id: "s0-cell"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 40, y: 140, width: 160, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Cell k: known coordinate" }
-          children: [
-            { id: "s0-cell-t" capability: "core.text" text: "Cell k" layout: { x: 40, y: 160, width: 160, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s0-cell-d" capability: "core.text" text: "known coordinate" layout: { x: 40, y: 184, width: 160, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "Cell k"
+          detail: "known coordinate"
         }
-        { id: "s0-a1" capability: "core.path" d: "M200 180 H300" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s0-a1" capability: "core.connector" from: { nodeId: "s0-cell", anchor: "e" } to: { nodeId: "s0-velo", anchor: "w" } style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
         { id: "s0-hello" capability: "core.text" text: "_hello" layout: { x: 225, y: 152, width: 50, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.tertiary, textAnchor: "middle" } }
         {
           id: "s0-velo"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 300, y: 140, width: 170, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Velo transport: resolve PeerInfo" }
-          children: [
-            { id: "s0-velo-t" capability: "core.text" text: "Velo transport" layout: { x: 300, y: 160, width: 170, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s0-velo-d" capability: "core.text" text: "resolve PeerInfo" layout: { x: 300, y: 184, width: 170, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "Velo transport"
+          detail: "resolve PeerInfo"
         }
-        { id: "s0-a2" capability: "core.path" d: "M470 180 H540" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
+        { id: "s0-a2" capability: "core.connector" from: { nodeId: "s0-velo", anchor: "e" } to: { nodeId: "s0-ctrl", anchor: "w" } style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s0-ctrl"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 540, y: 140, width: 140, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Controller: register_peer" }
-          children: [
-            { id: "s0-ctrl-t" capability: "core.text" text: "Controller" layout: { x: 540, y: 160, width: 140, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s0-ctrl-d" capability: "core.text" text: "register_peer" layout: { x: 540, y: 184, width: 140, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "Controller"
+          detail: "register_peer"
         }
         {
           id: "s0-src"
-          capability: "core.rect"
-          layout: { x: 210, y: 280, width: 280, height: 60 }
+          capability: "core.lane"
+          title: "tcp:// · uds:// · SLURM_* · k8s"
+          layout: { x: 210, y: 270, width: 280, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "tcp:// · uds:// · SLURM_* · k8s: coordinate sources" }
           children: [
-            { id: "s0-src-t" capability: "core.text" text: "tcp:// · uds:// · SLURM_* · k8s" layout: { x: 210, y: 290, width: 280, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s0-src-d" capability: "core.text" text: "coordinate sources" layout: { x: 210, y: 314, width: 280, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
+            {
+              id: "s0-src-detail"
+              capability: "core.text"
+              text: "coordinate sources"
+              layout: { x: 16, y: 36, width: 248, height: 18 }
+              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
+            }
           ]
         }
-        {
-          id: "s0-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.secondary }
-        }
+
         {
           id: "s0-motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
@@ -120,7 +112,6 @@ explainer "Velo deep dive" {
         { id: "s0-draw-a2" at: 840 duration: 360 target: "s0-a2" action: "draw" }
         { id: "s0-enter-ctrl" at: 1040 duration: 280 target: "s0-ctrl" action: "enter" }
         { id: "s0-enter-src" at: 1280 duration: 260 target: "s0-src" action: "enter" }
-        { id: "s0-enter-mdot" at: 1480 duration: 200 target: "s0-motion-sig-dot" action: "enter" }
         { id: "s0-draw-motion" at: 1600 duration: 700 target: "s0-motion-sig" action: "draw" }
         { id: "s0-emph" at: 2300 duration: 400 target: "s0-ctrl" action: "emphasis" }
       ]
@@ -147,72 +138,57 @@ explainer "Velo deep dive" {
       roots: [
         {
           id: "s1-hdr"
-          capability: "core.rect"
+          capability: "core.header"
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "REGISTRATION REPLY" }
-          children: [
-            { id: "s1-hdr-l" capability: "core.text" text: "REGISTRATION REPLY" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
-            { id: "s1-hdr-c" capability: "core.text" text: "decode CellRegister → spec_for(cell_id) → RegisterReply." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
+          title: "REGISTRATION REPLY"
+          caption: "decode CellRegister → spec_for(cell_id) → RegisterReply."
         }
         {
           id: "s1-reg"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 30, y: 150, width: 150, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "CellRegister: cell_id: u32" }
-          children: [
-            { id: "s1-reg-t" capability: "core.text" text: "CellRegister" layout: { x: 30, y: 165, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s1-reg-d" capability: "core.text" text: "cell_id: u32" layout: { x: 30, y: 189, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "CellRegister"
+          detail: "cell_id: u32"
         }
-        { id: "s1-a1" capability: "core.path" d: "M180 185 H225" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
+        { id: "s1-a1" capability: "core.connector" from: { nodeId: "s1-reg", anchor: "e" } to: { nodeId: "s1-peer", anchor: "w" } style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s1-peer"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 225, y: 150, width: 150, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "register_peer: return route" }
-          children: [
-            { id: "s1-peer-t" capability: "core.text" text: "register_peer" layout: { x: 225, y: 165, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s1-peer-d" capability: "core.text" text: "return route" layout: { x: 225, y: 189, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "register_peer"
+          detail: "return route"
         }
-        { id: "s1-a2" capability: "core.path" d: "M375 185 H420" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
+        { id: "s1-a2" capability: "core.connector" from: { nodeId: "s1-peer", anchor: "e" } to: { nodeId: "s1-spec", anchor: "w" } style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s1-spec"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 420, y: 150, width: 150, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "spec_for(id): pure lookup" }
-          children: [
-            { id: "s1-spec-t" capability: "core.text" text: "spec_for(id)" layout: { x: 420, y: 165, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s1-spec-d" capability: "core.text" text: "pure lookup" layout: { x: 420, y: 189, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "spec_for(id)"
+          detail: "pure lookup"
         }
         { id: "s1-a3" capability: "core.path" d: "M570 185 H610" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
-        { id: "s1-a4" capability: "core.path" d: "M495 220 V280" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s1-a4" capability: "core.connector" from: { nodeId: "s1-spec", anchor: "s" } to: { nodeId: "s1-reply", anchor: "n" } style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s1-reply"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 470, y: 280, width: 200, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "RegisterReply: envelope + start_event" }
-          children: [
-            { id: "s1-reply-t" capability: "core.text" text: "RegisterReply" layout: { x: 470, y: 295, width: 200, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s1-reply-d" capability: "core.text" text: "envelope + start_event" layout: { x: 470, y: 319, width: 200, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "RegisterReply"
+          detail: "envelope + start_event"
         }
-        {
-          id: "s1-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.secondary }
-        }
+
         {
           id: "s1-motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 170 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
@@ -228,7 +204,6 @@ explainer "Velo deep dive" {
         { id: "s1-draw-a3" at: 1120 duration: 280 target: "s1-a3" action: "draw" }
         { id: "s1-draw-a4" at: 1240 duration: 300 target: "s1-a4" action: "draw" }
         { id: "s1-enter-reply" at: 1400 duration: 280 target: "s1-reply" action: "enter" }
-        { id: "s1-enter-mdot" at: 1600 duration: 180 target: "s1-motion-sig-dot" action: "enter" }
         { id: "s1-draw-motion" at: 1720 duration: 700 target: "s1-motion-sig" action: "draw" }
         { id: "s1-emph" at: 2420 duration: 400 target: "s1-reply" action: "emphasis" }
       ]
@@ -255,58 +230,48 @@ explainer "Velo deep dive" {
       roots: [
         {
           id: "s2-hdr"
-          capability: "core.rect"
+          capability: "core.header"
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "SYNCHRONIZED START" }
-          children: [
-            { id: "s2-hdr-l" capability: "core.text" text: "SYNCHRONIZED START" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
-            { id: "s2-hdr-c" capability: "core.text" text: "N registrations → trigger → all awaiters go Ready." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
+          title: "SYNCHRONIZED START"
+          caption: "N registrations → trigger → all awaiters go Ready."
         }
         {
           id: "s2-c0"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 30, y: 280, width: 80, height: 60 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "c0: register" }
-          children: [
-            { id: "s2-c0-t" capability: "core.text" text: "c0" layout: { x: 30, y: 290, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s2-c0-d" capability: "core.text" text: "register" layout: { x: 30, y: 314, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "c0"
+          detail: "register"
         }
         {
           id: "s2-c1"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 130, y: 280, width: 80, height: 60 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "c1: register" }
-          children: [
-            { id: "s2-c1-t" capability: "core.text" text: "c1" layout: { x: 130, y: 290, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s2-c1-d" capability: "core.text" text: "register" layout: { x: 130, y: 314, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "c1"
+          detail: "register"
         }
         {
           id: "s2-c2"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 230, y: 280, width: 80, height: 60 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "c2: register" }
-          children: [
-            { id: "s2-c2-t" capability: "core.text" text: "c2" layout: { x: 230, y: 290, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s2-c2-d" capability: "core.text" text: "register" layout: { x: 230, y: 314, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "c2"
+          detail: "register"
         }
         {
           id: "s2-c3"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 330, y: 280, width: 80, height: 60 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "c3: register" }
-          children: [
-            { id: "s2-c3-t" capability: "core.text" text: "c3" layout: { x: 330, y: 290, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s2-c3-d" capability: "core.text" text: "register" layout: { x: 330, y: 314, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "c3"
+          detail: "register"
         }
         { id: "s2-a0" capability: "core.path" d: "M70 280 C70 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
         { id: "s2-a1" capability: "core.path" d: "M170 280 C170 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
@@ -314,36 +279,27 @@ explainer "Velo deep dive" {
         { id: "s2-a3" capability: "core.path" d: "M370 280 C370 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s2-barrier"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 460, y: 150, width: 180, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Barrier: all_registered → trigger" }
-          children: [
-            { id: "s2-barrier-t" capability: "core.text" text: "Barrier" layout: { x: 460, y: 170, width: 180, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s2-barrier-d" capability: "core.text" text: "all_registered → trigger" layout: { x: 460, y: 194, width: 180, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "Barrier"
+          detail: "all_registered → trigger"
         }
         {
           id: "s2-start"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 210, y: 110, width: 220, height: 54 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "START event: wake all awaiters" }
-          children: [
-            { id: "s2-start-t" capability: "core.text" text: "START event" layout: { x: 210, y: 117, width: 220, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s2-start-d" capability: "core.text" text: "wake all awaiters" layout: { x: 210, y: 141, width: 220, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "START event"
+          detail: "wake all awaiters"
         }
         { id: "s2-aw" capability: "core.path" d: "M550 150 C520 120 470 130 430 137" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s2-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.secondary }
-        }
+
         {
           id: "s2-motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M350 300 V150"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
@@ -351,10 +307,7 @@ explainer "Velo deep dive" {
       ]
       timeline: [
         { id: "s2-enter-hdr" at: 0 duration: 260 target: "s2-hdr" action: "enter" }
-        { id: "s2-enter-c0" at: 200 duration: 220 target: "s2-c0" action: "enter" }
-        { id: "s2-enter-c1" at: 300 duration: 220 target: "s2-c1" action: "enter" }
-        { id: "s2-enter-c2" at: 400 duration: 220 target: "s2-c2" action: "enter" }
-        { id: "s2-enter-c3" at: 500 duration: 220 target: "s2-c3" action: "enter" }
+        { id: "s2-enter-c0" at: 200 duration: 220 target: "s2-c0" action: "stagger" targets: ["s2-c0", "s2-c1", "s2-c2", "s2-c3"] step: 100 }
         { id: "s2-draw-a0" at: 620 duration: 360 target: "s2-a0" action: "draw" }
         { id: "s2-draw-a1" at: 740 duration: 360 target: "s2-a1" action: "draw" }
         { id: "s2-draw-a2" at: 860 duration: 360 target: "s2-a2" action: "draw" }
@@ -362,7 +315,6 @@ explainer "Velo deep dive" {
         { id: "s2-enter-barrier" at: 1100 duration: 280 target: "s2-barrier" action: "enter" }
         { id: "s2-draw-aw" at: 1320 duration: 320 target: "s2-aw" action: "draw" }
         { id: "s2-enter-start" at: 1480 duration: 260 target: "s2-start" action: "enter" }
-        { id: "s2-enter-mdot" at: 1680 duration: 180 target: "s2-motion-sig-dot" action: "enter" }
         { id: "s2-draw-motion" at: 1800 duration: 700 target: "s2-motion-sig" action: "draw" }
         { id: "s2-emph" at: 2500 duration: 400 target: "s2-barrier" action: "emphasis" }
       ]
@@ -389,72 +341,57 @@ explainer "Velo deep dive" {
       roots: [
         {
           id: "s3-hdr"
-          capability: "core.rect"
+          capability: "core.header"
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "MESSAGEPACK CODEC" }
-          children: [
-            { id: "s3-hdr-l" capability: "core.text" text: "MESSAGEPACK CODEC" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
-            { id: "s3-hdr-c" capability: "core.text" text: "to_vec → raw payload → from_slice → typed value." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
+          title: "MESSAGEPACK CODEC"
+          caption: "to_vec → raw payload → from_slice → typed value."
         }
         {
           id: "s3-msg"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 30, y: 150, width: 150, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "CellMessage: ttft: NaN · max +∞" }
-          children: [
-            { id: "s3-msg-t" capability: "core.text" text: "CellMessage" layout: { x: 30, y: 170, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s3-msg-d" capability: "core.text" text: "ttft: NaN · max +∞" layout: { x: 30, y: 194, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "CellMessage"
+          detail: "ttft: NaN · max +∞"
         }
-        { id: "s3-a1" capability: "core.path" d: "M180 190 H225" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s3-a1" capability: "core.connector" from: { nodeId: "s3-msg", anchor: "e" } to: { nodeId: "s3-vec", anchor: "w" } style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s3-vec"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 225, y: 150, width: 130, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "to_vec: rmp_serde" }
-          children: [
-            { id: "s3-vec-t" capability: "core.text" text: "to_vec" layout: { x: 225, y: 170, width: 130, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s3-vec-d" capability: "core.text" text: "rmp_serde" layout: { x: 225, y: 194, width: 130, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "to_vec"
+          detail: "rmp_serde"
         }
-        { id: "s3-a2" capability: "core.path" d: "M355 190 H400" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s3-a2" capability: "core.connector" from: { nodeId: "s3-vec", anchor: "e" } to: { nodeId: "s3-raw", anchor: "w" } style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s3-raw"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 400, y: 150, width: 130, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "raw bytes: Velo payload" }
-          children: [
-            { id: "s3-raw-t" capability: "core.text" text: "raw bytes" layout: { x: 400, y: 170, width: 130, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s3-raw-d" capability: "core.text" text: "Velo payload" layout: { x: 400, y: 194, width: 130, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "raw bytes"
+          detail: "Velo payload"
         }
         { id: "s3-a3" capability: "core.path" d: "M530 190 H575" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
-        { id: "s3-a4" capability: "core.path" d: "M600 230 V280" style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s3-a4" capability: "core.connector" from: { nodeId: "s3-raw", anchor: "s" } to: { nodeId: "s3-from", anchor: "n" } style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s3-from"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 555, y: 280, width: 130, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "from_slice: typed again" }
-          children: [
-            { id: "s3-from-t" capability: "core.text" text: "from_slice" layout: { x: 555, y: 295, width: 130, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s3-from-d" capability: "core.text" text: "typed again" layout: { x: 555, y: 319, width: 130, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "from_slice"
+          detail: "typed again"
         }
-        {
-          id: "s3-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.secondary }
-        }
+
         {
           id: "s3-motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M90 180 H600"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
@@ -470,7 +407,6 @@ explainer "Velo deep dive" {
         { id: "s3-draw-a3" at: 1120 duration: 300 target: "s3-a3" action: "draw" }
         { id: "s3-draw-a4" at: 1280 duration: 300 target: "s3-a4" action: "draw" }
         { id: "s3-enter-from" at: 1440 duration: 260 target: "s3-from" action: "enter" }
-        { id: "s3-enter-mdot" at: 1640 duration: 180 target: "s3-motion-sig-dot" action: "enter" }
         { id: "s3-draw-motion" at: 1760 duration: 700 target: "s3-motion-sig" action: "draw" }
         { id: "s3-emph" at: 2460 duration: 400 target: "s3-raw" action: "emphasis" }
       ]
@@ -497,72 +433,57 @@ explainer "Velo deep dive" {
       roots: [
         {
           id: "s4-hdr"
-          capability: "core.rect"
+          capability: "core.header"
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "HEARTBEAT LANE" }
-          children: [
-            { id: "s4-hdr-l" capability: "core.text" text: "HEARTBEAT LANE" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
-            { id: "s4-hdr-c" capability: "core.text" text: "snapshot counters + sketches → live aggregate · lag visible." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
+          title: "HEARTBEAT LANE"
+          caption: "snapshot counters + sketches → live aggregate · lag visible."
         }
         {
           id: "s4-c0"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 40, y: 100, width: 140, height: 64 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "cell 0: snapshot" }
-          children: [
-            { id: "s4-c0-t" capability: "core.text" text: "cell 0" layout: { x: 40, y: 112, width: 140, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s4-c0-d" capability: "core.text" text: "snapshot" layout: { x: 40, y: 136, width: 140, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "cell 0"
+          detail: "snapshot"
         }
         {
           id: "s4-c1"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 40, y: 190, width: 140, height: 64 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "cell 1: snapshot" }
-          children: [
-            { id: "s4-c1-t" capability: "core.text" text: "cell 1" layout: { x: 40, y: 202, width: 140, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s4-c1-d" capability: "core.text" text: "snapshot" layout: { x: 40, y: 226, width: 140, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "cell 1"
+          detail: "snapshot"
         }
         {
           id: "s4-c2"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 40, y: 280, width: 140, height: 64 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "cell 2: pulse missing" }
-          children: [
-            { id: "s4-c2-t" capability: "core.text" text: "cell 2" layout: { x: 40, y: 292, width: 140, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s4-c2-d" capability: "core.text" text: "pulse missing" layout: { x: 40, y: 316, width: 140, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "cell 2"
+          detail: "pulse missing"
         }
         { id: "s4-a0" capability: "core.path" d: "M180 132 C300 132 360 200 440 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         { id: "s4-a1" capability: "core.path" d: "M180 222 C300 222 360 200 440 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         { id: "s4-a2" capability: "core.path" d: "M180 312 C300 312 360 200 440 200" style: { stroke: @theme.accent.orange, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s4-agg"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 440, y: 160, width: 220, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Controller aggregate: counters + sketches · lag" }
-          children: [
-            { id: "s4-agg-t" capability: "core.text" text: "Controller aggregate" layout: { x: 440, y: 180, width: 220, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s4-agg-d" capability: "core.text" text: "counters + sketches · lag" layout: { x: 440, y: 204, width: 220, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "Controller aggregate"
+          detail: "counters + sketches · lag"
         }
         { id: "s4-note" capability: "core.text" text: "fire-and-forget · never blocks dispatch" layout: { x: 110, y: 348, width: 400, height: 16 } style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "start" } }
-        {
-          id: "s4-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.secondary }
-        }
+
         {
           id: "s4-motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M120 130 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
@@ -570,15 +491,12 @@ explainer "Velo deep dive" {
       ]
       timeline: [
         { id: "s4-enter-hdr" at: 0 duration: 260 target: "s4-hdr" action: "enter" }
-        { id: "s4-enter-c0" at: 200 duration: 240 target: "s4-c0" action: "enter" }
-        { id: "s4-enter-c1" at: 320 duration: 240 target: "s4-c1" action: "enter" }
-        { id: "s4-enter-c2" at: 440 duration: 240 target: "s4-c2" action: "enter" }
+        { id: "s4-enter-c0" at: 200 duration: 240 target: "s4-c0" action: "stagger" targets: ["s4-c0", "s4-c1", "s4-c2"] step: 120 }
         { id: "s4-draw-a0" at: 620 duration: 360 target: "s4-a0" action: "draw" }
         { id: "s4-draw-a1" at: 760 duration: 360 target: "s4-a1" action: "draw" }
         { id: "s4-draw-a2" at: 900 duration: 360 target: "s4-a2" action: "draw" }
         { id: "s4-enter-agg" at: 1100 duration: 280 target: "s4-agg" action: "enter" }
         { id: "s4-enter-note" at: 1320 duration: 200 target: "s4-note" action: "enter" }
-        { id: "s4-enter-mdot" at: 1480 duration: 180 target: "s4-motion-sig-dot" action: "enter" }
         { id: "s4-draw-motion" at: 1600 duration: 700 target: "s4-motion-sig" action: "draw" }
         { id: "s4-emph" at: 2300 duration: 400 target: "s4-agg" action: "emphasis" }
       ]
@@ -605,71 +523,56 @@ explainer "Velo deep dive" {
       roots: [
         {
           id: "s5-hdr"
-          capability: "core.rect"
+          capability: "core.header"
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "PARTITION SHIP" }
-          children: [
-            { id: "s5-hdr-l" capability: "core.text" text: "PARTITION SHIP" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
-            { id: "s5-hdr-c" capability: "core.text" text: "ship peer + partition → register_peer(shipper) → CellAck." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
+          title: "PARTITION SHIP"
+          caption: "ship peer + partition → register_peer(shipper) → CellAck."
         }
         {
           id: "s5-fin"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 30, y: 150, width: 160, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Finished cell: ship peer + partition" }
-          children: [
-            { id: "s5-fin-t" capability: "core.text" text: "Finished cell" layout: { x: 30, y: 170, width: 160, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s5-fin-d" capability: "core.text" text: "ship peer + partition" layout: { x: 30, y: 194, width: 160, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "Finished cell"
+          detail: "ship peer + partition"
         }
-        { id: "s5-a1" capability: "core.path" d: "M190 190 H250" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
+        { id: "s5-a1" capability: "core.connector" from: { nodeId: "s5-fin", anchor: "e" } to: { nodeId: "s5-pay", anchor: "w" } style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s5-pay"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 250, y: 150, width: 150, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "unary payload: fresh PeerInfo" }
-          children: [
-            { id: "s5-pay-t" capability: "core.text" text: "unary payload" layout: { x: 250, y: 170, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s5-pay-d" capability: "core.text" text: "fresh PeerInfo" layout: { x: 250, y: 194, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "unary payload"
+          detail: "fresh PeerInfo"
         }
-        { id: "s5-a2" capability: "core.path" d: "M400 190 H460" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
+        { id: "s5-a2" capability: "core.connector" from: { nodeId: "s5-pay", anchor: "e" } to: { nodeId: "s5-ctrl", anchor: "w" } style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s5-ctrl"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 460, y: 150, width: 200, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Controller: register_peer(shipper)" }
-          children: [
-            { id: "s5-ctrl-t" capability: "core.text" text: "Controller" layout: { x: 460, y: 170, width: 200, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s5-ctrl-d" capability: "core.text" text: "register_peer(shipper)" layout: { x: 460, y: 194, width: 200, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "Controller"
+          detail: "register_peer(shipper)"
         }
         { id: "s5-a3" capability: "core.path" d: "M560 230 C560 290 300 300 190 290" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s5-ack"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 210, y: 280, width: 130, height: 54 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "CellAck: delivered" }
-          children: [
-            { id: "s5-ack-t" capability: "core.text" text: "CellAck" layout: { x: 210, y: 287, width: 130, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s5-ack-d" capability: "core.text" text: "delivered" layout: { x: 210, y: 311, width: 130, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "CellAck"
+          detail: "delivered"
         }
-        {
-          id: "s5-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.secondary }
-        }
+
         {
           id: "s5-motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 180 H590"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
@@ -684,7 +587,6 @@ explainer "Velo deep dive" {
         { id: "s5-enter-ctrl" at: 960 duration: 280 target: "s5-ctrl" action: "enter" }
         { id: "s5-draw-a3" at: 1180 duration: 420 target: "s5-a3" action: "draw" }
         { id: "s5-enter-ack" at: 1460 duration: 260 target: "s5-ack" action: "enter" }
-        { id: "s5-enter-mdot" at: 1660 duration: 180 target: "s5-motion-sig-dot" action: "enter" }
         { id: "s5-draw-motion" at: 1780 duration: 700 target: "s5-motion-sig" action: "draw" }
         { id: "s5-emph" at: 2480 duration: 400 target: "s5-ack" action: "emphasis" }
       ]
@@ -711,58 +613,48 @@ explainer "Velo deep dive" {
       roots: [
         {
           id: "s6-hdr"
-          capability: "core.rect"
+          capability: "core.header"
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "MERGE CENTER" }
-          children: [
-            { id: "s6-hdr-l" capability: "core.text" text: "MERGE CENTER" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
-            { id: "s6-hdr-c" capability: "core.text" text: "records → global-order sort · stores → append + merge." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
+          title: "MERGE CENTER"
+          caption: "records → global-order sort · stores → append + merge."
         }
         {
           id: "s6-p0"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 30, y: 90, width: 130, height: 52 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "partition 0: records" }
-          children: [
-            { id: "s6-p0-t" capability: "core.text" text: "partition 0" layout: { x: 30, y: 96, width: 130, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s6-p0-d" capability: "core.text" text: "records" layout: { x: 30, y: 120, width: 130, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "partition 0"
+          detail: "records"
         }
         {
           id: "s6-p1"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 30, y: 158, width: 130, height: 52 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "partition 1: store" }
-          children: [
-            { id: "s6-p1-t" capability: "core.text" text: "partition 1" layout: { x: 30, y: 164, width: 130, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s6-p1-d" capability: "core.text" text: "store" layout: { x: 30, y: 188, width: 130, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "partition 1"
+          detail: "store"
         }
         {
           id: "s6-p2"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 30, y: 226, width: 130, height: 52 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "partition 2: records" }
-          children: [
-            { id: "s6-p2-t" capability: "core.text" text: "partition 2" layout: { x: 30, y: 232, width: 130, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s6-p2-d" capability: "core.text" text: "records" layout: { x: 30, y: 256, width: 130, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "partition 2"
+          detail: "records"
         }
         {
           id: "s6-p3"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 30, y: 294, width: 130, height: 52 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "partition 3: store" }
-          children: [
-            { id: "s6-p3-t" capability: "core.text" text: "partition 3" layout: { x: 30, y: 300, width: 130, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s6-p3-d" capability: "core.text" text: "store" layout: { x: 30, y: 324, width: 130, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "partition 3"
+          detail: "store"
         }
         { id: "s6-a0" capability: "core.path" d: "M160 116 C280 116 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         { id: "s6-a1" capability: "core.path" d: "M160 184 C280 184 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
@@ -770,37 +662,28 @@ explainer "Velo deep dive" {
         { id: "s6-a3" capability: "core.path" d: "M160 320 C280 320 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s6-merge"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 420, y: 160, width: 150, height: 80 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Merge center: associative fold" }
-          children: [
-            { id: "s6-merge-t" capability: "core.text" text: "Merge center" layout: { x: 420, y: 180, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s6-merge-d" capability: "core.text" text: "associative fold" layout: { x: 420, y: 204, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "Merge center"
+          detail: "associative fold"
         }
         { id: "s6-a4" capability: "core.path" d: "M570 200 H620" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
-        { id: "s6-a5" capability: "core.path" d: "M600 240 V290" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
+        { id: "s6-a5" capability: "core.route" from: { nodeId: "s6-merge", anchor: "s" } to: { nodeId: "s6-one", anchor: "n" } style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s6-one"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 520, y: 290, width: 160, height: 60 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "one result: order · append · merge" }
-          children: [
-            { id: "s6-one-t" capability: "core.text" text: "one result" layout: { x: 520, y: 300, width: 160, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s6-one-d" capability: "core.text" text: "order · append · merge" layout: { x: 520, y: 324, width: 160, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "one result"
+          detail: "order · append · merge"
         }
-        {
-          id: "s6-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.secondary }
-        }
+
         {
           id: "s6-motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
@@ -808,10 +691,7 @@ explainer "Velo deep dive" {
       ]
       timeline: [
         { id: "s6-enter-hdr" at: 0 duration: 260 target: "s6-hdr" action: "enter" }
-        { id: "s6-enter-p0" at: 180 duration: 220 target: "s6-p0" action: "enter" }
-        { id: "s6-enter-p1" at: 280 duration: 220 target: "s6-p1" action: "enter" }
-        { id: "s6-enter-p2" at: 380 duration: 220 target: "s6-p2" action: "enter" }
-        { id: "s6-enter-p3" at: 480 duration: 220 target: "s6-p3" action: "enter" }
+        { id: "s6-enter-p0" at: 180 duration: 220 target: "s6-p0" action: "stagger" targets: ["s6-p0", "s6-p1", "s6-p2", "s6-p3"] step: 100 }
         { id: "s6-draw-a0" at: 620 duration: 340 target: "s6-a0" action: "draw" }
         { id: "s6-draw-a1" at: 740 duration: 340 target: "s6-a1" action: "draw" }
         { id: "s6-draw-a2" at: 860 duration: 340 target: "s6-a2" action: "draw" }
@@ -820,7 +700,6 @@ explainer "Velo deep dive" {
         { id: "s6-draw-a4" at: 1340 duration: 280 target: "s6-a4" action: "draw" }
         { id: "s6-draw-a5" at: 1480 duration: 280 target: "s6-a5" action: "draw" }
         { id: "s6-enter-one" at: 1640 duration: 260 target: "s6-one" action: "enter" }
-        { id: "s6-enter-mdot" at: 1840 duration: 180 target: "s6-motion-sig-dot" action: "enter" }
         { id: "s6-draw-motion" at: 1960 duration: 700 target: "s6-motion-sig" action: "draw" }
         { id: "s6-emph" at: 2660 duration: 400 target: "s6-merge" action: "emphasis" }
       ]
@@ -847,93 +726,74 @@ explainer "Velo deep dive" {
       roots: [
         {
           id: "s7-hdr"
-          capability: "core.rect"
+          capability: "core.header"
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "PHASER REPLAY" }
-          children: [
-            { id: "s7-hdr-l" capability: "core.text" text: "PHASER REPLAY" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
-            { id: "s7-hdr-c" capability: "core.text" text: "attach → reply replay ≤ g · live push > g." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
+          title: "PHASER REPLAY"
+          caption: "attach → reply replay ≤ g · live push > g."
         }
         {
           id: "s7-g1"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 30, y: 110, width: 80, height: 56 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "g1: replay" }
-          children: [
-            { id: "s7-g1-t" capability: "core.text" text: "g1" layout: { x: 30, y: 118, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s7-g1-d" capability: "core.text" text: "replay" layout: { x: 30, y: 142, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "g1"
+          detail: "replay"
         }
         {
           id: "s7-g2"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 125, y: 110, width: 80, height: 56 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "g2: replay" }
-          children: [
-            { id: "s7-g2-t" capability: "core.text" text: "g2" layout: { x: 125, y: 118, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s7-g2-d" capability: "core.text" text: "replay" layout: { x: 125, y: 142, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "g2"
+          detail: "replay"
         }
         {
           id: "s7-g3"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 220, y: 110, width: 80, height: 56 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "g3: replay" }
-          children: [
-            { id: "s7-g3-t" capability: "core.text" text: "g3" layout: { x: 220, y: 118, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s7-g3-d" capability: "core.text" text: "replay" layout: { x: 220, y: 142, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "g3"
+          detail: "replay"
         }
         {
           id: "s7-g4"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 315, y: 110, width: 80, height: 56 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "g4: live" }
-          children: [
-            { id: "s7-g4-t" capability: "core.text" text: "g4" layout: { x: 315, y: 118, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s7-g4-d" capability: "core.text" text: "live" layout: { x: 315, y: 142, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "g4"
+          detail: "live"
         }
         {
           id: "s7-g5"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 410, y: 110, width: 80, height: 56 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "g5: live" }
-          children: [
-            { id: "s7-g5-t" capability: "core.text" text: "g5" layout: { x: 410, y: 118, width: 80, height: 20 } style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s7-g5-d" capability: "core.text" text: "live" layout: { x: 410, y: 142, width: 80, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "g5"
+          detail: "live"
         }
         {
           id: "s7-attach"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 220, y: 250, width: 180, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "attach @ g3: capture boundary" }
-          children: [
-            { id: "s7-attach-t" capability: "core.text" text: "attach @ g3" layout: { x: 220, y: 265, width: 180, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s7-attach-d" capability: "core.text" text: "capture boundary" layout: { x: 220, y: 289, width: 180, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "attach @ g3"
+          detail: "capture boundary"
         }
         { id: "s7-a1" capability: "core.path" d: "M310 250 C310 210 250 190 200 168" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
         { id: "s7-a2" capability: "core.path" d: "M400 260 C480 240 500 200 510 168" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         { id: "s7-note" capability: "core.text" text: "reply replays ≤ g3 · active-message pushes > g3" layout: { x: 150, y: 340, width: 420, height: 16 } style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "start" } }
-        {
-          id: "s7-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.secondary }
-        }
+
         {
           id: "s7-motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 130 H590"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
@@ -941,16 +801,11 @@ explainer "Velo deep dive" {
       ]
       timeline: [
         { id: "s7-enter-hdr" at: 0 duration: 260 target: "s7-hdr" action: "enter" }
-        { id: "s7-enter-g1" at: 180 duration: 220 target: "s7-g1" action: "enter" }
-        { id: "s7-enter-g2" at: 280 duration: 220 target: "s7-g2" action: "enter" }
-        { id: "s7-enter-g3" at: 380 duration: 220 target: "s7-g3" action: "enter" }
-        { id: "s7-enter-g4" at: 480 duration: 220 target: "s7-g4" action: "enter" }
-        { id: "s7-enter-g5" at: 580 duration: 220 target: "s7-g5" action: "enter" }
+        { id: "s7-enter-g1" at: 180 duration: 220 target: "s7-g1" action: "stagger" targets: ["s7-g1", "s7-g2", "s7-g3", "s7-g4", "s7-g5"] step: 100 }
         { id: "s7-enter-attach" at: 760 duration: 280 target: "s7-attach" action: "enter" }
         { id: "s7-draw-a1" at: 980 duration: 360 target: "s7-a1" action: "draw" }
         { id: "s7-draw-a2" at: 1140 duration: 360 target: "s7-a2" action: "draw" }
         { id: "s7-enter-note" at: 1400 duration: 200 target: "s7-note" action: "enter" }
-        { id: "s7-enter-mdot" at: 1560 duration: 180 target: "s7-motion-sig-dot" action: "enter" }
         { id: "s7-draw-motion" at: 1680 duration: 700 target: "s7-motion-sig" action: "draw" }
         { id: "s7-emph" at: 2380 duration: 400 target: "s7-attach" action: "emphasis" }
       ]
@@ -977,83 +832,66 @@ explainer "Velo deep dive" {
       roots: [
         {
           id: "s8-hdr"
-          capability: "core.rect"
+          capability: "core.header"
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "DATASET FLOODGATE" }
-          children: [
-            { id: "s8-hdr-l" capability: "core.text" text: "DATASET FLOODGATE" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
-            { id: "s8-hdr-c" capability: "core.text" text: "publish chunk → replay + live · keep id % cells == cell_id." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
+          title: "DATASET FLOODGATE"
+          caption: "publish chunk → replay + live · keep id % cells == cell_id."
         }
         {
           id: "s8-chunk"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 30, y: 140, width: 140, height: 90 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "chunk stream: MessagePack + zstd" }
-          children: [
-            { id: "s8-chunk-t" capability: "core.text" text: "chunk stream" layout: { x: 30, y: 165, width: 140, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s8-chunk-d" capability: "core.text" text: "MessagePack + zstd" layout: { x: 30, y: 189, width: 140, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "chunk stream"
+          detail: "MessagePack + zstd"
         }
-        { id: "s8-a0" capability: "core.path" d: "M170 185 H230" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
+        { id: "s8-a0" capability: "core.connector" from: { nodeId: "s8-chunk", anchor: "e" } to: { nodeId: "s8-bcast", anchor: "w" } style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s8-bcast"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 230, y: 150, width: 120, height: 70 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "broadcast: publish once" }
-          children: [
-            { id: "s8-bcast-t" capability: "core.text" text: "broadcast" layout: { x: 230, y: 165, width: 120, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s8-bcast-d" capability: "core.text" text: "publish once" layout: { x: 230, y: 189, width: 120, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "broadcast"
+          detail: "publish once"
         }
         {
           id: "s8-c0"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 430, y: 90, width: 230, height: 64 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "cell 0: keep id % 3 == 0" }
-          children: [
-            { id: "s8-c0-t" capability: "core.text" text: "cell 0" layout: { x: 430, y: 102, width: 230, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s8-c0-d" capability: "core.text" text: "keep id % 3 == 0" layout: { x: 430, y: 126, width: 230, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "cell 0"
+          detail: "keep id % 3 == 0"
         }
         { id: "s8-a1" capability: "core.path" d: "M350 185 C390 122 400 122 430 122" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s8-c1"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 430, y: 180, width: 230, height: 64 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "cell 1: keep id % 3 == 1" }
-          children: [
-            { id: "s8-c1-t" capability: "core.text" text: "cell 1" layout: { x: 430, y: 192, width: 230, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s8-c1-d" capability: "core.text" text: "keep id % 3 == 1" layout: { x: 430, y: 216, width: 230, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "cell 1"
+          detail: "keep id % 3 == 1"
         }
         { id: "s8-a2" capability: "core.path" d: "M350 185 C390 212 400 212 430 212" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s8-c2"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 430, y: 270, width: 230, height: 64 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "cell 2: keep id % 3 == 2" }
-          children: [
-            { id: "s8-c2-t" capability: "core.text" text: "cell 2" layout: { x: 430, y: 282, width: 230, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s8-c2-d" capability: "core.text" text: "keep id % 3 == 2" layout: { x: 430, y: 306, width: 230, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "cell 2"
+          detail: "keep id % 3 == 2"
         }
         { id: "s8-a3" capability: "core.path" d: "M350 185 C390 302 400 302 430 302" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s8-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.secondary }
-        }
+
         {
           id: "s8-motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M120 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
@@ -1070,7 +908,6 @@ explainer "Velo deep dive" {
         { id: "s8-enter-c1" at: 1080 duration: 240 target: "s8-c1" action: "enter" }
         { id: "s8-draw-a3" at: 1080 duration: 340 target: "s8-a3" action: "draw" }
         { id: "s8-enter-c2" at: 1240 duration: 240 target: "s8-c2" action: "enter" }
-        { id: "s8-enter-mdot" at: 1400 duration: 180 target: "s8-motion-sig-dot" action: "enter" }
         { id: "s8-draw-motion" at: 1520 duration: 700 target: "s8-motion-sig" action: "draw" }
         { id: "s8-emph" at: 2220 duration: 400 target: "s8-bcast" action: "emphasis" }
       ]
@@ -1097,108 +934,87 @@ explainer "Velo deep dive" {
       roots: [
         {
           id: "s9-hdr"
-          capability: "core.rect"
+          capability: "core.header"
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
           accessibility: { label: "AGGREGATOR TREE" }
-          children: [
-            { id: "s9-hdr-l" capability: "core.text" text: "AGGREGATOR TREE" layout: { x: 38, y: 28, width: 320, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" } },
-            { id: "s9-hdr-c" capability: "core.text" text: "fold: cells → aggregators → controller · retain stays flat." layout: { x: 360, y: 28, width: 300, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
-          ]
+          title: "AGGREGATOR TREE"
+          caption: "fold: cells → aggregators → controller · retain stays flat."
         }
         {
           id: "s9-ctrl"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 270, y: 90, width: 160, height: 64 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "Controller: one report" }
-          children: [
-            { id: "s9-ctrl-t" capability: "core.text" text: "Controller" layout: { x: 270, y: 102, width: 160, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s9-ctrl-d" capability: "core.text" text: "one report" layout: { x: 270, y: 126, width: 160, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "Controller"
+          detail: "one report"
         }
         {
           id: "s9-agg0"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 120, y: 210, width: 150, height: 60 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "aggregator 0: cells 0–3" }
-          children: [
-            { id: "s9-agg0-t" capability: "core.text" text: "aggregator 0" layout: { x: 120, y: 220, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s9-agg0-d" capability: "core.text" text: "cells 0–3" layout: { x: 120, y: 244, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "aggregator 0"
+          detail: "cells 0–3"
         }
         {
           id: "s9-agg1"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 430, y: 210, width: 150, height: 60 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "aggregator 1: cells 4–7" }
-          children: [
-            { id: "s9-agg1-t" capability: "core.text" text: "aggregator 1" layout: { x: 430, y: 220, width: 150, height: 20 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s9-agg1-d" capability: "core.text" text: "cells 4–7" layout: { x: 430, y: 244, width: 150, height: 16 } style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "aggregator 1"
+          detail: "cells 4–7"
         }
         { id: "s9-a0" capability: "core.path" d: "M195 210 C220 180 300 160 330 154" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         { id: "s9-a1" capability: "core.path" d: "M505 210 C480 180 400 160 370 154" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s9-c0"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 30, y: 320, width: 70, height: 50 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "c0: store" }
-          children: [
-            { id: "s9-c0-t" capability: "core.text" text: "c0" layout: { x: 30, y: 325, width: 70, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s9-c0-d" capability: "core.text" text: "store" layout: { x: 30, y: 349, width: 70, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "c0"
+          detail: "store"
         }
         { id: "s9-ac0" capability: "core.path" d: "M65 320 C65 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s9-c1"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 120, y: 320, width: 70, height: 50 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "c1: store" }
-          children: [
-            { id: "s9-c1-t" capability: "core.text" text: "c1" layout: { x: 120, y: 325, width: 70, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s9-c1-d" capability: "core.text" text: "store" layout: { x: 120, y: 349, width: 70, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "c1"
+          detail: "store"
         }
         { id: "s9-ac1" capability: "core.path" d: "M155 320 C155 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s9-c2"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 210, y: 320, width: 70, height: 50 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "c2: store" }
-          children: [
-            { id: "s9-c2-t" capability: "core.text" text: "c2" layout: { x: 210, y: 325, width: 70, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s9-c2-d" capability: "core.text" text: "store" layout: { x: 210, y: 349, width: 70, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "c2"
+          detail: "store"
         }
         { id: "s9-ac2" capability: "core.path" d: "M245 320 C245 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         {
           id: "s9-c3"
-          capability: "core.rect"
+          capability: "core.panel"
           layout: { x: 300, y: 320, width: 70, height: 50 }
           style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
           accessibility: { label: "c3: store" }
-          children: [
-            { id: "s9-c3-t" capability: "core.text" text: "c3" layout: { x: 300, y: 325, width: 70, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" } },
-            { id: "s9-c3-d" capability: "core.text" text: "store" layout: { x: 300, y: 349, width: 70, height: 16 } style: { fontSize: 10, fill: @theme.ink.secondary, textAnchor: "middle" } }
-          ]
+          title: "c3"
+          detail: "store"
         }
         { id: "s9-ac3" capability: "core.path" d: "M335 320 C335 300 170 290 195 270" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
         { id: "s9-note" capability: "core.text" text: "fold only · retain stays flat" layout: { x: 430, y: 340, width: 240, height: 16 } style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "start" } }
-        {
-          id: "s9-motion-sig-dot"
-          capability: "core.dot"
-          layout: { x: 345, y: 195, width: 10, height: 10 }
-          style: { r: 5, fill: @theme.accent.secondary }
-        }
+
         {
           id: "s9-motion-sig"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M350 320 V150"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
           accessibility: { label: "motion signal" }
@@ -1207,20 +1023,15 @@ explainer "Velo deep dive" {
       timeline: [
         { id: "s9-enter-hdr" at: 0 duration: 260 target: "s9-hdr" action: "enter" }
         { id: "s9-enter-ctrl" at: 200 duration: 260 target: "s9-ctrl" action: "enter" }
-        { id: "s9-enter-agg0" at: 400 duration: 240 target: "s9-agg0" action: "enter" }
-        { id: "s9-enter-agg1" at: 500 duration: 240 target: "s9-agg1" action: "enter" }
+        { id: "s9-enter-agg0" at: 400 duration: 240 target: "s9-agg0" action: "stagger" targets: ["s9-agg0", "s9-agg1"] step: 100 }
         { id: "s9-draw-a0" at: 680 duration: 340 target: "s9-a0" action: "draw" }
         { id: "s9-draw-a1" at: 800 duration: 340 target: "s9-a1" action: "draw" }
-        { id: "s9-enter-c0" at: 1000 duration: 200 target: "s9-c0" action: "enter" }
-        { id: "s9-enter-c1" at: 1080 duration: 200 target: "s9-c1" action: "enter" }
-        { id: "s9-enter-c2" at: 1160 duration: 200 target: "s9-c2" action: "enter" }
-        { id: "s9-enter-c3" at: 1240 duration: 200 target: "s9-c3" action: "enter" }
+        { id: "s9-enter-c0" at: 1000 duration: 200 target: "s9-c0" action: "stagger" targets: ["s9-c0", "s9-c1", "s9-c2", "s9-c3"] step: 80 }
         { id: "s9-draw-ac0" at: 1360 duration: 300 target: "s9-ac0" action: "draw" }
         { id: "s9-draw-ac1" at: 1460 duration: 300 target: "s9-ac1" action: "draw" }
         { id: "s9-draw-ac2" at: 1560 duration: 300 target: "s9-ac2" action: "draw" }
         { id: "s9-draw-ac3" at: 1660 duration: 300 target: "s9-ac3" action: "draw" }
         { id: "s9-enter-note" at: 1800 duration: 200 target: "s9-note" action: "enter" }
-        { id: "s9-enter-mdot" at: 1960 duration: 180 target: "s9-motion-sig-dot" action: "enter" }
         { id: "s9-draw-motion" at: 2080 duration: 700 target: "s9-motion-sig" action: "draw" }
         { id: "s9-emph" at: 2780 duration: 400 target: "s9-ctrl" action: "emphasis" }
       ]
@@ -1231,78 +1042,59 @@ explainer "Velo deep dive" {
     roots: [
       {
         id: "final-hdr"
-        capability: "core.rect"
+        capability: "core.header"
         layout: { x: 18, y: 16, width: 664, height: 44 }
         style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
         accessibility: { label: "Live evidence files" }
-        children: [
-          { id: "final-hdr-t" capability: "core.text" text: "Live evidence files" layout: { x: 38, y: 28, width: 360, height: 22 } style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary } },
-          { id: "final-hdr-p" capability: "core.text" text: "velo transport" layout: { x: 420, y: 28, width: 240, height: 22 } style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" } }
-        ]
-      },
+        title: "Live evidence files"
+        caption: "velo transport"
+        },
       {
         id: "f1"
-        capability: "core.rect"
+        capability: "core.panel"
         layout: { x: 40, y: 72, width: 620, height: 40 }
         style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.4, radius: 8 }
-        children: [
-          { id: "f1-t" capability: "core.text" text: "rust/runtime/src/cellular/transport/mod.rs" layout: { x: 52, y: 82, width: 596, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
-        ]
+        title: "rust/runtime/src/cellular/transport/mod.rs"
       },
       {
         id: "f2"
-        capability: "core.rect"
+        capability: "core.panel"
         layout: { x: 40, y: 120, width: 620, height: 40 }
         style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.4, radius: 8 }
-        children: [
-          { id: "f2-t" capability: "core.text" text: "rust/runtime/src/cellular/transport/velo_transport.rs" layout: { x: 52, y: 130, width: 596, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
-        ]
+        title: "rust/runtime/src/cellular/transport/velo_transport.rs"
       },
       {
         id: "f3"
-        capability: "core.rect"
+        capability: "core.panel"
         layout: { x: 40, y: 168, width: 620, height: 40 }
         style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.4, radius: 8 }
-        children: [
-          { id: "f3-t" capability: "core.text" text: "rust/runtime/src/cellular/transport/phaser_velo.rs" layout: { x: 52, y: 178, width: 596, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
-        ]
+        title: "rust/runtime/src/cellular/transport/phaser_velo.rs"
       },
       {
         id: "f4"
-        capability: "core.rect"
+        capability: "core.panel"
         layout: { x: 40, y: 216, width: 620, height: 40 }
         style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.4, radius: 8 }
-        children: [
-          { id: "f4-t" capability: "core.text" text: "rust/runtime/src/cellular/transport/dataset_velo.rs" layout: { x: 52, y: 226, width: 596, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
-        ]
+        title: "rust/runtime/src/cellular/transport/dataset_velo.rs"
       },
       {
         id: "f5"
-        capability: "core.rect"
+        capability: "core.panel"
         layout: { x: 40, y: 264, width: 620, height: 40 }
         style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.4, radius: 8 }
-        children: [
-          { id: "f5-t" capability: "core.text" text: "rust/runtime/src/cellular/heartbeat.rs" layout: { x: 52, y: 274, width: 596, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
-        ]
+        title: "rust/runtime/src/cellular/heartbeat.rs"
       },
       {
         id: "f6"
-        capability: "core.rect"
+        capability: "core.panel"
         layout: { x: 40, y: 312, width: 620, height: 40 }
         style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.4, radius: 8 }
-        children: [
-          { id: "f6-t" capability: "core.text" text: "rust/runtime/src/cellular/shard.rs" layout: { x: 52, y: 322, width: 596, height: 20 } style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary } }
-        ]
+        title: "rust/runtime/src/cellular/shard.rs"
       },
     ]
     timeline: [
       { id: "enter-fh" at: 0 duration: 260 target: "final-hdr" action: "enter" },
-      { id: "enter-f1" at: 120 duration: 220 target: "f1" action: "enter" },
-      { id: "enter-f2" at: 220 duration: 220 target: "f2" action: "enter" },
-      { id: "enter-f3" at: 320 duration: 220 target: "f3" action: "enter" },
-      { id: "enter-f4" at: 420 duration: 220 target: "f4" action: "enter" },
-      { id: "enter-f5" at: 520 duration: 220 target: "f5" action: "enter" },
-      { id: "enter-f6" at: 620 duration: 220 target: "f6" action: "enter" },
+      { id: "enter-f1" at: 120 duration: 220 target: "f1" action: "stagger" targets: ["f1", "f2", "f3", "f4", "f5", "f6"] step: 100 },
       { id: "emph-f" at: 900 duration: 360 target: "f1" action: "emphasis" }
     ]
   }

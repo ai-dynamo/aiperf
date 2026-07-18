@@ -37,54 +37,26 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s0-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s0-hdr-l"
-              capability: "core.text"
-              text: "BENCHMARK GOAL"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s0-hdr-n"
-              capability: "core.text"
-              text: "many machines generate one combined load"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s0-hdr"
+  capability: "core.header"
+  title: "BENCHMARK GOAL"
+  caption: "many machines generate one combined load"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
-          id: "s0-gens"
-          capability: "core.rect"
-          layout: { x: 74, y: 138, width: 220, height: 96 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10, pulse: true }
-          children: [
-            {
-              id: "s0-gens-t"
-              capability: "core.text"
-              text: "Many load generators"
-              layout: { x: 84, y: 160, width: 200, height: 20 }
-              style: { fontSize: 16, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s0-gens-s"
-              capability: "core.text"
-              text: "more machines = more traffic"
-              layout: { x: 84, y: 183, width: 200, height: 16 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s0-gens"
+  capability: "core.panel"
+  title: "Many load generators"
+  detail: "more machines = more traffic"
+  layout: { x: 74, y: 138, width: 220, height: 96 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 10, pulse: true }
+},
 {
           id: "s0-req"
-          capability: "core.path"
-          d: "M294 186 H418"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.route"
+          from: { nodeId: "s0-gens", anchor: "e" }
+          to: { nodeId: "s0-srv", anchor: "w" }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4 }
         },
             {
@@ -95,31 +67,18 @@ explainer "SLURM + Velo from scratch" {
               style: { fontSize: 11, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
             },
 {
-          id: "s0-srv"
-          capability: "core.rect"
-          layout: { x: 418, y: 138, width: 210, height: 96 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 36, pulse: true }
-          children: [
-            {
-              id: "s0-srv-t"
-              capability: "core.text"
-              text: "Inference server"
-              layout: { x: 433, y: 162, width: 180, height: 20 }
-              style: { fontSize: 16, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s0-srv-s"
-              capability: "core.text"
-              text: "the AI model endpoint"
-              layout: { x: 433, y: 185, width: 180, height: 16 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s0-srv"
+  capability: "core.panel"
+  title: "Inference server"
+  detail: "the AI model endpoint"
+  layout: { x: 418, y: 138, width: 210, height: 96 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 36, pulse: true }
+},
 {
           id: "s0-motion"
-          capability: "core.path"
-          d: "M294 186 H418"
+          capability: "motion.signal"
+          from: { nodeId: "s0-gens", anchor: "center" }
+          to: { nodeId: "s0-srv", anchor: "center" }
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
           accessibility: { label: "motion signal" }
@@ -156,49 +115,21 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s1-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s1-hdr-l"
-              capability: "core.text"
-              text: "SLURM RESERVES RESOURCES"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s1-hdr-n"
-              capability: "core.text"
-              text: "the scheduler lends your job a set of machines"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s1-hdr"
+  capability: "core.header"
+  title: "SLURM RESERVES RESOURCES"
+  caption: "the scheduler lends your job a set of machines"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
-          id: "s1-slurm"
-          capability: "core.rect"
-          layout: { x: 64, y: 128, width: 190, height: 96 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.6, radius: 10, pulse: true }
-          children: [
-            {
-              id: "s1-slurm-t"
-              capability: "core.text"
-              text: "SLURM scheduler"
-              layout: { x: 74, y: 150, width: 170, height: 20 }
-              style: { fontSize: 16, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s1-slurm-s"
-              capability: "core.text"
-              text: "finds and reserves machines"
-              layout: { x: 74, y: 174, width: 170, height: 16 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s1-slurm"
+  capability: "core.panel"
+  title: "SLURM scheduler"
+  detail: "finds and reserves machines"
+  layout: { x: 64, y: 128, width: 190, height: 96 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.6, radius: 10, pulse: true }
+},
 {
           id: "s1-arr"
           capability: "core.path"
@@ -220,98 +151,42 @@ explainer "SLURM + Velo from scratch" {
               style: { fontSize: 15, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
 {
-          id: "s1-task-0"
-          capability: "core.rect"
-          layout: { x: 350, y: 150, width: 54, height: 58 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
-          children: [
-            {
-              id: "s1-task-0-t"
-              capability: "core.text"
-              text: "Task 0"
-              layout: { x: 353, y: 164, width: 48, height: 14 }
-              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s1-task-0-s"
-              capability: "core.text"
-              text: "machine"
-              layout: { x: 353, y: 183, width: 48, height: 12 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s1-task-0"
+  capability: "core.panel"
+  title: "Task 0"
+  detail: "machine"
+  layout: { x: 350, y: 150, width: 54, height: 58 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+},
 {
-          id: "s1-task-1"
-          capability: "core.rect"
-          layout: { x: 418, y: 150, width: 54, height: 58 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
-          children: [
-            {
-              id: "s1-task-1-t"
-              capability: "core.text"
-              text: "Task 1"
-              layout: { x: 421, y: 164, width: 48, height: 14 }
-              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s1-task-1-s"
-              capability: "core.text"
-              text: "machine"
-              layout: { x: 421, y: 183, width: 48, height: 12 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s1-task-1"
+  capability: "core.panel"
+  title: "Task 1"
+  detail: "machine"
+  layout: { x: 418, y: 150, width: 54, height: 58 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+},
 {
-          id: "s1-task-2"
-          capability: "core.rect"
-          layout: { x: 486, y: 150, width: 54, height: 58 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
-          children: [
-            {
-              id: "s1-task-2-t"
-              capability: "core.text"
-              text: "Task 2"
-              layout: { x: 489, y: 164, width: 48, height: 14 }
-              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s1-task-2-s"
-              capability: "core.text"
-              text: "machine"
-              layout: { x: 489, y: 183, width: 48, height: 12 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s1-task-2"
+  capability: "core.panel"
+  title: "Task 2"
+  detail: "machine"
+  layout: { x: 486, y: 150, width: 54, height: 58 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+},
 {
-          id: "s1-task-3"
-          capability: "core.rect"
-          layout: { x: 554, y: 150, width: 54, height: 58 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
-          children: [
-            {
-              id: "s1-task-3-t"
-              capability: "core.text"
-              text: "Task 3"
-              layout: { x: 557, y: 164, width: 48, height: 14 }
-              style: { fontSize: 12, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s1-task-3-s"
-              capability: "core.text"
-              text: "machine"
-              layout: { x: 557, y: 183, width: 48, height: 12 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        }
+  id: "s1-task-3"
+  capability: "core.panel"
+  title: "Task 3"
+  detail: "machine"
+  layout: { x: 554, y: 150, width: 54, height: 58 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 6 }
+}
           ]
         },
 {
           id: "s1-motion"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M254 176 H330"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -352,49 +227,21 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s2-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s2-hdr-l"
-              capability: "core.text"
-              text: "ONE COMMAND, MANY TASKS"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s2-hdr-n"
-              capability: "core.text"
-              text: "SLURM_PROCID gives each copy a unique rank"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s2-hdr"
+  capability: "core.header"
+  title: "ONE COMMAND, MANY TASKS"
+  caption: "SLURM_PROCID gives each copy a unique rank"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
-          id: "s2-cmd"
-          capability: "core.rect"
-          layout: { x: 190, y: 78, width: 320, height: 58 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 8, pulse: true }
-          children: [
-            {
-              id: "s2-cmd-t"
-              capability: "core.text"
-              text: "aiperf slurm run --config benchmark.yaml"
-              layout: { x: 200, y: 88, width: 300, height: 16 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s2-cmd-s"
-              capability: "core.text"
-              text: "one identical command on every task"
-              layout: { x: 200, y: 108, width: 300, height: 14 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s2-cmd"
+  capability: "core.panel"
+  title: "aiperf slurm run --config benchmark.yaml"
+  detail: "one identical command on every task"
+  layout: { x: 190, y: 78, width: 320, height: 58 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 8, pulse: true }
+},
 {
           id: "s2-task-0"
           capability: "core.rect"
@@ -519,7 +366,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s2-motion-trunk"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M350 136 V168"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -527,7 +374,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s2-motion-b0"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M350 168 H150 V198"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -535,7 +382,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s2-motion-b1"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M350 168 V198"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -543,7 +390,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s2-motion-b2"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M350 168 H550 V198"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -589,27 +436,13 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s3-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s3-hdr-l"
-              capability: "core.text"
-              text: "RANKS BECOME AIPERF ROLES"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s3-hdr-n"
-              capability: "core.text"
-              text: "rank 0 coordinates · ranks 1…N generate load"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s3-hdr"
+  capability: "core.header"
+  title: "RANKS BECOME AIPERF ROLES"
+  caption: "rank 0 coordinates · ranks 1…N generate load"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
           id: "s3-r0"
           capability: "core.rect"
@@ -691,7 +524,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s3-motion"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M292 178 H408"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -729,27 +562,13 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s4-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s4-hdr-l"
-              capability: "core.text"
-              text: "EVERY CELL FINDS RANK 0"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s4-hdr-n"
-              capability: "core.text"
-              text: "the controller address is derived, not discovered"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s4-hdr"
+  capability: "core.header"
+  title: "EVERY CELL FINDS RANK 0"
+  caption: "the controller address is derived, not discovered"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
           id: "s4-nodes"
           capability: "core.rect"
@@ -787,27 +606,13 @@ explainer "SLURM + Velo from scratch" {
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
         },
 {
-          id: "s4-coord"
-          capability: "core.rect"
-          layout: { x: 236, y: 116, width: 190, height: 96 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8, pulse: true }
-          children: [
-            {
-              id: "s4-coord-t"
-              capability: "core.text"
-              text: "Controller coordinate"
-              layout: { x: 246, y: 134, width: 170, height: 16 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s4-coord-a"
-              capability: "core.text"
-              text: "tcp://node01:9500"
-              layout: { x: 246, y: 163, width: 170, height: 16 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s4-coord"
+  capability: "core.panel"
+  title: "Controller coordinate"
+  detail: "tcp://node01:9500"
+  layout: { x: 236, y: 116, width: 190, height: 96 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.6, radius: 8, pulse: true }
+},
 {
           id: "s4-a2"
           capability: "core.path"
@@ -853,7 +658,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s4-motion"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M572 164 H331 H572"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -892,27 +697,13 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s5-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s5-hdr-l"
-              capability: "core.text"
-              text: "VELO = CONTROL MESSAGING"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s5-hdr-n"
-              capability: "core.text"
-              text: "SLURM launches processes · Velo lets them talk"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s5-hdr"
+  capability: "core.header"
+  title: "VELO = CONTROL MESSAGING"
+  caption: "SLURM launches processes · Velo lets them talk"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
           id: "s5-ctrl"
           capability: "core.rect"
@@ -950,27 +741,13 @@ explainer "SLURM + Velo from scratch" {
           ]
         },
 {
-          id: "s5-velo"
-          capability: "core.rect"
-          layout: { x: 270, y: 132, width: 160, height: 86 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 2, radius: 10, pulse: true }
-          children: [
-            {
-              id: "s5-velo-t"
-              capability: "core.text"
-              text: "VELO"
-              layout: { x: 280, y: 150, width: 140, height: 22 }
-              style: { fontSize: 18, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s5-velo-s"
-              capability: "core.text"
-              text: "control walkie-talkie"
-              layout: { x: 280, y: 176, width: 140, height: 14 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s5-velo"
+  capability: "core.panel"
+  title: "VELO"
+  detail: "control walkie-talkie"
+  layout: { x: 270, y: 132, width: 160, height: 86 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 2, radius: 10, pulse: true }
+},
 {
           id: "s5-cells"
           capability: "core.rect"
@@ -1058,7 +835,7 @@ explainer "SLURM + Velo from scratch" {
             },
 {
           id: "s5-motion"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M228 155 H472 V195 H228"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -1102,115 +879,45 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s6-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s6-hdr-l"
-              capability: "core.text"
-              text: "VELO HANDSHAKE"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s6-hdr-n"
-              capability: "core.text"
-              text: "address in · peer connection out"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s6-hdr"
+  capability: "core.header"
+  title: "VELO HANDSHAKE"
+  caption: "address in · peer connection out"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
-          id: "s6-step-0"
-          capability: "core.rect"
-          layout: { x: 28, y: 128, width: 140, height: 100 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 9, pulse: true }
-          children: [
-            {
-              id: "s6-step-0-t"
-              capability: "core.text"
-              text: "Cell knows"
-              layout: { x: 38, y: 152, width: 120, height: 16 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s6-step-0-s"
-              capability: "core.text"
-              text: "tcp://node01:9500"
-              layout: { x: 38, y: 180, width: 120, height: 14 }
-              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s6-step-0"
+  capability: "core.panel"
+  title: "Cell knows"
+  detail: "tcp://node01:9500"
+  layout: { x: 28, y: 128, width: 140, height: 100 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 9, pulse: true }
+},
 {
-          id: "s6-step-1"
-          capability: "core.rect"
-          layout: { x: 196, y: 128, width: 140, height: 100 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 2, radius: 9, pulse: true }
-          children: [
-            {
-              id: "s6-step-1-t"
-              capability: "core.text"
-              text: "velo.connect"
-              layout: { x: 206, y: 152, width: 120, height: 16 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s6-step-1-s"
-              capability: "core.text"
-              text: "hello handshake"
-              layout: { x: 206, y: 180, width: 120, height: 14 }
-              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s6-step-1"
+  capability: "core.panel"
+  title: "velo.connect"
+  detail: "hello handshake"
+  layout: { x: 196, y: 128, width: 140, height: 100 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 2, radius: 9, pulse: true }
+},
 {
-          id: "s6-step-2"
-          capability: "core.rect"
-          layout: { x: 364, y: 128, width: 140, height: 100 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 9, pulse: true }
-          children: [
-            {
-              id: "s6-step-2-t"
-              capability: "core.text"
-              text: "Peers registered"
-              layout: { x: 374, y: 152, width: 120, height: 16 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s6-step-2-s"
-              capability: "core.text"
-              text: "controller ↔ cell"
-              layout: { x: 374, y: 180, width: 120, height: 14 }
-              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s6-step-2"
+  capability: "core.panel"
+  title: "Peers registered"
+  detail: "controller ↔ cell"
+  layout: { x: 364, y: 128, width: 140, height: 100 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 9, pulse: true }
+},
 {
-          id: "s6-step-3"
-          capability: "core.rect"
-          layout: { x: 532, y: 128, width: 140, height: 100 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 9, pulse: true }
-          children: [
-            {
-              id: "s6-step-3-t"
-              capability: "core.text"
-              text: "Ready to talk"
-              layout: { x: 542, y: 152, width: 120, height: 16 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s6-step-3-s"
-              capability: "core.text"
-              text: "named handlers"
-              layout: { x: 542, y: 180, width: 120, height: 14 }
-              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s6-step-3"
+  capability: "core.panel"
+  title: "Ready to talk"
+  detail: "named handlers"
+  layout: { x: 532, y: 128, width: 140, height: 100 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 9, pulse: true }
+},
 {
           id: "s6-a0"
           capability: "core.path"
@@ -1255,7 +962,7 @@ explainer "SLURM + Velo from scratch" {
             },
 {
           id: "s6-motion"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M98 178 H602 V248 H98"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -1299,137 +1006,53 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s7-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s7-hdr-l"
-              capability: "core.text"
-              text: "REGISTER + START OVER VELO"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s7-hdr-n"
-              capability: "core.text"
-              text: "Velo carries the readiness choreography"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s7-hdr"
+  capability: "core.header"
+  title: "REGISTER + START OVER VELO"
+  caption: "Velo carries the readiness choreography"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
-          id: "s7-step-0"
-          capability: "core.rect"
-          layout: { x: 20, y: 120, width: 112, height: 100 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.4, radius: 8, pulse: true }
-          children: [
-            {
-              id: "s7-step-0-t"
-              capability: "core.text"
-              text: "Connect"
-              layout: { x: 26, y: 142, width: 100, height: 16 }
-              style: { fontSize: 12.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s7-step-0-s"
-              capability: "core.text"
-              text: "Velo hello"
-              layout: { x: 26, y: 170, width: 100, height: 14 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s7-step-0"
+  capability: "core.panel"
+  title: "Connect"
+  detail: "Velo hello"
+  layout: { x: 20, y: 120, width: 112, height: 100 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.4, radius: 8, pulse: true }
+},
 {
-          id: "s7-step-1"
-          capability: "core.rect"
-          layout: { x: 156, y: 120, width: 112, height: 100 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.4, radius: 8, pulse: true }
-          children: [
-            {
-              id: "s7-step-1-t"
-              capability: "core.text"
-              text: "Register"
-              layout: { x: 162, y: 142, width: 100, height: 16 }
-              style: { fontSize: 12.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s7-step-1-s"
-              capability: "core.text"
-              text: "aiperf.cell.register"
-              layout: { x: 162, y: 170, width: 100, height: 14 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s7-step-1"
+  capability: "core.panel"
+  title: "Register"
+  detail: "aiperf.cell.register"
+  layout: { x: 156, y: 120, width: 112, height: 100 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.4, radius: 8, pulse: true }
+},
 {
-          id: "s7-step-2"
-          capability: "core.rect"
-          layout: { x: 292, y: 120, width: 112, height: 100 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.4, radius: 8, pulse: true }
-          children: [
-            {
-              id: "s7-step-2-t"
-              capability: "core.text"
-              text: "Get slice"
-              layout: { x: 298, y: 142, width: 100, height: 16 }
-              style: { fontSize: 12.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s7-step-2-s"
-              capability: "core.text"
-              text: "sliced envelope"
-              layout: { x: 298, y: 170, width: 100, height: 14 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s7-step-2"
+  capability: "core.panel"
+  title: "Get slice"
+  detail: "sliced envelope"
+  layout: { x: 292, y: 120, width: 112, height: 100 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.4, radius: 8, pulse: true }
+},
 {
-          id: "s7-step-3"
-          capability: "core.rect"
-          layout: { x: 428, y: 120, width: 112, height: 100 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.4, radius: 8, pulse: true }
-          children: [
-            {
-              id: "s7-step-3-t"
-              capability: "core.text"
-              text: "Await START"
-              layout: { x: 434, y: 142, width: 100, height: 16 }
-              style: { fontSize: 12.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s7-step-3-s"
-              capability: "core.text"
-              text: "EventHandle"
-              layout: { x: 434, y: 170, width: 100, height: 14 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s7-step-3"
+  capability: "core.panel"
+  title: "Await START"
+  detail: "EventHandle"
+  layout: { x: 428, y: 120, width: 112, height: 100 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.4, radius: 8, pulse: true }
+},
 {
-          id: "s7-step-4"
-          capability: "core.rect"
-          layout: { x: 564, y: 120, width: 112, height: 100 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 2, radius: 8, pulse: true }
-          children: [
-            {
-              id: "s7-step-4-t"
-              capability: "core.text"
-              text: "START!"
-              layout: { x: 570, y: 142, width: 100, height: 16 }
-              style: { fontSize: 12.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s7-step-4-s"
-              capability: "core.text"
-              text: "all cells release"
-              layout: { x: 570, y: 170, width: 100, height: 14 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s7-step-4"
+  capability: "core.panel"
+  title: "START!"
+  detail: "all cells release"
+  layout: { x: 564, y: 120, width: 112, height: 100 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 2, radius: 8, pulse: true }
+},
 {
           id: "s7-a0"
           capability: "core.path"
@@ -1467,7 +1090,7 @@ explainer "SLURM + Velo from scratch" {
             },
 {
           id: "s7-motion"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M76 170 H620 H76"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -1511,27 +1134,13 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s8-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s8-hdr-l"
-              capability: "core.text"
-              text: "HOT PATH IS NOT VELO"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s8-hdr-n"
-              capability: "core.text"
-              text: "measured requests use HTTP / gRPC only"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s8-hdr"
+  capability: "core.header"
+  title: "HOT PATH IS NOT VELO"
+  caption: "measured requests use HTTP / gRPC only"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
           id: "s8-cells"
           capability: "core.rect"
@@ -1583,52 +1192,24 @@ explainer "SLURM + Velo from scratch" {
               style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
             },
 {
-          id: "s8-srv"
-          capability: "core.rect"
-          layout: { x: 430, y: 100, width: 170, height: 120 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 36, pulse: true }
-          children: [
-            {
-              id: "s8-srv-t"
-              capability: "core.text"
-              text: "Inference server"
-              layout: { x: 445, y: 132, width: 140, height: 18 }
-              style: { fontSize: 15, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s8-srv-s"
-              capability: "core.text"
-              text: "AI endpoint"
-              layout: { x: 445, y: 160, width: 140, height: 14 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s8-srv"
+  capability: "core.panel"
+  title: "Inference server"
+  detail: "AI endpoint"
+  layout: { x: 430, y: 100, width: 170, height: 120 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 36, pulse: true }
+},
 {
-          id: "s8-hb"
-          capability: "core.rect"
-          layout: { x: 230, y: 268, width: 240, height: 56 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.4, radius: 8 }
-          children: [
-            {
-              id: "s8-hb-t"
-              capability: "core.text"
-              text: "Velo heartbeats only"
-              layout: { x: 240, y: 280, width: 220, height: 16 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s8-hb-s"
-              capability: "core.text"
-              text: "progress summaries → rank 0"
-              layout: { x: 240, y: 300, width: 220, height: 14 }
-              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s8-hb"
+  capability: "core.panel"
+  title: "Velo heartbeats only"
+  detail: "progress summaries → rank 0"
+  layout: { x: 230, y: 268, width: 240, height: 56 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.4, radius: 8 }
+},
 {
           id: "s8-motion"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M210 160 H430 H210"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -1668,27 +1249,13 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s9-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s9-hdr-l"
-              capability: "core.text"
-              text: "THREE TRAFFIC PLANES"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s9-hdr-n"
-              capability: "core.text"
-              text: "control · load · bulk files"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s9-hdr"
+  capability: "core.header"
+  title: "THREE TRAFFIC PLANES"
+  caption: "control · load · bulk files"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
           id: "s9-plane-0"
           capability: "core.rect"
@@ -1778,7 +1345,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s9-motion"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M80 122 H620 V214 H80 V306 H620"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -1815,115 +1382,45 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s10-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s10-hdr-l"
-              capability: "core.text"
-              text: "RESULTS OVER VELO"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s10-hdr-n"
-              capability: "core.text"
-              text: "partitions return to the original rank-0 controller"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s10-hdr"
+  capability: "core.header"
+  title: "RESULTS OVER VELO"
+  caption: "partitions return to the original rank-0 controller"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
-          id: "s10-step-0"
-          capability: "core.rect"
-          layout: { x: 26, y: 126, width: 136, height: 104 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.7, radius: 9, pulse: true }
-          children: [
-            {
-              id: "s10-step-0-t"
-              capability: "core.text"
-              text: "Load cells"
-              layout: { x: 34, y: 148, width: 120, height: 18 }
-              style: { fontSize: 13.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s10-step-0-s"
-              capability: "core.text"
-              text: "finish local work"
-              layout: { x: 34, y: 174, width: 120, height: 14 }
-              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s10-step-0"
+  capability: "core.panel"
+  title: "Load cells"
+  detail: "finish local work"
+  layout: { x: 26, y: 126, width: 136, height: 104 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.7, radius: 9, pulse: true }
+},
 {
-          id: "s10-step-1"
-          capability: "core.rect"
-          layout: { x: 196, y: 126, width: 136, height: 104 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.7, radius: 9, pulse: true }
-          children: [
-            {
-              id: "s10-step-1-t"
-              capability: "core.text"
-              text: "Velo ship"
-              layout: { x: 204, y: 148, width: 120, height: 18 }
-              style: { fontSize: 13.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s10-step-1-s"
-              capability: "core.text"
-              text: "partition / store"
-              layout: { x: 204, y: 174, width: 120, height: 14 }
-              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s10-step-1"
+  capability: "core.panel"
+  title: "Velo ship"
+  detail: "partition / store"
+  layout: { x: 196, y: 126, width: 136, height: 104 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.7, radius: 9, pulse: true }
+},
 {
-          id: "s10-step-2"
-          capability: "core.rect"
-          layout: { x: 366, y: 126, width: 136, height: 104 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.7, radius: 9, pulse: true }
-          children: [
-            {
-              id: "s10-step-2-t"
-              capability: "core.text"
-              text: "Rank-0 controller"
-              layout: { x: 374, y: 148, width: 120, height: 18 }
-              style: { fontSize: 13.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s10-step-2-s"
-              capability: "core.text"
-              text: "receives + merges"
-              layout: { x: 374, y: 174, width: 120, height: 14 }
-              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s10-step-2"
+  capability: "core.panel"
+  title: "Rank-0 controller"
+  detail: "receives + merges"
+  layout: { x: 366, y: 126, width: 136, height: 104 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.primary, strokeWidth: 1.7, radius: 9, pulse: true }
+},
 {
-          id: "s10-step-3"
-          capability: "core.rect"
-          layout: { x: 536, y: 126, width: 136, height: 104 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.7, radius: 9, pulse: true }
-          children: [
-            {
-              id: "s10-step-3-t"
-              capability: "core.text"
-              text: "One report"
-              layout: { x: 544, y: 148, width: 120, height: 18 }
-              style: { fontSize: 13.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s10-step-3-s"
-              capability: "core.text"
-              text: "global benchmark"
-              layout: { x: 544, y: 174, width: 120, height: 14 }
-              style: { fontSize: 11, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s10-step-3"
+  capability: "core.panel"
+  title: "One report"
+  detail: "global benchmark"
+  layout: { x: 536, y: 126, width: 136, height: 104 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.7, radius: 9, pulse: true }
+},
 {
           id: "s10-a0"
           capability: "core.path"
@@ -1961,7 +1458,7 @@ explainer "SLURM + Velo from scratch" {
             },
 {
           id: "s10-motion"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M162 178 H536"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -2004,27 +1501,13 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s11-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s11-hdr-l"
-              capability: "core.text"
-              text: "BULK ARTIFACTS SEPARATE"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s11-hdr-n"
-              capability: "core.text"
-              text: "large files use HTTP/1 + zstd, not Velo"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s11-hdr"
+  capability: "core.header"
+  title: "BULK ARTIFACTS SEPARATE"
+  caption: "large files use HTTP/1 + zstd, not Velo"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
           id: "s11-velo"
           capability: "core.rect"
@@ -2134,27 +1617,13 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s12-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s12-hdr-l"
-              capability: "core.text"
-              text: "CONTROLLER ROLE VS NODE"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s12-hdr-n"
-              capability: "core.text"
-              text: "role is required · whole node is optional"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s12-hdr"
+  capability: "core.header"
+  title: "CONTROLLER ROLE VS NODE"
+  caption: "role is required · whole node is optional"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
           id: "s12-role"
           capability: "core.rect"
@@ -2264,27 +1733,13 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s13-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s13-hdr-l"
-              capability: "core.text"
-              text: "FAN-OUT: ONE PLAN → MANY SLICES"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s13-hdr-n"
-              capability: "core.text"
-              text: "rank 0 distributes distinct cell-owned work"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s13-hdr"
+  capability: "core.header"
+  title: "FAN-OUT: ONE PLAN → MANY SLICES"
+  caption: "rank 0 distributes distinct cell-owned work"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
           id: "s13-r0"
           capability: "core.rect"
@@ -2453,7 +1908,7 @@ explainer "SLURM + Velo from scratch" {
             },
 {
           id: "s13-motion-trunk"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M210 178 H310"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -2461,7 +1916,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s13-motion-b0"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M310 178 H382 V118 H410"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -2469,7 +1924,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s13-motion-b1"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M310 178 H410"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -2477,7 +1932,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s13-motion-b2"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M310 178 H382 V238 H410"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -2524,27 +1979,13 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s14-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s14-hdr-l"
-              capability: "core.text"
-              text: "FAN-IN: MANY RESULTS → ONE REPORT"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s14-hdr-n"
-              capability: "core.text"
-              text: "every cell returns one terminal result"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s14-hdr"
+  capability: "core.header"
+  title: "FAN-IN: MANY RESULTS → ONE REPORT"
+  caption: "every cell returns one terminal result"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
           id: "s14-cell-0"
           capability: "core.rect"
@@ -2713,7 +2154,7 @@ explainer "SLURM + Velo from scratch" {
             },
 {
           id: "s14-motion-b0"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M290 118 H318 V178 H390"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -2721,7 +2162,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s14-motion-b1"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M290 178 H390"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -2729,7 +2170,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s14-motion-b2"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M290 238 H318 V178 H390"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -2737,7 +2178,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s14-motion-out"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M390 178 H454"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
@@ -2780,137 +2221,53 @@ explainer "SLURM + Velo from scratch" {
     render: @scene {
       roots: [
 {
-          id: "s15-hdr"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          children: [
-            {
-              id: "s15-hdr-l"
-              capability: "core.text"
-              text: "FROM CONFIG TO REPORT"
-              layout: { x: 38, y: 28, width: 320, height: 20 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-            },
-            {
-              id: "s15-hdr-n"
-              capability: "core.text"
-              text: "the generated script launches the complete run"
-              layout: { x: 360, y: 28, width: 300, height: 20 }
-              style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
-        },
+  id: "s15-hdr"
+  capability: "core.header"
+  title: "FROM CONFIG TO REPORT"
+  caption: "the generated script launches the complete run"
+  layout: { x: 18, y: 16, width: 664, height: 44 }
+  style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
+},
 {
-          id: "s15-step-0"
-          capability: "core.rect"
-          layout: { x: 20, y: 126, width: 108, height: 94 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 8, pulse: true }
-          children: [
-            {
-              id: "s15-step-0-t"
-              capability: "core.text"
-              text: "Config v2"
-              layout: { x: 26, y: 146, width: 96, height: 16 }
-              style: { fontSize: 12.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s15-step-0-s"
-              capability: "core.text"
-              text: "benchmark.yaml"
-              layout: { x: 26, y: 172, width: 96, height: 14 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s15-step-0"
+  capability: "core.panel"
+  title: "Config v2"
+  detail: "benchmark.yaml"
+  layout: { x: 20, y: 126, width: 108, height: 94 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 8, pulse: true }
+},
 {
-          id: "s15-step-1"
-          capability: "core.rect"
-          layout: { x: 156, y: 126, width: 108, height: 94 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 8, pulse: true }
-          children: [
-            {
-              id: "s15-step-1-t"
-              capability: "core.text"
-              text: "Generate"
-              layout: { x: 162, y: 146, width: 96, height: 16 }
-              style: { fontSize: 12.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s15-step-1-s"
-              capability: "core.text"
-              text: "job.sbatch"
-              layout: { x: 162, y: 172, width: 96, height: 14 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s15-step-1"
+  capability: "core.panel"
+  title: "Generate"
+  detail: "job.sbatch"
+  layout: { x: 156, y: 126, width: 108, height: 94 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 8, pulse: true }
+},
 {
-          id: "s15-step-2"
-          capability: "core.rect"
-          layout: { x: 292, y: 126, width: 108, height: 94 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 8, pulse: true }
-          children: [
-            {
-              id: "s15-step-2-t"
-              capability: "core.text"
-              text: "Submit"
-              layout: { x: 298, y: 146, width: 96, height: 16 }
-              style: { fontSize: 12.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s15-step-2-s"
-              capability: "core.text"
-              text: "sbatch job.sbatch"
-              layout: { x: 298, y: 172, width: 96, height: 14 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s15-step-2"
+  capability: "core.panel"
+  title: "Submit"
+  detail: "sbatch job.sbatch"
+  layout: { x: 292, y: 126, width: 108, height: 94 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 8, pulse: true }
+},
 {
-          id: "s15-step-3"
-          capability: "core.rect"
-          layout: { x: 428, y: 126, width: 108, height: 94 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 8, pulse: true }
-          children: [
-            {
-              id: "s15-step-3-t"
-              capability: "core.text"
-              text: "SLURM + Velo"
-              layout: { x: 434, y: 146, width: 96, height: 16 }
-              style: { fontSize: 12.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s15-step-3-s"
-              capability: "core.text"
-              text: "roles + messaging"
-              layout: { x: 434, y: 172, width: 96, height: 14 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s15-step-3"
+  capability: "core.panel"
+  title: "SLURM + Velo"
+  detail: "roles + messaging"
+  layout: { x: 428, y: 126, width: 108, height: 94 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.ink.secondary, strokeWidth: 1.3, radius: 8, pulse: true }
+},
 {
-          id: "s15-step-4"
-          capability: "core.rect"
-          layout: { x: 564, y: 126, width: 108, height: 94 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 8, pulse: true }
-          children: [
-            {
-              id: "s15-step-4-t"
-              capability: "core.text"
-              text: "AIPerf report"
-              layout: { x: 570, y: 146, width: 96, height: 16 }
-              style: { fontSize: 12.5, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "s15-step-4-s"
-              capability: "core.text"
-              text: "merged result"
-              layout: { x: 570, y: 172, width: 96, height: 14 }
-              style: { fontSize: 10, fontWeight: "normal", fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
+  id: "s15-step-4"
+  capability: "core.panel"
+  title: "AIPerf report"
+  detail: "merged result"
+  layout: { x: 564, y: 126, width: 108, height: 94 }
+  style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 8, pulse: true }
+},
 {
           id: "s15-a0"
           capability: "core.path"
@@ -2941,7 +2298,7 @@ explainer "SLURM + Velo from scratch" {
         },
 {
           id: "s15-motion"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M128 173 H564"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }

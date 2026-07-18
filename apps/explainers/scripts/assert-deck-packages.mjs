@@ -5,9 +5,9 @@
  */
 
 /**
- * Assert that `src/decks-generated/*.package.json` holds all eight explainer
- * decks (packages-only registry inputs), each with slides that carry non-empty
- * narration, and that any slide with `render` present has a non-empty
+ * Assert that `src/decks-generated/*.package.json` holds all registered
+ * explainer decks (packages-only registry inputs), each with slides that carry
+ * non-empty narration, and that any slide with `render` present has a non-empty
  * `scene.timeline` (SceneRenderer animation contract).
  *
  * Part of the flow-backed explainers gate:
@@ -39,6 +39,7 @@ const EXPECTED_DECK_IDS = [
   "cellular-internals",
   "cellular-algorithms",
   "dynosim",
+  "tstar-warmup",
 ];
 
 function isFile(path) {

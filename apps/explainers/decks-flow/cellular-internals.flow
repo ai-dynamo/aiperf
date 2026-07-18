@@ -41,76 +41,46 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr0"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "LAUNCH · ONE RUN, MANY CELLS"
+          caption: "authored run → many cells → one report."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "LAUNCH · ONE RUN, MANY CELLS" }
-          children: [
-            {
-              id: "hdr0-text"
-              capability: "core.text"
-              text: "LAUNCH · ONE RUN, MANY CELLS"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr0-cap"
-              capability: "core.text"
-              text: "authored run → many cells → one report."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase0"
-          capability: "core.text"
-          text: "CONTROL → EXECUTE → RESULTS"
-          layout: { x: 40, y: 78, width: 280, height: 20 }
-          style: { fontSize: 11, fill: @theme.ink.tertiary, fontWeight: "bold" }
+          capability: "core.stepper"
+          steps: ["CONTROL", "EXECUTE", "RESULTS"]
+          linked: true
+          layout: { x: 40, y: 70, width: 280, height: 26 }
+          style: { gap: 10 }
         },
         {
-          id: "chip0a"
-          capability: "core.rect"
-          layout: { x: 340, y: 72, width: 100, height: 24 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.2, radius: 6 }
+          id: "tags0"
+          capability: "layout.rail"
+          layout: { x: 340, y: 72, width: 330, height: 24 }
+          style: { direction: "row", gap: 10 }
           children: [
             {
-              id: "chip0a-t"
-              capability: "core.text"
+              id: "chip0a"
+              capability: "core.chip"
               text: "one identity"
-              layout: { x: 340, y: 78, width: 100, height: 16 }
-              style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-            }
-          ]
-        },
-        {
-          id: "chip0b"
-          capability: "core.rect"
-          layout: { x: 450, y: 72, width: 100, height: 24 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.accent.secondary, strokeWidth: 1.2, radius: 6 }
-          children: [
+              layout: { x: 0, y: 0, width: 100, height: 24 }
+              style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.2 }
+            },
             {
-              id: "chip0b-t"
-              capability: "core.text"
+              id: "chip0b"
+              capability: "core.chip"
               text: "autonomous"
-              layout: { x: 450, y: 78, width: 100, height: 16 }
-              style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.secondary, textAnchor: "middle" }
-            }
-          ]
-        },
-        {
-          id: "chip0c"
-          capability: "core.rect"
-          layout: { x: 560, y: 72, width: 110, height: 24 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.accent.tertiary, strokeWidth: 1.2, radius: 6 }
-          children: [
+              layout: { x: 0, y: 0, width: 100, height: 24 }
+              style: { fill: @theme.surface.secondary, stroke: @theme.accent.secondary, strokeWidth: 1.2 }
+            },
             {
-              id: "chip0c-t"
-              capability: "core.text"
+              id: "chip0c"
+              capability: "core.chip"
               text: "authoritative"
-              layout: { x: 560, y: 78, width: 110, height: 16 }
-              style: { fontSize: 10, fontWeight: "bold", fill: @theme.accent.tertiary, textAnchor: "middle" }
+              layout: { x: 0, y: 0, width: 110, height: 24 }
+              style: { fill: @theme.surface.secondary, stroke: @theme.accent.tertiary, strokeWidth: 1.2 }
             }
           ]
         },
@@ -235,7 +205,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-0"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M180 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -243,7 +213,7 @@ explainer "Cellular internals" {
       ]
       timeline: [
         { id: "s0-hdr0", at: 0, duration: 260, target: "hdr0", action: "enter" },
-        { id: "s0-phase0", at: 150, duration: 260, target: "phase0", action: "enter" },
+        { id: "s0-phase0", at: 150, duration: 260, action: "stagger", targets: ["phase0-step-0", "phase0-step-1", "phase0-step-2"], step: 70 },
         { id: "s0-chip0a", at: 300, duration: 260, target: "chip0a", action: "enter" },
         { id: "s0-chip0b", at: 450, duration: 260, target: "chip0b", action: "enter" },
         { id: "s0-chip0c", at: 600, duration: 260, target: "chip0c", action: "enter" },
@@ -256,11 +226,11 @@ explainer "Cellular internals" {
         { id: "s0-ev0", at: 1710, duration: 260, target: "ev0", action: "enter" },
         { id: "s0-motion0", at: 1860, duration: 900, target: "motion-sig-0", action: "draw" },
         { id: "s0-report-emph", at: 2080, duration: 280, target: "report", action: "emphasis" },
-        { id: "s0-auto-hdr0-text", at: 40, duration: 200, target: "hdr0-text", action: "enter" },
-        { id: "s0-auto-hdr0-cap", at: 50, duration: 200, target: "hdr0-cap", action: "enter" },
-        { id: "s0-auto-chip0a-t", at: 340, duration: 200, target: "chip0a-t", action: "enter" },
-        { id: "s0-auto-chip0b-t", at: 490, duration: 200, target: "chip0b-t", action: "enter" },
-        { id: "s0-auto-chip0c-t", at: 640, duration: 200, target: "chip0c-t", action: "enter" },
+        { id: "s0-auto-hdr0-text", at: 40, duration: 200, target: "hdr0-title", action: "enter" },
+        { id: "s0-auto-hdr0-cap", at: 50, duration: 200, target: "hdr0-caption", action: "enter" },
+        { id: "s0-auto-chip0a-t", at: 340, duration: 200, target: "chip0a-label", action: "enter" },
+        { id: "s0-auto-chip0b-t", at: 490, duration: 200, target: "chip0b-label", action: "enter" },
+        { id: "s0-auto-chip0c-t", at: 640, duration: 200, target: "chip0c-label", action: "enter" },
         { id: "s0-auto-authored-title", at: 790, duration: 200, target: "authored-title", action: "enter" },
         { id: "s0-auto-authored-detail", at: 820, duration: 200, target: "authored-detail", action: "enter" },
         { id: "s0-auto-authored-sub", at: 850, duration: 200, target: "authored-sub", action: "enter" },
@@ -294,26 +264,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr1"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "LAUNCH · CONFIG V2 SOURCE"
+          caption: "one authored Config v2 request · resolved before fan-out."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "LAUNCH · CONFIG V2 SOURCE" }
-          children: [
-            {
-              id: "hdr1-text"
-              capability: "core.text"
-              text: "LAUNCH · CONFIG V2 SOURCE"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr1-cap"
-              capability: "core.text"
-              text: "one authored Config v2 request · resolved before fan-out."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase1"
@@ -523,8 +478,8 @@ explainer "Cellular internals" {
         { id: "s1-cell3", at: 1620, duration: 260, target: "cell3", action: "enter" },
         { id: "s1-ev1", at: 1770, duration: 260, target: "ev1", action: "enter" },
         { id: "s1-cfg-emph", at: 1960, duration: 280, target: "cfg", action: "emphasis" },
-        { id: "s1-auto-hdr1-text", at: 40, duration: 200, target: "hdr1-text", action: "enter" },
-        { id: "s1-auto-hdr1-cap", at: 50, duration: 200, target: "hdr1-cap", action: "enter" },
+        { id: "s1-auto-hdr1-text", at: 40, duration: 200, target: "hdr1-title", action: "enter" },
+        { id: "s1-auto-hdr1-cap", at: 50, duration: 200, target: "hdr1-caption", action: "enter" },
         { id: "s1-auto-cfg-title", at: 340, duration: 200, target: "cfg-title", action: "enter" },
         { id: "s1-auto-cfg-detail", at: 370, duration: 200, target: "cfg-detail", action: "enter" },
         { id: "s1-auto-cfg-sub", at: 400, duration: 200, target: "cfg-sub", action: "enter" },
@@ -564,26 +519,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr2"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "LAUNCH · SELF-EXEC BOUNDARY"
+          caption: "self-exec --execute · protocol-v2 boundary."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "LAUNCH · SELF-EXEC BOUNDARY" }
-          children: [
-            {
-              id: "hdr2-text"
-              capability: "core.text"
-              text: "LAUNCH · SELF-EXEC BOUNDARY"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr2-cap"
-              capability: "core.text"
-              text: "self-exec --execute · protocol-v2 boundary."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase2"
@@ -751,7 +691,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-2"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 175 H600"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -770,8 +710,8 @@ explainer "Cellular internals" {
         { id: "s2-stdio", at: 1440, duration: 260, target: "stdio", action: "enter" },
         { id: "s2-motion2", at: 1590, duration: 900, target: "motion-sig-2", action: "draw" },
         { id: "s2-execute-emph", at: 1810, duration: 280, target: "execute", action: "emphasis" },
-        { id: "s2-auto-hdr2-text", at: 40, duration: 200, target: "hdr2-text", action: "enter" },
-        { id: "s2-auto-hdr2-cap", at: 50, duration: 200, target: "hdr2-cap", action: "enter" },
+        { id: "s2-auto-hdr2-text", at: 40, duration: 200, target: "hdr2-title", action: "enter" },
+        { id: "s2-auto-hdr2-cap", at: 50, duration: 200, target: "hdr2-caption", action: "enter" },
         { id: "s2-auto-chip2-t", at: 340, duration: 200, target: "chip2-t", action: "enter" },
         { id: "s2-auto-profile-title", at: 490, duration: 200, target: "profile-title", action: "enter" },
         { id: "s2-auto-profile-detail", at: 520, duration: 200, target: "profile-detail", action: "enter" },
@@ -809,26 +749,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr3"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "LAUNCH · CONTROLLER PROMOTION"
+          caption: "cells > 1 → promote one coordinator."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "LAUNCH · CONTROLLER PROMOTION" }
-          children: [
-            {
-              id: "hdr3-text"
-              capability: "core.text"
-              text: "LAUNCH · CONTROLLER PROMOTION"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr3-cap"
-              capability: "core.text"
-              text: "cells > 1 → promote one coordinator."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase3"
@@ -975,7 +900,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-3"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M180 160 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -992,8 +917,8 @@ explainer "Cellular internals" {
         { id: "s3-single", at: 1110, duration: 260, target: "single", action: "enter" },
         { id: "s3-motion3", at: 1260, duration: 900, target: "motion-sig-3", action: "draw" },
         { id: "s3-ctrl-emph", at: 1480, duration: 280, target: "ctrl", action: "emphasis" },
-        { id: "s3-auto-hdr3-text", at: 40, duration: 200, target: "hdr3-text", action: "enter" },
-        { id: "s3-auto-hdr3-cap", at: 50, duration: 200, target: "hdr3-cap", action: "enter" },
+        { id: "s3-auto-hdr3-text", at: 40, duration: 200, target: "hdr3-title", action: "enter" },
+        { id: "s3-auto-hdr3-cap", at: 50, duration: 200, target: "hdr3-caption", action: "enter" },
         { id: "s3-auto-exec3-title", at: 340, duration: 200, target: "exec3-title", action: "enter" },
         { id: "s3-auto-exec3-detail", at: 370, duration: 200, target: "exec3-detail", action: "enter" },
         { id: "s3-auto-exec3-sub", at: 400, duration: 200, target: "exec3-sub", action: "enter" },
@@ -1030,26 +955,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr4"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "LAUNCH · VALIDATE / FAIL CLOSED"
+          caption: "eligibility gate → reject unsupported shapes."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "LAUNCH · VALIDATE / FAIL CLOSED" }
-          children: [
-            {
-              id: "hdr4-text"
-              capability: "core.text"
-              text: "LAUNCH · VALIDATE / FAIL CLOSED"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr4-cap"
-              capability: "core.text"
-              text: "eligibility gate → reject unsupported shapes."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase4"
@@ -1228,8 +1138,8 @@ explainer "Cellular internals" {
         { id: "s4-a4c", at: 1260, duration: 420, target: "a4c", action: "draw" },
         { id: "s4-ok4", at: 1440, duration: 260, target: "ok4", action: "enter" },
         { id: "s4-ok4-emph", at: 1630, duration: 280, target: "ok4", action: "emphasis" },
-        { id: "s4-auto-hdr4-text", at: 40, duration: 200, target: "hdr4-text", action: "enter" },
-        { id: "s4-auto-hdr4-cap", at: 50, duration: 200, target: "hdr4-cap", action: "enter" },
+        { id: "s4-auto-hdr4-text", at: 40, duration: 200, target: "hdr4-title", action: "enter" },
+        { id: "s4-auto-hdr4-cap", at: 50, duration: 200, target: "hdr4-caption", action: "enter" },
         { id: "s4-auto-chip4-t", at: 340, duration: 200, target: "chip4-t", action: "enter" },
         { id: "s4-auto-ctrl4-title", at: 490, duration: 200, target: "ctrl4-title", action: "enter" },
         { id: "s4-auto-ctrl4-detail", at: 520, duration: 200, target: "ctrl4-detail", action: "enter" },
@@ -1267,26 +1177,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr5"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "DISTRIBUTE · MODULO PARTITION"
+          caption: "global budget → disjoint modulo tiles."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "DISTRIBUTE · MODULO PARTITION" }
-          children: [
-            {
-              id: "hdr5-text"
-              capability: "core.text"
-              text: "DISTRIBUTE · MODULO PARTITION"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr5-cap"
-              capability: "core.text"
-              text: "global budget → disjoint modulo tiles."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase5"
@@ -1482,7 +1377,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-5"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 175 H580"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -1503,8 +1398,8 @@ explainer "Cellular internals" {
         { id: "s5-own2", at: 1800, duration: 260, target: "own2", action: "enter" },
         { id: "s5-motion5", at: 1950, duration: 900, target: "motion-sig-5", action: "draw" },
         { id: "s5-mod-emph", at: 2170, duration: 280, target: "mod", action: "emphasis" },
-        { id: "s5-auto-hdr5-text", at: 40, duration: 200, target: "hdr5-text", action: "enter" },
-        { id: "s5-auto-hdr5-cap", at: 50, duration: 200, target: "hdr5-cap", action: "enter" },
+        { id: "s5-auto-hdr5-text", at: 40, duration: 200, target: "hdr5-title", action: "enter" },
+        { id: "s5-auto-hdr5-cap", at: 50, duration: 200, target: "hdr5-caption", action: "enter" },
         { id: "s5-auto-ctrl5-title", at: 340, duration: 200, target: "ctrl5-title", action: "enter" },
         { id: "s5-auto-ctrl5-detail", at: 370, duration: 200, target: "ctrl5-detail", action: "enter" },
         { id: "s5-auto-ctrl5-sub", at: 400, duration: 200, target: "ctrl5-sub", action: "enter" },
@@ -1544,26 +1439,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr6"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "DISTRIBUTE · START BARRIER"
+          caption: "register all → trigger → synchronized dispatch."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "DISTRIBUTE · START BARRIER" }
-          children: [
-            {
-              id: "hdr6-text"
-              capability: "core.text"
-              text: "DISTRIBUTE · START BARRIER"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr6-cap"
-              capability: "core.text"
-              text: "register all → trigger → synchronized dispatch."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase6"
@@ -1790,7 +1670,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-6"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M350 300 V160"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -1812,8 +1692,8 @@ explainer "Cellular internals" {
         { id: "s6-start", at: 1950, duration: 260, target: "start", action: "enter" },
         { id: "s6-motion6", at: 2100, duration: 900, target: "motion-sig-6", action: "draw" },
         { id: "s6-start-emph", at: 2320, duration: 280, target: "start", action: "emphasis" },
-        { id: "s6-auto-hdr6-text", at: 40, duration: 200, target: "hdr6-text", action: "enter" },
-        { id: "s6-auto-hdr6-cap", at: 50, duration: 200, target: "hdr6-cap", action: "enter" },
+        { id: "s6-auto-hdr6-text", at: 40, duration: 200, target: "hdr6-title", action: "enter" },
+        { id: "s6-auto-hdr6-cap", at: 50, duration: 200, target: "hdr6-caption", action: "enter" },
         { id: "s6-auto-c0-title", at: 340, duration: 200, target: "c0-title", action: "enter" },
         { id: "s6-auto-c0-detail", at: 370, duration: 200, target: "c0-detail", action: "enter" },
         { id: "s6-auto-c0-sub", at: 400, duration: 200, target: "c0-sub", action: "enter" },
@@ -1856,26 +1736,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr7"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "DISTRIBUTE · START POLICIES"
+          caption: "synchronized · phaser · barrier-free · shared origin."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "DISTRIBUTE · START POLICIES" }
-          children: [
-            {
-              id: "hdr7-text"
-              capability: "core.text"
-              text: "DISTRIBUTE · START POLICIES"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr7-cap"
-              capability: "core.text"
-              text: "synchronized · phaser · barrier-free · shared origin."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase7"
@@ -2039,8 +1904,8 @@ explainer "Cellular internals" {
         { id: "s7-origin", at: 1110, duration: 260, target: "origin", action: "enter" },
         { id: "s7-ev7", at: 1260, duration: 260, target: "ev7", action: "enter" },
         { id: "s7-origin-emph", at: 1450, duration: 280, target: "origin", action: "emphasis" },
-        { id: "s7-auto-hdr7-text", at: 40, duration: 200, target: "hdr7-text", action: "enter" },
-        { id: "s7-auto-hdr7-cap", at: 50, duration: 200, target: "hdr7-cap", action: "enter" },
+        { id: "s7-auto-hdr7-text", at: 40, duration: 200, target: "hdr7-title", action: "enter" },
+        { id: "s7-auto-hdr7-cap", at: 50, duration: 200, target: "hdr7-caption", action: "enter" },
         { id: "s7-auto-pol0-title", at: 340, duration: 200, target: "pol0-title", action: "enter" },
         { id: "s7-auto-pol0-detail", at: 370, duration: 200, target: "pol0-detail", action: "enter" },
         { id: "s7-auto-pol0-sub", at: 400, duration: 200, target: "pol0-sub", action: "enter" },
@@ -2077,26 +1942,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr8"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "DISTRIBUTE · DATASET DELIVERY"
+          caption: "Velo overlay · Stage G HTTP+zstd · owned inputs only."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "DISTRIBUTE · DATASET DELIVERY" }
-          children: [
-            {
-              id: "hdr8-text"
-              capability: "core.text"
-              text: "DISTRIBUTE · DATASET DELIVERY"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr8-cap"
-              capability: "core.text"
-              text: "Velo overlay · Stage G HTTP+zstd · owned inputs only."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase8"
@@ -2255,7 +2105,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-8"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M180 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -2274,8 +2124,8 @@ explainer "Cellular internals" {
         { id: "s8-cell8", at: 1470, duration: 260, target: "cell8", action: "enter" },
         { id: "s8-motion8", at: 1620, duration: 900, target: "motion-sig-8", action: "draw" },
         { id: "s8-cell8-emph", at: 1840, duration: 280, target: "cell8", action: "emphasis" },
-        { id: "s8-auto-hdr8-text", at: 40, duration: 200, target: "hdr8-text", action: "enter" },
-        { id: "s8-auto-hdr8-cap", at: 50, duration: 200, target: "hdr8-cap", action: "enter" },
+        { id: "s8-auto-hdr8-text", at: 40, duration: 200, target: "hdr8-title", action: "enter" },
+        { id: "s8-auto-hdr8-cap", at: 50, duration: 200, target: "hdr8-caption", action: "enter" },
         { id: "s8-auto-own8-title", at: 340, duration: 200, target: "own8-title", action: "enter" },
         { id: "s8-auto-own8-detail", at: 370, duration: 200, target: "own8-detail", action: "enter" },
         { id: "s8-auto-own8-sub", at: 400, duration: 200, target: "own8-sub", action: "enter" },
@@ -2312,26 +2162,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr9"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "DISTRIBUTE · OWNERSHIP INDEX"
+          caption: "owned ids only · indexed → in-flight → complete."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "DISTRIBUTE · OWNERSHIP INDEX" }
-          children: [
-            {
-              id: "hdr9-text"
-              capability: "core.text"
-              text: "DISTRIBUTE · OWNERSHIP INDEX"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr9-cap"
-              capability: "core.text"
-              text: "owned ids only · indexed → in-flight → complete."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase9"
@@ -2494,7 +2329,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-9"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 175 H580"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -2512,8 +2347,8 @@ explainer "Cellular internals" {
         { id: "s9-chip9", at: 1230, duration: 260, target: "chip9", action: "enter" },
         { id: "s9-motion9", at: 1380, duration: 900, target: "motion-sig-9", action: "draw" },
         { id: "s9-completed-emph", at: 1600, duration: 280, target: "completed", action: "emphasis" },
-        { id: "s9-auto-hdr9-text", at: 40, duration: 200, target: "hdr9-text", action: "enter" },
-        { id: "s9-auto-hdr9-cap", at: 50, duration: 200, target: "hdr9-cap", action: "enter" },
+        { id: "s9-auto-hdr9-text", at: 40, duration: 200, target: "hdr9-title", action: "enter" },
+        { id: "s9-auto-hdr9-cap", at: 50, duration: 200, target: "hdr9-caption", action: "enter" },
         { id: "s9-auto-idx-title", at: 340, duration: 200, target: "idx-title", action: "enter" },
         { id: "s9-auto-idx-detail", at: 370, duration: 200, target: "idx-detail", action: "enter" },
         { id: "s9-auto-idx-sub", at: 400, duration: 200, target: "idx-sub", action: "enter" },
@@ -2551,26 +2386,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr10"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "EXECUTE · AUTONOMOUS CELL"
+          caption: "sliced envelope → autonomous cell process."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "EXECUTE · AUTONOMOUS CELL" }
-          children: [
-            {
-              id: "hdr10-text"
-              capability: "core.text"
-              text: "EXECUTE · AUTONOMOUS CELL"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr10-cap"
-              capability: "core.text"
-              text: "sliced envelope → autonomous cell process."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase10"
@@ -2745,7 +2565,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-10"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -2765,8 +2585,8 @@ explainer "Cellular internals" {
         { id: "s10-chip10", at: 1590, duration: 260, target: "chip10", action: "enter" },
         { id: "s10-motion10", at: 1740, duration: 900, target: "motion-sig-10", action: "draw" },
         { id: "s10-auto-emph", at: 1960, duration: 280, target: "auto", action: "emphasis" },
-        { id: "s10-auto-hdr10-text", at: 40, duration: 200, target: "hdr10-text", action: "enter" },
-        { id: "s10-auto-hdr10-cap", at: 50, duration: 200, target: "hdr10-cap", action: "enter" },
+        { id: "s10-auto-hdr10-text", at: 40, duration: 200, target: "hdr10-title", action: "enter" },
+        { id: "s10-auto-hdr10-cap", at: 50, duration: 200, target: "hdr10-caption", action: "enter" },
         { id: "s10-auto-env-title", at: 340, duration: 200, target: "env-title", action: "enter" },
         { id: "s10-auto-env-detail", at: 370, duration: 200, target: "env-detail", action: "enter" },
         { id: "s10-auto-env-sub", at: 400, duration: 200, target: "env-sub", action: "enter" },
@@ -2804,26 +2624,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr11"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "EXECUTE · WORKER SHARDS"
+          caption: "cell slice → worker shards · second disjoint partition."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "EXECUTE · WORKER SHARDS" }
-          children: [
-            {
-              id: "hdr11-text"
-              capability: "core.text"
-              text: "EXECUTE · WORKER SHARDS"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr11-cap"
-              capability: "core.text"
-              text: "cell slice → worker shards · second disjoint partition."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase11"
@@ -2976,7 +2781,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-11"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M190 175 H540"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -2994,8 +2799,8 @@ explainer "Cellular internals" {
         { id: "s11-store", at: 1290, duration: 260, target: "store", action: "enter" },
         { id: "s11-motion11", at: 1440, duration: 900, target: "motion-sig-11", action: "draw" },
         { id: "s11-store-emph", at: 1660, duration: 280, target: "store", action: "emphasis" },
-        { id: "s11-auto-hdr11-text", at: 40, duration: 200, target: "hdr11-text", action: "enter" },
-        { id: "s11-auto-hdr11-cap", at: 50, duration: 200, target: "hdr11-cap", action: "enter" },
+        { id: "s11-auto-hdr11-text", at: 40, duration: 200, target: "hdr11-title", action: "enter" },
+        { id: "s11-auto-hdr11-cap", at: 50, duration: 200, target: "hdr11-caption", action: "enter" },
         { id: "s11-auto-slice-title", at: 340, duration: 200, target: "slice-title", action: "enter" },
         { id: "s11-auto-slice-detail", at: 370, duration: 200, target: "slice-detail", action: "enter" },
         { id: "s11-auto-slice-sub", at: 400, duration: 200, target: "slice-sub", action: "enter" },
@@ -3032,26 +2837,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr12"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "EXECUTE · GLOBAL ORDINAL"
+          caption: "local progress → stable global ordinal."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "EXECUTE · GLOBAL ORDINAL" }
-          children: [
-            {
-              id: "hdr12-text"
-              capability: "core.text"
-              text: "EXECUTE · GLOBAL ORDINAL"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr12-cap"
-              capability: "core.text"
-              text: "local progress → stable global ordinal."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase12"
@@ -3061,7 +2851,7 @@ explainer "Cellular internals" {
           style: { fontSize: 11, fill: @theme.ink.tertiary, fontWeight: "bold" }
         },
         {
-          id: "gord"
+          id: "global-ord"
           capability: "core.rect"
           layout: { x: 120, y: 105, width: 460, height: 80 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 8 }
@@ -3069,21 +2859,21 @@ explainer "Cellular internals" {
           children: [
 
             {
-              id: "gord-title"
+              id: "global-ord-title"
               capability: "core.text"
               text: "global_ordinal"
               layout: { x: 120, y: 127, width: 460, height: 18 }
               style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
             },
             {
-              id: "gord-detail"
+              id: "global-ord-detail"
               capability: "core.text"
               text: "phase_base + local × cell_count + cell_id"
               layout: { x: 120, y: 147, width: 460, height: 16 }
               style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
             },
             {
-              id: "gord-sub"
+              id: "global-ord-sub"
               capability: "core.text"
               text: "stable across cells"
               layout: { x: 120, y: 165, width: 460, height: 14 }
@@ -3243,7 +3033,7 @@ explainer "Cellular internals" {
       timeline: [
         { id: "s12-hdr12", at: 0, duration: 260, target: "hdr12", action: "enter" },
         { id: "s12-phase12", at: 150, duration: 260, target: "phase12", action: "enter" },
-        { id: "s12-gord", at: 300, duration: 260, target: "gord", action: "enter" },
+        { id: "s12-global-ord", at: 300, duration: 260, target: "global-ord", action: "enter" },
         { id: "s12-a120", at: 450, duration: 420, target: "a120", action: "draw" },
         { id: "s12-ord0", at: 630, duration: 260, target: "ord0", action: "enter" },
         { id: "s12-a121", at: 780, duration: 420, target: "a121", action: "draw" },
@@ -3252,12 +3042,12 @@ explainer "Cellular internals" {
         { id: "s12-ord2", at: 1290, duration: 260, target: "ord2", action: "enter" },
         { id: "s12-a123", at: 1440, duration: 420, target: "a123", action: "draw" },
         { id: "s12-ord3", at: 1620, duration: 260, target: "ord3", action: "enter" },
-        { id: "s12-gord-emph", at: 1810, duration: 280, target: "gord", action: "emphasis" },
-        { id: "s12-auto-hdr12-text", at: 40, duration: 200, target: "hdr12-text", action: "enter" },
-        { id: "s12-auto-hdr12-cap", at: 50, duration: 200, target: "hdr12-cap", action: "enter" },
-        { id: "s12-auto-gord-title", at: 340, duration: 200, target: "gord-title", action: "enter" },
-        { id: "s12-auto-gord-detail", at: 370, duration: 200, target: "gord-detail", action: "enter" },
-        { id: "s12-auto-gord-sub", at: 400, duration: 200, target: "gord-sub", action: "enter" },
+        { id: "s12-global-ord-emph", at: 1810, duration: 280, target: "global-ord", action: "emphasis" },
+        { id: "s12-auto-hdr12-text", at: 40, duration: 200, target: "hdr12-title", action: "enter" },
+        { id: "s12-auto-hdr12-cap", at: 50, duration: 200, target: "hdr12-caption", action: "enter" },
+        { id: "s12-auto-global-ord-title", at: 340, duration: 200, target: "global-ord-title", action: "enter" },
+        { id: "s12-auto-global-ord-detail", at: 370, duration: 200, target: "global-ord-detail", action: "enter" },
+        { id: "s12-auto-global-ord-sub", at: 400, duration: 200, target: "global-ord-sub", action: "enter" },
         { id: "s12-auto-ord0-title", at: 670, duration: 200, target: "ord0-title", action: "enter" },
         { id: "s12-auto-ord0-detail", at: 700, duration: 200, target: "ord0-detail", action: "enter" },
         { id: "s12-auto-ord0-sub", at: 730, duration: 200, target: "ord0-sub", action: "enter" },
@@ -3294,26 +3084,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr13"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "EXECUTE · ONLINE DISPATCH"
+          caption: "clock-injected HTTP/gRPC · DynoSim cellular rejected."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "EXECUTE · ONLINE DISPATCH" }
-          children: [
-            {
-              id: "hdr13-text"
-              capability: "core.text"
-              text: "EXECUTE · ONLINE DISPATCH"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr13-cap"
-              capability: "core.text"
-              text: "clock-injected HTTP/gRPC · DynoSim cellular rejected."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase13"
@@ -3481,7 +3256,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-13"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -3500,8 +3275,8 @@ explainer "Cellular internals" {
         { id: "s13-srv", at: 1440, duration: 260, target: "srv", action: "enter" },
         { id: "s13-motion13", at: 1590, duration: 900, target: "motion-sig-13", action: "draw" },
         { id: "s13-http-emph", at: 1810, duration: 280, target: "http", action: "emphasis" },
-        { id: "s13-auto-hdr13-text", at: 40, duration: 200, target: "hdr13-text", action: "enter" },
-        { id: "s13-auto-hdr13-cap", at: 50, duration: 200, target: "hdr13-cap", action: "enter" },
+        { id: "s13-auto-hdr13-text", at: 40, duration: 200, target: "hdr13-title", action: "enter" },
+        { id: "s13-auto-hdr13-cap", at: 50, duration: 200, target: "hdr13-caption", action: "enter" },
         { id: "s13-auto-chip13-t", at: 340, duration: 200, target: "chip13-t", action: "enter" },
         { id: "s13-auto-shard-title", at: 490, duration: 200, target: "shard-title", action: "enter" },
         { id: "s13-auto-shard-detail", at: 520, duration: 200, target: "shard-detail", action: "enter" },
@@ -3539,26 +3314,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr14"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "EXECUTE · CAPTURED RECORD"
+          caption: "observe events → one CapturedRecord."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "EXECUTE · CAPTURED RECORD" }
-          children: [
-            {
-              id: "hdr14-text"
-              capability: "core.text"
-              text: "EXECUTE · CAPTURED RECORD"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr14-cap"
-              capability: "core.text"
-              text: "observe events → one CapturedRecord."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase14"
@@ -3785,7 +3545,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-14"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 175 H600"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -3807,8 +3567,8 @@ explainer "Cellular internals" {
         { id: "s14-cap", at: 1950, duration: 260, target: "cap", action: "enter" },
         { id: "s14-motion14", at: 2100, duration: 900, target: "motion-sig-14", action: "draw" },
         { id: "s14-cap-emph", at: 2320, duration: 280, target: "cap", action: "emphasis" },
-        { id: "s14-auto-hdr14-text", at: 40, duration: 200, target: "hdr14-text", action: "enter" },
-        { id: "s14-auto-hdr14-cap", at: 50, duration: 200, target: "hdr14-cap", action: "enter" },
+        { id: "s14-auto-hdr14-text", at: 40, duration: 200, target: "hdr14-title", action: "enter" },
+        { id: "s14-auto-hdr14-cap", at: 50, duration: 200, target: "hdr14-caption", action: "enter" },
         { id: "s14-auto-ev0-title", at: 340, duration: 200, target: "ev0-title", action: "enter" },
         { id: "s14-auto-ev0-detail", at: 370, duration: 200, target: "ev0-detail", action: "enter" },
         { id: "s14-auto-ev0-sub", at: 400, duration: 200, target: "ev0-sub", action: "enter" },
@@ -3851,26 +3611,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr15"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "REDUCE · RETAIN ROWS"
+          caption: "keep rows → ship Partition → global-order merge."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "REDUCE · RETAIN ROWS" }
-          children: [
-            {
-              id: "hdr15-text"
-              capability: "core.text"
-              text: "REDUCE · RETAIN ROWS"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr15-cap"
-              capability: "core.text"
-              text: "keep rows → ship Partition → global-order merge."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase15"
@@ -3993,7 +3738,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-15"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -4010,8 +3755,8 @@ explainer "Cellular internals" {
         { id: "s15-note15", at: 1110, duration: 260, target: "note15", action: "enter" },
         { id: "s15-motion15", at: 1260, duration: 900, target: "motion-sig-15", action: "draw" },
         { id: "s15-retain-emph", at: 1480, duration: 280, target: "retain", action: "emphasis" },
-        { id: "s15-auto-hdr15-text", at: 40, duration: 200, target: "hdr15-text", action: "enter" },
-        { id: "s15-auto-hdr15-cap", at: 50, duration: 200, target: "hdr15-cap", action: "enter" },
+        { id: "s15-auto-hdr15-text", at: 40, duration: 200, target: "hdr15-title", action: "enter" },
+        { id: "s15-auto-hdr15-cap", at: 50, duration: 200, target: "hdr15-caption", action: "enter" },
         { id: "s15-auto-disp15-title", at: 340, duration: 200, target: "disp15-title", action: "enter" },
         { id: "s15-auto-disp15-detail", at: 370, duration: 200, target: "disp15-detail", action: "enter" },
         { id: "s15-auto-disp15-sub", at: 400, duration: 200, target: "disp15-sub", action: "enter" },
@@ -4045,26 +3790,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr16"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "REDUCE · EXACT FOLD"
+          caption: "fold each record → exact store · drop row."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "REDUCE · EXACT FOLD" }
-          children: [
-            {
-              id: "hdr16-text"
-              capability: "core.text"
-              text: "REDUCE · EXACT FOLD"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr16-cap"
-              capability: "core.text"
-              text: "fold each record → exact store · drop row."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase16"
@@ -4187,7 +3917,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-16"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -4204,8 +3934,8 @@ explainer "Cellular internals" {
         { id: "s16-note16", at: 1110, duration: 260, target: "note16", action: "enter" },
         { id: "s16-motion16", at: 1260, duration: 900, target: "motion-sig-16", action: "draw" },
         { id: "s16-fold-emph", at: 1480, duration: 280, target: "fold", action: "emphasis" },
-        { id: "s16-auto-hdr16-text", at: 40, duration: 200, target: "hdr16-text", action: "enter" },
-        { id: "s16-auto-hdr16-cap", at: 50, duration: 200, target: "hdr16-cap", action: "enter" },
+        { id: "s16-auto-hdr16-text", at: 40, duration: 200, target: "hdr16-title", action: "enter" },
+        { id: "s16-auto-hdr16-cap", at: 50, duration: 200, target: "hdr16-caption", action: "enter" },
         { id: "s16-auto-disp16-title", at: 340, duration: 200, target: "disp16-title", action: "enter" },
         { id: "s16-auto-disp16-detail", at: 370, duration: 200, target: "disp16-detail", action: "enter" },
         { id: "s16-auto-disp16-sub", at: 400, duration: 200, target: "disp16-sub", action: "enter" },
@@ -4239,26 +3969,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr17"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "REDUCE · SKETCH"
+          caption: "finite values → t-digest + exact moments."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "REDUCE · SKETCH" }
-          children: [
-            {
-              id: "hdr17-text"
-              capability: "core.text"
-              text: "REDUCE · SKETCH"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr17-cap"
-              capability: "core.text"
-              text: "finite values → t-digest + exact moments."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase17"
@@ -4411,7 +4126,7 @@ explainer "Cellular internals" {
         },
         {
           id: "motion-sig-17"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 175 H560"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -4429,8 +4144,8 @@ explainer "Cellular internals" {
         { id: "s17-approx", at: 1290, duration: 260, target: "approx", action: "enter" },
         { id: "s17-motion17", at: 1440, duration: 900, target: "motion-sig-17", action: "draw" },
         { id: "s17-sketch-emph", at: 1660, duration: 280, target: "sketch", action: "emphasis" },
-        { id: "s17-auto-hdr17-text", at: 40, duration: 200, target: "hdr17-text", action: "enter" },
-        { id: "s17-auto-hdr17-cap", at: 50, duration: 200, target: "hdr17-cap", action: "enter" },
+        { id: "s17-auto-hdr17-text", at: 40, duration: 200, target: "hdr17-title", action: "enter" },
+        { id: "s17-auto-hdr17-cap", at: 50, duration: 200, target: "hdr17-caption", action: "enter" },
         { id: "s17-auto-fin-title", at: 340, duration: 200, target: "fin-title", action: "enter" },
         { id: "s17-auto-fin-detail", at: 370, duration: 200, target: "fin-detail", action: "enter" },
         { id: "s17-auto-fin-sub", at: 400, duration: 200, target: "fin-sub", action: "enter" },
@@ -4467,26 +4182,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr18"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "SCALE · MERGE & PUBLISH"
+          caption: "flat + tree merge → artifacts + report · external planned."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "SCALE · MERGE & PUBLISH" }
-          children: [
-            {
-              id: "hdr18-text"
-              capability: "core.text"
-              text: "SCALE · MERGE & PUBLISH"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr18-cap"
-              capability: "core.text"
-              text: "flat + tree merge → artifacts + report · external planned."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase18"
@@ -4750,31 +4450,15 @@ explainer "Cellular internals" {
         },
         {
           id: "sink"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "external sink"
+          detail: "planned"
           layout: { x: 430, y: 310, width: 210, height: 48 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.8, radius: 8 }
-          accessibility: { label: "external sink: planned" }
-          children: [
-
-            {
-              id: "sink-title"
-              capability: "core.text"
-              text: "external sink"
-              layout: { x: 430, y: 320, width: 210, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "sink-detail"
-              capability: "core.text"
-              text: "planned"
-              layout: { x: 430, y: 340, width: 210, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "motion-sig-18"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M110 175 H580"
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", markerEnd: "none" }
           accessibility: { label: "motion signal" }
@@ -4799,8 +4483,8 @@ explainer "Cellular internals" {
         { id: "s18-sink", at: 2430, duration: 260, target: "sink", action: "enter" },
         { id: "s18-motion18", at: 2580, duration: 900, target: "motion-sig-18", action: "draw" },
         { id: "s18-merge-emph", at: 2800, duration: 280, target: "merge", action: "emphasis" },
-        { id: "s18-auto-hdr18-text", at: 40, duration: 200, target: "hdr18-text", action: "enter" },
-        { id: "s18-auto-hdr18-cap", at: 50, duration: 200, target: "hdr18-cap", action: "enter" },
+        { id: "s18-auto-hdr18-text", at: 40, duration: 200, target: "hdr18-title", action: "enter" },
+        { id: "s18-auto-hdr18-cap", at: 50, duration: 200, target: "hdr18-caption", action: "enter" },
         { id: "s18-auto-cell180-title", at: 340, duration: 200, target: "cell180-title", action: "enter" },
         { id: "s18-auto-cell180-detail", at: 370, duration: 200, target: "cell180-detail", action: "enter" },
         { id: "s18-auto-cell180-sub", at: 400, duration: 200, target: "cell180-sub", action: "enter" },
@@ -4848,26 +4532,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "hdr19"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "SCALE · FULL SYSTEM ATLAS"
+          caption: "all planes together · one measurement contract."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "SCALE · FULL SYSTEM ATLAS" }
-          children: [
-            {
-              id: "hdr19-text"
-              capability: "core.text"
-              text: "SCALE · FULL SYSTEM ATLAS"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "hdr19-cap"
-              capability: "core.text"
-              text: "all planes together · one measurement contract."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "phase19"
@@ -4878,99 +4547,35 @@ explainer "Cellular internals" {
         },
         {
           id: "ctrl19"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "CONTROL — coordinate & authority"
+          detail: "controller · START · roles"
           layout: { x: 30, y: 95, width: 640, height: 52 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 8 }
-          accessibility: { label: "CONTROL — coordinate & authority: controller · START · roles" }
-          children: [
-
-            {
-              id: "ctrl19-title"
-              capability: "core.text"
-              text: "CONTROL — coordinate & authority"
-              layout: { x: 30, y: 107, width: 640, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "ctrl19-detail"
-              capability: "core.text"
-              text: "controller · START · roles"
-              layout: { x: 30, y: 127, width: 640, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "data19"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "DATA — distribute & timing"
+          detail: "partition · dataset · origin"
           layout: { x: 30, y: 165, width: 640, height: 52 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 8 }
-          accessibility: { label: "DATA — distribute & timing: partition · dataset · origin" }
-          children: [
-
-            {
-              id: "data19-title"
-              capability: "core.text"
-              text: "DATA — distribute & timing"
-              layout: { x: 30, y: 177, width: 640, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "data19-detail"
-              capability: "core.text"
-              text: "partition · dataset · origin"
-              layout: { x: 30, y: 197, width: 640, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "exec19"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "EXECUTE — request / load"
+          detail: "cells · shards · dispatch"
           layout: { x: 30, y: 235, width: 640, height: 52 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 8 }
-          accessibility: { label: "EXECUTE — request / load: cells · shards · dispatch" }
-          children: [
-
-            {
-              id: "exec19-title"
-              capability: "core.text"
-              text: "EXECUTE — request / load"
-              layout: { x: 30, y: 247, width: 640, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "exec19-detail"
-              capability: "core.text"
-              text: "cells · shards · dispatch"
-              layout: { x: 30, y: 267, width: 640, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "res19"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "RESULTS — reduce & publish"
+          detail: "retain · fold · merge · report"
           layout: { x: 30, y: 305, width: 640, height: 52 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 8 }
-          accessibility: { label: "RESULTS — reduce & publish: retain · fold · merge · report" }
-          children: [
-
-            {
-              id: "res19-title"
-              capability: "core.text"
-              text: "RESULTS — reduce & publish"
-              layout: { x: 30, y: 317, width: 640, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "res19-detail"
-              capability: "core.text"
-              text: "retain · fold · merge · report"
-              layout: { x: 30, y: 337, width: 640, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "a19a"
@@ -5002,8 +4607,8 @@ explainer "Cellular internals" {
         { id: "s19-a19c", at: 1110, duration: 420, target: "a19c", action: "draw" },
         { id: "s19-res19", at: 1290, duration: 260, target: "res19", action: "enter" },
         { id: "s19-res19-emph", at: 1480, duration: 280, target: "res19", action: "emphasis" },
-        { id: "s19-auto-hdr19-text", at: 40, duration: 200, target: "hdr19-text", action: "enter" },
-        { id: "s19-auto-hdr19-cap", at: 50, duration: 200, target: "hdr19-cap", action: "enter" },
+        { id: "s19-auto-hdr19-text", at: 40, duration: 200, target: "hdr19-title", action: "enter" },
+        { id: "s19-auto-hdr19-cap", at: 50, duration: 200, target: "hdr19-caption", action: "enter" },
         { id: "s19-auto-ctrl19-title", at: 340, duration: 200, target: "ctrl19-title", action: "enter" },
         { id: "s19-auto-ctrl19-detail", at: 370, duration: 200, target: "ctrl19-detail", action: "enter" },
         { id: "s19-auto-data19-title", at: 670, duration: 200, target: "data19-title", action: "enter" },
@@ -5020,26 +4625,11 @@ explainer "Cellular internals" {
       roots: [
         {
           id: "f-hdr"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "SCALE · FULL SYSTEM ATLAS"
+          caption: "all planes together · one measurement contract."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "SCALE · FULL SYSTEM ATLAS" }
-          children: [
-            {
-              id: "f-hdr-text"
-              capability: "core.text"
-              text: "SCALE · FULL SYSTEM ATLAS"
-              layout: { x: 38, y: 28, width: 360, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            },
-            {
-              id: "f-hdr-cap"
-              capability: "core.text"
-              text: "all planes together · one measurement contract."
-              layout: { x: 400, y: 28, width: 260, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         },
         {
           id: "f-phase"
@@ -5050,99 +4640,35 @@ explainer "Cellular internals" {
         },
         {
           id: "f-ctrl"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "CONTROL — coordinate & authority"
+          detail: "controller · START · roles"
           layout: { x: 30, y: 95, width: 640, height: 52 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 8 }
-          accessibility: { label: "CONTROL — coordinate & authority: controller · START · roles" }
-          children: [
-
-            {
-              id: "f-ctrl-title"
-              capability: "core.text"
-              text: "CONTROL — coordinate & authority"
-              layout: { x: 30, y: 107, width: 640, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "f-ctrl-detail"
-              capability: "core.text"
-              text: "controller · START · roles"
-              layout: { x: 30, y: 127, width: 640, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "f-data"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "DATA — distribute & timing"
+          detail: "partition · dataset · origin"
           layout: { x: 30, y: 165, width: 640, height: 52 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8, radius: 8 }
-          accessibility: { label: "DATA — distribute & timing: partition · dataset · origin" }
-          children: [
-
-            {
-              id: "f-data-title"
-              capability: "core.text"
-              text: "DATA — distribute & timing"
-              layout: { x: 30, y: 177, width: 640, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "f-data-detail"
-              capability: "core.text"
-              text: "partition · dataset · origin"
-              layout: { x: 30, y: 197, width: 640, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "f-exec"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "EXECUTE — request / load"
+          detail: "cells · shards · dispatch"
           layout: { x: 30, y: 235, width: 640, height: 52 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 8 }
-          accessibility: { label: "EXECUTE — request / load: cells · shards · dispatch" }
-          children: [
-
-            {
-              id: "f-exec-title"
-              capability: "core.text"
-              text: "EXECUTE — request / load"
-              layout: { x: 30, y: 247, width: 640, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "f-exec-detail"
-              capability: "core.text"
-              text: "cells · shards · dispatch"
-              layout: { x: 30, y: 267, width: 640, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "f-res"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "RESULTS — reduce & publish"
+          detail: "retain · fold · merge · report"
           layout: { x: 30, y: 305, width: 640, height: 52 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 8 }
-          accessibility: { label: "RESULTS — reduce & publish: retain · fold · merge · report" }
-          children: [
-
-            {
-              id: "f-res-title"
-              capability: "core.text"
-              text: "RESULTS — reduce & publish"
-              layout: { x: 30, y: 317, width: 640, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            },
-            {
-              id: "f-res-detail"
-              capability: "core.text"
-              text: "retain · fold · merge · report"
-              layout: { x: 30, y: 337, width: 640, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         },
         {
           id: "f-a"

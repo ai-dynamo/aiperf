@@ -36,212 +36,92 @@ explainer "Rust Architecture Atlas" {
       roots: [
         {
           id: "hdr0"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "SYSTEM LANDSCAPE"
+          caption: "Author → execute → target · artifacts fan out after the run."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-          accessibility: { label: "SYSTEM LANDSCAPE" }
-          children: [
-            {
-              id: "hdr0-text"
-              capability: "core.text"
-              text: "SYSTEM LANDSCAPE"
-              layout: { x: 38, y: 28, width: 300, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            }
-            {
-              id: "hdr0-cap"
-              capability: "core.text"
-              text: "Author → execute → target · artifacts fan out after the run."
-              layout: { x: 340, y: 28, width: 320, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         }
         {
           id: "config"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Config v2"
+          detail: "cli flags"
           layout: { x: 60, y: 90, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "Config v2: cli flags" }
-          children: [
-            {
-              id: "config-title"
-              capability: "core.text"
-              text: "Config v2"
-              layout: { x: 60, y: 111, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "config-detail"
-              capability: "core.text"
-              text: "cli flags"
-              layout: { x: 60, y: 131, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a0a"
-          capability: "core.path"
-          d: "M220 125 H270"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.route"
+          from: { nodeId: "config", anchor: "e" }
+          to: { nodeId: "aiperf", anchor: "w" }
           style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" }
         }
         {
           id: "aiperf"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "aiperf"
+          detail: "cli/src/main.rs"
           layout: { x: 270, y: 80, width: 180, height: 90 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "aiperf: cli/src/main.rs" }
-          children: [
-            {
-              id: "aiperf-title"
-              capability: "core.text"
-              text: "aiperf"
-              layout: { x: 270, y: 111, width: 180, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "aiperf-detail"
-              capability: "core.text"
-              text: "cli/src/main.rs"
-              layout: { x: 270, y: 131, width: 180, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a0b"
-          capability: "core.path"
-          d: "M360 170 V210"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.route"
+          from: { nodeId: "aiperf", anchor: "s" }
+          to: { nodeId: "execute", anchor: "n" }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
         }
         {
           id: "execute"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "aiperf --execute"
+          detail: "protocol v2 child"
           layout: { x: 250, y: 210, width: 220, height: 80 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "aiperf --execute: protocol v2 child" }
-          children: [
-            {
-              id: "execute-title"
-              capability: "core.text"
-              text: "aiperf --execute"
-              layout: { x: 250, y: 236, width: 220, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "execute-detail"
-              capability: "core.text"
-              text: "protocol v2 child"
-              layout: { x: 250, y: 256, width: 220, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a0c"
-          capability: "core.path"
-          d: "M470 250 H520"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
+          capability: "core.route"
+          from: { nodeId: "execute", anchor: "e" }
+          to: { nodeId: "cell", anchor: "w" }
           style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" }
         }
         {
           id: "cell"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "--cell N"
+          detail: "optional"
           layout: { x: 520, y: 210, width: 140, height: 80 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "--cell N: optional" }
-          children: [
-            {
-              id: "cell-title"
-              capability: "core.text"
-              text: "--cell N"
-              layout: { x: 520, y: 236, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "cell-detail"
-              capability: "core.text"
-              text: "optional"
-              layout: { x: 520, y: 256, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "real"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "real server"
+          detail: "HTTP / gRPC"
           layout: { x: 60, y: 310, width: 150, height: 60 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "real server: HTTP / gRPC" }
-          children: [
-            {
-              id: "real-title"
-              capability: "core.text"
-              text: "real server"
-              layout: { x: 60, y: 326, width: 150, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "real-detail"
-              capability: "core.text"
-              text: "HTTP / gRPC"
-              layout: { x: 60, y: 346, width: 150, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "mock"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "mock-server"
+          detail: "standalone"
           layout: { x: 250, y: 310, width: 170, height: 60 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "mock-server: standalone" }
-          children: [
-            {
-              id: "mock-title"
-              capability: "core.text"
-              text: "mock-server"
-              layout: { x: 250, y: 326, width: 170, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "mock-detail"
-              capability: "core.text"
-              text: "standalone"
-              layout: { x: 250, y: 346, width: 170, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "dyno"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Dynosim"
+          detail: "feature gate"
           layout: { x: 460, y: 310, width: 180, height: 60 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "Dynosim: feature gate" }
-          children: [
-            {
-              id: "dyno-title"
-              capability: "core.text"
-              text: "Dynosim"
-              layout: { x: 460, y: 326, width: 180, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "dyno-detail"
-              capability: "core.text"
-              text: "feature gate"
-              layout: { x: 460, y: 346, width: 180, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "motion-sig-0"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M350 120 V200"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
@@ -285,49 +165,19 @@ explainer "Rust Architecture Atlas" {
       roots: [
         {
           id: "hdr1"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "PROCESS / CRATE GRAPH"
+          caption: "cli → runtime → loadgen-core · mock-server is peer, not child."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-          accessibility: { label: "PROCESS / CRATE GRAPH" }
-          children: [
-            {
-              id: "hdr1-text"
-              capability: "core.text"
-              text: "PROCESS / CRATE GRAPH"
-              layout: { x: 38, y: 28, width: 300, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            }
-            {
-              id: "hdr1-cap"
-              capability: "core.text"
-              text: "cli → runtime → loadgen-core · mock-server is peer, not child."
-              layout: { x: 340, y: 28, width: 320, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         }
         {
           id: "cli"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "aiperf-cli"
+          detail: "binary + commands"
           layout: { x: 40, y: 100, width: 160, height: 90 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "aiperf-cli: binary + commands" }
-          children: [
-            {
-              id: "cli-title"
-              capability: "core.text"
-              text: "aiperf-cli"
-              layout: { x: 40, y: 131, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "cli-detail"
-              capability: "core.text"
-              text: "binary + commands"
-              layout: { x: 40, y: 151, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a1a"
@@ -338,26 +188,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "runtime"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "aiperf-runtime"
+          detail: "engine + transports"
           layout: { x: 250, y: 100, width: 180, height: 90 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "aiperf-runtime: engine + transports" }
-          children: [
-            {
-              id: "runtime-title"
-              capability: "core.text"
-              text: "aiperf-runtime"
-              layout: { x: 250, y: 131, width: 180, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "runtime-detail"
-              capability: "core.text"
-              text: "engine + transports"
-              layout: { x: 250, y: 151, width: 180, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a1b"
@@ -368,76 +203,31 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "loadgen"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "loadgen-core"
+          detail: "sink · observer"
           layout: { x: 480, y: 100, width: 180, height: 90 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "loadgen-core: sink · observer" }
-          children: [
-            {
-              id: "loadgen-title"
-              capability: "core.text"
-              text: "loadgen-core"
-              layout: { x: 480, y: 131, width: 180, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "loadgen-detail"
-              capability: "core.text"
-              text: "sink · observer"
-              layout: { x: 480, y: 151, width: 180, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "mock1"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "mock-server"
+          detail: "→ runtime"
           layout: { x: 250, y: 240, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "mock-server: → runtime" }
-          children: [
-            {
-              id: "mock1-title"
-              capability: "core.text"
-              text: "mock-server"
-              layout: { x: 250, y: 261, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "mock1-detail"
-              capability: "core.text"
-              text: "→ runtime"
-              layout: { x: 250, y: 281, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "pyext"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "pyext / e2e"
+          detail: "off hot path"
           layout: { x: 450, y: 240, width: 140, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "pyext / e2e: off hot path" }
-          children: [
-            {
-              id: "pyext-title"
-              capability: "core.text"
-              text: "pyext / e2e"
-              layout: { x: 450, y: 261, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "pyext-detail"
-              capability: "core.text"
-              text: "off hot path"
-              layout: { x: 450, y: 281, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "motion-sig-1"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M140 178 H560"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
@@ -478,49 +268,19 @@ explainer "Rust Architecture Atlas" {
       roots: [
         {
           id: "hdr2"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "ONE-RUN HOT PATH"
+          caption: "Registries at startup · Clock + sink on the hot path · merge after drain."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-          accessibility: { label: "ONE-RUN HOT PATH" }
-          children: [
-            {
-              id: "hdr2-text"
-              capability: "core.text"
-              text: "ONE-RUN HOT PATH"
-              layout: { x: 38, y: 28, width: 300, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            }
-            {
-              id: "hdr2-cap"
-              capability: "core.text"
-              text: "Registries at startup · Clock + sink on the hot path · merge after drain."
-              layout: { x: 340, y: 28, width: 320, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         }
         {
           id: "app"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Application"
+          detail: "freeze registry"
           layout: { x: 30, y: 90, width: 140, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "Application: freeze registry" }
-          children: [
-            {
-              id: "app-title"
-              capability: "core.text"
-              text: "Application"
-              layout: { x: 30, y: 111, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "app-detail"
-              capability: "core.text"
-              text: "freeze registry"
-              layout: { x: 30, y: 131, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a2a"
@@ -531,26 +291,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "coord"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Coordinator"
+          detail: "validate/prepare"
           layout: { x: 210, y: 90, width: 140, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "Coordinator: validate/prepare" }
-          children: [
-            {
-              id: "coord-title"
-              capability: "core.text"
-              text: "Coordinator"
-              layout: { x: 210, y: 111, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "coord-detail"
-              capability: "core.text"
-              text: "validate/prepare"
-              layout: { x: 210, y: 131, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a2b"
@@ -561,26 +306,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "phase"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Phase runtime"
+          detail: "warmup→profile"
           layout: { x: 390, y: 90, width: 140, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "Phase runtime: warmup→profile" }
-          children: [
-            {
-              id: "phase-title"
-              capability: "core.text"
-              text: "Phase runtime"
-              layout: { x: 390, y: 111, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "phase-detail"
-              capability: "core.text"
-              text: "warmup→profile"
-              layout: { x: 390, y: 131, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a2c"
@@ -591,99 +321,39 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "sink"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Sink"
+          detail: "dispatch"
           layout: { x: 570, y: 90, width: 110, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "Sink: dispatch" }
-          children: [
-            {
-              id: "sink-title"
-              capability: "core.text"
-              text: "Sink"
-              layout: { x: 570, y: 111, width: 110, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "sink-detail"
-              capability: "core.text"
-              text: "dispatch"
-              layout: { x: 570, y: 131, width: 110, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "clock"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Clock"
+          detail: "Real / Sim"
           layout: { x: 120, y: 220, width: 150, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "Clock: Real / Sim" }
-          children: [
-            {
-              id: "clock-title"
-              capability: "core.text"
-              text: "Clock"
-              layout: { x: 120, y: 241, width: 150, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "clock-detail"
-              capability: "core.text"
-              text: "Real / Sim"
-              layout: { x: 120, y: 261, width: 150, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "obs"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Observer"
+          detail: "token · usage"
           layout: { x: 320, y: 220, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "Observer: token · usage" }
-          children: [
-            {
-              id: "obs-title"
-              capability: "core.text"
-              text: "Observer"
-              layout: { x: 320, y: 241, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "obs-detail"
-              capability: "core.text"
-              text: "token · usage"
-              layout: { x: 320, y: 261, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "nv2"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "native-v2"
+          detail: "report commit"
           layout: { x: 520, y: 220, width: 150, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "native-v2: report commit" }
-          children: [
-            {
-              id: "nv2-title"
-              capability: "core.text"
-              text: "native-v2"
-              layout: { x: 520, y: 241, width: 150, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "nv2-detail"
-              capability: "core.text"
-              text: "report commit"
-              layout: { x: 520, y: 261, width: 150, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "motion-sig-2"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M90 178 H610"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
@@ -727,49 +397,19 @@ explainer "Rust Architecture Atlas" {
       roots: [
         {
           id: "hdr3"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "PROTOCOL V2 CHILD"
+          caption: "stdin: one envelope · stdout: one terminal · parent stays the shell."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-          accessibility: { label: "PROTOCOL V2 CHILD" }
-          children: [
-            {
-              id: "hdr3-text"
-              capability: "core.text"
-              text: "PROTOCOL V2 CHILD"
-              layout: { x: 38, y: 28, width: 300, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            }
-            {
-              id: "hdr3-cap"
-              capability: "core.text"
-              text: "stdin: one envelope · stdout: one terminal · parent stays the shell."
-              layout: { x: 340, y: 28, width: 320, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         }
         {
           id: "profile"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "profile"
+          detail: "parent shell"
           layout: { x: 40, y: 90, width: 150, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "profile: parent shell" }
-          children: [
-            {
-              id: "profile-title"
-              capability: "core.text"
-              text: "profile"
-              layout: { x: 40, y: 111, width: 150, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "profile-detail"
-              capability: "core.text"
-              text: "parent shell"
-              layout: { x: 40, y: 131, width: 150, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a3a"
@@ -780,26 +420,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "req"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "RunnerRequest"
+          detail: "protocol v2"
           layout: { x: 230, y: 90, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "RunnerRequest: protocol v2" }
-          children: [
-            {
-              id: "req-title"
-              capability: "core.text"
-              text: "RunnerRequest"
-              layout: { x: 230, y: 111, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "req-detail"
-              capability: "core.text"
-              text: "protocol v2"
-              layout: { x: 230, y: 131, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a3b"
@@ -810,26 +435,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "execbin"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "exec_bin"
+          detail: "current_exe"
           layout: { x: 430, y: 90, width: 140, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "exec_bin: current_exe" }
-          children: [
-            {
-              id: "execbin-title"
-              capability: "core.text"
-              text: "exec_bin"
-              layout: { x: 430, y: 111, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "execbin-detail"
-              capability: "core.text"
-              text: "current_exe"
-              layout: { x: 430, y: 131, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a3c"
@@ -840,99 +450,39 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "spawn"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "spawn"
+          detail: "--execute"
           layout: { x: 610, y: 90, width: 70, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "spawn: --execute" }
-          children: [
-            {
-              id: "spawn-title"
-              capability: "core.text"
-              text: "spawn"
-              layout: { x: 610, y: 111, width: 70, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "spawn-detail"
-              capability: "core.text"
-              text: "--execute"
-              layout: { x: 610, y: 131, width: 70, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "stdin"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "stdin JSON"
+          detail: "to EOF"
           layout: { x: 80, y: 210, width: 140, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "stdin JSON: to EOF" }
-          children: [
-            {
-              id: "stdin-title"
-              capability: "core.text"
-              text: "stdin JSON"
-              layout: { x: 80, y: 231, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "stdin-detail"
-              capability: "core.text"
-              text: "to EOF"
-              layout: { x: 80, y: 251, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "app3"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "Application"
+          detail: "frozen catalog"
           layout: { x: 280, y: 210, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "Application: frozen catalog" }
-          children: [
-            {
-              id: "app3-title"
-              capability: "core.text"
-              text: "Application"
-              layout: { x: 280, y: 231, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "app3-detail"
-              capability: "core.text"
-              text: "frozen catalog"
-              layout: { x: 280, y: 251, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "stdout"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "stdout JSONL"
+          detail: "one terminal"
           layout: { x: 500, y: 210, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "stdout JSONL: one terminal" }
-          children: [
-            {
-              id: "stdout-title"
-              capability: "core.text"
-              text: "stdout JSONL"
-              layout: { x: 500, y: 231, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "stdout-detail"
-              capability: "core.text"
-              text: "one terminal"
-              layout: { x: 500, y: 251, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "motion-sig-3"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M100 120 H600"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
@@ -976,49 +526,19 @@ explainer "Rust Architecture Atlas" {
       roots: [
         {
           id: "hdr4"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "SCHEDULED WORKLOAD"
+          caption: "dataset → phase → admit → TurnDispatcher → RequestSink."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-          accessibility: { label: "SCHEDULED WORKLOAD" }
-          children: [
-            {
-              id: "hdr4-text"
-              capability: "core.text"
-              text: "SCHEDULED WORKLOAD"
-              layout: { x: 38, y: 28, width: 300, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            }
-            {
-              id: "hdr4-cap"
-              capability: "core.text"
-              text: "dataset → phase → admit → TurnDispatcher → RequestSink."
-              layout: { x: 340, y: 28, width: 320, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         }
         {
           id: "dataset"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "dataset"
+          detail: "loader"
           layout: { x: 30, y: 90, width: 130, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "dataset: loader" }
-          children: [
-            {
-              id: "dataset-title"
-              capability: "core.text"
-              text: "dataset"
-              layout: { x: 30, y: 111, width: 130, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "dataset-detail"
-              capability: "core.text"
-              text: "loader"
-              layout: { x: 30, y: 131, width: 130, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a4a"
@@ -1029,26 +549,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "orch"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "PhaseOrchestrator"
+          detail: "lifecycle"
           layout: { x: 200, y: 90, width: 140, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "PhaseOrchestrator: lifecycle" }
-          children: [
-            {
-              id: "orch-title"
-              capability: "core.text"
-              text: "PhaseOrchestrator"
-              layout: { x: 200, y: 111, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "orch-detail"
-              capability: "core.text"
-              text: "lifecycle"
-              layout: { x: 200, y: 131, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a4b"
@@ -1059,26 +564,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "slot"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "SlotPool"
+          detail: "admission"
           layout: { x: 380, y: 90, width: 140, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "SlotPool: admission" }
-          children: [
-            {
-              id: "slot-title"
-              capability: "core.text"
-              text: "SlotPool"
-              layout: { x: 380, y: 111, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "slot-detail"
-              capability: "core.text"
-              text: "admission"
-              layout: { x: 380, y: 131, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a4c"
@@ -1089,76 +579,31 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "turn"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "TurnDispatcher"
+          detail: "place turn"
           layout: { x: 560, y: 90, width: 120, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "TurnDispatcher: place turn" }
-          children: [
-            {
-              id: "turn-title"
-              capability: "core.text"
-              text: "TurnDispatcher"
-              layout: { x: 560, y: 111, width: 120, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "turn-detail"
-              capability: "core.text"
-              text: "place turn"
-              layout: { x: 560, y: 131, width: 120, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "w1"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "workers=1"
+          detail: "co-located LocalSet"
           layout: { x: 120, y: 220, width: 180, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "workers=1: co-located LocalSet" }
-          children: [
-            {
-              id: "w1-title"
-              capability: "core.text"
-              text: "workers=1"
-              layout: { x: 120, y: 241, width: 180, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "w1-detail"
-              capability: "core.text"
-              text: "co-located LocalSet"
-              layout: { x: 120, y: 261, width: 180, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "wn"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "workers>1"
+          detail: "OS thread sub-cells"
           layout: { x: 400, y: 220, width: 200, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "workers>1: OS thread sub-cells" }
-          children: [
-            {
-              id: "wn-title"
-              capability: "core.text"
-              text: "workers>1"
-              layout: { x: 400, y: 241, width: 200, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "wn-detail"
-              capability: "core.text"
-              text: "OS thread sub-cells"
-              layout: { x: 400, y: 261, width: 200, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "motion-sig-4"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M80 160 H620"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
@@ -1201,49 +646,19 @@ explainer "Rust Architecture Atlas" {
       roots: [
         {
           id: "hdr5"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "GRAPH TRACE PATH"
+          caption: "Compile once · rewrite phases · dispatch per node."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-          accessibility: { label: "GRAPH TRACE PATH" }
-          children: [
-            {
-              id: "hdr5-text"
-              capability: "core.text"
-              text: "GRAPH TRACE PATH"
-              layout: { x: 38, y: 28, width: 300, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            }
-            {
-              id: "hdr5-cap"
-              capability: "core.text"
-              text: "Compile once · rewrite phases · dispatch per node."
-              layout: { x: 340, y: 28, width: 320, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         }
         {
           id: "trace"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "trace source"
+          detail: "dag · WEKA · Dynamo"
           layout: { x: 30, y: 90, width: 140, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "trace source: dag · WEKA · Dynamo" }
-          children: [
-            {
-              id: "trace-title"
-              capability: "core.text"
-              text: "trace source"
-              layout: { x: 30, y: 111, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "trace-detail"
-              capability: "core.text"
-              text: "dag · WEKA · Dynamo"
-              layout: { x: 30, y: 131, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a5a"
@@ -1254,26 +669,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "gin"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "graph_input"
+          detail: "strict decode"
           layout: { x: 210, y: 90, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "graph_input: strict decode" }
-          children: [
-            {
-              id: "gin-title"
-              capability: "core.text"
-              text: "graph_input"
-              layout: { x: 210, y: 111, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "gin-detail"
-              capability: "core.text"
-              text: "strict decode"
-              layout: { x: 210, y: 131, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a5b"
@@ -1284,26 +684,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "comp"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "compiler"
+          detail: "LCP + intern"
           layout: { x: 410, y: 90, width: 150, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "compiler: LCP + intern" }
-          children: [
-            {
-              id: "comp-title"
-              capability: "core.text"
-              text: "compiler"
-              layout: { x: 410, y: 111, width: 150, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "comp-detail"
-              capability: "core.text"
-              text: "LCP + intern"
-              layout: { x: 410, y: 131, width: 150, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a5c"
@@ -1314,99 +699,39 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "bundle"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "bundle"
+          detail: "program"
           layout: { x: 600, y: 90, width: 80, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "bundle: program" }
-          children: [
-            {
-              id: "bundle-title"
-              capability: "core.text"
-              text: "bundle"
-              layout: { x: 600, y: 111, width: 80, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "bundle-detail"
-              capability: "core.text"
-              text: "program"
-              layout: { x: 600, y: 131, width: 80, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "warm"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "warmup rewrite"
+          detail: "prime prefixes"
           layout: { x: 80, y: 210, width: 150, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "warmup rewrite: prime prefixes" }
-          children: [
-            {
-              id: "warm-title"
-              capability: "core.text"
-              text: "warmup rewrite"
-              layout: { x: 80, y: 231, width: 150, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "warm-detail"
-              capability: "core.text"
-              text: "prime prefixes"
-              layout: { x: 80, y: 251, width: 150, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "chop"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "profiling chop"
+          detail: "from t*"
           layout: { x: 280, y: 210, width: 150, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "profiling chop: from t*" }
-          children: [
-            {
-              id: "chop-title"
-              capability: "core.text"
-              text: "profiling chop"
-              layout: { x: 280, y: 231, width: 150, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "chop-detail"
-              capability: "core.text"
-              text: "from t*"
-              layout: { x: 280, y: 251, width: 150, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "gexec"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "graph executor"
+          detail: "RequestSink"
           layout: { x: 480, y: 210, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "graph executor: RequestSink" }
-          children: [
-            {
-              id: "gexec-title"
-              capability: "core.text"
-              text: "graph executor"
-              layout: { x: 480, y: 231, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "gexec-detail"
-              capability: "core.text"
-              text: "RequestSink"
-              layout: { x: 480, y: 251, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "motion-sig-5"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M90 160 H610"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
@@ -1450,49 +775,19 @@ explainer "Rust Architecture Atlas" {
       roots: [
         {
           id: "hdr6"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "ENDPOINT DIALECTS"
+          caption: "validate once · prepare per worker · format per turn."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-          accessibility: { label: "ENDPOINT DIALECTS" }
-          children: [
-            {
-              id: "hdr6-text"
-              capability: "core.text"
-              text: "ENDPOINT DIALECTS"
-              layout: { x: 38, y: 28, width: 300, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            }
-            {
-              id: "hdr6-cap"
-              capability: "core.text"
-              text: "validate once · prepare per worker · format per turn."
-              layout: { x: 340, y: 28, width: 320, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         }
         {
           id: "profiles"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "profiles"
+          detail: "EndpointId"
           layout: { x: 40, y: 90, width: 150, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "profiles: EndpointId" }
-          children: [
-            {
-              id: "profiles-title"
-              capability: "core.text"
-              text: "profiles"
-              layout: { x: 40, y: 111, width: 150, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "profiles-detail"
-              capability: "core.text"
-              text: "EndpointId"
-              layout: { x: 40, y: 131, width: 150, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a6a"
@@ -1503,26 +798,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "ereg"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "EndpointRegistry"
+          detail: "factory lookup"
           layout: { x: 230, y: 90, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "EndpointRegistry: factory lookup" }
-          children: [
-            {
-              id: "ereg-title"
-              capability: "core.text"
-              text: "EndpointRegistry"
-              layout: { x: 230, y: 111, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "ereg-detail"
-              capability: "core.text"
-              text: "factory lookup"
-              layout: { x: 230, y: 131, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a6b"
@@ -1533,26 +813,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "prep"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "prepare_worker"
+          detail: "dense table"
           layout: { x: 430, y: 90, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "prepare_worker: dense table" }
-          children: [
-            {
-              id: "prep-title"
-              capability: "core.text"
-              text: "prepare_worker"
-              layout: { x: 430, y: 111, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "prep-detail"
-              capability: "core.text"
-              text: "dense table"
-              layout: { x: 430, y: 131, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a6c"
@@ -1563,99 +828,39 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "key"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "key"
+          detail: "table"
           layout: { x: 620, y: 90, width: 60, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "key: table" }
-          children: [
-            {
-              id: "key-title"
-              capability: "core.text"
-              text: "key"
-              layout: { x: 620, y: 111, width: 60, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "key-detail"
-              capability: "core.text"
-              text: "table"
-              layout: { x: 620, y: 131, width: 60, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "dialect"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "dialect"
+          detail: "BodyPlan"
           layout: { x: 80, y: 220, width: 150, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "dialect: BodyPlan" }
-          children: [
-            {
-              id: "dialect-title"
-              capability: "core.text"
-              text: "dialect"
-              layout: { x: 80, y: 241, width: 150, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "dialect-detail"
-              capability: "core.text"
-              text: "BodyPlan"
-              layout: { x: 80, y: 261, width: 150, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "bind"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "HTTP / gRPC bind"
+          detail: "URI · tensors"
           layout: { x: 280, y: 220, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "HTTP / gRPC bind: URI · tensors" }
-          children: [
-            {
-              id: "bind-title"
-              capability: "core.text"
-              text: "HTTP / gRPC bind"
-              layout: { x: 280, y: 241, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "bind-detail"
-              capability: "core.text"
-              text: "URI · tensors"
-              layout: { x: 280, y: 261, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "obs6"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "observations"
+          detail: "usage · tokens"
           layout: { x: 500, y: 220, width: 150, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "observations: usage · tokens" }
-          children: [
-            {
-              id: "obs6-title"
-              capability: "core.text"
-              text: "observations"
-              layout: { x: 500, y: 241, width: 150, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "obs6-detail"
-              capability: "core.text"
-              text: "usage · tokens"
-              layout: { x: 500, y: 261, width: 150, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "motion-sig-6"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M100 160 H600"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
@@ -1699,49 +904,19 @@ explainer "Rust Architecture Atlas" {
       roots: [
         {
           id: "hdr7"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "METRICS PLANE"
+          caption: "hot-path events · post-drain merge · durable report + fan-out."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-          accessibility: { label: "METRICS PLANE" }
-          children: [
-            {
-              id: "hdr7-text"
-              capability: "core.text"
-              text: "METRICS PLANE"
-              layout: { x: 38, y: 28, width: 300, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            }
-            {
-              id: "hdr7-cap"
-              capability: "core.text"
-              text: "hot-path events · post-drain merge · durable report + fan-out."
-              layout: { x: 340, y: 28, width: 320, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         }
         {
           id: "rsink"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "RequestSink"
+          detail: "complete request"
           layout: { x: 40, y: 90, width: 140, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "RequestSink: complete request" }
-          children: [
-            {
-              id: "rsink-title"
-              capability: "core.text"
-              text: "RequestSink"
-              layout: { x: 40, y: 111, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "rsink-detail"
-              capability: "core.text"
-              text: "complete request"
-              layout: { x: 40, y: 131, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a7a"
@@ -1752,26 +927,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "robs"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "RequestObserver"
+          detail: "arrival→terminal"
           layout: { x: 220, y: 90, width: 180, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "RequestObserver: arrival→terminal" }
-          children: [
-            {
-              id: "robs-title"
-              capability: "core.text"
-              text: "RequestObserver"
-              layout: { x: 220, y: 111, width: 180, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "robs-detail"
-              capability: "core.text"
-              text: "arrival→terminal"
-              layout: { x: 220, y: 131, width: 180, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a7b"
@@ -1782,26 +942,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "wstore"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "worker store"
+          detail: "exact / sketch"
           layout: { x: 440, y: 90, width: 140, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "worker store: exact / sketch" }
-          children: [
-            {
-              id: "wstore-title"
-              capability: "core.text"
-              text: "worker store"
-              layout: { x: 440, y: 111, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "wstore-detail"
-              capability: "core.text"
-              text: "exact / sketch"
-              layout: { x: 440, y: 131, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a7c"
@@ -1812,99 +957,39 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "merge"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "merge"
+          detail: "drain"
           layout: { x: 610, y: 90, width: 70, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "merge: drain" }
-          children: [
-            {
-              id: "merge-title"
-              capability: "core.text"
-              text: "merge"
-              layout: { x: 610, y: 111, width: 70, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "merge-detail"
-              capability: "core.text"
-              text: "drain"
-              layout: { x: 610, y: 131, width: 70, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "nv7"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "native-v2.json"
+          detail: "commit"
           layout: { x: 100, y: 220, width: 150, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "native-v2.json: commit" }
-          children: [
-            {
-              id: "nv7-title"
-              capability: "core.text"
-              text: "native-v2.json"
-              layout: { x: 100, y: 241, width: 150, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "nv7-detail"
-              capability: "core.text"
-              text: "commit"
-              layout: { x: 100, y: 261, width: 150, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "compat"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "compat exports"
+          detail: "JSON · CSV"
           layout: { x: 300, y: 220, width: 150, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "compat exports: JSON · CSV" }
-          children: [
-            {
-              id: "compat-title"
-              capability: "core.text"
-              text: "compat exports"
-              layout: { x: 300, y: 241, width: 150, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "compat-detail"
-              capability: "core.text"
-              text: "JSON · CSV"
-              layout: { x: 300, y: 261, width: 150, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "otlp"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "OTLP · MLflow"
+          detail: "network sinks"
           layout: { x: 500, y: 220, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "OTLP · MLflow: network sinks" }
-          children: [
-            {
-              id: "otlp-title"
-              capability: "core.text"
-              text: "OTLP · MLflow"
-              layout: { x: 500, y: 241, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "otlp-detail"
-              capability: "core.text"
-              text: "network sinks"
-              layout: { x: 500, y: 261, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "motion-sig-7"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M80 160 H620"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
@@ -1948,49 +1033,19 @@ explainer "Rust Architecture Atlas" {
       roots: [
         {
           id: "hdr8"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "CELLULAR SCALE-OUT"
+          caption: "promote → slice → ordinary execute → merge → one commit."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-          accessibility: { label: "CELLULAR SCALE-OUT" }
-          children: [
-            {
-              id: "hdr8-text"
-              capability: "core.text"
-              text: "CELLULAR SCALE-OUT"
-              layout: { x: 38, y: 28, width: 300, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            }
-            {
-              id: "hdr8-cap"
-              capability: "core.text"
-              text: "promote → slice → ordinary execute → merge → one commit."
-              layout: { x: 340, y: 28, width: 320, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         }
         {
           id: "exec8"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "--execute"
+          detail: "cells > 1"
           layout: { x: 40, y: 90, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "--execute: cells > 1" }
-          children: [
-            {
-              id: "exec8-title"
-              capability: "core.text"
-              text: "--execute"
-              layout: { x: 40, y: 111, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "exec8-detail"
-              capability: "core.text"
-              text: "cells > 1"
-              layout: { x: 40, y: 131, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a8a"
@@ -2001,26 +1056,11 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "ctrl"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "controller"
+          detail: "partition + Velo"
           layout: { x: 240, y: 90, width: 170, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "controller: partition + Velo" }
-          children: [
-            {
-              id: "ctrl-title"
-              capability: "core.text"
-              text: "controller"
-              layout: { x: 240, y: 111, width: 170, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "ctrl-detail"
-              capability: "core.text"
-              text: "partition + Velo"
-              layout: { x: 240, y: 131, width: 170, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a8b"
@@ -2031,122 +1071,47 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "launch"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "cell launcher"
+          detail: "sliced envelope"
           layout: { x: 450, y: 90, width: 140, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "cell launcher: sliced envelope" }
-          children: [
-            {
-              id: "launch-title"
-              capability: "core.text"
-              text: "cell launcher"
-              layout: { x: 450, y: 111, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "launch-detail"
-              capability: "core.text"
-              text: "sliced envelope"
-              layout: { x: 450, y: 131, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "c0"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "--cell 0"
+          detail: "ordinary exec"
           layout: { x: 60, y: 210, width: 130, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "--cell 0: ordinary exec" }
-          children: [
-            {
-              id: "c0-title"
-              capability: "core.text"
-              text: "--cell 0"
-              layout: { x: 60, y: 231, width: 130, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "c0-detail"
-              capability: "core.text"
-              text: "ordinary exec"
-              layout: { x: 60, y: 251, width: 130, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "cn"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "--cell N"
+          detail: "ordinary exec"
           layout: { x: 230, y: 210, width: 130, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "--cell N: ordinary exec" }
-          children: [
-            {
-              id: "cn-title"
-              capability: "core.text"
-              text: "--cell N"
-              layout: { x: 230, y: 231, width: 130, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "cn-detail"
-              capability: "core.text"
-              text: "ordinary exec"
-              layout: { x: 230, y: 251, width: 130, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "agg"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "aggregators"
+          detail: "optional"
           layout: { x: 400, y: 210, width: 140, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "aggregators: optional" }
-          children: [
-            {
-              id: "agg-title"
-              capability: "core.text"
-              text: "aggregators"
-              layout: { x: 400, y: 231, width: 140, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "agg-detail"
-              capability: "core.text"
-              text: "optional"
-              layout: { x: 400, y: 251, width: 140, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "merge8"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "merge"
+          detail: "one commit"
           layout: { x: 560, y: 210, width: 120, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "merge: one commit" }
-          children: [
-            {
-              id: "merge8-title"
-              capability: "core.text"
-              text: "merge"
-              layout: { x: 560, y: 231, width: 120, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "merge8-detail"
-              capability: "core.text"
-              text: "one commit"
-              layout: { x: 560, y: 251, width: 120, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "motion-sig-8"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M120 160 H580"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
@@ -2189,191 +1154,71 @@ explainer "Rust Architecture Atlas" {
       roots: [
         {
           id: "hdr9"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "FEATURE BUILDS"
+          caption: "Cargo features freeze the implementation universe."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-          accessibility: { label: "FEATURE BUILDS" }
-          children: [
-            {
-              id: "hdr9-text"
-              capability: "core.text"
-              text: "FEATURE BUILDS"
-              layout: { x: 38, y: 28, width: 300, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            }
-            {
-              id: "hdr9-cap"
-              capability: "core.text"
-              text: "Cargo features freeze the implementation universe."
-              layout: { x: 340, y: 28, width: 320, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         }
         {
           id: "def"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "default"
+          detail: "grpc + cellular"
           layout: { x: 40, y: 90, width: 180, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "default: grpc + cellular" }
-          children: [
-            {
-              id: "def-title"
-              capability: "core.text"
-              text: "default"
-              layout: { x: 40, y: 111, width: 180, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "def-detail"
-              capability: "core.text"
-              text: "grpc + cellular"
-              layout: { x: 40, y: 131, width: 180, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "parquet"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "parquet"
+          detail: "columnar"
           layout: { x: 260, y: 90, width: 130, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "parquet: columnar" }
-          children: [
-            {
-              id: "parquet-title"
-              capability: "core.text"
-              text: "parquet"
-              layout: { x: 260, y: 111, width: 130, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "parquet-detail"
-              capability: "core.text"
-              text: "columnar"
-              layout: { x: 260, y: 131, width: 130, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "dynosim"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "dynosim"
+          detail: "Dynamo mocker"
           layout: { x: 420, y: 90, width: 130, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "dynosim: Dynamo mocker" }
-          children: [
-            {
-              id: "dynosim-title"
-              capability: "core.text"
-              text: "dynosim"
-              layout: { x: 420, y: 111, width: 130, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "dynosim-detail"
-              capability: "core.text"
-              text: "Dynamo mocker"
-              layout: { x: 420, y: 131, width: 130, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "pyo3"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "pyo3"
+          detail: "embed"
           layout: { x: 580, y: 90, width: 100, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "pyo3: embed" }
-          children: [
-            {
-              id: "pyo3-title"
-              capability: "core.text"
-              text: "pyo3"
-              layout: { x: 580, y: 111, width: 100, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "pyo3-detail"
-              capability: "core.text"
-              text: "embed"
-              layout: { x: 580, y: 131, width: 100, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "search"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "search-pyo3"
+          detail: "planners"
           layout: { x: 120, y: 220, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "search-pyo3: planners" }
-          children: [
-            {
-              id: "search-title"
-              capability: "core.text"
-              text: "search-pyo3"
-              layout: { x: 120, y: 241, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "search-detail"
-              capability: "core.text"
-              text: "planners"
-              layout: { x: 120, y: 261, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "full"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "full"
+          detail: "dynosim+parquet+…"
           layout: { x: 340, y: 220, width: 160, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "full: dynosim+parquet+…" }
-          children: [
-            {
-              id: "full-title"
-              capability: "core.text"
-              text: "full"
-              layout: { x: 340, y: 241, width: 160, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "full-detail"
-              capability: "core.text"
-              text: "dynosim+parquet+…"
-              layout: { x: 340, y: 261, width: 160, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "fail"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "fail closed"
+          detail: "validate"
           layout: { x: 540, y: 220, width: 120, height: 70 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-          accessibility: { label: "fail closed: validate" }
-          children: [
-            {
-              id: "fail-title"
-              capability: "core.text"
-              text: "fail closed"
-              layout: { x: 540, y: 241, width: 120, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "fail-detail"
-              capability: "core.text"
-              text: "validate"
-              layout: { x: 540, y: 261, width: 120, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "motion-sig-9"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M140 160 H560"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }
@@ -2414,49 +1259,19 @@ explainer "Rust Architecture Atlas" {
       roots: [
         {
           id: "hdr10"
-          capability: "core.rect"
+          capability: "core.header"
+          title: "EXTENSION SEAMS"
+          caption: "compile-time composition · Clock/Sink substitution · cellular wraps the core."
           layout: { x: 18, y: 16, width: 664, height: 44 }
           style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-          accessibility: { label: "EXTENSION SEAMS" }
-          children: [
-            {
-              id: "hdr10-text"
-              capability: "core.text"
-              text: "EXTENSION SEAMS"
-              layout: { x: 38, y: 28, width: 300, height: 24 }
-              style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-            }
-            {
-              id: "hdr10-cap"
-              capability: "core.text"
-              text: "compile-time composition · Clock/Sink substitution · cellular wraps the core."
-              layout: { x: 340, y: 28, width: 320, height: 24 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-            }
-          ]
         }
         {
           id: "ext"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "AIPerfExtension"
+          detail: "transactional register"
           layout: { x: 240, y: 80, width: 200, height: 60 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-          accessibility: { label: "AIPerfExtension: transactional register" }
-          children: [
-            {
-              id: "ext-title"
-              capability: "core.text"
-              text: "AIPerfExtension"
-              layout: { x: 240, y: 96, width: 200, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "ext-detail"
-              capability: "core.text"
-              text: "transactional register"
-              layout: { x: 240, y: 116, width: 200, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "a10a"
@@ -2467,145 +1282,55 @@ explainer "Rust Architecture Atlas" {
         }
         {
           id: "reg"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "AIPerfRegistry"
+          detail: "frozen once"
           layout: { x: 230, y: 170, width: 220, height: 60 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-          accessibility: { label: "AIPerfRegistry: frozen once" }
-          children: [
-            {
-              id: "reg-title"
-              capability: "core.text"
-              text: "AIPerfRegistry"
-              layout: { x: 230, y: 186, width: 220, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "reg-detail"
-              capability: "core.text"
-              text: "frozen once"
-              layout: { x: 230, y: 206, width: 220, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "ds"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "datasets"
+          detail: "loaders"
           layout: { x: 40, y: 270, width: 110, height: 60 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "datasets: loaders" }
-          children: [
-            {
-              id: "ds-title"
-              capability: "core.text"
-              text: "datasets"
-              layout: { x: 40, y: 286, width: 110, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "ds-detail"
-              capability: "core.text"
-              text: "loaders"
-              layout: { x: 40, y: 306, width: 110, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "ep"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "endpoints"
+          detail: "dialects"
           layout: { x: 170, y: 270, width: 110, height: 60 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "endpoints: dialects" }
-          children: [
-            {
-              id: "ep-title"
-              capability: "core.text"
-              text: "endpoints"
-              layout: { x: 170, y: 286, width: 110, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "ep-detail"
-              capability: "core.text"
-              text: "dialects"
-              layout: { x: 170, y: 306, width: 110, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "tr"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "transports"
+          detail: "HTTP·gRPC"
           layout: { x: 300, y: 270, width: 110, height: 60 }
           style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-          accessibility: { label: "transports: HTTP·gRPC" }
-          children: [
-            {
-              id: "tr-title"
-              capability: "core.text"
-              text: "transports"
-              layout: { x: 300, y: 286, width: 110, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "tr-detail"
-              capability: "core.text"
-              text: "HTTP·gRPC"
-              layout: { x: 300, y: 306, width: 110, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "wl"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "workloads"
+          detail: "sched·graph"
           layout: { x: 430, y: 270, width: 110, height: 60 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "workloads: sched·graph" }
-          children: [
-            {
-              id: "wl-title"
-              capability: "core.text"
-              text: "workloads"
-              layout: { x: 430, y: 286, width: 110, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "wl-detail"
-              capability: "core.text"
-              text: "sched·graph"
-              layout: { x: 430, y: 306, width: 110, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "ex"
-          capability: "core.rect"
+          capability: "core.panel"
+          title: "exporters"
+          detail: "sinks"
           layout: { x: 560, y: 270, width: 110, height: 60 }
           style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-          accessibility: { label: "exporters: sinks" }
-          children: [
-            {
-              id: "ex-title"
-              capability: "core.text"
-              text: "exporters"
-              layout: { x: 560, y: 286, width: 110, height: 18 }
-              style: { fontSize: 13, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-            }
-            {
-              id: "ex-detail"
-              capability: "core.text"
-              text: "sinks"
-              layout: { x: 560, y: 306, width: 110, height: 16 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
         }
         {
           id: "motion-sig-10"
-          capability: "core.path"
+          capability: "motion.signal"
           d: "M200 100 V280"
           layout: { x: 0, y: 0, width: 700, height: 400 }
           style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" }

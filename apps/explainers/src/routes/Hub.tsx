@@ -24,7 +24,7 @@ export function Hub() {
 
   return (
     <main className="ex-page ex-hub">
-      <div className="ex-eyebrow" style={{ marginBottom: 10 }}>
+      <div className="ex-eyebrow ex-eyebrow--accent" style={{ marginBottom: 10 }}>
         AIPerf · Explainers
       </div>
       <h1 className="ex-title" style={{ marginBottom: 12 }}>

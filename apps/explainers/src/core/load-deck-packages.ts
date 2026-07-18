@@ -14,6 +14,7 @@ import rustArchitectureAtlasPackage from "../decks-generated/rust-architecture-a
 import rustArchitecturePackage from "../decks-generated/rust-architecture.package.json";
 import segmentPoolsPackage from "../decks-generated/segment-pools.package.json";
 import slurmVeloPackage from "../decks-generated/slurm-velo.package.json";
+import tstarWarmupPackage from "../decks-generated/tstar-warmup.package.json";
 import veloDeepDivePackage from "../decks-generated/velo-deep-dive.package.json";
 
 /** Minimal DeckPackage shape required before handing off to the adapter. */
@@ -49,6 +50,7 @@ const EAGER_PACKAGE_JSON_MODULES: Record<string, unknown> = {
   "../decks-generated/rust-architecture.package.json": rustArchitecturePackage,
   "../decks-generated/segment-pools.package.json": segmentPoolsPackage,
   "../decks-generated/slurm-velo.package.json": slurmVeloPackage,
+  "../decks-generated/tstar-warmup.package.json": tstarWarmupPackage,
   "../decks-generated/velo-deep-dive.package.json": veloDeepDivePackage,
 };
 
@@ -95,7 +97,7 @@ function unwrapModuleExport(mod: unknown): unknown {
 /**
  * Eager Vite globs plus the canonical JSON import map.
  * Supports `.package.json` (build output) and `.package.ts` / `.package.js`
- * golden modules. The eager map guarantees all eight registered decks are
+ * golden modules. The eager map guarantees all registered decks are
  * discoverable even when glob alone returns empty.
  */
 export function generatedPackageModules(): Record<string, unknown> {

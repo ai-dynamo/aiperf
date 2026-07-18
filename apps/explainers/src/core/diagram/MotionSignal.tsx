@@ -149,6 +149,8 @@ export function MotionSignal({
         attributeName="opacity"
         values="0;1;1;0"
         keyTimes="0;0.08;0.9;1"
+        calcMode="spline"
+        keySplines="0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1"
         begin={delay}
         dur={duration}
         repeatCount="indefinite"
@@ -160,6 +162,9 @@ export function MotionSignal({
         dur={duration}
         repeatCount="indefinite"
         fill="freeze"
+        calcMode="spline"
+        keyTimes="0;1"
+        keySplines="0.45 0.05 0.55 0.95"
       />
       {children}
     </circle>

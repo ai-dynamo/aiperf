@@ -35,7 +35,7 @@ export type SceneGeometryLike = Readonly<{
 /**
  * Point or connector endpoint.
  * Explicit `x`/`y` win; otherwise `nodeId` resolves to an anchored point on
- * the target node (`anchor`: center|left|right|top|bottom, default center).
+ * the target node (`anchor`: center|n/s/e/w/ne/nw/se/sw|top/bottom/left/right).
  */
 export type ScenePointLike = Readonly<{
   x?: number;
@@ -78,15 +78,26 @@ export type SceneNodeLike = Readonly<{
   /** Endpoint coordinates or node refs for core.line / core.connector. */
   from?: ScenePointLike;
   to?: ScenePointLike;
+  /** Optional elbow bend / waypoint (`core.elbow`). */
+  via?: ScenePointLike;
+  /** Preferred first-segment axis for orthogonal elbows (`"x"` | `"y"`). */
+  axis?: "x" | "y" | string;
 }>;
 
-/** Minimal timeline cue (enter/reveal/draw/emphasize/pulse). */
+/** Minimal timeline cue (enter/reveal/draw/emphasize/pulse/fade/exit/stagger). */
 export type SceneTimelineCueLike = Readonly<{
   id: string;
   at: number;
   duration: number;
   action: string;
+  /** Primary / group id; may be empty when `targets` identifies members. */
   target: string;
+  /** Stagger member ids when `action` is `stagger` / `enter-children`. */
+  targets?: readonly string[];
+  /** Delay between successive stagger targets. */
+  step?: number;
+  /** Progress easing for this cue's envelope. */
+  easing?: string;
 }>;
 
 /** Optional logical SVG bounds (defaults to 700×400). */
@@ -134,8 +145,9 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const DEFAULT_DOT_RADIUS = 5;
 const PULSE_CYCLE_MS = 2200;
 const PULSE_DELAY_MS = 800;
-const MOTION_DOT_DURATION_S = 2.2;
-const MOTION_DOT_DELAY_S = 0.8;
+/** Calm SMIL loop — short draw cues must not drive a one-shot zip. */
+const MOTION_DOT_DURATION_S = 4.2;
+const MOTION_DOT_DELAY_S = 0.55;
 const DASHED_STROKE: string = tokens.diagram.dashed;
 const DOTTED_STROKE = "2 3";
 
@@ -150,13 +162,36 @@ const ARROW_CAPABILITIES = new Set([
   "core.path",
   "core.arrow",
   "core.connector",
+  "core.elbow",
+  "core.route",
+  "core.bracket",
 ]);
 
-const ARROW_KINDS = new Set(["line", "path", "arrow", "connector"]);
+const ARROW_KINDS = new Set(["line", "path", "arrow", "connector", "elbow"]);
 
-const DOT_CAPABILITIES = new Set(["core.dot", "core.circle"]);
+/** Small filled dots only — circles/ellipses render as shapes. */
+const DOT_CAPABILITIES = new Set(["core.dot"]);
 
-const DOT_KINDS = new Set(["dot", "circle"]);
+const DOT_KINDS = new Set(["dot"]);
+
+/** Groups whose children are authored in the parent local frame by default. */
+const LOCAL_LAYOUT_CAPABILITIES = new Set([
+  "core.group",
+  "core.panel",
+  "core.header",
+  "core.callout",
+  "core.lane",
+  "core.band",
+  "core.swimlane",
+  "core.stepper",
+  "layout.stack",
+  "layout.grid",
+  "layout.pad",
+  "layout.rail",
+]);
+
+/** Container groups that paint a chrome rect behind nested children. */
+const CHROME_GROUP_CAPABILITIES = new Set(["core.panel", "core.header"]);
 
 const MOTION_SIGNAL_CAPABILITIES = new Set([
   "motion.signal",
@@ -216,6 +251,44 @@ function clamp01(value: number): number {
     return 1;
   }
   return value;
+}
+
+/** Map linear progress through a simple cubic easing curve. */
+function applyCueEasing(progress: number, easing: string | undefined): number {
+  const t = clamp01(progress);
+  switch ((easing ?? "linear").toLowerCase()) {
+    case "ease-in":
+      return t * t * t;
+    case "ease-out": {
+      const u = 1 - t;
+      return 1 - u * u * u;
+    }
+    case "ease-in-out":
+      return t < 0.5
+        ? 4 * t * t * t
+        : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    case "linear":
+    default:
+      return t;
+  }
+}
+
+/** Linear cue window progress in [0, 1], then optionally eased. */
+function cueProgress(
+  cue: SceneTimelineCueLike,
+  playbackTimeMs: number,
+): number {
+  const atMs = Math.max(0, finiteNumber(cue.at));
+  const durationMs = Math.max(0, finiteNumber(cue.duration));
+  let linear = 0;
+  if (playbackTimeMs < atMs) {
+    linear = 0;
+  } else if (durationMs === 0) {
+    linear = 1;
+  } else {
+    linear = clamp01((playbackTimeMs - atMs) / durationMs);
+  }
+  return applyCueEasing(linear, cue.easing);
 }
 
 function capabilityOf(node: SceneNodeLike): string {
@@ -331,10 +404,40 @@ function sceneViewBox(
 
 /** Pure group container: nests children in a `<g>` with no leaf body of its own. */
 function isGroupLike(node: SceneNodeLike, capability: string): boolean {
+  if (LOCAL_LAYOUT_CAPABILITIES.has(capability) || capability.startsWith("layout.")) {
+    return true;
+  }
   if (capability === "core.group") {
     return true;
   }
-  return node.kind === "group";
+  return node.kind === "group" || node.kind === "component";
+}
+
+function styleCoordinateSpace(
+  style: SceneNodeLike["style"],
+): "local" | "absolute" | undefined {
+  const value = style?.coordinateSpace;
+  if (value === "absolute" || value === "local") {
+    return value;
+  }
+  return undefined;
+}
+
+function styleGap(style: SceneNodeLike["style"]): number {
+  const gap = style?.gap;
+  return typeof gap === "number" && Number.isFinite(gap) ? Math.max(0, gap) : 0;
+}
+
+function styleCols(style: SceneNodeLike["style"]): number {
+  const cols = style?.cols;
+  if (typeof cols === "number" && Number.isFinite(cols) && cols >= 1) {
+    return Math.floor(cols);
+  }
+  return 1;
+}
+
+function styleDirection(style: SceneNodeLike["style"]): "row" | "column" {
+  return style?.direction === "row" ? "row" : "column";
 }
 
 /**
@@ -371,6 +474,11 @@ function childrenFitParentLocalBox(
 /**
  * Whether nested children are authored in the parent's local frame so the
  * renderer should apply `translate(parent.x, parent.y)` around them.
+ *
+ * Rule: children of `core.panel` / `core.header` / `layout.*` / `core.callout`
+ * use local coordinates unless `style.coordinateSpace === "absolute"`.
+ * Plain `core.group` prefers local when children fit the parent box; otherwise
+ * legacy world-absolute nesting is preserved.
  */
 function childrenUseLocalLayout(
   node: SceneNodeLike,
@@ -380,10 +488,34 @@ function childrenUseLocalLayout(
   if (!Array.isArray(children) || children.length === 0) {
     return false;
   }
+  const space = styleCoordinateSpace(node.style);
+  if (space === "absolute") {
+    return false;
+  }
+  if (space === "local") {
+    return true;
+  }
+  const capability = capabilityOf(node);
+  if (
+    capability === "core.panel" ||
+    capability === "core.header" ||
+    capability === "core.callout" ||
+    capability === "core.lane" ||
+    capability === "core.band" ||
+    capability === "core.swimlane" ||
+    capability === "core.stepper" ||
+    capability === "layout.stack" ||
+    capability === "layout.grid" ||
+    capability === "layout.pad" ||
+    capability === "layout.rail" ||
+    capability.startsWith("layout.")
+  ) {
+    return true;
+  }
   if (childrenFitParentLocalBox(parentGeom, children)) {
     return true;
   }
-  if (capabilityOf(node) !== "core.group") {
+  if (capability !== "core.group" && node.kind !== "group") {
     return false;
   }
   if (parentGeom.width > 0 && parentGeom.height > 0) {
@@ -407,6 +539,209 @@ function childrenUseLocalLayout(
   return true;
 }
 
+/** Compute stack child local geometries; enlarge parent when width/height are 0. */
+function computeStackLayout(
+  parentGeom: SceneGeometryLike,
+  children: readonly SceneNodeLike[],
+  style: SceneNodeLike["style"],
+): Readonly<{
+  parentGeom: SceneGeometryLike;
+  childGeoms: readonly SceneGeometryLike[];
+}> {
+  const direction = styleDirection(style);
+  const gap = styleGap(style);
+  const childGeoms: SceneGeometryLike[] = [];
+  let cursor = 0;
+  let cross = 0;
+  for (const child of children) {
+    const g = geometryOf(child);
+    if (direction === "row") {
+      childGeoms.push({
+        x: cursor,
+        y: 0,
+        width: g.width,
+        height: g.height,
+      });
+      cursor += g.width + gap;
+      cross = Math.max(cross, g.height);
+    } else {
+      childGeoms.push({
+        x: 0,
+        y: cursor,
+        width: g.width,
+        height: g.height,
+      });
+      cursor += g.height + gap;
+      cross = Math.max(cross, g.width);
+    }
+  }
+  if (childGeoms.length > 0) {
+    cursor = Math.max(0, cursor - gap);
+  }
+  const width =
+    parentGeom.width > 0
+      ? parentGeom.width
+      : direction === "row"
+        ? cursor
+        : cross;
+  const height =
+    parentGeom.height > 0
+      ? parentGeom.height
+      : direction === "column"
+        ? cursor
+        : cross;
+  return {
+    parentGeom: { ...parentGeom, width, height },
+    childGeoms,
+  };
+}
+
+/** Row-major grid child local geometries; enlarge parent when needed. */
+function computeGridLayout(
+  parentGeom: SceneGeometryLike,
+  children: readonly SceneNodeLike[],
+  style: SceneNodeLike["style"],
+): Readonly<{
+  parentGeom: SceneGeometryLike;
+  childGeoms: readonly SceneGeometryLike[];
+}> {
+  const cols = styleCols(style);
+  const gap = styleGap(style);
+  const cellWidths: number[] = Array.from({ length: cols }, () => 0);
+  const rowCount = Math.max(1, Math.ceil(children.length / cols));
+  const rowHeights: number[] = Array.from({ length: rowCount }, () => 0);
+  children.forEach((child, index) => {
+    const g = geometryOf(child);
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    cellWidths[col] = Math.max(cellWidths[col]!, g.width);
+    rowHeights[row] = Math.max(rowHeights[row]!, g.height);
+  });
+  const colOffsets: number[] = [];
+  let xCursor = 0;
+  for (let col = 0; col < cols; col++) {
+    colOffsets.push(xCursor);
+    xCursor += cellWidths[col]! + gap;
+  }
+  const rowOffsets: number[] = [];
+  let yCursor = 0;
+  for (let row = 0; row < rowCount; row++) {
+    rowOffsets.push(yCursor);
+    yCursor += rowHeights[row]! + gap;
+  }
+  const childGeoms = children.map((child, index) => {
+    const g = geometryOf(child);
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    return {
+      x: colOffsets[col]!,
+      y: rowOffsets[row]!,
+      width: g.width,
+      height: g.height,
+    };
+  });
+  const contentWidth = Math.max(0, xCursor - (children.length > 0 ? gap : 0));
+  const contentHeight = Math.max(0, yCursor - (children.length > 0 ? gap : 0));
+  return {
+    parentGeom: {
+      ...parentGeom,
+      width: parentGeom.width > 0 ? parentGeom.width : contentWidth,
+      height: parentGeom.height > 0 ? parentGeom.height : contentHeight,
+    },
+    childGeoms,
+  };
+}
+
+/** Equal-slot rail child local geometries; enlarge parent when needed. */
+function computeRailLayout(
+  parentGeom: SceneGeometryLike,
+  children: readonly SceneNodeLike[],
+  style: SceneNodeLike["style"],
+): Readonly<{
+  parentGeom: SceneGeometryLike;
+  childGeoms: readonly SceneGeometryLike[];
+}> {
+  const direction = styleDirection(style);
+  const gap = styleGap(style);
+  const count = children.length;
+  if (count === 0) {
+    return { parentGeom, childGeoms: [] };
+  }
+  const authored = children.map((child) => geometryOf(child));
+  const totalGap = gap * Math.max(count - 1, 0);
+  let parentWidth = parentGeom.width;
+  let parentHeight = parentGeom.height;
+  if (direction === "row") {
+    if (parentWidth <= 0) {
+      const maxChild = Math.max(...authored.map((g) => g.width), 1);
+      parentWidth = maxChild * count + totalGap;
+    }
+    if (parentHeight <= 0) {
+      parentHeight = Math.max(...authored.map((g) => g.height), 0);
+    }
+    const slot = Math.max((parentWidth - totalGap) / count, 0);
+    const childGeoms = authored.map((g, index) => ({
+      x: index * (slot + gap),
+      y: 0,
+      width: slot,
+      height: g.height > 0 ? g.height : parentHeight,
+    }));
+    return {
+      parentGeom: { ...parentGeom, width: parentWidth, height: parentHeight },
+      childGeoms,
+    };
+  }
+  if (parentHeight <= 0) {
+    const maxChild = Math.max(...authored.map((g) => g.height), 1);
+    parentHeight = maxChild * count + totalGap;
+  }
+  if (parentWidth <= 0) {
+    parentWidth = Math.max(...authored.map((g) => g.width), 0);
+  }
+  const slot = Math.max((parentHeight - totalGap) / count, 0);
+  const childGeoms = authored.map((g, index) => ({
+    x: 0,
+    y: index * (slot + gap),
+    width: g.width > 0 ? g.width : parentWidth,
+    height: slot,
+  }));
+  return {
+    parentGeom: { ...parentGeom, width: parentWidth, height: parentHeight },
+    childGeoms,
+  };
+}
+
+/**
+ * Resolve local child geometries for stack/grid/rail parents; otherwise authored.
+ * Also returns a possibly auto-sized parent geometry.
+ */
+function resolveContainerLayout(
+  node: SceneNodeLike,
+  parentGeom: SceneGeometryLike,
+  children: readonly SceneNodeLike[] | undefined,
+): Readonly<{
+  parentGeom: SceneGeometryLike;
+  childGeoms: readonly SceneGeometryLike[] | undefined;
+}> {
+  if (!Array.isArray(children) || children.length === 0) {
+    return { parentGeom, childGeoms: undefined };
+  }
+  const capability = capabilityOf(node);
+  if (capability === "layout.stack") {
+    return computeStackLayout(parentGeom, children, node.style);
+  }
+  if (capability === "layout.grid") {
+    return computeGridLayout(parentGeom, children, node.style);
+  }
+  if (capability === "layout.rail") {
+    return computeRailLayout(parentGeom, children, node.style);
+  }
+  return {
+    parentGeom,
+    childGeoms: children.map((child) => geometryOf(child)),
+  };
+}
+
 /** Flatten scene roots (and nested children) into id → node / world-geometry maps. */
 function indexSceneNodes(roots: readonly SceneNodeLike[]): SceneNodeIndex {
   const nodesById = new Map<string, SceneNodeLike>();
@@ -417,35 +752,42 @@ function indexSceneNodes(roots: readonly SceneNodeLike[]): SceneNodeIndex {
     originX: number,
     originY: number,
     coordsAreLocal: boolean,
+    geometryOverride: SceneGeometryLike | undefined,
   ): void => {
-    const geom = geometryOf(node);
+    const authored = geometryOverride ?? geometryOf(node);
+    const kids = node.children;
+    const { parentGeom: laidOutParent, childGeoms } = resolveContainerLayout(
+      node,
+      authored,
+      kids,
+    );
     const worldGeom: SceneGeometryLike = coordsAreLocal
       ? {
-          x: originX + geom.x,
-          y: originY + geom.y,
-          width: geom.width,
-          height: geom.height,
+          x: originX + laidOutParent.x,
+          y: originY + laidOutParent.y,
+          width: laidOutParent.width,
+          height: laidOutParent.height,
         }
-      : geom;
+      : laidOutParent;
     nodesById.set(node.id, node);
     worldGeometryById.set(node.id, worldGeom);
 
-    const kids = node.children;
     if (!Array.isArray(kids) || kids.length === 0) {
       return;
     }
-    const local = childrenUseLocalLayout(node, geom, kids);
-    for (const child of kids) {
+    const local = childrenUseLocalLayout(node, laidOutParent, kids);
+    kids.forEach((child, index) => {
+      const childOverride = childGeoms?.[index];
       if (local) {
-        visit(child, worldGeom.x, worldGeom.y, true);
+        visit(child, worldGeom.x, worldGeom.y, true, childOverride);
       } else {
-        visit(child, 0, 0, false);
+        visit(child, 0, 0, false, childOverride);
       }
-    }
+    });
   };
 
   for (const root of roots) {
-    visit(root, 0, 0, false);
+    visit(root, 0, 0, false, undefined);
   }
   return { nodesById, worldGeometryById };
 }
@@ -463,29 +805,496 @@ function nodeCenter(
 /**
  * Anchored point on world-space geometry.
  * Edge anchors land on mid-sides so connectors stop at box borders instead of
- * driving center-to-center strokes through fills.
+ * driving center-to-center strokes through fills. Corners use box corners.
  */
 function nodeAnchorPoint(
   worldGeom: SceneGeometryLike,
   anchor: string | undefined,
 ): Readonly<{ x: number; y: number }> {
   const center = nodeCenter(worldGeom);
+  const left = worldGeom.x;
+  const right = worldGeom.x + worldGeom.width;
+  const top = worldGeom.y;
+  const bottom = worldGeom.y + worldGeom.height;
   switch ((anchor ?? "center").toLowerCase()) {
     case "left":
     case "west":
-      return { x: worldGeom.x, y: center.y };
+    case "w":
+      return { x: left, y: center.y };
     case "right":
     case "east":
-      return { x: worldGeom.x + worldGeom.width, y: center.y };
+    case "e":
+      return { x: right, y: center.y };
     case "top":
     case "north":
-      return { x: center.x, y: worldGeom.y };
+    case "n":
+      return { x: center.x, y: top };
     case "bottom":
     case "south":
-      return { x: center.x, y: worldGeom.y + worldGeom.height };
+    case "s":
+      return { x: center.x, y: bottom };
+    case "ne":
+      return { x: right, y: top };
+    case "nw":
+      return { x: left, y: top };
+    case "se":
+      return { x: right, y: bottom };
+    case "sw":
+      return { x: left, y: bottom };
     case "center":
     default:
       return center;
+  }
+}
+
+/** Soft / missing anchors that should be upgraded to facing edges for motion. */
+function isSoftMotionAnchor(anchor: string | undefined): boolean {
+  if (anchor === undefined || anchor.length === 0) {
+    return true;
+  }
+  const token = anchor.toLowerCase();
+  return token === "center" || token === "middle" || token === "c";
+}
+
+/**
+ * Pick perimeter anchors so a traveler runs in the gap between boxes instead
+ * of center-to-center through fills.
+ */
+function facingMotionAnchors(
+  fromGeom: SceneGeometryLike,
+  toGeom: SceneGeometryLike,
+): Readonly<{ from: string; to: string }> {
+  const fromCenter = nodeCenter(fromGeom);
+  const toCenter = nodeCenter(toGeom);
+  const dx = toCenter.x - fromCenter.x;
+  const dy = toCenter.y - fromCenter.y;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? { from: "e", to: "w" } : { from: "w", to: "e" };
+  }
+  return dy >= 0 ? { from: "s", to: "n" } : { from: "n", to: "s" };
+}
+
+/**
+ * Resolve a motion endpoint. Soft `center` anchors on node refs become the
+ * facing edge so balls travel along connectors, not through panel fills.
+ */
+function resolveMotionEndpoint(
+  endpoint: ScenePointLike | undefined,
+  peer: ScenePointLike | undefined,
+  index: SceneNodeIndex,
+  layoutOrigin: LayoutOrigin,
+  role: "from" | "to",
+): Readonly<{ x: number; y: number }> {
+  if (endpoint === undefined) {
+    return { x: 0, y: 0 };
+  }
+  const hasX = typeof endpoint.x === "number" && Number.isFinite(endpoint.x);
+  const hasY = typeof endpoint.y === "number" && Number.isFinite(endpoint.y);
+  if (hasX && hasY) {
+    return {
+      x: endpoint.x as number,
+      y: endpoint.y as number,
+    };
+  }
+  const nodeId = endpoint.nodeId;
+  if (typeof nodeId !== "string" || nodeId.length === 0) {
+    return resolveEndpoint(endpoint, index, layoutOrigin);
+  }
+  const world =
+    index.worldGeometryById.get(nodeId) ??
+    (index.nodesById.has(nodeId)
+      ? geometryOf(index.nodesById.get(nodeId)!)
+      : undefined);
+  if (world === undefined) {
+    return { x: 0, y: 0 };
+  }
+
+  let anchor = endpoint.anchor;
+  if (isSoftMotionAnchor(anchor) && peer !== undefined) {
+    const peerId = peer.nodeId;
+    if (typeof peerId === "string" && peerId.length > 0) {
+      const peerWorld =
+        index.worldGeometryById.get(peerId) ??
+        (index.nodesById.has(peerId)
+          ? geometryOf(index.nodesById.get(peerId)!)
+          : undefined);
+      if (peerWorld !== undefined) {
+        const facing = facingMotionAnchors(world, peerWorld);
+        anchor = role === "from" ? facing.from : facing.to;
+      }
+    }
+  }
+
+  const point = nodeAnchorPoint(world, anchor);
+  return {
+    x: point.x - layoutOrigin.x,
+    y: point.y - layoutOrigin.y,
+  };
+}
+
+/**
+ * Path for a traveling motion signal.
+ * Node-anchored endpoints use facing edges; authored paths are clipped to the
+ * gaps between boxes so balls only travel on line boundaries — never across
+ * the top of the diagram and never through panel fills.
+ */
+function motionSignalPathData(
+  node: SceneNodeLike,
+  index: SceneNodeIndex,
+  layoutOrigin: LayoutOrigin,
+): string | undefined {
+  const from = node.from;
+  const to = node.to;
+  const hasNodeEndpoint =
+    (typeof from?.nodeId === "string" && from.nodeId.length > 0) ||
+    (typeof to?.nodeId === "string" && to.nodeId.length > 0);
+
+  let raw: string | undefined;
+  if (hasNodeEndpoint) {
+    const start = resolveMotionEndpoint(from, to, index, layoutOrigin, "from");
+    const end = resolveMotionEndpoint(to, from, index, layoutOrigin, "to");
+    // Always straight then clip to inter-box gaps — elbow routes still pierce
+    // middle panels and are not "line boundary" travel.
+    raw = `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} L${formatPathNumber(end.x)} ${formatPathNumber(end.y)}`;
+  } else {
+    const authored =
+      typeof node.d === "string" && node.d.length > 0
+        ? node.d
+        : typeof node.path === "string" && node.path.length > 0
+          ? node.path
+          : undefined;
+    if (authored !== undefined) {
+      raw = authored;
+    } else if (Array.isArray(node.points) && node.points.length > 0) {
+      raw = polylinePathData(node.points, index, layoutOrigin);
+    } else if (from !== undefined || to !== undefined) {
+      const start = resolveEndpoint(from, index, layoutOrigin);
+      const end = resolveEndpoint(to, index, layoutOrigin);
+      if (
+        (Math.abs(start.x) > 0.5 || Math.abs(start.y) > 0.5) &&
+        (Math.abs(end.x) > 0.5 || Math.abs(end.y) > 0.5)
+      ) {
+        raw = `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} L${formatPathNumber(end.x)} ${formatPathNumber(end.y)}`;
+      }
+    }
+  }
+
+  if (raw === undefined) {
+    return undefined;
+  }
+  // Keep travelers on inter-box corridors only (hide if nothing remains).
+  return boundaryOnlyMotionPath(raw, index, layoutOrigin);
+}
+
+/** Minimum clear gap between boxes to treat as a connector corridor. */
+const MOTION_BOUNDARY_GAP_MIN = 8;
+
+function boxGeometriesForMotion(
+  index: SceneNodeIndex,
+): readonly SceneGeometryLike[] {
+  const boxes: SceneGeometryLike[] = [];
+  for (const [id, geom] of index.worldGeometryById) {
+    if (!(geom.width >= 24 && geom.height >= 24)) {
+      continue;
+    }
+    const node = index.nodesById.get(id);
+    if (node === undefined) {
+      continue;
+    }
+    const cap = capabilityOf(node);
+    if (
+      isArrowLike(node, cap) ||
+      isMotionSignalNode(node, cap) ||
+      isDotLike(node, cap) ||
+      isPulseNode(node, cap) ||
+      cap === "core.text" ||
+      cap === "core.band" ||
+      node.kind === "text"
+    ) {
+      continue;
+    }
+    // Stroke-only overlays / lanes are not solid obstacles.
+    const fill = node.style?.fill;
+    if (
+      fill === "none" ||
+      fill === "transparent" ||
+      (typeof fill === "string" && fill.toLowerCase() === "rgba(0, 0, 0, 0)")
+    ) {
+      continue;
+    }
+    const role = node.style?.role;
+    if (
+      role === "band" ||
+      role === "lane" ||
+      role === "overlay" ||
+      role === "pulse"
+    ) {
+      continue;
+    }
+    const lowerId = id.toLowerCase();
+    if (
+      lowerId.includes("band") ||
+      lowerId.includes("-lane") ||
+      lowerId.startsWith("lane-")
+    ) {
+      continue;
+    }
+    boxes.push(geom);
+  }
+  return boxes;
+}
+
+/**
+ * Clip a straight motion guide to segments that only exist in the gaps between
+ * boxes (the line boundaries). Returns undefined when no corridor remains.
+ */
+function boundaryOnlyMotionPath(
+  d: string,
+  index: SceneNodeIndex,
+  layoutOrigin: LayoutOrigin,
+): string | undefined {
+  const trimmed = d.trim();
+  const hMatch =
+    /^M\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s+([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s+H\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/i.exec(
+      trimmed,
+    );
+  if (
+    hMatch?.[1] !== undefined &&
+    hMatch[2] !== undefined &&
+    hMatch[3] !== undefined
+  ) {
+    return horizontalBoundaryCorridors(
+      Number(hMatch[1]),
+      Number(hMatch[3]),
+      Number(hMatch[2]),
+      index,
+      layoutOrigin,
+    );
+  }
+  const vMatch =
+    /^M\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s+([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s+V\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/i.exec(
+      trimmed,
+    );
+  if (
+    vMatch?.[1] !== undefined &&
+    vMatch[2] !== undefined &&
+    vMatch[3] !== undefined
+  ) {
+    return verticalBoundaryCorridors(
+      Number(vMatch[1]),
+      Number(vMatch[2]),
+      Number(vMatch[3]),
+      index,
+      layoutOrigin,
+    );
+  }
+  const lMatch =
+    /^M\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s+([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s+L\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+|,)\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/i.exec(
+      trimmed,
+    );
+  if (
+    lMatch?.[1] !== undefined &&
+    lMatch[2] !== undefined &&
+    lMatch[3] !== undefined &&
+    lMatch[4] !== undefined
+  ) {
+    const x1 = Number(lMatch[1]);
+    const y1 = Number(lMatch[2]);
+    const x2 = Number(lMatch[3]);
+    const y2 = Number(lMatch[4]);
+    const dx = Math.abs(x2 - x1);
+    const dy = Math.abs(y2 - y1);
+    if (dy <= 1.5 && dx > dy) {
+      return horizontalBoundaryCorridors(x1, x2, (y1 + y2) / 2, index, layoutOrigin);
+    }
+    if (dx <= 1.5 && dy > dx) {
+      return verticalBoundaryCorridors(x1, y1, y2, index, layoutOrigin);
+    }
+    // Diagonal / elbow: keep only if the open segment does not pierce a box.
+    if (!segmentPiercesBox(x1, y1, x2, y2, index, layoutOrigin)) {
+      return trimmed;
+    }
+    return undefined;
+  }
+  // Complex authored curves: keep only when they stay outside box fills.
+  if (!pathPiercesBoxes(trimmed, index, layoutOrigin)) {
+    return trimmed;
+  }
+  return undefined;
+}
+
+function horizontalBoundaryCorridors(
+  x1: number,
+  x2: number,
+  y: number,
+  index: SceneNodeIndex,
+  layoutOrigin: LayoutOrigin,
+): string | undefined {
+  const xMin = Math.min(x1, x2);
+  const xMax = Math.max(x1, x2);
+  const worldY = y + layoutOrigin.y;
+  const worldXMin = xMin + layoutOrigin.x;
+  const worldXMax = xMax + layoutOrigin.x;
+  const hit = boxGeometriesForMotion(index)
+    .filter(
+      (box) =>
+        box.x < worldXMax &&
+        box.x + box.width > worldXMin &&
+        box.y < worldY + 2 &&
+        box.y + box.height > worldY - 2,
+    )
+    .slice()
+    .sort((a, b) => a.x - b.x);
+  if (hit.length === 0) {
+    return `M${formatPathNumber(x1)} ${formatPathNumber(y)} H${formatPathNumber(x2)}`;
+  }
+  // Keep authored corridor Y so travelers stay on the connector lane.
+  const corridorY = y;
+  const parts: string[] = [];
+  const pushGap = (gapStartLocal: number, gapEndLocal: number) => {
+    if (gapEndLocal - gapStartLocal < MOTION_BOUNDARY_GAP_MIN) {
+      return;
+    }
+    const fromX = x1 <= x2 ? gapStartLocal : gapEndLocal;
+    const toX = x1 <= x2 ? gapEndLocal : gapStartLocal;
+    parts.push(
+      `M${formatPathNumber(fromX)} ${formatPathNumber(corridorY)} H${formatPathNumber(toX)}`,
+    );
+  };
+  // Leading span before the first box.
+  pushGap(xMin, hit[0]!.x - layoutOrigin.x);
+  for (let i = 0; i < hit.length - 1; i++) {
+    const left = hit[i]!;
+    const right = hit[i + 1]!;
+    pushGap(left.x + left.width - layoutOrigin.x, right.x - layoutOrigin.x);
+  }
+  // Trailing span after the last box.
+  const last = hit[hit.length - 1]!;
+  pushGap(last.x + last.width - layoutOrigin.x, xMax);
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+function verticalBoundaryCorridors(
+  x: number,
+  y1: number,
+  y2: number,
+  index: SceneNodeIndex,
+  layoutOrigin: LayoutOrigin,
+): string | undefined {
+  const yMin = Math.min(y1, y2);
+  const yMax = Math.max(y1, y2);
+  const worldX = x + layoutOrigin.x;
+  const worldYMin = yMin + layoutOrigin.y;
+  const worldYMax = yMax + layoutOrigin.y;
+  const hit = boxGeometriesForMotion(index)
+    .filter(
+      (box) =>
+        box.y < worldYMax &&
+        box.y + box.height > worldYMin &&
+        box.x < worldX + 2 &&
+        box.x + box.width > worldX - 2,
+    )
+    .slice()
+    .sort((a, b) => a.y - b.y);
+  if (hit.length === 0) {
+    return `M${formatPathNumber(x)} ${formatPathNumber(y1)} V${formatPathNumber(y2)}`;
+  }
+  const corridorX = x;
+  const parts: string[] = [];
+  const pushGap = (gapStartLocal: number, gapEndLocal: number) => {
+    if (gapEndLocal - gapStartLocal < MOTION_BOUNDARY_GAP_MIN) {
+      return;
+    }
+    const fromY = y1 <= y2 ? gapStartLocal : gapEndLocal;
+    const toY = y1 <= y2 ? gapEndLocal : gapStartLocal;
+    parts.push(
+      `M${formatPathNumber(corridorX)} ${formatPathNumber(fromY)} V${formatPathNumber(toY)}`,
+    );
+  };
+  pushGap(yMin, hit[0]!.y - layoutOrigin.y);
+  for (let i = 0; i < hit.length - 1; i++) {
+    const top = hit[i]!;
+    const bottom = hit[i + 1]!;
+    pushGap(top.y + top.height - layoutOrigin.y, bottom.y - layoutOrigin.y);
+  }
+  const last = hit[hit.length - 1]!;
+  pushGap(last.y + last.height - layoutOrigin.y, yMax);
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+function pointInsideBox(
+  x: number,
+  y: number,
+  box: SceneGeometryLike,
+  inset = 1,
+): boolean {
+  return (
+    x > box.x + inset &&
+    x < box.x + box.width - inset &&
+    y > box.y + inset &&
+    y < box.y + box.height - inset
+  );
+}
+
+function segmentPiercesBox(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  index: SceneNodeIndex,
+  layoutOrigin: LayoutOrigin,
+): boolean {
+  const wx1 = x1 + layoutOrigin.x;
+  const wy1 = y1 + layoutOrigin.y;
+  const wx2 = x2 + layoutOrigin.x;
+  const wy2 = y2 + layoutOrigin.y;
+  for (const box of boxGeometriesForMotion(index)) {
+    // Sample the open segment (skip endpoints which may sit on edges).
+    for (let i = 1; i <= 4; i++) {
+      const t = i / 5;
+      const x = wx1 + (wx2 - wx1) * t;
+      const y = wy1 + (wy2 - wy1) * t;
+      if (pointInsideBox(x, y, box)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function pathPiercesBoxes(
+  d: string,
+  index: SceneNodeIndex,
+  layoutOrigin: LayoutOrigin,
+): boolean {
+  if (typeof document === "undefined") {
+    return false;
+  }
+  try {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", d);
+    if (typeof path.getTotalLength !== "function") {
+      return false;
+    }
+    const total = path.getTotalLength();
+    if (!(total > 0)) {
+      return false;
+    }
+    const boxes = boxGeometriesForMotion(index);
+    const samples = Math.max(8, Math.min(48, Math.ceil(total / 12)));
+    for (let i = 1; i < samples; i++) {
+      const point = path.getPointAtLength((total * i) / samples);
+      const x = point.x + layoutOrigin.x;
+      const y = point.y + layoutOrigin.y;
+      for (const box of boxes) {
+        if (pointInsideBox(x, y, box)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  } catch {
+    return false;
   }
 }
 
@@ -504,10 +1313,12 @@ function resolveEndpoint(
   }
   const hasX = typeof endpoint.x === "number" && Number.isFinite(endpoint.x);
   const hasY = typeof endpoint.y === "number" && Number.isFinite(endpoint.y);
-  if (hasX || hasY) {
+  // Require both coordinates for an absolute point; a lone axis would pin the
+  // other to 0 and drag connectors into the wrong corner.
+  if (hasX && hasY) {
     return {
-      x: hasX ? (endpoint.x as number) : 0,
-      y: hasY ? (endpoint.y as number) : 0,
+      x: endpoint.x as number,
+      y: endpoint.y as number,
     };
   }
   if (typeof endpoint.nodeId === "string" && endpoint.nodeId.length > 0) {
@@ -575,6 +1386,76 @@ function isPulseAction(action: string): boolean {
   return action === "pulse";
 }
 
+function isFadeLikeAction(action: string): boolean {
+  return action === "fade" || action === "exit";
+}
+
+function isStaggerLikeAction(action: string): boolean {
+  return action === "stagger" || action === "enter-children";
+}
+
+/** Direct child ids of a group/panel node (for `enter-children` expansion). */
+function directChildIds(node: SceneNodeLike | undefined): readonly string[] {
+  if (node === undefined || !Array.isArray(node.children)) {
+    return [];
+  }
+  return node.children
+    .map((child) => child.id)
+    .filter((id) => typeof id === "string" && id.length > 0);
+}
+
+function resolveStaggerTargets(
+  cue: SceneTimelineCueLike,
+  nodesById: ReadonlyMap<string, SceneNodeLike>,
+): readonly string[] {
+  if (Array.isArray(cue.targets) && cue.targets.length > 0) {
+    return cue.targets.filter((id) => typeof id === "string" && id.length > 0);
+  }
+  if (cue.action === "enter-children" && cue.target.length > 0) {
+    return directChildIds(nodesById.get(cue.target));
+  }
+  return [];
+}
+
+/**
+ * Expand compact `stagger` / `enter-children` cues into per-target enter cues
+ * with stepped `at`. Other cues pass through unchanged.
+ */
+function expandTimelineCues(
+  timeline: readonly SceneTimelineCueLike[],
+  nodesById: ReadonlyMap<string, SceneNodeLike>,
+): readonly SceneTimelineCueLike[] {
+  const expanded: SceneTimelineCueLike[] = [];
+  for (const cue of timeline) {
+    if (!isStaggerLikeAction(cue.action)) {
+      expanded.push(cue);
+      continue;
+    }
+    const targets = resolveStaggerTargets(cue, nodesById);
+    if (targets.length === 0) {
+      // Keep the cue so duration accounting is not silently lost.
+      expanded.push({
+        ...cue,
+        action: "enter",
+        target: cue.target.length > 0 ? cue.target : cue.id,
+      });
+      continue;
+    }
+    const step = Math.max(0, finiteNumber(cue.step, 80));
+    targets.forEach((targetId, index) => {
+      expanded.push({
+        id: `${cue.id}__${index}`,
+        at: finiteNumber(cue.at) + index * step,
+        duration: finiteNumber(cue.duration),
+        action: "enter",
+        target: targetId,
+        easing: cue.easing,
+      });
+    });
+  }
+  return expanded;
+}
+
 function isArrowLike(node: SceneNodeLike, capability: string): boolean {
   if (ARROW_CAPABILITIES.has(capability)) {
     return true;
@@ -589,13 +1470,158 @@ function isDotLike(node: SceneNodeLike, capability: string): boolean {
   if (typeof node.kind === "string" && DOT_KINDS.has(node.kind)) {
     return true;
   }
+  // Never promote rect / panel chrome: authors use `r` as corner radius.
+  if (
+    capability === "core.rect" ||
+    capability === "core.panel" ||
+    capability === "core.header" ||
+    capability === "core.circle" ||
+    capability === "core.ellipse" ||
+    node.kind === "rect" ||
+    node.kind === "circle" ||
+    node.kind === "ellipse"
+  ) {
+    return false;
+  }
+  // Legacy bare nodes with `style.r` and no capability → small motion/dot mark.
+  if (capability.length > 0) {
+    return false;
+  }
   const radius = node.style?.r;
   return typeof radius === "number" && Number.isFinite(radius) && radius > 0;
+}
+
+function isCircleOrEllipse(node: SceneNodeLike, capability: string): boolean {
+  if (capability === "core.circle" || capability === "core.ellipse") {
+    return true;
+  }
+  return node.kind === "circle" || node.kind === "ellipse";
+}
+
+function isElbowConnector(node: SceneNodeLike, capability: string): boolean {
+  if (capability === "core.elbow" || capability === "core.route") {
+    return true;
+  }
+  if (node.style?.route === "elbow") {
+    return true;
+  }
+  if (node.kind === "elbow") {
+    return true;
+  }
+  return false;
+}
+
+function connectorAxisOf(
+  node: SceneNodeLike,
+): "x" | "y" | undefined {
+  if (node.axis === "x" || node.axis === "y") {
+    return node.axis;
+  }
+  const styled = node.style?.axis;
+  if (styled === "x" || styled === "y") {
+    return styled;
+  }
+  return undefined;
+}
+
+/**
+ * Orthogonal elbow path: `M x1 y1 H/V mid H/V x2 y2`.
+ * `via` supplies the bend coordinate; otherwise midpoint. `axis` prefers the
+ * first segment direction (`x` → horizontal first).
+ */
+function elbowPathData(
+  start: Readonly<{ x: number; y: number }>,
+  end: Readonly<{ x: number; y: number }>,
+  via: Readonly<{ x: number; y: number }> | undefined,
+  axis: "x" | "y" | undefined,
+): string {
+  const dx = Math.abs(end.x - start.x);
+  const dy = Math.abs(end.y - start.y);
+  const preferX =
+    axis === "y" ? false : axis === "x" ? true : dx >= dy;
+  if (via !== undefined) {
+    // Route through the via bend point (both axes), then finish to end.
+    if (preferX) {
+      return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} H${formatPathNumber(via.x)} V${formatPathNumber(via.y)} H${formatPathNumber(end.x)} V${formatPathNumber(end.y)}`;
+    }
+    return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} V${formatPathNumber(via.y)} H${formatPathNumber(via.x)} V${formatPathNumber(end.y)} H${formatPathNumber(end.x)}`;
+  }
+  if (preferX) {
+    const midX = (start.x + end.x) / 2;
+    return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} H${formatPathNumber(midX)} V${formatPathNumber(end.y)} H${formatPathNumber(end.x)}`;
+  }
+  const midY = (start.y + end.y) / 2;
+  return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} V${formatPathNumber(midY)} H${formatPathNumber(end.x)} V${formatPathNumber(end.y)}`;
+}
+
+/**
+ * Legacy static companion beside a motion path (`s9-motion-sig-dot`).
+ * MotionSignal on the path owns the traveling visual — drop these from the tree.
+ */
+function isMotionCompanionDot(node: SceneNodeLike, capability = ""): boolean {
+  const cap = capability.length > 0 ? capability : capabilityOf(node);
+  if (!isDotLike(node, cap)) {
+    return false;
+  }
+  const role = node.style?.role;
+  if (role === "motion-signal" || role === "motion-dot") {
+    return true;
+  }
+  return /motion[-_]?sig/i.test(node.id) && /-dot$/i.test(node.id);
+}
+
+/** Drop obsolete motion companion dots (and strip them from nested children). */
+function omitMotionCompanionDots(
+  nodes: readonly SceneNodeLike[] | undefined,
+): SceneNodeLike[] {
+  if (!Array.isArray(nodes) || nodes.length === 0) {
+    return [];
+  }
+  const out: SceneNodeLike[] = [];
+  for (const node of nodes) {
+    if (isMotionCompanionDot(node)) {
+      continue;
+    }
+    const kids = node.children;
+    if (!Array.isArray(kids) || kids.length === 0) {
+      out.push(node);
+      continue;
+    }
+    const nextKids = omitMotionCompanionDots(kids);
+    out.push(
+      nextKids.length === kids.length &&
+        nextKids.every((child, i) => child === kids[i])
+        ? node
+        : { ...node, children: nextKids },
+    );
+  }
+  return out;
+}
+
+/** Drop timeline cues whose only target was a stripped companion dot. */
+function omitCompanionTimelineCues(
+  cues: readonly SceneTimelineCueLike[],
+  nodesById: ReadonlyMap<string, SceneNodeLike>,
+): SceneTimelineCueLike[] {
+  return cues.filter((cue) => {
+    const target = cue.target;
+    if (typeof target !== "string" || target.length === 0) {
+      return true;
+    }
+    if (nodesById.has(target)) {
+      return true;
+    }
+    // Orphan cue that named a companion (`…-motion-sig-dot`).
+    return !(/motion[-_]?sig/i.test(target) && /-dot$/i.test(target));
+  });
 }
 
 /** Traveling MentalModel-style motion dots (often authored as `motion-sig` paths). */
 function isMotionSignalNode(node: SceneNodeLike, capability = ""): boolean {
   const cap = capability.length > 0 ? capability : capabilityOf(node);
+  if (isDotLike(node, cap)) {
+    return false;
+  }
   if (MOTION_SIGNAL_CAPABILITIES.has(cap)) {
     return true;
   }
@@ -646,7 +1672,23 @@ function isPulseNode(node: SceneNodeLike, capability = ""): boolean {
   );
 }
 
+/**
+ * True when pulse should animate outline opacity (legacy MentalModel overlay).
+ * Filled content boxes keep opaque fills — only stroke scale / float pulse.
+ */
+function isOutlinePulseFill(fillPaint: string): boolean {
+  const token = fillPaint.trim().toLowerCase();
+  return token === "none" || token === "transparent" || token === "rgba(0, 0, 0, 0)";
+}
+
 function markerEndDisabled(style: SceneNodeLike["style"]): boolean {
+  if (
+    style?.arrowhead === false ||
+    style?.arrowhead === 0 ||
+    style?.arrowhead === "false"
+  ) {
+    return true;
+  }
   return isMarkerEndNone(style?.markerEnd);
 }
 
@@ -661,26 +1703,44 @@ function tipForArrowNode(
   return resolveMarkerTip(node.style?.markerEnd, DEFAULT_MARKER_TIP);
 }
 
-/** Directed edges get arrowheads; motion guides and undirected lines do not. */
+/** True when the author opted into an explicit tip (not just kind defaults). */
+function hasExplicitMarkerEnd(style: SceneNodeLike["style"]): boolean {
+  return style?.markerEnd !== undefined && !markerEndDisabled(style);
+}
+
+/**
+ * Directed edges get arrowheads; motion guides and undirected strokes do not.
+ *
+ * Package IR stamps `kind: "connector"` on `core.path` / `core.line` /
+ * `core.bracket`. Capability must win for braces (undirected); authored
+ * path/line edges with endpoints are directed like connectors.
+ */
 function shouldShowArrowhead(node: SceneNodeLike, capability: string): boolean {
   if (isMotionSignalNode(node, capability) || markerEndDisabled(node.style)) {
     return false;
   }
+  // Visual dividers / rules are never directed (matches flow-verifier).
+  if (/^(split|divider|rule|sep|guide)([-_]|$)/i.test(node.id)) {
+    return false;
+  }
+  // Braces are undirected geometry (desugar also stamps markerEnd: "none").
+  if (capability === "core.bracket" || node.kind === "bracket") {
+    return hasExplicitMarkerEnd(node.style);
+  }
   if (
     capability === "core.arrow" ||
     capability === "core.connector" ||
+    capability === "core.elbow" ||
+    capability === "core.route" ||
+    capability === "core.path" ||
+    capability === "core.line" ||
     node.kind === "arrow" ||
-    node.kind === "connector"
+    node.kind === "connector" ||
+    node.kind === "elbow" ||
+    node.kind === "path" ||
+    node.kind === "line"
   ) {
     return true;
-  }
-  if (capability === "core.path" || node.kind === "path") {
-    return true;
-  }
-  if (capability === "core.line" || node.kind === "line") {
-    return node.style?.markerEnd !== undefined
-      ? !markerEndDisabled(node.style)
-      : true;
   }
   return false;
 }
@@ -753,36 +1813,79 @@ function enterCueForNode(
     .at(-1);
 }
 
+function fadeCueForNode(
+  nodeId: string,
+  timeline: readonly SceneTimelineCueLike[],
+): SceneTimelineCueLike | undefined {
+  return timeline
+    .filter(
+      (candidate) =>
+        candidate.target === nodeId && isFadeLikeAction(candidate.action),
+    )
+    .at(-1);
+}
+
 /** Map cue `at`/`duration` onto opacity and enter state for one node. */
 function appearanceForNode(
   nodeId: string,
   timeline: readonly SceneTimelineCueLike[],
   playbackTimeMs: number,
 ): TimelineAppearance {
-  const cue = enterCueForNode(nodeId, timeline);
-  if (cue === undefined) {
+  const enterCue = enterCueForNode(nodeId, timeline);
+  const fadeCue = fadeCueForNode(nodeId, timeline);
+
+  let enterOpacity = 1;
+  let state: TimelineState = "unchanged";
+
+  if (enterCue !== undefined) {
+    const progress = cueProgress(enterCue, playbackTimeMs);
+    if (progress <= 0) {
+      enterOpacity = 0;
+      state = "hidden";
+    } else if (progress >= 1) {
+      enterOpacity = 1;
+      state = "revealed";
+    } else {
+      enterOpacity = progress;
+      state = "entering";
+    }
+  }
+
+  if (fadeCue !== undefined) {
+    const fadeAt = Math.max(0, finiteNumber(fadeCue.at));
+    if (playbackTimeMs >= fadeAt) {
+      const fadeProgress = cueProgress(fadeCue, playbackTimeMs);
+      const opacity = enterOpacity * (1 - fadeProgress);
+      if (fadeCue.action === "exit" && fadeProgress >= 1) {
+        return { state: "hidden", opacity: 0 };
+      }
+      if (fadeProgress >= 1) {
+        return { state: "hidden", opacity: 0 };
+      }
+      return {
+        state: opacity <= 0 ? "hidden" : state === "unchanged" ? "entering" : state,
+        opacity,
+      };
+    }
+  }
+
+  if (enterCue === undefined) {
     return { state: "unchanged", opacity: 1 };
   }
+  return { state, opacity: enterOpacity };
+}
 
-  const atMs = Math.max(0, finiteNumber(cue.at));
-  const cueDurationMs = Math.max(0, finiteNumber(cue.duration));
-
-  let progress = 0;
-  if (playbackTimeMs < atMs) {
-    progress = 0;
-  } else if (cueDurationMs === 0) {
-    progress = 1;
-  } else {
-    progress = clamp01((playbackTimeMs - atMs) / cueDurationMs);
+/** True once a fade/exit cue window has started for this node. */
+function isFadingOut(
+  nodeId: string,
+  timeline: readonly SceneTimelineCueLike[],
+  playbackTimeMs: number,
+): boolean {
+  const fadeCue = fadeCueForNode(nodeId, timeline);
+  if (fadeCue === undefined) {
+    return false;
   }
-
-  if (progress <= 0) {
-    return { state: "hidden", opacity: 0 };
-  }
-  if (progress >= 1) {
-    return { state: "revealed", opacity: 1 };
-  }
-  return { state: "entering", opacity: progress };
+  return playbackTimeMs >= Math.max(0, finiteNumber(fadeCue.at));
 }
 
 /**
@@ -804,14 +1907,10 @@ function drawProgressForNode(
     return undefined;
   }
   const atMs = finiteNumber(cue.at);
-  const durationMs = finiteNumber(cue.duration);
   if (playbackTimeMs <= atMs) {
     return 0;
   }
-  if (durationMs <= 0) {
-    return 1;
-  }
-  return clamp01((playbackTimeMs - atMs) / durationMs);
+  return cueProgress(cue, playbackTimeMs);
 }
 
 /**
@@ -847,10 +1946,7 @@ function emphasisForNode(
     return undefined;
   }
 
-  const progress =
-    durationMs <= 0
-      ? 1
-      : clamp01((playbackTimeMs - atMs) / durationMs);
+  const progress = cueProgress(cue, playbackTimeMs);
   const intensity = Math.sin(progress * Math.PI);
   if (intensity <= 0) {
     return undefined;
@@ -894,10 +1990,7 @@ function pulseCueForNode(
     return undefined;
   }
 
-  const progress =
-    durationMs <= 0
-      ? 1
-      : clamp01((playbackTimeMs - atMs) / durationMs);
+  const progress = cueProgress(cue, playbackTimeMs);
   const intensity = Math.sin(progress * Math.PI);
   if (intensity <= 0) {
     return undefined;
@@ -922,15 +2015,17 @@ function continuousPulseForNode(
   playbackTimeMs: number,
   playback: PlaybackContext,
 ): PulseAppearance | undefined {
-  if (!isPulseNode(node, capability) || playback.reducedMotion) {
+  if (!isPulseNode(node, capability)) {
     return undefined;
   }
   if (appearance.state === "hidden") {
     return undefined;
   }
-  // When paused (not playing), hold the final-ish mid pulse so the outline stays visible.
-  if (!playback.playing) {
-    return { intensity: 0.5, opacity: 0.45 };
+  // Match legacy MentalModel CSS: `.box-pulse { opacity: 0 }` with animation
+  // only while playing. Pausing / reduced-motion must not leave a mid-pulse
+  // outline parked on top of panels (reads as a ghost double border).
+  if (playback.reducedMotion || !playback.playing) {
+    return { intensity: 0, opacity: 0 };
   }
   if (playbackTimeMs < PULSE_DELAY_MS) {
     return { intensity: 0, opacity: 0 };
@@ -987,12 +2082,16 @@ function resolveThemePaint(
       : value;
 
   switch (role) {
-    case "surface.primary":
     case "surface.elevated":
-    case "surface.secondary":
     case "bg.elevated":
-    case "bg.primary":
       return theme.bg.elevated;
+    case "surface.primary":
+    case "bg.primary":
+      // Primary surface sits between chrome and elevated cards.
+      return theme.bg.chrome;
+    case "surface.secondary":
+      // Quieter fill for headers / chips (distinct from elevated panels).
+      return theme.fill.tertiary;
     case "surface.chrome":
     case "bg.chrome":
       return theme.bg.chrome;
@@ -1040,6 +2139,8 @@ function resolveThemePaint(
     case "accent.warning":
     case "accent.attention":
       return theme.category.yellow;
+    case "accent.caution":
+      return theme.category.orange;
     case "accent.cyan":
       return theme.category.cyan;
     case "accent.orange":
@@ -1060,6 +2161,44 @@ function paintFromStyle(
   fallback: string,
 ): string {
   return resolveThemePaint(style?.[key], theme, fallback);
+}
+
+/** True when a style value is an `@theme.accent.*` (or bare `accent.*`) role. */
+function isAccentThemeRole(value: unknown): boolean {
+  if (typeof value !== "string" || value.length === 0) {
+    return false;
+  }
+  const role = value.startsWith("@theme.")
+    ? value.slice("@theme.".length)
+    : value.startsWith("theme.")
+      ? value.slice("theme.".length)
+      : value;
+  return role.startsWith("accent.");
+}
+
+/**
+ * Chalk skin for diagram panels: never fill `core.rect` with saturated accents.
+ * Accent fills become elevated panels with the accent as the border (and ink
+ * strokes are replaced so the box still reads as colored).
+ */
+function chalkRectPaints(
+  style: SceneNodeLike["style"],
+  theme: Theme,
+  themeBg: string,
+  themeStroke: string,
+): { fill: string; stroke: string } {
+  const fillRole = style?.fill;
+  if (isAccentThemeRole(fillRole)) {
+    const accent = resolveThemePaint(fillRole, theme, theme.accent.primary);
+    const stroke = isAccentThemeRole(style?.stroke)
+      ? resolveThemePaint(style?.stroke, theme, accent)
+      : accent;
+    return { fill: themeBg, stroke };
+  }
+  return {
+    fill: paintFromStyle(style, "fill", theme, themeBg),
+    stroke: paintFromStyle(style, "stroke", theme, themeStroke),
+  };
 }
 
 /** CSS from node.style with `@theme.*` paints resolved; omits fill/stroke attrs. */
@@ -1085,6 +2224,15 @@ function styleToCss(
       key === "strokeStyle" ||
       key === "variant" ||
       key === "r" ||
+      key === "rx" ||
+      key === "ry" ||
+      key === "radius" ||
+      key === "direction" ||
+      key === "cols" ||
+      key === "gap" ||
+      key === "route" ||
+      key === "axis" ||
+      key === "coordinateSpace" ||
       // Caps are owned by FlowArrow (butt under markers / draw reveal).
       key === "strokeLinecap" ||
       key === "stroke-linecap"
@@ -1105,8 +2253,8 @@ function styleToCss(
 }
 
 /**
- * Resolve SVG path data for line / path / arrow / connector nodes.
- * Precedence: authored `d` → `path` → `points` polyline → `from`/`to`.
+ * Resolve SVG path data for line / path / arrow / connector / elbow nodes.
+ * Precedence: authored `d` → `path` → `points` polyline → elbow/`from`/`to`.
  */
 function arrowPathData(
   node: SceneNodeLike,
@@ -1125,6 +2273,13 @@ function arrowPathData(
   if (node.from !== undefined || node.to !== undefined) {
     const start = resolveEndpoint(node.from, index, layoutOrigin);
     const end = resolveEndpoint(node.to, index, layoutOrigin);
+    if (isElbowConnector(node, capabilityOf(node))) {
+      const via =
+        node.via !== undefined
+          ? resolveEndpoint(node.via, index, layoutOrigin)
+          : undefined;
+      return elbowPathData(start, end, via, connectorAxisOf(node));
+    }
     return `M${start.x} ${start.y} L${end.x} ${end.y}`;
   }
   return undefined;
@@ -1141,6 +2296,7 @@ function formatPathNumber(value: number): string {
 /**
  * Rewrite the final absolute H / V / L / C endpoint when the rest of the path
  * can stay intact (avoids polyline-approximating whole curves).
+ * Relative endings are refused so absolute coords are not written under `h/v/l/c`.
  */
 function rewriteLastEndpoint(
   d: string,
@@ -1148,18 +2304,19 @@ function rewriteLastEndpoint(
   y: number,
 ): string | undefined {
   const trimmed = d.trim();
+  // Absolute only — no `/i` (relative endings fall through to polyline approx).
   let match =
-    /^(.*)H\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/i.exec(trimmed);
+    /^(.*)H\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/.exec(trimmed);
   if (match?.[1] !== undefined) {
     return `${match[1]}H${formatPathNumber(x)}`;
   }
   match =
-    /^(.*)V\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/i.exec(trimmed);
+    /^(.*)V\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/.exec(trimmed);
   if (match?.[1] !== undefined) {
     return `${match[1]}V${formatPathNumber(y)}`;
   }
   match =
-    /^(.*)L\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?:\s+|,)\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/i.exec(
+    /^(.*)L\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?:\s+|,)\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/.exec(
       trimmed,
     );
   if (match?.[1] !== undefined) {
@@ -1167,7 +2324,7 @@ function rewriteLastEndpoint(
   }
   // Absolute cubic: keep control points, pull only the terminal point back.
   match =
-    /^(.*C(?:\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?:\s+|,)\s*){4})[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?:\s+|,)\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/i.exec(
+    /^(.*C(?:\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?:\s+|,)\s*){4})[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?:\s+|,)\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$/.exec(
       trimmed,
     );
   if (match?.[1] !== undefined) {
@@ -1210,63 +2367,100 @@ function shortenPathEndWithDom(d: string, inset: number): string | undefined {
 
 /**
  * Pure fallback when DOM path measurement is unavailable (or failed).
- * Handles the straight H / V / L endings that dominate authored decks.
+ * Walks M/L/H/V (abs + rel) so tip inset uses the true pen position.
  */
 function lastPointFromPrefix(
   prefix: string,
 ): Readonly<{ x: number; y: number }> | undefined {
-  const trimmed = prefix.trimEnd();
-  const lMatch =
-    /[Ll]\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+|,)\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/.exec(
-      trimmed,
-    );
-  if (lMatch?.[1] !== undefined && lMatch[2] !== undefined) {
-    return { x: Number(lMatch[1]), y: Number(lMatch[2]) };
-  }
-  const mMatch =
-    /[Mm]\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+|,)\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/.exec(
-      trimmed,
-    );
-  if (mMatch?.[1] !== undefined && mMatch[2] !== undefined) {
-    return { x: Number(mMatch[1]), y: Number(mMatch[2]) };
-  }
-  const hMatch =
-    /H\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/i.exec(trimmed);
-  const vMatch =
-    /V\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/i.exec(trimmed);
-  const base =
-    /[Mm]\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+|,)\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/.exec(
-      trimmed,
-    );
-  if (base?.[1] === undefined || base[2] === undefined) {
+  const trimmed = prefix.trim();
+  if (trimmed.length === 0) {
     return undefined;
   }
-  let x = Number(base[1]);
-  let y = Number(base[2]);
-  if (hMatch?.[1] !== undefined) {
-    x = Number(hMatch[1]);
-  }
-  if (vMatch?.[1] !== undefined) {
-    y = Number(vMatch[1]);
-  }
-  // Walk all absolute H/V after the move to recover the true last point.
-  const rest = trimmed.slice((base.index ?? 0) + base[0].length);
-  for (const token of rest.matchAll(
-    /([HhVv])\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/g,
-  )) {
-    if (token[1] === "H" || token[1] === "h") {
-      x = Number(token[2]);
-    } else {
-      y = Number(token[2]);
+  const cmdRe =
+    /([MmLlHhVv])\s*([^MmLlHhVvCcSsQqTtAaZz]*)/g;
+  let x = 0;
+  let y = 0;
+  let found = false;
+  for (const match of trimmed.matchAll(cmdRe)) {
+    const cmd = match[1] ?? "";
+    const nums = [
+      ...(match[2] ?? "").matchAll(
+        /[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/g,
+      ),
+    ].map((token) => Number(token[0]));
+    const relative = cmd === cmd.toLowerCase();
+    const op = cmd.toUpperCase();
+    if (op === "M" || op === "L") {
+      for (let i = 0; i + 1 < nums.length; i += 2) {
+        const nx = nums[i]!;
+        const ny = nums[i + 1]!;
+        if (relative && found) {
+          x += nx;
+          y += ny;
+        } else {
+          x = nx;
+          y = ny;
+        }
+        found = true;
+        // Extra M pairs are treated as implicit LineTos.
+      }
+    } else if (op === "H") {
+      for (const nx of nums) {
+        x = relative && found ? x + nx : nx;
+        found = true;
+      }
+    } else if (op === "V") {
+      for (const ny of nums) {
+        y = relative && found ? y + ny : ny;
+        found = true;
+      }
     }
   }
-  return { x, y };
+  return found ? { x, y } : undefined;
 }
 
 function shortenPathEndParsed(d: string, inset: number): string {
   const trimmed = d.trim();
+  // Relative endings: shorten the delta, keep the relative command letter.
+  const hRel =
+    /^(.*)h\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/.exec(trimmed);
+  if (hRel?.[1] !== undefined && hRel[2] !== undefined) {
+    const dx = Number(hRel[2]);
+    if (Math.abs(dx) > inset) {
+      return `${hRel[1]}h${formatPathNumber(dx - Math.sign(dx) * inset)}`;
+    }
+    return d;
+  }
+  const vRel =
+    /^(.*)v\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/.exec(trimmed);
+  if (vRel?.[1] !== undefined && vRel[2] !== undefined) {
+    const dy = Number(vRel[2]);
+    if (Math.abs(dy) > inset) {
+      return `${vRel[1]}v${formatPathNumber(dy - Math.sign(dy) * inset)}`;
+    }
+    return d;
+  }
+  const lRel =
+    /^(.*)l\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+|,)\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/.exec(
+      trimmed,
+    );
+  if (
+    lRel?.[1] !== undefined &&
+    lRel[2] !== undefined &&
+    lRel[3] !== undefined
+  ) {
+    const dx = Number(lRel[2]);
+    const dy = Number(lRel[3]);
+    const length = Math.hypot(dx, dy);
+    if (length > inset) {
+      const scale = (length - inset) / length;
+      return `${lRel[1]}l${formatPathNumber(dx * scale)} ${formatPathNumber(dy * scale)}`;
+    }
+    return d;
+  }
+
   const hMatch =
-    /^(.*)H\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/i.exec(trimmed);
+    /^(.*)H\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/.exec(trimmed);
   if (hMatch?.[1] !== undefined && hMatch[2] !== undefined) {
     const prev = lastPointFromPrefix(hMatch[1]);
     const xEnd = Number(hMatch[2]);
@@ -1278,7 +2472,7 @@ function shortenPathEndParsed(d: string, inset: number): string {
     }
   }
   const vMatch =
-    /^(.*)V\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/i.exec(trimmed);
+    /^(.*)V\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/.exec(trimmed);
   if (vMatch?.[1] !== undefined && vMatch[2] !== undefined) {
     const prev = lastPointFromPrefix(vMatch[1]);
     const yEnd = Number(vMatch[2]);
@@ -1290,7 +2484,7 @@ function shortenPathEndParsed(d: string, inset: number): string {
     }
   }
   const lMatch =
-    /^(.*)L\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+|,)\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/i.exec(
+    /^(.*)L\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+|,)\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/.exec(
       trimmed,
     );
   if (
@@ -1308,6 +2502,29 @@ function shortenPathEndParsed(d: string, inset: number): string {
       if (length > inset) {
         const scale = (length - inset) / length;
         return `${lMatch[1]}L${formatPathNumber(prev.x + dx * scale)} ${formatPathNumber(prev.y + dy * scale)}`;
+      }
+    }
+  }
+  // Absolute cubic: pull only the terminal point back along the chord.
+  const cMatch =
+    /^(.*C(?:\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?:\s+|,)\s*){4})([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:\s+|,)\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*$/.exec(
+      trimmed,
+    );
+  if (
+    cMatch?.[1] !== undefined &&
+    cMatch[2] !== undefined &&
+    cMatch[3] !== undefined
+  ) {
+    const prev = lastPointFromPrefix(cMatch[1]);
+    if (prev !== undefined) {
+      const xEnd = Number(cMatch[2]);
+      const yEnd = Number(cMatch[3]);
+      const dx = xEnd - prev.x;
+      const dy = yEnd - prev.y;
+      const length = Math.hypot(dx, dy);
+      if (length > inset) {
+        const scale = (length - inset) / length;
+        return `${cMatch[1]}${formatPathNumber(prev.x + dx * scale)} ${formatPathNumber(prev.y + dy * scale)}`;
       }
     }
   }
@@ -1381,6 +2598,7 @@ function cornerRadiusFromStyle(
  * Recursively render nested `children` into sibling `<g>` wrappers.
  * When `layoutOffset` is set, children are parent-local and wrapped in
  * `translate(offset)` so group/container origins shift the subtree.
+ * `childGeoms` supplies stack/grid local placements when present.
  * Arrow-like siblings paint after non-arrows so tip heads (which extend
  * past the stroke end) are not buried under destination box fills.
  */
@@ -1394,6 +2612,7 @@ function renderChildren(
   parentLayoutOrigin: LayoutOrigin,
   layoutOffset: LayoutOrigin | undefined,
   playback: PlaybackContext,
+  childGeoms: readonly SceneGeometryLike[] | undefined,
 ): ReactNode {
   if (!Array.isArray(children) || children.length === 0) {
     return null;
@@ -1405,8 +2624,12 @@ function renderChildren(
           x: parentLayoutOrigin.x + layoutOffset.x,
           y: parentLayoutOrigin.y + layoutOffset.y,
         };
-  const nested = orderArrowSiblingsLast(children).map((child) =>
-    renderNode(
+  const ordered = orderArrowSiblingsLast(children);
+  const nested = ordered.map((child) => {
+    const authoredIndex = children.indexOf(child);
+    const geometryOverride =
+      authoredIndex >= 0 ? childGeoms?.[authoredIndex] : undefined;
+    return renderNode(
       child,
       timeline,
       playbackTimeMs,
@@ -1415,8 +2638,9 @@ function renderChildren(
       index,
       childOrigin,
       playback,
-    ),
-  );
+      geometryOverride,
+    );
+  });
   if (
     layoutOffset === undefined ||
     (layoutOffset.x === 0 && layoutOffset.y === 0)
@@ -1461,9 +2685,16 @@ function renderNode(
   index: SceneNodeIndex,
   layoutOrigin: LayoutOrigin = ZERO_ORIGIN,
   playback: PlaybackContext,
+  geometryOverride?: SceneGeometryLike,
 ): ReactNode {
   const capability = capabilityOf(node);
-  const geom = geometryOf(node);
+  const authoredGeom = geometryOverride ?? geometryOf(node);
+  const kids = node.children;
+  const { parentGeom: geom, childGeoms } = resolveContainerLayout(
+    node,
+    authoredGeom,
+    kids,
+  );
   const appearance = appearanceForNode(node.id, timeline, playbackTimeMs);
   const drawProgress = drawProgressForNode(node.id, timeline, playbackTimeMs);
   const themeAccent = theme.accent.primary;
@@ -1488,9 +2719,9 @@ function renderNode(
     typeof description === "string" && description.length > 0
       ? `flow-node-${node.id}-desc`
       : undefined;
-  const localChildren = childrenUseLocalLayout(node, geom, node.children);
+  const localChildren = childrenUseLocalLayout(node, geom, kids);
   const nested = renderChildren(
-    node.children,
+    kids,
     timeline,
     playbackTimeMs,
     theme,
@@ -1499,6 +2730,7 @@ function renderNode(
     layoutOrigin,
     localChildren ? { x: geom.x, y: geom.y } : undefined,
     playback,
+    childGeoms,
   );
 
   const themeBg = theme.bg.elevated;
@@ -1511,23 +2743,127 @@ function renderNode(
     ? pulseFloatStyle(playback, playbackTimeMs)
     : undefined;
 
+  // Capability before kind: package IR often stamps `kind: "rect"` on
+  // `core.dot` nodes. Dots must win over chalk rects.
   let body: ReactNode = null;
-  if (capability === "core.rect" || node.kind === "rect") {
-    const strokePaint = paintFromStyle(node.style, "stroke", theme, themeStroke);
-    const fillPaint = paintFromStyle(node.style, "fill", theme, themeBg);
+  if (isDotLike(node, capability) && !isArrowLike(node, capability)) {
+    const radius = circleRadius(node, geom);
+    const cx =
+      geom.width > 0 || geom.height > 0 ? geom.x + geom.width / 2 : geom.x;
+    const cy =
+      geom.width > 0 || geom.height > 0 ? geom.y + geom.height / 2 : geom.y;
+    body = (
+      <circle
+        cx={cx}
+        cy={cy}
+        r={radius}
+        fill={paintFromStyle(node.style, "fill", theme, themeAccent)}
+        stroke={paintFromStyle(node.style, "stroke", theme, "none")}
+        strokeWidth={strokeWidthFromStyle(node.style, 0) * strokeScale}
+        focusable={false}
+        aria-hidden="true"
+        data-flow-dot="true"
+        style={styleToCss(node.style, theme)}
+      />
+    );
+  } else if (isCircleOrEllipse(node, capability)) {
+    const cx =
+      geom.width > 0 || geom.height > 0 ? geom.x + geom.width / 2 : geom.x;
+    const cy =
+      geom.width > 0 || geom.height > 0 ? geom.y + geom.height / 2 : geom.y;
+    const styledRx =
+      typeof node.style?.rx === "number" && Number.isFinite(node.style.rx)
+        ? node.style.rx
+        : typeof node.style?.r === "number" && Number.isFinite(node.style.r)
+          ? node.style.r
+          : undefined;
+    const styledRy =
+      typeof node.style?.ry === "number" && Number.isFinite(node.style.ry)
+        ? node.style.ry
+        : styledRx;
+    const rx =
+      styledRx !== undefined && styledRx > 0
+        ? styledRx
+        : geom.width > 0
+          ? geom.width / 2
+          : circleRadius(node, geom);
+    const ry =
+      styledRy !== undefined && styledRy > 0
+        ? styledRy
+        : geom.height > 0
+          ? geom.height / 2
+          : rx;
+    const { fill: fillPaint, stroke: strokePaint } = {
+      fill: paintFromStyle(node.style, "fill", theme, themeAccent),
+      stroke: paintFromStyle(node.style, "stroke", theme, "none"),
+    };
+    if (
+      capability === "core.ellipse" ||
+      node.kind === "ellipse" ||
+      Math.abs(rx - ry) > 0.5
+    ) {
+      body = (
+        <ellipse
+          cx={cx}
+          cy={cy}
+          rx={rx}
+          ry={ry}
+          fill={fillPaint}
+          stroke={strokePaint}
+          strokeWidth={strokeWidthFromStyle(node.style, 1.3) * strokeScale}
+          focusable={false}
+          aria-hidden="true"
+          style={styleToCss(node.style, theme)}
+          data-flow-ellipse="true"
+        />
+      );
+    } else {
+      body = (
+        <circle
+          cx={cx}
+          cy={cy}
+          r={rx}
+          fill={fillPaint}
+          stroke={strokePaint}
+          strokeWidth={strokeWidthFromStyle(node.style, 1.3) * strokeScale}
+          focusable={false}
+          aria-hidden="true"
+          data-flow-circle="true"
+          style={styleToCss(node.style, theme)}
+        />
+      );
+    }
+  } else if (capability === "core.rect" || node.kind === "rect") {
+    const { fill: fillPaint, stroke: strokePaint } = chalkRectPaints(
+      node.style,
+      theme,
+      themeBg,
+      themeStroke,
+    );
+    const remappedAccentFill = isAccentThemeRole(node.style?.fill);
+    // Outline-only pulses fade opacity; filled content boxes stay opaque and
+    // pulse via stroke scale / float (MentalModel overlay parity).
     const pulseOpacity =
-      continuousPulse !== undefined ? continuousPulse.opacity : undefined;
+      continuousPulse !== undefined && isOutlinePulseFill(fillPaint)
+        ? continuousPulse.opacity
+        : undefined;
+    const rx = cornerRadiusFromStyle(node.style);
+    const ry =
+      typeof node.style?.ry === "number" && Number.isFinite(node.style.ry)
+        ? node.style.ry
+        : rx;
     body = (
       <rect
         x={geom.x}
         y={geom.y}
         width={geom.width}
         height={geom.height}
-        rx={cornerRadiusFromStyle(node.style)}
+        rx={rx}
+        ry={ry}
         fill={fillPaint}
         stroke={strokePaint}
         strokeWidth={
-          strokeWidthFromStyle(node.style, 1.3) *
+          strokeWidthFromStyle(node.style, remappedAccentFill ? 1.8 : 1.3) *
           strokeScale *
           (pulseTagged && continuousPulse !== undefined
             ? 1 + continuousPulse.intensity * 0.25
@@ -1548,6 +2884,41 @@ function renderNode(
         }
       />
     );
+  } else if (CHROME_GROUP_CAPABILITIES.has(capability)) {
+    // Panel / header groups paint chrome; title/detail children are local.
+    // Enter opacity rides the chrome only (MentalModel: rect fades, text snaps).
+    const { fill: fillPaint, stroke: strokePaint } = chalkRectPaints(
+      node.style,
+      theme,
+      themeBg,
+      themeStroke,
+    );
+    const chromeEnterOpacity =
+      appearance.state === "entering" &&
+      !isFadingOut(node.id, timeline, playbackTimeMs)
+        ? appearance.opacity
+        : undefined;
+    body = (
+      <rect
+        x={geom.x}
+        y={geom.y}
+        width={geom.width}
+        height={geom.height}
+        rx={cornerRadiusFromStyle(node.style, 10)}
+        fill={fillPaint}
+        stroke={strokePaint}
+        strokeWidth={strokeWidthFromStyle(node.style, 1.3) * strokeScale}
+        focusable={false}
+        aria-hidden="true"
+        style={{
+          ...styleToCss(node.style, theme),
+          ...(chromeEnterOpacity !== undefined
+            ? { opacity: chromeEnterOpacity }
+            : {}),
+        }}
+        data-flow-panel-chrome="true"
+      />
+    );
   } else if (capability === "core.text" || node.kind === "text") {
     const fontSize =
       typeof node.style?.fontSize === "number" ? node.style.fontSize : 14;
@@ -1562,13 +2933,23 @@ function renderNode(
       rawAnchor === "inherit"
         ? rawAnchor
         : undefined;
+    // Geometry is a layout box: start/middle/end anchor to left/center/right.
+    // Using `geom.x` for `end` draws long captions leftward over sibling titles.
     const textX =
-      textAnchor === "middle" ? geom.x + geom.width / 2 : geom.x;
+      textAnchor === "middle"
+        ? geom.x + geom.width / 2
+        : textAnchor === "end"
+          ? geom.x + Math.max(geom.width, 0)
+          : geom.x;
+    // Middle-anchored labels in a tall box center optically (SceneBox parity).
+    const centerVertically =
+      textAnchor === "middle" && geom.height > fontSize * 1.25;
+    const textY = centerVertically ? geom.y + geom.height / 2 : geom.y;
     body = (
       <text
         x={textX}
-        y={geom.y}
-        dominantBaseline="hanging"
+        y={textY}
+        dominantBaseline={centerVertically ? "middle" : "hanging"}
         textAnchor={textAnchor}
         fill={paintFromStyle(node.style, "fill", theme, themeText)}
         fontSize={fontSize}
@@ -1579,75 +2960,64 @@ function renderNode(
         {node.text ?? ""}
       </text>
     );
-  } else if (isDotLike(node, capability) && !isArrowLike(node, capability)) {
-    const radius = circleRadius(node, geom);
-    const cx =
-      geom.width > 0 || geom.height > 0 ? geom.x + geom.width / 2 : geom.x;
-    const cy =
-      geom.width > 0 || geom.height > 0 ? geom.y + geom.height / 2 : geom.y;
-    body = (
-      <circle
-        cx={cx}
-        cy={cy}
-        r={radius}
-        fill={paintFromStyle(node.style, "fill", theme, themeAccent)}
-        stroke={paintFromStyle(node.style, "stroke", theme, "none")}
-        strokeWidth={strokeWidthFromStyle(node.style, 0) * strokeScale}
-        focusable={false}
-        aria-hidden="true"
-        data-flow-dot="true"
-        style={styleToCss(node.style, theme)}
-      />
-    );
   } else if (isMotionSignalNode(node, capability)) {
-    const d = arrowPathData(node, index, layoutOrigin);
+    const d = motionSignalPathData(node, index, layoutOrigin);
     if (d !== undefined) {
       const stroke = paintFromStyle(node.style, "stroke", theme, themeAccent);
-      const motionProgress =
-        drawProgress !== undefined
-          ? drawProgress
-          : appearance.state === "unchanged"
-            ? undefined
-            : appearance.opacity;
+      const authoredOpacity =
+        typeof node.style?.opacity === "number" &&
+        Number.isFinite(node.style.opacity)
+          ? Math.min(1, Math.max(0, node.style.opacity))
+          : typeof node.style?.opacity === "string" &&
+              node.style.opacity.length > 0 &&
+              Number.isFinite(Number(node.style.opacity))
+            ? Math.min(1, Math.max(0, Number(node.style.opacity)))
+            : 1;
+      // Travel with a calm SMIL loop. Short `draw` cues (~0.9s) used to drive
+      // progress 0→1 once and park the ball at the destination — that felt like
+      // a zip through boxes. Keep draw/enter for visibility only.
       const smilActive =
-        motionProgress === undefined &&
         playback.playing &&
         !playback.reducedMotion &&
         appearance.state !== "hidden";
+      // One traveler per inter-box corridor (joined M… paths would teleport).
+      const segments = d.match(/M[^M]+/gi) ?? [d];
       body = (
-        <>
-          {/* Guide path stays invisible — MentalModel motion signals are dots-only. */}
-          <path
-            d={d}
-            fill="none"
-            stroke="none"
-            aria-hidden="true"
-            focusable={false}
-          />
-          {motionProgress !== undefined ? (
-            <MotionSignal
-              path={d}
-              color={stroke}
-              progress={motionProgress}
-              reducedMotion={playback.reducedMotion}
-              active={appearance.state !== "hidden"}
-              r={DEFAULT_DOT_RADIUS}
-              data-flow-motion-signal={node.id}
-            />
-          ) : (
-            <MotionSignal
-              key={`motion-${playback.restartKey}-${node.id}`}
-              path={d}
-              color={stroke}
-              delay={smilSeconds(MOTION_DOT_DELAY_S, playback.playbackRate)}
-              duration={smilSeconds(MOTION_DOT_DURATION_S, playback.playbackRate)}
-              reducedMotion={playback.reducedMotion}
-              active={smilActive}
-              r={DEFAULT_DOT_RADIUS}
-              data-flow-motion-signal={node.id}
-            />
-          )}
-        </>
+        <g opacity={authoredOpacity < 1 ? authoredOpacity : undefined}>
+          {segments.map((segment, segmentIndex) => {
+            const path = segment.trim();
+            if (path.length === 0) {
+              return null;
+            }
+            const delayS = MOTION_DOT_DELAY_S + segmentIndex * 0.45;
+            return (
+              <g key={`motion-seg-${node.id}-${segmentIndex}`}>
+                <path
+                  d={path}
+                  fill="none"
+                  stroke="none"
+                  aria-hidden="true"
+                  focusable={false}
+                />
+                <MotionSignal
+                  key={`motion-${playback.restartKey}-${node.id}-${segmentIndex}`}
+                  path={path}
+                  color={stroke}
+                  delay={smilSeconds(delayS, playback.playbackRate)}
+                  duration={smilSeconds(
+                    MOTION_DOT_DURATION_S,
+                    playback.playbackRate,
+                  )}
+                  reducedMotion={playback.reducedMotion}
+                  active={smilActive}
+                  r={DEFAULT_DOT_RADIUS}
+                  data-flow-motion-signal={node.id}
+                  data-flow-motion-segment={String(segmentIndex)}
+                />
+              </g>
+            );
+          })}
+        </g>
       );
     }
   } else if (isArrowLike(node, capability)) {
@@ -1697,10 +3067,14 @@ function renderNode(
             style={styleToCss(node.style, theme)}
             data-flow-arrowhead={showMarker ? "true" : "false"}
             data-flow-tip={tip?.key}
+            data-flow-elbow={
+              isElbowConnector(node, capability) ? "true" : undefined
+            }
           />
-          {/* Tip dot rides the stroke head while a draw cue is in flight. */}
+          {/* Tip only near the end of long draws — short cues used to zip a
+              progress-driven ball along the whole stroke in <300ms. */}
           {drawing &&
-          drawProgress > 0 &&
+          drawProgress >= 0.88 &&
           drawProgress < 1 &&
           !playback.reducedMotion ? (
             <MotionSignal
@@ -1719,12 +3093,25 @@ function renderNode(
 
   const baseOpacity =
     appearance.state === "unchanged" ? 1 : appearance.opacity;
+  const fadingOut = isFadingOut(node.id, timeline, playbackTimeMs);
+  // MentalModel only faded box chrome — labels popped in fully opaque. Keep
+  // enter fades off text / panel wrappers; chrome rect carries the ramp.
+  const snapEnterOpaque =
+    !fadingOut &&
+    activeEmphasis === undefined &&
+    (CHROME_GROUP_CAPABILITIES.has(capability) ||
+      capability === "core.text" ||
+      node.kind === "text");
   const groupOpacity =
-    activeEmphasis !== undefined
-      ? baseOpacity * activeEmphasis.opacityScale
-      : appearance.state === "unchanged"
-        ? undefined
-        : appearance.opacity;
+    appearance.state === "hidden"
+      ? 0
+      : activeEmphasis !== undefined
+        ? baseOpacity * activeEmphasis.opacityScale
+        : fadingOut
+          ? appearance.opacity
+          : snapEnterOpaque || appearance.state === "unchanged"
+            ? undefined
+            : appearance.opacity;
   const groupStyle: CSSProperties | undefined =
     groupOpacity === undefined &&
     (emphasis === undefined || emphasis.filter === "none")
@@ -1749,6 +3136,7 @@ function renderNode(
       key={node.id}
       data-flow-node-id={node.id}
       data-flow-kind={flowKind}
+      data-flow-capability={capability.length > 0 ? capability : undefined}
       data-flow-local-layout={localChildren ? "true" : undefined}
       data-flow-motion-signal={
         isMotionSignalNode(node, capability) ? "true" : undefined
@@ -1784,9 +3172,11 @@ function renderNode(
  * Plays authored timeline cues when `playing`, freezes when paused,
  * restarts on `restartKey`, and collapses to the final frame under reduced motion.
  *
- * Supports `core.rect` / `core.text` / `core.dot|circle` / `core.line|path|arrow|connector`,
- * nested children with layout offsets, enter/draw/emphasize/pulse cues, camera viewBox,
- * theme paints, motion dots on motion-signal paths, dashed strokes, and arrowheads.
+ * Supports `core.rect` / `core.text` / `core.circle|ellipse` / `core.dot` /
+ * `core.line|path|arrow|connector|elbow`, `core.panel` / `core.header`,
+ * `layout.stack` / `layout.grid`, nested local children, enter/draw/emphasize/pulse
+ * /fade/exit/stagger cues (with easing), camera viewBox, theme paints, motion
+ * signals, dashed strokes, and arrowheads.
  */
 export function SceneRenderer({
   scene,
@@ -1798,7 +3188,13 @@ export function SceneRenderer({
   const theme = useHostTheme();
   const reactId = useId().replaceAll(":", "");
   const markerPrefix = `scene-arrow-${reactId}`;
-  const timeline = Array.isArray(scene.timeline) ? scene.timeline : [];
+  const roots = omitMotionCompanionDots(scene.roots ?? []);
+  const index = indexSceneNodes(roots);
+  const authoredTimeline = Array.isArray(scene.timeline) ? scene.timeline : [];
+  const timeline = expandTimelineCues(
+    omitCompanionTimelineCues(authoredTimeline, index.nodesById),
+    index.nodesById,
+  );
   const durationMs = timelineDurationMs(timeline);
   const [playbackTimeMs, setPlaybackTimeMs] = useState(0);
   const playbackTimeMsRef = useRef(0);
@@ -1856,8 +3252,6 @@ export function SceneRenderer({
     typeof scene.summary === "string" && scene.summary.length > 0
       ? `scene-summary-${reactId}`
       : undefined;
-  const roots = scene.roots ?? [];
-  const index = indexSceneNodes(roots);
   const sceneTips = collectSceneTips(roots);
   const { width: viewportWidth, height: viewportHeight } = resolveViewportSize(
     scene.viewport,
