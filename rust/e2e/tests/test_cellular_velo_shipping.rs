@@ -319,9 +319,12 @@ async fn test_cellular_velo_shipping_matches_single_cell() {
 
 /// Run the config against `h`'s mock at `CELLS` cells over the velo plane, with the
 /// controller-forwarded observable surfaced (`warn,aiperf=info`) and, when `hub`, the
-/// hub anchor (`AIPERF_CELLULAR_HUB=1`). The default path and the hub path are driven
-/// through the identical config + force seam + velo transport; only the anchor differs.
-fn run_velo_cells(h: &AIPerfHarness, hub: bool) -> RunResult {
+/// hub anchor (`AIPERF_CELLULAR_HUB=1`). When `fanout`, the dataset fan-out + phaser
+/// control planes are enabled too (`AIPERF_CELL_DATASET_FANOUT` / `AIPERF_CELL_PHASER_
+/// START`) — under `hub` those planes ride the one hub anchor as the `/dataset` and
+/// `/phaser` plugins. The paths are driven through the identical config + force seam +
+/// velo transport; only the anchor (and, per `fanout`, the enabled planes) differ.
+fn run_velo_cells(h: &AIPerfHarness, hub: bool, fanout: bool) -> RunResult {
     let tmp = tempfile::TempDir::new().unwrap();
     let cfg = tmp.path().join("velo_coverage.yaml");
     std::fs::write(&cfg, config(&h.mock.url, CELLS)).unwrap();
@@ -336,6 +339,11 @@ fn run_velo_cells(h: &AIPerfHarness, hub: bool) -> RunResult {
     ];
     if hub {
         env.push(("AIPERF_CELLULAR_HUB", "1"));
+    }
+    if fanout {
+        // Fan-out requires the phaser availability interlock (ShardsAvailable per chunk).
+        env.push(("AIPERF_CELL_DATASET_FANOUT", "1"));
+        env.push(("AIPERF_CELL_PHASER_START", "1"));
     }
     // `--random-seed` sets `run.random_seed`, which every cell inherits verbatim (the
     // controller only auto-derives a per-identity seed when none is authored), so both
@@ -403,11 +411,11 @@ async fn test_cellular_hub_mode_matches_default_velo_path() {
     }
 
     let h_default = AIPerfHarness::new().await;
-    let default_path = run_velo_cells(&h_default, false);
+    let default_path = run_velo_cells(&h_default, false, false);
     assert_velo_run("default", &default_path);
 
     let h_hub = AIPerfHarness::new().await;
-    let hub_path = run_velo_cells(&h_hub, true);
+    let hub_path = run_velo_cells(&h_hub, true, false);
     assert_velo_run("hub", &hub_path);
 
     // inputs.json byte-identical: both are 3-cell velo runs over the same seeded
@@ -473,6 +481,100 @@ async fn test_cellular_hub_mode_matches_default_velo_path() {
     eprintln!(
         "hub-mode parity confirmed: {} default + {} hub velo artifact streams across {} cells",
         velo_observables(&default_path).len(),
+        velo_observables(&hub_path).len(),
+        CELLS
+    );
+}
+
+/// A COMPLETE hub-mode run: `AIPERF_CELLULAR_HUB=1` WITH the dataset fan-out + phaser
+/// control planes enabled, so the hub carries the cell↔controller, `/artifact`,
+/// `/dataset`, and `/phaser` plugins on ONE velo anchor — a full replacement of the
+/// standalone control/data planes for the run. This asserts the hub anchor is WIRE- and
+/// DATA-equivalent to the standalone anchor while BOTH drive the dataset fan-out +
+/// phaser planes: the controller generates the request-ids once and broadcasts them, the
+/// phaser gates chunk availability, and each cell subscribes over its anchor and
+/// dispatches its owned slice. Comparing hub-fanout to standalone-fanout (both fan-out,
+/// so the dispatch source is identical) isolates the anchor change from the fan-out
+/// dispatch-source change, keeping the strong per-record row-set parity.
+#[tokio::test]
+async fn test_cellular_hub_mode_dataset_fanout_and_phaser_matches_standalone() {
+    // Flaky on macOS CI like the other artifact e2es; skip there.
+    if cfg!(target_os = "macos") {
+        return;
+    }
+
+    // Standalone anchor, fan-out + phaser planes bound directly on the control-plane velo.
+    let h_std = AIPerfHarness::new().await;
+    let std_path = run_velo_cells(&h_std, false, true);
+    assert_velo_run("standalone-fanout", &std_path);
+
+    // Hub anchor, fan-out + phaser planes mounted as the `/dataset` + `/phaser` plugins.
+    let h_hub = AIPerfHarness::new().await;
+    let hub_path = run_velo_cells(&h_hub, true, true);
+    assert_velo_run("hub-fanout", &hub_path);
+
+    // inputs.json byte-identical: both are 3-cell fan-out runs over the same seeded
+    // dataset; only the anchor differs, never the controller-generated dataset.
+    let inputs_std = std::fs::read(
+        std_path
+            .artifacts
+            .find_file("**/inputs.json")
+            .expect("standalone inputs.json"),
+    )
+    .unwrap();
+    let inputs_hub = std::fs::read(
+        hub_path
+            .artifacts
+            .find_file("**/inputs.json")
+            .expect("hub inputs.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        inputs_std, inputs_hub,
+        "inputs.json must be byte-identical between the standalone and hub fan-out paths"
+    );
+
+    // records.jsonl deterministic row set (excludes session_num per the module doc).
+    let recs_std = std_path.artifacts.jsonl();
+    let recs_hub = hub_path.artifacts.jsonl();
+    assert_eq!(
+        recs_std.len(),
+        recs_hub.len(),
+        "standalone and hub fan-out paths must emit the same records.jsonl count"
+    );
+    assert_eq!(
+        sorted(&recs_std, record_projection),
+        sorted(&recs_hub, record_projection),
+        "records.jsonl deterministic row SET diverged between the standalone and hub fan-out paths"
+    );
+
+    // raw.jsonl request-payload set.
+    let raw_std = std_path.artifacts.raw_records();
+    let raw_hub = hub_path.artifacts.raw_records();
+    let raw_key = |r: &Value| r["payload"]["messages"].to_string();
+    assert_eq!(
+        sorted(&raw_std, raw_key),
+        sorted(&raw_hub, raw_key),
+        "raw.jsonl request-payload SET diverged between the standalone and hub fan-out paths"
+    );
+
+    // outputs.json deterministic text set.
+    let os = outputs(&std_path);
+    let oh = outputs(&hub_path);
+    assert_eq!(
+        os.len(),
+        oh.len(),
+        "outputs.json row count diverged (standalone vs hub fan-out)"
+    );
+    assert_eq!(
+        sorted(&os, |r| output_projection(r)),
+        sorted(&oh, |r| output_projection(r)),
+        "outputs.json deterministic (text) SET diverged between the standalone and hub fan-out paths"
+    );
+
+    eprintln!(
+        "hub-mode dataset+phaser parity confirmed: {} standalone + {} hub velo artifact streams across {} cells",
+        velo_observables(&std_path).len(),
         velo_observables(&hub_path).len(),
         CELLS
     );
