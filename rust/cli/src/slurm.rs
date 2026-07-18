@@ -29,7 +29,7 @@ use aiperf_runtime::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV;
 use aiperf_runtime::engine::slurm_topology::{
     CONTROLLER_PORT_ENV, SlurmTopology, controller_port_from_env,
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 
 /// The `slurm run` subcommand token intercepted natively; every other `slurm`
 /// subcommand (`generate`) is delegated to the Python CLI.
@@ -72,18 +72,13 @@ pub fn run(args: &[String]) -> Result<i32> {
 /// allocation's cell count and drive the cellular controller.
 fn run_controller(args: &[String], topology: &SlurmTopology, coordinate: &str) -> Result<i32> {
     let cell_count = topology.cell_count();
-    // The cellular controller path only engages for `cells > 1`; a 2-task allocation
-    // (one cell) has nothing to distribute, so fail with actionable guidance rather
-    // than silently binding a controller no cell would drive into a hang.
-    if cell_count < 2 {
-        bail!(
-            "SLURM cellular run needs at least 2 cell tasks (3 total tasks: one controller \
-             plus two or more cells); this allocation has {} task(s). Increase --ntasks \
-             (e.g. `aiperf slurm generate --cells N` requests N+1 tasks), or run a plain \
-             single-node `aiperf profile` instead.",
-            topology.ntasks()
-        );
-    }
+    // A 2-task allocation (`cell_count == 1`) is a valid degenerate cellular run: rank
+    // 0 controls and rank 1 is the sole cell. The cross-host launcher promotion (keyed
+    // off `AIPERF_CELL_LAUNCHER=slurm`, set in `run`) engages the controller for a
+    // single cell too, so no minimum-of-two guard is needed. `cell_count` is always
+    // `>= 1` here because `SlurmTopology` rejects `ntasks < 2` (a 1-task allocation)
+    // up front with its own actionable guidance.
+    debug_assert!(cell_count >= 1, "topology guarantees at least one cell");
     tracing::info!(
         cell_count,
         %coordinate,

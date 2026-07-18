@@ -12,13 +12,18 @@
 //! - task rank 0 (`SLURM_PROCID == 0`) is the cellular **controller**;
 //! - ranks `1..ntasks` are **cells**, cell `id = rank - 1`, `cell_count = ntasks - 1`;
 //! - the controller coordinate every cell dials is derived from the allocation's
-//!   rank-0 node hostname (the first host in `SLURM_JOB_NODELIST`) plus the velo
-//!   bootstrap port, so discovery is zero-round-trip and matches on every task.
+//!   rank-0 node hostname (the first host of the highest-precedence non-empty
+//!   nodelist — `SLURM_STEP_NODELIST`, then `SLURM_NODELIST`, then
+//!   `SLURM_JOB_NODELIST`) plus the velo bootstrap port, so discovery is
+//!   zero-round-trip and matches on every task.
 //!
 //! The rank-0 node is taken to be the first node of the expanded nodelist. This is
 //! SLURM's default block task distribution (task 0 lands on the first node of the
 //! allocation); an explicit `AIPERF_SLURM_CONTROLLER_HOST` override is honored first
-//! for exotic distributions or user-pinned placement.
+//! for exotic distributions or user-pinned placement. The step-scoped lists take
+//! precedence over the job-wide list so a nested `srun` step (e.g. an orchestrator
+//! launching aiperf against a node subset) resolves rank 0 within the step's nodes,
+//! not the job's first host.
 
 use std::fmt::{self, Display, Formatter};
 
@@ -73,7 +78,7 @@ pub enum SlurmTopologyError {
         /// The allocation's task count.
         ntasks: u32,
     },
-    /// `SLURM_JOB_NODELIST` was present but expanded to no hosts (and no explicit
+    /// A nodelist variable was present but expanded to no hosts (and no explicit
     /// [`CONTROLLER_HOST_ENV`] override was set).
     EmptyNodelist(String),
 }
@@ -102,7 +107,7 @@ impl Display for SlurmTopologyError {
             ),
             Self::EmptyNodelist(raw) => write!(
                 f,
-                "SLURM_JOB_NODELIST {raw:?} expanded to no hosts and no \
+                "SLURM nodelist {raw:?} expanded to no hosts and no \
                  AIPERF_SLURM_CONTROLLER_HOST override was set"
             ),
         }
@@ -136,7 +141,8 @@ impl SlurmTopology {
     ///
     /// Reads `SLURM_PROCID` and `SLURM_NTASKS`, and resolves the controller host
     /// from [`CONTROLLER_HOST_ENV`] if set, otherwise the first host of the expanded
-    /// `SLURM_JOB_NODELIST`.
+    /// highest-precedence non-empty nodelist (`SLURM_STEP_NODELIST`, then
+    /// `SLURM_NODELIST`, then `SLURM_JOB_NODELIST`).
     pub fn from_env() -> Result<Self, SlurmTopologyError> {
         let proc_id = parse_env_u32("SLURM_PROCID")?;
         let ntasks = parse_env_u32("SLURM_NTASKS")?;
@@ -206,16 +212,52 @@ fn parse_env_u32(var: &'static str) -> Result<u32, SlurmTopologyError> {
         .map_err(|_| SlurmTopologyError::InvalidEnv { var, value: raw })
 }
 
+/// Nodelist environment variables consulted, in order, to derive the rank-0
+/// (controller) host — first non-empty wins.
+///
+/// An orchestrator (e.g. srt-slurm) that launches aiperf as a nested `srun` **step**
+/// scoped to a subset of the job's nodes exposes that step's nodes in
+/// `SLURM_STEP_NODELIST` (and its `SLURM_NODELIST` alias), while `SLURM_JOB_NODELIST`
+/// stays the job-wide list whose first host is not necessarily where this step's rank
+/// 0 landed. The narrower step lists therefore take precedence over the job-wide list;
+/// a plain `srun`/`sbatch` allocation (no nested step) sets all three to the same
+/// value, so the order is a no-op there.
+const NODELIST_ENV_PRECEDENCE: [&str; 3] =
+    ["SLURM_STEP_NODELIST", "SLURM_NODELIST", "SLURM_JOB_NODELIST"];
+
+/// The `&'static str` reported by [`SlurmTopologyError::MissingEnv`] when none of the
+/// [`NODELIST_ENV_PRECEDENCE`] variables (nor the [`CONTROLLER_HOST_ENV`] override) is
+/// present.
+const NODELIST_ENV_LABEL: &str = "SLURM_STEP_NODELIST/SLURM_NODELIST/SLURM_JOB_NODELIST";
+
 fn resolve_controller_host_from_env() -> Result<String, SlurmTopologyError> {
     if let Ok(host) = std::env::var(CONTROLLER_HOST_ENV)
         && !host.trim().is_empty()
     {
         return Ok(host.trim().to_owned());
     }
-    let raw = std::env::var("SLURM_JOB_NODELIST")
-        .map_err(|_| SlurmTopologyError::MissingEnv("SLURM_JOB_NODELIST"))?;
-    let first = expand_nodelist(&raw).into_iter().next();
-    first.ok_or(SlurmTopologyError::EmptyNodelist(raw))
+    // First non-empty nodelist in precedence order supplies the controller host (its
+    // first expanded entry). A present-but-empty value is skipped rather than treated
+    // as authoritative, so a narrower step list only wins when it actually names nodes.
+    let mut last_nonempty_raw = None;
+    for var in NODELIST_ENV_PRECEDENCE {
+        let Ok(raw) = std::env::var(var) else {
+            continue;
+        };
+        if raw.trim().is_empty() {
+            continue;
+        }
+        if let Some(first) = expand_nodelist(&raw).into_iter().next() {
+            return Ok(first);
+        }
+        last_nonempty_raw = Some(raw);
+    }
+    match last_nonempty_raw {
+        // Present but expanded to no hosts (a malformed hostlist that yielded nothing).
+        Some(raw) => Err(SlurmTopologyError::EmptyNodelist(raw)),
+        // None of the nodelist variables were set at all.
+        None => Err(SlurmTopologyError::MissingEnv(NODELIST_ENV_LABEL)),
+    }
 }
 
 /// Expand a SLURM `SLURM_JOB_NODELIST` hostlist into concrete hostnames.
@@ -304,6 +346,114 @@ fn expand_group(group: &str, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// `std::env` is process-global; serialize the env-reading tests so parallel
+    /// runners do not observe each other's `SLURM_*` mutations.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// The full set of variables [`resolve_controller_host_from_env`] consults, so a
+    /// test starts from a known-clean slate regardless of the ambient (possibly-real
+    /// SLURM) environment.
+    const HOST_ENV_VARS: [&str; 4] = [
+        CONTROLLER_HOST_ENV,
+        "SLURM_STEP_NODELIST",
+        "SLURM_NODELIST",
+        "SLURM_JOB_NODELIST",
+    ];
+
+    /// Clear every controller-host variable, set `vars`, run `f`, then clear again —
+    /// all under [`ENV_LOCK`] so the mutation window is not visible to other tests.
+    fn with_host_env<T>(vars: &[(&str, &str)], f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+        // SAFETY: all env mutation is confined to this locked window; no other thread
+        // reads or writes these variables while the guard is held.
+        unsafe {
+            for var in HOST_ENV_VARS {
+                std::env::remove_var(var);
+            }
+            for (key, value) in vars {
+                std::env::set_var(key, value);
+            }
+        }
+        let out = f();
+        unsafe {
+            for var in HOST_ENV_VARS {
+                std::env::remove_var(var);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn controller_host_override_beats_every_nodelist() {
+        let host = with_host_env(
+            &[
+                (CONTROLLER_HOST_ENV, "pinned-host"),
+                ("SLURM_STEP_NODELIST", "step01"),
+                ("SLURM_NODELIST", "node01"),
+                ("SLURM_JOB_NODELIST", "job01"),
+            ],
+            resolve_controller_host_from_env,
+        );
+        assert_eq!(host.unwrap(), "pinned-host");
+    }
+
+    #[test]
+    fn step_nodelist_wins_over_job_nodelist() {
+        // A nested `srun` step scoped to a node subset: rank 0 is within the step's
+        // nodes, not the job-wide first host.
+        let host = with_host_env(
+            &[
+                ("SLURM_STEP_NODELIST", "step[07-09]"),
+                ("SLURM_JOB_NODELIST", "job[01-16]"),
+            ],
+            resolve_controller_host_from_env,
+        );
+        assert_eq!(host.unwrap(), "step07");
+    }
+
+    #[test]
+    fn node_nodelist_used_when_no_step_nodelist() {
+        // `SLURM_NODELIST` (the step alias) outranks the job-wide list.
+        let host = with_host_env(
+            &[
+                ("SLURM_NODELIST", "alias05"),
+                ("SLURM_JOB_NODELIST", "job01"),
+            ],
+            resolve_controller_host_from_env,
+        );
+        assert_eq!(host.unwrap(), "alias05");
+    }
+
+    #[test]
+    fn job_nodelist_is_the_final_fallback() {
+        let host = with_host_env(
+            &[("SLURM_JOB_NODELIST", "compute[03-06]")],
+            resolve_controller_host_from_env,
+        );
+        assert_eq!(host.unwrap(), "compute03");
+    }
+
+    #[test]
+    fn empty_higher_precedence_nodelist_falls_through() {
+        // A present-but-empty step list must not shadow a populated job list.
+        let host = with_host_env(
+            &[
+                ("SLURM_STEP_NODELIST", ""),
+                ("SLURM_NODELIST", "  "),
+                ("SLURM_JOB_NODELIST", "job42"),
+            ],
+            resolve_controller_host_from_env,
+        );
+        assert_eq!(host.unwrap(), "job42");
+    }
+
+    #[test]
+    fn missing_every_nodelist_is_a_missing_env_error() {
+        let err = with_host_env(&[], resolve_controller_host_from_env).unwrap_err();
+        assert!(matches!(err, SlurmTopologyError::MissingEnv(_)));
+    }
 
     #[test]
     fn expand_single_bare_host() {
@@ -389,10 +539,21 @@ mod tests {
 
     #[test]
     fn topology_two_task_allocation_is_one_cell() {
+        // A 2-task allocation is a valid single-cell cellular run: rank 0 controls,
+        // rank 1 is the sole cell (dense id 0), both dialing the same coordinate.
         let controller = SlurmTopology::new(0, 2, "n0").unwrap();
         let cell = SlurmTopology::new(1, 2, "n0").unwrap();
+        assert!(controller.is_controller());
         assert_eq!(controller.cell_count(), 1);
+        assert_eq!(controller.cell_id(), None);
+        assert!(!cell.is_controller());
+        assert_eq!(cell.cell_count(), 1);
         assert_eq!(cell.cell_id(), Some(0));
+        assert_eq!(
+            controller.controller_coordinate(9500),
+            cell.controller_coordinate(9500)
+        );
+        assert_eq!(cell.controller_coordinate(9500), "tcp://n0:9500");
     }
 
     #[test]

@@ -50,13 +50,26 @@ functions (no velo dependency, exhaustively unit-tested):
 
 - `SlurmTopology::from_env` reads `SLURM_PROCID` and `SLURM_NTASKS`; rank 0 is the
   controller, ranks `1..ntasks` map to dense cell ids `0..cell_count` with
-  `cell_count = ntasks - 1` (tiling exactly, as `ModuloCellPartition` requires).
+  `cell_count = ntasks - 1` (tiling exactly, as `ModuloCellPartition` requires). A
+  2-task allocation (`cell_count == 1`) is a valid single-cell run — rank 0 controls,
+  rank 1 is the sole cell; only a 1-task allocation is rejected (with actionable
+  guidance to increase `--ntasks`). The controller engages the cellular path for a
+  single cell because `AIPERF_CELL_LAUNCHER=slurm` marks a cross-host launcher
+  (`is_cross_host_launcher`), whose promotion gate fires at `cells >= 1` — a separate
+  cell task is already dialing — whereas the same-host default treats `cells == 1` as
+  a plain single-process run.
 - The controller coordinate is `tcp://<rank0-host>:<port>`. The rank-0 host is the
-  first host of the expanded `SLURM_JOB_NODELIST` (SLURM's default block task
-  distribution places task 0 on the first allocation node), overridable with
-  `AIPERF_SLURM_CONTROLLER_HOST`. `expand_nodelist` handles SLURM's compressed
-  hostlist syntax — `node[01-04]`, `node[01-02,05]`, top-level comma lists, and
-  bracket suffixes — preserving the lower-bound zero-pad width.
+  first host of the highest-precedence non-empty nodelist — `SLURM_STEP_NODELIST`,
+  then `SLURM_NODELIST`, then `SLURM_JOB_NODELIST` — overridable with
+  `AIPERF_SLURM_CONTROLLER_HOST` (honored first). The step-scoped lists outrank the
+  job-wide list so a nested `srun` **step** scoped to a node subset (e.g. an
+  orchestrator such as srt-slurm launching aiperf against part of the allocation)
+  resolves rank 0 within the step's nodes, not the job's first host; a plain
+  `srun`/`sbatch` allocation sets all three identically, so the order is a no-op there.
+  SLURM's default block task distribution places task 0 on the first node of the
+  chosen list. `expand_nodelist` handles SLURM's compressed hostlist syntax —
+  `node[01-04]`, `node[01-02,05]`, top-level comma lists, and bracket suffixes —
+  preserving the lower-bound zero-pad width.
 
 ### Cross-host placement
 
@@ -88,9 +101,6 @@ script mirroring `aiperf kube generate`'s ergonomics. `--cells N` requests
   tree is gated on the operator-wired aggregator DNS (`AIPERF_CELL_AGG_DNS_TEMPLATE`),
   which SLURM does not set, so a fanout request falls closed to the flat star. A
   SLURM-native aggregator placement (rank-band assignment) is unbuilt.
-- **Single-cell allocations**: a 2-task allocation (one cell) is rejected with
-  actionable guidance; the controller path needs `cells > 1`. Degenerate single-cell
-  SLURM runs would need a controller-hosted cell.
 - **Live in-sandbox multi-cell proof**: the topology, launcher selection, coordinate
   derivation, velo discovery/envelope-fetch, AND the controller's merge are proven
   end-to-end by the simulation in `rust/e2e/scripts/slurm_sim.sh` — a 3-task loopback

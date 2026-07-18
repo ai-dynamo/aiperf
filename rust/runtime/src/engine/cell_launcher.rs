@@ -218,6 +218,20 @@ pub fn select_launcher() -> Box<dyn CellLauncher> {
     }
 }
 
+/// Whether [`CELL_LAUNCHER_ENV`] selects a **cross-host** launcher (`k8s` or
+/// `slurm`), where the cell processes already exist on separate nodes and dial the
+/// controller over velo. This governs whether the runner promotes itself to the
+/// cellular controller: a cross-host launcher must engage the controller even for a
+/// single cell (`cells == 1`, e.g. a 2-task SLURM allocation), because a separate
+/// cell task is already waiting to register, whereas the same-host default treats
+/// `cells == 1` as a plain single-process run with no cell to coordinate.
+pub fn is_cross_host_launcher() -> bool {
+    matches!(
+        std::env::var(CELL_LAUNCHER_ENV).as_deref(),
+        Ok("k8s") | Ok("slurm")
+    )
+}
+
 /// The number of dispatch-stream positions in `[0, total)` that cell `k` owns under
 /// round-robin ownership (`position % cell_count == cell_id`) — `ceil((total-k)/C)`.
 /// A phase's per-cell slice is the difference of this over the phase's `[base,
@@ -308,6 +322,26 @@ mod tests {
             for count in 1..=8u32 {
                 let sum: u64 = (0..count).map(|k| owned_positions(total, k, count)).sum();
                 assert_eq!(sum, total, "total {total} count {count}");
+            }
+        }
+    }
+
+    #[test]
+    fn cross_host_launcher_detection() {
+        // SAFETY: single-threaded test body; the variable is restored before return.
+        unsafe {
+            let prior = std::env::var(CELL_LAUNCHER_ENV).ok();
+            std::env::set_var(CELL_LAUNCHER_ENV, "slurm");
+            assert!(is_cross_host_launcher());
+            std::env::set_var(CELL_LAUNCHER_ENV, "k8s");
+            assert!(is_cross_host_launcher());
+            std::env::set_var(CELL_LAUNCHER_ENV, "local");
+            assert!(!is_cross_host_launcher());
+            std::env::remove_var(CELL_LAUNCHER_ENV);
+            assert!(!is_cross_host_launcher());
+            match prior {
+                Some(value) => std::env::set_var(CELL_LAUNCHER_ENV, value),
+                None => std::env::remove_var(CELL_LAUNCHER_ENV),
             }
         }
     }
