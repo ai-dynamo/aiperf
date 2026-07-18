@@ -37,11 +37,11 @@ use velo::Velo;
 pub use artifact::{ARTIFACT_PREFIX, ArtifactHubPlugin, ReceiverSlot};
 pub use cell_controller::{CELL_CONTROLLER_PREFIX, CellControllerHubPlugin, TransportSlot};
 pub use dataset::{DATASET_PREFIX, DatasetHubPlugin};
-pub use phaser::{PHASER_PREFIX, PhaserHubPlugin};
 pub use discovery::{
     DiscoveryPlugin, DiscoveryReply, DiscoveryRequest, DiscoveryState, HUB_DISCOVERY,
     handle_discovery,
 };
+pub use phaser::{PHASER_PREFIX, PhaserHubPlugin};
 pub use plugin::{HUB_ABI_VERSION, HubAbiRequirement, HubError, HubPlugin};
 
 /// Composes [`HubPlugin`]s over one velo instance and serves both their HTTP and

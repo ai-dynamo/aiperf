@@ -97,17 +97,13 @@ impl HubPlugin for PhaserHubPlugin {
     }
 
     fn register_velo_handlers(&self, velo: &Arc<Velo>) -> Result<(), HubError> {
-        let server =
-            PhaserServer::bind(velo.clone(), self.phaser.clone()).map_err(|error| {
-                HubError::VeloHandler {
-                    prefix: self.prefix.clone(),
-                    message: error.to_string(),
-                }
-            })?;
-        *self
-            .server
-            .lock()
-            .expect("phaser server slot poisoned") = Some(server);
+        let server = PhaserServer::bind(velo.clone(), self.phaser.clone()).map_err(|error| {
+            HubError::VeloHandler {
+                prefix: self.prefix.clone(),
+                message: error.to_string(),
+            }
+        })?;
+        *self.server.lock().expect("phaser server slot poisoned") = Some(server);
         Ok(())
     }
 }
@@ -166,7 +162,10 @@ mod tests {
         // The dual-surface diagnostic reports the phaser's live generation. Raw hyper GET
         // (direct `TcpStream::connect`, so ambient proxy settings are never consulted).
         let body = http_get_json(server.http_addr(), "/phaser/status").await;
-        assert_eq!(body["generation"], 3, "diagnostic reports the live generation");
+        assert_eq!(
+            body["generation"], 3,
+            "diagnostic reports the live generation"
+        );
         assert_eq!(body["subscribe_handler"], HANDLER_PHASER_SUBSCRIBE);
 
         server.shutdown().await;
@@ -192,7 +191,11 @@ mod tests {
             .body(Empty::<bytes::Bytes>::new())
             .expect("build request");
         let response = sender.send_request(request).await.expect("send request");
-        assert!(response.status().is_success(), "http status {}", response.status());
+        assert!(
+            response.status().is_success(),
+            "http status {}",
+            response.status()
+        );
         let bytes = response
             .into_body()
             .collect()

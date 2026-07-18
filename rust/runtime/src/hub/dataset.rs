@@ -106,10 +106,7 @@ impl HubPlugin for DatasetHubPlugin {
                     message: error.to_string(),
                 }
             })?;
-        *self
-            .server
-            .lock()
-            .expect("dataset server slot poisoned") = Some(server);
+        *self.server.lock().expect("dataset server slot poisoned") = Some(server);
         Ok(())
     }
 }
@@ -167,7 +164,11 @@ mod tests {
             .await
             .expect("build index");
         let expected: Vec<u64> = (0..12).filter(|id| id % 3 == 0).collect();
-        assert_eq!(index.owned_ids(), expected, "cell 0 of 3 owned set over hub");
+        assert_eq!(
+            index.owned_ids(),
+            expected,
+            "cell 0 of 3 owned set over hub"
+        );
 
         // The dual-surface diagnostic reports the same publisher chunk count. Raw hyper
         // GET (direct `TcpStream::connect`, so ambient proxy settings are never consulted).
@@ -198,7 +199,11 @@ mod tests {
             .body(Empty::<bytes::Bytes>::new())
             .expect("build request");
         let response = sender.send_request(request).await.expect("send request");
-        assert!(response.status().is_success(), "http status {}", response.status());
+        assert!(
+            response.status().is_success(),
+            "http status {}",
+            response.status()
+        );
         let bytes = response
             .into_body()
             .collect()
