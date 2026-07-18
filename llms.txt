@@ -419,9 +419,10 @@ Execution and scheduling:
 - [`specs/velo-hub.md`](specs/velo-hub.md) — the per-experiment control-plane hub
   (`aiperf_runtime::hub`, `cellular` feature): a plugin trait whose plugins each
   contribute an HTTP router and velo handlers backed by one shared handler
-  function, the discovery connect-by-endpoint plugin, the cell↔controller and
-  `/artifact` plugins that fold the standalone velo planes onto the hub, and the
-  `AIPERF_CELLULAR_HUB` bootstrap toggle in `engine::cellular_controller`.
+  function, the discovery connect-by-endpoint plugin, and the cell↔controller,
+  `/artifact`, `/dataset` (fan-out), and `/phaser` plugins that fold every standalone
+  velo plane onto the hub, and the `AIPERF_CELLULAR_HUB` bootstrap toggle in
+  `engine::cellular_controller`.
 
 Transports:
 

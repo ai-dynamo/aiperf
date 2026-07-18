@@ -185,6 +185,33 @@ out after registration. Its velo surface is inherently peer-registration + strea
 coordination with no faithful plain-HTTP mirror, so the HTTP surface is a diagnostic
 `GET /cell/status`; the full protocol stays on velo.
 
+### The `/dataset` plugin (dataset fan-out plane fold-in)
+
+`DatasetHubPlugin` (prefix `/dataset`) re-homes the velo dataset fan-out data plane onto
+the hub. Its `register_velo_handlers` installs the exact `aiperf.dataset.subscribe` /
+`aiperf.dataset.chunk` handlers via `cellular::transport::dataset_velo::DatasetServer::
+bind`, serving the same `DatasetPublisher` the bootstrap fills and finalizes — cells
+subscribe over the one hub anchor and build their owned index unchanged; only the mount
+point moves. The bound `DatasetServer` is retained inside the plugin, but the handlers
+and their per-cell pump tasks ride the hub velo instance the `HubServer` holds, so they
+survive the plugin's drop at `Hub::serve`. The HTTP surface is a dual-surface diagnostic:
+`GET /dataset/status` reports the two handler names plus the publisher's live
+`chunk_count`, so the same publisher state the velo subscribe handler replays is
+observable over HTTP. The bulk fan-out (replay + live chunks) stays on velo; the broadcast
+protocol has no faithful plain-axum mirror and is not duplicated.
+
+### The `/phaser` plugin (phaser control plane fold-in)
+
+`PhaserHubPlugin` (prefix `/phaser`) re-homes the velo monotonic-phaser control plane onto
+the hub. Its `register_velo_handlers` installs the exact `aiperf.phaser.subscribe` /
+`aiperf.phaser.event` handlers via `cellular::transport::phaser_velo::PhaserServer::bind`,
+serving the same `Phaser` the bootstrap `advance`s — cells subscribe over the hub anchor
+and observe replay-then-live generations unchanged. As with `/dataset`, the bound
+`PhaserServer` is retained inside the plugin while the handlers and pump tasks ride the hub
+velo the `HubServer` holds. `GET /phaser/status` is the dual-surface diagnostic: the two
+handler names plus the phaser's live `current_generation`, the same state the velo
+subscribe handler replays.
+
 ### Hub bootstrap wiring and the `AIPERF_CELLULAR_HUB` toggle
 
 `engine::cellular_controller` gates the hub path on `AIPERF_CELLULAR_HUB`
@@ -193,30 +220,35 @@ standalone planes: the `VeloControllerTransport` binds directly on the control-p
 velo and the velo artifact receiver (when per-record artifacts ride velo) registers
 directly. When on, `build_cellular_hub` stands up ONE `Hub` over the same control-plane
 velo instance, mounting the cell↔controller plugin, the `/artifact` plugin (only when
-`http_shipping && velo_artifacts`), and the discovery plugin (advertising the mounted
-prefixes and the hub's dial-able endpoint), then serves the co-bound axum diagnostic
-surface (`AIPERF_CELLULAR_HUB_HTTP_BIND`, default loopback `:0`). The captured
-transport + artifact receiver flow back into the unchanged collect/barrier/merge loop,
-and the served `HubServer` is held for the run. Cells reach the hub by the identical
-`tcp://HOST:PORT` velo coordinate either way — the hub IS the connect anchor the
-controller already is, so no cell-side change is needed. The `test_cellular_hub_mode_
-matches_default_velo_path` e2e proves a hub-mode 3-cell velo run is wire- and
-data-equivalent (byte-identical `inputs.json`, identical records/raw/outputs row sets,
-per-cell velo observables) to the default standalone velo path.
+`http_shipping && velo_artifacts`), the `/phaser` plugin (only when `AIPERF_CELL_PHASER_
+START` is set), the `/dataset` plugin (only when `AIPERF_CELL_DATASET_FANOUT` is set), and
+the discovery plugin (advertising the mounted prefixes and the hub's dial-able endpoint),
+then serves the co-bound axum diagnostic surface (`AIPERF_CELLULAR_HUB_HTTP_BIND`, default
+loopback `:0`). In hub mode the standalone `PhaserServer::bind` / `DatasetServer::bind`
+calls are skipped (the plugins bind the identical servers on the hub velo); the phaser is
+still `advance`d and the publisher still filled + finalized by the bootstrap, unchanged.
+The captured transport + artifact receiver flow back into the unchanged collect/barrier/
+merge loop, and the served `HubServer` is held for the run. With the phaser and dataset
+planes mounted, a hub-mode run is a complete replacement of the standalone control/data
+planes on the one anchor. Cells reach the hub by the identical `tcp://HOST:PORT` velo
+coordinate either way — the hub IS the connect anchor the controller already is, so no
+cell-side change is needed. The `test_cellular_hub_mode_matches_default_velo_path` e2e
+proves a hub-mode 3-cell velo run is wire- and data-equivalent (byte-identical
+`inputs.json`, identical records/raw/outputs row sets, per-cell velo observables) to the
+default standalone velo path, and `test_cellular_hub_mode_dataset_fanout_and_phaser_
+matches_standalone` proves the same equivalence with the dataset fan-out + phaser planes
+active on both anchors.
 
 ## Future requirements
 
-The vertical slice and all three original fold-ins are delivered. Remaining additive
-work (not blocking):
+The vertical slice, all three original fold-ins, and the dataset fan-out + phaser control
+planes are delivered — under `AIPERF_CELLULAR_HUB` every cellular control/data plane rides
+the one hub anchor. Remaining additive work (not blocking):
 
 - **Retire the raw-hyper `:9600` artifact server.** The velo artifact plane is folded
   into the hub, but the HTTP-transport artifact path (`engine::artifact_shipping`) still
   binds its own server when `http_upload` is selected. Folding those upload/dataset
   routes onto the hub's axum surface would retire the second port entirely.
-- **Hub-mode dataset fan-out and phaser planes.** `AIPERF_CELL_DATASET_FANOUT` and
-  `AIPERF_CELL_PHASER_START` still bind their servers directly on the control-plane velo
-  even under `AIPERF_CELLULAR_HUB`; they could become hub plugins for a single unified
-  anchor.
 
 ## Source anchors
 
@@ -230,11 +262,18 @@ work (not blocking):
   `engine`-gated), the `ReceiverSlot` capture, and the hub-anchor streaming test.
 - `rust/runtime/src/hub/cell_controller.rs` — `CellControllerHubPlugin` (prefix
   `/cell`), the `TransportSlot` capture, and the hub-anchor register test.
+- `rust/runtime/src/hub/dataset.rs` — `DatasetHubPlugin` (prefix `/dataset`), wrapping
+  `DatasetServer`, its `GET /dataset/status` diagnostic, and the hub-anchor fan-out test.
+- `rust/runtime/src/hub/phaser.rs` — `PhaserHubPlugin` (prefix `/phaser`), wrapping
+  `PhaserServer`, its `GET /phaser/status` diagnostic, and the hub-anchor phaser test.
 - `rust/runtime/src/engine/cellular_controller.rs` — the `AIPERF_CELLULAR_HUB`
-  toggle (`CELLULAR_HUB_ENV`), `build_cellular_hub`, and the hub-mode bootstrap
+  toggle (`CELLULAR_HUB_ENV`), `build_cellular_hub` (mounting the cell↔controller,
+  `/artifact`, `/phaser`, `/dataset`, and discovery plugins), and the hub-mode bootstrap
   round-trip test.
 - `rust/e2e/tests/test_cellular_velo_shipping.rs` —
-  `test_cellular_hub_mode_matches_default_velo_path`, the hub-vs-default parity e2e.
+  `test_cellular_hub_mode_matches_default_velo_path`, the hub-vs-default parity e2e, and
+  `test_cellular_hub_mode_dataset_fanout_and_phaser_matches_standalone`, the complete
+  hub-mode (dataset fan-out + phaser) parity e2e.
 - `rust/runtime/src/cellular/transport/connect.rs` — reused `build_velo`,
   `BindSpec`, `parse_endpoint`, `connect_controller`.
 - `rust/runtime/src/engine/artifact_shipping.rs` — the HTTP+zstd artifact plane
