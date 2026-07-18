@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { usePrefersReducedMotion } from "./diagram/usePrefersReducedMotion";
 import { narrationSupported, stopNarration, unlockSpeech } from "./narration";
-import type { DeckDefinition } from "./types";
+import type { DeckDefinition, SlideDefinition } from "./types";
 import { slideNarrations } from "./types";
 import {
   formatSlideDuration,
@@ -24,6 +25,14 @@ import {
   useHostTheme,
 } from "./ui";
 
+type MentalModelProps = {
+  slideIndex: number;
+  slide: SlideDefinition;
+  playing: boolean;
+  restartKey: number;
+  reducedMotion: boolean;
+};
+
 export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
   const t = useHostTheme();
   const location = useLocation();
@@ -40,12 +49,14 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
   const [voiceURI, setVoiceURI] = useCanvasState<string>(storagePrefix, "voice", "");
   const [started, setStarted] = useState(false);
   const [restartKey, setRestartKey] = useState(0);
+  const reducedMotion = usePrefersReducedMotion();
   const voices = useSpeechVoices();
   const index = Number.isInteger(stored) && stored >= 0 && stored < slides.length ? stored : 0;
   const slide = slides[index];
   const speechAvailable = narrationSupported();
   const FinalCard = deck.FinalCard;
-  const MentalModel = deck.MentalModel;
+  // Deck MentalModels may ignore playback props; SceneRenderer wrappers consume them.
+  const MentalModel = deck.MentalModel as (props: MentalModelProps) => ReactNode;
 
   useEffect(() => {
     stopNarration();
@@ -259,7 +270,13 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
         <Divider />
 
         <div key={`slide-${index}-${restartKey}`} className={`${classPrefix}-stage ${classPrefix}-slide`}>
-          <MentalModel slideIndex={index} slide={slide} />
+          <MentalModel
+            slideIndex={index}
+            slide={slide}
+            playing={started && playing}
+            restartKey={restartKey}
+            reducedMotion={reducedMotion}
+          />
           <Subtitles
             text={slide.narration}
             activeWordIndex={activeWordIndex}
