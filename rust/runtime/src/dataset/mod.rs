@@ -77,8 +77,8 @@ pub use synthesis::{
     PrefixTraceSynthesizer, TraceSynthesisConfig, TraceSynthesisRecord, TraceSynthesizer,
 };
 pub use tokenizer::{
-    HuggingFaceTokenizer, NativeTiktokenTokenizer, TextTokenizer, TiktokenEncoding,
-    TiktokenTokenizer, find_tiktoken_model_file,
+    HuggingFaceTokenizer, NativeTiktokenTokenizer, ServerTokenizer, TextTokenizer,
+    TiktokenEncoding, TiktokenTokenizer, find_tiktoken_model_file,
 };
 pub mod loader;
 pub mod media;

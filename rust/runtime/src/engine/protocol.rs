@@ -97,6 +97,16 @@ pub struct TokenizerSpec {
     /// Count chat-shaped request bodies through the tokenizer's chat template.
     #[serde(default)]
     pub apply_chat_template: bool,
+    /// Opt-in server-side tokenizer origin (e.g. `http://host:8000`).
+    ///
+    /// When set, tokenization is offloaded to the server's `/tokenize` and
+    /// `/detokenize` endpoints instead of a local encoding, and [`name`] is
+    /// only used as the diagnostic model selector. Absent by default, which
+    /// keeps the local built-in / Hugging Face path in force.
+    ///
+    /// [`name`]: Self::name
+    #[serde(default)]
+    pub server_url: Option<String>,
 }
 
 impl Default for TokenizerSpec {
@@ -104,6 +114,7 @@ impl Default for TokenizerSpec {
         Self {
             name: default_tokenizer_name(),
             apply_chat_template: false,
+            server_url: None,
         }
     }
 }
