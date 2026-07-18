@@ -1,0 +1,488 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+flow "Request lifecycle: queue to record" as request-lifecycle-cinematic {
+  language 1
+
+  require core.rect "^1.0.0"
+  require core.connector "^1.0.0"
+  require core.camera "^1.0.0"
+  require core.timeline "^1.0.0"
+  require core.inspect "^1.0.0"
+  require viz.queue "^1.0.0"
+  require viz.waterfall "^1.0.0"
+
+  token background = "#07111f"
+  token surface = "#12233b"
+  token surface-strong = "#1d3557"
+  token request = "#76b900"
+  token transport = "#38bdf8"
+  token model = "#a78bfa"
+  token stream = "#f59e0b"
+  token observer = "#f472b6"
+  token evidence = "#dbeafe"
+  token relation = "#6b8db5"
+
+  scene "One request, seven distinct lifecycle boundaries" as lifecycle {
+    summary "A request crosses admission, transport, model, stream, and observation boundaries while a synchronized waterfall preserves five distinct evidence timestamps."
+
+    Queue(
+      capabilityId = "viz.queue",
+      id = "admission-queue-component",
+      label = "Admission queue for request req-017",
+      policy = "fifo",
+      capacity = 3,
+      request = { id: "req-017", arriveAt: 1200, serviceMs: 1800 }
+    )
+
+    Waterfall(
+      capabilityId = "viz.waterfall",
+      id = "request-waterfall-component",
+      label = "Request req-017 lifecycle waterfall",
+      requestId = "req-017",
+      arrivalAt = 1200,
+      admissionAt = 3000,
+      firstTokenAt = 6700,
+      terminalAt = 9300,
+      recordAt = 10400,
+      lanes = { arrival: "arrival", admission: "admission", firstToken: "first-token", terminal: "terminal", record: "record" }
+    )
+
+    rect client {
+      x 80
+      y 170
+      width 190
+      height 96
+      fill token(surface)
+      label "Client"
+      role "group"
+      description "Stable entity client sends request req-017."
+      fallback "Client sends request req-017."
+    }
+
+    rect queue {
+      x 350
+      y 170
+      width 210
+      height 96
+      fill token(surface-strong)
+      label "Admission queue"
+      role "list"
+      description "FIFO admission queue with capacity three; req-017 waits here between arrival and admission."
+      fallback "Admission queue: req-017 waits from 1200 to 3000 milliseconds."
+    }
+
+    rect transport-boundary {
+      x 640
+      y 170
+      width 210
+      height 96
+      fill token(transport)
+      label "HTTP transport"
+      role "group"
+      description "Transport serializes and dispatches the admitted request."
+      fallback "HTTP transport dispatches req-017."
+    }
+
+    rect model {
+      x 930
+      y 170
+      width 210
+      height 96
+      fill token(model)
+      label "Inference model"
+      role "group"
+      description "The model begins service after admission and produces the first token."
+      fallback "Inference model serves req-017."
+    }
+
+    rect stream {
+      x 1220
+      y 170
+      width 210
+      height 96
+      fill token(stream)
+      label "Token stream"
+      role "group"
+      description "The stream exposes first-token and terminal boundaries without conflating them."
+      fallback "Token stream starts at 6700 and terminates at 9300 milliseconds."
+    }
+
+    rect observer {
+      x 1510
+      y 170
+      width 210
+      height 96
+      fill token(observer)
+      label "Request observer"
+      role "group"
+      description "The observer receives lifecycle events and emits the final record after terminal processing."
+      fallback "Observer records req-017 at 10400 milliseconds."
+    }
+
+    connector submit {
+      from client
+      to queue
+      label "submit req-017"
+      stroke token(relation)
+      fallback "Client submits req-017 to the admission queue."
+    }
+
+    connector admit {
+      from queue
+      to transport-boundary
+      label "admit at 3000 ms"
+      stroke token(request)
+      fallback "The queue admits req-017 at 3000 milliseconds."
+    }
+
+    connector dispatch {
+      from transport-boundary
+      to model
+      label "dispatch"
+      stroke token(transport)
+      fallback "HTTP transport dispatches req-017 to the model."
+    }
+
+    connector emit {
+      from model
+      to stream
+      label "emit tokens"
+      stroke token(model)
+      fallback "The model emits tokens into the response stream."
+    }
+
+    connector observe {
+      from stream
+      to observer
+      label "observe lifecycle"
+      stroke token(observer)
+      fallback "The observer receives first-token and terminal events from the stream."
+    }
+
+    rect request-arrived {
+      x 382
+      y 196
+      width 56
+      height 44
+      fill token(request)
+      label "req-017 arrived"
+      role "listitem"
+      description "Request chip snapshot at the queue when arrival is 1200 milliseconds."
+      fallback "req-017 arrives at 1200 milliseconds."
+    }
+
+    rect request-admitted {
+      x 686
+      y 196
+      width 56
+      height 44
+      fill token(request)
+      label "req-017 admitted"
+      role "listitem"
+      description "Request chip snapshot crossing transport after admission at 3000 milliseconds."
+      fallback "req-017 is admitted at 3000 milliseconds."
+    }
+
+    rect request-in-model {
+      x 976
+      y 196
+      width 56
+      height 44
+      fill token(request)
+      label "req-017 in model"
+      role "listitem"
+      description "Request chip snapshot while the model is serving the request."
+      fallback "req-017 is served by the model."
+    }
+
+    rect request-streaming {
+      x 1266
+      y 196
+      width 56
+      height 44
+      fill token(request)
+      label "req-017 streaming"
+      role "listitem"
+      description "Request chip snapshot at first token, 6700 milliseconds."
+      fallback "req-017 produces its first token at 6700 milliseconds."
+    }
+
+    rect request-recorded {
+      x 1556
+      y 196
+      width 56
+      height 44
+      fill token(request)
+      label "req-017 recorded"
+      role "listitem"
+      description "Request chip snapshot after terminal at 9300 and final record at 10400 milliseconds."
+      fallback "req-017 terminates at 9300 and is recorded at 10400 milliseconds."
+    }
+
+    rect waterfall-panel {
+      x 120
+      y 380
+      width 1120
+      height 390
+      fill token(background)
+      label "Synchronized request waterfall"
+      role "table"
+      description "Five ordered lanes preserve arrival, admission, first-token, terminal, and record as separate evidence-backed events."
+      fallback "Waterfall lanes: arrival 1200; admission 3000; first token 6700; terminal 9300; record 10400 milliseconds."
+    }
+
+    rect evidence-arrival {
+      x 170
+      y 430
+      width 180
+      height 52
+      fill token(evidence)
+      label "Arrival evidence"
+      role "row"
+      description "Evidence ID ev-arrival-req-017, captured from the scheduler at 1200 milliseconds."
+      fallback "ev-arrival-req-017: scheduler arrival at 1200 milliseconds."
+    }
+
+    rect evidence-admission {
+      x 385
+      y 490
+      width 180
+      height 52
+      fill token(evidence)
+      label "Admission evidence"
+      role "row"
+      description "Evidence ID ev-admission-req-017, captured when service begins at 3000 milliseconds."
+      fallback "ev-admission-req-017: admission at 3000 milliseconds."
+    }
+
+    rect evidence-first-token {
+      x 600
+      y 550
+      width 180
+      height 52
+      fill token(evidence)
+      label "First-token evidence"
+      role "row"
+      description "Evidence ID ev-first-token-req-017, the first observed output token at 6700 milliseconds."
+      fallback "ev-first-token-req-017: first token at 6700 milliseconds."
+    }
+
+    rect evidence-terminal {
+      x 815
+      y 610
+      width 180
+      height 52
+      fill token(evidence)
+      label "Terminal evidence"
+      role "row"
+      description "Evidence ID ev-terminal-req-017, terminal stream event at 9300 milliseconds."
+      fallback "ev-terminal-req-017: terminal event at 9300 milliseconds."
+    }
+
+    rect evidence-record {
+      x 1030
+      y 670
+      width 180
+      height 52
+      fill token(evidence)
+      label "Record evidence"
+      role "row"
+      description "Evidence ID ev-record-req-017, finalized measurement record at 10400 milliseconds."
+      fallback "ev-record-req-017: final record at 10400 milliseconds."
+    }
+
+    rect caption-establish {
+      x 1320
+      y 400
+      width 400
+      height 70
+      fill token(surface)
+      label "Caption: establish"
+      role "note"
+      description "Establish: one request crosses a live inference topology."
+      fallback "Caption: One request crosses a live inference topology."
+    }
+
+    rect caption-teach {
+      x 1320
+      y 490
+      width 400
+      height 70
+      fill token(surface)
+      label "Caption: teach"
+      role "note"
+      description "Teach: arrival, admission, and first token are separate boundaries."
+      fallback "Caption: Arrival, admission, and first token are separate boundaries."
+    }
+
+    rect caption-inspect {
+      x 1320
+      y 580
+      width 400
+      height 70
+      fill token(surface)
+      label "Caption: inspect"
+      role "note"
+      description "Inspect: pause at the evidence-backed waterfall and navigate each timestamp."
+      fallback "Caption: Inspect the evidence-backed waterfall."
+    }
+
+    rect caption-transition {
+      x 1320
+      y 670
+      width 400
+      height 70
+      fill token(surface)
+      label "Caption: transition"
+      role "note"
+      description "Transition: terminal precedes record finalization; the distinction survives every backend."
+      fallback "Caption: Terminal precedes final record creation."
+    }
+
+    rect reduced-motion-policy {
+      x 120
+      y 810
+      width 500
+      height 64
+      fill token(surface)
+      label "Reduced-motion policy"
+      role "note"
+      description "When reduced motion is requested, preserve cue order and semantic state using cuts instead of traced movement."
+      fallback "Reduced motion preserves all lifecycle events and uses cuts."
+    }
+
+    rect fallback-policy {
+      x 660
+      y 810
+      width 580
+      height 64
+      fill token(surface)
+      label "Fallback policy"
+      role "note"
+      description "SVG or HTML fallback preserves stable entities, relations, evidence, captions, narration, focus, and inspection."
+      fallback "Fallback keeps topology, waterfall timestamps, evidence, narration, and inspection."
+    }
+
+    camera lesson-camera {
+      at 0 frame client,observer zoom 0.82
+      at 2800 frame queue,transport-boundary zoom 1.28
+      at 6200 frame model,stream zoom 1.22
+      at 9500 frame waterfall-panel zoom 1.08
+      at 11200 frame observer,evidence-record zoom 1.15
+      at 12600 frame client,observer zoom 0.82
+    }
+
+    timeline establish {
+      at 0 reveal client duration 350
+      at 400 reveal queue duration 350
+      at 800 trace submit duration 400
+      at 1200 reveal request-arrived duration 300
+      at 1500 reveal caption-establish duration 250
+    }
+
+    timeline teach {
+      at 3000 reveal request-admitted duration 300
+      at 3300 trace admit duration 450
+      at 3900 trace dispatch duration 600
+      at 4700 reveal request-in-model duration 300
+      at 5600 trace emit duration 700
+      at 6700 reveal request-streaming duration 300
+      at 7000 reveal caption-teach duration 250
+    }
+
+    timeline inspect {
+      at 7600 reveal waterfall-panel duration 350
+      at 8000 reveal evidence-arrival duration 200
+      at 8250 reveal evidence-admission duration 200
+      at 8500 reveal evidence-first-token duration 200
+      at 8750 reveal evidence-terminal duration 200
+      at 9000 reveal evidence-record duration 200
+      at 9300 reveal caption-inspect duration 250
+    }
+
+    timeline transition {
+      at 9600 trace observe duration 500
+      at 10400 reveal request-recorded duration 300
+      at 10800 reveal caption-transition duration 250
+      at 11300 reveal reduced-motion-policy duration 250
+      at 11600 reveal fallback-policy duration 250
+    }
+
+    interaction inspect-queue {
+      on select queue
+      do inspect queue
+    }
+
+    interaction inspect-waterfall {
+      on select waterfall-panel
+      do inspect waterfall-panel
+    }
+
+    interaction inspect-arrival-evidence {
+      on select evidence-arrival
+      do inspect evidence-arrival
+    }
+
+    interaction inspect-admission-evidence {
+      on select evidence-admission
+      do inspect evidence-admission
+    }
+
+    interaction inspect-first-token-evidence {
+      on select evidence-first-token
+      do inspect evidence-first-token
+    }
+
+    interaction inspect-terminal-evidence {
+      on select evidence-terminal
+      do inspect evidence-terminal
+    }
+
+    interaction inspect-record-evidence {
+      on select evidence-record
+      do inspect evidence-record
+    }
+
+    responsive compact when width < 720 {
+      set client.x = 40
+      set client.y = 100
+      set queue.x = 40
+      set queue.y = 230
+      set transport-boundary.x = 40
+      set transport-boundary.y = 360
+      set model.x = 40
+      set model.y = 490
+      set stream.x = 40
+      set stream.y = 620
+      set observer.x = 40
+      set observer.y = 750
+      set waterfall-panel.x = 290
+      set waterfall-panel.y = 100
+      set waterfall-panel.width = 390
+      set waterfall-panel.height = 650
+      set evidence-arrival.x = 320
+      set evidence-arrival.y = 140
+      set evidence-admission.x = 320
+      set evidence-admission.y = 230
+      set evidence-first-token.x = 320
+      set evidence-first-token.y = 320
+      set evidence-terminal.x = 320
+      set evidence-terminal.y = 410
+      set evidence-record.x = 320
+      set evidence-record.y = 500
+      set caption-inspect.x = 290
+      set caption-inspect.y = 780
+      set reduced-motion-policy.x = 40
+      set reduced-motion-policy.y = 900
+      set fallback-policy.x = 40
+      set fallback-policy.y = 990
+    }
+
+    narrate "Follow request req-017 from client arrival through FIFO admission, HTTP transport, model service, token streaming, and observation. The synchronized waterfall keeps scheduler arrival at 1200 milliseconds, admission at 3000, first token at 6700, terminal at 9300, and final record at 10400 as separate evidence-backed boundaries. At the inspect beat, pause and examine each stable evidence ID before resuming to see why terminal processing must finish before the measurement record exists."
+    reading-order client,submit,queue,request-arrived,admit,transport-boundary,request-admitted,dispatch,model,request-in-model,emit,stream,request-streaming,observe,observer,request-recorded,waterfall-panel,evidence-arrival,evidence-admission,evidence-first-token,evidence-terminal,evidence-record,caption-establish,caption-teach,caption-inspect,caption-transition,reduced-motion-policy,fallback-policy
+    fallback "Request req-017 arrives at 1200 milliseconds, waits in the admission queue until 3000, crosses HTTP transport to the model, produces its first token at 6700, terminates at 9300, and becomes a final observer record at 10400. Stable evidence IDs preserve every boundary. Captions, narration, keyboard reading order, evidence inspection, reduced-motion meaning, and the responsive topology remain available in the semantic and SVG or HTML fallback."
+  }
+}

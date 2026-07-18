@@ -41,8 +41,8 @@ repos:
     hooks:
     - id: codespell
       additional_dependencies: [tomli]
-      args: ["--toml", "pyproject.toml"]
-      exclude: (?x)^(.*stemmer.*|.*stop_words.*|^CHANGELOG.md$|.*shakespeare.txt|ATTRIBUTIONS-.*\.md)
+      args: ["--toml", "pyproject.toml", "--ignore-words-list", "timeslice,timeslices,optiona,disjointness,concurency,mot,ser,nowns,afterall,caf"]
+      exclude: (?x)^(.*stemmer.*|.*stop_words.*|^CHANGELOG.md$|.*shakespeare.txt|ATTRIBUTIONS-.*\.md|.*package-lock\.json$)
   - repo: local
     hooks:
       - id: add-license

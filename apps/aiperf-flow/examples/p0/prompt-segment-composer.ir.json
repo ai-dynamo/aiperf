@@ -1,0 +1,181 @@
+{
+  "irVersion": 1,
+  "id": "prompt-segment-composer",
+  "title": "Prompt segment composer",
+  "capabilities": [
+    { "id": "core.segment-strip", "range": "^1.0.0" },
+    { "id": "core.segment-strip.layout", "range": "^1.0.0" }
+  ],
+  "tokens": {
+    "accent": "#9ece6a",
+    "prefix": "#bb9af7"
+  },
+  "scenes": [
+    {
+      "id": "main",
+      "title": "Seven segment prompt",
+      "summary": "A multimodal prompt assembled from seven ordered segments with prefix reuse and truncation.",
+      "roots": [
+        {
+          "kind": "component",
+          "id": "prompt-strip",
+          "capabilityId": "core.segment-strip",
+          "props": {
+            "segments": [
+              { "id": "seg-system", "tokens": 12, "role": "system" },
+              { "id": "seg-prefix", "tokens": 48, "role": "prefix", "reused": true },
+              { "id": "seg-user", "tokens": 24, "role": "user" },
+              { "id": "seg-image", "tokens": 0, "role": "image" },
+              { "id": "seg-tool", "tokens": 18, "role": "tool" },
+              { "id": "seg-assistant", "tokens": 16, "role": "assistant" },
+              { "id": "seg-tail", "tokens": 8, "role": "tail", "truncated": true }
+            ],
+            "layout": {
+              "originX": 0,
+              "originY": 0,
+              "rowHeight": 24,
+              "gap": 4,
+              "unitWidth": 2,
+              "seed": 42
+            }
+          },
+          "semanticModel": {
+            "entities": [
+              { "id": "seg-system", "label": "System", "kind": "segment" },
+              { "id": "seg-prefix", "label": "Warm prefix", "kind": "segment" },
+              { "id": "seg-user", "label": "User", "kind": "segment" },
+              { "id": "seg-image", "label": "Image", "kind": "segment" },
+              { "id": "seg-tool", "label": "Tool", "kind": "segment" },
+              { "id": "seg-assistant", "label": "Assistant", "kind": "segment" },
+              { "id": "seg-tail", "label": "Tail", "kind": "segment" }
+            ],
+            "relations": [
+              { "id": "compose-0", "from": "seg-system", "to": "seg-prefix", "kind": "precedes" },
+              { "id": "compose-1", "from": "seg-prefix", "to": "seg-user", "kind": "precedes" },
+              { "id": "compose-2", "from": "seg-user", "to": "seg-image", "kind": "precedes" },
+              { "id": "compose-3", "from": "seg-image", "to": "seg-tool", "kind": "precedes" },
+              { "id": "compose-4", "from": "seg-tool", "to": "seg-assistant", "kind": "precedes" },
+              { "id": "compose-5", "from": "seg-assistant", "to": "seg-tail", "kind": "precedes" }
+            ],
+            "morphs": []
+          },
+          "layoutPlan": {
+            "version": 1,
+            "nodes": [
+              {
+                "nodeId": "seg-system",
+                "bounds": { "x": 0, "y": 0, "width": 24, "height": 24 }
+              },
+              {
+                "nodeId": "seg-prefix",
+                "bounds": { "x": 28, "y": 0, "width": 96, "height": 24 },
+                "continuation": true
+              },
+              {
+                "nodeId": "seg-user",
+                "bounds": { "x": 128, "y": 0, "width": 48, "height": 24 }
+              },
+              {
+                "nodeId": "seg-image",
+                "bounds": { "x": 180, "y": 0, "width": 2, "height": 24 }
+              },
+              {
+                "nodeId": "seg-tool",
+                "bounds": { "x": 186, "y": 0, "width": 36, "height": 24 }
+              },
+              {
+                "nodeId": "seg-assistant",
+                "bounds": { "x": 226, "y": 0, "width": 32, "height": 24 }
+              },
+              {
+                "nodeId": "seg-tail",
+                "bounds": { "x": 262, "y": 0, "width": 16, "height": 24 },
+                "clip": true
+              }
+            ],
+            "routes": []
+          },
+          "children": [],
+          "geometry": { "x": 0, "y": 0, "width": 278, "height": 24 },
+          "style": { "fill": "#1a1b26" },
+          "accessibility": {
+            "label": "Prompt segment strip",
+            "description": "Seven ordered prompt segments with prefix reuse overlay"
+          },
+          "fallback": "System, reused prefix, user, image, tool, assistant, and truncated tail segments.",
+          "sourceMap": {
+            "source": "prompt-segment-composer.flow",
+            "start": { "offset": 40, "line": 3, "column": 3 },
+            "end": { "offset": 320, "line": 18, "column": 4 }
+          }
+        }
+      ],
+      "camera": [
+        {
+          "id": "main-0",
+          "at": 0,
+          "x": 139,
+          "y": 12,
+          "zoom": 1,
+          "sourceMap": {
+            "source": "prompt-segment-composer.flow",
+            "start": { "offset": 330, "line": 20, "column": 5 },
+            "end": { "offset": 370, "line": 20, "column": 45 }
+          }
+        }
+      ],
+      "timeline": [
+        {
+          "id": "primary-0",
+          "at": 0,
+          "duration": 800,
+          "target": "prompt-strip",
+          "action": "reveal",
+          "sourceMap": {
+            "source": "prompt-segment-composer.flow",
+            "start": { "offset": 380, "line": 22, "column": 7 },
+            "end": { "offset": 440, "line": 22, "column": 67 }
+          }
+        }
+      ],
+      "narration": "Seven prompt segments compose one endpoint body, highlighting prefix reuse and truncation.",
+      "interactions": [
+        {
+          "id": "inspect-prefix",
+          "event": "select",
+          "target": "seg-prefix",
+          "action": "inspect",
+          "sourceMap": {
+            "source": "prompt-segment-composer.flow",
+            "start": { "offset": 450, "line": 24, "column": 5 },
+            "end": { "offset": 510, "line": 24, "column": 65 }
+          }
+        }
+      ],
+      "responsive": [],
+      "accessibility": {
+        "label": "Prompt segment composer scene",
+        "readingOrder": [
+          "seg-system",
+          "seg-prefix",
+          "seg-user",
+          "seg-image",
+          "seg-tool",
+          "seg-assistant",
+          "seg-tail"
+        ]
+      },
+      "fallback": "Ordered prompt segments: system, prefix, user, image, tool, assistant, tail.",
+      "sourceMap": {
+        "source": "prompt-segment-composer.flow",
+        "start": { "offset": 0, "line": 1, "column": 1 },
+        "end": { "offset": 540, "line": 26, "column": 2 }
+      }
+    }
+  ],
+  "sourceMap": {
+    "source": "prompt-segment-composer.flow",
+    "start": { "offset": 0, "line": 1, "column": 1 },
+    "end": { "offset": 540, "line": 26, "column": 2 }
+  }
+}

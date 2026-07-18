@@ -1,0 +1,166 @@
+{
+  "irVersion": 1,
+  "id": "request-lifecycle-waterfall",
+  "title": "Request lifecycle waterfall",
+  "capabilities": [
+    { "id": "viz.waterfall", "range": "^1.0.0" },
+    { "id": "viz.waterfall.nest-layout", "range": "^1.0.0" }
+  ],
+  "tokens": {
+    "accent": "#7dcfff"
+  },
+  "scenes": [
+    {
+      "id": "main",
+      "title": "Request lifecycle",
+      "summary": "Arrival, admission, connect, and first-token events across ordered lifecycle lanes.",
+      "roots": [
+        {
+          "kind": "component",
+          "id": "lifecycle-waterfall",
+          "capabilityId": "viz.waterfall",
+          "props": {
+            "laneOrder": ["arrival", "admission", "connect", "first-token"],
+            "events": [
+              { "id": "ev-arrival", "lane": "arrival", "start": 0, "end": 0 },
+              { "id": "ev-admission", "lane": "admission", "start": 2, "end": 2 },
+              { "id": "ev-connect", "lane": "connect", "start": 2, "end": 18 },
+              { "id": "ev-first-token", "lane": "first-token", "start": 120, "end": 120 }
+            ],
+            "layout": {
+              "originX": 0,
+              "originY": 0,
+              "laneHeight": 16,
+              "laneGap": 4,
+              "pxPerMs": 1
+            }
+          },
+          "semanticModel": {
+            "entities": [
+              { "id": "ev-arrival", "label": "Arrival", "kind": "event" },
+              { "id": "ev-admission", "label": "Admission", "kind": "event" },
+              { "id": "ev-connect", "label": "Connect", "kind": "event" },
+              { "id": "ev-first-token", "label": "First token", "kind": "event" }
+            ],
+            "relations": [
+              { "id": "flow-0", "from": "ev-arrival", "to": "ev-admission", "kind": "precedes" },
+              { "id": "flow-1", "from": "ev-admission", "to": "ev-connect", "kind": "precedes" },
+              { "id": "flow-2", "from": "ev-connect", "to": "ev-first-token", "kind": "precedes" }
+            ],
+            "morphs": []
+          },
+          "layoutPlan": {
+            "version": 1,
+            "nodes": [
+              {
+                "nodeId": "ev-arrival",
+                "bounds": { "x": 0, "y": 0, "width": 1, "height": 16 }
+              },
+              {
+                "nodeId": "ev-admission",
+                "bounds": { "x": 2, "y": 20, "width": 1, "height": 16 }
+              },
+              {
+                "nodeId": "ev-connect",
+                "bounds": { "x": 2, "y": 40, "width": 16, "height": 16 }
+              },
+              {
+                "nodeId": "ev-first-token",
+                "bounds": { "x": 120, "y": 60, "width": 1, "height": 16 }
+              }
+            ],
+            "routes": []
+          },
+          "children": [],
+          "geometry": { "x": 0, "y": 0, "width": 121, "height": 76 },
+          "style": { "stroke": "#7dcfff" },
+          "accessibility": {
+            "label": "Request lifecycle waterfall",
+            "description": "Timeline of arrival through first visible token"
+          },
+          "fallback": "Arrival at 0 ms, admission and connect at 2 ms, connect spans to 18 ms, first token at 120 ms.",
+          "sourceMap": {
+            "source": "request-lifecycle-waterfall.flow",
+            "start": { "offset": 40, "line": 3, "column": 3 },
+            "end": { "offset": 280, "line": 16, "column": 4 }
+          }
+        }
+      ],
+      "camera": [
+        {
+          "id": "main-0",
+          "at": 0,
+          "x": 60,
+          "y": 38,
+          "zoom": 1,
+          "sourceMap": {
+            "source": "request-lifecycle-waterfall.flow",
+            "start": { "offset": 290, "line": 18, "column": 5 },
+            "end": { "offset": 330, "line": 18, "column": 45 }
+          }
+        }
+      ],
+      "timeline": [
+        {
+          "id": "primary-0",
+          "at": 0,
+          "duration": 400,
+          "target": "ev-arrival",
+          "action": "reveal",
+          "sourceMap": {
+            "source": "request-lifecycle-waterfall.flow",
+            "start": { "offset": 340, "line": 20, "column": 7 },
+            "end": { "offset": 400, "line": 20, "column": 67 }
+          }
+        },
+        {
+          "id": "primary-1",
+          "at": 600,
+          "duration": 800,
+          "target": "ev-first-token",
+          "action": "emphasize",
+          "sourceMap": {
+            "source": "request-lifecycle-waterfall.flow",
+            "start": { "offset": 410, "line": 21, "column": 7 },
+            "end": { "offset": 470, "line": 21, "column": 69 }
+          }
+        }
+      ],
+      "narration": "A request arrives, is admitted, connects, and emits its first visible token on distinct lanes.",
+      "interactions": [
+        {
+          "id": "inspect-first-token",
+          "event": "select",
+          "target": "ev-first-token",
+          "action": "inspect",
+          "sourceMap": {
+            "source": "request-lifecycle-waterfall.flow",
+            "start": { "offset": 480, "line": 23, "column": 5 },
+            "end": { "offset": 540, "line": 23, "column": 65 }
+          }
+        }
+      ],
+      "responsive": [],
+      "accessibility": {
+        "label": "Request lifecycle waterfall scene",
+        "readingOrder": [
+          "ev-arrival",
+          "ev-admission",
+          "ev-connect",
+          "ev-first-token"
+        ]
+      },
+      "fallback": "Request lifecycle: arrival, admission, connect interval, first token.",
+      "sourceMap": {
+        "source": "request-lifecycle-waterfall.flow",
+        "start": { "offset": 0, "line": 1, "column": 1 },
+        "end": { "offset": 560, "line": 25, "column": 2 }
+      }
+    }
+  ],
+  "sourceMap": {
+    "source": "request-lifecycle-waterfall.flow",
+    "start": { "offset": 0, "line": 1, "column": 1 },
+    "end": { "offset": 560, "line": 25, "column": 2 }
+  }
+}

@@ -1,0 +1,140 @@
+/* SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+.aiperf-flow__subtitle-overlay {
+  --flow-subtitle-ink: #fff;
+  --flow-subtitle-surface: rgb(3 8 15 / 94%);
+  --flow-subtitle-edge: #78d7ff;
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  pointer-events: none;
+}
+
+.aiperf-flow__subtitle-safe-area {
+  position: absolute;
+  inset-inline: max(5%, env(safe-area-inset-left))
+    max(5%, env(safe-area-inset-right));
+  inset-block-end: max(7%, calc(env(safe-area-inset-bottom) + 1rem));
+  display: flex;
+  justify-content: center;
+}
+
+.aiperf-flow__subtitle-cue {
+  max-width: min(72ch, 86vw);
+  margin: 0;
+  padding: 0.72rem 1.1rem 0.78rem;
+  border-block-start: 0.2rem solid var(--flow-subtitle-edge);
+  color: var(--flow-subtitle-ink);
+  background: var(--flow-subtitle-surface);
+  box-shadow: 0 0.8rem 2rem rgb(0 0 0 / 30%);
+  font-family: Inter, "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-size: clamp(1rem, 1.2vw + 0.65rem, 1.55rem);
+  font-weight: 560;
+  line-height: 1.4;
+  letter-spacing: 0.012em;
+  text-align: center;
+  text-wrap: balance;
+  animation: aiperf-flow-subtitle-in 140ms ease-out both;
+}
+
+.aiperf-flow__subtitle-speaker {
+  display: block;
+  margin-block-end: 0.18rem;
+  color: var(--flow-subtitle-edge);
+  font-family: "IBM Plex Mono", "Cascadia Code", monospace;
+  font-size: 0.68em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.aiperf-flow__subtitle-control {
+  position: absolute;
+  inset-block-start: max(0.75rem, env(safe-area-inset-top));
+  inset-inline-end: max(0.75rem, env(safe-area-inset-right));
+  min-width: 2.75rem;
+  color: var(--flow-subtitle-ink);
+  background: var(--flow-subtitle-surface);
+  border-color: var(--flow-subtitle-edge);
+  font-family: "IBM Plex Mono", "Cascadia Code", monospace;
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  pointer-events: auto;
+}
+
+.aiperf-flow__subtitle-control[aria-pressed="true"] {
+  color: #03111b;
+  background: var(--flow-subtitle-edge);
+}
+
+.aiperf-flow__subtitle-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.aiperf-flow__subtitle-overlay[data-contrast="high"] {
+  --flow-subtitle-ink: #fff;
+  --flow-subtitle-surface: #000;
+  --flow-subtitle-edge: #ffea00;
+}
+
+.aiperf-flow__subtitle-overlay[data-reduced-motion="true"]
+  .aiperf-flow__subtitle-cue {
+  animation: none;
+}
+
+@keyframes aiperf-flow-subtitle-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.35rem);
+  }
+}
+
+@media (width < 720px) {
+  .aiperf-flow__subtitle-safe-area {
+    inset-inline: max(0.75rem, env(safe-area-inset-left))
+      max(0.75rem, env(safe-area-inset-right));
+    inset-block-end: max(4.5%, calc(env(safe-area-inset-bottom) + 0.65rem));
+  }
+
+  .aiperf-flow__subtitle-cue {
+    width: 100%;
+    max-width: none;
+    padding: 0.58rem 0.75rem 0.64rem;
+    font-size: clamp(0.92rem, 4.4vw, 1.16rem);
+    line-height: 1.32;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .aiperf-flow__subtitle-overlay {
+    --flow-subtitle-ink: #fff;
+    --flow-subtitle-surface: #000;
+    --flow-subtitle-edge: #ffea00;
+  }
+}
+
+@media (forced-colors: active) {
+  .aiperf-flow__subtitle-cue,
+  .aiperf-flow__subtitle-control {
+    color: CanvasText;
+    background: Canvas;
+    border-color: Highlight;
+    forced-color-adjust: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aiperf-flow__subtitle-cue {
+    animation: none;
+  }
+}

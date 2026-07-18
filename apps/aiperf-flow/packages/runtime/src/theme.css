@@ -1,0 +1,309 @@
+/* SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+.aiperf-flow {
+  --flow-ink: #eef4ff;
+  --flow-muted: #91a4be;
+  --flow-plane-deep: #07111f;
+  --flow-plane: #0c1a2c;
+  --flow-plane-raised: #13243a;
+  --flow-control: #68a8ff;
+  --flow-execution: #75d59b;
+  --flow-danger: #ff9c9c;
+  --flow-safe-inline: max(1rem, env(safe-area-inset-left, 0px));
+  --flow-safe-block: max(0.75rem, env(safe-area-inset-top, 0px));
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 0;
+  color: var(--flow-ink);
+  background:
+    linear-gradient(115deg, rgb(104 168 255 / 8%), transparent 38%),
+    var(--flow-plane-deep);
+  font-family:
+    Inter, "IBM Plex Sans", "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
+.aiperf-flow *,
+.aiperf-flow *::before,
+.aiperf-flow *::after {
+  box-sizing: inherit;
+}
+
+.aiperf-flow__shell {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  min-height: 100vh;
+}
+
+.aiperf-flow__skip-link {
+  position: fixed;
+  z-index: 20;
+  inset-block-start: var(--flow-safe-block);
+  inset-inline-start: var(--flow-safe-inline);
+  padding: 0.55rem 0.8rem;
+  color: var(--flow-plane-deep);
+  background: var(--flow-control);
+  transform: translateY(-160%);
+}
+
+.aiperf-flow__skip-link:focus {
+  transform: translateY(0);
+}
+
+.aiperf-flow__chrome {
+  position: relative;
+  z-index: 2;
+  max-width: min(36rem, calc(100% - 2 * var(--flow-safe-inline)));
+  margin-inline-start: var(--flow-safe-inline);
+}
+
+.aiperf-flow__header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-block-start: var(--flow-safe-block);
+  padding: 0.75rem 0 0.5rem;
+}
+
+.aiperf-flow__header h1 {
+  margin: 0;
+  font-family:
+    "IBM Plex Mono", "Cascadia Code", monospace;
+  font-size: clamp(1.1rem, 2.4vw, 1.85rem);
+  font-weight: 520;
+  letter-spacing: -0.045em;
+}
+
+.aiperf-flow__eyebrow {
+  margin: 0 0 0.35rem;
+  color: var(--flow-control);
+  font-family:
+    "IBM Plex Mono", "Cascadia Code", monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.aiperf-flow__navigation,
+.aiperf-flow__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.aiperf-flow__controls {
+  margin: 0.35rem var(--flow-safe-inline) 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border-inline-start: 0.2rem solid var(--flow-execution);
+  background: rgb(12 26 44 / 88%);
+  backdrop-filter: blur(8px);
+}
+
+.aiperf-flow button {
+  min-height: 2.4rem;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid rgb(104 168 255 / 45%);
+  border-radius: 0.25rem;
+  color: var(--flow-ink);
+  background: var(--flow-plane-raised);
+  font: inherit;
+  cursor: pointer;
+}
+
+.aiperf-flow button:hover:not(:disabled) {
+  border-color: var(--flow-control);
+  background: #19304d;
+}
+
+.aiperf-flow button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.aiperf-flow :focus-visible {
+  outline: 0.18rem solid var(--flow-control);
+  outline-offset: 0.18rem;
+}
+
+.aiperf-flow__controls output {
+  margin-inline-start: auto;
+  color: var(--flow-muted);
+  font-family:
+    "IBM Plex Mono", "Cascadia Code", monospace;
+  font-size: 0.78rem;
+}
+
+.aiperf-flow__stage-region {
+  position: relative;
+  z-index: 1;
+  min-height: min(72vh, 48rem);
+  padding-inline: var(--flow-safe-inline);
+}
+
+.aiperf-flow__scene {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 96rem;
+  min-height: inherit;
+  margin-inline: auto;
+  border: 1px solid rgb(104 168 255 / 20%);
+  background:
+    linear-gradient(rgb(104 168 255 / 5%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(104 168 255 / 5%) 1px, transparent 1px),
+    var(--flow-plane);
+  background-size: 2rem 2rem;
+  box-shadow: 0 2rem 5rem rgb(0 0 0 / 24%);
+}
+
+.aiperf-flow__stage {
+  display: block;
+  width: 100%;
+  min-height: 24rem;
+  max-height: 78vh;
+}
+
+.aiperf-flow__canvas {
+  width: 100%;
+  height: auto;
+  max-height: 78vh;
+  cursor: crosshair;
+}
+
+.aiperf-flow__stage g {
+  cursor: pointer;
+}
+
+.aiperf-flow__semantic-twin {
+  align-self: start;
+  width: min(16rem, 34vw);
+  max-height: 78vh;
+  margin: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  overflow: auto;
+  border: 1px solid rgb(104 168 255 / 28%);
+  background: rgb(7 17 31 / 92%);
+  color: var(--flow-ink);
+}
+
+.aiperf-flow__semantic-twin--compact {
+  width: min(12.5rem, 30vw);
+  font-size: 0.85rem;
+}
+
+.aiperf-flow__semantic-entities,
+.aiperf-flow__semantic-relations {
+  margin: 0;
+  padding-inline-start: 1.1rem;
+}
+
+.aiperf-flow__semantic-entities {
+  margin-block-end: 0.75rem;
+}
+
+.aiperf-flow__semantic-twin button {
+  width: 100%;
+  min-height: 1.9rem;
+  margin-block: 0.2rem;
+  text-align: start;
+}
+
+.aiperf-flow__connector-label {
+  fill: var(--flow-muted);
+  font-family:
+    "IBM Plex Mono", "Cascadia Code", monospace;
+  font-size: 0.72rem;
+  text-anchor: middle;
+}
+
+.aiperf-flow__inspector {
+  position: absolute;
+  z-index: 3;
+  inset-block: 1rem;
+  inset-inline-end: 1rem;
+  width: min(20rem, calc(100% - 2rem));
+  padding: 1rem;
+  border: 1px solid rgb(117 213 155 / 52%);
+  background: rgb(7 17 31 / 94%);
+  box-shadow: -1rem 1rem 2.5rem rgb(0 0 0 / 32%);
+}
+
+.aiperf-flow__inspector strong {
+  color: var(--flow-execution);
+  font-family:
+    "IBM Plex Mono", "Cascadia Code", monospace;
+}
+
+.aiperf-flow__node-fallback,
+.aiperf-flow__scene-fallback,
+.aiperf-flow__transcript,
+.aiperf-flow__narration-highlight {
+  color: var(--flow-muted);
+  background: var(--flow-plane);
+}
+
+.aiperf-flow__scene-fallback,
+.aiperf-flow__transcript,
+.aiperf-flow__narration-highlight {
+  max-width: 96rem;
+  margin: 0.75rem var(--flow-safe-inline);
+  padding: 1rem;
+  border-inline-start: 0.2rem solid var(--flow-control);
+}
+
+.aiperf-flow__error-detail,
+.aiperf-flow__site-error p:first-of-type {
+  color: var(--flow-danger);
+}
+
+.aiperf-flow__transcript h2 {
+  margin-block-start: 0;
+  color: var(--flow-ink);
+  font-family:
+    "IBM Plex Mono", "Cascadia Code", monospace;
+  font-size: 0.9rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+@media (width < 720px) {
+  .aiperf-flow__header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .aiperf-flow__navigation button {
+    flex: 1;
+  }
+
+  .aiperf-flow__scene {
+    grid-template-columns: 1fr;
+  }
+
+  .aiperf-flow__semantic-twin,
+  .aiperf-flow__semantic-twin--compact {
+    width: auto;
+    max-height: 12rem;
+  }
+
+  .aiperf-flow__stage {
+    min-height: 14rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aiperf-flow *,
+  .aiperf-flow *::before,
+  .aiperf-flow *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

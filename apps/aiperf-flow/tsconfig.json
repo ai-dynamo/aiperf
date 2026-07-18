@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    {
+      "path": "./packages/schema"
+    },
+    {
+      "path": "./packages/language"
+    },
+    {
+      "path": "./packages/compiler"
+    },
+    {
+      "path": "./packages/runtime"
+    },
+    {
+      "path": "./packages/cli"
+    }
+  ]
+}

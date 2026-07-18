@@ -1,0 +1,11 @@
+flow "Request lifecycle waterfall" as request-lifecycle-waterfall {
+  language 1
+
+  symbol RequestLifecycleWaterfall(lanes: LaneRef) {
+    Waterfall(id = "lifecycle")
+  }
+
+  scene "Stub" as stub {
+    summary "P0 flagship stub pending expansion."
+  }
+}

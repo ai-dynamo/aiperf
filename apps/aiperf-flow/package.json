@@ -1,0 +1,16 @@
+{
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "flow:test": "npm test --workspaces --if-present",
+    "flow:build": "npm run build --workspace @aiperf/flow-schema && npm run build --workspace @aiperf/flow-language && npm run build --workspace @aiperf/flow-compiler && npm run build --workspace @aiperf/flow-runtime && npm run build --workspace @aiperf/flow-cli",
+    "flow:check": "npm run flow:test && npm run flow:build"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.7.0",
+    "vite": "^6.3.5"
+  }
+}
