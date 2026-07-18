@@ -48,10 +48,17 @@ export function canvasFont(font: TextAtlasFont): string {
 }
 
 function finiteMeasurement(metrics: TextMetrics): CanvasTextMeasurement {
+  const optionalMetrics = metrics as TextMetrics &
+    Partial<
+      Pick<
+        TextMetrics,
+        "actualBoundingBoxAscent" | "actualBoundingBoxDescent"
+      >
+    >;
   const measurement = {
     width: metrics.width,
-    actualBoundingBoxAscent: metrics.actualBoundingBoxAscent,
-    actualBoundingBoxDescent: metrics.actualBoundingBoxDescent,
+    actualBoundingBoxAscent: optionalMetrics.actualBoundingBoxAscent ?? 0,
+    actualBoundingBoxDescent: optionalMetrics.actualBoundingBoxDescent ?? 0,
   };
   if (Object.values(measurement).some((value) => !Number.isFinite(value))) {
     throw new RangeError("Canvas text measurement must be finite");

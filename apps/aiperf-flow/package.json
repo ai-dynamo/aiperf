@@ -7,7 +7,8 @@
     "dev": "vite",
     "flow:test": "npm test --workspaces --if-present",
     "flow:build": "npm run build --workspace @aiperf/flow-schema && npm run build --workspace @aiperf/flow-language && npm run build --workspace @aiperf/flow-compiler && npm run build --workspace @aiperf/flow-runtime && npm run build --workspace @aiperf/flow-cli",
-    "flow:check": "npm run flow:test && npm run flow:build"
+    "flow:check": "npm run flow:test && npm run flow:build",
+    "measure:runtime": "node scripts/measure-runtime.mjs"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.7.0",

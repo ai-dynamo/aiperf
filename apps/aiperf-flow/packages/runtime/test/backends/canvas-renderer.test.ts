@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import {
   renderDisplayList,
@@ -28,6 +28,12 @@ function recordingContext(): {
     save: () => calls.push(["save"]),
     scale: (...args: unknown[]) => calls.push(["scale", ...args]),
     stroke: () => calls.push(["stroke"]),
+    measureText: () =>
+      ({
+        width: 0,
+        actualBoundingBoxAscent: 0,
+        actualBoundingBoxDescent: 0,
+      }) as TextMetrics,
   } as unknown as CanvasRenderContext;
   return { context, calls };
 }
@@ -118,5 +124,39 @@ describe("Canvas display-list renderer", () => {
       ["restore"],
     ]);
     expect(metrics).toEqual({ commandCount: 1 });
+  });
+
+  test("measures repeated text through one cached Canvas atlas entry", () => {
+    const recorded = recordingContext();
+    const measureText = vi.fn(
+      () =>
+        ({
+          width: 56,
+          actualBoundingBoxAscent: 11,
+          actualBoundingBoxDescent: 3,
+        }) as TextMetrics,
+    );
+    const context = {
+      ...recorded.context,
+      measureText,
+    };
+    const text = {
+      kind: "text",
+      text: "Runtime",
+      font: { family: "NVIDIA Sans", sizePx: 16, weight: 600 },
+      origin: { x: 4, y: 10 },
+    };
+
+    renderDisplayList(
+      context,
+      displayList([
+        { ...text, id: "first", order: 0 },
+        { ...text, id: "second", order: 1 },
+      ]),
+    );
+
+    expect(measureText).toHaveBeenCalledOnce();
+    expect(measureText).toHaveBeenCalledWith("Runtime");
+    expect(context.font).toBe('600 16px "NVIDIA Sans"');
   });
 });

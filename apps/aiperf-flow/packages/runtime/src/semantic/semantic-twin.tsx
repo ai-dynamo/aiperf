@@ -7,6 +7,7 @@ import type {
   SemanticEntityProjection,
   SemanticProjection,
 } from "../evaluate/types.js";
+import { SemanticFallbackTable } from "./fallback-table.js";
 
 export type SemanticTwinProps = Readonly<{
   projection: SemanticProjection;
@@ -48,6 +49,18 @@ function orderedEntities(
   }
 
   return ordered;
+}
+
+function hasTabularSemantics(projection: SemanticProjection): boolean {
+  return projection.entities.some(
+    (entity) =>
+      entity.role === "chart" ||
+      entity.role === "grid" ||
+      entity.role === "row" ||
+      entity.role === "table" ||
+      entity.kind === "lane" ||
+      entity.kind === "waterfall",
+  );
 }
 
 /**
@@ -123,6 +136,10 @@ export function SemanticTwin({
           </li>
         ))}
       </ul>
+
+      {hasTabularSemantics(projection) ? (
+        <SemanticFallbackTable projection={projection} />
+      ) : null}
 
       {(projection.captions ?? []).length > 0 ? (
         <div

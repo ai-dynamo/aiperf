@@ -1,0 +1,67 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+.aiperf-flow__audio-consent-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgb(8 8 10 / 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.aiperf-flow__audio-consent {
+  width: min(100%, 26rem);
+  padding: 1.5rem;
+  border: 1px solid #2e2e38;
+  border-radius: 12px;
+  background: #17171d;
+  color: #f6f6f8;
+  box-shadow: 0 24px 48px -20px rgb(0 0 0 / 0.8);
+}
+
+.aiperf-flow__audio-consent h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+  line-height: 1.3;
+}
+
+.aiperf-flow__audio-consent p {
+  margin: 0 0 1.25rem;
+  color: #b9b9c3;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.aiperf-flow__audio-consent-actions {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.aiperf-flow__audio-consent-actions button {
+  min-height: 2.75rem;
+  padding: 0.7rem 1rem;
+  border: 1px solid #33333d;
+  border-radius: 8px;
+  background: #0d0d10;
+  color: #f6f6f8;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.aiperf-flow__audio-consent-actions button:hover,
+.aiperf-flow__audio-consent-actions button:focus-visible {
+  border-color: #26c6da;
+  outline: none;
+}
+
+.aiperf-flow__audio-consent-primary {
+  border-color: #26c6da !important;
+  background: #0f2a30 !important;
+  color: #5fd6e6 !important;
+}

@@ -14,6 +14,7 @@ import {
 
 import { renderDisplayList } from "./backends/canvas/canvas-renderer.js";
 import { hitTest } from "./backends/canvas/hit-test.js";
+import { CanvasTextAtlas } from "./backends/canvas/text-atlas.js";
 import { SvgFallback } from "./backends/svg/svg-fallback.js";
 import {
   beginCameraTakeover,
@@ -37,10 +38,20 @@ import {
   updateExploration,
 } from "./exploration.js";
 import {
+  AudioConsentModal,
+  type AudioConsentChoice,
+  loadAudioConsentChoice,
+  saveAudioConsentChoice,
+} from "./narrative/audio-consent-modal.js";
+import {
   createBrowserSpeechSynthesisBackend,
   NarratorController,
   type NarratorBackend,
 } from "./narrative/narrator.js";
+import {
+  createKokoroNarratorBackend,
+  type KokoroNarratorBackend,
+} from "./narrative/kokoro-narrator.js";
 import { sceneNarrativeCues } from "./narrative/scene-cues.js";
 import {
   SubtitleOverlay,
@@ -67,6 +78,28 @@ const unavailableNarratorBackend: NarratorBackend = Object.freeze({
   resume: () => undefined,
   cancel: () => undefined,
 });
+
+function unlockSpeechFromGesture(backend: NarratorBackend): void {
+  const kokoro = backend as Partial<KokoroNarratorBackend>;
+  if (typeof kokoro.activate === "function") {
+    void Promise.resolve(kokoro.activate()).catch(() => undefined);
+  }
+  if (typeof kokoro.prewarm === "function") {
+    void Promise.resolve(kokoro.prewarm()).catch(() => undefined);
+  }
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    return;
+  }
+  try {
+    window.speechSynthesis.getVoices();
+    const prime = new SpeechSynthesisUtterance(" ");
+    prime.volume = 0;
+    window.speechSynthesis.speak(prime);
+    window.speechSynthesis.cancel();
+  } catch {
+    // Browser speech unlock is best-effort; Kokoro activation is primary.
+  }
+}
 
 function record(value: unknown): UnknownRecord {
   return typeof value === "object" && value !== null
@@ -223,6 +256,10 @@ function CanvasStage({
   onHit,
 }: CanvasStageProps): ReactNode {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const textAtlasRef = useRef<Readonly<{
+    context: CanvasRenderingContext2D;
+    atlas: CanvasTextAtlas;
+  }> | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -232,6 +269,12 @@ function CanvasStage({
     const context = canvas.getContext("2d");
     if (context === null) {
       return;
+    }
+    if (textAtlasRef.current?.context !== context) {
+      textAtlasRef.current = {
+        context,
+        atlas: new CanvasTextAtlas(context),
+      };
     }
     const { paintBounds } = displayList;
     const ratio =
@@ -261,7 +304,10 @@ function CanvasStage({
         -camera.temporary.y,
       );
     }
-    renderDisplayList(context, displayList, { devicePixelRatio: 1 });
+    renderDisplayList(context, displayList, {
+      devicePixelRatio: 1,
+      textAtlas: textAtlasRef.current.atlas,
+    });
     context.restore();
   }, [camera, displayList]);
 
@@ -409,6 +455,11 @@ export type FlowAppProps = Readonly<{
   reducedMotion?: boolean;
   /** Force SVG fallback even when Canvas 2D is available (tests). */
   forceSvgFallback?: boolean;
+  /**
+   * When true (default), block playback behind an audio consent dialog so
+   * "Play with audio" can unlock Web Audio from a user gesture.
+   */
+  requireAudioConsent?: boolean;
 }>;
 
 export function FlowApp({
@@ -418,6 +469,7 @@ export function FlowApp({
   narratorBackend: suppliedNarratorBackend,
   reducedMotion = false,
   forceSvgFallback = false,
+  requireAudioConsent = suppliedNarratorBackend === undefined && !forceSvgFallback,
 }: FlowAppProps): ReactNode {
   const registry = useMemo(
     () => suppliedRegistry ?? createFoundationRegistry(),
@@ -430,8 +482,11 @@ export function FlowApp({
   const narratorBackend = useMemo(
     () =>
       suppliedNarratorBackend ??
-      createBrowserSpeechSynthesisBackend() ??
-      unavailableNarratorBackend,
+      createKokoroNarratorBackend({
+        fallback:
+          createBrowserSpeechSynthesisBackend() ??
+          unavailableNarratorBackend,
+      }),
     [suppliedNarratorBackend],
   );
   const preferCanvas = useMemo(
@@ -444,7 +499,13 @@ export function FlowApp({
   const [sceneIndex, setSceneIndex] = useState(0);
   const [timeMs, setTimeMs] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [muted, setMuted] = useState(false);
+  const [audioConsent, setAudioConsent] = useState<AudioConsentChoice | null>(
+    () =>
+      requireAudioConsent
+        ? loadAudioConsentChoice()
+        : "with-audio",
+  );
+  const [muted, setMuted] = useState(audioConsent === "without-audio");
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
   const [exploration, setExploration] = useState<ExplorationSnapshot | null>(
     null,
@@ -624,8 +685,29 @@ export function FlowApp({
     setSceneIndex(nextIndex);
   }
 
+  function chooseAudioConsent(choice: AudioConsentChoice): void {
+    saveAudioConsentChoice(choice);
+    setAudioConsent(choice);
+    if (choice === "with-audio") {
+      setMuted(false);
+      narrator.setMuted(false);
+      unlockSpeechFromGesture(narratorBackend);
+    } else {
+      setMuted(true);
+      narrator.setMuted(true);
+    }
+    if (!reducedMotion) {
+      const snapshot = player.play();
+      setTimeMs(snapshot.timeMs);
+      if (choice === "with-audio") {
+        narrator.play(snapshot.timeMs);
+      }
+      setPlaying(true);
+    }
+  }
+
   function togglePlayback(): void {
-    if (exploring) {
+    if (exploring || audioConsent === null) {
       return;
     }
     if (playing) {
@@ -634,6 +716,9 @@ export function FlowApp({
       setTimeMs(snapshot.timeMs);
       setPlaying(false);
       return;
+    }
+    if (!muted) {
+      unlockSpeechFromGesture(narratorBackend);
     }
     const snapshot = player.play();
     narrator.play(snapshot.timeMs);
@@ -847,6 +932,10 @@ export function FlowApp({
 
   return (
     <main className="aiperf-flow">
+      <AudioConsentModal
+        onChoose={chooseAudioConsent}
+        open={audioConsent === null}
+      />
       <a className="aiperf-flow__skip-link" href="#flow-transcript">
         Skip to transcript
       </a>
@@ -880,7 +969,11 @@ export function FlowApp({
           aria-label="Playback controls"
           className="aiperf-flow__controls aiperf-flow__chrome"
         >
-          <button disabled={exploring} onClick={togglePlayback} type="button">
+          <button
+            disabled={exploring || audioConsent === null}
+            onClick={togglePlayback}
+            type="button"
+          >
             {playing ? "Pause" : "Play"}
           </button>
           <button onClick={restart} type="button">

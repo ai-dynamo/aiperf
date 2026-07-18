@@ -3,6 +3,7 @@
 
 import type { Bounds, DisplayList } from "../../display-list.js";
 import type { CanvasQualityMode } from "./quality.js";
+import { CanvasTextAtlas } from "./text-atlas.js";
 
 type CanvasMethod =
   | "beginPath"
@@ -12,6 +13,7 @@ type CanvasMethod =
   | "fillRect"
   | "fillText"
   | "lineTo"
+  | "measureText"
   | "moveTo"
   | "restore"
   | "save"
@@ -31,6 +33,7 @@ export type CanvasRenderContext = Pick<CanvasRenderingContext2D, CanvasMethod> &
 
 export type CanvasRenderOptions = Readonly<{
   devicePixelRatio?: number;
+  textAtlas?: CanvasTextAtlas;
 }>;
 
 export type CanvasRenderMetrics = Readonly<{
@@ -128,7 +131,11 @@ function drawPath(context: CanvasRenderContext, path: string): void {
   }
 }
 
-function drawCommand(context: CanvasRenderContext, value: unknown): number {
+function drawCommand(
+  context: CanvasRenderContext,
+  textAtlas: CanvasTextAtlas,
+  value: unknown,
+): number {
   const command = record(value);
   applyPaint(context, command);
 
@@ -149,7 +156,11 @@ function drawCommand(context: CanvasRenderContext, value: unknown): number {
       const family = asString(font.family);
       const sizePx = number(font.sizePx);
       if (family !== "" && sizePx > 0) {
-        context.font = `${sizePx}px ${family}`;
+        textAtlas.measure(asString(command.text), {
+          family,
+          sizePx,
+          ...(typeof font.weight === "number" ? { weight: font.weight } : {}),
+        });
       }
       context.fillText(asString(command.text), origin.x, origin.y);
       return 1;
@@ -174,7 +185,7 @@ function drawCommand(context: CanvasRenderContext, value: unknown): number {
       return 1;
     case "group":
       return children(command).reduce<number>(
-        (total, child) => total + drawCommand(context, child),
+        (total, child) => total + drawCommand(context, textAtlas, child),
         0,
       );
     case "clip": {
@@ -182,7 +193,7 @@ function drawCommand(context: CanvasRenderContext, value: unknown): number {
       drawPath(context, asString(command.path));
       context.clip();
       const count = children(command).reduce<number>(
-        (total, child) => total + drawCommand(context, child),
+        (total, child) => total + drawCommand(context, textAtlas, child),
         0,
       );
       context.restore();
@@ -196,7 +207,7 @@ function drawCommand(context: CanvasRenderContext, value: unknown): number {
           command.blendMode as GlobalCompositeOperation;
       }
       const count = children(command).reduce<number>(
-        (total, child) => total + drawCommand(context, child),
+        (total, child) => total + drawCommand(context, textAtlas, child),
         0,
       );
       context.restore();
@@ -240,6 +251,7 @@ export function renderDisplayList(
   if (!Number.isFinite(ratio) || ratio <= 0) {
     throw new RangeError("devicePixelRatio must be a positive finite number.");
   }
+  const textAtlas = options.textAtlas ?? new CanvasTextAtlas(context);
 
   if (ratio !== 1) {
     context.save();
@@ -247,7 +259,7 @@ export function renderDisplayList(
   }
 
   const commandCount = displayList.commands.reduce(
-    (count, command) => count + drawCommand(context, command),
+    (count, command) => count + drawCommand(context, textAtlas, command),
     0,
   );
 

@@ -67,6 +67,23 @@ describe("Canvas text atlas", () => {
     expect(atlas.size).toBe(3);
   });
 
+  test("normalizes unavailable bounding-box metrics without rejecting width", () => {
+    const atlas = new CanvasTextAtlas(
+      measurementContext(
+        () =>
+          ({
+            width: 8,
+          }) as TextMetrics,
+      ),
+    );
+
+    expect(atlas.measure("A", { family: "Inter", sizePx: 12 })).toEqual({
+      width: 8,
+      actualBoundingBoxAscent: 0,
+      actualBoundingBoxDescent: 0,
+    });
+  });
+
   test("rejects invalid fonts and non-finite measurements", () => {
     const atlas = new CanvasTextAtlas(
       measurementContext(

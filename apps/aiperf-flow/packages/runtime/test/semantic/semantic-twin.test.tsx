@@ -170,4 +170,30 @@ describe("SemanticTwin", () => {
     expect(admit.getAttribute("data-selected")).toBe("true");
     expect(admit.getAttribute("data-focused")).toBe("true");
   });
+
+  test("mounts the accessible table alternative for tabular semantics", () => {
+    const tabularProjection: SemanticProjection = {
+      ...projection,
+      entities: projection.entities.map((entity) =>
+        entity.id === "observe" ? { ...entity, role: "table" } : entity,
+      ),
+    };
+
+    render(
+      <SemanticTwin
+        focusedEntityId={null}
+        onActivate={() => {}}
+        onFocus={() => {}}
+        projection={tabularProjection}
+        selectedEntityId={null}
+      />,
+    );
+
+    const twin = screen.getByRole("region", { name: "Semantic outline" });
+    const table = within(twin).getByRole("table", {
+      name: "lifecycle semantic alternative",
+    });
+    expect(table.getAttribute("aria-hidden")).not.toBe("true");
+    expect(getComputedStyle(table).display).not.toBe("none");
+  });
 });
