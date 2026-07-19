@@ -156,6 +156,7 @@ explainer "Segment Pools" {
         at 280 reveal pool-callout duration 200
         at 400 reveal composer duration 280
         at 640 trace arrow-composer-pool duration 220
+        at 700 trace motion-sig duration 900
         at 800 reveal segment-pool duration 300
         at 1060 trace arrow-pool-freeze duration 220
         at 1220 reveal freeze duration 280
@@ -163,7 +164,6 @@ explainer "Segment Pools" {
         at 1600 stagger targets [dataset, body-plan, materializer] step 160 duration 220
         at 1680 reveal dispatch-bracket duration 220
         at 2120 reveal in-memory-store duration 260
-        at 700 trace motion-sig duration 900
       }
     }
   }
@@ -269,10 +269,10 @@ explainer "Segment Pools" {
         at 200 reveal intern duration 280
         at 440 trace arrow-intern-pool duration 220
         at 600 reveal pool duration 320
+        at 700 trace motion-sig duration 900
         at 880 trace arrow-pool-dedup duration 220
         at 1040 reveal dedup duration 280
         at 1280 stagger targets [h0, h1, h23] step 160 duration 240
-        at 700 trace motion-sig duration 900
       }
     }
   }
@@ -370,8 +370,8 @@ explainer "Segment Pools" {
       timeline main {
         at 0 reveal header duration 220
         at 180 stagger targets [domain-message, domain-text, domain-raw, domain-token, domain-media, domain-trace] step 120 duration 200
-        at 1000 reveal hash-recipe duration 320
         at 700 trace motion-sig duration 900
+        at 1000 reveal hash-recipe duration 320
       }
     }
   }
@@ -477,10 +477,10 @@ explainer "Segment Pools" {
         at 200 reveal plan duration 280
         at 440 trace arrow-plan-mat duration 220
         at 600 reveal mat duration 320
+        at 700 trace motion-sig duration 900
         at 880 trace arrow-mat-bytes duration 220
         at 1040 reveal bytes duration 280
         at 1280 stagger targets [literals, wires, overrides] step 160 duration 240
-        at 700 trace motion-sig duration 900
       }
     }
   }
@@ -572,9 +572,9 @@ explainer "Segment Pools" {
         at 560 reveal h1 duration 260
         at 780 trace arrow-h1-branches duration 380
         at 1080 reveal h2 duration 240
+        at 1100 trace arrow-h1-branches duration 900
         at 1240 reveal h3 duration 240
         at 1460 reveal footnote duration 200
-        at 1100 trace arrow-h1-branches duration 900
       }
     }
   }
@@ -672,11 +672,11 @@ explainer "Segment Pools" {
         at 200 reveal turn-body duration 280
         at 440 trace arrow-precedence duration 440
         at 600 reveal raw duration 220
+        at 700 trace arrow-precedence duration 900
         at 920 reveal token duration 220
         at 1240 reveal messages duration 220
         at 1420 trace arrow-out duration 200
         at 1560 reveal out duration 260
-        at 700 trace arrow-precedence duration 900
       }
     }
   }

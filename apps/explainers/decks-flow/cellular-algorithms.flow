@@ -136,15 +136,15 @@ explainer "Cellular algorithm workbook" {
         at 0 reveal header duration 260
         at 160 reveal dispatch duration 260
         at 320 reveal st-d duration 260
-        at 480 trace a1 duration 420
         at 640 reveal promote duration 260
         at 800 reveal st-p duration 260
-        at 960 trace a2 duration 420
+        at 900 trace a1 duration 420
         at 1120 reveal validate duration 260
         at 1280 reveal st-v duration 260
-        at 1440 trace a3 duration 420
+        at 1380 trace a2 duration 420
         at 1600 reveal velo duration 260
         at 1760 reveal st-velo duration 260
+        at 1860 trace a3 duration 420
         at 1920 trace motion-sig duration 900
       }
     }
@@ -226,12 +226,12 @@ explainer "Cellular algorithm workbook" {
         at 0 reveal header duration 260
         at 160 reveal replay duration 260
         at 320 reveal st-r duration 260
-        at 480 trace c1 duration 420
         at 640 reveal gen duration 260
         at 800 reveal st-g duration 260
-        at 960 trace c2 duration 420
+        at 900 trace c1 duration 420
         at 1120 reveal start duration 260
         at 1280 reveal st-s duration 260
+        at 1380 trace c2 duration 420
         at 1440 reveal ctrl-note duration 260
         at 1600 trace motion-sig duration 900
       }
@@ -269,12 +269,12 @@ explainer "Cellular algorithm workbook" {
         at 0 reveal header duration 260
         at 160 reveal canon duration 260
         at 320 reveal st-canon duration 260
-        at 480 trace d1 duration 420
         at 640 reveal fanout duration 260
         at 800 reveal st-fan duration 260
-        at 960 trace d2 duration 420
         at 1120 reveal miss duration 260
         at 1280 reveal st-miss duration 260
+        at 1380 trace d1 duration 420
+        at 1380 trace d2 duration 420
         at 1440 trace motion-sig duration 900
       }
     }
@@ -312,14 +312,14 @@ explainer "Cellular algorithm workbook" {
         at 0 reveal header duration 260
         at 160 reveal tlp duration 260
         at 320 reveal st-tlp duration 260
-        at 480 trace e1 duration 420
         at 640 reveal iss duration 260
         at 800 reveal st-iss duration 260
-        at 960 trace e2 duration 420
+        at 900 trace e1 duration 420
         at 1120 reveal w0 duration 260
-        at 1280 trace e3 duration 420
+        at 1380 trace e2 duration 420
         at 1440 reveal w1 duration 260
         at 1600 trace motion-sig duration 900
+        at 1700 trace e3 duration 420
       }
     }
   }
@@ -355,10 +355,10 @@ explainer "Cellular algorithm workbook" {
         at 0 reveal header duration 260
         at 160 reveal term duration 260
         at 320 reveal st-term duration 260
-        at 480 trace cap1 duration 420
         at 640 reveal retain duration 260
         at 800 reveal fold duration 260
         at 960 reveal sketch duration 260
+        at 1060 trace cap1 duration 420
         at 1120 reveal compat duration 260
         at 1280 reveal st-compat duration 260
         at 1440 trace motion-sig duration 900
@@ -397,12 +397,12 @@ explainer "Cellular algorithm workbook" {
         at 0 reveal header duration 260
         at 160 reveal sgom duration 260
         at 320 reveal st-sgom duration 260
-        at 480 trace m1 duration 420
         at 640 reveal fidelity duration 260
         at 800 reveal st-fid duration 260
-        at 960 trace m2 duration 420
         at 1120 reveal report duration 260
         at 1280 reveal st-rep duration 260
+        at 1380 trace m1 duration 420
+        at 1380 trace m2 duration 420
         at 1440 trace motion-sig duration 900
       }
     }
@@ -442,15 +442,15 @@ explainer "Cellular algorithm workbook" {
         at 0 reveal header duration 260
         at 160 reveal allow duration 260
         at 320 reveal st-allow duration 260
-        at 480 trace ar1 duration 420
         at 640 reveal upload duration 260
         at 800 reveal st-up duration 260
-        at 960 trace ar2 duration 420
+        at 900 trace ar1 duration 420
         at 1120 reveal atomic duration 260
         at 1280 reveal st-at duration 260
-        at 1440 trace ar3 duration 420
+        at 1380 trace ar2 duration 420
         at 1600 reveal barrier duration 260
         at 1760 reveal st-bar duration 260
+        at 1860 trace ar3 duration 420
         at 1920 trace motion-sig duration 900
       }
     }
@@ -494,21 +494,21 @@ explainer "Cellular algorithm workbook" {
       timeline primary {
         at 0 reveal header duration 260
         at 160 reveal rt-eligibility duration 260
-        at 320 trace rt-a0 duration 420
         at 480 reveal rt-ownership duration 260
-        at 640 trace rt-a1 duration 420
+        at 740 trace rt-a0 duration 420
         at 800 reveal rt-control duration 260
-        at 960 trace rt-a2 duration 420
+        at 1060 trace rt-a1 duration 420
         at 1120 reveal rt-distribution duration 260
-        at 1280 trace rt-a3 duration 420
+        at 1380 trace rt-a2 duration 420
         at 1440 reveal rt-execution duration 260
-        at 1600 trace rt-a4 duration 420
+        at 1700 trace rt-a3 duration 420
         at 1760 reveal rt-capture duration 260
-        at 1920 trace rt-a5 duration 420
+        at 2020 trace rt-a4 duration 420
         at 2080 reveal rt-merge duration 260
-        at 2240 trace rt-a6 duration 420
+        at 2340 trace rt-a5 duration 420
         at 2400 reveal rt-artifacts duration 260
         at 2560 reveal route-cap duration 260
+        at 2660 trace rt-a6 duration 420
         at 2720 trace motion-sig duration 900
       }
     }
@@ -581,9 +581,9 @@ explainer "Cellular algorithm workbook" {
         at 0 reveal header duration 260
         at 160 reveal decision duration 260
         at 320 reveal left duration 260
-        at 480 trace dl duration 420
+        at 580 trace dl duration 420
         at 640 reveal right duration 260
-        at 800 trace dr duration 420
+        at 900 trace dr duration 420
         at 960 reveal invariant duration 260
         at 1120 trace motion-sig duration 900
       }
@@ -619,9 +619,9 @@ explainer "Cellular algorithm workbook" {
         at 0 reveal header duration 260
         at 160 reveal decision duration 260
         at 320 reveal left duration 260
-        at 480 trace dl duration 420
+        at 580 trace dl duration 420
         at 640 reveal right duration 260
-        at 800 trace dr duration 420
+        at 900 trace dr duration 420
         at 960 reveal invariant duration 260
         at 1120 trace motion-sig duration 900
       }
@@ -657,9 +657,9 @@ explainer "Cellular algorithm workbook" {
         at 0 reveal header duration 260
         at 160 reveal decision duration 260
         at 320 reveal left duration 260
-        at 480 trace dl duration 420
+        at 580 trace dl duration 420
         at 640 reveal right duration 260
-        at 800 trace dr duration 420
+        at 900 trace dr duration 420
         at 960 reveal invariant duration 260
         at 1120 trace motion-sig duration 900
       }
@@ -690,8 +690,8 @@ explainer "Cellular algorithm workbook" {
       timeline primary {
         at 0 reveal header duration 260
         at 160 reveal pages duration 260
-        at 320 trace ref-a duration 420
         at 480 reveal canvas duration 260
+        at 740 trace ref-a duration 420
       }
     }
   }

@@ -60,11 +60,11 @@ explainer "Cellular internals" {
         at 170 reveal phase0 duration 260
         at 340 reveal tags0 duration 260
         at 510 reveal authored duration 260
-        at 680 trace a0a duration 420
         at 850 reveal cell-k duration 260
-        at 1020 trace a0b duration 420
+        at 1110 trace a0a duration 420
         at 1190 reveal report duration 260
         at 1360 reveal note0 duration 260
+        at 1450 trace a0b duration 420
         at 1530 reveal ev0 duration 260
         at 1700 trace motion-sig-0 duration 900
       }
@@ -144,13 +144,13 @@ explainer "Cellular internals" {
         at 170 reveal phase2 duration 260
         at 340 reveal chip2 duration 260
         at 510 reveal profile duration 260
-        at 680 trace a2a duration 420
         at 850 reveal execbin duration 260
-        at 1020 trace a2b duration 420
+        at 1110 trace a2a duration 420
         at 1190 reveal execute duration 260
-        at 1360 trace a2c duration 420
+        at 1450 trace a2b duration 420
         at 1530 reveal stdio duration 260
         at 1700 trace motion-sig-2 duration 900
+        at 1790 trace a2c duration 420
       }
     }
   }
@@ -185,12 +185,12 @@ explainer "Cellular internals" {
         at 0 reveal hdr3 duration 260
         at 170 reveal phase3 duration 260
         at 340 reveal exec3 duration 260
-        at 510 trace a3a duration 420
         at 680 reveal ctrl duration 260
         at 850 reveal single duration 260
-        at 1020 trace a3b duration 420
+        at 940 trace a3a duration 420
         at 1190 reveal roles duration 260
         at 1360 trace motion-sig-3 duration 900
+        at 1450 trace a3b duration 420
       }
     }
   }
@@ -227,12 +227,12 @@ explainer "Cellular internals" {
         at 170 reveal phase4 duration 260
         at 340 reveal chip4 duration 260
         at 510 reveal ctrl4 duration 260
-        at 680 trace a4a duration 420
         at 850 reveal rej1 duration 260
-        at 1020 trace a4b duration 420
+        at 1110 trace a4a duration 420
         at 1190 reveal rej2 duration 260
-        at 1360 trace a4c duration 420
+        at 1450 trace a4b duration 420
         at 1530 reveal ok4 duration 260
+        at 1790 trace a4c duration 420
       }
     }
   }
@@ -270,14 +270,14 @@ explainer "Cellular internals" {
         at 0 reveal hdr5 duration 260
         at 170 reveal phase5 duration 260
         at 340 reveal ctrl5 duration 260
-        at 510 trace a5a duration 420
         at 680 reveal mod duration 260
         at 850 reveal own0 duration 260
-        at 1020 trace a5c0 duration 420
+        at 940 trace a5a duration 420
+        at 1110 trace a5c0 duration 420
         at 1190 reveal own1 duration 260
-        at 1360 trace a5c1 duration 420
+        at 1450 trace a5c1 duration 420
         at 1530 reveal own2 duration 260
-        at 1700 trace a5c2 duration 420
+        at 1790 trace a5c2 duration 420
         at 1870 trace motion-sig-5 duration 900
       }
     }
@@ -321,14 +321,14 @@ explainer "Cellular internals" {
         at 510 reveal c1 duration 260
         at 680 reveal c2 duration 260
         at 850 reveal c3 duration 260
-        at 1020 trace a6a0 duration 420
-        at 1190 trace a6a1 duration 420
-        at 1360 trace a6a2 duration 420
-        at 1530 trace a6a3 duration 420
         at 1700 reveal barrier duration 260
-        at 1870 trace a6b duration 420
+        at 1960 trace a6a0 duration 420
+        at 1960 trace a6a1 duration 420
+        at 1960 trace a6a2 duration 420
+        at 1960 trace a6a3 duration 420
         at 2040 reveal start duration 260
-        at 2210 trace motion-sig-6 duration 900
+        at 2300 trace a6b duration 420
+        at 2300 trace motion-sig-6 duration 900
       }
     }
   }
@@ -366,7 +366,7 @@ explainer "Cellular internals" {
         at 510 reveal pol1 duration 260
         at 680 reveal pol2 duration 260
         at 850 reveal origin duration 260
-        at 1020 trace a7a duration 420
+        at 1110 trace a7a duration 420
         at 1190 trace a7b duration 420
         at 1360 reveal ev7 duration 260
       }
@@ -406,11 +406,11 @@ explainer "Cellular internals" {
         at 170 reveal phase8 duration 260
         at 340 reveal own8 duration 260
         at 510 reveal velo duration 260
-        at 680 trace a8a duration 420
+        at 770 trace a8a duration 420
         at 850 reveal stage duration 260
-        at 1020 trace a8b duration 420
+        at 1110 trace a8b duration 420
         at 1190 reveal cell8 duration 260
-        at 1360 trace a8c duration 420
+        at 1450 trace a8c duration 420
         at 1530 trace a8d duration 420
         at 1700 trace motion-sig-8 duration 900
       }
@@ -450,13 +450,13 @@ explainer "Cellular internals" {
         at 0 reveal hdr9 duration 260
         at 170 reveal phase9 duration 260
         at 340 reveal idx duration 260
-        at 510 trace a9a duration 420
         at 680 reveal indexed duration 260
-        at 850 trace a9b duration 420
+        at 940 trace a9a duration 420
         at 1020 reveal inflight duration 260
-        at 1190 trace a9c duration 420
+        at 1280 trace a9b duration 420
         at 1360 reveal completed duration 260
         at 1530 reveal note9 duration 260
+        at 1620 trace a9c duration 420
         at 1700 reveal chip9 duration 260
         at 1870 trace motion-sig-9 duration 900
       }
@@ -496,13 +496,13 @@ explainer "Cellular internals" {
         at 0 reveal hdr10 duration 260
         at 170 reveal phase10 duration 260
         at 340 reveal env duration 260
-        at 510 trace a10a duration 420
         at 680 reveal inputs duration 260
-        at 850 trace a10b duration 420
         at 1020 reveal torigin duration 260
-        at 1190 trace a10c duration 420
         at 1360 reveal auto duration 260
         at 1530 reveal note10 duration 260
+        at 1620 trace a10a duration 420
+        at 1620 trace a10b duration 420
+        at 1620 trace a10c duration 420
         at 1700 reveal chip10 duration 260
         at 1870 trace motion-sig-10 duration 900
       }
@@ -542,11 +542,11 @@ explainer "Cellular internals" {
         at 170 reveal phase11 duration 260
         at 340 reveal slice duration 260
         at 510 reveal w0 duration 260
-        at 680 trace a11a duration 420
+        at 770 trace a11a duration 420
         at 850 reveal w1 duration 260
-        at 1020 trace a11d duration 420
+        at 1110 trace a11d duration 420
         at 1190 reveal store duration 260
-        at 1360 trace a11b duration 420
+        at 1450 trace a11b duration 420
         at 1530 trace a11c duration 420
         at 1700 trace motion-sig-11 duration 900
       }
@@ -586,13 +586,13 @@ explainer "Cellular internals" {
         at 170 reveal phase12 duration 260
         at 340 reveal global-ord duration 260
         at 510 reveal ord0 duration 260
-        at 680 trace a120 duration 420
+        at 770 trace a120 duration 420
         at 850 reveal ord1 duration 260
-        at 1020 trace a121 duration 420
+        at 1110 trace a121 duration 420
         at 1190 reveal ord2 duration 260
-        at 1360 trace a122 duration 420
+        at 1450 trace a122 duration 420
         at 1530 reveal ord3 duration 260
-        at 1700 trace a123 duration 420
+        at 1790 trace a123 duration 420
       }
     }
   }
@@ -631,11 +631,11 @@ explainer "Cellular internals" {
         at 340 reveal chip13 duration 260
         at 510 reveal shard duration 260
         at 680 reveal http duration 260
-        at 850 trace a13a duration 420
+        at 940 trace a13a duration 420
         at 1020 reveal dyno duration 260
-        at 1190 trace a13b duration 420
+        at 1280 trace a13b duration 420
         at 1360 reveal srv duration 260
-        at 1530 trace a13c duration 420
+        at 1620 trace a13c duration 420
         at 1700 trace motion-sig-13 duration 900
       }
     }
@@ -676,17 +676,17 @@ explainer "Cellular internals" {
         at 0 reveal hdr14 duration 260
         at 170 reveal phase14 duration 260
         at 340 reveal ev0 duration 260
-        at 510 trace a140 duration 420
         at 680 reveal ev1 duration 260
-        at 850 trace a141 duration 420
+        at 940 trace a140 duration 420
         at 1020 reveal ev2 duration 260
-        at 1190 trace a142 duration 420
+        at 1280 trace a141 duration 420
         at 1360 reveal ev3 duration 260
-        at 1530 trace a143 duration 420
+        at 1620 trace a142 duration 420
         at 1700 reveal ev4 duration 260
-        at 1870 trace a14v duration 420
+        at 1960 trace a143 duration 420
         at 2040 reveal cap duration 260
         at 2210 trace motion-sig-14 duration 900
+        at 2300 trace a14v duration 420
       }
     }
   }
@@ -721,11 +721,11 @@ explainer "Cellular internals" {
         at 0 reveal hdr15 duration 260
         at 170 reveal phase15 duration 260
         at 340 reveal disp15 duration 260
-        at 510 trace a15a duration 420
         at 680 reveal retain duration 260
-        at 850 trace a15b duration 420
+        at 940 trace a15a duration 420
         at 1020 reveal part duration 260
         at 1190 reveal note15 duration 260
+        at 1280 trace a15b duration 420
         at 1360 trace motion-sig-15 duration 900
       }
     }
@@ -761,11 +761,11 @@ explainer "Cellular internals" {
         at 0 reveal hdr16 duration 260
         at 170 reveal phase16 duration 260
         at 340 reveal disp16 duration 260
-        at 510 trace a16a duration 420
         at 680 reveal fold duration 260
-        at 850 trace a16b duration 420
+        at 940 trace a16a duration 420
         at 1020 reveal drop duration 260
         at 1190 reveal note16 duration 260
+        at 1280 trace a16b duration 420
         at 1360 trace motion-sig-16 duration 900
       }
     }
@@ -802,12 +802,12 @@ explainer "Cellular internals" {
         at 0 reveal hdr17 duration 260
         at 170 reveal phase17 duration 260
         at 340 reveal fin duration 260
-        at 510 trace a17a duration 420
         at 680 reveal sketch duration 260
         at 850 reveal exact duration 260
-        at 1020 trace a17b duration 420
+        at 940 trace a17a duration 420
+        at 1110 trace a17b duration 420
         at 1190 reveal approx duration 260
-        at 1360 trace a17c duration 420
+        at 1450 trace a17c duration 420
         at 1530 trace motion-sig-17 duration 900
       }
     }
@@ -858,7 +858,7 @@ explainer "Cellular internals" {
         at 1700 reveal merge duration 260
         at 1870 trace aggs-to-merge duration 420
         at 2040 reveal sink duration 260
-        at 2210 trace merge-to-sink duration 420
+        at 2300 trace merge-to-sink duration 420
       }
     }
   }
@@ -893,12 +893,12 @@ explainer "Cellular internals" {
         at 0 reveal hdr19 duration 260
         at 170 reveal phase19 duration 260
         at 340 reveal ctrl19 duration 260
-        at 510 trace a19a duration 420
         at 680 reveal data19 duration 260
-        at 850 trace a19b duration 420
+        at 940 trace a19a duration 420
         at 1020 reveal exec19 duration 260
-        at 1190 trace a19c duration 420
+        at 1280 trace a19b duration 420
         at 1360 reveal res19 duration 260
+        at 1620 trace a19c duration 420
       }
     }
   }

@@ -194,8 +194,8 @@ explainer "SLURM + Velo from scratch" {
         at 700 reveal s1-task-1 duration 260
         at 780 reveal s1-task-2 duration 260
         at 860 reveal s1-task-3 duration 260
-        at 1050 reveal s1-alloc duration 340
         at 1037 trace s1-motion duration 1100
+        at 1050 reveal s1-alloc duration 340
       }
   }
   }
@@ -291,8 +291,8 @@ explainer "SLURM + Velo from scratch" {
         at 620 reveal s2-task-0 duration 260
         at 760 reveal s2-task-1 duration 260
         at 900 reveal s2-task-2 duration 260
-        at 1100 reveal s2-cmd duration 340
         at 1087 trace s2-fan duration 1460
+        at 1100 reveal s2-cmd duration 340
       }
   }
   }
@@ -491,8 +491,8 @@ explainer "SLURM + Velo from scratch" {
         at 460 reveal s4-coord duration 260
         at 620 trace s4-a2 duration 360
         at 720 reveal s4-cells duration 260
-        at 980 reveal s4-coord duration 340
         at 967 trace s4-motion duration 1100
+        at 980 reveal s4-coord duration 340
       }
   }
   }
@@ -651,8 +651,8 @@ explainer "SLURM + Velo from scratch" {
         at 880 trace s5-r2 duration 360
         at 920 reveal s5-reply duration 260
         at 1000 reveal s5-note duration 260
-        at 1150 reveal s5-velo duration 340
         at 1137 trace s5-motion duration 1100
+        at 1150 reveal s5-velo duration 340
       }
   }
   }
@@ -808,8 +808,8 @@ explainer "SLURM + Velo from scratch" {
         at 920 trace s6-ret duration 360
         at 1020 reveal s6-ret-l duration 260
         at 1100 reveal s6-note duration 260
-        at 1220 reveal s6-step-1 duration 340
         at 1207 trace s6-motion duration 1100
+        at 1220 reveal s6-step-1 duration 340
       }
   }
   }
@@ -964,8 +964,8 @@ explainer "SLURM + Velo from scratch" {
         at 800 trace s7-a3 duration 360
         at 840 reveal s7-step-4 duration 260
         at 1050 reveal s7-note duration 260
-        at 1180 reveal s7-step-4 duration 340
         at 1167 trace s7-motion duration 1100
+        at 1180 reveal s7-step-4 duration 340
       }
   }
   }
@@ -1083,8 +1083,8 @@ explainer "SLURM + Velo from scratch" {
         at 560 reveal s8-hot-n duration 260
         at 620 reveal s8-srv duration 260
         at 820 reveal s8-hb duration 260
-        at 1000 reveal s8-srv duration 340
         at 987 trace s8-motion duration 1100
+        at 1000 reveal s8-srv duration 340
       }
   }
   }
@@ -1318,8 +1318,8 @@ explainer "SLURM + Velo from scratch" {
         at 720 reveal s10-step-3 duration 260
         at 1000 reveal s10-note1 duration 260
         at 1100 reveal s10-note2 duration 260
-        at 1220 reveal s10-step-3 duration 340
         at 1207 trace s10-motion duration 1100
+        at 1220 reveal s10-step-3 duration 340
       }
   }
   }
@@ -1587,8 +1587,8 @@ explainer "SLURM + Velo from scratch" {
         at 760 reveal s13-cell-1 duration 260
         at 920 reveal s13-cell-2 duration 260
         at 1050 reveal s13-note duration 260
-        at 1180 reveal s13-r0 duration 340
         at 1167 trace s13-fan duration 1460
+        at 1180 reveal s13-r0 duration 340
       }
   }
   }
@@ -1708,8 +1708,8 @@ explainer "SLURM + Velo from scratch" {
         at 660 reveal s14-velo duration 260
         at 820 reveal s14-r0 duration 260
         at 980 reveal s14-note duration 260
-        at 1120 reveal s14-r0 duration 340
         at 1107 trace s14-fan duration 1460
+        at 1120 reveal s14-r0 duration 340
       }
   }
   }
@@ -1848,8 +1848,8 @@ explainer "SLURM + Velo from scratch" {
         at 650 reveal s15-step-3 duration 260
         at 760 trace s15-a3 duration 360
         at 800 reveal s15-step-4 duration 260
-        at 1100 reveal s15-step-4 duration 340
         at 1087 trace s15-motion duration 1100
+        at 1100 reveal s15-step-4 duration 340
       }
   }
   }
