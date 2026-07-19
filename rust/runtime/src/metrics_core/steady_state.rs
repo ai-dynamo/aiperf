@@ -184,8 +184,8 @@ pub fn detect_steady_window(
     let start_ns = window_start?;
     // If concurrency never fell back below the threshold after opening (e.g. the
     // run ended while still saturated), close at the last curve event.
-    let end_ns = window_end
-        .unwrap_or_else(|| timestamps.last().map(|&t| t as i64).unwrap_or(start_ns));
+    let end_ns =
+        window_end.unwrap_or_else(|| timestamps.last().map(|&t| t as i64).unwrap_or(start_ns));
     Some(SteadyWindow {
         start_ns,
         end_ns: end_ns.max(start_ns),
@@ -224,7 +224,11 @@ pub fn steady_state_summary(
         return None;
     }
 
-    let window = detect_steady_window(&concurrency, target_concurrency, config.effective_fraction())?;
+    let window = detect_steady_window(
+        &concurrency,
+        target_concurrency,
+        config.effective_fraction(),
+    )?;
 
     let timestamps = concurrency.timestamps_ns();
     let run_start_ns = timestamps.first().map(|&t| t as i64).unwrap_or(0);
