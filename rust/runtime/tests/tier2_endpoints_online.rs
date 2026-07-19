@@ -13,6 +13,7 @@ use aiperf_runtime::clock::{Clock, RealClock};
 use aiperf_runtime::dataset::{
     ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
 };
+use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
 use aiperf_runtime::endpoints::{
     EndpointConfig, EndpointId, EndpointRegistry, EndpointType, PreparedEndpoint,
     PreparedEndpointTable, RawEndpointConfig,
@@ -37,7 +38,6 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use loadgen_core::collector::ReplayTerminalStatus;
 use serde_json::{Value, json};
 
 mod common;

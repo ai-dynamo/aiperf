@@ -8,6 +8,8 @@ use std::rc::Rc;
 
 use aiperf_runtime::clock::Clock;
 use aiperf_runtime::clock::sim_clock::SimClock;
+use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
+use aiperf_runtime::dispatch::sink::RequestObserver;
 use aiperf_runtime::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
@@ -21,8 +23,6 @@ use aiperf_runtime::timing::{BernoulliFixedDelay, Phase, RoundRobinUrlSelector, 
 use aiperf_runtime::user_centric::UserTargetController;
 use aiperf_runtime::user_centric::{UserCentricConfig, UserCentricWorkload};
 use async_trait::async_trait;
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::RequestObserver;
 
 mod common;
 

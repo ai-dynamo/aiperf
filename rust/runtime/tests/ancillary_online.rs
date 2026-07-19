@@ -9,6 +9,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use aiperf_runtime::ancillary::AncillaryTimingConfig;
 use aiperf_runtime::clock::{Clock, RealClock};
+use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
+use aiperf_runtime::dispatch::observer::CollectorObserver;
+use aiperf_runtime::dispatch::sink::RequestObserver;
 use aiperf_runtime::fixed_schedule::FixedScheduleConfig;
 use aiperf_runtime::transport::core::ErrorKind;
 use aiperf_runtime::transport::core::Request;
@@ -19,9 +22,6 @@ use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
 use axum::{
     Router, body::Bytes, extract::State, http::header, response::IntoResponse, routing::post,
 };
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::observer::CollectorObserver;
-use loadgen_core::sink::RequestObserver;
 use uuid::Uuid;
 
 mod common;

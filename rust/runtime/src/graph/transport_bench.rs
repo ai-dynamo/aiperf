@@ -116,7 +116,7 @@ fn percentile(sorted: &[f32], p: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }
-    // One shared nearest-rank definition (loadgen-core owns the stats math).
+    // One shared nearest-rank definition (dispatch::collector owns the stats math).
     let idx = crate::dispatch::collector::percentile_rank(sorted.len(), p);
     sorted[idx] as f64
 }

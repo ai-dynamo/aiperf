@@ -14,6 +14,8 @@ use aiperf_runtime::clock::clock::Clock;
 use aiperf_runtime::clock::real_clock::RealClock;
 use aiperf_runtime::dataset::TiktokenTokenizer;
 use aiperf_runtime::dataset::loader::{DatasetSource, LoadConfig};
+use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
+use aiperf_runtime::dispatch::sink::RequestObserver;
 use aiperf_runtime::graph::execution::LocalGraphTraceExecutionBackend;
 use aiperf_runtime::graph::input::{GraphInputConfig, compile_dag_jsonl_input};
 use aiperf_runtime::graph::materialize::SegmentItemsMaterializer;
@@ -31,8 +33,6 @@ use aiperf_runtime::graph::workload::{
 };
 use aiperf_runtime::rng::RngRoot;
 use aiperf_runtime::timing::{BernoulliFixedDelay, Phase};
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::RequestObserver;
 use serde_json::{Value, json};
 use uuid::Uuid;
 

@@ -8,6 +8,8 @@ use std::rc::Rc;
 
 use aiperf_runtime::clock::Clock;
 use aiperf_runtime::clock::sim_clock::SimClock;
+use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
+use aiperf_runtime::dispatch::sink::RequestObserver;
 use aiperf_runtime::graph::runtime::drive_sim;
 use aiperf_runtime::multiturn::{ConversationSource, TurnToSend};
 use aiperf_runtime::request_rate::{RequestRateConfig, RequestRateWorkload};
@@ -16,8 +18,6 @@ use aiperf_runtime::scheduled::{
 };
 use aiperf_runtime::timing::{ArrivalPattern, StopConfig};
 use async_trait::async_trait;
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::RequestObserver;
 
 mod common;
 

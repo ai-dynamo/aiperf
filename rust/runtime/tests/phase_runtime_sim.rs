@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 
 use aiperf_runtime::clock::{Clock, sim_clock::SimClock};
+use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
+use aiperf_runtime::dispatch::sink::RequestObserver;
 use aiperf_runtime::metrics_core::RequestTrace;
 use aiperf_runtime::multiturn::{ConversationSource, IssuedCredit, TurnToSend};
 use aiperf_runtime::phase_runtime::{
@@ -27,8 +29,6 @@ use aiperf_runtime::timing::{
     RampDriver, RamperConfig, SlotPool, StopConfig,
 };
 use async_trait::async_trait;
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::RequestObserver;
 use tokio::task::LocalSet;
 
 mod common;
