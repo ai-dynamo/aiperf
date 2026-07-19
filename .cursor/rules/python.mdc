@@ -48,6 +48,7 @@ The native execution model is thread-per-core:
 
 - `workers == 1` uses one co-located worker sink on the coordinator's current-thread runtime and `LocalSet`.
 - `workers > 1` runs self-contained sub-cells on OS threads. Each sub-cell owns scheduling, admission, transport, capture, and worker-local state.
+- `runtime.dispatch`/`--dispatch` selects `workers > 1` admission strategy (`sharded`, `global`, or `global-hop`; `global` is the default): `sharded` keeps today's static per-thread partition, `global` admits concurrency and rate from a shared per-cell gate for byte-exact aggregate parity against a single global limiter, and `global-hop` additionally routes every request through one coordinator-owned dispatcher for exact global issuance order.
 - A transport contributes an `ExecutionSinkBuilder` and worker-local `WorkerSink`; transport implementations do not own worker scheduling or phase orchestration.
 - HTTP and gRPC share response reduction in `transport::reduce` and worker measurement in `transport::measure`.
 - Request-rate and concurrency workloads partition request budgets; user-centric and fixed-schedule workloads partition conversations.

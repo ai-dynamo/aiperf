@@ -28,10 +28,16 @@ self-contained sub-cell OS threads. Each thread owns a fresh `current_thread`
 runtime and `LocalSet`, builds its own `workers == 1` transport sink on a
 reactor-local clock derived from a shared `real_clock_anchor`, runs the unchanged
 `run_scheduled_phases` engine over a `1/W` partition, and returns a
-`ScheduledShardOutcome`. The coordinator merges shards (`merge_shards`) and
-finalizes once. `shardable == request.workers > 1`; there is no per-request
-transport thread hop. `exact_fold` (fold-and-drop memory retention) is an
-orthogonal axis, not tied to `shardable`.
+`ScheduledShardOutcome`. The `runtime.dispatch`/`--dispatch` selector
+(`sharded` | `global` | `global-hop`, `global` default for `workers > 1`)
+governs whether that `1/W` partition's concurrency and rate admission stays
+purely thread-local (`sharded`) or draws from a shared per-cell
+`GlobalAdmission` gate (`global`) or a single coordinator-owned dispatcher
+(`global-hop`); see [global-exact-dispatch.md](global-exact-dispatch.md). The
+coordinator merges shards (`merge_shards`) and finalizes once. `shardable ==
+request.workers > 1`; there is no per-request transport thread hop outside
+`global-hop`. `exact_fold` (fold-and-drop memory retention) is an orthogonal
+axis, not tied to `shardable`.
 
 Sidecars (server-metrics, GPU, network) and artifacts are once-per-cell on the
 main thread; worker phase plans install no live sink, heartbeat, or phase

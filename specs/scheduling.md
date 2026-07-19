@@ -64,7 +64,10 @@ threads and cells is a permutation of the whole run (see
 - Request-rate and concurrency partition by request budget
   (`slice_phase_for_thread`, `two_level_partition`, `ModuloCellPartition`); the
   static rate/concurrency/prefill caps are sliced per shard so aggregate offered
-  load matches one shard.
+  load matches one shard under `runtime.dispatch: sharded`, or drawn from a
+  shared per-cell `GlobalAdmission` gate under the `global`/`global-hop`
+  dispatch modes (`global` is the default for `workers > 1`; see
+  [global-exact-dispatch.md](global-exact-dispatch.md)).
 - `user_centric` and `fixed_schedule` partition per conversation
   (`multiturn::…new_with_endpoint` filters the enumerated conversations to the
   shard's owned authored indices).

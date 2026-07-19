@@ -404,6 +404,12 @@ Execution and scheduling:
 - [`specs/scheduling.md`](specs/scheduling.md) — request-rate, concurrency,
   user-centric, and fixed-schedule workloads over one `Clock`-backed runtime, and
   how each partitions across sub-cells.
+- [`specs/global-exact-dispatch.md`](specs/global-exact-dispatch.md) — the
+  built `runtime.dispatch` selector (`sharded` | `global` | `global-hop`)
+  replacing the static per-thread partition with a shared per-cell
+  `GlobalAdmission` gate (`global`, the `workers>1` default) or a
+  single-coordinator hop dispatcher (`global-hop`) so `workers>1` runs are
+  byte-exact against Python's single global concurrency/rate limiter.
 - [`specs/phase-orchestration.md`](specs/phase-orchestration.md) — one
   `Clock`-native warmup→profiling lifecycle: escalation ladder, cancellation
   latch, and the seam scheduled and graph runs share.
