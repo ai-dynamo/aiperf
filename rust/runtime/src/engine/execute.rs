@@ -2534,7 +2534,6 @@ pub(crate) async fn execute_scheduled_shard(
     // A reactor-local clock on the shared real-clock timeline (the graph
     // thread-per-core model); never the coordinator's clock object.
     let clock: Rc<dyn Clock> = RealClock::from_anchor(shared.real_clock_anchor);
-    let start_ns = shared.start_ns;
     // This thread's nested `(cell × thread)` partition — the same object feeds the
     // sampler (which instances it draws) and the issuer (which global ordinals it
     // stamps), so `within*(cells*W) + index == instance` holds and the ordinals
@@ -2557,6 +2556,55 @@ pub(crate) async fn execute_scheduled_shard(
         transport: shared.transport_config.clone(),
         prepared_endpoints: Some(prepared_endpoints),
     })?;
+    // Each `Sharded`/`Global` worker thread slices the authored phases into its
+    // own `1/W` share (see `slice_phase_for_thread`); the pipeline below is shared
+    // with the `GlobalHop` coordinator, which passes the full un-thread-sliced
+    // phases instead.
+    let sliced_phases: Vec<PhaseSpec> = shared
+        .phases
+        .iter()
+        .map(|phase| {
+            crate::engine::sharded_scheduled::slice_phase_for_thread(
+                phase,
+                thread_id,
+                shared.workers,
+                shared.dispatch_mode,
+            )
+        })
+        .collect();
+    execute_scheduled_pipeline(
+        shared,
+        thread_id,
+        partition,
+        sliced_phases,
+        clock,
+        execution_backend,
+    )
+    .await
+}
+
+/// Build and run one complete scheduled pipeline over `partition` with
+/// `sliced_phases`, dispatching every issued turn through `execution_backend`.
+///
+/// Shared by two callers:
+/// - [`execute_scheduled_shard`] runs one pipeline per `Sharded`/`Global` worker
+///   thread, over that thread's `1/W` nested partition and thread-sliced phases,
+///   dispatching to a co-located (`workers == 1`) transport sink.
+/// - [`crate::engine::global_hop::run_global_hop`] runs ONE coordinator-owned
+///   pipeline over the full cell partition and un-thread-sliced phases,
+///   dispatching each turn through the cross-thread thread-per-core hop executor.
+///
+/// `shard_id` names this pipeline's per-shard artifact temp directory (`0` for
+/// the single-coordinator `GlobalHop` pipeline).
+pub(crate) async fn execute_scheduled_pipeline(
+    shared: &ShardedShared,
+    shard_id: usize,
+    partition: crate::cellular::ModuloCellPartition,
+    sliced_phases: Vec<PhaseSpec>,
+    clock: Rc<dyn Clock>,
+    execution_backend: Rc<dyn RequestExecutor>,
+) -> Result<ScheduledShardOutcome> {
+    let start_ns = shared.start_ns;
     // when this sharded run selected exact-fold AND a per-record artifact is
     // requested, this shard streams each completed record's rows into its OWN lane
     // writing to a per-shard temp file (`<artifact_dir>/.shard-<id>/<name>`), dropping
@@ -2569,7 +2617,7 @@ pub(crate) async fn execute_scheduled_shard(
             relative.as_ref().map(|path| {
                 crate::engine::shard_artifacts::shard_artifact_path(
                     &shared.artifact_dir,
-                    thread_id,
+                    shard_id,
                     path,
                 )
             })
@@ -2627,18 +2675,6 @@ pub(crate) async fn execute_scheduled_shard(
         // subset of the cell's instances.
         cell_partition: Some(partition),
     };
-    let sliced_phases: Vec<PhaseSpec> = shared
-        .phases
-        .iter()
-        .map(|phase| {
-            crate::engine::sharded_scheduled::slice_phase_for_thread(
-                phase,
-                thread_id,
-                shared.workers,
-                shared.dispatch_mode,
-            )
-        })
-        .collect();
 
     // A static-accuracy run gives each shard its OWN capture processor over the
     // shared read-only associations; it is registered on the profiling phase below
