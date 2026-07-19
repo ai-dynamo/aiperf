@@ -1002,6 +1002,57 @@ mod tests {
         );
     }
 
+    /// `Global`-mode twin of
+    /// `concurrency_workers_gt_1_is_sharded_and_data_matches_single_thread`:
+    /// the same single-thread-baseline data-multiset assertion, but with
+    /// `workers = 4` dispatched under `DispatchMode::Global` instead of
+    /// `Sharded`. Proves `Global` mode is data-identical to the
+    /// authoritative single dispatcher for the `concurrency` phase shape,
+    /// not just an approximation of it.
+    #[test]
+    fn concurrency_workers_gt_1_global_data_matches_single_thread() {
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let entries = 16;
+        let requests = 16u64;
+        let phase = |concurrency: usize| -> PhaseSpec {
+            serde_json::from_value(json!({
+                "type": "concurrency",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": requests,
+                "concurrency": concurrency,
+            }))
+            .unwrap()
+        };
+
+        let baseline = run_dispatch_records(
+            &registry,
+            &mock,
+            1,
+            build_dataset(&registry, entries, 1),
+            phase(4),
+            crate::engine::protocol::DispatchMode::Sharded,
+        );
+        assert_pinned_records(&baseline, requests as usize, true);
+
+        let global = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_dataset(&registry, entries, 1),
+            phase(4),
+            crate::engine::protocol::DispatchMode::Global,
+        );
+        assert_pinned_records(&global, requests as usize, true);
+
+        assert_eq!(
+            sorted_data_keys(&baseline),
+            sorted_data_keys(&global),
+            "Global workers>1 must be DATA-identical to the single-thread baseline"
+        );
+    }
+
     #[test]
     fn poisson_workers_gt_1_is_sharded_and_data_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();
@@ -1044,6 +1095,52 @@ mod tests {
         );
     }
 
+    /// `Global`-mode twin of
+    /// `poisson_workers_gt_1_is_sharded_and_data_matches_single_thread`.
+    #[test]
+    fn poisson_workers_gt_1_global_data_matches_single_thread() {
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let entries = 12;
+        let requests = 12u64;
+        let phase = || -> PhaseSpec {
+            serde_json::from_value(json!({
+                "type": "poisson",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": requests,
+                "rate": 200.0,
+            }))
+            .unwrap()
+        };
+
+        let baseline = run_dispatch_records(
+            &registry,
+            &mock,
+            1,
+            build_dataset(&registry, entries, 1),
+            phase(),
+            crate::engine::protocol::DispatchMode::Sharded,
+        );
+        assert_pinned_records(&baseline, requests as usize, true);
+
+        let global = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_dataset(&registry, entries, 1),
+            phase(),
+            crate::engine::protocol::DispatchMode::Global,
+        );
+        assert_pinned_records(&global, requests as usize, true);
+
+        assert_eq!(
+            sorted_data_keys(&baseline),
+            sorted_data_keys(&global),
+            "Global Poisson workers>1 must be DATA-identical to the baseline"
+        );
+    }
+
     #[test]
     fn user_centric_workers_gt_1_thread_per_core_data_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();
@@ -1075,6 +1172,56 @@ mod tests {
             distinct_data_keys(&baseline),
             distinct_data_keys(&threaded),
             "user_centric workers>1 must draw from the same turn-shape universe"
+        );
+    }
+
+    /// `Global`-mode twin of
+    /// `user_centric_workers_gt_1_thread_per_core_data_matches_single_thread`.
+    #[test]
+    fn user_centric_workers_gt_1_global_data_matches_single_thread() {
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let entries = 12;
+        let requests = 12u64;
+        let phase = || -> PhaseSpec {
+            serde_json::from_value(json!({
+                "type": "user_centric",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": requests,
+                "rate": 200.0,
+                "users": 4,
+            }))
+            .unwrap()
+        };
+        let dataset = || build_dataset(&registry, entries, 2);
+
+        let baseline = run_dispatch_records(
+            &registry,
+            &mock,
+            1,
+            dataset(),
+            phase(),
+            crate::engine::protocol::DispatchMode::Sharded,
+        );
+        assert_pinned_records(&baseline, requests as usize, false);
+
+        let global = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            dataset(),
+            phase(),
+            crate::engine::protocol::DispatchMode::Global,
+        );
+        assert_pinned_records(&global, requests as usize, false);
+
+        // Real-clock churn makes the per-shape multiset timing-dependent; the
+        // stable invariant is the set of turn shapes.
+        assert_eq!(
+            distinct_data_keys(&baseline),
+            distinct_data_keys(&global),
+            "Global user_centric workers>1 must draw from the same turn-shape universe"
         );
     }
 
@@ -1118,6 +1265,307 @@ mod tests {
             sorted_data_keys(&baseline),
             sorted_data_keys(&threaded),
             "ThreadPerCore fixed_schedule workers>1 must be DATA-identical to the baseline"
+        );
+    }
+
+    /// `Global`-mode twin of
+    /// `fixed_schedule_workers_gt_1_thread_per_core_data_matches_single_thread`.
+    #[test]
+    fn fixed_schedule_workers_gt_1_global_data_matches_single_thread() {
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let entries = 10;
+        let phase = || -> PhaseSpec {
+            serde_json::from_value(json!({
+                "type": "fixed_schedule",
+                "name": "profiling",
+                "exclude_from_results": false,
+            }))
+            .unwrap()
+        };
+
+        let baseline = run_dispatch_records(
+            &registry,
+            &mock,
+            1,
+            build_mooncake_dataset(&registry, entries),
+            phase(),
+            crate::engine::protocol::DispatchMode::Sharded,
+        );
+        let global = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_mooncake_dataset(&registry, entries),
+            phase(),
+            crate::engine::protocol::DispatchMode::Global,
+        );
+
+        assert_eq!(
+            baseline.len(),
+            entries,
+            "fixed_schedule dispatches one first turn per conversation"
+        );
+        assert_pinned_records(&baseline, entries, true);
+        assert_pinned_records(&global, entries, true);
+        assert_eq!(
+            sorted_data_keys(&baseline),
+            sorted_data_keys(&global),
+            "Global fixed_schedule workers>1 must be DATA-identical to the baseline"
+        );
+    }
+
+    /// A second mock, distinct from `FixedMock`, whose per-request TTFT
+    /// alternates between a short and a long delay (round-robin over
+    /// arrival order) so that completion times across concurrently
+    /// in-flight requests are deliberately UNEVEN — unlike `FixedMock`,
+    /// where every request takes the same fixed time and so every worker
+    /// thread's local admission slots free up in lockstep.
+    ///
+    /// Uneven completion times are the condition under which `Sharded`
+    /// mode's static `1/workers` partition of the concurrency budget is
+    /// most visibly wrong: a thread stuck behind a slow request cannot
+    /// borrow spare capacity from a thread whose fast requests already
+    /// completed, so the true, wire-observed aggregate concurrency drifts
+    /// away from what a shared, dynamically-reallocated pool (`Global`)
+    /// would allow.
+    struct VariableLatencyMock {
+        base_url: String,
+        shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+        thread: Option<std::thread::JoinHandle<()>>,
+        #[allow(dead_code)]
+        current: Arc<std::sync::atomic::AtomicUsize>,
+        peak: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl VariableLatencyMock {
+        fn spawn() -> Self {
+            let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let addr = listener.local_addr().unwrap();
+            let base_url = format!("http://{addr}");
+            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+            let current = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let peak = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let arrival = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let thread = std::thread::Builder::new()
+                .name("variable-latency-mock".into())
+                .spawn({
+                    let current = current.clone();
+                    let peak = peak.clone();
+                    move || {
+                        let runtime = tokio::runtime::Builder::new_multi_thread()
+                            .worker_threads(2)
+                            .enable_all()
+                            .build()
+                            .unwrap();
+                        runtime.block_on(async move {
+                            let listener = tokio::net::TcpListener::from_std(
+                                std::net::TcpListener::from(listener),
+                            )
+                            .unwrap();
+                            let mut shutdown_rx = shutdown_rx;
+                            loop {
+                                tokio::select! {
+                                    _ = &mut shutdown_rx => break,
+                                    accepted = listener.accept() => {
+                                        let Ok((stream, _)) = accepted else { continue };
+                                        let current = current.clone();
+                                        let peak = peak.clone();
+                                        let arrival = arrival.clone();
+                                        tokio::spawn(async move {
+                                            let service = service_fn(move |request| {
+                                                serve_variable_sse(
+                                                    request,
+                                                    current.clone(),
+                                                    peak.clone(),
+                                                    arrival.clone(),
+                                                )
+                                            });
+                                            let _ = hyper::server::conn::http1::Builder::new()
+                                                .serve_connection(TokioIo::new(stream), service)
+                                                .await;
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                    }
+                })
+                .unwrap();
+            Self {
+                base_url,
+                shutdown: Some(shutdown_tx),
+                thread: Some(thread),
+                current,
+                peak,
+            }
+        }
+
+        fn peak_concurrent(&self) -> usize {
+            self.peak.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl Drop for VariableLatencyMock {
+        fn drop(&mut self) {
+            if let Some(tx) = self.shutdown.take() {
+                let _ = tx.send(());
+            }
+            if let Some(handle) = self.thread.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    async fn serve_variable_sse(
+        _request: Request<hyper::body::Incoming>,
+        current: Arc<std::sync::atomic::AtomicUsize>,
+        peak: Arc<std::sync::atomic::AtomicUsize>,
+        arrival: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> Result<
+        HttpResponse<StreamBody<impl stream::Stream<Item = Result<Frame<Bytes>, Infallible>>>>,
+        Infallible,
+    > {
+        // Every third arrival is a "slow" request (long TTFT + long ITL);
+        // the rest are "fast". This uneven mix, combined with `Sharded`'s
+        // static round-robin request-to-thread assignment, concentrates
+        // slow requests unevenly across worker threads.
+        let index = arrival.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let slow = index % 3 == 0;
+        let (ttft_ms, itl_ms) = if slow { (60, 10) } else { (4, 1) };
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Frame<Bytes>, Infallible>>();
+        tokio::spawn(async move {
+            let now = current.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            peak.fetch_max(now, std::sync::atomic::Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(ttft_ms)).await;
+            for index in 0..FIXED_OSL {
+                if index > 0 {
+                    tokio::time::sleep(Duration::from_millis(itl_ms)).await;
+                }
+                let chunk = json!({
+                    "id": "chatcmpl-variable",
+                    "object": "chat.completion.chunk",
+                    "model": "mock-model",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"content": "x"},
+                        "finish_reason": Value::Null,
+                    }],
+                });
+                let frame = format!("data: {chunk}\n\n");
+                if tx.send(Ok(Frame::data(Bytes::from(frame)))).is_err() {
+                    current.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    return;
+                }
+            }
+            let usage = json!({
+                "id": "chatcmpl-variable",
+                "object": "chat.completion.chunk",
+                "model": "mock-model",
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": FIXED_ISL,
+                    "completion_tokens": FIXED_OSL,
+                    "total_tokens": FIXED_ISL + FIXED_OSL as u64,
+                },
+            });
+            let _ = tx.send(Ok(Frame::data(Bytes::from(format!("data: {usage}\n\n")))));
+            let _ = tx.send(Ok(Frame::data(Bytes::from_static(b"data: [DONE]\n\n"))));
+            current.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        });
+        let body = StreamBody::new(tokio_stream::wrappers::UnboundedReceiverStream::new(rx));
+        Ok(HttpResponse::builder()
+            .status(200)
+            .header("content-type", "text/event-stream")
+            .body(body)
+            .unwrap())
+    }
+
+    /// The divergence regression guard: proves `Sharded` and `Global` modes
+    /// produce MEASURABLY DIFFERENT aggregate-concurrency behavior under
+    /// deliberately uneven per-request completion times, and that the
+    /// difference is in the expected direction — `Sharded`'s local,
+    /// per-thread admission floor over-subscribes the authored global cap,
+    /// while `Global`'s shared pool never does.
+    ///
+    /// If `Global` mode's admission wiring were ever broken (e.g. reverted
+    /// to consulting only a local per-thread slot count), this test would
+    /// stop observing a difference between the two modes and fail on the
+    /// `global_peak <= 3` assertion — the same failure mode this whole task
+    /// plan exists to guard against.
+    #[test]
+    fn sharded_and_global_diverge_under_uneven_completion_times() {
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let entries = 24;
+        let requests = 24u64;
+        let phase: PhaseSpec = serde_json::from_value(json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": requests,
+            "concurrency": 3,
+        }))
+        .unwrap();
+
+        let run = |mock: &VariableLatencyMock,
+                   dispatch_mode: crate::engine::protocol::DispatchMode| {
+            let artifact_dir = tempfile::tempdir().unwrap();
+            let request_executor: Arc<dyn RequestExecutorFactory> = Arc::new(HttpExecutionFactory);
+            let factories = native_execution_factories();
+            let spec = plan_with_dispatch(
+                &mock.base_url,
+                artifact_dir.path(),
+                4,
+                build_dataset(&registry, entries, 1),
+                phase.clone(),
+                dispatch_mode,
+            );
+            let report = execute_prepared_native_plan_uncommitted_selected(
+                spec,
+                request_executor,
+                &factories,
+                &registry,
+                None,
+            )
+            .expect("native run must complete");
+            assert!(
+                report_error_count(&report) == 0,
+                "expected zero profiling errors, report: {report:?}"
+            );
+        };
+
+        let sharded_mock = VariableLatencyMock::spawn();
+        run(
+            &sharded_mock,
+            crate::engine::protocol::DispatchMode::Sharded,
+        );
+        let sharded_peak = sharded_mock.peak_concurrent();
+
+        let global_mock = VariableLatencyMock::spawn();
+        run(&global_mock, crate::engine::protocol::DispatchMode::Global);
+        let global_peak = global_mock.peak_concurrent();
+
+        assert!(
+            sharded_peak > 3,
+            "Sharded mode's local per-thread admission floor is expected to \
+             over-subscribe the authored aggregate cap of 3 under uneven \
+             per-request completion times (a slow request stalls one \
+             thread's local slot while other threads keep issuing from \
+             their own local floor-to-1 slots); observed peak {sharded_peak}"
+        );
+        assert!(
+            global_peak <= 3,
+            "Global mode's shared admission pool must never exceed the \
+             authored aggregate cap of 3, even under uneven per-request \
+             completion times; observed peak {global_peak}"
+        );
+        assert!(
+            sharded_peak != global_peak,
+            "Sharded and Global must diverge under uneven completion times \
+             (Sharded {sharded_peak} vs Global {global_peak}) — a passing \
+             assertion here that shows no difference would be a false \
+             negative for this regression guard"
         );
     }
 
