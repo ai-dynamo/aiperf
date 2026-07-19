@@ -36,18 +36,24 @@ Screenshots of live decks (rendered via `npm run dev` + Playwright,
 
 ## Root causes
 
-1. **Caption collision.** `sdk.note` / header-caption text nodes in
-   `chrome.ts` are placed and sized without measuring wrapped text height
-   against sibling node geometry. A caption that wraps to two lines is
-   painted at its authored single-line box height, so the second line spills
-   into whatever sits below it in local coordinate space.
-2. **Glow tied to color, not intent.** In `SceneRenderer.tsx`, the box render
-   path applies the full double-glow `drop-shadow` filter whenever
-   `isAccentThemeRole(node.style?.fill) || isAccentThemeRole(node.style?.stroke)`
-   is true (`remappedAccentFill`, around the `core.box` render branch).
-   Category-accent colors (green/blue/orange fills used for semantic
-   grouping, not emphasis) trigger the same glow as an intentionally
-   highlighted node, so glow ends up wherever accent colors happen to land.
+1. **Caption collision (corrected).** The `segment-pools` scene 1 overlap was
+   not text-wrap measurement at all: a separate `sdk.Callout` node
+   (`pool-callout`, text "serialize once") was authored in `segment-pools.flow`
+   at coordinates that geometrically overlapped the `sdk.Header` box by
+   ~20 vertical pixels. `sdk.Callout`'s stem is a straight line from box to an
+   explicit target point with no path-avoidance of intervening nodes, so any
+   author-supplied position that lands inside another node's box collides.
+   No `chrome.ts` measurement logic was implicated.
+2. **Glow refined for quality, not "fixed" as inconsistent.** The
+   `remappedAccentFill` accent-color detection in `SceneRenderer.tsx`'s box
+   render path (glow fires whenever `isAccentThemeRole` matches fill or
+   stroke) turned out to be deliberate and consistent: every accent-stroked
+   panel glows, every neutral/muted-stroked chip does not. The real defect
+   was that the glow itself looked heavy — a stacked double `drop-shadow`
+   (14px blur at 70% opacity plus 28px at 40%) read as neon rather than
+   premium. The fix reduces it to a single softer glow (8px blur, 45%
+   opacity) and deepens the baseline elevation shadow used by non-glowing
+   nodes, rather than gating glow behind a new explicit flag.
 3. **No enforced diagram-to-text gap.** Scene layout does not reserve a
    minimum vertical gap between the diagram canvas and the headline/body
    text block beneath it, so the two areas can end up touching or nearly
@@ -61,24 +67,26 @@ Screenshots of live decks (rendered via `npm run dev` + Playwright,
 
 ### 1. Caption/text collision
 
-In `chrome.ts`, compute the wrapped bounding box of caption/note text at
-compile time (measure against the authored max width) and size the caption's
-layout box to that measured height rather than a fixed single-line height.
-Downstream siblings that are positioned relative to the caption's box
-therefore get pushed to account for wrapped lines instead of being painted
-underneath them.
+Reposition the colliding node in `decks-flow/segment-pools.flow`: the
+`pool-callout` `sdk.Callout` moved from `x=250,y=40` (overlapping the header)
+to `x=300,y=66`, with its target retargeted from `{x:310,y:120}` to
+`{x:360,y:95}` — the top of the "FREEZE" step chip, which is also where
+serialization actually happens. This is a per-scene content fix, not a
+`chrome.ts` change; `sdk.Callout`'s straight-line-stem behavior is unchanged
+and authors remain responsible for choosing non-colliding coordinates.
+Separately, `decks-flow/rust-architecture.flow` scene 1 dropped an empty
+`sdk.Band` background (`zone`) that added dead space around a single small
+panel with no grouping value.
 
-### 2. Glow gated by explicit intent
+### 2. Glow refined for depth, not gated behind a new flag
 
-Replace the `remappedAccentFill` accent-color detection in
-`SceneRenderer.tsx`'s box render path with an explicit style flag (e.g.
-`style.emphasis === true` or `style.glow === true`) that scene authors (or
-SDK component defaults) set deliberately. Accent-colored fills that are not
-marked emphasized fall through to the existing baseline
-`drop-shadow(0 3px 5px rgba(0,0,0,0.28))`. Update any SDK component
-(`sdk.chip`, `sdk.card`, etc. in `chrome.ts`) that relied on the old
-color-triggered glow to set the new flag explicitly where highlighting was
-intended.
+In `SceneRenderer.tsx`'s box render path, the `remappedAccentFill` branch's
+filter changed from a heavy double `drop-shadow` (14px @ 70% + 28px @ 40%) to
+a single softer glow (8px blur @ 45% opacity), and the non-glow baseline
+shadow deepened from `0 3px 5px rgba(0,0,0,0.28)` to `0 6px 10px
+rgba(0,0,0,0.3)` (glow branch baseline: `0 8px 14px rgba(0,0,0,0.4)`). No new
+style flag was introduced; the existing accent-color-triggered glow rule is
+kept as-is, just visually refined.
 
 ### 3. Diagram-to-text minimum gap
 
@@ -106,21 +114,26 @@ adjustment in the existing chip render path, not a new node type.
 
 ## Verification
 
-- Re-render the three scenes captured as evidence (`rust-architecture`,
+- Re-rendered the three scenes captured as evidence (`rust-architecture`,
   `cellular-internals`, `segment-pools`, scene 1 of each) via the dev server
-  and Playwright screenshot; confirm no text/element overlap and a visible
+  and Playwright screenshot; confirmed no text/element overlap and a visible
   gap between diagram and text block.
-- Spot-check 2-3 additional decks with step-chip sequences (`slurm-velo`,
-  `velo-deep-dive`) to confirm chip differentiation reads correctly and no
-  existing "emphasis" scenes lost their glow after the flag migration.
-- Run `npm run flow-verifier` (or the project's existing flow/deck
-  verification script) to confirm no `.flow` deck fails to compile after the
-  `chrome.ts` changes.
+- Spot-checked `slurm-velo` and `velo-deep-dive` (step-chip and accent-glow
+  scenes not in the original evidence set); chip differentiation and the
+  refined glow read correctly with no regressions.
+- Ran `npm run flow-verifier`: `IR: verifying 9 package(s)…`, `Play: full-deck
+  Playwright walk…`, `summary: 0 error(s), 0 warn(s)`.
 
 ## Source anchors
 
 - `apps/explainers/src/core/diagram/SceneRenderer.tsx` — box/panel render
   paths, glow (`remappedAccentFill`), shadow filters.
-- `apps/explainers/src/flow/sdk/generic/chrome.ts` — `sdk.header`,
-  `sdk.note`, `sdk.chip`, `sdk.card` descriptors and caption/chip layout.
-- `apps/explainers/src/core/tokens.ts` — spacing/radius/color tokens.
+- `apps/explainers/src/flow/compiler/desugar-scene-primitives.ts` —
+  `core.stepper` step-chip chrome.
+- `apps/explainers/src/flow/sdk/generic/chrome.ts` — `sdk.Header`,
+  `sdk.Callout` descriptors (stem/target geometry).
+- `apps/explainers/src/index.css` — `.ex-stage-hero.ex-content-card__diagram`
+  bottom inset (diagram-to-text gap).
+- `apps/explainers/decks-flow/segment-pools.flow`,
+  `apps/explainers/decks-flow/rust-architecture.flow` — per-scene content
+  fixes.
