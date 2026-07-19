@@ -22,6 +22,7 @@ pub mod cancellation;
 pub mod intervals;
 pub mod phase;
 pub mod ramping;
+pub mod rate_gate;
 pub mod slots;
 pub mod stop;
 pub mod url_selection;
@@ -46,7 +47,10 @@ pub use ramping::{
     ExponentialRamp, LinearRamp, PoissonRamp, RampConfigError, RampDriver, RampHandle,
     RampStrategy, RampTaskError, RamperConfig,
 };
-pub use slots::{ConcurrencyManager, ConcurrencyStats, SlotGuard, SlotPool};
+pub use rate_gate::GlobalRateGate;
+pub use slots::{
+    ConcurrencyManager, ConcurrencyStats, GlobalSlotGuard, GlobalSlotPool, SlotGuard, SlotPool,
+};
 pub use stop::{RunState, StopChecker, StopCondition, StopConfig};
 pub use url_selection::{RoundRobinUrlSelector, UrlSelectionError, UrlSelector};
 pub use user_centric::{InitialUser, UserCentricPlan, plan_user_centric};
