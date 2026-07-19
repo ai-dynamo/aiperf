@@ -57,16 +57,16 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-0", from = { nodeId: "authored", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr0 duration 260
-        at 170 reveal phase0 duration 260
-        at 340 reveal tags0 duration 260
-        at 510 reveal authored duration 260
-        at 850 reveal cell-k duration 260
-        at 1110 trace a0a duration 420
-        at 1190 reveal report duration 260
-        at 1360 reveal note0 duration 260
-        at 1450 trace a0b duration 420
-        at 1530 reveal ev0 duration 260
-        at 1700 trace motion-sig-0 duration 900
+        after hdr0 reveal phase0 duration 260
+        after phase0 reveal tags0 duration 260
+        after tags0 reveal authored duration 260
+        after authored reveal cell-k duration 260
+        after cell-k trace a0a duration 420
+        after a0a reveal report duration 260
+        after report reveal note0 duration 260
+        after report trace a0b duration 420
+        after a0b reveal ev0 duration 260
+        after report trace motion-sig-0 duration 900
       }
     }
   }
@@ -99,14 +99,14 @@ explainer "Cellular internals" {
       sdk.Label(id = "ev1", text = "flags.rs · resolve before children", x = 40, y = 360, width = 300, height = 20, fontSize = 10, align = "start")
       timeline primary {
         at 0 reveal hdr1 duration 260
-        at 170 reveal phase1 duration 260
-        at 340 reveal cfg duration 260
-        at 510 reveal cell0 duration 260
-        at 680 reveal cell1 duration 260
-        at 850 reveal cell2 duration 260
-        at 1020 reveal cell3 duration 260
-        at 1190 trace config-fan duration 420
-        at 1360 reveal ev1 duration 260
+        after hdr1 reveal phase1 duration 260
+        after phase1 reveal cfg duration 260
+        after cfg reveal cell0 duration 260
+        after cell0 reveal cell1 duration 260
+        after cell1 reveal cell2 duration 260
+        after cell2 reveal cell3 duration 260
+        after cell3 trace config-fan duration 420
+        after config-fan reveal ev1 duration 260
       }
     }
   }
@@ -141,16 +141,16 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-2", from = { nodeId: "profile", anchor: "e" }, to = { nodeId: "execute", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr2 duration 260
-        at 170 reveal phase2 duration 260
-        at 340 reveal chip2 duration 260
-        at 510 reveal profile duration 260
-        at 850 reveal execbin duration 260
-        at 1110 trace a2a duration 420
-        at 1190 reveal execute duration 260
-        at 1450 trace a2b duration 420
-        at 1530 reveal stdio duration 260
-        at 1700 trace motion-sig-2 duration 900
-        at 1790 trace a2c duration 420
+        after hdr2 reveal phase2 duration 260
+        after phase2 reveal chip2 duration 260
+        after chip2 reveal profile duration 260
+        after profile reveal execbin duration 260
+        after execbin trace a2a duration 420
+        after a2a reveal execute duration 260
+        after execute trace a2b duration 420
+        after a2b reveal stdio duration 260
+        after execute trace motion-sig-2 duration 900
+        after stdio trace a2c duration 420
       }
     }
   }
@@ -183,14 +183,14 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-3", from = { nodeId: "exec3", anchor: "e" }, to = { nodeId: "ctrl", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr3 duration 260
-        at 170 reveal phase3 duration 260
-        at 340 reveal exec3 duration 260
-        at 680 reveal ctrl duration 260
-        at 850 reveal single duration 260
-        at 940 trace a3a duration 420
-        at 1190 reveal roles duration 260
-        at 1360 trace motion-sig-3 duration 900
-        at 1450 trace a3b duration 420
+        after hdr3 reveal phase3 duration 260
+        after phase3 reveal exec3 duration 260
+        after exec3 reveal ctrl duration 260
+        after ctrl reveal single duration 260
+        after ctrl trace a3a duration 420
+        after a3a reveal roles duration 260
+        after ctrl trace motion-sig-3 duration 900
+        after roles trace a3b duration 420
       }
     }
   }
@@ -224,15 +224,15 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a4c", mode = "path", from = { nodeId: "ctrl4", anchor: "s" }, to = { nodeId: "ok4", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr4 duration 260
-        at 170 reveal phase4 duration 260
-        at 340 reveal chip4 duration 260
-        at 510 reveal ctrl4 duration 260
-        at 850 reveal rej1 duration 260
-        at 1110 trace a4a duration 420
-        at 1190 reveal rej2 duration 260
-        at 1450 trace a4b duration 420
-        at 1530 reveal ok4 duration 260
-        at 1790 trace a4c duration 420
+        after hdr4 reveal phase4 duration 260
+        after phase4 reveal chip4 duration 260
+        after chip4 reveal ctrl4 duration 260
+        after ctrl4 reveal rej1 duration 260
+        after rej1 trace a4a duration 420
+        after a4a reveal rej2 duration 260
+        after rej2 trace a4b duration 420
+        after a4b reveal ok4 duration 260
+        after ok4 trace a4c duration 420
       }
     }
   }
@@ -268,17 +268,17 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-5", from = { nodeId: "ctrl5", anchor: "e" }, to = { nodeId: "own1", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr5 duration 260
-        at 170 reveal phase5 duration 260
-        at 340 reveal ctrl5 duration 260
-        at 680 reveal mod duration 260
-        at 850 reveal own0 duration 260
-        at 940 trace a5a duration 420
-        at 1110 trace a5c0 duration 420
-        at 1190 reveal own1 duration 260
-        at 1450 trace a5c1 duration 420
-        at 1530 reveal own2 duration 260
-        at 1790 trace a5c2 duration 420
-        at 1870 trace motion-sig-5 duration 900
+        after hdr5 reveal phase5 duration 260
+        after phase5 reveal ctrl5 duration 260
+        after ctrl5 reveal mod duration 260
+        after mod reveal own0 duration 260
+        after mod trace a5a duration 420
+        after own0 trace a5c0 duration 420
+        after a5c0 reveal own1 duration 260
+        after own1 trace a5c1 duration 420
+        after a5c1 reveal own2 duration 260
+        after own2 trace a5c2 duration 420
+        after own1 trace motion-sig-5 duration 900
       }
     }
   }
@@ -316,19 +316,19 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-6", from = { nodeId: "barrier", anchor: "w" }, to = { nodeId: "start", anchor: "e" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr6 duration 260
-        at 170 reveal phase6 duration 260
-        at 340 reveal c0 duration 260
-        at 510 reveal c1 duration 260
-        at 680 reveal c2 duration 260
-        at 850 reveal c3 duration 260
-        at 1700 reveal barrier duration 260
-        at 1960 trace a6a0 duration 420
-        at 1960 trace a6a1 duration 420
-        at 1960 trace a6a2 duration 420
-        at 1960 trace a6a3 duration 420
-        at 2040 reveal start duration 260
-        at 2300 trace a6b duration 420
-        at 2300 trace motion-sig-6 duration 900
+        after hdr6 reveal phase6 duration 260
+        after phase6 reveal c0 duration 260
+        after c0 reveal c1 duration 260
+        after c1 reveal c2 duration 260
+        after c2 reveal c3 duration 260
+        after c3 reveal barrier duration 260
+        after barrier trace a6a0 duration 420
+        after barrier trace a6a1 duration 420
+        after barrier trace a6a2 duration 420
+        after barrier trace a6a3 duration 420
+        after a6a3 reveal start duration 260
+        after start trace a6b duration 420
+        after start trace motion-sig-6 duration 900
       }
     }
   }
@@ -361,14 +361,14 @@ explainer "Cellular internals" {
       sdk.Label(id = "ev7", text = "timing origin optional · policies change rendezvous only", x = 390, y = 280, width = 270, height = 20, fontSize = 10, align = "start")
       timeline primary {
         at 0 reveal hdr7 duration 260
-        at 170 reveal phase7 duration 260
-        at 340 reveal pol0 duration 260
-        at 510 reveal pol1 duration 260
-        at 680 reveal pol2 duration 260
-        at 850 reveal origin duration 260
-        at 1110 trace a7a duration 420
-        at 1190 trace a7b duration 420
-        at 1360 reveal ev7 duration 260
+        after hdr7 reveal phase7 duration 260
+        after phase7 reveal pol0 duration 260
+        after pol0 reveal pol1 duration 260
+        after pol1 reveal pol2 duration 260
+        after pol2 reveal origin duration 260
+        after origin trace a7a duration 420
+        after origin trace a7b duration 420
+        after a7b reveal ev7 duration 260
       }
     }
   }
@@ -403,16 +403,16 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-8", from = { nodeId: "own8", anchor: "e" }, to = { nodeId: "cell8", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr8 duration 260
-        at 170 reveal phase8 duration 260
-        at 340 reveal own8 duration 260
-        at 510 reveal velo duration 260
-        at 770 trace a8a duration 420
-        at 850 reveal stage duration 260
-        at 1110 trace a8b duration 420
-        at 1190 reveal cell8 duration 260
-        at 1450 trace a8c duration 420
-        at 1530 trace a8d duration 420
-        at 1700 trace motion-sig-8 duration 900
+        after hdr8 reveal phase8 duration 260
+        after phase8 reveal own8 duration 260
+        after own8 reveal velo duration 260
+        after velo trace a8a duration 420
+        after a8a reveal stage duration 260
+        after stage trace a8b duration 420
+        after a8b reveal cell8 duration 260
+        after cell8 trace a8c duration 420
+        after cell8 trace a8d duration 420
+        after cell8 trace motion-sig-8 duration 900
       }
     }
   }
@@ -448,17 +448,17 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-9", from = { nodeId: "idx", anchor: "e" }, to = { nodeId: "completed", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr9 duration 260
-        at 170 reveal phase9 duration 260
-        at 340 reveal idx duration 260
-        at 680 reveal indexed duration 260
-        at 940 trace a9a duration 420
-        at 1020 reveal inflight duration 260
-        at 1280 trace a9b duration 420
-        at 1360 reveal completed duration 260
-        at 1530 reveal note9 duration 260
-        at 1620 trace a9c duration 420
-        at 1700 reveal chip9 duration 260
-        at 1870 trace motion-sig-9 duration 900
+        after hdr9 reveal phase9 duration 260
+        after phase9 reveal idx duration 260
+        after idx reveal indexed duration 260
+        after indexed trace a9a duration 420
+        after a9a reveal inflight duration 260
+        after inflight trace a9b duration 420
+        after a9b reveal completed duration 260
+        after completed reveal note9 duration 260
+        after completed trace a9c duration 420
+        after a9c reveal chip9 duration 260
+        after completed trace motion-sig-9 duration 900
       }
     }
   }
@@ -494,17 +494,17 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-10", from = { nodeId: "env", anchor: "e" }, to = { nodeId: "auto", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr10 duration 260
-        at 170 reveal phase10 duration 260
-        at 340 reveal env duration 260
-        at 680 reveal inputs duration 260
-        at 1020 reveal torigin duration 260
-        at 1360 reveal auto duration 260
-        at 1530 reveal note10 duration 260
-        at 1620 trace a10a duration 420
-        at 1620 trace a10b duration 420
-        at 1620 trace a10c duration 420
-        at 1700 reveal chip10 duration 260
-        at 1870 trace motion-sig-10 duration 900
+        after hdr10 reveal phase10 duration 260
+        after phase10 reveal env duration 260
+        after env reveal inputs duration 260
+        after inputs reveal torigin duration 260
+        after torigin reveal auto duration 260
+        after auto reveal note10 duration 260
+        after auto trace a10a duration 420
+        after auto trace a10b duration 420
+        after auto trace a10c duration 420
+        after a10c reveal chip10 duration 260
+        after auto trace motion-sig-10 duration 900
       }
     }
   }
@@ -539,16 +539,16 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-11", from = { nodeId: "slice", anchor: "e" }, to = { nodeId: "store", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr11 duration 260
-        at 170 reveal phase11 duration 260
-        at 340 reveal slice duration 260
-        at 510 reveal w0 duration 260
-        at 770 trace a11a duration 420
-        at 850 reveal w1 duration 260
-        at 1110 trace a11d duration 420
-        at 1190 reveal store duration 260
-        at 1450 trace a11b duration 420
-        at 1530 trace a11c duration 420
-        at 1700 trace motion-sig-11 duration 900
+        after hdr11 reveal phase11 duration 260
+        after phase11 reveal slice duration 260
+        after slice reveal w0 duration 260
+        after w0 trace a11a duration 420
+        after a11a reveal w1 duration 260
+        after w1 trace a11d duration 420
+        after a11d reveal store duration 260
+        after store trace a11b duration 420
+        after store trace a11c duration 420
+        after store trace motion-sig-11 duration 900
       }
     }
   }
@@ -583,16 +583,16 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a123", mode = "path", from = { nodeId: "global-ord", anchor: "s" }, to = { nodeId: "ord3", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr12 duration 260
-        at 170 reveal phase12 duration 260
-        at 340 reveal global-ord duration 260
-        at 510 reveal ord0 duration 260
-        at 770 trace a120 duration 420
-        at 850 reveal ord1 duration 260
-        at 1110 trace a121 duration 420
-        at 1190 reveal ord2 duration 260
-        at 1450 trace a122 duration 420
-        at 1530 reveal ord3 duration 260
-        at 1790 trace a123 duration 420
+        after hdr12 reveal phase12 duration 260
+        after phase12 reveal global-ord duration 260
+        after global-ord reveal ord0 duration 260
+        after ord0 trace a120 duration 420
+        after a120 reveal ord1 duration 260
+        after ord1 trace a121 duration 420
+        after a121 reveal ord2 duration 260
+        after ord2 trace a122 duration 420
+        after a122 reveal ord3 duration 260
+        after ord3 trace a123 duration 420
       }
     }
   }
@@ -627,16 +627,16 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-13", from = { nodeId: "shard", anchor: "e" }, to = { nodeId: "srv", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr13 duration 260
-        at 170 reveal phase13 duration 260
-        at 340 reveal chip13 duration 260
-        at 510 reveal shard duration 260
-        at 680 reveal http duration 260
-        at 940 trace a13a duration 420
-        at 1020 reveal dyno duration 260
-        at 1280 trace a13b duration 420
-        at 1360 reveal srv duration 260
-        at 1620 trace a13c duration 420
-        at 1700 trace motion-sig-13 duration 900
+        after hdr13 reveal phase13 duration 260
+        after phase13 reveal chip13 duration 260
+        after chip13 reveal shard duration 260
+        after shard reveal http duration 260
+        after http trace a13a duration 420
+        after a13a reveal dyno duration 260
+        after dyno trace a13b duration 420
+        after a13b reveal srv duration 260
+        after srv trace a13c duration 420
+        after srv trace motion-sig-13 duration 900
       }
     }
   }
@@ -674,19 +674,19 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-14", from = { nodeId: "ev0", anchor: "e" }, to = { nodeId: "ev4", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr14 duration 260
-        at 170 reveal phase14 duration 260
-        at 340 reveal ev0 duration 260
-        at 680 reveal ev1 duration 260
-        at 940 trace a140 duration 420
-        at 1020 reveal ev2 duration 260
-        at 1280 trace a141 duration 420
-        at 1360 reveal ev3 duration 260
-        at 1620 trace a142 duration 420
-        at 1700 reveal ev4 duration 260
-        at 1960 trace a143 duration 420
-        at 2040 reveal cap duration 260
-        at 2210 trace motion-sig-14 duration 900
-        at 2300 trace a14v duration 420
+        after hdr14 reveal phase14 duration 260
+        after phase14 reveal ev0 duration 260
+        after ev0 reveal ev1 duration 260
+        after ev1 trace a140 duration 420
+        after a140 reveal ev2 duration 260
+        after ev2 trace a141 duration 420
+        after a141 reveal ev3 duration 260
+        after ev3 trace a142 duration 420
+        after a142 reveal ev4 duration 260
+        after ev4 trace a143 duration 420
+        after a143 reveal cap duration 260
+        after ev4 trace motion-sig-14 duration 900
+        after cap trace a14v duration 420
       }
     }
   }
@@ -719,14 +719,14 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-15", from = { nodeId: "disp15", anchor: "e" }, to = { nodeId: "part", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr15 duration 260
-        at 170 reveal phase15 duration 260
-        at 340 reveal disp15 duration 260
-        at 680 reveal retain duration 260
-        at 940 trace a15a duration 420
-        at 1020 reveal part duration 260
-        at 1190 reveal note15 duration 260
-        at 1280 trace a15b duration 420
-        at 1360 trace motion-sig-15 duration 900
+        after hdr15 reveal phase15 duration 260
+        after phase15 reveal disp15 duration 260
+        after disp15 reveal retain duration 260
+        after retain trace a15a duration 420
+        after a15a reveal part duration 260
+        after part reveal note15 duration 260
+        after part trace a15b duration 420
+        after part trace motion-sig-15 duration 900
       }
     }
   }
@@ -759,14 +759,14 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-16", from = { nodeId: "disp16", anchor: "e" }, to = { nodeId: "drop", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr16 duration 260
-        at 170 reveal phase16 duration 260
-        at 340 reveal disp16 duration 260
-        at 680 reveal fold duration 260
-        at 940 trace a16a duration 420
-        at 1020 reveal drop duration 260
-        at 1190 reveal note16 duration 260
-        at 1280 trace a16b duration 420
-        at 1360 trace motion-sig-16 duration 900
+        after hdr16 reveal phase16 duration 260
+        after phase16 reveal disp16 duration 260
+        after disp16 reveal fold duration 260
+        after fold trace a16a duration 420
+        after a16a reveal drop duration 260
+        after drop reveal note16 duration 260
+        after drop trace a16b duration 420
+        after drop trace motion-sig-16 duration 900
       }
     }
   }
@@ -800,15 +800,15 @@ explainer "Cellular internals" {
       sdk.Signal(id = "motion-sig-17", from = { nodeId: "fin", anchor: "e" }, to = { nodeId: "sketch", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr17 duration 260
-        at 170 reveal phase17 duration 260
-        at 340 reveal fin duration 260
-        at 680 reveal sketch duration 260
-        at 850 reveal exact duration 260
-        at 940 trace a17a duration 420
-        at 1110 trace a17b duration 420
-        at 1190 reveal approx duration 260
-        at 1450 trace a17c duration 420
-        at 1530 trace motion-sig-17 duration 900
+        after hdr17 reveal phase17 duration 260
+        after phase17 reveal fin duration 260
+        after fin reveal sketch duration 260
+        after sketch reveal exact duration 260
+        after sketch trace a17a duration 420
+        after exact trace a17b duration 420
+        after a17b reveal approx duration 260
+        after approx trace a17c duration 420
+        after sketch trace motion-sig-17 duration 900
       }
     }
   }
@@ -846,19 +846,19 @@ explainer "Cellular internals" {
       sdk.Edge(id = "merge-to-sink", mode = "route", from = { nodeId: "merge", anchor: "s" }, to = { nodeId: "sink", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr18 duration 260
-        at 170 reveal phase18 duration 260
-        at 340 reveal cell180 duration 260
-        at 510 reveal cell181 duration 260
-        at 680 reveal cell182 duration 260
-        at 850 reveal cell183 duration 260
-        at 1020 reveal agg0 duration 260
-        at 1190 reveal agg1 duration 260
-        at 1360 trace cells-to-agg0 duration 420
-        at 1530 trace cells-to-agg1 duration 420
-        at 1700 reveal merge duration 260
-        at 1870 trace aggs-to-merge duration 420
-        at 2040 reveal sink duration 260
-        at 2300 trace merge-to-sink duration 420
+        after hdr18 reveal phase18 duration 260
+        after phase18 reveal cell180 duration 260
+        after cell180 reveal cell181 duration 260
+        after cell181 reveal cell182 duration 260
+        after cell182 reveal cell183 duration 260
+        after cell183 reveal agg0 duration 260
+        after agg0 reveal agg1 duration 260
+        after agg1 trace cells-to-agg0 duration 420
+        after cells-to-agg0 trace cells-to-agg1 duration 420
+        after cells-to-agg1 reveal merge duration 260
+        after merge trace aggs-to-merge duration 420
+        after aggs-to-merge reveal sink duration 260
+        after sink trace merge-to-sink duration 420
       }
     }
   }
@@ -891,14 +891,14 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a19c", mode = "path", from = { nodeId: "exec19", anchor: "s" }, to = { nodeId: "res19", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr19 duration 260
-        at 170 reveal phase19 duration 260
-        at 340 reveal ctrl19 duration 260
-        at 680 reveal data19 duration 260
-        at 940 trace a19a duration 420
-        at 1020 reveal exec19 duration 260
-        at 1280 trace a19b duration 420
-        at 1360 reveal res19 duration 260
-        at 1620 trace a19c duration 420
+        after hdr19 reveal phase19 duration 260
+        after phase19 reveal ctrl19 duration 260
+        after ctrl19 reveal data19 duration 260
+        after data19 trace a19a duration 420
+        after a19a reveal exec19 duration 260
+        after exec19 trace a19b duration 420
+        after a19b reveal res19 duration 260
+        after res19 trace a19c duration 420
       }
     }
   }

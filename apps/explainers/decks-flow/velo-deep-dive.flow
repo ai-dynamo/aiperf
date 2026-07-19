@@ -133,15 +133,15 @@ explainer "Velo deep dive" {
 
       timeline main {
         at 0 reveal s0-hdr duration 260
-        at 200 reveal s0-cell duration 280
-        at 420 trace s0-a1 duration 360
-        at 480 reveal s0-hello duration 180
-        at 620 reveal s0-velo duration 280
-        at 840 trace s0-a2 duration 360
-        at 1040 reveal s0-ctrl duration 280
-        at 1280 reveal s0-src duration 260
-        at 1600 trace s0-motion-sig duration 700
-        at 2300 reveal s0-ctrl duration 400
+        after s0-hdr reveal s0-cell duration 280
+        after s0-cell trace s0-a1 duration 360
+        after s0-a1 reveal s0-hello duration 180
+        after s0-hello reveal s0-velo duration 280
+        after s0-velo trace s0-a2 duration 360
+        after s0-a2 reveal s0-ctrl duration 280
+        after s0-ctrl reveal s0-src duration 260
+        after s0-src trace s0-motion-sig duration 700
+        after s0-motion-sig reveal s0-ctrl duration 400
       }
   }
   }
@@ -249,15 +249,15 @@ explainer "Velo deep dive" {
 
       timeline main {
         at 0 reveal s1-hdr duration 260
-        at 200 reveal s1-reg duration 260
-        at 400 trace s1-a1 duration 300
-        at 560 reveal s1-peer duration 260
-        at 760 trace s1-a2 duration 300
-        at 920 reveal s1-spec duration 260
-        at 1240 trace s1-a4 duration 300
-        at 1400 reveal s1-reply duration 280
-        at 1720 trace s1-motion-sig duration 700
-        at 2420 reveal s1-reply duration 400
+        after s1-hdr reveal s1-reg duration 260
+        after s1-reg trace s1-a1 duration 300
+        after s1-a1 reveal s1-peer duration 260
+        after s1-peer trace s1-a2 duration 300
+        after s1-a2 reveal s1-spec duration 260
+        after s1-spec trace s1-a4 duration 300
+        after s1-a4 reveal s1-reply duration 280
+        after s1-reply trace s1-motion-sig duration 700
+        after s1-motion-sig reveal s1-reply duration 400
       }
   }
   }
@@ -406,16 +406,16 @@ explainer "Velo deep dive" {
 
       timeline main {
         at 0 reveal s2-hdr duration 260
-        at 200 stagger targets [s2-c0, s2-c1, s2-c2, s2-c3] step 100 duration 220
-        at 620 trace s2-a0 duration 360
-        at 740 trace s2-a1 duration 360
-        at 860 trace s2-a2 duration 360
-        at 980 trace s2-a3 duration 360
-        at 1100 reveal s2-barrier duration 280
-        at 1320 trace s2-aw duration 320
-        at 1480 reveal s2-start duration 260
-        at 1800 trace s2-motion-sig duration 700
-        at 2500 reveal s2-barrier duration 400
+        after s2-hdr stagger targets [s2-c0, s2-c1, s2-c2, s2-c3] step 100 duration 220
+        after s2-c3 trace s2-a0 duration 360
+        after s2-a0 trace s2-a1 duration 360
+        after s2-a1 trace s2-a2 duration 360
+        after s2-a2 trace s2-a3 duration 360
+        after s2-a3 reveal s2-barrier duration 280
+        after s2-barrier trace s2-aw duration 320
+        after s2-aw reveal s2-start duration 260
+        after s2-start trace s2-motion-sig duration 700
+        after s2-motion-sig reveal s2-barrier duration 400
       }
   }
   }
@@ -523,15 +523,15 @@ explainer "Velo deep dive" {
 
       timeline main {
         at 0 reveal s3-hdr duration 260
-        at 200 reveal s3-msg duration 260
-        at 400 trace s3-a1 duration 300
-        at 560 reveal s3-vec duration 260
-        at 760 trace s3-a2 duration 300
-        at 920 reveal s3-raw duration 260
-        at 1280 trace s3-a4 duration 300
-        at 1440 reveal s3-from duration 260
-        at 1760 trace s3-motion-sig duration 700
-        at 2460 reveal s3-raw duration 400
+        after s3-hdr reveal s3-msg duration 260
+        after s3-msg trace s3-a1 duration 300
+        after s3-a1 reveal s3-vec duration 260
+        after s3-vec trace s3-a2 duration 300
+        after s3-a2 reveal s3-raw duration 260
+        after s3-raw trace s3-a4 duration 300
+        after s3-a4 reveal s3-from duration 260
+        after s3-from trace s3-motion-sig duration 700
+        after s3-motion-sig reveal s3-raw duration 400
       }
   }
   }
@@ -653,14 +653,14 @@ explainer "Velo deep dive" {
 
       timeline main {
         at 0 reveal s4-hdr duration 260
-        at 200 stagger targets [s4-c0, s4-c1, s4-c2] step 120 duration 240
-        at 620 trace s4-a0 duration 360
-        at 760 trace s4-a1 duration 360
-        at 900 trace s4-a2 duration 360
-        at 1100 reveal s4-agg duration 280
-        at 1320 reveal s4-note duration 200
-        at 1600 trace s4-motion-sig duration 700
-        at 2300 reveal s4-agg duration 400
+        after s4-hdr stagger targets [s4-c0, s4-c1, s4-c2] step 120 duration 240
+        after s4-c2 trace s4-a0 duration 360
+        after s4-a0 trace s4-a1 duration 360
+        after s4-a1 trace s4-a2 duration 360
+        after s4-a2 reveal s4-agg duration 280
+        after s4-agg reveal s4-note duration 200
+        after s4-note trace s4-motion-sig duration 700
+        after s4-motion-sig reveal s4-agg duration 400
       }
   }
   }
@@ -769,15 +769,15 @@ explainer "Velo deep dive" {
 
       timeline main {
         at 0 reveal s5-hdr duration 260
-        at 200 reveal s5-fin duration 260
-        at 400 trace s5-a1 duration 320
-        at 580 reveal s5-pay duration 260
-        at 780 trace s5-a2 duration 320
-        at 960 reveal s5-ctrl duration 280
-        at 1180 trace s5-a3 duration 420
-        at 1460 reveal s5-ack duration 260
-        at 1780 trace s5-motion-sig duration 700
-        at 2480 reveal s5-ack duration 400
+        after s5-hdr reveal s5-fin duration 260
+        after s5-fin trace s5-a1 duration 320
+        after s5-a1 reveal s5-pay duration 260
+        after s5-pay trace s5-a2 duration 320
+        after s5-a2 reveal s5-ctrl duration 280
+        after s5-ctrl trace s5-a3 duration 420
+        after s5-a3 reveal s5-ack duration 260
+        after s5-ack trace s5-motion-sig duration 700
+        after s5-motion-sig reveal s5-ack duration 400
       }
   }
   }
@@ -925,16 +925,16 @@ explainer "Velo deep dive" {
 
       timeline main {
         at 0 reveal s6-hdr duration 260
-        at 180 stagger targets [s6-p0, s6-p1, s6-p2, s6-p3] step 100 duration 220
-        at 620 trace s6-a0 duration 340
-        at 740 trace s6-a1 duration 340
-        at 860 trace s6-a2 duration 340
-        at 980 trace s6-a3 duration 340
-        at 1120 reveal s6-merge duration 280
-        at 1480 trace s6-a5 duration 280
-        at 1640 reveal s6-one duration 260
-        at 1960 trace s6-motion-sig duration 700
-        at 2660 reveal s6-merge duration 400
+        after s6-hdr stagger targets [s6-p0, s6-p1, s6-p2, s6-p3] step 100 duration 220
+        after s6-p3 trace s6-a0 duration 340
+        after s6-a0 trace s6-a1 duration 340
+        after s6-a1 trace s6-a2 duration 340
+        after s6-a2 trace s6-a3 duration 340
+        after s6-a3 reveal s6-merge duration 280
+        after s6-merge trace s6-a5 duration 280
+        after s6-a5 reveal s6-one duration 260
+        after s6-one trace s6-motion-sig duration 700
+        after s6-motion-sig reveal s6-merge duration 400
       }
   }
   }
@@ -1070,13 +1070,13 @@ explainer "Velo deep dive" {
 
       timeline main {
         at 0 reveal s7-hdr duration 260
-        at 180 stagger targets [s7-g1, s7-g2, s7-g3, s7-g4, s7-g5] step 100 duration 220
-        at 760 reveal s7-attach duration 280
-        at 980 trace s7-a1 duration 360
-        at 1140 trace s7-a2 duration 360
-        at 1400 reveal s7-note duration 200
-        at 1680 trace s7-motion-sig duration 700
-        at 2380 reveal s7-attach duration 400
+        after s7-hdr stagger targets [s7-g1, s7-g2, s7-g3, s7-g4, s7-g5] step 100 duration 220
+        after s7-g5 reveal s7-attach duration 280
+        after s7-attach trace s7-a1 duration 360
+        after s7-a1 trace s7-a2 duration 360
+        after s7-a2 reveal s7-note duration 200
+        after s7-note trace s7-motion-sig duration 700
+        after s7-motion-sig reveal s7-attach duration 400
       }
   }
   }
@@ -1205,17 +1205,17 @@ explainer "Velo deep dive" {
 
       timeline main {
         at 0 reveal s8-hdr duration 260
-        at 200 reveal s8-chunk duration 260
-        at 400 trace s8-a0 duration 300
-        at 560 reveal s8-bcast duration 260
-        at 760 trace s8-a1 duration 340
-        at 920 reveal s8-c0 duration 240
-        at 920 trace s8-a2 duration 340
-        at 1080 reveal s8-c1 duration 240
-        at 1080 trace s8-a3 duration 340
-        at 1240 reveal s8-c2 duration 240
-        at 1520 trace s8-motion-sig duration 700
-        at 2220 reveal s8-bcast duration 400
+        after s8-hdr reveal s8-chunk duration 260
+        after s8-chunk trace s8-a0 duration 300
+        after s8-a0 reveal s8-bcast duration 260
+        after s8-bcast trace s8-a1 duration 340
+        after s8-a1 reveal s8-c0 duration 240
+        after s8-c0 trace s8-a2 duration 340
+        after s8-a2 reveal s8-c1 duration 240
+        after s8-c1 trace s8-a3 duration 340
+        after s8-a3 reveal s8-c2 duration 240
+        after s8-c2 trace s8-motion-sig duration 700
+        after s8-motion-sig reveal s8-bcast duration 400
       }
   }
   }
@@ -1355,15 +1355,15 @@ explainer "Velo deep dive" {
 
       timeline main {
         at 0 reveal s9-hdr duration 260
-        at 200 reveal s9-ctrl duration 260
-        at 400 stagger targets [s9-agg0, s9-agg1] step 100 duration 240
-        at 680 trace s9-agg-fan duration 460
-        at 1000 stagger targets [s9-c0, s9-c1, s9-c2, s9-c3] step 80 duration 200
-        at 1360 trace s9-cell-fan duration 600
-        at 1800 reveal s9-note duration 200
-        at 1960 trace s9-cell-fan duration 820
-        at 2220 trace s9-agg-fan duration 560
-        at 2780 reveal s9-ctrl duration 400
+        after s9-hdr reveal s9-ctrl duration 260
+        after s9-ctrl stagger targets [s9-agg0, s9-agg1] step 100 duration 240
+        after s9-agg1 trace s9-agg-fan duration 460
+        after s9-agg-fan stagger targets [s9-c0, s9-c1, s9-c2, s9-c3] step 80 duration 200
+        after s9-c3 trace s9-cell-fan duration 600
+        after s9-cell-fan reveal s9-note duration 200
+        after s9-note trace s9-cell-fan duration 820
+        after s9-cell-fan trace s9-agg-fan duration 560
+        after s9-agg-fan reveal s9-ctrl duration 400
       }
   }
   }

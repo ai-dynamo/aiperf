@@ -43,13 +43,13 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "binary", anchor: "w" }, to = { nodeId: "binary", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 80 reveal binary duration 360
-        at 560 reveal footer duration 280
-        at 760 reveal cli-hat duration 280
-        at 1200 reveal engine-hat duration 280
-        at 1480 trace a1 duration 320
-        at 1580 trace motion-sig duration 1100
-        at 2500 reveal binary duration 480
+        after header reveal binary duration 360
+        after binary reveal footer duration 280
+        after footer reveal cli-hat duration 280
+        after cli-hat reveal engine-hat duration 280
+        after engine-hat trace a1 duration 320
+        after binary trace motion-sig duration 1100
+        after motion-sig reveal binary duration 480
       }
     }
   }
@@ -79,14 +79,14 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "cli", anchor: "e" }, to = { nodeId: "loadgen", anchor: "w" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal cli duration 320
-        at 720 reveal runtime duration 320
-        at 1040 trace a1 duration 280
-        at 1160 reveal loadgen duration 320
-        at 1400 reveal mock duration 300
-        at 1480 trace a2 duration 280
-        at 1780 trace motion-sig duration 1100
-        at 2700 reveal runtime duration 480
+        after header reveal cli duration 320
+        after cli reveal runtime duration 320
+        after runtime trace a1 duration 280
+        after a1 reveal loadgen duration 320
+        after loadgen reveal mock duration 300
+        after loadgen trace a2 duration 280
+        after loadgen trace motion-sig duration 1100
+        after motion-sig reveal runtime duration 480
       }
     }
   }
@@ -115,13 +115,13 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "logging", anchor: "e" }, to = { nodeId: "dispatch", anchor: "w" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal logging duration 320
-        at 720 reveal execute duration 360
-        at 1080 trace a1 duration 280
-        at 1200 reveal dispatch duration 320
-        at 1520 trace a2 duration 280
-        at 1680 trace motion-sig duration 1100
-        at 2600 reveal execute duration 480
+        after header reveal logging duration 320
+        after logging reveal execute duration 360
+        after execute trace a1 duration 280
+        after a1 reveal dispatch duration 320
+        after dispatch trace a2 duration 280
+        after dispatch trace motion-sig duration 1100
+        after motion-sig reveal execute duration 480
       }
     }
   }
@@ -149,12 +149,12 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "native", anchor: "w" }, to = { nodeId: "delegated", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal native duration 360
-        at 760 reveal delegated duration 360
-        at 1040 reveal footer duration 300
-        at 1120 trace split duration 280
-        at 1480 trace motion-sig duration 1100
-        at 2400 reveal native duration 480
+        after header reveal native duration 360
+        after native reveal delegated duration 360
+        after delegated reveal footer duration 300
+        after delegated trace split duration 280
+        after delegated trace motion-sig duration 1100
+        after motion-sig reveal native duration 480
       }
     }
   }
@@ -183,13 +183,13 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "yaml", anchor: "w" }, to = { nodeId: "run", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal yaml duration 320
-        at 720 reveal load duration 320
-        at 1040 trace a1 duration 280
-        at 1160 reveal run duration 360
-        at 1520 trace a2 duration 280
-        at 1680 trace motion-sig duration 1100
-        at 2600 reveal run duration 480
+        after header reveal yaml duration 320
+        after yaml reveal load duration 320
+        after load trace a1 duration 280
+        after a1 reveal run duration 360
+        after run trace a2 duration 280
+        after run trace motion-sig duration 1100
+        after motion-sig reveal run duration 480
       }
     }
   }
@@ -218,13 +218,13 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "parent", anchor: "w" }, to = { nodeId: "execute", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal parent duration 320
-        at 720 reveal spawn duration 320
-        at 1040 trace a1 duration 280
-        at 1160 reveal execute duration 360
-        at 1520 trace a2 duration 280
-        at 1680 trace motion-sig duration 1100
-        at 2600 reveal spawn duration 480
+        after header reveal parent duration 320
+        after parent reveal spawn duration 320
+        after spawn trace a1 duration 280
+        after a1 reveal execute duration 360
+        after execute trace a2 duration 280
+        after execute trace motion-sig duration 1100
+        after motion-sig reveal spawn duration 480
       }
     }
   }
@@ -253,13 +253,13 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "envelope", anchor: "w" }, to = { nodeId: "terminal", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal envelope duration 320
-        at 720 reveal app duration 360
-        at 1080 trace a1 duration 280
-        at 1200 reveal terminal duration 320
-        at 1520 trace a2 duration 280
-        at 1680 trace motion-sig duration 1100
-        at 2600 reveal app duration 480
+        after header reveal envelope duration 320
+        after envelope reveal app duration 360
+        after app trace a1 duration 280
+        after a1 reveal terminal duration 320
+        after terminal trace a2 duration 280
+        after terminal trace motion-sig duration 1100
+        after motion-sig reveal app duration 480
       }
     }
   }
@@ -293,14 +293,14 @@ explainer "Rust Architecture" {
       sdk.Panel(id = "transports", title = "transports", detail = "registered", x = 500, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal registry duration 360
-        at 560 trace registry-fan duration 900
-        at 760 reveal loaders duration 260
-        at 1060 reveal samplers duration 260
-        at 1360 reveal endpoints duration 260
-        at 1660 reveal transports duration 260
-        at 2080 trace registry-fan duration 1100
-        at 3000 reveal registry duration 480
+        after header reveal registry duration 360
+        after registry trace registry-fan duration 900
+        after registry-fan reveal loaders duration 260
+        after loaders reveal samplers duration 260
+        after samplers reveal endpoints duration 260
+        after endpoints reveal transports duration 260
+        after transports trace registry-fan duration 1100
+        after registry-fan reveal registry duration 480
       }
     }
   }
@@ -331,15 +331,15 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "validate", anchor: "w" }, to = { nodeId: "persist", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal validate duration 300
-        at 500 trace a1 duration 240
-        at 660 reveal prepare duration 300
-        at 880 trace a2 duration 240
-        at 1040 reveal execute duration 300
-        at 1260 trace a3 duration 240
-        at 1420 reveal persist duration 300
-        at 1880 trace motion-sig duration 1100
-        at 2800 reveal execute duration 480
+        after header reveal validate duration 300
+        after validate trace a1 duration 240
+        after a1 reveal prepare duration 300
+        after prepare trace a2 duration 240
+        after a2 reveal execute duration 300
+        after execute trace a3 duration 240
+        after a3 reveal persist duration 300
+        after persist trace motion-sig duration 1100
+        after motion-sig reveal execute duration 480
       }
     }
   }
@@ -367,12 +367,12 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "real", anchor: "w" }, to = { nodeId: "sim", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal real duration 340
-        at 540 trace split duration 280
-        at 740 reveal sim duration 340
-        at 1000 reveal footer duration 300
-        at 1480 trace motion-sig duration 1100
-        at 2400 reveal real duration 480
+        after header reveal real duration 340
+        after real trace split duration 280
+        after split reveal sim duration 340
+        after sim reveal footer duration 300
+        after footer trace motion-sig duration 1100
+        after motion-sig reveal real duration 480
       }
     }
   }
@@ -403,15 +403,15 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "load", anchor: "w" }, to = { nodeId: "materialize", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal load duration 300
-        at 500 trace a1 duration 240
-        at 660 reveal compose duration 300
-        at 880 trace a2 duration 240
-        at 1040 reveal sample duration 300
-        at 1260 trace a3 duration 240
-        at 1420 reveal materialize duration 300
-        at 1880 trace motion-sig duration 1100
-        at 2800 reveal materialize duration 480
+        after header reveal load duration 300
+        after load trace a1 duration 240
+        after a1 reveal compose duration 300
+        after compose trace a2 duration 240
+        after a2 reveal sample duration 300
+        after sample trace a3 duration 240
+        after a3 reveal materialize duration 300
+        after materialize trace motion-sig duration 1100
+        after motion-sig reveal materialize duration 480
       }
     }
   }
@@ -440,13 +440,13 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "workload", anchor: "w" }, to = { nodeId: "turns", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal workload duration 340
-        at 540 trace a1 duration 280
-        at 740 reveal phase duration 340
-        at 1000 trace a2 duration 280
-        at 1200 reveal turns duration 340
-        at 1680 trace motion-sig duration 1100
-        at 2600 reveal phase duration 480
+        after header reveal workload duration 340
+        after workload trace a1 duration 280
+        after a1 reveal phase duration 340
+        after phase trace a2 duration 280
+        after a2 reveal turns duration 340
+        after turns trace motion-sig duration 1100
+        after motion-sig reveal phase duration 480
       }
     }
   }
@@ -475,13 +475,13 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "dispatcher", anchor: "w" }, to = { nodeId: "observer", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal dispatcher duration 320
-        at 520 trace a1 duration 280
-        at 720 reveal sink duration 320
-        at 960 trace a2 duration 280
-        at 1160 reveal observer duration 320
-        at 1680 trace motion-sig duration 1100
-        at 2600 reveal sink duration 480
+        after header reveal dispatcher duration 320
+        after dispatcher trace a1 duration 280
+        after a1 reveal sink duration 320
+        after sink trace a2 duration 280
+        after a2 reveal observer duration 320
+        after observer trace motion-sig duration 1100
+        after motion-sig reveal sink duration 480
       }
     }
   }
@@ -513,13 +513,13 @@ explainer "Rust Architecture" {
       sdk.Panel(id = "w2", title = "Worker 2", detail = "sub-cell", x = 460, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal coord duration 340
-        at 540 trace worker-fan duration 900
-        at 720 reveal w0 duration 260
-        at 1060 reveal w1 duration 260
-        at 1400 reveal w2 duration 260
-        at 1880 trace worker-fan duration 1100
-        at 2800 reveal coord duration 480
+        after header reveal coord duration 340
+        after coord trace worker-fan duration 900
+        after worker-fan reveal w0 duration 260
+        after w0 reveal w1 duration 260
+        after w1 reveal w2 duration 260
+        after w2 trace worker-fan duration 1100
+        after worker-fan reveal coord duration 480
       }
     }
   }
@@ -548,13 +548,13 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "controller", anchor: "w" }, to = { nodeId: "cells", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal controller duration 340
-        at 540 trace a1 duration 280
-        at 740 reveal velo duration 340
-        at 1000 trace a2 duration 280
-        at 1200 reveal cells duration 340
-        at 1680 trace motion-sig duration 1100
-        at 2600 reveal velo duration 480
+        after header reveal controller duration 340
+        after controller trace a1 duration 280
+        after a1 reveal velo duration 340
+        after velo trace a2 duration 280
+        after a2 reveal cells duration 340
+        after cells trace motion-sig duration 1100
+        after motion-sig reveal velo duration 480
       }
     }
   }
@@ -584,14 +584,14 @@ explainer "Rust Architecture" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "workers", anchor: "w" }, to = { nodeId: "exporters", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
-        at 280 reveal workers duration 320
-        at 520 trace a1 duration 280
-        at 720 reveal report duration 340
-        at 980 trace a2 duration 280
-        at 1180 reveal exporters duration 340
-        at 1440 reveal footer duration 300
-        at 1880 trace motion-sig duration 1100
-        at 2800 reveal report duration 480
+        after header reveal workers duration 320
+        after workers trace a1 duration 280
+        after a1 reveal report duration 340
+        after report trace a2 duration 280
+        after a2 reveal exporters duration 340
+        after exporters reveal footer duration 300
+        after footer trace motion-sig duration 1100
+        after motion-sig reveal report duration 480
       }
     }
   }

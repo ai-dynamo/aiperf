@@ -47,18 +47,18 @@ explainer "Rust Architecture Atlas" {
       sdk.Signal(id = "motion-sig-0", from = { nodeId: "aiperf", anchor: "s" }, to = { nodeId: "execute", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr0 duration 280
-        at 200 reveal config duration 280
-        at 700 reveal aiperf duration 280
-        at 980 trace a0a duration 420
-        at 1200 reveal execute duration 280
-        at 1480 trace a0b duration 420
-        at 1700 reveal cell duration 280
-        at 1920 reveal real duration 280
-        at 1980 trace a0c duration 420
-        at 2140 reveal mock duration 280
-        at 2360 reveal dyno duration 280
-        at 2580 trace motion-sig-0 duration 900
-        at 3080 reveal dyno duration 480
+        after hdr0 reveal config duration 280
+        after config reveal aiperf duration 280
+        after aiperf trace a0a duration 420
+        after a0a reveal execute duration 280
+        after execute trace a0b duration 420
+        after a0b reveal cell duration 280
+        after cell reveal real duration 280
+        after cell trace a0c duration 420
+        after a0c reveal mock duration 280
+        after mock reveal dyno duration 280
+        after execute trace motion-sig-0 duration 900
+        after motion-sig-0 reveal dyno duration 480
       }
     }
   }
@@ -90,15 +90,15 @@ explainer "Rust Architecture Atlas" {
       sdk.Signal(id = "motion-sig-1", from = { nodeId: "cli", anchor: "e" }, to = { nodeId: "loadgen", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr1 duration 280
-        at 200 reveal cli duration 280
-        at 700 reveal runtime duration 280
-        at 980 trace a1a duration 420
-        at 1200 reveal loadgen duration 280
-        at 1420 reveal mock1 duration 280
-        at 1480 trace a1b duration 420
-        at 1640 reveal pyext duration 280
-        at 1860 trace motion-sig-1 duration 900
-        at 2360 reveal pyext duration 480
+        after hdr1 reveal cli duration 280
+        after cli reveal runtime duration 280
+        after runtime trace a1a duration 420
+        after a1a reveal loadgen duration 280
+        after loadgen reveal mock1 duration 280
+        after loadgen trace a1b duration 420
+        after a1b reveal pyext duration 280
+        after loadgen trace motion-sig-1 duration 900
+        after motion-sig-1 reveal pyext duration 480
       }
     }
   }
@@ -133,18 +133,18 @@ explainer "Rust Architecture Atlas" {
       sdk.Signal(id = "motion-sig-2", from = { nodeId: "app", anchor: "e" }, to = { nodeId: "sink", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr2 duration 280
-        at 200 reveal app duration 280
-        at 700 reveal coord duration 280
-        at 980 trace a2a duration 420
-        at 1200 reveal phase duration 280
-        at 1480 trace a2b duration 420
-        at 1700 reveal sink duration 280
-        at 1920 reveal clock duration 280
-        at 1980 trace a2c duration 420
-        at 2140 reveal obs duration 280
-        at 2360 reveal nv2 duration 280
-        at 2580 trace motion-sig-2 duration 900
-        at 3080 reveal nv2 duration 480
+        after hdr2 reveal app duration 280
+        after app reveal coord duration 280
+        after coord trace a2a duration 420
+        after a2a reveal phase duration 280
+        after phase trace a2b duration 420
+        after a2b reveal sink duration 280
+        after sink reveal clock duration 280
+        after sink trace a2c duration 420
+        after a2c reveal obs duration 280
+        after obs reveal nv2 duration 280
+        after sink trace motion-sig-2 duration 900
+        after motion-sig-2 reveal nv2 duration 480
       }
     }
   }
@@ -179,18 +179,18 @@ explainer "Rust Architecture Atlas" {
       sdk.Signal(id = "motion-sig-3", from = { nodeId: "profile", anchor: "e" }, to = { nodeId: "spawn", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr3 duration 280
-        at 200 reveal profile duration 280
-        at 700 reveal req duration 280
-        at 980 trace a3a duration 420
-        at 1200 reveal execbin duration 280
-        at 1480 trace a3b duration 420
-        at 1700 reveal spawn duration 280
-        at 1920 reveal stdin duration 280
-        at 1980 trace a3c duration 420
-        at 2140 reveal app3 duration 280
-        at 2360 reveal stdout duration 280
-        at 2580 trace motion-sig-3 duration 900
-        at 3080 reveal stdout duration 480
+        after hdr3 reveal profile duration 280
+        after profile reveal req duration 280
+        after req trace a3a duration 420
+        after a3a reveal execbin duration 280
+        after execbin trace a3b duration 420
+        after a3b reveal spawn duration 280
+        after spawn reveal stdin duration 280
+        after spawn trace a3c duration 420
+        after a3c reveal app3 duration 280
+        after app3 reveal stdout duration 280
+        after spawn trace motion-sig-3 duration 900
+        after motion-sig-3 reveal stdout duration 480
       }
     }
   }
@@ -224,17 +224,17 @@ explainer "Rust Architecture Atlas" {
       sdk.Signal(id = "motion-sig-4", from = { nodeId: "dataset", anchor: "e" }, to = { nodeId: "turn", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr4 duration 280
-        at 200 reveal dataset duration 280
-        at 700 reveal orch duration 280
-        at 980 trace a4a duration 420
-        at 1200 reveal slot duration 280
-        at 1480 trace a4b duration 420
-        at 1700 reveal turn duration 280
-        at 1920 reveal w1 duration 280
-        at 1980 trace a4c duration 420
-        at 2140 reveal wn duration 280
-        at 2360 trace motion-sig-4 duration 900
-        at 2860 reveal wn duration 480
+        after hdr4 reveal dataset duration 280
+        after dataset reveal orch duration 280
+        after orch trace a4a duration 420
+        after a4a reveal slot duration 280
+        after slot trace a4b duration 420
+        after a4b reveal turn duration 280
+        after turn reveal w1 duration 280
+        after turn trace a4c duration 420
+        after a4c reveal wn duration 280
+        after turn trace motion-sig-4 duration 900
+        after motion-sig-4 reveal wn duration 480
       }
     }
   }
@@ -269,18 +269,18 @@ explainer "Rust Architecture Atlas" {
       sdk.Signal(id = "motion-sig-5", from = { nodeId: "trace", anchor: "e" }, to = { nodeId: "bundle", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr5 duration 280
-        at 200 reveal trace duration 280
-        at 700 reveal gin duration 280
-        at 980 trace a5a duration 420
-        at 1200 reveal comp duration 280
-        at 1480 trace a5b duration 420
-        at 1700 reveal bundle duration 280
-        at 1920 reveal warm duration 280
-        at 1980 trace a5c duration 420
-        at 2140 reveal chop duration 280
-        at 2360 reveal gexec duration 280
-        at 2580 trace motion-sig-5 duration 900
-        at 3080 reveal gexec duration 480
+        after hdr5 reveal trace duration 280
+        after trace reveal gin duration 280
+        after gin trace a5a duration 420
+        after a5a reveal comp duration 280
+        after comp trace a5b duration 420
+        after a5b reveal bundle duration 280
+        after bundle reveal warm duration 280
+        after bundle trace a5c duration 420
+        after a5c reveal chop duration 280
+        after chop reveal gexec duration 280
+        after bundle trace motion-sig-5 duration 900
+        after motion-sig-5 reveal gexec duration 480
       }
     }
   }
@@ -315,18 +315,18 @@ explainer "Rust Architecture Atlas" {
       sdk.Signal(id = "motion-sig-6", from = { nodeId: "profiles", anchor: "e" }, to = { nodeId: "key", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr6 duration 280
-        at 200 reveal profiles duration 280
-        at 700 reveal ereg duration 280
-        at 980 trace a6a duration 420
-        at 1200 reveal prep duration 280
-        at 1480 trace a6b duration 420
-        at 1700 reveal key duration 280
-        at 1920 reveal dialect duration 280
-        at 1980 trace a6c duration 420
-        at 2140 reveal bind duration 280
-        at 2360 reveal obs6 duration 280
-        at 2580 trace motion-sig-6 duration 900
-        at 3080 reveal obs6 duration 480
+        after hdr6 reveal profiles duration 280
+        after profiles reveal ereg duration 280
+        after ereg trace a6a duration 420
+        after a6a reveal prep duration 280
+        after prep trace a6b duration 420
+        after a6b reveal key duration 280
+        after key reveal dialect duration 280
+        after key trace a6c duration 420
+        after a6c reveal bind duration 280
+        after bind reveal obs6 duration 280
+        after key trace motion-sig-6 duration 900
+        after motion-sig-6 reveal obs6 duration 480
       }
     }
   }
@@ -365,19 +365,19 @@ explainer "Rust Architecture Atlas" {
           ], axis = "y", junction = { x: 645, y: 190 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr7 duration 280
-        at 200 reveal rsink duration 280
-        at 700 reveal robs duration 280
-        at 980 trace a7a duration 420
-        at 1200 reveal wstore duration 280
-        at 1480 trace a7b duration 420
-        at 1700 reveal merge duration 280
-        at 1880 trace export-fan duration 700
-        at 1920 reveal nv7 duration 280
-        at 1980 trace a7c duration 420
-        at 2140 reveal compat duration 280
-        at 2360 reveal otlp duration 280
-        at 2580 trace export-fan duration 900
-        at 3080 reveal otlp duration 480
+        after hdr7 reveal rsink duration 280
+        after rsink reveal robs duration 280
+        after robs trace a7a duration 420
+        after a7a reveal wstore duration 280
+        after wstore trace a7b duration 420
+        after a7b reveal merge duration 280
+        after merge trace export-fan duration 700
+        after export-fan reveal nv7 duration 280
+        after merge trace a7c duration 420
+        after a7c reveal compat duration 280
+        after compat reveal otlp duration 280
+        after otlp trace export-fan duration 900
+        after export-fan reveal otlp duration 480
       }
     }
   }
@@ -420,20 +420,20 @@ explainer "Rust Architecture Atlas" {
           ], to = { nodeId: "merge8", anchor: "w" }, axis = "x", style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2, fill: "none" })
       timeline primary {
         at 0 reveal hdr8 duration 280
-        at 200 reveal exec8 duration 280
-        at 700 reveal ctrl duration 280
-        at 980 trace a8a duration 420
-        at 1200 reveal launch duration 280
-        at 1320 trace cell-fan duration 620
-        at 1420 reveal c0 duration 280
-        at 1480 trace a8b duration 420
-        at 1500 trace cell-fan duration 900
-        at 1640 reveal cn duration 280
-        at 1860 reveal agg duration 280
-        at 1960 trace result-fan duration 620
-        at 2080 reveal merge8 duration 280
-        at 2300 trace result-fan duration 900
-        at 2800 reveal merge8 duration 480
+        after hdr8 reveal exec8 duration 280
+        after exec8 reveal ctrl duration 280
+        after ctrl trace a8a duration 420
+        after a8a reveal launch duration 280
+        after launch trace cell-fan duration 620
+        after cell-fan reveal c0 duration 280
+        after launch trace a8b duration 420
+        after a8b trace cell-fan duration 900
+        after cell-fan reveal cn duration 280
+        after cn reveal agg duration 280
+        after agg trace result-fan duration 620
+        after result-fan reveal merge8 duration 280
+        after merge8 trace result-fan duration 900
+        after result-fan reveal merge8 duration 480
       }
     }
   }
@@ -465,15 +465,15 @@ explainer "Rust Architecture Atlas" {
       sdk.Signal(id = "motion-sig-9", from = { nodeId: "def", anchor: "w" }, to = { nodeId: "fail", anchor: "e" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr9 duration 280
-        at 200 reveal def duration 280
-        at 420 reveal parquet duration 280
-        at 640 reveal dynosim duration 280
-        at 860 reveal pyo3 duration 280
-        at 1080 reveal search duration 280
-        at 1300 reveal full duration 280
-        at 1520 reveal fail duration 280
-        at 1800 trace motion-sig-9 duration 900
-        at 2240 reveal fail duration 480
+        after hdr9 reveal def duration 280
+        after def reveal parquet duration 280
+        after parquet reveal dynosim duration 280
+        after dynosim reveal pyo3 duration 280
+        after pyo3 reveal search duration 280
+        after search reveal full duration 280
+        after full reveal fail duration 280
+        after fail trace motion-sig-9 duration 900
+        after motion-sig-9 reveal fail duration 480
       }
     }
   }
@@ -506,16 +506,16 @@ explainer "Rust Architecture Atlas" {
       sdk.Signal(id = "motion-sig-10", from = { nodeId: "ext", anchor: "s" }, to = { nodeId: "ep", anchor: "s" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr10 duration 280
-        at 200 reveal ext duration 280
-        at 420 trace a10a duration 420
-        at 700 reveal reg duration 280
-        at 920 reveal ds duration 280
-        at 1140 reveal ep duration 280
-        at 1360 reveal tr duration 280
-        at 1580 reveal wl duration 280
-        at 1800 reveal ex duration 280
-        at 2020 trace motion-sig-10 duration 900
-        at 2520 reveal ex duration 480
+        after hdr10 reveal ext duration 280
+        after ext trace a10a duration 420
+        after a10a reveal reg duration 280
+        after reg reveal ds duration 280
+        after ds reveal ep duration 280
+        after ep reveal tr duration 280
+        after tr reveal wl duration 280
+        after wl reveal ex duration 280
+        after ex trace motion-sig-10 duration 900
+        after motion-sig-10 reveal ex duration 480
       }
     }
   }

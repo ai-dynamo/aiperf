@@ -150,17 +150,17 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 reveal s0-hdr duration 260
-        at 80 reveal s0-band duration 200
-        at 120 stagger targets [s0-chip-off, s0-chip-on, s0-chip-sim] step 60 duration 200
-        at 180 reveal s0-aiperf duration 280
-        at 420 trace s0-a1 duration 320
-        at 560 reveal s0-sink duration 280
-        at 780 trace s0-a2 duration 320
-        at 920 reveal s0-replay duration 280
-        at 1100 reveal s0-divider duration 200
-        at 1140 reveal s0-callout duration 200
-        at 1180 reveal s0-note duration 280
-        at 1400 trace s0-motion-sig duration 900
+        after s0-hdr reveal s0-band duration 200
+        after s0-band stagger targets [s0-chip-off, s0-chip-on, s0-chip-sim] step 60 duration 200
+        after s0-chip-sim reveal s0-aiperf duration 280
+        after s0-aiperf trace s0-a1 duration 320
+        after s0-a1 reveal s0-sink duration 280
+        after s0-sink trace s0-a2 duration 320
+        after s0-a2 reveal s0-replay duration 280
+        after s0-replay reveal s0-divider duration 200
+        after s0-divider reveal s0-callout duration 200
+        after s0-callout reveal s0-note duration 280
+        after s0-note trace s0-motion-sig duration 900
       }
     }
   }
@@ -228,10 +228,10 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 reveal s1-hdr duration 260
-        at 180 reveal s1-feat duration 280
-        at 420 trace s1-a1 duration 320
-        at 560 reveal s1-ids duration 280
-        at 900 trace s1-motion-sig duration 900
+        after s1-hdr reveal s1-feat duration 280
+        after s1-feat trace s1-a1 duration 320
+        after s1-a1 reveal s1-ids duration 280
+        after s1-ids trace s1-motion-sig duration 900
       }
     }
   }
@@ -314,12 +314,12 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 reveal s2-hdr duration 260
-        at 180 reveal s2-run duration 280
-        at 420 trace s2-a1 duration 300
-        at 560 reveal s2-tr duration 280
-        at 800 trace s2-a2 duration 300
-        at 940 reveal s2-clk duration 280
-        at 1200 trace s2-motion-sig duration 900
+        after s2-hdr reveal s2-run duration 280
+        after s2-run trace s2-a1 duration 300
+        after s2-a1 reveal s2-tr duration 280
+        after s2-tr trace s2-a2 duration 300
+        after s2-a2 reveal s2-clk duration 280
+        after s2-clk trace s2-motion-sig duration 900
       }
     }
   }
@@ -387,7 +387,7 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 stagger targets [s3-hdr, s3-http, s3-dyno, s3-note] step 220 duration 280
-        at 1000 trace s3-motion-sig duration 900
+        after s3-note trace s3-motion-sig duration 900
       }
     }
   }
@@ -470,12 +470,12 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 reveal s4-hdr duration 260
-        at 180 reveal s4-host duration 280
-        at 420 trace s4-a1 duration 300
-        at 560 reveal s4-sink duration 280
-        at 800 trace s4-a2 duration 300
-        at 940 reveal s4-obs duration 280
-        at 1200 trace s4-motion-sig duration 900
+        after s4-hdr reveal s4-host duration 280
+        after s4-host trace s4-a1 duration 300
+        after s4-a1 reveal s4-sink duration 280
+        after s4-sink trace s4-a2 duration 300
+        after s4-a2 reveal s4-obs duration 280
+        after s4-obs trace s4-motion-sig duration 900
       }
     }
   }
@@ -543,10 +543,10 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 reveal s5-hdr duration 260
-        at 180 reveal s5-off duration 280
-        at 420 trace s5-a1 duration 320
-        at 560 reveal s5-drive duration 280
-        at 900 trace s5-motion-sig duration 900
+        after s5-hdr reveal s5-off duration 280
+        after s5-off trace s5-a1 duration 320
+        after s5-a1 reveal s5-drive duration 280
+        after s5-drive trace s5-motion-sig duration 900
       }
     }
   }
@@ -614,10 +614,10 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 reveal s6-hdr duration 260
-        at 180 reveal s6-on duration 280
-        at 420 trace s6-a1 duration 320
-        at 560 reveal s6-drive duration 280
-        at 900 trace s6-motion-sig duration 900
+        after s6-hdr reveal s6-on duration 280
+        after s6-on trace s6-a1 duration 320
+        after s6-a1 reveal s6-drive duration 280
+        after s6-drive trace s6-motion-sig duration 900
       }
     }
   }
@@ -685,7 +685,7 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 stagger targets [s7-hdr, s7-real, s7-sim, s7-note] step 220 duration 280
-        at 1000 trace s7-motion-sig duration 900
+        after s7-note trace s7-motion-sig duration 900
       }
     }
   }
@@ -753,7 +753,7 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 stagger targets [s8-hdr, s8-clkq, s8-srcq, s8-rule] step 220 duration 280
-        at 1000 trace s8-motion-sig duration 900
+        after s8-rule trace s8-motion-sig duration 900
       }
     }
   }
@@ -851,14 +851,14 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 reveal s9-hdr duration 260
-        at 160 reveal s9-p0 duration 240
-        at 360 trace s9-a0 duration 260
-        at 480 reveal s9-p1 duration 240
-        at 680 trace s9-a1 duration 260
-        at 800 reveal s9-p2 duration 240
-        at 1000 trace s9-a2 duration 260
-        at 1120 reveal s9-p3 duration 240
-        at 1400 trace s9-motion-sig duration 900
+        after s9-hdr reveal s9-p0 duration 240
+        after s9-p0 trace s9-a0 duration 260
+        after s9-a0 reveal s9-p1 duration 240
+        after s9-p1 trace s9-a1 duration 260
+        after s9-a1 reveal s9-p2 duration 240
+        after s9-p2 trace s9-a2 duration 260
+        after s9-a2 reveal s9-p3 duration 240
+        after s9-p3 trace s9-motion-sig duration 900
       }
     }
   }
@@ -926,7 +926,7 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 stagger targets [s10-hdr, s10-arr, s10-eng, s10-rule] step 220 duration 280
-        at 1000 trace s10-motion-sig duration 900
+        after s10-rule trace s10-motion-sig duration 900
       }
     }
   }
@@ -1009,12 +1009,12 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 reveal s11-hdr duration 260
-        at 180 reveal s11-step duration 280
-        at 420 trace s11-a1 duration 300
-        at 560 reveal s11-guards duration 280
-        at 800 trace s11-a2 duration 300
-        at 940 reveal s11-adv duration 280
-        at 1200 trace s11-motion-sig duration 900
+        after s11-hdr reveal s11-step duration 280
+        after s11-step trace s11-a1 duration 300
+        after s11-a1 reveal s11-guards duration 280
+        after s11-guards trace s11-a2 duration 300
+        after s11-a2 reveal s11-adv duration 280
+        after s11-adv trace s11-motion-sig duration 900
       }
     }
   }
@@ -1097,12 +1097,12 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 reveal s12-hdr duration 260
-        at 180 reveal s12-turn duration 280
-        at 420 trace s12-a1 duration 300
-        at 560 reveal s12-req duration 280
-        at 800 trace s12-a2 duration 300
-        at 940 reveal s12-mail duration 280
-        at 1200 trace s12-motion-sig duration 900
+        after s12-hdr reveal s12-turn duration 280
+        after s12-turn trace s12-a1 duration 300
+        after s12-a1 reveal s12-req duration 280
+        after s12-req trace s12-a2 duration 300
+        after s12-a2 reveal s12-mail duration 280
+        after s12-mail trace s12-motion-sig duration 900
       }
     }
   }
@@ -1185,12 +1185,12 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 reveal s13-hdr duration 260
-        at 180 reveal s13-evt duration 280
-        at 420 trace s13-a1 duration 300
-        at 560 reveal s13-sink duration 280
-        at 800 trace s13-a2 duration 300
-        at 940 reveal s13-obs duration 280
-        at 1200 trace s13-motion-sig duration 900
+        after s13-hdr reveal s13-evt duration 280
+        after s13-evt trace s13-a1 duration 300
+        after s13-a1 reveal s13-sink duration 280
+        after s13-sink trace s13-a2 duration 300
+        after s13-a2 reveal s13-obs duration 280
+        after s13-obs trace s13-motion-sig duration 900
       }
     }
   }
@@ -1273,12 +1273,12 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 reveal s14-hdr duration 260
-        at 180 reveal s14-obs duration 280
-        at 420 trace s14-a1 duration 300
-        at 560 reveal s14-core duration 280
-        at 800 trace s14-a2 duration 300
-        at 940 reveal s14-rec duration 280
-        at 1200 trace s14-motion-sig duration 900
+        after s14-hdr reveal s14-obs duration 280
+        after s14-obs trace s14-a1 duration 300
+        after s14-a1 reveal s14-core duration 280
+        after s14-core trace s14-a2 duration 300
+        after s14-a2 reveal s14-rec duration 280
+        after s14-rec trace s14-motion-sig duration 900
       }
     }
   }
@@ -1339,7 +1339,7 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 stagger targets [s15-hdr, s15-inc, s15-coa] step 200 duration 280
-        at 700 trace s15-motion-sig duration 900
+        after s15-coa trace s15-motion-sig duration 900
       }
     }
   }
@@ -1400,7 +1400,7 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 stagger targets [s16-hdr, s16-ready, s16-stall] step 200 duration 280
-        at 700 trace s16-motion-sig duration 900
+        after s16-stall trace s16-motion-sig duration 900
       }
     }
   }
@@ -1483,12 +1483,12 @@ explainer "Dynosim" {
 
       timeline main {
         at 0 reveal s17-hdr duration 260
-        at 180 reveal s17-off duration 280
-        at 420 trace s17-a1 duration 300
-        at 560 reveal s17-on duration 280
-        at 800 trace s17-a2 duration 300
-        at 940 reveal s17-json duration 280
-        at 1200 trace s17-motion-sig duration 900
+        after s17-hdr reveal s17-off duration 280
+        after s17-off trace s17-a1 duration 300
+        after s17-a1 reveal s17-on duration 280
+        after s17-on trace s17-a2 duration 300
+        after s17-a2 reveal s17-json duration 280
+        after s17-json trace s17-motion-sig duration 900
       }
     }
   }

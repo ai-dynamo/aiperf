@@ -48,18 +48,18 @@ explainer "Cellular algorithm workbook" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "ch-eligibility", anchor: "e" }, to = { nodeId: "ch-artifacts", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal map-band duration 260
-        at 320 reveal ch-eligibility duration 260
-        at 480 reveal ch-ownership duration 260
-        at 640 reveal ch-control duration 260
-        at 800 reveal ch-distribution duration 260
-        at 960 reveal ch-execution duration 260
-        at 1120 reveal ch-capture duration 260
-        at 1280 reveal ch-merge duration 260
-        at 1440 reveal ch-artifacts duration 260
-        at 1600 trace ch-link-0 duration 420
-        at 1760 reveal footer duration 260
-        at 1920 trace motion-sig duration 900
+        after header reveal map-band duration 260
+        after map-band reveal ch-eligibility duration 260
+        after ch-eligibility reveal ch-ownership duration 260
+        after ch-ownership reveal ch-control duration 260
+        after ch-control reveal ch-distribution duration 260
+        after ch-distribution reveal ch-execution duration 260
+        after ch-execution reveal ch-capture duration 260
+        after ch-capture reveal ch-merge duration 260
+        after ch-merge reveal ch-artifacts duration 260
+        after ch-ownership trace ch-link-0 duration 420
+        after ch-link-0 reveal footer duration 260
+        after ch-artifacts trace motion-sig duration 900
       }
     }
   }
@@ -91,13 +91,13 @@ explainer "Cellular algorithm workbook" {
       sdk.Panel(id = "evidence", title = "Evidence", x = 110, y = 275, width = 480, height = 54, strokeRole = "@theme.accent.primary")
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal algo-built duration 260
-        at 320 reveal st-built duration 260
-        at 480 reveal algo-partial duration 260
-        at 640 reveal st-partial duration 260
-        at 800 reveal algo-gated duration 260
-        at 960 reveal st-gated duration 260
-        at 1120 reveal evidence duration 260
+        after header reveal algo-built duration 260
+        after algo-built reveal st-built duration 260
+        after st-built reveal algo-partial duration 260
+        after algo-partial reveal st-partial duration 260
+        after st-partial reveal algo-gated duration 260
+        after algo-gated reveal st-gated duration 260
+        after st-gated reveal evidence duration 260
       }
     }
   }
@@ -134,18 +134,18 @@ explainer "Cellular algorithm workbook" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "dispatch", anchor: "e" }, to = { nodeId: "velo", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal dispatch duration 260
-        at 320 reveal st-d duration 260
-        at 640 reveal promote duration 260
-        at 800 reveal st-p duration 260
-        at 900 trace a1 duration 420
-        at 1120 reveal validate duration 260
-        at 1280 reveal st-v duration 260
-        at 1380 trace a2 duration 420
-        at 1600 reveal velo duration 260
-        at 1760 reveal st-velo duration 260
-        at 1860 trace a3 duration 420
-        at 1920 trace motion-sig duration 900
+        after header reveal dispatch duration 260
+        after dispatch reveal st-d duration 260
+        after st-d reveal promote duration 260
+        after promote reveal st-p duration 260
+        after promote trace a1 duration 420
+        after a1 reveal validate duration 260
+        after validate reveal st-v duration 260
+        after validate trace a2 duration 420
+        after a2 reveal velo duration 260
+        after velo reveal st-velo duration 260
+        after velo trace a3 duration 420
+        after velo trace motion-sig duration 900
       }
     }
   }
@@ -180,16 +180,16 @@ explainer "Cellular algorithm workbook" {
       sdk.Label(id = "inv", text = "disjoint + complete", x = 100, y = 340, width = 500, height = 20, fontSize = 12, align = "middle")
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal modulo duration 260
-        at 320 reveal st-mod duration 260
-        at 480 reveal c0 duration 260
-        at 640 reveal c1 duration 260
-        at 800 reveal c2 duration 260
-        at 960 trace o1 duration 420
-        at 1120 reveal conv duration 260
-        at 1280 reveal st-conv duration 260
-        at 1440 trace ownership-merge duration 420
-        at 1600 reveal inv duration 260
+        after header reveal modulo duration 260
+        after modulo reveal st-mod duration 260
+        after st-mod reveal c0 duration 260
+        after c0 reveal c1 duration 260
+        after c1 reveal c2 duration 260
+        after c2 trace o1 duration 420
+        after o1 reveal conv duration 260
+        after conv reveal st-conv duration 260
+        after st-conv trace ownership-merge duration 420
+        after ownership-merge reveal inv duration 260
       }
     }
   }
@@ -224,16 +224,16 @@ explainer "Cellular algorithm workbook" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "replay", anchor: "e" }, to = { nodeId: "start", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal replay duration 260
-        at 320 reveal st-r duration 260
-        at 640 reveal gen duration 260
-        at 800 reveal st-g duration 260
-        at 900 trace c1 duration 420
-        at 1120 reveal start duration 260
-        at 1280 reveal st-s duration 260
-        at 1380 trace c2 duration 420
-        at 1440 reveal ctrl-note duration 260
-        at 1600 trace motion-sig duration 900
+        after header reveal replay duration 260
+        after replay reveal st-r duration 260
+        after st-r reveal gen duration 260
+        after gen reveal st-g duration 260
+        after gen trace c1 duration 420
+        after c1 reveal start duration 260
+        after start reveal st-s duration 260
+        after start trace c2 duration 420
+        after c2 reveal ctrl-note duration 260
+        after start trace motion-sig duration 900
       }
     }
   }
@@ -267,15 +267,15 @@ explainer "Cellular algorithm workbook" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "canon", anchor: "e" }, to = { nodeId: "miss", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal canon duration 260
-        at 320 reveal st-canon duration 260
-        at 640 reveal fanout duration 260
-        at 800 reveal st-fan duration 260
-        at 1120 reveal miss duration 260
-        at 1280 reveal st-miss duration 260
-        at 1380 trace d1 duration 420
-        at 1380 trace d2 duration 420
-        at 1440 trace motion-sig duration 900
+        after header reveal canon duration 260
+        after canon reveal st-canon duration 260
+        after st-canon reveal fanout duration 260
+        after fanout reveal st-fan duration 260
+        after st-fan reveal miss duration 260
+        after miss reveal st-miss duration 260
+        after miss trace d1 duration 420
+        after miss trace d2 duration 420
+        after miss trace motion-sig duration 900
       }
     }
   }
@@ -310,16 +310,16 @@ explainer "Cellular algorithm workbook" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "tlp", anchor: "e" }, to = { nodeId: "w0", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal tlp duration 260
-        at 320 reveal st-tlp duration 260
-        at 640 reveal iss duration 260
-        at 800 reveal st-iss duration 260
-        at 900 trace e1 duration 420
-        at 1120 reveal w0 duration 260
-        at 1380 trace e2 duration 420
-        at 1440 reveal w1 duration 260
-        at 1600 trace motion-sig duration 900
-        at 1700 trace e3 duration 420
+        after header reveal tlp duration 260
+        after tlp reveal st-tlp duration 260
+        after st-tlp reveal iss duration 260
+        after iss reveal st-iss duration 260
+        after iss trace e1 duration 420
+        after e1 reveal w0 duration 260
+        after w0 trace e2 duration 420
+        after e2 reveal w1 duration 260
+        after w0 trace motion-sig duration 900
+        after w1 trace e3 duration 420
       }
     }
   }
@@ -353,15 +353,15 @@ explainer "Cellular algorithm workbook" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "term", anchor: "e" }, to = { nodeId: "compat", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal term duration 260
-        at 320 reveal st-term duration 260
-        at 640 reveal retain duration 260
-        at 800 reveal fold duration 260
-        at 960 reveal sketch duration 260
-        at 1060 trace cap1 duration 420
-        at 1120 reveal compat duration 260
-        at 1280 reveal st-compat duration 260
-        at 1440 trace motion-sig duration 900
+        after header reveal term duration 260
+        after term reveal st-term duration 260
+        after st-term reveal retain duration 260
+        after retain reveal fold duration 260
+        after fold reveal sketch duration 260
+        after fold trace cap1 duration 420
+        after cap1 reveal compat duration 260
+        after compat reveal st-compat duration 260
+        after compat trace motion-sig duration 900
       }
     }
   }
@@ -395,15 +395,15 @@ explainer "Cellular algorithm workbook" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "sgom", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal sgom duration 260
-        at 320 reveal st-sgom duration 260
-        at 640 reveal fidelity duration 260
-        at 800 reveal st-fid duration 260
-        at 1120 reveal report duration 260
-        at 1280 reveal st-rep duration 260
-        at 1380 trace m1 duration 420
-        at 1380 trace m2 duration 420
-        at 1440 trace motion-sig duration 900
+        after header reveal sgom duration 260
+        after sgom reveal st-sgom duration 260
+        after st-sgom reveal fidelity duration 260
+        after fidelity reveal st-fid duration 260
+        after st-fid reveal report duration 260
+        after report reveal st-rep duration 260
+        after report trace m1 duration 420
+        after report trace m2 duration 420
+        after report trace motion-sig duration 900
       }
     }
   }
@@ -440,18 +440,18 @@ explainer "Cellular algorithm workbook" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "allow", anchor: "e" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal allow duration 260
-        at 320 reveal st-allow duration 260
-        at 640 reveal upload duration 260
-        at 800 reveal st-up duration 260
-        at 900 trace ar1 duration 420
-        at 1120 reveal atomic duration 260
-        at 1280 reveal st-at duration 260
-        at 1380 trace ar2 duration 420
-        at 1600 reveal barrier duration 260
-        at 1760 reveal st-bar duration 260
-        at 1860 trace ar3 duration 420
-        at 1920 trace motion-sig duration 900
+        after header reveal allow duration 260
+        after allow reveal st-allow duration 260
+        after st-allow reveal upload duration 260
+        after upload reveal st-up duration 260
+        after upload trace ar1 duration 420
+        after ar1 reveal atomic duration 260
+        after atomic reveal st-at duration 260
+        after atomic trace ar2 duration 420
+        after ar2 reveal barrier duration 260
+        after barrier reveal st-bar duration 260
+        after barrier trace ar3 duration 420
+        after barrier trace motion-sig duration 900
       }
     }
   }
@@ -493,23 +493,23 @@ explainer "Cellular algorithm workbook" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "rt-eligibility", anchor: "e" }, to = { nodeId: "rt-artifacts", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal rt-eligibility duration 260
-        at 480 reveal rt-ownership duration 260
-        at 740 trace rt-a0 duration 420
-        at 800 reveal rt-control duration 260
-        at 1060 trace rt-a1 duration 420
-        at 1120 reveal rt-distribution duration 260
-        at 1380 trace rt-a2 duration 420
-        at 1440 reveal rt-execution duration 260
-        at 1700 trace rt-a3 duration 420
-        at 1760 reveal rt-capture duration 260
-        at 2020 trace rt-a4 duration 420
-        at 2080 reveal rt-merge duration 260
-        at 2340 trace rt-a5 duration 420
-        at 2400 reveal rt-artifacts duration 260
-        at 2560 reveal route-cap duration 260
-        at 2660 trace rt-a6 duration 420
-        at 2720 trace motion-sig duration 900
+        after header reveal rt-eligibility duration 260
+        after rt-eligibility reveal rt-ownership duration 260
+        after rt-ownership trace rt-a0 duration 420
+        after rt-a0 reveal rt-control duration 260
+        after rt-control trace rt-a1 duration 420
+        after rt-a1 reveal rt-distribution duration 260
+        after rt-distribution trace rt-a2 duration 420
+        after rt-a2 reveal rt-execution duration 260
+        after rt-execution trace rt-a3 duration 420
+        after rt-a3 reveal rt-capture duration 260
+        after rt-capture trace rt-a4 duration 420
+        after rt-a4 reveal rt-merge duration 260
+        after rt-merge trace rt-a5 duration 420
+        after rt-a5 reveal rt-artifacts duration 260
+        after rt-artifacts reveal route-cap duration 260
+        after rt-artifacts trace rt-a6 duration 420
+        after rt-artifacts trace motion-sig duration 900
       }
     }
   }
@@ -541,13 +541,13 @@ explainer "Cellular algorithm workbook" {
       sdk.Label(id = "status-msg", text = "status text travels with every selected algorithm", x = 60, y = 280, width = 580, height = 28, fontSize = 12, align = "middle")
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal canon-route duration 260
-        at 320 reveal st-cr duration 260
-        at 480 reveal branches duration 260
-        at 640 reveal st-br duration 260
-        at 800 reveal partials duration 260
-        at 960 reveal st-pa duration 260
-        at 1120 reveal status-msg duration 260
+        after header reveal canon-route duration 260
+        after canon-route reveal st-cr duration 260
+        after st-cr reveal branches duration 260
+        after branches reveal st-br duration 260
+        after st-br reveal partials duration 260
+        after partials reveal st-pa duration 260
+        after st-pa reveal status-msg duration 260
       }
     }
   }
@@ -579,13 +579,13 @@ explainer "Cellular algorithm workbook" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "left", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal decision duration 260
-        at 320 reveal left duration 260
-        at 580 trace dl duration 420
-        at 640 reveal right duration 260
-        at 900 trace dr duration 420
-        at 960 reveal invariant duration 260
-        at 1120 trace motion-sig duration 900
+        after header reveal decision duration 260
+        after decision reveal left duration 260
+        after left trace dl duration 420
+        after dl reveal right duration 260
+        after right trace dr duration 420
+        after dr reveal invariant duration 260
+        after left trace motion-sig duration 900
       }
     }
   }
@@ -617,13 +617,13 @@ explainer "Cellular algorithm workbook" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "right", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal decision duration 260
-        at 320 reveal left duration 260
-        at 580 trace dl duration 420
-        at 640 reveal right duration 260
-        at 900 trace dr duration 420
-        at 960 reveal invariant duration 260
-        at 1120 trace motion-sig duration 900
+        after header reveal decision duration 260
+        after decision reveal left duration 260
+        after left trace dl duration 420
+        after dl reveal right duration 260
+        after right trace dr duration 420
+        after dr reveal invariant duration 260
+        after right trace motion-sig duration 900
       }
     }
   }
@@ -655,13 +655,13 @@ explainer "Cellular algorithm workbook" {
       sdk.Signal(id = "motion-sig", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "right", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal decision duration 260
-        at 320 reveal left duration 260
-        at 580 trace dl duration 420
-        at 640 reveal right duration 260
-        at 900 trace dr duration 420
-        at 960 reveal invariant duration 260
-        at 1120 trace motion-sig duration 900
+        after header reveal decision duration 260
+        after decision reveal left duration 260
+        after left trace dl duration 420
+        after dl reveal right duration 260
+        after right trace dr duration 420
+        after dr reveal invariant duration 260
+        after right trace motion-sig duration 900
       }
     }
   }
@@ -689,9 +689,9 @@ explainer "Cellular algorithm workbook" {
       sdk.Panel(id = "canvas", title = "docs/canvases/cellular-algorithm-workbook.canvas.tsx", x = 70, y = 210, width = 560, height = 72, strokeRole = "@theme.accent.secondary")
       timeline primary {
         at 0 reveal header duration 260
-        at 160 reveal pages duration 260
-        at 480 reveal canvas duration 260
-        at 740 trace ref-a duration 420
+        after header reveal pages duration 260
+        after pages reveal canvas duration 260
+        after canvas trace ref-a duration 420
       }
     }
   }

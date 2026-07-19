@@ -100,13 +100,13 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s1-hdr duration 260
-        at 180 reveal s1-cold duration 280
-        at 420 trace s1-a1 duration 320
-        at 560 reveal s1-warm duration 280
-        at 780 trace s1-a2 duration 320
-        at 920 reveal s1-resume duration 280
-        at 1140 reveal s1-note duration 280
-        at 1400 trace s1-motion duration 900
+        after s1-hdr reveal s1-cold duration 280
+        after s1-cold trace s1-a1 duration 320
+        after s1-a1 reveal s1-warm duration 280
+        after s1-warm trace s1-a2 duration 320
+        after s1-a2 reveal s1-resume duration 280
+        after s1-resume reveal s1-note duration 280
+        after s1-note trace s1-motion duration 900
       }
     }
   }
@@ -228,17 +228,17 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s2-hdr duration 260
-        at 80 stagger targets [s2-steps-step-0, s2-steps-step-1, s2-steps-step-2] step 70 duration 200
-        at 160 reveal s2-ord duration 280
-        at 280 reveal s2-tstar duration 280
-        at 480 reveal s2-div duration 200
-        at 560 reveal s2-ord-a duration 240
-        at 720 trace s2-ord-link duration 280
-        at 820 reveal s2-ord-b duration 240
-        at 900 reveal s2-ts-a duration 240
-        at 1060 trace s2-ts-link duration 280
-        at 1160 reveal s2-ts-b duration 240
-        at 1400 trace s2-motion duration 800
+        after s2-hdr stagger targets [s2-steps-step-0, s2-steps-step-1, s2-steps-step-2] step 70 duration 200
+        after s2-steps-step-2 reveal s2-ord duration 280
+        after s2-ord reveal s2-tstar duration 280
+        after s2-tstar reveal s2-div duration 200
+        after s2-div reveal s2-ord-a duration 240
+        after s2-ord-a trace s2-ord-link duration 280
+        after s2-ord-link reveal s2-ord-b duration 240
+        after s2-ord-b reveal s2-ts-a duration 240
+        after s2-ts-a trace s2-ts-link duration 280
+        after s2-ts-link reveal s2-ts-b duration 240
+        after s2-ts-b trace s2-motion duration 800
       }
     }
   }
@@ -356,17 +356,17 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s3-hdr duration 260
-        at 160 reveal s3-n0 duration 240
-        at 360 trace s3-e01 duration 260
-        at 480 reveal s3-n1 duration 240
-        at 680 reveal s3-cut duration 360
-        at 780 reveal s3-cut-l duration 200
-        at 960 reveal s3-n2 duration 240
-        at 1140 trace s3-e23 duration 260
-        at 1260 reveal s3-n3 duration 240
-        at 1480 reveal s3-hist duration 240
-        at 1580 reveal s3-live duration 240
-        at 1800 trace s3-motion duration 900
+        after s3-hdr reveal s3-n0 duration 240
+        after s3-n0 trace s3-e01 duration 260
+        after s3-e01 reveal s3-n1 duration 240
+        after s3-n1 reveal s3-cut duration 360
+        after s3-cut reveal s3-cut-l duration 200
+        after s3-cut-l reveal s3-n2 duration 240
+        after s3-n2 trace s3-e23 duration 260
+        after s3-e23 reveal s3-n3 duration 240
+        after s3-n3 reveal s3-hist duration 240
+        after s3-hist reveal s3-live duration 240
+        after s3-live trace s3-motion duration 900
       }
     }
   }
@@ -465,14 +465,14 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s4-hdr duration 260
-        at 180 reveal s4-server duration 280
-        at 420 trace s4-bridge duration 320
-        at 560 reveal s4-client duration 280
-        at 800 trace s4-sv-link duration 280
-        at 920 reveal s4-kv duration 260
-        at 1100 trace s4-cl-link duration 280
-        at 1220 reveal s4-path duration 260
-        at 1500 trace s4-motion duration 900
+        after s4-hdr reveal s4-server duration 280
+        after s4-server trace s4-bridge duration 320
+        after s4-bridge reveal s4-client duration 280
+        after s4-client trace s4-sv-link duration 280
+        after s4-sv-link reveal s4-kv duration 260
+        after s4-kv trace s4-cl-link duration 280
+        after s4-cl-link reveal s4-path duration 260
+        after s4-path trace s4-motion duration 900
       }
     }
   }
@@ -579,15 +579,15 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s5-hdr duration 260
-        at 180 reveal s5-warm duration 280
-        at 420 trace s5-a1 duration 320
-        at 560 reveal s5-hand duration 280
-        at 780 trace s5-a2 duration 320
-        at 920 reveal s5-prof duration 280
-        at 1160 reveal s5-seed duration 280
-        at 1360 trace s5-seed-w duration 300
-        at 1480 trace s5-seed-p duration 300
-        at 1700 trace s5-motion duration 900
+        after s5-hdr reveal s5-warm duration 280
+        after s5-warm trace s5-a1 duration 320
+        after s5-a1 reveal s5-hand duration 280
+        after s5-hand trace s5-a2 duration 320
+        after s5-a2 reveal s5-prof duration 280
+        after s5-prof reveal s5-seed duration 280
+        after s5-seed trace s5-seed-w duration 300
+        after s5-seed-w trace s5-seed-p duration 300
+        after s5-seed-p trace s5-motion duration 900
       }
     }
   }
@@ -730,20 +730,20 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s6-hdr duration 260
-        at 140 reveal s6-n0 duration 220
-        at 320 trace s6-e01 duration 220
-        at 420 reveal s6-n1 duration 220
-        at 580 trace s6-e12 duration 220
-        at 680 reveal s6-n2 duration 220
-        at 840 trace s6-e23 duration 220
-        at 940 reveal s6-n3 duration 220
-        at 1100 trace s6-dur-link duration 260
-        at 1220 reveal s6-dur duration 240
-        at 1440 reveal s6-lo duration 240
-        at 1600 trace s6-win duration 280
-        at 1720 reveal s6-hi duration 240
-        at 1940 reveal s6-knobs duration 240
-        at 2100 trace s6-motion duration 800
+        after s6-hdr reveal s6-n0 duration 220
+        after s6-n0 trace s6-e01 duration 220
+        after s6-e01 reveal s6-n1 duration 220
+        after s6-n1 trace s6-e12 duration 220
+        after s6-e12 reveal s6-n2 duration 220
+        after s6-n2 trace s6-e23 duration 220
+        after s6-e23 reveal s6-n3 duration 220
+        after s6-n3 trace s6-dur-link duration 260
+        after s6-dur-link reveal s6-dur duration 240
+        after s6-dur reveal s6-lo duration 240
+        after s6-lo trace s6-win duration 280
+        after s6-win reveal s6-hi duration 240
+        after s6-hi reveal s6-knobs duration 240
+        after s6-knobs trace s6-motion duration 800
       }
     }
   }
@@ -847,15 +847,15 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s7-hdr duration 260
-        at 160 reveal s7-open duration 280
-        at 280 reveal s7-coll duration 280
-        at 480 reveal s7-div duration 200
-        at 600 trace s7-open-link duration 280
-        at 720 reveal s7-draw duration 260
-        at 900 trace s7-coll-link duration 280
-        at 1020 reveal s7-exact duration 260
-        at 1260 reveal s7-note duration 260
-        at 1500 trace s7-motion duration 800
+        after s7-hdr reveal s7-open duration 280
+        after s7-open reveal s7-coll duration 280
+        after s7-coll reveal s7-div duration 200
+        after s7-div trace s7-open-link duration 280
+        after s7-open-link reveal s7-draw duration 260
+        after s7-draw trace s7-coll-link duration 280
+        after s7-coll-link reveal s7-exact duration 260
+        after s7-exact reveal s7-note duration 260
+        after s7-note trace s7-motion duration 800
       }
     }
   }
@@ -960,15 +960,15 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s8-hdr duration 260
-        at 180 reveal s8-base duration 280
-        at 420 trace s8-a1 duration 300
-        at 560 reveal s8-hash duration 280
-        at 780 trace s8-a2 duration 300
-        at 920 reveal s8-pcg duration 280
-        at 1160 reveal s8-salt duration 260
-        at 1340 trace s8-salt-link duration 280
-        at 1560 reveal s8-note duration 260
-        at 1760 trace s8-motion duration 900
+        after s8-hdr reveal s8-base duration 280
+        after s8-base trace s8-a1 duration 300
+        after s8-a1 reveal s8-hash duration 280
+        after s8-hash trace s8-a2 duration 300
+        after s8-a2 reveal s8-pcg duration 280
+        after s8-pcg reveal s8-salt duration 260
+        after s8-salt trace s8-salt-link duration 280
+        after s8-salt-link reveal s8-note duration 260
+        after s8-note trace s8-motion duration 900
       }
     }
   }
@@ -1090,17 +1090,17 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s9-hdr duration 260
-        at 140 reveal s9-n0 duration 220
-        at 240 reveal s9-n1 duration 220
-        at 420 reveal s9-cut duration 360
-        at 520 reveal s9-cut-l duration 200
-        at 700 reveal s9-start duration 260
-        at 900 trace s9-reroot duration 300
-        at 1040 reveal s9-n2 duration 260
-        at 1240 trace s9-e23 duration 300
-        at 1380 reveal s9-n3 duration 260
-        at 1600 reveal s9-delay duration 260
-        at 1800 trace s9-motion duration 900
+        after s9-hdr reveal s9-n0 duration 220
+        after s9-n0 reveal s9-n1 duration 220
+        after s9-n1 reveal s9-cut duration 360
+        after s9-cut reveal s9-cut-l duration 200
+        after s9-cut-l reveal s9-start duration 260
+        after s9-start trace s9-reroot duration 300
+        after s9-reroot reveal s9-n2 duration 260
+        after s9-n2 trace s9-e23 duration 300
+        after s9-e23 reveal s9-n3 duration 260
+        after s9-n3 reveal s9-delay duration 260
+        after s9-delay trace s9-motion duration 900
       }
     }
   }
@@ -1206,15 +1206,15 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s10-hdr duration 260
-        at 160 reveal s10-n0 duration 260
-        at 380 trace s10-dead duration 280
-        at 500 reveal s10-ch duration 260
-        at 700 reveal s10-x duration 220
-        at 900 reveal s10-n2 duration 260
-        at 1100 trace s10-keep duration 280
-        at 1240 reveal s10-n3 duration 260
-        at 1480 reveal s10-note duration 260
-        at 1680 trace s10-motion duration 800
+        after s10-hdr reveal s10-n0 duration 260
+        after s10-n0 trace s10-dead duration 280
+        after s10-dead reveal s10-ch duration 260
+        after s10-ch reveal s10-x duration 220
+        after s10-x reveal s10-n2 duration 260
+        after s10-n2 trace s10-keep duration 280
+        after s10-keep reveal s10-n3 duration 260
+        after s10-n3 reveal s10-note duration 260
+        after s10-note trace s10-motion duration 800
       }
     }
   }
@@ -1327,16 +1327,16 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s11-hdr duration 260
-        at 160 reveal s11-live duration 280
-        at 400 trace s11-bridge duration 300
-        at 540 reveal s11-path duration 280
-        at 780 reveal s11-n2 duration 240
-        at 960 trace s11-live-link duration 260
-        at 1080 reveal s11-n3 duration 240
-        at 1260 trace s11-path-link duration 280
-        at 1400 reveal s11-seg duration 260
-        at 1640 reveal s11-note duration 260
-        at 1840 trace s11-motion duration 900
+        after s11-hdr reveal s11-live duration 280
+        after s11-live trace s11-bridge duration 300
+        after s11-bridge reveal s11-path duration 280
+        after s11-path reveal s11-n2 duration 240
+        after s11-n2 trace s11-live-link duration 260
+        after s11-live-link reveal s11-n3 duration 240
+        after s11-n3 trace s11-path-link duration 280
+        after s11-path-link reveal s11-seg duration 260
+        after s11-seg reveal s11-note duration 260
+        after s11-note trace s11-motion duration 900
       }
     }
   }
@@ -1441,15 +1441,15 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s12-hdr duration 260
-        at 180 reveal s12-chop duration 280
-        at 420 trace s12-a1 duration 300
-        at 560 reveal s12-press duration 280
-        at 780 trace s12-a2 duration 300
-        at 920 reveal s12-kv duration 280
-        at 1160 trace s12-loop-link duration 280
-        at 1280 reveal s12-loop duration 260
-        at 1520 reveal s12-note duration 260
-        at 1720 trace s12-motion duration 900
+        after s12-hdr reveal s12-chop duration 280
+        after s12-chop trace s12-a1 duration 300
+        after s12-a1 reveal s12-press duration 280
+        after s12-press trace s12-a2 duration 300
+        after s12-a2 reveal s12-kv duration 280
+        after s12-kv trace s12-loop-link duration 280
+        after s12-loop-link reveal s12-loop duration 260
+        after s12-loop reveal s12-note duration 260
+        after s12-note trace s12-motion duration 900
       }
     }
   }
@@ -1557,15 +1557,15 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s13-hdr duration 260
-        at 160 reveal s13-tstar duration 260
-        at 280 reveal s13-root duration 260
-        at 500 trace s13-a1 duration 300
-        at 640 reveal s13-modes duration 260
-        at 880 reveal s13-seq duration 240
-        at 1000 reveal s13-shuf duration 240
-        at 1120 reveal s13-rand duration 240
-        at 1360 reveal s13-note duration 260
-        at 1560 trace s13-motion duration 900
+        after s13-hdr reveal s13-tstar duration 260
+        after s13-tstar reveal s13-root duration 260
+        after s13-root trace s13-a1 duration 300
+        after s13-a1 reveal s13-modes duration 260
+        after s13-modes reveal s13-seq duration 240
+        after s13-seq reveal s13-shuf duration 240
+        after s13-shuf reveal s13-rand duration 240
+        after s13-rand reveal s13-note duration 260
+        after s13-note trace s13-motion duration 900
       }
     }
   }
@@ -1687,17 +1687,17 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s14-hdr duration 260
-        at 160 reveal s14-deck duration 260
-        at 380 trace s14-a1 duration 280
-        at 520 reveal s14-lane duration 260
-        at 740 trace s14-a2 duration 280
-        at 880 reveal s14-fields duration 260
-        at 1100 reveal s14-tpl duration 220
-        at 1220 reveal s14-iid duration 220
-        at 1340 reveal s14-ts duration 220
-        at 1460 reveal s14-exec duration 220
-        at 1680 reveal s14-note duration 260
-        at 1880 trace s14-motion duration 900
+        after s14-hdr reveal s14-deck duration 260
+        after s14-deck trace s14-a1 duration 280
+        after s14-a1 reveal s14-lane duration 260
+        after s14-lane trace s14-a2 duration 280
+        after s14-a2 reveal s14-fields duration 260
+        after s14-fields reveal s14-tpl duration 220
+        after s14-tpl reveal s14-iid duration 220
+        after s14-iid reveal s14-ts duration 220
+        after s14-ts reveal s14-exec duration 220
+        after s14-exec reveal s14-note duration 260
+        after s14-note trace s14-motion duration 900
       }
     }
   }
@@ -1804,15 +1804,15 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s15-hdr duration 260
-        at 160 reveal s15-press duration 260
-        at 380 trace s15-a1 duration 280
-        at 520 reveal s15-resume duration 260
-        at 740 trace s15-a2 duration 280
-        at 880 reveal s15-mark duration 260
-        at 1120 reveal s15-bad duration 240
-        at 1260 reveal s15-good duration 240
-        at 1500 reveal s15-note duration 260
-        at 1700 trace s15-motion duration 900
+        after s15-hdr reveal s15-press duration 260
+        after s15-press trace s15-a1 duration 280
+        after s15-a1 reveal s15-resume duration 260
+        after s15-resume trace s15-a2 duration 280
+        after s15-a2 reveal s15-mark duration 260
+        after s15-mark reveal s15-bad duration 240
+        after s15-bad reveal s15-good duration 240
+        after s15-good reveal s15-note duration 260
+        after s15-note trace s15-motion duration 900
       }
     }
   }
@@ -1919,15 +1919,15 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s16-hdr duration 260
-        at 140 reveal s16-n0 duration 220
-        at 240 reveal s16-n1 duration 220
-        at 360 reveal s16-n2 duration 240
-        at 560 reveal s16-start duration 260
-        at 780 trace s16-rr duration 300
-        at 920 reveal s16-n3 duration 260
-        at 1160 reveal s16-walls duration 260
-        at 1400 reveal s16-note duration 260
-        at 1600 trace s16-motion duration 900
+        after s16-hdr reveal s16-n0 duration 220
+        after s16-n0 reveal s16-n1 duration 220
+        after s16-n1 reveal s16-n2 duration 240
+        after s16-n2 reveal s16-start duration 260
+        after s16-start trace s16-rr duration 300
+        after s16-rr reveal s16-n3 duration 260
+        after s16-n3 reveal s16-walls duration 260
+        after s16-walls reveal s16-note duration 260
+        after s16-note trace s16-motion duration 900
       }
     }
   }
@@ -2026,14 +2026,14 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s17-hdr duration 260
-        at 160 reveal s17-k duration 260
-        at 360 reveal s17-l0 duration 220
-        at 480 reveal s17-l1 duration 220
-        at 600 reveal s17-l2 duration 220
-        at 820 trace s17-a1 duration 300
-        at 1000 reveal s17-fresh duration 280
-        at 1280 reveal s17-note duration 260
-        at 1480 trace s17-motion duration 900
+        after s17-hdr reveal s17-k duration 260
+        after s17-k reveal s17-l0 duration 220
+        after s17-l0 reveal s17-l1 duration 220
+        after s17-l1 reveal s17-l2 duration 220
+        after s17-l2 trace s17-a1 duration 300
+        after s17-a1 reveal s17-fresh duration 280
+        after s17-fresh reveal s17-note duration 260
+        after s17-note trace s17-motion duration 900
       }
     }
   }
@@ -2131,14 +2131,14 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s18-hdr duration 260
-        at 160 reveal s18-press duration 260
-        at 380 trace s18-a1 duration 280
-        at 520 reveal s18-hand duration 260
-        at 740 trace s18-a2 duration 280
-        at 880 reveal s18-prof duration 260
-        at 1140 reveal s18-single duration 260
-        at 1400 reveal s18-note duration 260
-        at 1600 trace s18-motion duration 900
+        after s18-hdr reveal s18-press duration 260
+        after s18-press trace s18-a1 duration 280
+        after s18-a1 reveal s18-hand duration 260
+        after s18-hand trace s18-a2 duration 280
+        after s18-a2 reveal s18-prof duration 260
+        after s18-prof reveal s18-single duration 260
+        after s18-single reveal s18-note duration 260
+        after s18-note trace s18-motion duration 900
       }
     }
   }
@@ -2259,17 +2259,17 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s19-hdr duration 260
-        at 160 reveal s19-abort duration 240
-        at 300 reveal s19-t0 duration 240
-        at 440 reveal s19-win duration 240
-        at 660 trace s19-a1 duration 260
-        at 780 reveal s19-gate duration 240
-        at 960 trace s19-a2 duration 260
-        at 1080 reveal s19-full duration 240
-        at 1260 trace s19-a3 duration 260
-        at 1380 reveal s19-lo duration 240
-        at 1600 reveal s19-note duration 260
-        at 1800 trace s19-motion duration 900
+        after s19-hdr reveal s19-abort duration 240
+        after s19-abort reveal s19-t0 duration 240
+        after s19-t0 reveal s19-win duration 240
+        after s19-win trace s19-a1 duration 260
+        after s19-a1 reveal s19-gate duration 240
+        after s19-gate trace s19-a2 duration 260
+        after s19-a2 reveal s19-full duration 240
+        after s19-full trace s19-a3 duration 260
+        after s19-a3 reveal s19-lo duration 240
+        after s19-lo reveal s19-note duration 260
+        after s19-note trace s19-motion duration 900
       }
     }
   }
@@ -2398,18 +2398,18 @@ explainer "t* Warmup" {
 
       timeline main {
         at 0 reveal s20-hdr duration 260
-        at 140 reveal s20-tstar duration 220
-        at 320 trace s20-a1 duration 240
-        at 420 reveal s20-snap duration 220
-        at 600 trace s20-a2 duration 240
-        at 700 reveal s20-hand duration 220
-        at 880 trace s20-a3 duration 240
-        at 980 reveal s20-phase duration 220
-        at 1200 reveal s20-min duration 220
-        at 1320 reveal s20-max duration 220
-        at 1440 reveal s20-seed duration 220
-        at 1660 reveal s20-note duration 260
-        at 1860 trace s20-motion duration 900
+        after s20-hdr reveal s20-tstar duration 220
+        after s20-tstar trace s20-a1 duration 240
+        after s20-a1 reveal s20-snap duration 220
+        after s20-snap trace s20-a2 duration 240
+        after s20-a2 reveal s20-hand duration 220
+        after s20-hand trace s20-a3 duration 240
+        after s20-a3 reveal s20-phase duration 220
+        after s20-phase reveal s20-min duration 220
+        after s20-min reveal s20-max duration 220
+        after s20-max reveal s20-seed duration 220
+        after s20-seed reveal s20-note duration 260
+        after s20-note trace s20-motion duration 900
       }
     }
   }
