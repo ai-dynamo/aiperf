@@ -25,6 +25,7 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use tokio::sync::Semaphore;
 
@@ -249,6 +250,92 @@ impl ConcurrencyManager {
     }
 }
 
+/// Cross-thread concurrency admission gate.
+///
+/// Unlike [`SlotPool`] (single-threaded, `Rc`-based, used by `sharded` dispatch),
+/// this type is `Send + Sync` and shared via `Arc` across worker threads so
+/// `global` dispatch enforces one true global concurrency limit instead of `W`
+/// independent local limits.
+pub struct GlobalSlotPool {
+    semaphore: Semaphore,
+    acquire_count: std::sync::atomic::AtomicU64,
+    release_count: std::sync::atomic::AtomicU64,
+    wait_count: std::sync::atomic::AtomicU64,
+    current_limit: std::sync::atomic::AtomicUsize,
+}
+
+impl GlobalSlotPool {
+    /// Create a pool with `initial_limit` globally shared slots.
+    pub fn new(initial_limit: usize) -> Arc<Self> {
+        Arc::new(Self {
+            semaphore: Semaphore::new(initial_limit),
+            acquire_count: std::sync::atomic::AtomicU64::new(0),
+            release_count: std::sync::atomic::AtomicU64::new(0),
+            wait_count: std::sync::atomic::AtomicU64::new(0),
+            current_limit: std::sync::atomic::AtomicUsize::new(initial_limit),
+        })
+    }
+
+    /// Acquire one globally-shared slot, waiting if none are free.
+    pub async fn acquire(self: &Arc<Self>) -> GlobalSlotGuard {
+        let had_permit_immediately = self.semaphore.available_permits() > 0;
+        if !had_permit_immediately {
+            self.wait_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        let permit = self
+            .semaphore
+            .acquire()
+            .await
+            .expect("GlobalSlotPool semaphore is never closed");
+        permit.forget();
+        self.acquire_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        GlobalSlotGuard { pool: self.clone() }
+    }
+
+    /// The configured global concurrency limit.
+    pub fn current_limit(&self) -> usize {
+        self.current_limit
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Slots currently available across all worker threads.
+    pub fn effective_slots(&self) -> usize {
+        self.semaphore.available_permits()
+    }
+
+    /// A snapshot of instrumentation counters, in the shared [`ConcurrencyStats`] shape.
+    pub fn stats(&self) -> ConcurrencyStats {
+        ConcurrencyStats {
+            acquire_count: self
+                .acquire_count
+                .load(std::sync::atomic::Ordering::Relaxed),
+            release_count: self
+                .release_count
+                .load(std::sync::atomic::Ordering::Relaxed),
+            wait_count: self.wait_count.load(std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    fn release(&self) {
+        self.semaphore.add_permits(1);
+        self.release_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// RAII guard for one [`GlobalSlotPool`] slot; releases on drop.
+pub struct GlobalSlotGuard {
+    pool: Arc<GlobalSlotPool>,
+}
+
+impl Drop for GlobalSlotGuard {
+    fn drop(&mut self) {
+        self.pool.release();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,5 +484,29 @@ mod tests {
         let _p1 = mgr.prefill.try_acquire().unwrap();
         let _p2 = mgr.prefill.try_acquire().unwrap();
         assert!(mgr.prefill.try_acquire().is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn global_slot_pool_enforces_true_cross_thread_limit() {
+        let pool = GlobalSlotPool::new(2);
+        let concurrent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let max_seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let pool = pool.clone();
+            let concurrent = concurrent.clone();
+            let max_seen = max_seen.clone();
+            handles.push(tokio::spawn(async move {
+                let _guard = pool.acquire().await;
+                let now = concurrent.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                max_seen.fetch_max(now, std::sync::atomic::Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                concurrent.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+        assert_eq!(max_seen.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 }
