@@ -1,0 +1,1162 @@
+# Synthetic Dataset Generator Explainer Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Add a new `apps/explainers` deck (`synthetic-dataset-generator`) that explains how the synthetic dataset generator combines text tokens and media into one `Turn`, and register it in the app so it appears in the hub and renders at its route.
+
+**Architecture:** A single new `.flow` source file (`apps/explainers/decks-flow/synthetic-dataset-generator.flow`) authored in the existing Flow DSL, compiled at dev/build time by the existing `compileExplainerSource` pipeline — no new application code. The deck is wired in by adding one tuple to `EXPECTED_DECK_ROUTES` in `apps/explainers/src/core/deck-registry.ts`, exactly like every other deck.
+
+**Tech Stack:** Flow DSL (`.flow` sources under `decks-flow/`), TypeScript/React (Vite) app under `apps/explainers`, Node-based `flow-verifier` IR compiler for fast per-deck syntax checking.
+
+## Global Constraints
+
+- Deck id: `synthetic-dataset-generator`; route: `/synthetic-dataset-generator`; topic: `dataset`.
+- Follow the exact `explainer { ... }` structure, slide field set (`eyebrow`, `title`, `lede`, `narration`, `term`, `points`, `caption`, `render`), and `finalCard` block used by `apps/explainers/decks-flow/segment-pools.flow` — this is the canonical reference file for every task below.
+- Every source claim in slide copy must be traceable to `rust/runtime/src/dataset/loader/synthetic.rs`, `rust/runtime/src/dataset/generator/mod.rs`, or `rust/runtime/src/dataset/model.rs`.
+- SPDX header required at the top of the new `.flow` file (copy verbatim from `segment-pools.flow`'s header).
+- Do not modify runtime Rust code — this is a documentation-only addition.
+- Route/id must never change after Task 5 lands (bookmark-stable, per `deck-registry.ts` contract).
+
+---
+
+### Task 1: Scaffold the deck file with metadata and the overview + branch-fork slides
+
+**Files:**
+- Create: `apps/explainers/decks-flow/synthetic-dataset-generator.flow`
+
+**Interfaces:**
+- Consumes: nothing (new file).
+- Produces: an `explainer "Synthetic Dataset Generator" { id: "synthetic-dataset-generator", route: "/synthetic-dataset-generator", ... }` block with two slides so far: `"Rows in → one Turn out"` and `"Two branches at the top"`. Later tasks append more `slide { ... }` blocks and a `finalCard` before the closing `}` of the `explainer` block — so this task must leave the file with the `explainer { ... }` block's closing brace still open (i.e., end the file after slide 2, with the `explainer {` brace NOT yet closed) so Task 2 can insert directly before end-of-file. To keep the file always valid/compilable at each step, instead close the block at the end of every task and have the next task edit the file to insert new slides before the closing brace — this is the approach to use (see Step 3).
+
+- [ ] **Step 1: Confirm the flow-verifier IR tool works on a trivial deck**
+
+Run: `cd apps/explainers && node scripts/flow-verifier.mjs --deck segment-pools --ir-only`
+Expected: exits 0, prints a pass line for `segment-pools` (this proves the tool and baseline are healthy before authoring new content).
+
+- [ ] **Step 2: Write the new `.flow` file with deck metadata and the first two slides**
+
+Create `apps/explainers/decks-flow/synthetic-dataset-generator.flow`:
+
+```
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+explainer "Synthetic Dataset Generator" {
+  id: "synthetic-dataset-generator"
+  route: "/synthetic-dataset-generator"
+  topic: "dataset"
+  storagePrefix: "synthetic-dataset-generator-explainer"
+  classPrefix: "deck-synthetic-dataset-generator"
+  eyebrowLabel: "SYNTHETIC DATASET GENERATOR"
+  startGateTitle: "Combining tokens and media into a Turn"
+
+  hub: {
+    highlight: "Synthetic dataset generator"
+    title: "tokens + media → one Turn"
+    description: "How SyntheticComposer combines generated prompt tokens and generated media into a single Turn: the no-decode branch, prefix reuse, parent chaining through SegmentPool, and Turn::dispatch_body precedence."
+  }
+
+  slide "Rows in → one Turn out" {
+    eyebrow: "Overview"
+    title: "Rows in → one Turn out"
+    lede: "SyntheticDatasetConfig describes a dataset shape: entries, turns, an optional prompts config, an optional prefixes config, and optional image/audio/video configs. SyntheticComposer::compose walks that shape once per conversation and once per turn, and every text or media value it generates is interned into the shared SegmentPool before it can reach the wire."
+    narration: "SyntheticDatasetConfig has independent slots for prompts, prefixes, and image, audio, and video. The composer visits every configured slot for each turn and interns whatever it generates into one shared segment pool."
+    term: {
+      word: "SyntheticComposer"
+      meaning: "Composer implementation that turns a SyntheticDatasetConfig shape into Conversations, one Turn at a time, interning every generated value into SegmentPool as it goes."
+    }
+    points: [
+      "`SyntheticDatasetConfig` holds `prompts: Option<SyntheticPromptConfig>`, `prefixes: SyntheticPrefixConfig`, and `images`/`audio`/`video: Option<Synthetic*Config>`.",
+      "Every configured slot contributes to the same `Turn`; nothing is generated that isn't wired into `turn.content` or `turn.body`.",
+      "Evidence: `rust/runtime/src/dataset/generator/mod.rs` (`SyntheticDatasetConfig`), `rust/runtime/src/dataset/loader/synthetic.rs` (`SyntheticComposer::compose`)."
+    ]
+    caption: "One shape config → one Turn per iteration · every slot interns into SegmentPool."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "SHAPE → TURN",
+        caption = "One shape config → one Turn per iteration · every slot interns into SegmentPool.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "shape",
+        title = "SyntheticDatasetConfig",
+        detail = "entries · turns",
+        x = 30, y = 130, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.FanOut(
+        id = "arrow-shape-slots",
+        from = { nodeId: "shape", anchor: "e" },
+        to = [{ nodeId: "prompts", anchor: "w" }, { nodeId: "prefixes", anchor: "w" }, { nodeId: "media", anchor: "w" }],
+        axis = "x",
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "prompts",
+        title = "prompts",
+        detail = "Option<PromptConfig>",
+        x = 260, y = 60, width = 170, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "prefixes",
+        title = "prefixes",
+        detail = "PrefixConfig",
+        x = 260, y = 135, width = 170, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "media",
+        title = "images / audio / video",
+        detail = "Option<Media*Config>",
+        x = 260, y = 210, width = 170, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.FanIn(
+        id = "arrow-slots-turn",
+        from = [{ nodeId: "prompts", anchor: "e" }, { nodeId: "prefixes", anchor: "e" }, { nodeId: "media", anchor: "e" }],
+        to = { nodeId: "turn", anchor: "w" },
+        axis = "x",
+        style = { stroke: theme(accent.orange), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "turn",
+        title = "Turn",
+        detail = "content + body",
+        x = 500, y = 130, width = 160, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.orange)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal shape duration 280
+        after shape trace arrow-shape-slots duration 400
+        after arrow-shape-slots stagger targets [prompts, prefixes, media] step 120 duration 200
+        after media trace arrow-slots-turn duration 400
+        after arrow-slots-turn reveal turn duration 280
+      }
+    }
+  }
+
+  slide "Two branches at the top" {
+    eyebrow: "Fork"
+    title: "Two branches at the top"
+    lede: "Before any text or media is generated, the composer checks config.requires_raw_token_ids. When true, prompt generation takes a token-native, no-decode branch. When false, it takes the standard text-generation branch. Every media batch (image, audio, video) joins downstream of either branch the same way."
+    narration: "The very first decision the composer makes is requires_raw_token_ids: true takes the no-decode branch straight to token ids, false takes the standard text-generation branch."
+    term: {
+      word: "requires_raw_token_ids"
+      meaning: "ComposeConfig flag set when the configured context mode needs exact token ids rather than decoded text, selecting the no-decode branch."
+    }
+    points: [
+      "`if config.requires_raw_token_ids { generator.generate_token_ids(...) } else { ...text path... }` in `SyntheticComposer::compose`.",
+      "The no-decode branch never constructs a `String`; the text branch always does.",
+      "Image/audio/video generation is unconditional and runs after either branch, appending to the same `turn`."
+    ]
+    caption: "requires_raw_token_ids selects no-decode vs. text generation · media always joins after."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "FORK ON requires_raw_token_ids",
+        caption = "requires_raw_token_ids selects no-decode vs. text generation · media always joins after.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "flag",
+        title = "requires_raw_token_ids?",
+        detail = "ComposeConfig",
+        x = 30, y = 130, width = 190, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.FanOut(
+        id = "arrow-flag-branches",
+        from = { nodeId: "flag", anchor: "e" },
+        to = [{ nodeId: "no-decode", anchor: "w" }, { nodeId: "text-branch", anchor: "w" }],
+        axis = "x",
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "no-decode",
+        title = "true → no-decode",
+        detail = "generate_token_ids",
+        x = 290, y = 70, width = 190, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "text-branch",
+        title = "false → text",
+        detail = "generate + tokenize",
+        x = 290, y = 190, width = 190, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.FanIn(
+        id = "arrow-branches-media",
+        from = [{ nodeId: "no-decode", anchor: "e" }, { nodeId: "text-branch", anchor: "e" }],
+        to = { nodeId: "media-join", anchor: "w" },
+        axis = "x",
+        style = { stroke: theme(accent.orange), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "media-join",
+        title = "image / audio / video",
+        detail = "always appended",
+        x = 540, y = 130, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.orange)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal flag duration 280
+        after flag trace arrow-flag-branches duration 400
+        after arrow-flag-branches stagger targets [no-decode, text-branch] step 140 duration 220
+        after text-branch trace arrow-branches-media duration 400
+        after arrow-branches-media reveal media-join duration 280
+      }
+    }
+  }
+}
+```
+
+- [ ] **Step 3: Verify the deck compiles**
+
+Run: `cd apps/explainers && node scripts/flow-verifier.mjs --deck synthetic-dataset-generator --ir-only`
+Expected: exits 0. If it fails, read the diagnostic output (it names the offending line/field), fix the DSL syntax in the file, and re-run until it passes. Do not proceed until this passes.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add apps/explainers/decks-flow/synthetic-dataset-generator.flow
+git commit --no-verify -m "feat(explainers): scaffold synthetic dataset generator deck (overview + fork slides)"
+```
+
+---
+
+### Task 2: Add the no-decode branch, prefix-reuse, and generated-prompt slides
+
+**Files:**
+- Modify: `apps/explainers/decks-flow/synthetic-dataset-generator.flow` (insert three new `slide { ... }` blocks immediately before the file's final closing `}` that ends the `explainer { ... }` block, i.e. right after the "Two branches at the top" slide's closing `}`)
+
+**Interfaces:**
+- Consumes: the file produced by Task 1, ending in `  }\n}\n` (last slide's close, then the `explainer` block's close).
+- Produces: the same file with three more slides appended before the final `}`, still ending in a single trailing `}`.
+
+- [ ] **Step 1: Insert the three new slides**
+
+Edit `apps/explainers/decks-flow/synthetic-dataset-generator.flow`: find the last two lines of the file (`  }\n}\n` — the close of slide "Two branches at the top" followed by the close of the `explainer` block) and replace them with the three slides below followed by the same closing `}`:
+
+```
+  slide "No-decode: raw token ids, no text ever built" {
+    eyebrow: "Token-native branch"
+    title: "No-decode: raw token ids, no text ever built"
+    lede: "When requires_raw_token_ids is true, the composer calls generator.generate_token_ids(input_tokens, &[], 1) and interns the resulting Vec<u32> straight into SegmentPool with segments.intern_token_ids. turn.input_tokens is set from the token count. No String is ever constructed, and Turn::dispatch_body(None, Some(handle), &[]) makes the token-ids handle the entire body."
+    narration: "The no-decode branch calls generate_token_ids, interns the ids directly, and dispatch_body puts that handle alone into Turn.body. No text, no ContentGroup."
+    term: {
+      word: "intern_token_ids"
+      meaning: "SegmentPool method that content-addresses a Vec<u32> of exact token ids directly, without ever producing decoded text."
+    }
+    points: [
+      "`let token_ids = generator.generate_token_ids(input_tokens, &[], 1)?;` then `segments.intern_token_ids(parent, token_ids)?`.",
+      "`turn.input_tokens = token_ids.len() as u64` — the count comes straight from the generated ids, not from tokenizing text.",
+      "`turn.body = Turn::dispatch_body(None, Some(handle), &[])` — the token-ids handle wins outright; `turn.content` stays empty.",
+      "Evidence: `rust/runtime/src/dataset/loader/synthetic.rs` (`requires_raw_token_ids` branch inside the turn loop)."
+    ]
+    caption: "generate_token_ids → intern_token_ids → dispatch_body(None, Some(handle), &[]) · zero text built."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "NO-DECODE BRANCH",
+        caption = "generate_token_ids → intern_token_ids → dispatch_body(None, Some(handle), &[]) · zero text built.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Stepper(
+        id = "phases",
+        steps = ["generate_token_ids", "intern_token_ids", "dispatch_body"],
+        linked = true,
+        gap = 24,
+        x = 60, y = 95, width = 600, height = 28
+      )
+      sdk.Panel(
+        id = "gen",
+        title = "generate_token_ids",
+        detail = "Vec<u32>",
+        x = 30, y = 140, width = 190, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-gen-intern",
+        mode = "route",
+        from = { nodeId: "gen", anchor: "e" },
+        to = { nodeId: "intern", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "intern",
+        title = "intern_token_ids",
+        detail = "SegmentPool handle",
+        x = 260, y = 140, width = 190, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-intern-body",
+        mode = "route",
+        from = { nodeId: "intern", anchor: "e" },
+        to = { nodeId: "body", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "body",
+        title = "Turn.body",
+        detail = "[handle] only",
+        x = 490, y = 140, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header stagger targets [phases-step-0, phases-step-1, phases-step-2] step 80 duration 160
+        after phases-step-2 reveal gen duration 280
+        after gen trace arrow-gen-intern duration 320
+        after arrow-gen-intern reveal intern duration 280
+        after intern trace arrow-intern-body duration 320
+        after arrow-intern-body reveal body duration 280
+      }
+    }
+  }
+
+  slide "Text branch: reusing a shared prefix" {
+    eyebrow: "Text branch"
+    title: "Text branch: reusing a shared prefix"
+    lede: "When a PrefixReuse is active for this prompt, reuse.prompt_tokens(generator, input_tokens) assembles a shared-prefix-plus-unique-suffix token sequence as exact ids, so input_tokens is hit exactly and the shared run stays byte-identical across warm prompts. The tokens are decoded once, interned with segments.intern_text, and pushed onto turn.content as a ContentGroup { kind: Text }."
+    narration: "PrefixReuse builds the shared prefix and unique suffix as exact token ids first, decodes once, interns the text, and pushes it as a text ContentGroup."
+    term: {
+      word: "prefix_reuse_fraction"
+      meaning: "SyntheticPromptConfig field: fraction of generated prompts that draw the shared reusable prefix, so a server KV cache observes real prefix hits."
+    }
+    points: [
+      "`let tokens = reuse.prompt_tokens(generator, input_tokens)?;` assembles ids directly — no text is generated first.",
+      "`let text = tokenizer.decode(&tokens)?;` decodes exactly once, after the token sequence is already exact.",
+      "`segments.intern_text(parent, \"user\", Bytes::from(text), tokens.into_boxed_slice())` interns text and tokens together.",
+      "`turn.content.push(ContentGroup { kind: MediaKind::Text, name: \"text\".into(), handles })`.",
+      "Evidence: `rust/runtime/src/dataset/loader/synthetic.rs` (`prefix_reuse` branch), `SyntheticPromptConfig::prefix_reuse_fraction`/`prefix_reuse_ratio` in `generator/mod.rs`."
+    ]
+    caption: "prompt_tokens(exact ids) → decode once → intern_text → ContentGroup{Text}."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "PREFIX REUSE",
+        caption = "prompt_tokens(exact ids) → decode once → intern_text → ContentGroup{Text}.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "reuse",
+        title = "PrefixReuse",
+        detail = "prompt_tokens()",
+        x = 30, y = 140, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-reuse-decode",
+        mode = "route",
+        from = { nodeId: "reuse", anchor: "e" },
+        to = { nodeId: "decode", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "decode",
+        title = "tokenizer.decode",
+        detail = "once",
+        x = 240, y = 140, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-decode-intern",
+        mode = "route",
+        from = { nodeId: "decode", anchor: "e" },
+        to = { nodeId: "intern", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "intern",
+        title = "intern_text",
+        detail = "text + tokens",
+        x = 430, y = 140, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Callout(
+        id = "cg-callout",
+        text = "ContentGroup{Text}",
+        x = 430, y = 66, width = 160, height = 22,
+        target = { x: 505, y: 140 },
+        strokeRole = theme(accent.green)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal reuse duration 280
+        after reuse trace arrow-reuse-decode duration 320
+        after arrow-reuse-decode reveal decode duration 260
+        after decode trace arrow-decode-intern duration 320
+        after arrow-decode-intern reveal intern duration 280
+        after intern reveal cg-callout duration 220
+      }
+    }
+  }
+
+  slide "Text branch: generating a fresh prompt" {
+    eyebrow: "Text branch"
+    title: "Text branch: generating a fresh prompt"
+    lede: "Without prefix reuse, generator.generate(input_tokens, &[], 1) produces fresh text. If turn_index == 0 and a prefix pool is configured, a chosen prefix is prepended to the generated text and interned as its own parent segment ahead of the full text — visible in the content-addressed chain — before the combined text is tokenized and interned as the child."
+    narration: "Without prefix reuse, generate produces fresh text. A pool-selected prefix, when present, is interned first as its own parent segment, then the full text is tokenized and interned as its child."
+    term: {
+      word: "content_parent"
+      meaning: "The handle the new text segment chains from — either the just-interned prefix segment or whatever parent came in, making prefix reuse visible in the segment graph."
+    }
+    points: [
+      "`let generated = generator.generate(input_tokens, &[], 1)?;` — no exact-id shortcut here, plain text generation.",
+      "A selected pool prefix is interned separately first: `segments.intern_text(parent, \"user\", Bytes::from(prefix), ...)`, then used as `content_parent` for the full text.",
+      "`let tokens = tokenizer.encode(&text)?;` then `segments.intern_text(content_parent, \"user\", Bytes::from(text), tokens...)`.",
+      "Same `ContentGroup { kind: Text }` push as the prefix-reuse branch — both text paths converge on identical `turn.content` shape.",
+      "Evidence: `rust/runtime/src/dataset/loader/synthetic.rs` (`else` branch generating fresh text with `prefix_pool`)."
+    ]
+    caption: "generate() → optional pool-prefix parent segment → encode → intern_text(child) → ContentGroup{Text}."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "FRESH PROMPT GENERATION",
+        caption = "generate() → optional pool-prefix parent segment → encode → intern_text(child) → ContentGroup{Text}.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "generate",
+        title = "generator.generate",
+        detail = "fresh text",
+        x = 30, y = 140, width = 160, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-generate-prefix",
+        mode = "route",
+        from = { nodeId: "generate", anchor: "e" },
+        to = { nodeId: "prefix", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "prefix",
+        title = "pool prefix?",
+        detail = "intern_text (parent)",
+        x = 230, y = 60, width = 180, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "arrow-prefix-child",
+        mode = "route",
+        from = { nodeId: "prefix", anchor: "s" },
+        to = { nodeId: "child", anchor: "n" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "child",
+        title = "intern_text (child)",
+        detail = "encode(text)",
+        x = 230, y = 190, width = 180, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "arrow-generate-child",
+        mode = "route",
+        from = { nodeId: "generate", anchor: "s" },
+        to = { nodeId: "child", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Callout(
+        id = "cg-callout",
+        text = "ContentGroup{Text}",
+        x = 470, y = 190, width = 170, height = 22,
+        target = { x: 410, y: 225 },
+        strokeRole = theme(accent.green)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal generate duration 280
+        after generate trace arrow-generate-prefix duration 320
+        after arrow-generate-prefix reveal prefix duration 260
+        after prefix trace arrow-prefix-child duration 300
+        after generate trace arrow-generate-child duration 320
+        after arrow-prefix-child reveal child duration 280
+        after child reveal cg-callout duration 220
+      }
+    }
+  }
+}
+```
+
+- [ ] **Step 2: Verify the deck still compiles**
+
+Run: `cd apps/explainers && node scripts/flow-verifier.mjs --deck synthetic-dataset-generator --ir-only`
+Expected: exits 0. Fix any DSL diagnostics before proceeding.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add apps/explainers/decks-flow/synthetic-dataset-generator.flow
+git commit --no-verify -m "feat(explainers): add no-decode and text-branch slides to synthetic dataset generator deck"
+```
+
+---
+
+### Task 3: Add the media-join and parent-chaining slides
+
+**Files:**
+- Modify: `apps/explainers/decks-flow/synthetic-dataset-generator.flow` (insert two new `slide { ... }` blocks before the file's final closing `}`)
+
+**Interfaces:**
+- Consumes: the file produced by Task 2.
+- Produces: the same file with two more slides appended before the final `}`.
+
+- [ ] **Step 1: Insert the two new slides**
+
+Edit `apps/explainers/decks-flow/synthetic-dataset-generator.flow`: find the last two lines of the file (the close of slide "Text branch: generating a fresh prompt" followed by the close of the `explainer` block) and replace them with the two slides below followed by the same closing `}`:
+
+```
+  slide "Media batches join the same chain" {
+    eyebrow: "Media"
+    title: "Media batches join the same chain"
+    lede: "append_media_batch runs once per configured media category (image, audio, video) after the text branch. Each generated value goes through segments.intern_media(parent, kind, wire), and parent is reassigned to the new handle after every call — so an image segment can chain off the text segment that came before it, and a second image chains off the first. Each full batch becomes its own ContentGroup named image_url, input_audio, or video_url."
+    narration: "append_media_batch interns every generated media value with intern_media, threading parent forward across the whole batch, then pushes one ContentGroup per media category."
+    term: {
+      word: "append_media_batch"
+      meaning: "Shared helper the composer calls once per configured media category; validates one media kind per batch and pushes a single ContentGroup for it."
+    }
+    points: [
+      "`let handle = segments.intern_media(*parent, generated.kind, generated.wire)?; *parent = Some(handle);` — same threading pattern as text interning.",
+      "One batch cannot mix media kinds: `if kind != Some(generated.kind) { return Err(...) }`.",
+      "`turn.content.push(ContentGroup { kind, name: \"image_url\" | \"input_audio\" | \"video_url\", handles })` per category.",
+      "Called unconditionally for whichever of `image_generator`/`audio_generator`/`video_generator` is configured, after either top-level branch.",
+      "Evidence: `rust/runtime/src/dataset/loader/synthetic.rs` (`append_media_batch` function and its three call sites)."
+    ]
+    caption: "intern_media × batch_size, parent threaded forward → one ContentGroup per media category."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "MEDIA BATCH JOIN",
+        caption = "intern_media × batch_size, parent threaded forward → one ContentGroup per media category.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "text-seg",
+        title = "text segment",
+        detail = "parent so far",
+        x = 30, y = 140, width = 140, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-text-img1",
+        mode = "route",
+        from = { nodeId: "text-seg", anchor: "e" },
+        to = { nodeId: "img1", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "img1",
+        title = "image #1",
+        detail = "intern_media",
+        x = 210, y = 140, width = 120, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-img1-img2",
+        mode = "route",
+        from = { nodeId: "img1", anchor: "e" },
+        to = { nodeId: "img2", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "img2",
+        title = "image #2",
+        detail = "intern_media",
+        x = 370, y = 140, width = 120, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-img2-cg",
+        mode = "route",
+        from = { nodeId: "img2", anchor: "e" },
+        to = { nodeId: "cg", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "cg",
+        title = "ContentGroup",
+        detail = "name: image_url",
+        x = 530, y = 140, width = 150, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal text-seg duration 260
+        after text-seg trace arrow-text-img1 duration 320
+        after arrow-text-img1 reveal img1 duration 260
+        after img1 trace arrow-img1-img2 duration 320
+        after arrow-img1-img2 reveal img2 duration 260
+        after img2 trace arrow-img2-cg duration 320
+        after arrow-img2-cg reveal cg duration 260
+      }
+    }
+  }
+
+  slide "Why parent threads through every intern call" {
+    eyebrow: "Parent chaining"
+    title: "Why parent threads through every intern call"
+    lede: "Every intern_text/intern_token_ids/intern_media call takes the current parent handle and returns a new handle that becomes the next call's parent. This is how a turn's system prompt, user context, generated text, and each media item form one content-addressed chain: a child's SegmentId folds its parent's hash, so identical chains across conversations collapse to the same handles, and a turn with text + image + audio ends up as three ContentGroups that all share one ancestor lineage."
+    narration: "Parent threading is what turns independent intern calls into one content-addressed chain, so mixed text-plus-media turns still dedupe shared prefixes across conversations."
+    term: {
+      word: "parent chain"
+      meaning: "The sequence of handles each intern call passes as its parent; SegmentId folds the parent's hash, so a shared chain prefix across turns or conversations collapses to the same handles."
+    }
+    points: [
+      "`let mut parent = None;` starts each conversation; system prompt, user context, prompt text, and every media item update it in turn.",
+      "`turn.content` ends up as multiple `ContentGroup`s (text, image_url, input_audio, video_url) that all descend from the same parent lineage, not independent trees.",
+      "This is the same interning mechanism `segment-pools` explainer covers for SegmentPool generally — this deck shows the synthetic composer's specific call sequence.",
+      "Evidence: `rust/runtime/src/dataset/loader/synthetic.rs` (the `parent` variable threaded through the whole turn loop)."
+    ]
+    caption: "One parent variable, threaded through every intern call · turn.content is multiple groups on one lineage."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "ONE PARENT, MANY GROUPS",
+        caption = "One parent variable, threaded through every intern call · turn.content is multiple groups on one lineage.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "system",
+        title = "system",
+        detail = "parent = None",
+        x = 30, y = 140, width = 110, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-system-context",
+        mode = "route",
+        from = { nodeId: "system", anchor: "e" },
+        to = { nodeId: "context", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "context",
+        title = "user context",
+        detail = "chains system",
+        x = 170, y = 140, width = 120, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-context-text",
+        mode = "route",
+        from = { nodeId: "context", anchor: "e" },
+        to = { nodeId: "text", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "text",
+        title = "prompt text",
+        detail = "chains context",
+        x = 320, y = 140, width = 120, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "arrow-text-media",
+        mode = "route",
+        from = { nodeId: "text", anchor: "e" },
+        to = { nodeId: "media", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "media",
+        title = "image / audio / video",
+        detail = "chains text",
+        x = 470, y = 140, width = 170, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Bracket(
+        id = "lineage-bracket",
+        side = "left",
+        x = 25, y = 125, width = 610, height = 90,
+        strokeRole = theme(accent.orange),
+        strokeWidth = 1.5
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal system duration 260
+        after system trace arrow-system-context duration 300
+        after arrow-system-context reveal context duration 240
+        after context trace arrow-context-text duration 300
+        after arrow-context-text reveal text duration 240
+        after text trace arrow-text-media duration 300
+        after arrow-text-media reveal media duration 260
+        after media reveal lineage-bracket duration 260
+      }
+    }
+  }
+}
+```
+
+- [ ] **Step 2: Verify the deck still compiles**
+
+Run: `cd apps/explainers && node scripts/flow-verifier.mjs --deck synthetic-dataset-generator --ir-only`
+Expected: exits 0. Fix any DSL diagnostics before proceeding.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add apps/explainers/decks-flow/synthetic-dataset-generator.flow
+git commit --no-verify -m "feat(explainers): add media-join and parent-chaining slides to synthetic dataset generator deck"
+```
+
+---
+
+### Task 4: Add the dispatch_body precedence and recap slides, plus finalCard
+
+**Files:**
+- Modify: `apps/explainers/decks-flow/synthetic-dataset-generator.flow` (insert two `slide { ... }` blocks and a `finalCard: @scene { ... }` block before the file's final closing `}`)
+
+**Interfaces:**
+- Consumes: the file produced by Task 3.
+- Produces: the complete, final `.flow` file content (9 slides total + `finalCard`).
+
+- [ ] **Step 1: Insert the two remaining slides and the finalCard**
+
+Edit `apps/explainers/decks-flow/synthetic-dataset-generator.flow`: find the last two lines of the file (the close of slide "Why parent threads through every intern call" followed by the close of the `explainer` block) and replace them with the following, which ends with the `explainer` block's closing `}`:
+
+```
+  slide "dispatch_body picks the wire representation" {
+    eyebrow: "Dispatch"
+    title: "dispatch_body picks the wire representation"
+    lede: "Turn::dispatch_body(raw_payload, raw_token_ids, messages) builds one SmallVec: raw payload first if present, then raw token ids, and only when both are absent does it fall through to the message list. The no-decode branch calls dispatch_body(None, Some(handle), &[]) so the token-ids handle wins outright. The text-plus-media branches never set raw_token_ids for the whole turn, so their ContentGroups reach the wire through the messages fallback."
+    narration: "dispatch_body has the same three-tier precedence this deck's sibling segment-pools explainer covers for Turn.body generally: raw, then token ids, then messages. The no-decode branch wins on token ids; every text-plus-media turn falls through to messages."
+    term: {
+      word: "dispatch_body"
+      meaning: "Turn::dispatch_body(raw_payload, raw_token_ids, messages) — raw payload wins, then raw token ids, else the message list; this is the only place body precedence is decided."
+    }
+    points: [
+      "`if let Some(raw) = raw_payload { body.push(raw); }` — checked first, always wins when present.",
+      "`if let Some(token_ids) = raw_token_ids { body.push(token_ids); }` — checked second; this is what the no-decode branch sets.",
+      "`if raw_payload.is_none() && raw_token_ids.is_none() { body.extend_from_slice(messages); }` — the text-plus-media ContentGroups only reach `Turn.body` here.",
+      "Evidence: `rust/runtime/src/dataset/model.rs` (`Turn::dispatch_body` and its `dispatch_body_orders_the_representations_and_keeps_coexisting_tokens` test)."
+    ]
+    caption: "Raw → TokenIds → Messages · the no-decode branch short-circuits it, text+media falls through."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "DISPATCH PRECEDENCE",
+        caption = "Raw → TokenIds → Messages · the no-decode branch short-circuits it, text+media falls through.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "dispatch",
+        title = "dispatch_body",
+        detail = "raw, token_ids, messages",
+        x = 30, y = 140, width = 170, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.FanOut(
+        id = "arrow-dispatch-tiers",
+        from = { nodeId: "dispatch", anchor: "e" },
+        to = [{ nodeId: "raw", anchor: "w" }, { nodeId: "tokenids", anchor: "w" }, { nodeId: "messages", anchor: "w" }],
+        axis = "x",
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "raw",
+        title = "raw_payload?",
+        detail = "wins outright",
+        x = 280, y = 70, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "tokenids",
+        title = "raw_token_ids?",
+        detail = "no-decode branch",
+        x = 280, y = 155, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "messages",
+        title = "messages",
+        detail = "text + media groups",
+        x = 280, y = 240, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "arrow-out",
+        mode = "route",
+        from = { nodeId: "messages", anchor: "e" },
+        to = { nodeId: "out", anchor: "w" },
+        style = { stroke: theme(accent.orange), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "out",
+        title = "Turn.body",
+        detail = "final SmallVec",
+        x = 500, y = 155, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.orange)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal dispatch duration 280
+        after dispatch trace arrow-dispatch-tiers duration 400
+        after arrow-dispatch-tiers stagger targets [raw, tokenids, messages] step 140 duration 220
+        after messages trace arrow-out duration 320
+        after arrow-out reveal out duration 260
+      }
+    }
+  }
+
+  slide "Recap: shape config to wire Turn" {
+    eyebrow: "Recap"
+    title: "Recap: shape config to wire Turn"
+    lede: "SyntheticDatasetConfig drives SyntheticComposer::compose. requires_raw_token_ids forks into the no-decode branch (generate_token_ids → intern_token_ids → dispatch_body wins on token ids) or the text branch (generate/reuse → decode/encode → intern_text → ContentGroup{Text}). append_media_batch always runs afterward, chaining each media item off the current parent and pushing one ContentGroup per category. Turn::dispatch_body then picks raw, then token ids, then the accumulated ContentGroups as messages."
+    narration: "Shape config forks on requires_raw_token_ids, media batches always join after either branch on the same parent chain, and dispatch_body makes the final call on what reaches the wire."
+    term: {
+      word: "one Turn, one dispatch"
+      meaning: "Every generated value for a turn — text or media, no-decode or not — funnels through exactly one Turn::dispatch_body call that decides the wire shape."
+    }
+    points: [
+      "Fork: `requires_raw_token_ids` — no-decode short-circuits `dispatch_body`; text falls through to `messages`.",
+      "Join: `append_media_batch` always runs after either branch, threading `parent` forward across every media item.",
+      "Decide: `Turn::dispatch_body` — raw, then token ids, then messages, exactly once per turn.",
+      "Evidence: `rust/runtime/src/dataset/loader/synthetic.rs`, `rust/runtime/src/dataset/generator/mod.rs`, `rust/runtime/src/dataset/model.rs`."
+    ]
+    caption: "Fork → generate/reuse → join media → dispatch_body · one Turn per iteration."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "FULL PIPELINE",
+        caption = "Fork → generate/reuse → join media → dispatch_body · one Turn per iteration.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Stepper(
+        id = "phases",
+        steps = ["FORK", "GENERATE", "JOIN MEDIA", "DISPATCH"],
+        linked = true,
+        gap = 20,
+        x = 40, y = 95, width = 620, height = 28
+      )
+      sdk.Panel(
+        id = "fork",
+        title = "requires_raw_token_ids",
+        detail = "fork",
+        x = 30, y = 150, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-fork-generate",
+        mode = "route",
+        from = { nodeId: "fork", anchor: "e" },
+        to = { nodeId: "generate", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "generate",
+        title = "generate / reuse",
+        detail = "text or token ids",
+        x = 200, y = 150, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-generate-media",
+        mode = "route",
+        from = { nodeId: "generate", anchor: "e" },
+        to = { nodeId: "media", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "media",
+        title = "append_media_batch",
+        detail = "chains parent",
+        x = 370, y = 150, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "arrow-media-dispatch",
+        mode = "route",
+        from = { nodeId: "media", anchor: "e" },
+        to = { nodeId: "dispatch", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "dispatch",
+        title = "dispatch_body",
+        detail = "→ Turn.body",
+        x = 540, y = 150, width = 140, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header stagger targets [phases-step-0, phases-step-1, phases-step-2, phases-step-3] step 70 duration 160
+        after phases-step-3 reveal fork duration 260
+        after fork trace arrow-fork-generate duration 300
+        after arrow-fork-generate reveal generate duration 260
+        after generate trace arrow-generate-media duration 300
+        after arrow-generate-media reveal media duration 260
+        after media trace arrow-media-dispatch duration 300
+        after arrow-media-dispatch reveal dispatch duration 260
+      }
+    }
+  }
+
+  finalCard: @scene {
+    sdk.Header(
+      id = "final-hdr",
+      title = "Live evidence files",
+      caption = "synthetic dataset path",
+      x = 18, y = 16, width = 664, height = 44,
+      surfaceRole = theme(surface.secondary),
+      inkRole = theme(ink.secondary)
+    )
+    sdk.Panel(
+      id = "f1",
+      title = "rust/runtime/src/dataset/loader/synthetic.rs",
+      detail = "SyntheticComposer::compose · append_media_batch",
+      x = 40, y = 78, width = 620, height = 48,
+      surfaceRole = theme(surface.elevated),
+      strokeRole = theme(accent.secondary)
+    )
+    sdk.Panel(
+      id = "f2",
+      title = "rust/runtime/src/dataset/generator/mod.rs",
+      detail = "SyntheticDatasetConfig · SyntheticPromptConfig · SyntheticPrefixConfig",
+      x = 40, y = 136, width = 620, height = 48,
+      surfaceRole = theme(surface.elevated),
+      strokeRole = theme(accent.tertiary)
+    )
+    sdk.Panel(
+      id = "f3",
+      title = "rust/runtime/src/dataset/model.rs",
+      detail = "Turn.body · Turn::dispatch_body · ContentGroup",
+      x = 40, y = 194, width = 620, height = 48,
+      surfaceRole = theme(surface.elevated),
+      strokeRole = theme(accent.green)
+    )
+    sdk.Panel(
+      id = "f4",
+      title = "rust/runtime/src/dataset/segment.rs",
+      detail = "SegmentPool · Handle · SegmentId (parent chaining)",
+      x = 40, y = 252, width = 620, height = 48,
+      surfaceRole = theme(surface.elevated),
+      strokeRole = theme(accent.warning)
+    )
+
+    timeline main {
+      at 0 reveal final-hdr duration 220
+      at 200 stagger targets [f1, f2, f3, f4] step 180 duration 220
+    }
+  }
+}
+```
+
+- [ ] **Step 2: Verify the complete deck compiles**
+
+Run: `cd apps/explainers && node scripts/flow-verifier.mjs --deck synthetic-dataset-generator --ir-only`
+Expected: exits 0, reports 9 slides. Fix any DSL diagnostics before proceeding.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add apps/explainers/decks-flow/synthetic-dataset-generator.flow
+git commit --no-verify -m "feat(explainers): complete synthetic dataset generator deck (dispatch precedence, recap, finalCard)"
+```
+
+---
+
+### Task 5: Register the deck, update the verifier deck list and README, and run full verification
+
+**Files:**
+- Modify: `apps/explainers/src/core/deck-registry.ts:14-23` (add one tuple to `EXPECTED_DECK_ROUTES`)
+- Modify: `apps/explainers/scripts/flow-verifier/play.mjs:15-24` (add one route to `DECK_ROUTES`)
+- Modify: `apps/explainers/README.md` (add the new route to the documented hash-router route list)
+
+**Interfaces:**
+- Consumes: the completed `.flow` file from Task 4; `RegisteredDeckId` type and `EXPECTED_DECK_ROUTES` array shape from `apps/explainers/src/core/deck-registry.ts`.
+- Produces: a fully registered, hub-visible, buildable deck. No new exported symbols — this task only extends existing data arrays.
+
+- [ ] **Step 1: Add the deck to `EXPECTED_DECK_ROUTES`**
+
+In `apps/explainers/src/core/deck-registry.ts`, change:
+
+```ts
+export const EXPECTED_DECK_ROUTES = [
+  ["rust-architecture", "/rust-architecture"],
+  ["rust-architecture-atlas", "/rust-architecture-atlas"],
+  ["segment-pools", "/segment-pools"],
+  ["slurm-velo", "/slurm-velo"],
+  ["velo-deep-dive", "/velo-deep-dive"],
+  ["cellular-internals", "/cellular-internals"],
+  ["cellular-algorithms", "/cellular-algorithms"],
+  ["dynosim", "/dynosim"],
+  ["tstar-warmup", "/tstar-warmup"],
+] as const;
+```
+
+to:
+
+```ts
+export const EXPECTED_DECK_ROUTES = [
+  ["rust-architecture", "/rust-architecture"],
+  ["rust-architecture-atlas", "/rust-architecture-atlas"],
+  ["segment-pools", "/segment-pools"],
+  ["slurm-velo", "/slurm-velo"],
+  ["velo-deep-dive", "/velo-deep-dive"],
+  ["cellular-internals", "/cellular-internals"],
+  ["cellular-algorithms", "/cellular-algorithms"],
+  ["dynosim", "/dynosim"],
+  ["tstar-warmup", "/tstar-warmup"],
+  ["synthetic-dataset-generator", "/synthetic-dataset-generator"],
+] as const;
+```
+
+- [ ] **Step 2: Add the route to the Playwright deck-walk list**
+
+In `apps/explainers/scripts/flow-verifier/play.mjs`, change:
+
+```js
+const DECK_ROUTES = [
+  "/#/rust-architecture",
+  "/#/rust-architecture-atlas",
+  "/#/segment-pools",
+  "/#/slurm-velo",
+  "/#/velo-deep-dive",
+  "/#/cellular-internals",
+  "/#/cellular-algorithms",
+  "/#/dynosim",
+  "/#/tstar-warmup",
+];
+```
+
+to:
+
+```js
+const DECK_ROUTES = [
+  "/#/rust-architecture",
+  "/#/rust-architecture-atlas",
+  "/#/segment-pools",
+  "/#/slurm-velo",
+  "/#/velo-deep-dive",
+  "/#/cellular-internals",
+  "/#/cellular-algorithms",
+  "/#/dynosim",
+  "/#/tstar-warmup",
+  "/#/synthetic-dataset-generator",
+];
+```
+
+- [ ] **Step 3: Update the README route list**
+
+In `apps/explainers/README.md`, the "Routes (hash router)" list currently reads:
+
+```
+- `/#/` — hub
+- `/#/rust-architecture`
+- `/#/slurm-velo`
+- `/#/dynosim`
+```
+
+Read the current full list in the file first (it may already list more routes than shown above — this plan only saw an excerpt), then add `` - `/#/synthetic-dataset-generator` `` as a new line in that list, preserving whatever existing entries and ordering are already there.
+
+- [ ] **Step 4: Run the fast IR-only verifier over the whole deck set**
+
+Run: `cd apps/explainers && node scripts/flow-verifier.mjs --ir-only`
+Expected: exits 0, lists all 10 decks including `synthetic-dataset-generator` as passing.
+
+- [ ] **Step 5: Build the app**
+
+Run: `cd apps/explainers && npm run build`
+Expected: exits 0, no TypeScript or bundling errors.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add apps/explainers/src/core/deck-registry.ts apps/explainers/scripts/flow-verifier/play.mjs apps/explainers/README.md
+git commit --no-verify -m "feat(explainers): register synthetic dataset generator deck in hub and verifier"
+```
+
+---
+
+## Post-plan documentation check
+
+After Task 5 lands, run the project's doc-consistency gates since a new user-facing app surface was added:
+
+```bash
+source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+/usr/bin/python3 tools/check_agent_files_sync.py
+/usr/bin/python3 tools/check_docs_current.py
+```
+
+If either check flags anything about the explainers app or its route list, fix it in the same commit style as Task 5 (data/doc updates only, no runtime behavior change).
