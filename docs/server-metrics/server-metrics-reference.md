@@ -89,7 +89,10 @@ Comprehensive reference for server metrics collected during AIPerf benchmark run
 | `sglang:spec_accept_length` | `stats.avg/min/max/p50/p90` | Accepted speculative decoding length |
 
 AIPerf also prints a final `Server Metrics: Speculative Decoding` console table
-with mean, min, max, p50, and p90 when the server exposes these metrics.
+when matching metrics are available, with mean, min, max, p50, and p90 for each
+matching server metric series whose `model_name` label matches a configured
+model name case-insensitively. For SGLang, only the `pp_rank="0"` /
+`tp_rank="0"` leader series is shown to avoid duplicated scheduler-level gauges.
 
 ### "Where is time being spent?"
 
