@@ -191,4 +191,266 @@ explainer "Synthetic Dataset Generator" {
       }
     }
   }
+
+  slide "No-decode: raw token ids, no text ever built" {
+    eyebrow: "Token-native branch"
+    title: "No-decode: raw token ids, no text ever built"
+    lede: "When requires_raw_token_ids is true, the composer calls generator.generate_token_ids(input_tokens, &[], 1) and interns the resulting Vec<u32> straight into SegmentPool with segments.intern_token_ids. turn.input_tokens is set from the token count. No String is ever constructed, and Turn::dispatch_body(None, Some(handle), &[]) makes the token-ids handle the entire body."
+    narration: "The no-decode branch calls generate_token_ids, interns the ids directly, and dispatch_body puts that handle alone into Turn.body. No text, no ContentGroup."
+    term: {
+      word: "intern_token_ids"
+      meaning: "SegmentPool method that content-addresses a Vec<u32> of exact token ids directly, without ever producing decoded text."
+    }
+    points: [
+      "`let token_ids = generator.generate_token_ids(input_tokens, &[], 1)?;` then `segments.intern_token_ids(parent, token_ids)?`.",
+      "`turn.input_tokens = token_ids.len() as u64` — the count comes straight from the generated ids, not from tokenizing text.",
+      "`turn.body = Turn::dispatch_body(None, Some(handle), &[])` — the token-ids handle wins outright; `turn.content` stays empty.",
+      "Evidence: `rust/runtime/src/dataset/loader/synthetic.rs` (`requires_raw_token_ids` branch inside the turn loop)."
+    ]
+    caption: "generate_token_ids → intern_token_ids → dispatch_body(None, Some(handle), &[]) · zero text built."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "NO-DECODE BRANCH",
+        caption = "generate_token_ids → intern_token_ids → dispatch_body(None, Some(handle), &[]) · zero text built.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Stepper(
+        id = "phases",
+        steps = ["generate_token_ids", "intern_token_ids", "dispatch_body"],
+        linked = true,
+        gap = 24,
+        x = 60, y = 95, width = 600, height = 28
+      )
+      sdk.Panel(
+        id = "gen",
+        title = "generate_token_ids",
+        detail = "Vec<u32>",
+        x = 30, y = 140, width = 190, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-gen-intern",
+        mode = "route",
+        from = { nodeId: "gen", anchor: "e" },
+        to = { nodeId: "intern", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "intern",
+        title = "intern_token_ids",
+        detail = "SegmentPool handle",
+        x = 260, y = 140, width = 190, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-intern-body",
+        mode = "route",
+        from = { nodeId: "intern", anchor: "e" },
+        to = { nodeId: "body", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "body",
+        title = "Turn.body",
+        detail = "[handle] only",
+        x = 490, y = 140, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header stagger targets [phases-step-0, phases-step-1, phases-step-2] step 80 duration 160
+        after phases-step-2 reveal gen duration 280
+        after gen trace arrow-gen-intern duration 320
+        after arrow-gen-intern reveal intern duration 280
+        after intern trace arrow-intern-body duration 320
+        after arrow-intern-body reveal body duration 280
+      }
+    }
+  }
+
+  slide "Text branch: reusing a shared prefix" {
+    eyebrow: "Text branch"
+    title: "Text branch: reusing a shared prefix"
+    lede: "When a PrefixReuse is active for this prompt, reuse.prompt_tokens(generator, input_tokens) assembles a shared-prefix-plus-unique-suffix token sequence as exact ids, so input_tokens is hit exactly and the shared run stays byte-identical across warm prompts. The tokens are decoded once, interned with segments.intern_text, and pushed onto turn.content as a ContentGroup { kind: Text }."
+    narration: "PrefixReuse builds the shared prefix and unique suffix as exact token ids first, decodes once, interns the text, and pushes it as a text ContentGroup."
+    term: {
+      word: "prefix_reuse_fraction"
+      meaning: "SyntheticPromptConfig field: fraction of generated prompts that draw the shared reusable prefix, so a server KV cache observes real prefix hits."
+    }
+    points: [
+      "`let tokens = reuse.prompt_tokens(generator, input_tokens)?;` assembles ids directly — no text is generated first.",
+      "`let text = tokenizer.decode(&tokens)?;` decodes exactly once, after the token sequence is already exact.",
+      "`segments.intern_text(parent, \"user\", Bytes::from(text), tokens.into_boxed_slice())` interns text and tokens together.",
+      "`turn.content.push(ContentGroup { kind: MediaKind::Text, name: \"text\".into(), handles })`.",
+      "Evidence: `rust/runtime/src/dataset/loader/synthetic.rs` (`prefix_reuse` branch), `SyntheticPromptConfig::prefix_reuse_fraction`/`prefix_reuse_ratio` in `generator/mod.rs`."
+    ]
+    caption: "prompt_tokens(exact ids) → decode once → intern_text → ContentGroup{Text}."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "PREFIX REUSE",
+        caption = "prompt_tokens(exact ids) → decode once → intern_text → ContentGroup{Text}.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "reuse",
+        title = "PrefixReuse",
+        detail = "prompt_tokens()",
+        x = 30, y = 140, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-reuse-decode",
+        mode = "route",
+        from = { nodeId: "reuse", anchor: "e" },
+        to = { nodeId: "decode", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "decode",
+        title = "tokenizer.decode",
+        detail = "once",
+        x = 240, y = 140, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-decode-intern",
+        mode = "route",
+        from = { nodeId: "decode", anchor: "e" },
+        to = { nodeId: "intern", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "intern",
+        title = "intern_text",
+        detail = "text + tokens",
+        x = 430, y = 140, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Callout(
+        id = "cg-callout",
+        text = "ContentGroup{Text}",
+        x = 430, y = 66, width = 160, height = 22,
+        target = { x: 505, y: 140 },
+        strokeRole = theme(accent.green)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal reuse duration 280
+        after reuse trace arrow-reuse-decode duration 320
+        after arrow-reuse-decode reveal decode duration 260
+        after decode trace arrow-decode-intern duration 320
+        after arrow-decode-intern reveal intern duration 280
+        after intern reveal cg-callout duration 220
+      }
+    }
+  }
+
+  slide "Text branch: generating a fresh prompt" {
+    eyebrow: "Text branch"
+    title: "Text branch: generating a fresh prompt"
+    lede: "Without prefix reuse, generator.generate(input_tokens, &[], 1) produces fresh text. If turn_index == 0 and a prefix pool is configured, a chosen prefix is prepended to the generated text and interned as its own parent segment ahead of the full text — visible in the content-addressed chain — before the combined text is tokenized and interned as the child."
+    narration: "Without prefix reuse, generate produces fresh text. A pool-selected prefix, when present, is interned first as its own parent segment, then the full text is tokenized and interned as its child."
+    term: {
+      word: "content_parent"
+      meaning: "The handle the new text segment chains from — either the just-interned prefix segment or whatever parent came in, making prefix reuse visible in the segment graph."
+    }
+    points: [
+      "`let generated = generator.generate(input_tokens, &[], 1)?;` — no exact-id shortcut here, plain text generation.",
+      "A selected pool prefix is interned separately first: `segments.intern_text(parent, \"user\", Bytes::from(prefix), ...)`, then used as `content_parent` for the full text.",
+      "`let tokens = tokenizer.encode(&text)?;` then `segments.intern_text(content_parent, \"user\", Bytes::from(text), tokens...)`.",
+      "Same `ContentGroup { kind: Text }` push as the prefix-reuse branch — both text paths converge on identical `turn.content` shape.",
+      "Evidence: `rust/runtime/src/dataset/loader/synthetic.rs` (`else` branch generating fresh text with `prefix_pool`)."
+    ]
+    caption: "generate() → optional pool-prefix parent segment → encode → intern_text(child) → ContentGroup{Text}."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "FRESH PROMPT GENERATION",
+        caption = "generate() → optional pool-prefix parent segment → encode → intern_text(child) → ContentGroup{Text}.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "generate",
+        title = "generator.generate",
+        detail = "fresh text",
+        x = 30, y = 140, width = 160, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-generate-prefix",
+        mode = "route",
+        from = { nodeId: "generate", anchor: "e" },
+        to = { nodeId: "prefix", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "prefix",
+        title = "pool prefix?",
+        detail = "intern_text (parent)",
+        x = 230, y = 60, width = 180, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "arrow-prefix-child",
+        mode = "route",
+        from = { nodeId: "prefix", anchor: "s" },
+        to = { nodeId: "child", anchor: "n" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "child",
+        title = "intern_text (child)",
+        detail = "encode(text)",
+        x = 230, y = 190, width = 180, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "arrow-generate-child",
+        mode = "route",
+        from = { nodeId: "generate", anchor: "s" },
+        to = { nodeId: "child", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Callout(
+        id = "cg-callout",
+        text = "ContentGroup{Text}",
+        x = 470, y = 190, width = 170, height = 22,
+        target = { x: 410, y: 225 },
+        strokeRole = theme(accent.green)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal generate duration 280
+        after generate trace arrow-generate-prefix duration 320
+        after arrow-generate-prefix reveal prefix duration 260
+        after prefix trace arrow-prefix-child duration 300
+        after generate trace arrow-generate-child duration 320
+        after arrow-prefix-child reveal child duration 280
+        after child reveal cg-callout duration 220
+      }
+    }
+  }
 }
