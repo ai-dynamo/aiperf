@@ -17,7 +17,7 @@ use url::Url;
 use crate::clock::Clock;
 
 use crate::transport::core::SseMessage;
-use crate::transport::core::eventstream::{EventStreamDecoder, decode_payload_part};
+use crate::transport::core::eventstream::EventStreamDecoder;
 use crate::transport::core::{
     ErrorDetails, ErrorKind, RequestRecord, Response, TextResponse, TraceData,
 };
@@ -71,13 +71,12 @@ where
                         }
                     };
                     for message in messages {
-                        if let Some(inner_json) = decode_payload_part(&message.payload) {
-                            let mut sse = bytes::BytesMut::with_capacity(inner_json.len() + 8);
-                            sse.extend_from_slice(b"data: ");
-                            sse.extend_from_slice(&inner_json);
-                            sse.extend_from_slice(b"\n\n");
-                            state.pending.push_back(sse.freeze());
-                        }
+                        let inner_json = &message.payload;
+                        let mut sse = bytes::BytesMut::with_capacity(inner_json.len() + 8);
+                        sse.extend_from_slice(b"data: ");
+                        sse.extend_from_slice(inner_json);
+                        sse.extend_from_slice(b"\n\n");
+                        state.pending.push_back(sse.freeze());
                     }
                 }
                 Some(Err(error)) => return Some((Err(error), state)),
@@ -896,13 +895,13 @@ impl HttpClient {
 #[cfg(test)]
 mod eventstream_to_sse_tests {
     use super::*;
-    use crate::transport::core::eventstream::{EventStreamMessage, encode_payload_part};
+    use crate::transport::core::eventstream::EventStreamMessage;
     use futures::stream;
 
     #[tokio::test]
     async fn reframes_payload_parts_as_sse_data_lines() {
-        let m1 = EventStreamMessage::payload_part(encode_payload_part(br#"{"i":1}"#));
-        let m2 = EventStreamMessage::payload_part(encode_payload_part(br#"{"i":2}"#));
+        let m1 = EventStreamMessage::payload_part(Bytes::from_static(br#"{"i":1}"#));
+        let m2 = EventStreamMessage::payload_part(Bytes::from_static(br#"{"i":2}"#));
         let wire = [m1.encode(), m2.encode()].concat();
 
         let raw = stream::iter(vec![Ok::<Bytes, ErrorDetails>(Bytes::from(wire))]);
@@ -920,7 +919,7 @@ mod eventstream_to_sse_tests {
 
     #[tokio::test]
     async fn reframes_messages_split_across_chunk_boundaries() {
-        let message = EventStreamMessage::payload_part(encode_payload_part(br#"{"x":true}"#));
+        let message = EventStreamMessage::payload_part(Bytes::from_static(br#"{"x":true}"#));
         let encoded = message.encode();
         let (left, right) = encoded.split_at(encoded.len() / 2);
 

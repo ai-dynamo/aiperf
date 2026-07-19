@@ -51,11 +51,18 @@ pub struct EventStreamMessage {
 
 impl EventStreamMessage {
     /// A `PayloadPart` event message with the standard SageMaker header triad.
+    ///
+    /// `payload` is the raw inner chat-completion-chunk JSON bytes. The AWS
+    /// eventstream `PayloadPart` shape's `Bytes` member carries the
+    /// `eventpayload` trait, so the frame payload IS the blob directly — no
+    /// base64/JSON envelope wraps it (confirmed against `boto3`'s
+    /// `sagemaker-runtime` client, which reads `event["PayloadPart"]["Bytes"]`
+    /// as the raw frame payload bytes with no further JSON decoding).
     pub fn payload_part(payload: impl Into<Bytes>) -> Self {
         Self {
             headers: encode_headers(&[
                 (":event-type", "PayloadPart"),
-                (":content-type", "application/json"),
+                (":content-type", "application/octet-stream"),
                 (":message-type", "event"),
             ]),
             payload: payload.into(),
@@ -65,8 +72,8 @@ impl EventStreamMessage {
     /// Encode this message into its wire framing.
     pub fn encode(&self) -> Bytes {
         let headers_len = self.headers.len() as u32;
-        let total_len = (PRELUDE_LEN + CRC_LEN + self.headers.len() + self.payload.len() + CRC_LEN)
-            as u32;
+        let total_len =
+            (PRELUDE_LEN + CRC_LEN + self.headers.len() + self.payload.len() + CRC_LEN) as u32;
 
         let mut prelude = BytesMut::with_capacity(PRELUDE_LEN);
         prelude.put_u32(total_len);
@@ -151,9 +158,7 @@ impl EventStreamDecoder {
             let prelude_crc = u32::from_be_bytes(self.buf[8..12].try_into().unwrap());
             let computed_prelude_crc = crc32(&self.buf[0..PRELUDE_LEN]);
             if prelude_crc != computed_prelude_crc {
-                return Err(EventStreamDecodeError(
-                    "prelude CRC mismatch".to_string(),
-                ));
+                return Err(EventStreamDecodeError("prelude CRC mismatch".to_string()));
             }
 
             let headers_start = PRELUDE_LEN + CRC_LEN;
@@ -169,13 +174,14 @@ impl EventStreamDecoder {
                 u32::from_be_bytes(self.buf[payload_end..total_len].try_into().unwrap());
             let computed_message_crc = crc32(&self.buf[0..payload_end]);
             if message_crc != computed_message_crc {
-                return Err(EventStreamDecodeError(
-                    "message CRC mismatch".to_string(),
-                ));
+                return Err(EventStreamDecodeError("message CRC mismatch".to_string()));
             }
 
             let mut frame = self.buf.split_to(total_len);
-            let headers = frame.split_to(payload_start).split_off(headers_start).freeze();
+            let headers = frame
+                .split_to(payload_start)
+                .split_off(headers_start)
+                .freeze();
             frame.truncate(payload_end - payload_start);
             let payload = frame.freeze();
 
@@ -187,29 +193,6 @@ impl EventStreamDecoder {
     pub fn has_trailing_bytes(&self) -> bool {
         !self.buf.is_empty()
     }
-}
-
-/// Extract `PayloadPart.Bytes` (base64) from a decoded SageMaker eventstream
-/// message payload and base64-decode it back to the inner chat-completion-chunk
-/// JSON bytes. Returns `None` if the payload isn't the expected
-/// `{"PayloadPart":{"Bytes": "..."}}` shape.
-pub fn decode_payload_part(payload: &[u8]) -> Option<Bytes> {
-    use base64::Engine as _;
-    let value: serde_json::Value = serde_json::from_slice(payload).ok()?;
-    let b64 = value.get("PayloadPart")?.get("Bytes")?.as_str()?;
-    base64::engine::general_purpose::STANDARD
-        .decode(b64)
-        .ok()
-        .map(Bytes::from)
-}
-
-/// Build the `{"PayloadPart":{"Bytes": "<base64>"}}` envelope for one chunk of
-/// inner (chat-completion-chunk) JSON bytes.
-pub fn encode_payload_part(inner_json: &[u8]) -> Bytes {
-    use base64::Engine as _;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(inner_json);
-    let value = serde_json::json!({"PayloadPart": {"Bytes": b64}});
-    Bytes::from(serde_json::to_vec(&value).expect("json serialization of PayloadPart"))
 }
 
 #[cfg(test)]
@@ -277,13 +260,5 @@ mod tests {
         decoder.push(&encoded);
         let err = decoder.drain_messages().unwrap_err();
         assert!(err.0.contains("message CRC"));
-    }
-
-    #[test]
-    fn payload_part_round_trips_through_base64_envelope() {
-        let inner = br#"{"choices":[{"delta":{"content":"hi"}}]}"#;
-        let enveloped = encode_payload_part(inner);
-        let decoded = decode_payload_part(&enveloped).expect("envelope decodes");
-        assert_eq!(&decoded[..], &inner[..]);
     }
 }

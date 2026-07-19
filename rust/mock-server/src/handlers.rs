@@ -846,8 +846,7 @@ where
                 if rest.is_empty() || rest == b"[DONE]" {
                     continue;
                 }
-                let envelope = aiperf_runtime::transport::core::encode_payload_part(rest);
-                let frame = EventStreamMessage::payload_part(envelope).encode();
+                let frame = EventStreamMessage::payload_part(Bytes::copy_from_slice(rest)).encode();
                 yield Ok::<Bytes, Infallible>(frame);
             }
         }
@@ -3389,10 +3388,8 @@ mod sagemaker_tests {
         decoder.push(&out[0]);
         let messages = decoder.drain_messages().unwrap();
         assert_eq!(messages.len(), 1);
-        let inner =
-            aiperf_runtime::transport::core::decode_payload_part(&messages[0].payload).unwrap();
         assert_eq!(
-            &inner[..],
+            &messages[0].payload[..],
             b"{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}"
         );
     }
