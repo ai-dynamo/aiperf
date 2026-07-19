@@ -9,6 +9,7 @@
 
 pub mod dispatch;
 pub mod error;
+pub mod eventstream;
 pub mod record;
 pub mod response;
 pub mod reuse;
@@ -20,6 +21,10 @@ pub use dispatch::{
     PreparedTurn, Request, RequestExecutor,
 };
 pub use error::{ErrorDetails, ErrorKind};
+pub use eventstream::{
+    EventStreamDecodeError, EventStreamDecoder, EventStreamMessage, decode_payload_part,
+    encode_payload_part,
+};
 pub use record::RequestRecord;
 pub use response::{Response, TextResponse};
 pub use reuse::ConnectionReuseStrategy;

@@ -37,6 +37,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/embeddings", post(handlers::embeddings))
         .route("/v1/responses", post(handlers::responses))
         .route("/inference/v1/generate", post(handlers::vllm_generate))
+        .route(
+            "/endpoints/{endpoint_name}/invocations",
+            post(handlers::sagemaker_invoke),
+        )
+        .route(
+            "/endpoints/{endpoint_name}/invocations-response-stream",
+            post(handlers::sagemaker_invoke_stream),
+        )
         // KServe OpenAI-compatible `/openai/v1/*` aliases: the runner's KServe
         // chat/completions/embeddings factories default to these paths. They
         // dispatch to the identical OpenAI handlers above.

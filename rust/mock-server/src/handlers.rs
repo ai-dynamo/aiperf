@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aiperf_runtime::rng::RandomGenerator;
+use aiperf_runtime::transport::core::EventStreamMessage;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::State;
@@ -706,6 +707,189 @@ pub async fn vllm_generate(
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(json_body))
         .map_err(internal_error)
+}
+
+/// Builds a `ChatCompletionRequest` from a SageMaker Runtime invocation body.
+///
+/// Accepts either an OpenAI-chat-shaped body (`messages` key present) or a
+/// SageMaker JumpStart/DJL-shaped body (`inputs` key present, optional
+/// `parameters`), detected by key presence. `endpoint_name` (the URL path
+/// segment) always determines the target model, overriding any `model` field
+/// in the body, matching real SageMaker Runtime semantics where the endpoint
+/// name alone selects the deployed container.
+fn sagemaker_request_to_chat(
+    endpoint_name: &str,
+    body: &Value,
+    stream: bool,
+) -> AppResult<ChatCompletionRequest> {
+    if body.get("messages").is_some() {
+        let mut req: ChatCompletionRequest =
+            serde_json::from_value(body.clone()).map_err(|e| AppError {
+                status: StatusCode::BAD_REQUEST,
+                message: format!("invalid OpenAI-chat-shaped SageMaker request: {e}"),
+                retry_after: None,
+            })?;
+        req.model = endpoint_name.to_string();
+        req.stream = stream;
+        Ok(req)
+    } else if let Some(inputs) = body.get("inputs") {
+        let content = match inputs {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let params = body.get("parameters");
+        let max_tokens = params
+            .and_then(|p| p.get("max_new_tokens"))
+            .and_then(Value::as_u64)
+            .map(|v| v as usize);
+        let min_tokens = params
+            .and_then(|p| p.get("min_new_tokens"))
+            .and_then(Value::as_u64)
+            .map(|v| v as usize);
+        Ok(ChatCompletionRequest {
+            model: endpoint_name.to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: Value::String(content),
+            }],
+            stream,
+            stream_options: None,
+            max_tokens,
+            max_completion_tokens: None,
+            ignore_eos: false,
+            min_tokens,
+            reasoning_effort: None,
+            priority: None,
+        })
+    } else {
+        Err(AppError {
+            status: StatusCode::BAD_REQUEST,
+            message: "SageMaker request body must contain either a `messages` (OpenAI-chat) \
+                      or `inputs` (JumpStart/DJL) key"
+                .to_string(),
+            retry_after: None,
+        })
+    }
+}
+
+/// AWS SageMaker Runtime `InvokeEndpoint`: `POST
+/// /endpoints/{endpoint_name}/invocations`. Non-streaming; always responds
+/// OpenAI chat-completion shaped regardless of which request shape was sent.
+pub async fn sagemaker_invoke(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(endpoint_name): axum::extract::Path<String>,
+    Json(body): Json<Value>,
+) -> AppResult<Response> {
+    if let Some(e) = maybe_inject_error(&state) {
+        return Err(e);
+    }
+    let req = sagemaker_request_to_chat(&endpoint_name, &body, false)?;
+    let endpoint = "/endpoints/{endpoint_name}/invocations";
+    let start = Instant::now();
+    state.recorder.init_model_config(&req.model);
+    let req_gen = GenRequest::Chat(&req);
+    let ctx = RequestCtx::build("chatcmpl", &req_gen, endpoint, start, &state);
+
+    state.recorder.record_request_start(endpoint, &ctx.model);
+    state.recorder.record_llm_inflight_start(&ctx.model);
+    let (prefill, _decode) = ctx.latency_sim.wait_for_tokens(ctx.tokenized.count()).await;
+    let latency = start.elapsed();
+    let info = LLMLatencyInfo {
+        e2e: latency,
+        prefill,
+        decode: latency.saturating_sub(prefill),
+    };
+    let body = build_chat_response(&ctx);
+    let json_body = serde_json::to_vec(&body).map_err(internal_error)?;
+    let resp_bytes = json_body.len() as u64;
+
+    state
+        .recorder
+        .record_request_bytes(endpoint, ctx.tokenized.text.len() as u64, resp_bytes);
+    state.recorder.record_llm_success(
+        endpoint,
+        &ctx.model,
+        latency.as_secs_f64(),
+        &ctx.usage,
+        &info,
+    );
+    state.recorder.record_llm_inflight_end(&ctx.model);
+    state.recorder.record_request_end(endpoint);
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json_body))
+        .map_err(internal_error)?)
+}
+
+/// Re-frames a `chat_stream` SSE byte stream (`data: <json>\n\n` frames,
+/// terminated by `data: [DONE]\n\n`) as AWS eventstream binary frames, one
+/// `PayloadPart` message per SSE `data:` line. The `[DONE]` sentinel is
+/// dropped: AWS SageMaker eventstream responses have no terminal sentinel,
+/// they end at HTTP body EOF.
+fn sse_to_eventstream<S>(sse: S) -> impl Stream<Item = Result<Bytes, Infallible>>
+where
+    S: Stream<Item = Result<Bytes, Infallible>>,
+{
+    async_stream::stream! {
+        futures::pin_mut!(sse);
+        while let Some(chunk) = futures::StreamExt::next(&mut sse).await {
+            let Ok(chunk) = chunk;
+            for piece in chunk.split(|&b| b == b'\n') {
+                let Some(rest) = piece.strip_prefix(b"data: ") else { continue };
+                if rest.is_empty() || rest == b"[DONE]" {
+                    continue;
+                }
+                let frame = EventStreamMessage::payload_part(Bytes::from(rest.to_vec())).encode();
+                yield Ok::<Bytes, Infallible>(frame);
+            }
+        }
+    }
+}
+
+fn eventstream_response<S>(body: S) -> Response
+where
+    S: Stream<Item = Result<Bytes, Infallible>> + Send + 'static,
+{
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/vnd.amazon.eventstream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from_stream(body))
+        .expect("body ok")
+}
+
+/// AWS SageMaker Runtime `InvokeEndpointWithResponseStream`: `POST
+/// /endpoints/{endpoint_name}/invocations-response-stream`. Streams the same
+/// OpenAI chat-completion-chunk payloads `chat_stream` produces, each wrapped
+/// as a `PayloadPart` AWS eventstream binary frame.
+pub async fn sagemaker_invoke_stream(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(endpoint_name): axum::extract::Path<String>,
+    Json(body): Json<Value>,
+) -> AppResult<Response> {
+    if let Some(e) = maybe_inject_error(&state) {
+        return Err(e);
+    }
+    let req = sagemaker_request_to_chat(&endpoint_name, &body, true)?;
+    let endpoint = "/endpoints/{endpoint_name}/invocations-response-stream";
+    let start = Instant::now();
+    state.recorder.init_model_config(&req.model);
+    let req_gen = GenRequest::Chat(&req);
+    let ctx = RequestCtx::build("chatcmpl", &req_gen, endpoint, start, &state);
+
+    state.recorder.record_streaming_start(endpoint, &ctx.model);
+    let include_usage = req.include_usage();
+    let midstream_error = state.inject_midstream();
+    let sse = chat_stream(
+        state.clone(),
+        ctx,
+        endpoint.to_string(),
+        include_usage,
+        midstream_error,
+    );
+    Ok(eventstream_response(sse_to_eventstream(sse)))
 }
 
 /// Projects a Responses request onto the shared token and latency machinery.
