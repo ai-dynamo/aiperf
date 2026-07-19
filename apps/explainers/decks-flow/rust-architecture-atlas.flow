@@ -350,10 +350,9 @@ explainer "Rust Architecture Atlas" {
         after a7a reveal wstore duration 280
         after wstore trace a7b duration 420
         after a7b reveal merge duration 280
-        after merge trace export-fan duration 700
-        after export-fan reveal nv7 duration 280
         after merge trace a7c duration 420
-        after a7c reveal compat duration 280
+        after a7c reveal nv7 duration 280
+        after nv7 reveal compat duration 280
         after compat reveal otlp duration 280
         after otlp trace export-fan duration 900
       }
@@ -402,14 +401,12 @@ explainer "Rust Architecture Atlas" {
         after exec8 reveal ctrl duration 280
         after ctrl trace a8a duration 420
         after a8a reveal launch duration 280
-        after launch trace cell-fan duration 620
-        after cell-fan reveal c0 duration 280
         after launch trace a8b duration 420
-        after a8b trace cell-fan duration 900
-        after cell-fan reveal cn duration 280
+        after a8b reveal c0 duration 280
+        after c0 reveal cn duration 280
         after cn reveal agg duration 280
-        after agg trace result-fan duration 620
-        after result-fan reveal merge8 duration 280
+        after agg trace cell-fan duration 900
+        after cell-fan reveal merge8 duration 280
         after merge8 trace result-fan duration 900
       }
     }

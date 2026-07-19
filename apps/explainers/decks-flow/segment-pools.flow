@@ -570,11 +570,10 @@ explainer "Segment Pools" {
         after header reveal h0 duration 260
         after h0 trace arrow-h0-h1 duration 200
         after arrow-h0-h1 reveal h1 duration 260
-        after h1 trace arrow-h1-branches duration 380
-        after arrow-h1-branches reveal h2 duration 240
-        after h2 trace arrow-h1-branches duration 900
-        after arrow-h1-branches reveal h3 duration 240
-        after h3 reveal footnote duration 200
+        after h1 reveal h2 duration 240
+        after h2 reveal h3 duration 240
+        after h3 trace arrow-h1-branches duration 900
+        after arrow-h1-branches reveal footnote duration 200
       }
     }
   }
@@ -670,13 +669,12 @@ explainer "Segment Pools" {
       timeline main {
         at 0 reveal header duration 220
         after header reveal turn-body duration 280
-        after turn-body trace arrow-precedence duration 440
-        after arrow-precedence reveal raw duration 220
-        after raw trace arrow-precedence duration 900
-        after arrow-precedence reveal token duration 220
+        after turn-body reveal raw duration 220
+        after raw reveal token duration 220
         after token reveal messages duration 220
-        after messages trace arrow-out duration 200
-        after arrow-out reveal out duration 260
+        after messages trace arrow-precedence duration 900
+        after arrow-precedence reveal out duration 260
+        after out trace arrow-out duration 200
       }
     }
   }

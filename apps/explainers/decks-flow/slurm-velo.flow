@@ -285,8 +285,7 @@ explainer "SLURM + Velo from scratch" {
       timeline main {
         at 0 reveal s2-hdr duration 260
         after s2-hdr reveal s2-cmd duration 260
-        after s2-cmd trace s2-fan duration 820
-        after s2-fan reveal s2-task-0 duration 260
+        after s2-cmd reveal s2-task-0 duration 260
         after s2-task-0 reveal s2-task-1 duration 260
         after s2-task-1 reveal s2-task-2 duration 260
         after s2-task-2 trace s2-fan duration 1460
@@ -1568,8 +1567,7 @@ explainer "SLURM + Velo from scratch" {
       timeline main {
         at 0 reveal s13-hdr duration 260
         after s13-hdr reveal s13-r0 duration 260
-        after s13-r0 trace s13-fan duration 860
-        after s13-fan reveal s13-velo duration 260
+        after s13-r0 reveal s13-velo duration 260
         after s13-velo reveal s13-cell-0 duration 260
         after s13-cell-0 reveal s13-cell-1 duration 260
         after s13-cell-1 reveal s13-cell-2 duration 260
@@ -1690,8 +1688,7 @@ explainer "SLURM + Velo from scratch" {
         after s14-hdr reveal s14-cell-0 duration 260
         after s14-cell-0 reveal s14-cell-1 duration 260
         after s14-cell-1 reveal s14-cell-2 duration 260
-        after s14-cell-2 trace s14-fan duration 680
-        after s14-fan reveal s14-velo duration 260
+        after s14-cell-2 reveal s14-velo duration 260
         after s14-velo reveal s14-r0 duration 260
         after s14-r0 reveal s14-note duration 260
         after s14-note trace s14-fan duration 1460

@@ -273,8 +273,7 @@ explainer "Rust Architecture" {
       timeline primary {
         at 0 reveal header duration 280
         after header reveal registry duration 360
-        after registry trace registry-fan duration 900
-        after registry-fan reveal loaders duration 260
+        after registry reveal loaders duration 260
         after loaders reveal samplers duration 260
         after samplers reveal endpoints duration 260
         after endpoints reveal transports duration 260
@@ -477,8 +476,7 @@ explainer "Rust Architecture" {
       timeline primary {
         at 0 reveal header duration 280
         after header reveal coord duration 340
-        after coord trace worker-fan duration 900
-        after worker-fan reveal w0 duration 260
+        after coord reveal w0 duration 260
         after w0 reveal w1 duration 260
         after w1 reveal w2 duration 260
         after w2 trace worker-fan duration 1100

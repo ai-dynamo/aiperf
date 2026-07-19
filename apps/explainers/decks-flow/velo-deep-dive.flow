@@ -1352,8 +1352,6 @@ explainer "Velo deep dive" {
         after s9-agg-fan stagger targets [s9-c0, s9-c1, s9-c2, s9-c3] step 80 duration 200
         after s9-c3 trace s9-cell-fan duration 600
         after s9-cell-fan reveal s9-note duration 200
-        after s9-note trace s9-cell-fan duration 820
-        after s9-cell-fan trace s9-agg-fan duration 560
       }
   }
   }
