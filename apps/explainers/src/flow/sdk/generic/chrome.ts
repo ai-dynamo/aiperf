@@ -34,6 +34,7 @@ import type {
   NodeAccessibilityIr,
   PointIr,
   RectNodeIr,
+  RelativePositionIr,
   RenderNodeIr,
   Result,
   SourceRange,
@@ -78,6 +79,7 @@ const LEGEND_LABEL_GAP = 8;
 const LEGEND_DEFAULT_WIDTH = 180;
 const LEGEND_DEFAULT_SWATCH_ROLE = "@theme.accent.control";
 
+const DETAIL_INK_ROLE = "@theme.ink.secondary";
 const CARD_SUBTITLE_INK_ROLE = "@theme.ink.tertiary";
 
 type CardSizePreset = Readonly<{ width: number; height: number }>;
@@ -134,6 +136,35 @@ function numberProp(
   key: string,
 ): number | undefined {
   return jsonNumber(props[key]);
+}
+
+/**
+ * Reads an optional `position = { relativeTo, anchor?, dx?, dy? }` prop
+ * object, authoring an IR `relativePosition` so the node's own x/y resolve
+ * at render time against an already-declared sibling instead of a hardcoded
+ * literal. `relativeTo` names the target's root instance id (the sibling's
+ * `id` prop). Absent or malformed input yields `undefined`.
+ */
+function relativePositionProp(
+  props: Readonly<Record<string, JsonValue>>,
+): RelativePositionIr | undefined {
+  const record = jsonRecord(props["position"]);
+  if (record === undefined) {
+    return undefined;
+  }
+  const nodeId = jsonString(record["relativeTo"]);
+  if (nodeId === undefined) {
+    return undefined;
+  }
+  const anchor = jsonString(record["anchor"]);
+  const dx = jsonNumber(record["dx"]);
+  const dy = jsonNumber(record["dy"]);
+  return {
+    nodeId,
+    ...(anchor !== undefined ? { anchor } : {}),
+    ...(dx !== undefined ? { dx } : {}),
+    ...(dy !== undefined ? { dy } : {}),
+  };
 }
 
 /** Reads a required non-empty string prop, recording a diagnostic when absent. */
@@ -242,6 +273,7 @@ function buildGroup(args: {
   id: string;
   capabilityId: string;
   geometry: GeometryIr;
+  relativePosition?: RelativePositionIr;
   style: Readonly<Record<string, StyleValueIr>>;
   children: readonly RenderNodeIr[];
   label: string;
@@ -252,6 +284,9 @@ function buildGroup(args: {
     id: args.id,
     capabilityId: args.capabilityId,
     geometry: args.geometry,
+    ...(args.relativePosition !== undefined
+      ? { relativePosition: args.relativePosition }
+      : {}),
     style: args.style,
     accessibility: buildAccessibility(args.label),
     fallback: args.label,
@@ -352,6 +387,7 @@ const HEADER_DESCRIPTOR = makeDescriptor("sdk.header", "Header", "core.header", 
   height: { type: "number", required: false, default: HEADER_DEFAULT_GEOMETRY.height },
   surfaceRole: { type: "string", required: false },
   inkRole: { type: "string", required: false },
+  position: { type: "object", required: false },
 });
 
 const headerFactory: SdkComponentFactory = (props, _slots, context) => {
@@ -366,6 +402,7 @@ const headerFactory: SdkComponentFactory = (props, _slots, context) => {
   const caption = stringProp(props, "caption");
   const surfaceRole = stringProp(props, "surfaceRole");
   const inkRole = stringProp(props, "inkRole");
+  const relativePosition = relativePositionProp(props);
   const geometry: GeometryIr = {
     x: numberProp(props, "x") ?? HEADER_DEFAULT_GEOMETRY.x,
     y: numberProp(props, "y") ?? HEADER_DEFAULT_GEOMETRY.y,
@@ -435,6 +472,7 @@ const headerFactory: SdkComponentFactory = (props, _slots, context) => {
       id: rootId,
       capabilityId: "core.header",
       geometry,
+      ...(relativePosition !== undefined ? { relativePosition } : {}),
       style: surfaceRole !== undefined ? { fill: surfaceRole } : {},
       children,
       label: title ?? caption ?? "Header",
@@ -470,6 +508,7 @@ const PANEL_DESCRIPTOR = makeDescriptor("sdk.panel", "Panel", "core.panel", {
   height: { type: "number", required: false, default: PANEL_DEFAULT_GEOMETRY.height },
   surfaceRole: { type: "string", required: false },
   strokeRole: { type: "string", required: false },
+  position: { type: "object", required: false },
 });
 
 const panelFactory: SdkComponentFactory = (props, _slots, context) => {
@@ -484,6 +523,7 @@ const panelFactory: SdkComponentFactory = (props, _slots, context) => {
   const detail = stringProp(props, "detail");
   const surfaceRole = stringProp(props, "surfaceRole");
   const strokeRole = stringProp(props, "strokeRole");
+  const relativePosition = relativePositionProp(props);
   const geometry: GeometryIr = {
     x: numberProp(props, "x") ?? 0,
     y: numberProp(props, "y") ?? 0,
@@ -503,7 +543,7 @@ const panelFactory: SdkComponentFactory = (props, _slots, context) => {
           id: titleId,
           text: title,
           geometry: { x: INSET, y: INSET + 2, width: innerWidth, height: TITLE_HEIGHT },
-          style: { fontSize: 13, fontWeight: "bold", textAnchor: "middle" },
+          style: { fontSize: 14, fontWeight: "bold", textAnchor: "middle" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.panel", context, "title"),
@@ -525,7 +565,11 @@ const panelFactory: SdkComponentFactory = (props, _slots, context) => {
             width: innerWidth,
             height: DETAIL_HEIGHT,
           },
-          style: { fontSize: 11, textAnchor: "middle" },
+          style: {
+            fontSize: 11.5,
+            textAnchor: "middle",
+            fill: DETAIL_INK_ROLE,
+          },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.panel", context, "detail"),
@@ -539,6 +583,7 @@ const panelFactory: SdkComponentFactory = (props, _slots, context) => {
       id: rootId,
       capabilityId: "core.panel",
       geometry,
+      ...(relativePosition !== undefined ? { relativePosition } : {}),
       style: {
         ...(surfaceRole !== undefined ? { fill: surfaceRole } : {}),
         ...(strokeRole !== undefined ? { stroke: strokeRole } : {}),
@@ -617,7 +662,7 @@ const cardFactory: SdkComponentFactory = (props, _slots, context) => {
           id: titleId,
           text: title,
           geometry: { x: INSET, y: cursorY, width: innerWidth, height: TITLE_HEIGHT },
-          style: { fontSize: 13, fontWeight: "bold", textAnchor: "middle" },
+          style: { fontSize: 14, fontWeight: "bold", textAnchor: "middle" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.card", context, "title"),
@@ -635,7 +680,11 @@ const cardFactory: SdkComponentFactory = (props, _slots, context) => {
           id: detailId,
           text: detail,
           geometry: { x: INSET, y: cursorY, width: innerWidth, height: DETAIL_HEIGHT },
-          style: { fontSize: 11, textAnchor: "middle" },
+          style: {
+            fontSize: 11.5,
+            textAnchor: "middle",
+            fill: DETAIL_INK_ROLE,
+          },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.card", context, "detail"),

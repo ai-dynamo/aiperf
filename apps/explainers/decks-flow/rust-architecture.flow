@@ -39,7 +39,7 @@ explainer "Rust Architecture" {
       sdk.Label(id = "footer", text = "public CLI on the outside · execution child on the inside", x = 50, y = 210, width = 600, height = 24, fontSize = 13, align = "middle", inkRole = "@theme.ink.secondary")
       sdk.Panel(id = "cli-hat", title = "public CLI", detail = "outside", x = 90, y = 240, width = 180, height = 55, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
       sdk.Edge(id = "a1", mode = "route", from = { nodeId: "cli-hat", anchor: "e" }, to = { nodeId: "engine-hat", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none" })
-      sdk.Panel(id = "engine-hat", title = "execution child", detail = "inside", x = 430, y = 240, width = 180, height = 55, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "engine-hat", title = "execution child", detail = "inside", position = { relativeTo: "cli-hat", anchor: "n", dx: 250 }, width = 180, height = 55, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Signal(id = "motion-sig", path = "M170 120 H530", x = 0, y = 0, width = 700, height = 400, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280

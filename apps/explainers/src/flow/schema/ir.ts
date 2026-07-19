@@ -55,6 +55,23 @@ export type ConnectorEndpointIr = Readonly<{
   y?: number | undefined;
 }>;
 
+/**
+ * Relative position for a node's own geometry, resolved at render time
+ * against an already-declared sibling's world geometry (document order).
+ *
+ * `anchor` picks the point on `nodeId` to measure from (same vocabulary as
+ * `ConnectorEndpointIr.anchor`; defaults to `center`); `dx`/`dy` offset from
+ * that point. Width/height stay as authored on `geometry`. Forward
+ * references (a node relative to one declared later in the scene) are not
+ * supported — SceneRenderer resolves nodes in document order.
+ */
+export type RelativePositionIr = Readonly<{
+  nodeId: string;
+  anchor?: string | undefined;
+  dx?: number | undefined;
+  dy?: number | undefined;
+}>;
+
 export type NodeAccessibilityIr = Readonly<{
   label: string;
   description?: string | undefined;
@@ -126,6 +143,8 @@ export type RenderNodeBaseIr = Readonly<{
   /** Authoring alias for `capabilityId` (e.g. core.text / layout.stack). */
   capability?: FoundationCapabilityId | (string & {}) | undefined;
   geometry: GeometryIr;
+  /** Optional render-time x/y override resolved against a sibling node. */
+  relativePosition?: RelativePositionIr | undefined;
   style: Readonly<Record<string, StyleValueIr>>;
   accessibility: NodeAccessibilityIr;
   fallback: string;
@@ -371,6 +390,12 @@ const connectorEndpointSchema = z
     }
   });
 const polylinePointSchema = z.union([pointIrSchema, connectorEndpointSchema]);
+const relativePositionSchema = z.strictObject({
+  nodeId: z.string().min(1),
+  anchor: z.string().min(1).optional(),
+  dx: z.number().finite().optional(),
+  dy: z.number().finite().optional(),
+});
 const nodeAccessibilitySchema = z.strictObject({
   label: z.string().min(1),
   description: z.string().min(1).optional(),
@@ -419,6 +444,7 @@ const renderNodeBaseShape = {
   capabilityId: z.string().min(1).optional(),
   capability: foundationCapabilitySchema.optional(),
   geometry: geometrySchema,
+  relativePosition: relativePositionSchema.optional(),
   style: styleSchema,
   accessibility: nodeAccessibilitySchema,
   fallback: z.string().min(1),

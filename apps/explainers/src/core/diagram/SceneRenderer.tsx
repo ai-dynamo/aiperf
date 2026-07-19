@@ -65,6 +65,16 @@ export type SceneNodeLike = Readonly<{
   capability?: string;
   geometry?: SceneGeometryLike;
   layout?: SceneGeometryLike;
+  /**
+   * Render-time x/y override resolved against an already-declared sibling's
+   * world geometry (document order); width/height stay as authored.
+   */
+  relativePosition?: Readonly<{
+    nodeId: string;
+    anchor?: string;
+    dx?: number;
+    dy?: number;
+  }>;
   style?: Readonly<Record<string, SceneStyleValue>>;
   /** Glyph content for `core.text` / `kind: "text"` nodes. */
   text?: string;
@@ -788,7 +798,21 @@ function indexSceneNodes(roots: readonly SceneNodeLike[]): SceneNodeIndex {
     coordsAreLocal: boolean,
     geometryOverride: SceneGeometryLike | undefined,
   ): void => {
-    const authored = geometryOverride ?? geometryOf(node);
+    let authored = geometryOverride ?? geometryOf(node);
+    const relative = node.relativePosition;
+    if (geometryOverride === undefined && relative !== undefined) {
+      const targetWorldGeom = worldGeometryById.get(relative.nodeId);
+      if (targetWorldGeom !== undefined) {
+        const anchorPoint = nodeAnchorPoint(targetWorldGeom, relative.anchor);
+        const worldX = anchorPoint.x + finiteNumber(relative.dx);
+        const worldY = anchorPoint.y + finiteNumber(relative.dy);
+        authored = {
+          ...authored,
+          x: coordsAreLocal ? worldX - originX : worldX,
+          y: coordsAreLocal ? worldY - originY : worldY,
+        };
+      }
+    }
     const kids = node.children;
     const { parentGeom: laidOutParent, childGeoms } = resolveContainerLayout(
       node,
@@ -3431,7 +3455,21 @@ function renderNode(
   geometryOverride?: SceneGeometryLike,
 ): ReactNode {
   const capability = capabilityOf(node);
-  const authoredGeom = geometryOverride ?? geometryOf(node);
+  let authoredGeom = geometryOverride ?? geometryOf(node);
+  const relativePosition = node.relativePosition;
+  if (geometryOverride === undefined && relativePosition !== undefined) {
+    const targetWorldGeom = index.worldGeometryById.get(relativePosition.nodeId);
+    if (targetWorldGeom !== undefined) {
+      const anchorPoint = nodeAnchorPoint(targetWorldGeom, relativePosition.anchor);
+      const worldX = anchorPoint.x + finiteNumber(relativePosition.dx);
+      const worldY = anchorPoint.y + finiteNumber(relativePosition.dy);
+      authoredGeom = {
+        ...authoredGeom,
+        x: worldX - layoutOrigin.x,
+        y: worldY - layoutOrigin.y,
+      };
+    }
+  }
   const kids = node.children;
   const { parentGeom: geom, childGeoms } = resolveContainerLayout(
     node,
