@@ -18,8 +18,9 @@ use crate::clock::Clock;
 pub struct GlobalRateGate {
     /// Nanoseconds between successive fires (`1e9 / rate_per_sec`).
     interval_ns: i64,
-    /// The next unclaimed fire time, in run-clock nanoseconds. Claimed via CAS
-    /// so concurrent callers on different threads each get a distinct slot.
+    /// The next unclaimed fire time, in run-clock nanoseconds. Claimed via an
+    /// atomic fetch-add so concurrent callers on different threads each get a
+    /// distinct slot.
     next_fire_ns: AtomicI64,
 }
 
@@ -86,5 +87,106 @@ mod tests {
                 "fire times must be exactly 1ms apart"
             );
         }
+    }
+
+    /// Proves the cross-thread serialization property the doc comments
+    /// assert: real `std::thread::spawn` OS threads racing `wait_turn`
+    /// concurrently each claim a distinct, gapless slot in the shared
+    /// `next_fire_ns` sequence. Each thread builds its own current-thread
+    /// runtime, `LocalSet`, and `Rc<RealClock>` (both `!Send`), all anchored
+    /// to one shared [`RealClockAnchor`] (`Copy`/`Send`) so every thread's
+    /// `now_ns()` sits on the same timeline; the only thing actually shared
+    /// across threads for the claim itself is the `Arc<GlobalRateGate>` and
+    /// its internal `AtomicI64`.
+    #[test]
+    fn global_rate_gate_serializes_fire_times_across_real_os_threads() {
+        use std::sync::Mutex;
+        use std::thread;
+
+        use crate::clock::{RealClock, RealClockAnchor};
+
+        const RATE_PER_SEC: f64 = 500.0; // interval_ns == 2_000_000 (2ms)
+        const INTERVAL_NS: i64 = 2_000_000;
+        const N_THREADS: usize = 6;
+        const CALLS_PER_THREAD: usize = 12;
+        const EXPECTED_TOTAL: usize = N_THREADS * CALLS_PER_THREAD;
+
+        let gate = GlobalRateGate::new(RATE_PER_SEC);
+        assert_eq!(gate.interval_ns, INTERVAL_NS);
+        let anchor = RealClockAnchor::now();
+        let all_fire_times: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let handles: Vec<_> = (0..N_THREADS)
+            .map(|_| {
+                let gate = gate.clone();
+                let all_fire_times = all_fire_times.clone();
+                thread::spawn(move || {
+                    // `Rc<dyn Clock>` and the current-thread runtime are both
+                    // `!Send`, so each OS thread constructs its own; sharing
+                    // `anchor` keeps every thread's `now_ns()` on one
+                    // timeline so claimed slots line up with observed fire
+                    // times across threads.
+                    let clock: Rc<dyn Clock> = RealClock::from_anchor(anchor);
+                    let local_fire_times =
+                        Rc::new(RefCell::new(Vec::with_capacity(CALLS_PER_THREAD)));
+                    let body = {
+                        let clock = clock.clone();
+                        let local_fire_times = local_fire_times.clone();
+                        async move {
+                            for _ in 0..CALLS_PER_THREAD {
+                                gate.wait_turn(clock.clone()).await;
+                                local_fire_times.borrow_mut().push(clock.now_ns());
+                            }
+                        }
+                    };
+                    clock.drive(Box::pin(body));
+                    all_fire_times
+                        .lock()
+                        .unwrap()
+                        .extend(local_fire_times.borrow().iter().copied());
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().expect("worker thread panicked");
+        }
+
+        let times = all_fire_times.lock().unwrap();
+        assert_eq!(times.len(), EXPECTED_TOTAL);
+
+        // The gate never wakes a caller before its claimed fire time, and
+        // real-clock scheduling jitter is far smaller than `INTERVAL_NS`, so
+        // rounding each observed fire time down to the interval grid
+        // recovers exactly the slot index that thread claimed via
+        // `fetch_add`. If two threads ever raced to the same slot (a lost
+        // update), two entries would collide on the same bucket here.
+        let mut slots: Vec<i64> = times.iter().map(|&t| t / INTERVAL_NS).collect();
+        slots.sort_unstable();
+        slots.dedup();
+        assert_eq!(
+            slots.len(),
+            EXPECTED_TOTAL,
+            "every claimed slot must be distinct across all OS threads (no duplicates from a lost update)"
+        );
+        // No gaps: the recovered slot set is exactly {0, 1, ..., N-1}, i.e.
+        // the full claimed set is {0, interval_ns, 2*interval_ns, ...}.
+        let expected_slots: Vec<i64> = (0..EXPECTED_TOTAL as i64).collect();
+        assert_eq!(
+            slots, expected_slots,
+            "claimed slots across all threads must be exactly \
+             {{0, interval_ns, 2*interval_ns, ...}} with no gaps"
+        );
+
+        // The shared atomic itself: after `EXPECTED_TOTAL` successful
+        // `fetch_add` claims from racing OS threads, it must land at
+        // precisely `EXPECTED_TOTAL * interval_ns` with no lost updates.
+        let final_next_fire_ns = gate.next_fire_ns.load(Ordering::SeqCst);
+        assert_eq!(
+            final_next_fire_ns,
+            EXPECTED_TOTAL as i64 * INTERVAL_NS,
+            "shared counter must reflect exactly one fetch_add per wait_turn call \
+             across all threads, with no lost updates"
+        );
     }
 }
