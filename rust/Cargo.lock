@@ -120,6 +120,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
+ "crc32fast",
  "dashmap",
  "futures",
  "http 1.4.2",

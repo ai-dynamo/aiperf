@@ -581,7 +581,7 @@ explainer "Segment Pools" {
   slide "Turn.body precedence is domain-driven" {
     eyebrow: "Dispatch"
     title: "Turn.body precedence is domain-driven"
-    lede: "`Turn.dispatch_body` builds one SmallVec of handles: raw payload first, then token ids, else the message list. The domain of the leading handle decides whether materialization takes the complete-body, token-native, or message-array path."
+    lede: "`Turn::dispatch_body` builds one SmallVec of handles: raw payload first, then token ids, else the message list. The domain of the leading handle decides whether materialization takes the complete-body, token-native, or message-array path."
     narration: "Turn.body is one precedence vector. Raw leads, token ids follow, otherwise messages fill the body, and SegmentDomain selects the materializer path."
     term: {
       word: "dispatch_body"

@@ -22,6 +22,15 @@ path = "src/main.rs"
 name = "logproxy"
 path = "src/bin/logproxy.rs"
 
+# Like `logproxy`, but also translates between the AWS SageMaker Runtime
+# `InvokeEndpoint`/`InvokeEndpointWithResponseStream` wire protocol and a
+# plain OpenAI-compatible chat completions backend, so aiperf's/locust's
+# `--transport sagemaker` request path can be exercised end-to-end against
+# a non-SageMaker vLLM server for testing.
+[[bin]]
+name = "sagemaker-logproxy"
+path = "src/bin/sagemaker_logproxy.rs"
+
 [lib]
 path = "src/lib.rs"
 
@@ -81,6 +90,10 @@ rcgen = "0.13"
 # `logproxy` bin only: streams proxied response bodies frame-by-frame through
 # an mpsc channel without buffering the whole body.
 tokio-stream = "0.1"
+# `sagemaker-logproxy` bin only: CRC32 (IEEE 802.3) checksums for AWS
+# `application/vnd.amazon.eventstream` binary frame encoding/decoding.
+# Already resolved in the workspace Cargo.lock (pulled in transitively).
+crc32fast = "1"
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json", "stream"] }

@@ -63,25 +63,25 @@ explainer "Rust Architecture Atlas" {
   slide "Crate graph" {
     eyebrow: "2 · Processes"
     title: "Crate graph and process roles"
-    lede: "Compile-time capability flows `aiperf-cli` → `aiperf-runtime` → `loadgen-core`. The entry process and its `--execute` child share one binary; `aiperf-mock-server` links runtime independently; `pyext` and `e2e` stay off the hot path."
-    narration: "Capability flows from aiperf-cli into aiperf-runtime and then loadgen-core. Mock server and packaging crates stay outside that execute dependency edge."
+    lede: "Compile-time capability flows `aiperf-cli` → `aiperf-runtime`, which owns the dispatch seam as an in-crate module. The entry process and its `--execute` child share one binary; `aiperf-mock-server` links runtime independently; `pyext` and `e2e` stay off the hot path."
+    narration: "Capability flows from aiperf-cli into aiperf-runtime, which owns the dispatch module directly. Mock server and packaging crates stay outside that execute dependency edge."
     term: {
       word: "aiperf-runtime"
-      meaning: "Library crate that owns clocks, transports, datasets, engine, cellular, and metrics composition."
+      meaning: "Library crate that owns clocks, transports, datasets, engine, cellular, dispatch, and metrics composition."
     }
     points: [
-      "Workspace members: loadgen-core, runtime, cli, mock-server, e2e, pyext.",
+      "Workspace members: runtime, cli, mock-server, e2e, pyext (loadgen-core merged into runtime).",
       "Solid edges are Cargo deps or self re-exec; dashed edges are network or optional features.",
-      "Evidence: `rust/cli/Cargo.toml`, `rust/runtime/Cargo.toml`, `rust/loadgen-core/`."
+      "Evidence: `rust/cli/Cargo.toml`, `rust/runtime/Cargo.toml`, `rust/runtime/src/dispatch/`."
     ]
-    caption: "cli → runtime → loadgen-core · mock-server is peer, not child."
+    caption: "cli → runtime · dispatch lives in-crate · mock-server is peer, not child."
     render: @scene {
-      sdk.Header(id = "hdr1", title = "PROCESS / CRATE GRAPH", caption = "cli → runtime → loadgen-core · mock-server is peer, not child.", x = 18, y = 16, width = 664, height = 44, surfaceRole = "@theme.surface.secondary")
+      sdk.Header(id = "hdr1", title = "PROCESS / CRATE GRAPH", caption = "cli → runtime · dispatch lives in-crate · mock-server is peer, not child.", x = 18, y = 16, width = 664, height = 44, surfaceRole = "@theme.surface.secondary")
       sdk.Panel(id = "cli", title = "aiperf-cli", detail = "binary + commands", x = 40, y = 100, width = 160, height = 90, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
       sdk.Edge(id = "a1a", mode = "connector", from = { nodeId: "cli", anchor: "e" }, to = { nodeId: "runtime", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none" })
       sdk.Panel(id = "runtime", title = "aiperf-runtime", detail = "engine + transports", x = 250, y = 100, width = 180, height = 90, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "a1b", mode = "connector", from = { nodeId: "runtime", anchor: "e" }, to = { nodeId: "loadgen", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2, fill: "none" })
-      sdk.Panel(id = "loadgen", title = "loadgen-core", detail = "sink · observer", x = 480, y = 100, width = 180, height = 90, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "loadgen", title = "dispatch", detail = "in-crate module", x = 480, y = 100, width = 180, height = 90, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       sdk.Panel(id = "mock1", title = "mock-server", detail = "→ runtime", x = 250, y = 240, width = 160, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       sdk.Panel(id = "pyext", title = "pyext / e2e", detail = "off hot path", x = 450, y = 240, width = 140, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       timeline primary {
@@ -109,7 +109,7 @@ explainer "Rust Architecture Atlas" {
     points: [
       "`rust/runtime/src/engine/application.rs` freezes factories once.",
       "`rust/runtime/src/engine/coordinator.rs` owns the run spine.",
-      "`rust/loadgen-core/src/sink.rs` defines RequestSink and RequestObserver."
+      "`rust/runtime/src/dispatch/sink.rs` defines RequestSink and RequestObserver."
     ]
     caption: "Registries at startup · Clock + sink on the hot path · merge after drain."
     render: @scene {
@@ -150,7 +150,7 @@ explainer "Rust Architecture Atlas" {
       meaning: "Strict serde envelope wrapping the authored BenchmarkRun; unknown fields fail closed."
     }
     points: [
-      "`rust/cli/src/exec_bin.rs` resolves the child binary override.",
+      "`rust/cli/src/exec_bin.rs` resolves the child binary via `current_exe()`.",
       "`rust/cli/src/execute.rs` is the parent protocol client.",
       "Child bootstrap composes Application, then Coordinator validate|execute."
     ]
@@ -462,7 +462,7 @@ explainer "Rust Architecture Atlas" {
     }
     points: [
       "`rust/runtime/src/extensions/` owns registration contracts.",
-      "loadgen-core RequestObserver stays transport-neutral and !Send-friendly.",
+      "`aiperf_runtime::dispatch`'s RequestObserver stays transport-neutral and !Send-friendly.",
       "Workloads resolve an execution factory from the prepared transport—no pair matrix."
     ]
     caption: "compile-time composition · Clock/Sink substitution · cellular wraps the core."

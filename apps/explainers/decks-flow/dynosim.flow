@@ -401,7 +401,7 @@ explainer "Dynosim" {
 
     term: {
       word: "DynosimSink"
-      meaning: "Worker-local sink that drives replay turns through loadgen-core observation without wire encoding."
+      meaning: "Worker-local sink that drives replay turns through aiperf_runtime::dispatch observation (RequestObserver) without wire encoding."
     }
 
     points: [
@@ -940,7 +940,7 @@ explainer "Dynosim" {
 
     term: {
       word: "SimStep"
-      meaning: "One engine advance with end_ns, made_progress, and optional terminal metadata for the pump."
+      meaning: "One engine advance carrying end_ns and made_progress; the pump's regression and overshoot guards validate it before advancing SimClock."
     }
 
     points: [

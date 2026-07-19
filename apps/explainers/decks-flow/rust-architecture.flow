@@ -52,26 +52,26 @@ explainer "Rust Architecture" {
   }
   slide "Workspace map" {
     eyebrow: "Workspace map"
-    title: "Six crates, one dependency direction"
-    lede: "The Rust workspace is intentionally small. Capability flows cli → runtime → loadgen-core. Mock server and e2e are separate targets; pyext is packaging-only."
-    narration: "The Rust workspace stays small. Capability flows from aiperf-cli into aiperf-runtime and then into loadgen-core."
+    title: "Five crates, one dependency direction"
+    lede: "The Rust workspace is intentionally small. Capability flows cli → runtime, and runtime owns the transport-neutral dispatch seam as an in-crate module. Mock server and e2e are separate targets; pyext is packaging-only."
+    narration: "The Rust workspace stays small. Capability flows from aiperf-cli into aiperf-runtime, which owns the dispatch module directly."
     term: {
-      word: "loadgen-core"
-      meaning: "Transport-neutral observer and sink vocabulary with no HTTP, gRPC, or engine dependencies."
+      word: "runtime::dispatch"
+      meaning: "Transport-neutral observer and sink vocabulary living inside aiperf-runtime, with no HTTP, gRPC, or engine dependencies of its own."
     }
     points: [
-      "Members: loadgen-core, runtime, cli, mock-server, e2e, pyext.",
+      "Members: runtime, cli, mock-server, e2e, pyext (loadgen-core merged into runtime).",
       "aiperf-cli depends on aiperf-runtime with the engine feature.",
       "aiperf-mock-server is a standalone benchmark target."
     ]
-    caption: "cli → runtime → loadgen-core"
+    caption: "cli → runtime (dispatch lives in-crate)"
     render: @scene {
-      sdk.Header(id = "header", title = "WORKSPACE CRATES", caption = "cli \u2192 runtime \u2192 loadgen-core", x = 18, y = 16, width = 664, height = 44)
+      sdk.Header(id = "header", title = "WORKSPACE CRATES", caption = "cli \u2192 runtime (dispatch in-crate)", x = 18, y = 16, width = 664, height = 44)
       sdk.Panel(id = "cli", title = "aiperf-cli", detail = "commands + execute", x = 60, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
       sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "cli", anchor: "e" }, to = { nodeId: "runtime", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "runtime", title = "aiperf-runtime", detail = "engine + transports", x = 250, y = 130, width = 170, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "runtime", anchor: "e" }, to = { nodeId: "loadgen", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "loadgen", title = "loadgen-core", detail = "observer seam", x = 460, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "loadgen", title = "dispatch", detail = "in-crate module", x = 460, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       sdk.Panel(id = "mock", title = "mock-server", detail = "separate target", x = 520, y = 280, width = 120, height = 58, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       timeline primary {
         at 0 reveal header duration 280
@@ -417,9 +417,9 @@ explainer "Rust Architecture" {
   }
   slide "Observation seam" {
     eyebrow: "Observation seam"
-    title: "loadgen-core keeps transport neutral"
+    title: "runtime::dispatch keeps transport neutral"
     lede: "Transports implement `RequestSink`; observers receive arrival, admission, token, usage, and terminal events. TTFT is the first token observation—there is no separate first-token event."
-    narration: "loadgen-core defines the neutral observer seam. Transports implement RequestSink; measurement stays shared."
+    narration: "aiperf-runtime's dispatch module defines the neutral observer seam. Transports implement RequestSink; measurement stays shared."
     term: {
       word: "RequestObserver"
       meaning: "Worker-local callback surface with no Send bound, allowing LocalSet-friendly state."

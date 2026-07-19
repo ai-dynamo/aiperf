@@ -408,26 +408,26 @@ explainer "Cellular internals" {
   slide "Index stable cell ownership" {
     eyebrow: "Distribute · 10 of 20"
     title: "Index stable cell ownership"
-    lede: "Each cell tracks indexed, in-flight, and completed request identities. A request identity belongs to exactly one cell, so the cell-local ownership index is the ground truth for who runs what."
-    narration: "Each cell tracks indexed, in-flight, and completed request identities. A request identity belongs to exactly one cell."
+    lede: "Each cell tracks indexed, in-flight, and done request identities. A request identity belongs to exactly one cell, so the cell-local ownership index is the ground truth for who runs what."
+    narration: "Each cell tracks indexed, in-flight, and done request identities. A request identity belongs to exactly one cell."
     term: {
       word: "DatasetIndex"
-      meaning: "Cell-local index of owned request identities across indexed, in-flight, and completed states."
+      meaning: "Cell-local index of owned request identities; DispatchTracker advances each toward InFlight then Done."
     }
     points: [
       "A request identity belongs to exactly one cell.",
-      "Indexed → InFlight → completed is tracked per cell.",
-      "Evidence: `rust/runtime/src/cellular/dataset_session.rs`."
+      "Indexed → InFlight → Done is tracked per cell.",
+      "Evidence: `rust/runtime/src/cellular/dataset_session.rs`, `dispatch_state.rs`."
     ]
-    caption: "owned ids only · indexed → in-flight → complete."
+    caption: "owned ids only · indexed → in-flight → done."
 
     render: @scene {
-      sdk.Header(id = "hdr9", title = "DISTRIBUTE · OWNERSHIP INDEX", caption = "owned ids only · indexed → in-flight → complete.", x = 18, y = 16, width = 664, height = 44)
+      sdk.Header(id = "hdr9", title = "DISTRIBUTE · OWNERSHIP INDEX", caption = "owned ids only · indexed → in-flight → done.", x = 18, y = 16, width = 664, height = 44)
       sdk.Label(id = "phase9", text = "ONE IDENTITY · EXACTLY ONE CELL", x = 40, y = 78, width = 300, height = 20, fontSize = 11, align = "start")
       sdk.Card(id = "idx", title = "DatasetIndex", detail = "cell-local", subtitle = "owned ids", x = 40, y = 140, width = 160, height = 90, strokeRole = "@theme.accent.primary")
       sdk.Card(id = "indexed", title = "Indexed", detail = "owned ids", subtitle = "ready", x = 260, y = 95, width = 160, height = 70, strokeRole = "@theme.accent.secondary")
       sdk.Card(id = "inflight", title = "InFlight", detail = "dispatched", subtitle = "hot", x = 260, y = 180, width = 160, height = 70, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "completed", title = "Completed", detail = "captured", subtitle = "done", x = 260, y = 265, width = 160, height = 70, strokeRole = "@theme.accent.tertiary")
+      sdk.Card(id = "completed", title = "Done", detail = "captured", subtitle = "terminal", x = 260, y = 265, width = 160, height = 70, strokeRole = "@theme.accent.tertiary")
       sdk.Label(id = "note9", text = "one identity → exactly one cell", x = 450, y = 185, width = 220, height = 20, fontSize = 12, align = "start")
       sdk.Chip(id = "chip9", label = "no double ownership", x = 450, y = 220, width = 180, height = 28, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary")
       sdk.Edge(id = "a9a", mode = "connector", from = { nodeId: "idx", anchor: "e" }, to = { nodeId: "indexed", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
@@ -591,7 +591,7 @@ explainer "Cellular internals" {
     points: [
       "Only the execution child dispatches inference requests.",
       "Scheduled HTTP and gRPC cellular are built; graph+gRPC cellular is unproven.",
-      "Evidence: `rust/loadgen-core/src/sink.rs`, `engine/cellular_controller.rs`."
+      "Evidence: `rust/runtime/src/dispatch/sink.rs`, `engine/cellular_controller.rs`."
     ]
     caption: "clock-injected HTTP/gRPC · DynoSim cellular rejected."
 

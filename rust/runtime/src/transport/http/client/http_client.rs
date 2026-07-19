@@ -71,7 +71,14 @@ where
                         }
                     };
                     for message in messages {
-                        let inner_json = &message.payload;
+                        // Real SageMaker containers (HF TGI/vLLM/LMI) put the
+                        // full SSE-formatted `data: {...}` line inside
+                        // PayloadPart.Bytes already; only bare-JSON payloads
+                        // (no `data: ` prefix) need one synthesized here. This
+                        // makes the decoder agree with AIPerf's own SageMaker
+                        // transport and real AWS wire behavior either way.
+                        let raw = message.payload.trim_ascii_start();
+                        let inner_json = raw.strip_prefix(b"data: ").unwrap_or(raw);
                         let mut sse = bytes::BytesMut::with_capacity(inner_json.len() + 8);
                         sse.extend_from_slice(b"data: ");
                         sse.extend_from_slice(inner_json);

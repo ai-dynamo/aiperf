@@ -833,6 +833,14 @@ pub async fn sagemaker_invoke(
 /// `PayloadPart` message per SSE `data:` line. The `[DONE]` sentinel is
 /// dropped: AWS SageMaker eventstream responses have no terminal sentinel,
 /// they end at HTTP body EOF.
+///
+/// The `data: ` prefix (and a trailing `\n`) is preserved in the
+/// `PayloadPart.Bytes` payload rather than stripped: real SageMaker
+/// containers (HF TGI/vLLM/LMI) emit the raw SSE-formatted line inside the
+/// PayloadPart, and clients (boto3-based benchmarkers, AIPerf's SageMaker
+/// transport) buffer/parse PayloadPart bytes as `data: {...}` lines. See
+/// `~/nvidia/projects/aws-issue/sample-InferenceBenchmarker/factories/sagemakerai_realtime/factories_llm_textgeneration_stream.py`
+/// for the reference client-side parsing this mirrors.
 fn sse_to_eventstream<S>(sse: S) -> impl Stream<Item = Result<Bytes, Infallible>>
 where
     S: Stream<Item = Result<Bytes, Infallible>>,
@@ -846,7 +854,10 @@ where
                 if rest.is_empty() || rest == b"[DONE]" {
                     continue;
                 }
-                let frame = EventStreamMessage::payload_part(Bytes::copy_from_slice(rest)).encode();
+                let mut line = Vec::with_capacity(piece.len() + 1);
+                line.extend_from_slice(piece);
+                line.push(b'\n');
+                let frame = EventStreamMessage::payload_part(Bytes::from(line)).encode();
                 yield Ok::<Bytes, Infallible>(frame);
             }
         }

@@ -490,7 +490,7 @@ explainer "t* Warmup" {
     }
 
     points: [
-      "Warmup builds `GraphWarmupHandoff` (template, `instance_id`, `t_star_us`, executed nodes, return walls).",
+      "Warmup builds `GraphWarmupHandoff`, whose per-lane `LaneHandoff` carries template, `instance_id`, `t_star_us`, executed nodes, and return walls.",
       "Same seed · not a new draw: both phases share the seeded t* plan; the handoff still records instance `t_star_us` plus frontier state the seed alone cannot reproduce.",
       "Profiling resumes at the recorded frontier; it does not sample a new t*.",
       "Evidence: `rust/runtime/src/graph/warmup_handoff.rs`; `rust/runtime/src/graph/tstar.rs`."
@@ -525,7 +525,7 @@ explainer "t* Warmup" {
       sdk.Panel(
         id = "s5-hand",
         title = "Handoff",
-        detail = "LaneHandoff payload",
+        detail = "GraphWarmupHandoff payload",
         x = 260, y = 120, width = 160, height = 100,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
@@ -1344,18 +1344,18 @@ explainer "t* Warmup" {
   slide "Cache-pressure warmup" {
     eyebrow: "Cache-pressure warmup"
     title: "Extended warmup redispatches the boundary credit under pressure"
-    lede: "Cache-pressure warmup is the extended phase: lanes recycle the SAME lane-salted boundary-priming credit (`rewrite_for_warmup`) against the server so KV stays under load before the handoff drain — not the post-`t*` live set."
+    lede: "Cache-pressure warmup is the extended phase: lanes redispatch a lane-salted boundary-priming credit (`rewrite_for_warmup`) against the server, cycling through the corpus, so KV stays under load before the handoff drain — not the post-`t*` live set."
 
-    narration: "After the boundary rewrite, duration-bounded lanes repeatedly redispatch that flattened, one-node-per-chain priming credit at that lane's salted t* — a fresh instance id each time, no idle delay. The goal is cache pressure: keep the inference server's KV busy with priming traffic until the clock deadline, then drain into the handoff. The real post-t* remainder is not replayed here; profiling's frontier chop resumes it later."
+    narration: "Duration-bounded lanes repeatedly draw the next corpus template, apply the boundary rewrite at that lane's salted t*, and dispatch the resulting flattened, one-node-per-chain priming credit — a fresh instance id each time, no idle delay. The goal is cache pressure: keep the inference server's KV busy with priming traffic until the clock deadline, then drain into the handoff. The real post-t* remainder is not replayed here; profiling's frontier chop resumes it later."
 
     term: {
       word: "cache-pressure warmup"
-      meaning: "Extended warmup that redispatches the lane-salted boundary-priming credit (`rewrite_for_warmup`) on pressure lanes for a duration budget, building KV load before profiling handoff."
+      meaning: "Extended warmup that redispatches a lane-salted boundary-priming credit (`rewrite_for_warmup`) on pressure lanes for a duration budget, building KV load before profiling handoff."
     }
 
     points: [
       "`GraphPressureRecycle` runs until Clock deadline; lanes share one corpus cursor.",
-      "Each dispatch reuses `rewrite_for_warmup`'s flattened boundary credit — one node per live chain, rooted at START with no delay — NOT the post-`t*` live set.",
+      "Each dispatch draws the next corpus template and applies `rewrite_for_warmup`'s flattened boundary credit — one node per live chain, rooted at START with no delay — NOT the post-`t*` live set.",
       "Distinct from ordinary phase warmup (same rewrite, single pass) and from the later profiling resume (`chop_trie_at_frontier`).",
       "Evidence: `rust/runtime/src/graph/snapshot.rs` — `rewrite_for_warmup`; `graph_phase_runtime.rs` — `PressureTemplate` / `GraphPressureRecycle`."
     ]
