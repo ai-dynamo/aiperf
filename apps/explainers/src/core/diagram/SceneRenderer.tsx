@@ -3039,7 +3039,7 @@ function chalkRectPaints(
       : accent;
     return {
       fill: `color-mix(in srgb, ${accent} 38%, ${themeBg})`,
-      stroke: accent,
+      stroke,
     };
   }
   // GTC skin: any box outlined in an accent color gets a real, saturated,
