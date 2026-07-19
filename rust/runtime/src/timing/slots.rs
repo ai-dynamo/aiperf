@@ -81,43 +81,85 @@ impl SlotInner {
     }
 }
 
+/// Which concurrency admission backend a [`SlotPool`] delegates to.
+///
+/// `Local` is the original single-threaded debt-aware semaphore, used by
+/// `sharded` dispatch and by every phase type that has no cross-thread
+/// concern (`workers == 1`, or admission that is not thread-shared). `Global`
+/// wraps a [`GlobalSlotPool`] shared (via `Arc`) across every worker thread in
+/// a `global`/`global-hop` dispatch cell, so `acquire`/`try_acquire` admit
+/// from one true cross-thread counter instead of a thread-local share. A
+/// `SlotPool` in `Global` mode gives up debt tracking (see
+/// [`GlobalSlotPool::set_limit`]) — acceptable because concurrency ramps
+/// combined with `global` dispatch are not yet a supported combination (see
+/// `specs/global-exact-dispatch.md`).
+enum SlotPoolBackend {
+    Local(Rc<SlotInner>),
+    Global(Arc<GlobalSlotPool>),
+}
+
 /// A dynamic-capacity concurrency semaphore with debt-tracked graceful drain.
 ///
-/// See the [module docs](self) for the increase/decrease semantics.
+/// See the [module docs](self) for the increase/decrease semantics. See
+/// [`SlotPoolBackend`] for the `Local`/`Global` distinction.
 pub struct SlotPool {
-    inner: Rc<SlotInner>,
+    backend: SlotPoolBackend,
 }
 
 impl SlotPool {
-    /// Create a pool with `initial_limit` available slots.
+    /// Create a pool with `initial_limit` available slots, backed by a
+    /// thread-local semaphore (the original behavior).
     pub fn new(initial_limit: usize) -> Self {
         Self {
-            inner: Rc::new(SlotInner {
+            backend: SlotPoolBackend::Local(Rc::new(SlotInner {
                 semaphore: Semaphore::new(initial_limit),
                 debt: Cell::new(0),
                 current_limit: Cell::new(initial_limit),
                 stats: Cell::new(ConcurrencyStats::default()),
-            }),
+            })),
+        }
+    }
+
+    /// Create a pool that delegates every operation to a shared
+    /// [`GlobalSlotPool`], so this thread's admission draws from the same
+    /// cross-thread counter as every other worker thread holding a `SlotPool`
+    /// over the same `Arc<GlobalSlotPool>`. Used by `global`/`global-hop`
+    /// dispatch to enforce one true global concurrency limit.
+    pub fn new_global(pool: Arc<GlobalSlotPool>) -> Self {
+        Self {
+            backend: SlotPoolBackend::Global(pool),
         }
     }
 
     /// The current configured concurrency limit.
     pub fn current_limit(&self) -> usize {
-        self.inner.current_limit.get()
+        match &self.backend {
+            SlotPoolBackend::Local(inner) => inner.current_limit.get(),
+            SlotPoolBackend::Global(pool) => pool.current_limit(),
+        }
     }
 
     /// Outstanding debt: releases still to be absorbed before slots free up.
+    ///
+    /// Always `0` for a `Global`-backed pool: [`GlobalSlotPool`] does not
+    /// track debt (see [`SlotPoolBackend`]).
     pub fn debt(&self) -> usize {
-        self.inner.debt.get()
+        match &self.backend {
+            SlotPoolBackend::Local(inner) => inner.debt.get(),
+            SlotPoolBackend::Global(_) => 0,
+        }
     }
 
     /// Slots currently available to acquirers, accounting for debt
     /// (`available_permits - debt`, floored at 0).
     pub fn effective_slots(&self) -> usize {
-        self.inner
-            .semaphore
-            .available_permits()
-            .saturating_sub(self.inner.debt.get())
+        match &self.backend {
+            SlotPoolBackend::Local(inner) => inner
+                .semaphore
+                .available_permits()
+                .saturating_sub(inner.debt.get()),
+            SlotPoolBackend::Global(pool) => pool.effective_slots(),
+        }
     }
 
     /// Whether the underlying semaphore has no free permits.
@@ -125,12 +167,18 @@ impl SlotPool {
     /// This reflects the raw permit count and does **not** subtract debt; use
     /// [`effective_slots`](Self::effective_slots) for debt-adjusted capacity.
     pub fn locked(&self) -> bool {
-        self.inner.semaphore.available_permits() == 0
+        match &self.backend {
+            SlotPoolBackend::Local(inner) => inner.semaphore.available_permits() == 0,
+            SlotPoolBackend::Global(pool) => pool.effective_slots() == 0,
+        }
     }
 
     /// A snapshot of the instrumentation counters.
     pub fn stats(&self) -> ConcurrencyStats {
-        self.inner.stats.get()
+        match &self.backend {
+            SlotPoolBackend::Local(inner) => inner.stats.get(),
+            SlotPoolBackend::Global(pool) => pool.stats(),
+        }
     }
 
     /// Adjust the concurrency limit.
@@ -140,62 +188,77 @@ impl SlotPool {
     ///   not be drained becomes debt, to be absorbed by future releases.
     ///
     /// Synchronous: any waiters woken by added permits run only once the caller
-    /// yields to the runtime.
+    /// yields to the runtime. A `Global`-backed pool has no debt tracking (see
+    /// [`GlobalSlotPool::set_limit`]); calling this with the pool's own current
+    /// limit (the common case: a phase's `configure` resetting the limit to the
+    /// value the pool was already built with) is always a no-op.
     pub fn set_limit(&self, new_limit: usize) {
-        let current = self.inner.current_limit.get();
-        let diff = new_limit as i64 - current as i64;
+        match &self.backend {
+            SlotPoolBackend::Local(inner) => {
+                let current = inner.current_limit.get();
+                let diff = new_limit as i64 - current as i64;
 
-        if diff > 0 {
-            // Increase: cancel debt first, then add the leftover as real slots.
-            let diff = diff as usize;
-            let debt = self.inner.debt.get();
-            let cancel = diff.min(debt);
-            self.inner.debt.set(debt - cancel);
-            let to_add = diff - cancel;
-            if to_add > 0 {
-                self.inner.semaphore.add_permits(to_add);
+                if diff > 0 {
+                    // Increase: cancel debt first, then add the leftover as real slots.
+                    let diff = diff as usize;
+                    let debt = inner.debt.get();
+                    let cancel = diff.min(debt);
+                    inner.debt.set(debt - cancel);
+                    let to_add = diff - cancel;
+                    if to_add > 0 {
+                        inner.semaphore.add_permits(to_add);
+                    }
+                } else if diff < 0 {
+                    // Decrease: drain available permits now, track the remainder as debt.
+                    let mut shortfall = (-diff) as usize;
+                    let available = inner.semaphore.available_permits();
+                    let to_drain = shortfall.min(available);
+                    if to_drain > 0 {
+                        // Permanently remove `to_drain` currently-free permits. Capped at
+                        // `available`, so this acquisition cannot fail.
+                        inner
+                            .semaphore
+                            .try_acquire_many(to_drain as u32)
+                            .expect("draining <= available permits cannot fail")
+                            .forget();
+                    }
+                    shortfall -= to_drain;
+                    inner.debt.set(inner.debt.get() + shortfall);
+                }
+
+                inner.current_limit.set(new_limit);
             }
-        } else if diff < 0 {
-            // Decrease: drain available permits now, track the remainder as debt.
-            let mut shortfall = (-diff) as usize;
-            let available = self.inner.semaphore.available_permits();
-            let to_drain = shortfall.min(available);
-            if to_drain > 0 {
-                // Permanently remove `to_drain` currently-free permits. Capped at
-                // `available`, so this acquisition cannot fail.
-                self.inner
-                    .semaphore
-                    .try_acquire_many(to_drain as u32)
-                    .expect("draining <= available permits cannot fail")
-                    .forget();
-            }
-            shortfall -= to_drain;
-            self.inner.debt.set(self.inner.debt.get() + shortfall);
+            SlotPoolBackend::Global(pool) => pool.set_limit(new_limit),
         }
-
-        self.inner.current_limit.set(new_limit);
     }
 
     /// Acquire a slot, awaiting a free one if necessary.
     ///
     /// The returned [`SlotGuard`] frees the slot (honoring debt) when dropped.
     pub async fn acquire(&self) -> SlotGuard {
-        if self.locked() {
-            let mut stats = self.inner.stats.get();
-            stats.wait_count += 1;
-            self.inner.stats.set(stats);
-        }
-        // Forget the permit so releasing goes through our debt-aware `release`
-        // rather than the permit's own `Drop`.
-        self.inner
-            .semaphore
-            .acquire()
-            .await
-            .expect("SlotPool semaphore is never closed")
-            .forget();
-        self.inner.note_acquire();
-        SlotGuard {
-            inner: Rc::clone(&self.inner),
+        match &self.backend {
+            SlotPoolBackend::Local(inner) => {
+                if inner.semaphore.available_permits() == 0 {
+                    let mut stats = inner.stats.get();
+                    stats.wait_count += 1;
+                    inner.stats.set(stats);
+                }
+                // Forget the permit so releasing goes through our debt-aware `release`
+                // rather than the permit's own `Drop`.
+                inner
+                    .semaphore
+                    .acquire()
+                    .await
+                    .expect("SlotPool semaphore is never closed")
+                    .forget();
+                inner.note_acquire();
+                SlotGuard {
+                    backend: SlotGuardBackend::Local(Rc::clone(inner)),
+                }
+            }
+            SlotPoolBackend::Global(pool) => SlotGuard {
+                backend: SlotGuardBackend::Global(pool.acquire().await),
+            },
         }
     }
 
@@ -203,29 +266,46 @@ impl SlotPool {
     ///
     /// Returns `Some(guard)` if a slot was free, or `None` otherwise. Never waits.
     pub fn try_acquire(&self) -> Option<SlotGuard> {
-        match self.inner.semaphore.try_acquire() {
-            Ok(permit) => {
-                permit.forget();
-                self.inner.note_acquire();
-                Some(SlotGuard {
-                    inner: Rc::clone(&self.inner),
-                })
-            }
-            Err(_) => None,
+        match &self.backend {
+            SlotPoolBackend::Local(inner) => match inner.semaphore.try_acquire() {
+                Ok(permit) => {
+                    permit.forget();
+                    inner.note_acquire();
+                    Some(SlotGuard {
+                        backend: SlotGuardBackend::Local(Rc::clone(inner)),
+                    })
+                }
+                Err(_) => None,
+            },
+            SlotPoolBackend::Global(pool) => pool.try_acquire().map(|guard| SlotGuard {
+                backend: SlotGuardBackend::Global(guard),
+            }),
         }
     }
 }
 
+/// Backend a [`SlotGuard`] releases into on drop; mirrors [`SlotPoolBackend`].
+enum SlotGuardBackend {
+    Local(Rc<SlotInner>),
+    /// Held only for its `Drop` impl, which releases the shared slot.
+    Global(#[allow(dead_code)] GlobalSlotGuard),
+}
+
 /// RAII handle for one acquired slot. Dropping it releases the slot back to its
-/// [`SlotPool`] via the pool's debt-aware release path.
+/// [`SlotPool`] via the pool's debt-aware release path (`Local`) or the shared
+/// [`GlobalSlotPool`] (`Global`, via [`GlobalSlotGuard`]'s own `Drop`).
 #[must_use = "dropping the SlotGuard immediately releases the slot"]
 pub struct SlotGuard {
-    inner: Rc<SlotInner>,
+    backend: SlotGuardBackend,
 }
 
 impl Drop for SlotGuard {
     fn drop(&mut self) {
-        self.inner.release();
+        if let SlotGuardBackend::Local(inner) = &self.backend {
+            inner.release();
+        }
+        // `Global` releases automatically: dropping the held `GlobalSlotGuard`
+        // runs its own `Drop` impl.
     }
 }
 
@@ -294,10 +374,57 @@ impl GlobalSlotPool {
         GlobalSlotGuard { pool: self.clone() }
     }
 
+    /// Try to acquire one globally-shared slot without blocking.
+    ///
+    /// Returns `None` immediately if no slot is currently free across any
+    /// worker thread. Mirrors [`SlotPool::try_acquire`]'s nonblocking contract
+    /// for new-session admission under `global`/`global-hop` dispatch.
+    pub fn try_acquire(self: &Arc<Self>) -> Option<GlobalSlotGuard> {
+        match self.semaphore.try_acquire() {
+            Ok(permit) => {
+                permit.forget();
+                self.acquire_count
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Some(GlobalSlotGuard { pool: self.clone() })
+            }
+            Err(_) => None,
+        }
+    }
+
     /// The configured global concurrency limit.
     pub fn current_limit(&self) -> usize {
         self.current_limit
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Adjust the global concurrency limit.
+    ///
+    /// Unlike [`SlotPool::set_limit`], this has no debt tracking: a decrease
+    /// removes as many currently-free permits as are available and silently
+    /// drops any unmet shortfall (in-flight holders still drain normally, but
+    /// the pool may briefly admit more than `new_limit` concurrent holders
+    /// until enough releases catch up). Concurrency ramps combined with
+    /// `global`/`global-hop` dispatch are not yet a supported combination;
+    /// the common caller (a phase's `configure` resetting the limit to the
+    /// value this pool was already built with) always takes the `diff == 0`
+    /// no-op path.
+    pub fn set_limit(&self, new_limit: usize) {
+        let current = self
+            .current_limit
+            .swap(new_limit, std::sync::atomic::Ordering::Relaxed);
+        let diff = new_limit as i64 - current as i64;
+        if diff > 0 {
+            self.semaphore.add_permits(diff as usize);
+        } else if diff < 0 {
+            let shortfall = (-diff) as usize;
+            let available = self.semaphore.available_permits();
+            let to_drain = shortfall.min(available);
+            if to_drain > 0 {
+                if let Ok(permits) = self.semaphore.try_acquire_many(to_drain as u32) {
+                    permits.forget();
+                }
+            }
+        }
     }
 
     /// Slots currently available across all worker threads.
@@ -508,5 +635,75 @@ mod tests {
             h.await.unwrap();
         }
         assert_eq!(max_seen.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    /// Proves `SlotPool::new_global` is a transparent `Global`-backed facade:
+    /// several independent `SlotPool` handles (as if built on different worker
+    /// threads, one per thread here for a realistic `!Send` `Rc` story) that
+    /// all wrap the SAME `Arc<GlobalSlotPool>` enforce one true aggregate cap
+    /// across every handle combined, never per-handle.
+    #[test]
+    fn slot_pool_new_global_enforces_one_cross_thread_cap_across_handles() {
+        use std::sync::Mutex;
+        use std::thread;
+
+        let global = GlobalSlotPool::new(2);
+        let concurrent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let max_seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let handles: Vec<_> = (0..4)
+            .map(|thread_id| {
+                let global = global.clone();
+                let concurrent = concurrent.clone();
+                let max_seen = max_seen.clone();
+                let errors = errors.clone();
+                thread::spawn(move || {
+                    // Each OS thread builds its OWN `SlotPool` (a `!Send`,
+                    // `Rc`-based handle) over the shared `Arc<GlobalSlotPool>` —
+                    // exactly the shape `execute_scheduled_shard` would build
+                    // per worker thread under `global`/`global-hop` dispatch.
+                    let pool = SlotPool::new_global(global.clone());
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    let local = tokio::task::LocalSet::new();
+                    local.block_on(&runtime, async {
+                        for _ in 0..6 {
+                            let guard = pool.acquire().await;
+                            let now = concurrent.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                                + 1;
+                            max_seen.fetch_max(now, std::sync::atomic::Ordering::SeqCst);
+                            if now > 2 {
+                                errors.lock().unwrap().push(format!(
+                                    "thread {thread_id} observed {now} concurrent holders \
+                                     (cap is 2)"
+                                ));
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+                            concurrent.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                            drop(guard);
+                        }
+                    });
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let errors = errors.lock().unwrap();
+        assert!(
+            errors.is_empty(),
+            "aggregate concurrency across all SlotPool handles must never exceed the \
+             shared global cap: {errors:?}"
+        );
+        assert_eq!(
+            max_seen.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "the cap must actually be reached (proves the test exercises real \
+             contention, not just an under-subscribed run)"
+        );
     }
 }
