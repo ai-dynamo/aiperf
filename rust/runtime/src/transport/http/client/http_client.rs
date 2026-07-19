@@ -17,6 +17,7 @@ use url::Url;
 use crate::clock::Clock;
 
 use crate::transport::core::SseMessage;
+use crate::transport::core::eventstream::{EventStreamDecoder, decode_payload_part};
 use crate::transport::core::{
     ErrorDetails, ErrorKind, RequestRecord, Response, TextResponse, TraceData,
 };
@@ -26,6 +27,65 @@ use crate::transport::http::client::connection::{
 };
 use crate::transport::http::config::ClientConfig;
 use crate::transport::http::sse::{SseMessageHandler, read_sse, read_sse_with_handler};
+
+/// Re-frames an `application/vnd.amazon.eventstream` byte stream (AWS
+/// SageMaker Runtime `InvokeEndpointWithResponseStream` framing) as
+/// synthetic `"data: <json>\n\n"` SSE byte chunks, so the existing
+/// [`read_sse_with_handler`] parser — with all of its TTFT/backpressure/
+/// filter/recording logic — can consume it unmodified. AWS eventstream
+/// responses have no terminal sentinel; they end at transport EOF, which
+/// `read_sse_with_handler` already handles by flushing on stream close.
+fn eventstream_to_sse<S>(stream: S) -> impl Stream<Item = Result<Bytes, ErrorDetails>>
+where
+    S: Stream<Item = Result<Bytes, ErrorDetails>> + 'static,
+{
+    struct State<S> {
+        inner: std::pin::Pin<Box<S>>,
+        decoder: EventStreamDecoder,
+        pending: std::collections::VecDeque<Bytes>,
+    }
+
+    let state = State {
+        inner: Box::pin(stream),
+        decoder: EventStreamDecoder::new(),
+        pending: std::collections::VecDeque::new(),
+    };
+
+    futures::stream::unfold(state, |mut state| async move {
+        loop {
+            if let Some(frame) = state.pending.pop_front() {
+                return Some((Ok(frame), state));
+            }
+            match state.inner.next().await {
+                Some(Ok(chunk)) => {
+                    state.decoder.push(&chunk);
+                    let messages = match state.decoder.drain_messages() {
+                        Ok(messages) => messages,
+                        Err(error) => {
+                            return Some((
+                                Err(ErrorDetails::sse(format!(
+                                    "eventstream decode error: {error}"
+                                ))),
+                                state,
+                            ));
+                        }
+                    };
+                    for message in messages {
+                        if let Some(inner_json) = decode_payload_part(&message.payload) {
+                            let mut sse = bytes::BytesMut::with_capacity(inner_json.len() + 8);
+                            sse.extend_from_slice(b"data: ");
+                            sse.extend_from_slice(&inner_json);
+                            sse.extend_from_slice(b"\n\n");
+                            state.pending.push_back(sse.freeze());
+                        }
+                    }
+                }
+                Some(Err(error)) => return Some((Err(error), state)),
+                None => return None,
+            }
+        }
+    })
+}
 
 #[derive(Default)]
 struct ChunkTiming {
@@ -679,6 +739,11 @@ impl HttpClient {
                 .as_deref()
                 .map(|c| c.starts_with("text/event-stream"))
                 .unwrap_or(false);
+        let is_eventstream = streaming
+            && content_type
+                .as_deref()
+                .map(|c| c.starts_with("application/vnd.amazon.eventstream"))
+                .unwrap_or(false);
 
         check_declared_body_length(resp.headers(), self.cfg.max_response_body_bytes)?;
 
@@ -723,14 +788,20 @@ impl HttpClient {
             return Err(ErrorDetails::http(status.as_u16(), text));
         }
 
-        if is_sse {
+        if is_sse || is_eventstream {
+            let sse_stream: std::pin::Pin<Box<dyn Stream<Item = Result<Bytes, ErrorDetails>>>> =
+                if is_eventstream {
+                    Box::pin(eventstream_to_sse(timed))
+                } else {
+                    Box::pin(timed)
+                };
             let sse_result = if first_token_filter.is_backpressured() {
                 let mut handler = RecordingSseHandler {
                     start_ns: record.start_ns,
                     filter: first_token_filter,
                     responses: &mut record.responses,
                 };
-                read_sse_with_handler(timed, self.clock.clone(), &mut handler).await
+                read_sse_with_handler(sse_stream, self.clock.clone(), &mut handler).await
             } else {
                 let mut handler = FirstTokenSseHandler {
                     start_ns: record.start_ns,
@@ -738,7 +809,7 @@ impl HttpClient {
                     filter: first_token_filter,
                     responses: &mut record.responses,
                 };
-                read_sse_with_handler(timed, self.clock.clone(), &mut handler).await
+                read_sse_with_handler(sse_stream, self.clock.clone(), &mut handler).await
             };
 
             timing.borrow().copy_to(trace);
@@ -819,5 +890,52 @@ impl HttpClient {
         })
         .await?;
         Ok(code)
+    }
+}
+
+#[cfg(test)]
+mod eventstream_to_sse_tests {
+    use super::*;
+    use crate::transport::core::eventstream::{EventStreamMessage, encode_payload_part};
+    use futures::stream;
+
+    #[tokio::test]
+    async fn reframes_payload_parts_as_sse_data_lines() {
+        let m1 = EventStreamMessage::payload_part(encode_payload_part(br#"{"i":1}"#));
+        let m2 = EventStreamMessage::payload_part(encode_payload_part(br#"{"i":2}"#));
+        let wire = [m1.encode(), m2.encode()].concat();
+
+        let raw = stream::iter(vec![Ok::<Bytes, ErrorDetails>(Bytes::from(wire))]);
+        let sse = eventstream_to_sse(raw);
+        futures::pin_mut!(sse);
+
+        let mut collected = Vec::new();
+        while let Some(chunk) = sse.next().await {
+            collected.push(chunk.unwrap());
+        }
+        let joined: Vec<u8> = collected.concat();
+        let text = String::from_utf8(joined).unwrap();
+        assert_eq!(text, "data: {\"i\":1}\n\ndata: {\"i\":2}\n\n");
+    }
+
+    #[tokio::test]
+    async fn reframes_messages_split_across_chunk_boundaries() {
+        let message = EventStreamMessage::payload_part(encode_payload_part(br#"{"x":true}"#));
+        let encoded = message.encode();
+        let (left, right) = encoded.split_at(encoded.len() / 2);
+
+        let raw = stream::iter(vec![
+            Ok::<Bytes, ErrorDetails>(Bytes::copy_from_slice(left)),
+            Ok::<Bytes, ErrorDetails>(Bytes::copy_from_slice(right)),
+        ]);
+        let sse = eventstream_to_sse(raw);
+        futures::pin_mut!(sse);
+
+        let mut collected = Vec::new();
+        while let Some(chunk) = sse.next().await {
+            collected.push(chunk.unwrap());
+        }
+        let text = String::from_utf8(collected.concat()).unwrap();
+        assert_eq!(text, "data: {\"x\":true}\n\n");
     }
 }
