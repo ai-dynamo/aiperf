@@ -432,4 +432,6 @@ Allowed gates:
 - Arbitrary user code execution in `.flow`.
 - General-purpose constraint solving or automatic graph layout.
 - Pixel parity with the pre-migration bespoke layouts.
-- Moving the locally owned browser compiler back into `apps/aiperf-flow`.
+- Moving the locally owned browser compiler out of `apps/explainers` into a
+  separate Flow workspace (the standalone `apps/aiperf-flow` workspace has been
+  removed).

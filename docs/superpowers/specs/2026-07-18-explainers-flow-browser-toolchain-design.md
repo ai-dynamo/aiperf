@@ -23,9 +23,10 @@ bundle.
 
 - All first-party browser toolchain source lives under
   `apps/explainers/src/flow`.
-- The explainers app does not import, alias, or depend on first-party modules
-  from `apps/aiperf-flow`.
-- The full browser-safe compiler and authoring surface is copied locally.
+- `apps/explainers` solely owns this browser toolchain source. The standalone
+  `apps/aiperf-flow` workspace has been removed, so no separate Flow workspace
+  remains to import, alias, or depend on.
+- The full browser-safe compiler and authoring surface is owned locally.
 - Pure runtime evaluation and IR/geometry verification are copied or ported
   locally.
 - Heavy evaluator/verifier code is dynamically imported only for developer
@@ -85,10 +86,10 @@ initiation, report to the console, do not mutate package IR, and do not run in
 production. Production playback continues through `packageToDeckDefinition`
 and `SceneRenderer`.
 
-`apps/explainers` owns this implementation locally. It has no first-party
-import, alias, or build-time dependency on `apps/aiperf-flow`; future upstream
-changes require a deliberate manual sync of browser-safe source and the
-boundary checks in this document. Node filesystem/CLI/process APIs, implicit
+`apps/explainers` owns this implementation outright. The standalone
+`apps/aiperf-flow` workspace has been deleted, so there is no upstream Flow
+workspace to import, alias, or synchronize with; this toolchain is now the
+canonical first-party Flow source. Node filesystem/CLI/process APIs, implicit
 network module loading, Playwright, alternate Flow React/Canvas applications,
 and narrative/WASM/worker or inspection-UI subsystems remain outside this
 integration boundary.
@@ -256,19 +257,20 @@ Do not add Node polyfills. Any copied module that imports `node:*`, references
 `process`, or assumes filesystem/network access is outside the browser boundary
 and must be excluded or split into a pure helper.
 
-## Drift and ownership
+## Ownership
 
-The copied source is owned by `apps/explainers`. It intentionally does not
-resolve into the Flow workspace at build time.
+The Flow toolchain source is owned by `apps/explainers`. The standalone
+`apps/aiperf-flow` workspace has been removed, so there is no separate Flow
+workspace to resolve into at build time and no upstream project to synchronize
+with.
 
-Where practical, copied files preserve upstream names and structure so future
-audits can compare them mechanically. Explain-specific integration and
-developer-tool ports are documented as local adaptations. Synchronization with
-future Flow project changes is manual.
+Some files retain the names and structure from their original migration so the
+history stays easy to audit. Explainer-specific integration and developer-tool
+adaptations are local. `apps/explainers` is now the source of truth for all
+future changes.
 
-The current upstream fan endpoint validation is synchronized immediately so
-the compiler rejects invalid fan topology instead of lowering unresolved
-endpoints to `{ x: 0, y: 0 }`.
+Fan endpoint validation rejects invalid fan topology instead of lowering
+unresolved endpoints to `{ x: 0, y: 0 }`.
 
 ## Error handling
 
@@ -301,7 +303,8 @@ Allowed verification:
 
 - `apps/explainers` locally owns the full useful browser-safe Flow compiler,
   formatter, evaluator, and verifier source.
-- No first-party runtime import or Vite alias points to `apps/aiperf-flow`.
+- No runtime import or Vite alias points to a separate Flow workspace; the
+  toolchain resolves entirely within `apps/explainers`.
 - Live deck compilation honors strict/capability validation and set uniqueness.
 - Invalid references, component props, themes, fan endpoints, ids, and routes
   produce actionable diagnostics.

@@ -22,12 +22,14 @@ incomplete regex-based legacy loader.
 
 - Compilation always runs in the browser in development and production.
 - The browser imports `.flow` files as raw source through Vite.
-- `apps/explainers` owns a local browser-safe copy of the exact compiler,
-  language, and schema source needed by explainer compilation.
-- The explainers runtime has no imports, aliases, or workspace dependency on
-  `apps/aiperf-flow`.
-- Generated `decks-generated/*.package.json` artifacts and their pre-build
-  pipeline are deleted.
+- `apps/explainers` owns the browser-safe compiler, language, and schema source
+  needed by explainer compilation.
+- The standalone `apps/aiperf-flow` workspace has been removed; the explainers
+  runtime has no imports, aliases, or workspace dependency on any separate Flow
+  workspace.
+- Generated `decks-generated/*.package.json` artifacts are retained as
+  deterministic build-time mirrors for package assertions and deployment
+  checks, but the browser registry neither imports nor requires them.
 - Legacy and incomplete Flow loaders are deleted.
 - `packageToDeckDefinition`, `ExplainerShell`, and `SceneRenderer` remain the
   runtime adaptation and rendering path.
@@ -60,17 +62,16 @@ module initialization. No generated package fallback exists.
 
 ## Locally owned browser compiler
 
-The exact transitive source needed by `compileExplainerSource` is copied under
-`apps/explainers/src/flow/`. It is organized into focused `compiler`,
-`language`, and `schema` directories, with a browser entrypoint that exports
-`compileExplainerSource`, `FOUNDATION_CAPABILITIES`, `hasErrors`, and the types
-needed by the live loader.
+The Flow implementation is owned under `apps/explainers/src/flow/`. It is
+organized into focused `compiler`, `language`, `schema`, `sdk`, `runtime`, and
+`dev-tools` directories, with browser-safe entrypoints that expose the compiler,
+schema, formatter, SDK, and verifier surfaces used by the app and local tools.
 
-All copied modules use relative imports within `apps/explainers`. They do not
-import `@aiperf/flow-compiler`, `@aiperf/flow-language`,
-`@aiperf/flow-schema`, or files outside the explainers app.
+All toolchain modules use relative imports within `apps/explainers`. They do
+not import files outside the explainers app; the former `@aiperf/flow-compiler`,
+`@aiperf/flow-language`, and `@aiperf/flow-schema` packages no longer exist.
 
-The local closure includes only explainer parsing and lowering:
+The browser compile closure includes explainer parsing and lowering:
 
 - Compiler: explainer compile, lower, scene lower/desugaring, timeline
   validation, and the type-only linked-document vocabulary required by native
@@ -80,9 +81,10 @@ The local closure includes only explainer parsing and lowering:
   layout plans, semantic model, theme, and the capability manifest/constants
   required by the compile request.
 
-Node-only and unrelated modules are not copied. In particular, there is no
-package writer, canonical packer, module resolver, filesystem import, general
-Flow compile barrel, formatter, CLI, or runtime renderer in the local compiler.
+Node-only filesystem work remains outside the browser closure. The same local
+toolchain also provides deterministic package serialization, SDK expansion,
+formatting, and runtime evaluation for build-time tools; the React renderer
+remains under `apps/explainers/src/core/diagram`.
 
 The explainers package declares the third-party browser dependencies used by
 the copied source directly: `chevrotain` and `zod`. `js-sha256` is not needed.
@@ -97,8 +99,8 @@ The loader:
 
 1. Eagerly imports `../../decks-flow/*.flow` as raw strings.
 2. Derives each source name from its import path.
-3. Calls `compileExplainerSource` with `FOUNDATION_CAPABILITIES` and strict
-   validation.
+3. Calls `compileExplainerSource` with `FOUNDATION_CAPABILITIES`, strict
+   validation, and strict SDK-authoring enforcement.
 4. Formats compiler diagnostics with source, line, column, severity, code,
    message, and repair guidance.
 5. Throws when compilation fails or emits error diagnostics.
@@ -108,28 +110,22 @@ The loader:
 `deck-registry.ts` retains `EXPECTED_DECK_ROUTES` and validates each compiled
 deck against that map. Missing, duplicate, or mismatched decks fail closed.
 
-## Removed paths
+## Runtime boundary and retained package tooling
 
-Delete:
+The production registry imports only raw `decks-flow/*.flow` sources through
+`load-deck-flows.ts`. It does not import `load-deck-packages.ts` or generated
+JSON. The latter module and `src/decks-generated/*.package.json` remain as an
+auxiliary package-artifact seam for assertions and compatibility checks.
 
-- `apps/explainers/src/decks-generated/` package artifacts.
-- `apps/explainers/src/core/load-deck-packages.ts`.
-- `apps/aiperf-flow/scripts/build-explainer-packages.mjs`.
-- `apps/explainers/scripts/assert-deck-packages.mjs`.
-- The incomplete regex loader at
-  `apps/aiperf-flow/packages/runtime/src/explainer/flow-loader.ts`.
-- Package scripts and Makefile targets whose purpose is generating or
-  asserting `decks-generated` artifacts.
+`apps/explainers/scripts/build-explainer-packages.ts` mirrors the live compile
+policy with the same local compiler, capability manifest, set validation, and
+strict SDK-authoring gate. It writes deterministic package JSON for static
+verification and removes stale artifacts. This command is not a prerequisite
+for `vite dev`, the production build, or runtime registry construction.
 
-Remove stale imports and configuration that grant access to or consume
-`decks-generated`, including the aiperf-flow preview package registry and
-runtime tests that import package JSON. Because this change explicitly excludes
-tests, obsolete tests tied only to generated package artifacts are deleted
-rather than rewritten.
-
-The canonical Flow workspace sources remain otherwise untouched. The copied
-browser compiler is intentionally owned by `apps/explainers`; keeping it in
-sync with future Flow language changes is a manual maintenance responsibility.
+The obsolete regex loader, external `@aiperf/flow-*` packages, and standalone
+`apps/aiperf-flow` workspace are removed. `apps/explainers` is the source of
+truth for future Flow language changes.
 
 ## Tooling
 
@@ -137,8 +133,9 @@ The Flow verifier should consume `.flow` source directly and invoke the same
 real explainer compiler in Node. Its default path no longer reads generated
 JSON, and `--from-flow` is removed because source compilation is now inherent.
 
-The aggregate explainer gate may retain static and IR verification, but it must
-not generate or require committed package artifacts.
+The aggregate explainer gate intentionally rebuilds package mirrors before
+running package, strict-authoring, and IR assertions. These artifacts verify
+serialization parity; they are not runtime inputs.
 
 Documentation describing the packages-only runtime is updated to describe the
 live browser compile path.
@@ -169,10 +166,10 @@ Allowed verification:
 - Production and development browser builds compile all explainer `.flow`
   sources in memory with the real compiler.
 - Browser compilation resolves entirely from source and dependencies owned by
-  `apps/explainers`; it does not import or alias into `apps/aiperf-flow`.
+  `apps/explainers`; no separate Flow workspace is imported or aliased.
 - Editing a `.flow` source updates the Vite application without regenerating
   JSON.
-- No generated DeckPackage JSON is required or loaded.
+- No generated DeckPackage JSON is required or loaded by the browser registry.
 - No pre-build command is required before starting or building explainers.
 - No legacy regex Flow loader remains.
 - Existing deck ids, routes, narration, scenes, timelines, and rendering
