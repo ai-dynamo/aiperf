@@ -195,9 +195,10 @@ fn phase_scheduled_resources(
     // concurrency-burst phase authors the reverse. Resolve the rate gate first
     // so it attaches even when this phase falls through to the shared local
     // concurrency pool below.
-    let global_rate = shared.global_admission.as_ref().and_then(|admission| {
-        admission.rate.get(&metrics_phase(phase).ok()?).cloned()
-    });
+    let global_rate = shared
+        .global_admission
+        .as_ref()
+        .and_then(|admission| admission.rate.get(&metrics_phase(phase).ok()?).cloned());
     let global_pool = shared.global_admission.as_ref().and_then(|admission| {
         admission
             .concurrency
