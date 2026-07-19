@@ -7,6 +7,8 @@
 
 use std::path::PathBuf;
 
+use aiperf_runtime::engine::protocol::DispatchMode;
+
 use crate::flags::ProfileFlags;
 use crate::model::artifacts::Artifacts;
 use crate::model::dataset::{
@@ -206,6 +208,9 @@ pub(crate) struct Inputs {
     pub runtime_workers_min: Option<u32>,
     /// Cellular (multi-process) cell count (`runtime.cells`; `1` = single).
     pub runtime_cells: u32,
+    /// Admission strategy for `workers>1` scheduled execution (`runtime.dispatch`
+    /// / `--dispatch`). `None` omits the wire field, decoded as `Global`.
+    pub runtime_dispatch: Option<DispatchMode>,
     pub random_seed: Option<u64>,
     /// Per-dataset sampling seed (`dataset.random_seed`). The `--random-seed`
     /// flag sets both this and `random_seed`; a YAML top-level `randomSeed` sets
@@ -584,6 +589,11 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         runtime_workers: None,
         runtime_workers_min: None,
         runtime_cells: flags.cells.unwrap_or(1),
+        runtime_dispatch: flags
+            .dispatch
+            .is_some()
+            .then(|| flags.dispatch_mode())
+            .transpose()?,
         input_file: flags.input_file.clone(),
         inline_records: None,
         custom_dataset_type: flags.custom_dataset_type.clone(),
@@ -1007,6 +1017,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             workers_min: inputs.runtime_workers_min,
             workers_max: None,
             cells: inputs.runtime_cells,
+            dispatch: inputs.runtime_dispatch,
         }),
         metrics: Some(Metrics {
             slos: inputs.slos.clone(),

@@ -79,6 +79,11 @@ fn apply_cli_overrides(
     if let Some(cells) = flags.cells {
         inputs.runtime_cells = cells;
     }
+    // Same precedence as `--cells` over `runtime.cells`: an explicit `--dispatch`
+    // wins over an authored `runtime.dispatch`.
+    if flags.dispatch.is_some() {
+        inputs.runtime_dispatch = Some(flags.dispatch_mode()?);
+    }
     // CLI random seed governs both run and dataset sampling.
     if let Some(seed) = flags.random_seed {
         inputs.random_seed = Some(seed);
@@ -330,6 +335,12 @@ struct RuntimeSection {
     #[serde(default, alias = "workersMin")]
     workers_min: Option<u32>,
     cells: Option<u32>,
+    /// Admission strategy for `workers>1` scheduled execution (`sharded`/`global`/
+    /// `global-hop`). Absent selects [`DispatchMode::default`] (`Global`); reuses
+    /// `DispatchMode`'s own `Deserialize` impl so YAML and `--dispatch` validate
+    /// identically instead of duplicating the accepted-value list here.
+    #[serde(default)]
+    dispatch: Option<aiperf_runtime::engine::protocol::DispatchMode>,
 }
 
 /// A full models mapping or shorthand sequence of model names or item maps.
@@ -1348,12 +1359,12 @@ impl Benchmark {
                 tags: Vec::new(),
             });
 
-        // Runtime worker/cell policy.
-        let (runtime_workers, runtime_workers_min, runtime_cells) = self
+        // Runtime worker/cell/dispatch policy.
+        let (runtime_workers, runtime_workers_min, runtime_cells, runtime_dispatch) = self
             .runtime
             .as_ref()
-            .map(|r| (r.workers, r.workers_min, r.cells.unwrap_or(1)))
-            .unwrap_or((None, None, 1));
+            .map(|r| (r.workers, r.workers_min, r.cells.unwrap_or(1), r.dispatch))
+            .unwrap_or((None, None, 1, None));
 
         // Timeslice window (`artifacts.slice_duration`).
         let slice_duration = self.artifacts.as_ref().and_then(|a| a.slice_duration);
@@ -1459,6 +1470,7 @@ impl Benchmark {
             runtime_workers,
             runtime_workers_min,
             runtime_cells,
+            runtime_dispatch,
             random_seed,
             dataset_random_seed,
             input_file,
@@ -1767,5 +1779,42 @@ mod tests {
             v["cfg"]["datasets"][0]["type"],
             serde_json::json!("synthetic")
         );
+    }
+
+    #[test]
+    fn runtime_dispatch_is_yaml_authorable() {
+        let run = resolve_str(
+            &cfg(
+                "  dataset: {prompts: {isl: 128}}\n  phases: {type: concurrency, requests: 2, concurrency: 1}\n  runtime: {dispatch: sharded}\n",
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect("valid config resolves");
+        assert_eq!(
+            run.cfg.runtime.expect("runtime present").dispatch,
+            Some(aiperf_runtime::engine::protocol::DispatchMode::Sharded)
+        );
+    }
+
+    #[test]
+    fn runtime_dispatch_absent_defaults_to_global_none() {
+        let run = resolve_str(
+            &cfg(
+                "  dataset: {prompts: {isl: 128}}\n  phases: {type: concurrency, requests: 2, concurrency: 1}\n",
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect("valid config resolves");
+        // No `runtime.dispatch` authored: the typed field stays `None`, which the
+        // protocol-v2 wire decode resolves to `DispatchMode::Global`.
+        assert_eq!(run.cfg.runtime.expect("runtime present").dispatch, None);
+    }
+
+    #[test]
+    fn runtime_dispatch_rejects_unknown_value() {
+        let e = err(
+            "  dataset: {prompts: {isl: 128}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n  runtime: {dispatch: bogus}\n",
+        );
+        assert!(e.contains("dispatch") || e.contains("bogus"), "{e}");
     }
 }

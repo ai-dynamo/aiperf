@@ -4,6 +4,7 @@
 //!
 //! `workers` and `workers_min` emit null when unset; `workers_max` is omitted.
 
+use aiperf_runtime::engine::protocol::DispatchMode;
 use serde::{Deserialize, Serialize};
 
 /// The typed worker/cell runtime policy.
@@ -18,6 +19,11 @@ pub struct Runtime {
     pub workers_max: Option<u32>,
     /// Cellular (multi-process) cell count; `1` is the single-process path.
     pub cells: u32,
+    /// Admission strategy for `workers>1` scheduled execution (`runtime.dispatch`).
+    /// Absent (`None`) omits the wire field, which the runner decodes as
+    /// [`DispatchMode::default`] (`Global`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch: Option<DispatchMode>,
 }
 
 impl Default for Runtime {
@@ -27,6 +33,7 @@ impl Default for Runtime {
             workers_min: None,
             workers_max: None,
             cells: 1,
+            dispatch: None,
         }
     }
 }
