@@ -5,7 +5,7 @@
 //!
 //! A scheduler drives transport-native requests through [`RequestSink`];
 //! measurements flow through
-//! [`RequestObserver`] into a [`TraceCollector`](crate::collector::TraceCollector).
+//! [`RequestObserver`] into a [`TraceCollector`](super::collector::TraceCollector).
 //!
 //! Each request type implements [`Dispatchable`], keeping engine and wire types
 //! behind the trait.

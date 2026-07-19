@@ -419,7 +419,7 @@ impl SlaThresholds {
 /// Accumulates per-request measurement events received through
 /// [`RequestObserver`] and produces a [`TraceSimulationReport`].
 ///
-/// [`RequestObserver`]: crate::sink::RequestObserver
+/// [`RequestObserver`]: super::sink::RequestObserver
 #[derive(Debug, Default)]
 pub struct TraceCollector {
     requests: FxHashMap<Uuid, TraceRequestStats>,
