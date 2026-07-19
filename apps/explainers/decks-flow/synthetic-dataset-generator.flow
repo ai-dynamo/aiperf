@@ -1,0 +1,194 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+explainer "Synthetic Dataset Generator" {
+  id: "synthetic-dataset-generator"
+  route: "/synthetic-dataset-generator"
+  topic: "dataset"
+  storagePrefix: "synthetic-dataset-generator-explainer"
+  classPrefix: "deck-synthetic-dataset-generator"
+  eyebrowLabel: "SYNTHETIC DATASET GENERATOR"
+  startGateTitle: "Combining tokens and media into a Turn"
+
+  hub: {
+    highlight: "Synthetic dataset generator"
+    title: "tokens + media → one Turn"
+    description: "How SyntheticComposer combines generated prompt tokens and generated media into a single Turn: the no-decode branch, prefix reuse, parent chaining through SegmentPool, and Turn::dispatch_body precedence."
+  }
+
+  slide "Rows in → one Turn out" {
+    eyebrow: "Overview"
+    title: "Rows in → one Turn out"
+    lede: "SyntheticDatasetConfig describes a dataset shape: entries, turns, an optional prompts config, an optional prefixes config, and optional image/audio/video configs. SyntheticComposer::compose walks that shape once per conversation and once per turn, and every text or media value it generates is interned into the shared SegmentPool before it can reach the wire."
+    narration: "SyntheticDatasetConfig has independent slots for prompts, prefixes, and image, audio, and video. The composer visits every configured slot for each turn and interns whatever it generates into one shared segment pool."
+    term: {
+      word: "SyntheticComposer"
+      meaning: "Composer implementation that turns a SyntheticDatasetConfig shape into Conversations, one Turn at a time, interning every generated value into SegmentPool as it goes."
+    }
+    points: [
+      "`SyntheticDatasetConfig` holds `prompts: Option<SyntheticPromptConfig>`, `prefixes: SyntheticPrefixConfig`, and `images`/`audio`/`video: Option<Synthetic*Config>`.",
+      "Every configured slot contributes to the same `Turn`; nothing is generated that isn't wired into `turn.content` or `turn.body`.",
+      "Evidence: `rust/runtime/src/dataset/generator/mod.rs` (`SyntheticDatasetConfig`), `rust/runtime/src/dataset/loader/synthetic.rs` (`SyntheticComposer::compose`)."
+    ]
+    caption: "One shape config → one Turn per iteration · every slot interns into SegmentPool."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "SHAPE → TURN",
+        caption = "One shape config → one Turn per iteration · every slot interns into SegmentPool.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "shape",
+        title = "SyntheticDatasetConfig",
+        detail = "entries · turns",
+        x = 30, y = 130, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.FanOut(
+        id = "arrow-shape-slots",
+        from = { nodeId: "shape", anchor: "e" },
+        to = [{ nodeId: "prompts", anchor: "w" }, { nodeId: "prefixes", anchor: "w" }, { nodeId: "media", anchor: "w" }],
+        axis = "x",
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "prompts",
+        title = "prompts",
+        detail = "Option<PromptConfig>",
+        x = 260, y = 60, width = 170, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "prefixes",
+        title = "prefixes",
+        detail = "PrefixConfig",
+        x = 260, y = 135, width = 170, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "media",
+        title = "images / audio / video",
+        detail = "Option<Media*Config>",
+        x = 260, y = 210, width = 170, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.FanIn(
+        id = "arrow-slots-turn",
+        from = [{ nodeId: "prompts", anchor: "e" }, { nodeId: "prefixes", anchor: "e" }, { nodeId: "media", anchor: "e" }],
+        to = { nodeId: "turn", anchor: "w" },
+        axis = "x",
+        style = { stroke: theme(accent.orange), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "turn",
+        title = "Turn",
+        detail = "content + body",
+        x = 500, y = 130, width = 160, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.orange)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal shape duration 280
+        after shape trace arrow-shape-slots duration 400
+        after arrow-shape-slots stagger targets [prompts, prefixes, media] step 120 duration 200
+        after media trace arrow-slots-turn duration 400
+        after arrow-slots-turn reveal turn duration 280
+      }
+    }
+  }
+
+  slide "Two branches at the top" {
+    eyebrow: "Fork"
+    title: "Two branches at the top"
+    lede: "Before any text or media is generated, the composer checks config.requires_raw_token_ids. When true, prompt generation takes a token-native, no-decode branch. When false, it takes the standard text-generation branch. Every media batch (image, audio, video) joins downstream of either branch the same way."
+    narration: "The very first decision the composer makes is requires_raw_token_ids: true takes the no-decode branch straight to token ids, false takes the standard text-generation branch."
+    term: {
+      word: "requires_raw_token_ids"
+      meaning: "ComposeConfig flag set when the configured context mode needs exact token ids rather than decoded text, selecting the no-decode branch."
+    }
+    points: [
+      "`if config.requires_raw_token_ids { generator.generate_token_ids(...) } else { ...text path... }` in `SyntheticComposer::compose`.",
+      "The no-decode branch never constructs a `String`; the text branch always does.",
+      "Image/audio/video generation is unconditional and runs after either branch, appending to the same `turn`."
+    ]
+    caption: "requires_raw_token_ids selects no-decode vs. text generation · media always joins after."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "FORK ON requires_raw_token_ids",
+        caption = "requires_raw_token_ids selects no-decode vs. text generation · media always joins after.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "flag",
+        title = "requires_raw_token_ids?",
+        detail = "ComposeConfig",
+        x = 30, y = 130, width = 190, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.FanOut(
+        id = "arrow-flag-branches",
+        from = { nodeId: "flag", anchor: "e" },
+        to = [{ nodeId: "no-decode", anchor: "w" }, { nodeId: "text-branch", anchor: "w" }],
+        axis = "x",
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "no-decode",
+        title = "true → no-decode",
+        detail = "generate_token_ids",
+        x = 290, y = 70, width = 190, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "text-branch",
+        title = "false → text",
+        detail = "generate + tokenize",
+        x = 290, y = 190, width = 190, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.FanIn(
+        id = "arrow-branches-media",
+        from = [{ nodeId: "no-decode", anchor: "e" }, { nodeId: "text-branch", anchor: "e" }],
+        to = { nodeId: "media-join", anchor: "w" },
+        axis = "x",
+        style = { stroke: theme(accent.orange), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "media-join",
+        title = "image / audio / video",
+        detail = "always appended",
+        x = 540, y = 130, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.orange)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal flag duration 280
+        after flag trace arrow-flag-branches duration 400
+        after arrow-flag-branches stagger targets [no-decode, text-branch] step 140 duration 220
+        after text-branch trace arrow-branches-media duration 400
+        after arrow-branches-media reveal media-join duration 280
+      }
+    }
+  }
+}
