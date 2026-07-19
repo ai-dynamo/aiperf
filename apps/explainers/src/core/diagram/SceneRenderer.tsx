@@ -2784,7 +2784,7 @@ function resolveThemePaint(
   if (typeof value !== "string" || value.length === 0) {
     return fallback;
   }
-  if (value === "none" || value === "transparent" || !value.startsWith("@")) {
+  if (value === "none" || value === "transparent") {
     return value;
   }
 
@@ -2793,14 +2793,28 @@ function resolveThemePaint(
     : value.startsWith("theme.")
       ? value.slice("theme.".length)
       : value;
+  const isBareThemeRole =
+    role.startsWith("surface.") ||
+    role.startsWith("bg.") ||
+    role.startsWith("ink.") ||
+    role.startsWith("text.") ||
+    role.startsWith("stroke.") ||
+    role.startsWith("structure.") ||
+    role.startsWith("accent.");
+  if (!value.startsWith("@theme.") && !value.startsWith("theme.") && !isBareThemeRole) {
+    return value;
+  }
 
   switch (role) {
     case "surface.elevated":
+      // Scene cards need a solid layer above the graphite stage. A translucent
+      // fill reads as black once diagrams are scaled down.
+      return theme.bg.panel;
     case "bg.elevated":
       return theme.bg.elevated;
     case "surface.primary":
+      return theme.fill.quaternary;
     case "bg.primary":
-      // Primary surface sits between chrome and elevated cards.
       return theme.bg.chrome;
     case "surface.secondary":
       // Quieter fill for headers / chips (distinct from elevated panels).
@@ -2890,9 +2904,9 @@ function isAccentThemeRole(value: unknown): boolean {
 }
 
 /**
- * Chalk skin for diagram panels: never fill `core.rect` with saturated accents.
- * Accent fills become elevated panels with the accent as the border (and ink
- * strokes are replaced so the box still reads as colored).
+ * GTC skin for diagram panels: accent-tagged `core.rect` boxes get a real,
+ * saturated accent fill (with the accent doubling as the glowing border)
+ * instead of the old chalk convention of an outline-only bg fill.
  */
 function chalkRectPaints(
   style: SceneNodeLike["style"],
@@ -2901,12 +2915,26 @@ function chalkRectPaints(
   themeStroke: string,
 ): { fill: string; stroke: string } {
   const fillRole = style?.fill;
+  const strokeRole = style?.stroke;
   if (isAccentThemeRole(fillRole)) {
     const accent = resolveThemePaint(fillRole, theme, theme.accent.primary);
-    const stroke = isAccentThemeRole(style?.stroke)
-      ? resolveThemePaint(style?.stroke, theme, accent)
+    const stroke = isAccentThemeRole(strokeRole)
+      ? resolveThemePaint(strokeRole, theme, accent)
       : accent;
-    return { fill: themeBg, stroke };
+    return {
+      fill: `color-mix(in srgb, ${accent} 38%, ${themeBg})`,
+      stroke: accent,
+    };
+  }
+  // GTC skin: any box outlined in an accent color gets a real, saturated,
+  // stage-lit fill (authored `fill: none` is overridden here) instead of
+  // the old chalk convention of leaving accent-bordered boxes unfilled.
+  if (isAccentThemeRole(strokeRole)) {
+    const accent = resolveThemePaint(strokeRole, theme, theme.accent.primary);
+    return {
+      fill: `color-mix(in srgb, ${accent} 32%, ${themeBg})`,
+      stroke: accent,
+    };
   }
   return {
     fill: paintFromStyle(style, "fill", theme, themeBg),
@@ -3564,7 +3592,8 @@ function renderNode(
       themeBg,
       themeStroke,
     );
-    const remappedAccentFill = isAccentThemeRole(node.style?.fill);
+    const remappedAccentFill =
+      isAccentThemeRole(node.style?.fill) || isAccentThemeRole(node.style?.stroke);
     // Outline-only pulses fade opacity; filled content boxes stay opaque and
     // pulse via stroke scale / float (MentalModel overlay parity).
     const pulseOpacity =
@@ -3596,6 +3625,9 @@ function renderNode(
         focusable={false}
         aria-hidden="true"
         style={{
+          filter: remappedAccentFill
+            ? `drop-shadow(0 8px 14px rgba(0, 0, 0, 0.4)) drop-shadow(0 0 8px color-mix(in srgb, ${strokePaint} 45%, transparent))`
+            : "drop-shadow(0 6px 10px rgba(0, 0, 0, 0.3))",
           ...styleToCss(node.style, theme),
           ...pulseFloat,
           ...(pulseOpacity !== undefined ? { opacity: pulseOpacity } : {}),
@@ -3631,10 +3663,21 @@ function renderNode(
         rx={cornerRadiusFromStyle(node.style, 10)}
         fill={fillPaint}
         stroke={strokePaint}
-        strokeWidth={strokeWidthFromStyle(node.style, 1.3) * strokeScale}
+        strokeWidth={
+          strokeWidthFromStyle(
+            node.style,
+            capability === "core.panel" ? 1.6 : 1.3,
+          ) * strokeScale
+        }
         focusable={false}
         aria-hidden="true"
         style={{
+          ...(capability === "core.panel"
+            ? {
+                filter:
+                  "drop-shadow(0 5px 7px rgba(0, 0, 0, 0.32))",
+              }
+            : {}),
           ...styleToCss(node.style, theme),
           ...(chromeEnterOpacity !== undefined
             ? { opacity: chromeEnterOpacity }

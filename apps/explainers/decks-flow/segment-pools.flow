@@ -35,149 +35,136 @@ explainer "Segment Pools" {
     caption: "BUILD → FREEZE → DISPATCH · zero content re-serialize on the hot path."
 
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.header"
-          title: "BUILD · FREEZE · DISPATCH"
-          caption: "BUILD → FREEZE → DISPATCH · zero content re-serialize on the hot path."
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-        },
-        {
-          id: "phases"
-          capability: "core.stepper"
-          steps: ["BUILD", "FREEZE", "DISPATCH"]
-          linked: true
-          layout: { x: 90, y: 70, width: 540, height: 28 }
-          style: { gap: 24 }
-        },
-        {
-          id: "composer"
-          capability: "core.panel"
-          title: "Composer"
-          detail: "intern rows"
-          layout: { x: 30, y: 110, width: 150, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "arrow-composer-pool"
-          capability: "core.route"
-          from: { nodeId: "composer", anchor: "e" }
-          to: { nodeId: "segment-pool", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-        },
-        {
-          id: "segment-pool"
-          capability: "core.panel"
-          title: "SegmentPool"
-          detail: "arena + ids map"
-          layout: { x: 230, y: 100, width: 160, height: 90 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "pool-pulse"
-          capability: "motion.pulse"
-          layout: { x: 230, y: 100, width: 160, height: 90 }
-          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2, opacity: 0.45 }
-          accessibility: { label: "SegmentPool pulse" }
-        },
-        {
-          id: "pool-callout"
-          capability: "core.callout"
-          text: "serialize once"
-          layout: { x: 250, y: 40, width: 120, height: 22 }
-          target: { x: 310, y: 100 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1 }
-        },
-        {
-          id: "arrow-pool-freeze"
-          capability: "core.route"
-          from: { nodeId: "segment-pool", anchor: "e" }
-          to: { nodeId: "freeze", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-        },
-        {
-          id: "freeze"
-          capability: "core.panel"
-          title: ".freeze()"
-          detail: "drop ids"
-          layout: { x: 430, y: 110, width: 110, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "arrow-freeze-dispatch"
-          capability: "core.route"
-          from: { nodeId: "freeze", anchor: "e" }
-          to: { nodeId: "dataset", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.green, strokeWidth: 2.2 }
-        },
-        {
-          id: "dataset"
-          capability: "core.panel"
-          title: "Dataset"
-          detail: "Arc store"
-          layout: { x: 570, y: 90, width: 110, height: 60 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "body-plan"
-          capability: "core.panel"
-          title: "BodyPlan"
-          detail: "precompute"
-          layout: { x: 570, y: 170, width: 110, height: 60 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "materializer"
-          capability: "core.panel"
-          title: "Materializer"
-          detail: "→ Bytes"
-          layout: { x: 570, y: 250, width: 110, height: 60 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "dispatch-bracket"
-          capability: "core.bracket"
-          layout: { x: 555, y: 85, width: 18, height: 230 }
-          side: "left"
-          style: { stroke: @theme.accent.green, strokeWidth: 1.5, fill: "none" }
-          accessibility: { label: "dispatch stack brace" }
-        },
-        {
-          id: "in-memory-store"
-          capability: "core.panel"
-          title: "InMemoryStore"
-          detail: "Box<[Segment]>"
-          layout: { x: 230, y: 250, width: 160, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          from: { nodeId: "composer", anchor: "e" }
-          to: { nodeId: "dataset", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 220, target: "header", action: "enter" },
-        { id: "t-phases", at: 120, duration: 160, action: "stagger", targets: ["phases-step-0", "phases-step-1", "phases-step-2"], step: 80 },
-        { id: "t-callout", at: 280, duration: 200, target: "pool-callout", action: "enter" },
-        { id: "t-composer", at: 400, duration: 280, target: "composer", action: "enter" },
-        { id: "t-arrow1", at: 640, duration: 220, target: "arrow-composer-pool", action: "draw" },
-        { id: "t-pool", at: 800, duration: 300, target: "segment-pool", action: "enter" },
-        { id: "t-pulse", at: 820, duration: 300, target: "pool-pulse", action: "enter" },
-        { id: "t-arrow2", at: 1060, duration: 220, target: "arrow-pool-freeze", action: "draw" },
-        { id: "t-freeze", at: 1220, duration: 280, target: "freeze", action: "enter" },
-        { id: "t-arrow3", at: 1460, duration: 200, target: "arrow-freeze-dispatch", action: "draw" },
-        { id: "t-dispatch-stack", at: 1600, duration: 220, action: "stagger", targets: ["dataset", "body-plan", "materializer"], step: 160 },
-        { id: "t-bracket", at: 1680, duration: 220, target: "dispatch-bracket", action: "draw" },
-        { id: "t-store", at: 2120, duration: 260, target: "in-memory-store", action: "enter" },
-        { id: "t-motion", at: 700, duration: 900, target: "motion-sig", action: "draw" },
-        { id: "t-emphasis", at: 2400, duration: 420, target: "segment-pool", action: "emphasize" }
-      ]
+      sdk.Header(
+        id = "header",
+        title = "BUILD · FREEZE · DISPATCH",
+        caption = "BUILD → FREEZE → DISPATCH · zero content re-serialize on the hot path.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Stepper(
+        id = "phases",
+        steps = ["BUILD", "FREEZE", "DISPATCH"],
+        linked = true,
+        gap = 24,
+        x = 90, y = 95, width = 540, height = 28
+      )
+      sdk.Panel(
+        id = "composer",
+        title = "Composer",
+        detail = "intern rows",
+        x = 30, y = 130, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-composer-pool",
+        mode = "route",
+        from = { nodeId: "composer", anchor: "e" },
+        to = { nodeId: "segment-pool", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "segment-pool",
+        title = "SegmentPool",
+        detail = "arena + ids map",
+        x = 230, y = 120, width = 160, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Callout(
+        id = "pool-callout",
+        text = "serialize once",
+        x = 300, y = 66, width = 120, height = 22,
+        target = { x: 360, y: 95 },
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-pool-freeze",
+        mode = "route",
+        from = { nodeId: "segment-pool", anchor: "e" },
+        to = { nodeId: "freeze", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "freeze",
+        title = ".freeze()",
+        detail = "drop ids",
+        x = 430, y = 130, width = 110, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-freeze-dispatch",
+        mode = "route",
+        from = { nodeId: "freeze", anchor: "e" },
+        to = { nodeId: "dataset", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "dataset",
+        title = "Dataset",
+        detail = "Arc store",
+        x = 570, y = 110, width = 110, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "body-plan",
+        title = "BodyPlan",
+        detail = "precompute",
+        x = 570, y = 190, width = 110, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "materializer",
+        title = "Materializer",
+        detail = "→ Bytes",
+        x = 570, y = 270, width = 110, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Bracket(
+        id = "dispatch-bracket",
+        side = "left",
+        x = 555, y = 105, width = 18, height = 230,
+        strokeRole = theme(accent.green),
+        strokeWidth = 1.5
+      )
+      sdk.Panel(
+        id = "in-memory-store",
+        title = "InMemoryStore",
+        detail = "Box<[Segment]>",
+        x = 230, y = 230, width = 160, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Signal(
+        id = "motion-sig",
+        from = { nodeId: "composer", anchor: "e" },
+        to = { nodeId: "dataset", anchor: "w" },
+        opacity = 0.55,
+        strokeWidth = 2.4,
+        style = { stroke: theme(accent.tertiary) }
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        at 120 stagger targets [phases-step-0, phases-step-1, phases-step-2] step 80 duration 160
+        at 280 reveal pool-callout duration 200
+        at 400 reveal composer duration 280
+        at 640 trace arrow-composer-pool duration 220
+        at 800 reveal segment-pool duration 300
+        at 1060 trace arrow-pool-freeze duration 220
+        at 1220 reveal freeze duration 280
+        at 1460 trace arrow-freeze-dispatch duration 200
+        at 1600 stagger targets [dataset, body-plan, materializer] step 160 duration 220
+        at 1680 reveal dispatch-bracket duration 220
+        at 2120 reveal in-memory-store duration 260
+        at 700 trace motion-sig duration 900
+      }
     }
   }
 
@@ -198,97 +185,95 @@ explainer "Segment Pools" {
     caption: "Same parent chain + same bytes → same Handle."
 
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.header"
-          title: "SEGMENT POOL INTERN"
-          caption: "Same parent chain + same bytes → same Handle."
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-        },
-        {
-          id: "intern"
-          capability: "core.panel"
-          title: "intern(msg)"
-          detail: "parent + bytes"
-          layout: { x: 40, y: 100, width: 160, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "arrow-intern-pool"
-          capability: "core.route"
-          from: { nodeId: "intern", anchor: "e" }
-          to: { nodeId: "pool", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-        },
-        {
-          id: "pool"
-          capability: "core.panel"
-          title: "SegmentPool"
-          detail: "HashMap → Handle"
-          layout: { x: 250, y: 90, width: 200, height: 100 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "arrow-pool-dedup"
-          capability: "core.route"
-          from: { nodeId: "pool", anchor: "e" }
-          to: { nodeId: "dedup", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.green, strokeWidth: 2.2 }
-        },
-        {
-          id: "dedup"
-          capability: "core.panel"
-          title: "dedup hit?"
-          detail: "reuse Handle"
-          layout: { x: 500, y: 100, width: 160, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "h0"
-          capability: "core.panel"
-          title: "H0 system"
-          detail: "shared"
-          layout: { x: 120, y: 240, width: 140, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "h1"
-          capability: "core.panel"
-          title: "H1 user"
-          detail: "shared"
-          layout: { x: 300, y: 240, width: 140, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "h23"
-          capability: "core.panel"
-          title: "H2 / H3"
-          detail: "novel replies"
-          layout: { x: 480, y: 240, width: 140, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          from: { nodeId: "intern", anchor: "e" }
-          to: { nodeId: "dedup", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 220, target: "header", action: "enter" },
-        { id: "t-intern", at: 200, duration: 280, target: "intern", action: "enter" },
-        { id: "t-arrow1", at: 440, duration: 220, target: "arrow-intern-pool", action: "draw" },
-        { id: "t-pool", at: 600, duration: 320, target: "pool", action: "enter" },
-        { id: "t-arrow2", at: 880, duration: 220, target: "arrow-pool-dedup", action: "draw" },
-        { id: "t-dedup", at: 1040, duration: 280, target: "dedup", action: "enter" },
-        { id: "t-handles", at: 1280, duration: 240, action: "stagger", targets: ["h0", "h1", "h23"], step: 160 },
-        { id: "t-motion", at: 700, duration: 900, target: "motion-sig", action: "draw" },
-        { id: "t-emphasis", at: 1900, duration: 420, target: "pool", action: "emphasize" }
-      ]
+      sdk.Header(
+        id = "header",
+        title = "SEGMENT POOL INTERN",
+        caption = "Same parent chain + same bytes → same Handle.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "intern",
+        title = "intern(msg)",
+        detail = "parent + bytes",
+        x = 40, y = 100, width = 160, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-intern-pool",
+        mode = "route",
+        from = { nodeId: "intern", anchor: "e" },
+        to = { nodeId: "pool", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "pool",
+        title = "SegmentPool",
+        detail = "HashMap → Handle",
+        x = 250, y = 90, width = 200, height = 100,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-pool-dedup",
+        mode = "route",
+        from = { nodeId: "pool", anchor: "e" },
+        to = { nodeId: "dedup", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "dedup",
+        title = "dedup hit?",
+        detail = "reuse Handle",
+        x = 500, y = 100, width = 160, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "h0",
+        title = "H0 system",
+        detail = "shared",
+        x = 120, y = 240, width = 140, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "h1",
+        title = "H1 user",
+        detail = "shared",
+        x = 300, y = 240, width = 140, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "h23",
+        title = "H2 / H3",
+        detail = "novel replies",
+        x = 480, y = 240, width = 140, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.orange)
+      )
+      sdk.Signal(
+        id = "motion-sig",
+        from = { nodeId: "intern", anchor: "e" },
+        to = { nodeId: "dedup", anchor: "w" },
+        opacity = 0.55,
+        strokeWidth = 2.4,
+        style = { stroke: theme(accent.tertiary) }
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        at 200 reveal intern duration 280
+        at 440 trace arrow-intern-pool duration 220
+        at 600 reveal pool duration 320
+        at 880 trace arrow-pool-dedup duration 220
+        at 1040 reveal dedup duration 280
+        at 1280 stagger targets [h0, h1, h23] step 160 duration 240
+        at 700 trace motion-sig duration 900
+      }
     }
   }
 
@@ -309,87 +294,85 @@ explainer "Segment Pools" {
     caption: "HASH_VERSION · domain prefix · parent id · payload recipe → SegmentId."
 
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.header"
-          title: "PAYLOAD DOMAINS"
-          caption: "HASH_VERSION · domain prefix · parent id · payload recipe → SegmentId."
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-        },
-        {
-          id: "domain-message"
-          capability: "core.panel"
-          title: "Message"
-          detail: "wire + tokens"
-          layout: { x: 30, y: 110, width: 100, height: 90 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "domain-text"
-          capability: "core.panel"
-          title: "Text"
-          detail: "text-only"
-          layout: { x: 145, y: 110, width: 100, height: 90 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "domain-raw"
-          capability: "core.panel"
-          title: "Raw"
-          detail: "complete body"
-          layout: { x: 260, y: 110, width: 100, height: 90 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "domain-token"
-          capability: "core.panel"
-          title: "TokenIds"
-          detail: "native path"
-          layout: { x: 375, y: 110, width: 100, height: 90 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "domain-media"
-          capability: "core.panel"
-          title: "Media"
-          detail: "multimodal"
-          layout: { x: 490, y: 110, width: 100, height: 90 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "domain-trace"
-          capability: "core.panel"
-          title: "TraceHash"
-          detail: "sim identity"
-          layout: { x: 605, y: 110, width: 100, height: 90 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "hash-recipe"
-          capability: "core.panel"
-          title: "HASH_VERSION + domain + parent id"
-          detail: "blake3 → SegmentId([u8;32])"
-          layout: { x: 150, y: 250, width: 400, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          from: { nodeId: "domain-message", anchor: "s" }
-          to: { nodeId: "hash-recipe", anchor: "n" }
-          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 220, target: "header", action: "enter" },
-        { id: "t-domains", at: 180, duration: 200, action: "stagger", targets: ["domain-message", "domain-text", "domain-raw", "domain-token", "domain-media", "domain-trace"], step: 120 },
-        { id: "t-hash", at: 1000, duration: 320, target: "hash-recipe", action: "enter" },
-        { id: "t-motion", at: 700, duration: 900, target: "motion-sig", action: "draw" },
-        { id: "t-emphasis", at: 1400, duration: 420, target: "hash-recipe", action: "emphasize" }
-      ]
+      sdk.Header(
+        id = "header",
+        title = "PAYLOAD DOMAINS",
+        caption = "HASH_VERSION · domain prefix · parent id · payload recipe → SegmentId.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "domain-message",
+        title = "Message",
+        detail = "wire + tokens",
+        x = 30, y = 110, width = 100, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "domain-text",
+        title = "Text",
+        detail = "text-only",
+        x = 145, y = 110, width = 100, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "domain-raw",
+        title = "Raw",
+        detail = "complete body",
+        x = 260, y = 110, width = 100, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "domain-token",
+        title = "TokenIds",
+        detail = "native path",
+        x = 375, y = 110, width = 100, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "domain-media",
+        title = "Media",
+        detail = "multimodal",
+        x = 490, y = 110, width = 100, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.orange)
+      )
+      sdk.Panel(
+        id = "domain-trace",
+        title = "TraceHash",
+        detail = "sim identity",
+        x = 605, y = 110, width = 100, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.orange)
+      )
+      sdk.Panel(
+        id = "hash-recipe",
+        title = "HASH_VERSION + domain + parent id",
+        detail = "blake3 → SegmentId([u8;32])",
+        x = 150, y = 250, width = 400, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Signal(
+        id = "motion-sig",
+        from = { nodeId: "domain-message", anchor: "s" },
+        to = { nodeId: "hash-recipe", anchor: "n" },
+        opacity = 0.55,
+        strokeWidth = 2.4,
+        style = { stroke: theme(accent.tertiary) }
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        at 180 stagger targets [domain-message, domain-text, domain-raw, domain-token, domain-media, domain-trace] step 120 duration 200
+        at 1000 reveal hash-recipe duration 320
+        at 700 trace motion-sig duration 900
+      }
     }
   }
 
@@ -410,97 +393,95 @@ explainer "Segment Pools" {
     caption: "literals serialize · segment wires clone · Overrides patch the tail."
 
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.header"
-          title: "BODYPLAN SPLICE"
-          caption: "literals serialize · segment wires clone · Overrides patch the tail."
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-        },
-        {
-          id: "plan"
-          capability: "core.panel"
-          title: "BodyPlan"
-          detail: "shape + slots"
-          layout: { x: 40, y: 100, width: 160, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "arrow-plan-mat"
-          capability: "core.route"
-          from: { nodeId: "plan", anchor: "e" }
-          to: { nodeId: "mat", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.2 }
-        },
-        {
-          id: "mat"
-          capability: "core.panel"
-          title: "JsonBodyMaterializer"
-          detail: "walk once"
-          layout: { x: 250, y: 90, width: 200, height: 100 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "arrow-mat-bytes"
-          capability: "core.route"
-          from: { nodeId: "mat", anchor: "e" }
-          to: { nodeId: "bytes", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.green, strokeWidth: 2.2 }
-        },
-        {
-          id: "bytes"
-          capability: "core.panel"
-          title: "Bytes"
-          detail: "wire body"
-          layout: { x: 500, y: 100, width: 160, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "literals"
-          capability: "core.panel"
-          title: "literals"
-          detail: "serde_json"
-          layout: { x: 80, y: 240, width: 160, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "wires"
-          capability: "core.panel"
-          title: "segment wires"
-          detail: "clone Bytes"
-          layout: { x: 280, y: 240, width: 160, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "overrides"
-          capability: "core.panel"
-          title: "Overrides"
-          detail: "stream · limits"
-          layout: { x: 480, y: 240, width: 160, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          from: { nodeId: "plan", anchor: "e" }
-          to: { nodeId: "bytes", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 220, target: "header", action: "enter" },
-        { id: "t-plan", at: 200, duration: 280, target: "plan", action: "enter" },
-        { id: "t-arrow1", at: 440, duration: 220, target: "arrow-plan-mat", action: "draw" },
-        { id: "t-mat", at: 600, duration: 320, target: "mat", action: "enter" },
-        { id: "t-arrow2", at: 880, duration: 220, target: "arrow-mat-bytes", action: "draw" },
-        { id: "t-bytes", at: 1040, duration: 280, target: "bytes", action: "enter" },
-        { id: "t-slots", at: 1280, duration: 240, action: "stagger", targets: ["literals", "wires", "overrides"], step: 160 },
-        { id: "t-motion", at: 700, duration: 900, target: "motion-sig", action: "draw" },
-        { id: "t-emphasis", at: 1900, duration: 420, target: "mat", action: "emphasize" }
-      ]
+      sdk.Header(
+        id = "header",
+        title = "BODYPLAN SPLICE",
+        caption = "literals serialize · segment wires clone · Overrides patch the tail.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "plan",
+        title = "BodyPlan",
+        detail = "shape + slots",
+        x = 40, y = 100, width = 160, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "arrow-plan-mat",
+        mode = "route",
+        from = { nodeId: "plan", anchor: "e" },
+        to = { nodeId: "mat", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "mat",
+        title = "JsonBodyMaterializer",
+        detail = "walk once",
+        x = 250, y = 90, width = 200, height = 100,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "arrow-mat-bytes",
+        mode = "route",
+        from = { nodeId: "mat", anchor: "e" },
+        to = { nodeId: "bytes", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "bytes",
+        title = "Bytes",
+        detail = "wire body",
+        x = 500, y = 100, width = 160, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "literals",
+        title = "literals",
+        detail = "serde_json",
+        x = 80, y = 240, width = 160, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "wires",
+        title = "segment wires",
+        detail = "clone Bytes",
+        x = 280, y = 240, width = 160, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "overrides",
+        title = "Overrides",
+        detail = "stream · limits",
+        x = 480, y = 240, width = 160, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.orange)
+      )
+      sdk.Signal(
+        id = "motion-sig",
+        from = { nodeId: "plan", anchor: "e" },
+        to = { nodeId: "bytes", anchor: "w" },
+        opacity = 0.55,
+        strokeWidth = 2.4,
+        style = { stroke: theme(accent.tertiary) }
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        at 200 reveal plan duration 280
+        at 440 trace arrow-plan-mat duration 220
+        at 600 reveal mat duration 320
+        at 880 trace arrow-mat-bytes duration 220
+        at 1040 reveal bytes duration 280
+        at 1280 stagger targets [literals, wires, overrides] step 160 duration 240
+        at 700 trace motion-sig duration 900
+      }
     }
   }
 
@@ -521,85 +502,80 @@ explainer "Segment Pools" {
     caption: "One shared prefix · many conversation branches by handle."
 
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.header"
-          title: "PREFIX CHAINS"
-          caption: "One shared prefix · many conversation branches by handle."
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-        },
-        {
-          id: "h0"
-          capability: "core.panel"
-          title: "H0 system"
-          detail: "shared once"
-          layout: { x: 40, y: 140, width: 140, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "arrow-h0-h1"
-          capability: "core.route"
-          from: { nodeId: "h0", anchor: "e" }
-          to: { nodeId: "h1", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 2.2 }
-        },
-        {
-          id: "h1"
-          capability: "core.panel"
-          title: "H1 user"
-          detail: "shared once"
-          layout: { x: 220, y: 140, width: 140, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "arrow-h1-branches"
-          capability: "core.fan-out"
-          from: { nodeId: "h1", anchor: "e" }
-          to: [
-            { nodeId: "h2", anchor: "w" },
-            { nodeId: "h3", anchor: "w" }
-          ]
-          axis: "x"
-          style: { fill: "none", stroke: @theme.accent.green, strokeWidth: 2.2 }
-        },
-        {
-          id: "h2"
-          capability: "core.panel"
-          title: "H2 assistant"
-          detail: "C1 \"4\""
-          layout: { x: 460, y: 70, width: 150, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "h3"
-          capability: "core.panel"
-          title: "H3 assistant"
-          detail: "C2 novel"
-          layout: { x: 460, y: 220, width: 150, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "footnote"
-          capability: "core.text"
-          text: "LCP trie / compose parent chains reuse H0·H1"
-          layout: { x: 150, y: 330, width: 400, height: 20 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 220, target: "header", action: "enter" },
-        { id: "t-h0", at: 200, duration: 260, target: "h0", action: "enter" },
-        { id: "t-arrow1", at: 420, duration: 200, target: "arrow-h0-h1", action: "draw" },
-        { id: "t-h1", at: 560, duration: 260, target: "h1", action: "enter" },
-        { id: "t-arrow2", at: 780, duration: 380, target: "arrow-h1-branches", action: "draw" },
-        { id: "t-h2", at: 1080, duration: 240, target: "h2", action: "enter" },
-        { id: "t-h3", at: 1240, duration: 240, target: "h3", action: "enter" },
-        { id: "t-footnote", at: 1460, duration: 200, target: "footnote", action: "enter" },
-        { id: "t-motion", at: 1100, duration: 900, target: "arrow-h1-branches", action: "trace" },
-        { id: "t-emphasis", at: 1700, duration: 420, target: "h1", action: "emphasize" }
-      ]
+      sdk.Header(
+        id = "header",
+        title = "PREFIX CHAINS",
+        caption = "One shared prefix · many conversation branches by handle.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "h0",
+        title = "H0 system",
+        detail = "shared once",
+        x = 40, y = 140, width = 140, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-h0-h1",
+        mode = "route",
+        from = { nodeId: "h0", anchor: "e" },
+        to = { nodeId: "h1", anchor: "w" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "h1",
+        title = "H1 user",
+        detail = "shared once",
+        x = 220, y = 140, width = 140, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.FanOut(
+        id = "arrow-h1-branches",
+        from = { nodeId: "h1", anchor: "e" },
+        to = [{ nodeId: "h2", anchor: "w" }, { nodeId: "h3", anchor: "w" }],
+        axis = "x",
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "h2",
+        title = "H2 assistant",
+        detail = "C1 \"4\"",
+        x = 460, y = 100, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "h3",
+        title = "H3 assistant",
+        detail = "C2 novel",
+        x = 460, y = 220, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Label(
+        id = "footnote",
+        text = "LCP trie / compose parent chains reuse H0·H1",
+        x = 150, y = 330, width = 400, height = 20,
+        fontSize = 12,
+        align = "middle",
+        inkRole = theme(ink.secondary)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        at 200 reveal h0 duration 260
+        at 420 trace arrow-h0-h1 duration 200
+        at 560 reveal h1 duration 260
+        at 780 trace arrow-h1-branches duration 380
+        at 1080 reveal h2 duration 240
+        at 1240 reveal h3 duration 240
+        at 1460 reveal footnote duration 200
+        at 1100 trace arrow-h1-branches duration 900
+      }
     }
   }
 
@@ -620,153 +596,144 @@ explainer "Segment Pools" {
     caption: "Raw → TokenIds → Messages · domain chooses the materializer path."
 
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.header"
-          title: "DISPATCH PRECEDENCE"
-          caption: "Raw → TokenIds → Messages · domain chooses the materializer path."
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-        },
-        {
-          id: "turn-body"
-          capability: "core.panel"
-          title: "Turn.body"
-          detail: "SmallVec handles"
-          layout: { x: 30, y: 140, width: 150, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "arrow-precedence"
-          capability: "core.fan-out"
-          from: { nodeId: "turn-body", anchor: "e" }
-          to: [
-            { nodeId: "raw", anchor: "w" },
-            { nodeId: "token", anchor: "w" },
-            { nodeId: "messages", anchor: "w" }
-          ]
-          axis: "x"
-          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-        },
-        {
-          id: "raw"
-          capability: "core.panel"
-          title: "Raw first?"
-          detail: "complete body"
-          layout: { x: 280, y: 70, width: 170, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "token"
-          capability: "core.panel"
-          title: "TokenIds?"
-          detail: "native / validate"
-          layout: { x: 280, y: 155, width: 170, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "messages"
-          capability: "core.panel"
-          title: "Messages"
-          detail: "format array"
-          layout: { x: 280, y: 240, width: 170, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "arrow-out"
-          capability: "core.route"
-          from: { nodeId: "token", anchor: "e" }
-          to: { nodeId: "out", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.2 }
-        },
-        {
-          id: "out"
-          capability: "core.panel"
-          title: "BodyPlan → Bytes"
-          detail: "domain path"
-          layout: { x: 500, y: 140, width: 160, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-        },
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          from: { nodeId: "token", anchor: "e" }
-          to: { nodeId: "out", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.4, opacity: 0.55, role: "motion" }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 220, target: "header", action: "enter" },
-        { id: "t-turn", at: 200, duration: 280, target: "turn-body", action: "enter" },
-        { id: "t-arrow-raw", at: 440, duration: 440, target: "arrow-precedence", action: "draw" },
-        { id: "t-raw", at: 600, duration: 220, target: "raw", action: "enter" },
-        { id: "t-token", at: 920, duration: 220, target: "token", action: "enter" },
-        { id: "t-messages", at: 1240, duration: 220, target: "messages", action: "enter" },
-        { id: "t-arrow-out", at: 1420, duration: 200, target: "arrow-out", action: "draw" },
-        { id: "t-out", at: 1560, duration: 260, target: "out", action: "enter" },
-        { id: "t-motion", at: 700, duration: 900, target: "arrow-precedence", action: "trace" },
-        { id: "t-emphasis", at: 1860, duration: 420, target: "turn-body", action: "emphasize" }
-      ]
+      sdk.Header(
+        id = "header",
+        title = "DISPATCH PRECEDENCE",
+        caption = "Raw → TokenIds → Messages · domain chooses the materializer path.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "turn-body",
+        title = "Turn.body",
+        detail = "SmallVec handles",
+        x = 30, y = 140, width = 150, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.FanOut(
+        id = "arrow-precedence",
+        from = { nodeId: "turn-body", anchor: "e" },
+        to = [{ nodeId: "raw", anchor: "w" }, { nodeId: "token", anchor: "w" }, { nodeId: "messages", anchor: "w" }],
+        axis = "x",
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "raw",
+        title = "Raw first?",
+        detail = "complete body",
+        x = 280, y = 70, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "token",
+        title = "TokenIds?",
+        detail = "native / validate",
+        x = 280, y = 155, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "messages",
+        title = "Messages",
+        detail = "format array",
+        x = 280, y = 240, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-out",
+        mode = "route",
+        from = { nodeId: "token", anchor: "e" },
+        to = { nodeId: "out", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "out",
+        title = "BodyPlan → Bytes",
+        detail = "domain path",
+        x = 500, y = 140, width = 160, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Signal(
+        id = "motion-sig",
+        from = { nodeId: "token", anchor: "e" },
+        to = { nodeId: "out", anchor: "w" },
+        opacity = 0.55,
+        strokeWidth = 2.4,
+        style = { stroke: theme(accent.tertiary) }
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        at 200 reveal turn-body duration 280
+        at 440 trace arrow-precedence duration 440
+        at 600 reveal raw duration 220
+        at 920 reveal token duration 220
+        at 1240 reveal messages duration 220
+        at 1420 trace arrow-out duration 200
+        at 1560 reveal out duration 260
+        at 700 trace arrow-precedence duration 900
+      }
     }
   }
 
   finalCard: @scene {
-    roots: [
-      {
-        id: "final-hdr"
-        capability: "core.header"
-        title: "Live evidence files"
-        caption: "dataset path"
-        layout: { x: 18, y: 16, width: 664, height: 44 }
-        style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-      },
-      {
-        id: "f1"
-        capability: "core.panel"
-        title: "rust/runtime/src/dataset/segment.rs"
-        detail: "SegmentPool · Handle · SegmentId"
-        layout: { x: 40, y: 78, width: 620, height: 48 }
-        style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-      },
-      {
-        id: "f2"
-        capability: "core.panel"
-        title: "rust/runtime/src/dataset/model.rs"
-        detail: "Turn.body · dispatch_body precedence"
-        layout: { x: 40, y: 136, width: 620, height: 48 }
-        style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-      },
-      {
-        id: "f3"
-        capability: "core.panel"
-        title: "rust/runtime/src/dataset/compose.rs"
-        detail: "cross-format policy · rebase"
-        layout: { x: 40, y: 194, width: 620, height: 48 }
-        style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-      },
-      {
-        id: "f4"
-        capability: "core.panel"
-        title: "rust/runtime/src/body_plan.rs"
-        detail: "BodyPlan · JsonBodyMaterializer"
-        layout: { x: 40, y: 252, width: 620, height: 48 }
-        style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-      },
-      {
-        id: "f5"
-        capability: "core.panel"
-        title: "rust/runtime/src/graph/recorded/trie/"
-        detail: "LCP trie over block hashes"
-        layout: { x: 40, y: 310, width: 620, height: 48 }
-        style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
-      }
-    ]
-    timeline: [
-      { id: "tf-hdr", at: 0, duration: 220, target: "final-hdr", action: "enter" },
-      { id: "tf-rows", at: 200, duration: 220, action: "stagger", targets: ["f1", "f2", "f3", "f4", "f5"], step: 180 },
-      { id: "tf-emph", at: 1200, duration: 400, target: "f1", action: "emphasize" }
-    ]
+    sdk.Header(
+      id = "final-hdr",
+      title = "Live evidence files",
+      caption = "dataset path",
+      x = 18, y = 16, width = 664, height = 44,
+      surfaceRole = theme(surface.secondary),
+      inkRole = theme(ink.secondary)
+    )
+    sdk.Panel(
+      id = "f1",
+      title = "rust/runtime/src/dataset/segment.rs",
+      detail = "SegmentPool · Handle · SegmentId",
+      x = 40, y = 78, width = 620, height = 48,
+      surfaceRole = theme(surface.elevated),
+      strokeRole = theme(accent.secondary)
+    )
+    sdk.Panel(
+      id = "f2",
+      title = "rust/runtime/src/dataset/model.rs",
+      detail = "Turn.body · dispatch_body precedence",
+      x = 40, y = 136, width = 620, height = 48,
+      surfaceRole = theme(surface.elevated),
+      strokeRole = theme(accent.secondary)
+    )
+    sdk.Panel(
+      id = "f3",
+      title = "rust/runtime/src/dataset/compose.rs",
+      detail = "cross-format policy · rebase",
+      x = 40, y = 194, width = 620, height = 48,
+      surfaceRole = theme(surface.elevated),
+      strokeRole = theme(accent.tertiary)
+    )
+    sdk.Panel(
+      id = "f4",
+      title = "rust/runtime/src/body_plan.rs",
+      detail = "BodyPlan · JsonBodyMaterializer",
+      x = 40, y = 252, width = 620, height = 48,
+      surfaceRole = theme(surface.elevated),
+      strokeRole = theme(accent.green)
+    )
+    sdk.Panel(
+      id = "f5",
+      title = "rust/runtime/src/graph/recorded/trie/",
+      detail = "LCP trie over block hashes",
+      x = 40, y = 310, width = 620, height = 48,
+      surfaceRole = theme(surface.elevated),
+      strokeRole = theme(accent.orange)
+    )
+
+    timeline main {
+      at 0 reveal final-hdr duration 220
+      at 200 stagger targets [f1, f2, f3, f4, f5] step 180 duration 220
+    }
   }
 }

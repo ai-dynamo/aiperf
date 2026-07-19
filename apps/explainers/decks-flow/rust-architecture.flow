@@ -34,95 +34,23 @@ explainer "Rust Architecture" {
     ]
     caption: "One executable, two hats: operator CLI and execution child."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.header"
-          title: "ONE BINARY"
-          caption: "cli is entry + engine"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-        },
-        {
-          id: "zone"
-          capability: "core.band"
-          layout: { x: 70, y: 100, width: 560, height: 160 }
-          style: { fill: @theme.surface.secondary, opacity: 0.5 }
-        },
-        {
-          id: "binary"
-          capability: "core.panel"
-          title: "aiperf binary"
-          detail: "cli/src/main.rs"
-          layout: { x: 250, y: 130, width: 200, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "footer"
-          capability: "core.text"
-          text: "public CLI on the outside · execution child on the inside"
-          layout: { x: 50, y: 270, width: 600, height: 24 }
-          style: { fontSize: 13, fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-        {
-          id: "cli-hat"
-          capability: "core.panel"
-          title: "public CLI"
-          detail: "outside"
-          layout: { x: 90, y: 310, width: 180, height: 55 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.4 }
-        },
-        {
-          id: "a1"
-          capability: "core.route"
-          from: { nodeId: "cli-hat", anchor: "e" }
-          to: { nodeId: "engine-hat", anchor: "w" }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
-        },
-        {
-          id: "engine-hat"
-          capability: "core.panel"
-          title: "execution child"
-          detail: "inside"
-          layout: { x: 430, y: 310, width: 180, height: 55 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 70, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 480, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          d: "M170 190 H530"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-zone", at: 80, duration: 200, target: "zone", action: "enter" }
-        { id: "t-binary", at: 280, duration: 360, target: "binary", action: "enter" }
-        { id: "t-footer", at: 560, duration: 280, target: "footer", action: "enter" }
-        { id: "t-cli", at: 760, duration: 280, target: "cli-hat", action: "enter" }
-        { id: "t-a1", at: 980, duration: 320, target: "a1", action: "draw" }
-        { id: "t-engine", at: 1200, duration: 280, target: "engine-hat", action: "enter" }
-        { id: "t-pulse-a", at: 1500, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1680, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1580, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2500, duration: 480, target: "binary", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "ONE BINARY", caption = "cli is entry + engine", x = 18, y = 16, width = 664, height = 44, surfaceRole = "@theme.surface.secondary")
+      sdk.Panel(id = "binary", title = "aiperf binary", detail = "cli/src/main.rs", x = 250, y = 70, width = 200, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Label(id = "footer", text = "public CLI on the outside · execution child on the inside", x = 50, y = 210, width = 600, height = 24, fontSize = 13, align = "middle", inkRole = "@theme.ink.secondary")
+      sdk.Panel(id = "cli-hat", title = "public CLI", detail = "outside", x = 90, y = 240, width = 180, height = 55, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a1", mode = "route", from = { nodeId: "cli-hat", anchor: "e" }, to = { nodeId: "engine-hat", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none" })
+      sdk.Panel(id = "engine-hat", title = "execution child", detail = "inside", x = 430, y = 240, width = 180, height = 55, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Signal(id = "motion-sig", path = "M170 120 H530", x = 0, y = 0, width = 700, height = 400, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 80 reveal binary duration 360
+        at 560 reveal footer duration 280
+        at 760 reveal cli-hat duration 280
+        at 980 trace a1 duration 320
+        at 1200 reveal engine-hat duration 280
+        at 1580 trace motion-sig duration 1100
+        at 2500 reveal binary duration 480
+      }
     }
   }
   slide "Workspace map" {
@@ -141,111 +69,25 @@ explainer "Rust Architecture" {
     ]
     caption: "cli → runtime → loadgen-core"
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "WORKSPACE CRATES"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "cli → runtime → loadgen-core"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "cli"
-          capability: "core.panel"
-          title: "aiperf-cli"
-          detail: "commands + execute"
-          layout: { x: 60, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-        },
-        {
-          id: "a1"
-          capability: "core.connector"
-          from: { nodeId: "cli", anchor: "e" }
-          to: { nodeId: "runtime", anchor: "w" }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "runtime"
-          capability: "core.panel"
-          title: "aiperf-runtime"
-          detail: "engine + transports"
-          layout: { x: 250, y: 130, width: 170, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "a2"
-          capability: "core.connector"
-          from: { nodeId: "runtime", anchor: "e" }
-          to: { nodeId: "loadgen", anchor: "w" }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "loadgen"
-          capability: "core.panel"
-          title: "loadgen-core"
-          detail: "observer seam"
-          layout: { x: 460, y: 130, width: 180, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-        },
-        {
-          id: "mock"
-          capability: "core.panel"
-          title: "mock-server"
-          detail: "separate target"
-          layout: { x: 520, y: 280, width: 120, height: 58 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 78, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 474, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          from: { nodeId: "cli", anchor: "e" }
-          to: { nodeId: "loadgen", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-cli", at: 280, duration: 320, target: "cli", action: "enter" }
-        { id: "t-a1", at: 520, duration: 280, target: "a1", action: "draw" }
-        { id: "t-runtime", at: 720, duration: 320, target: "runtime", action: "enter" }
-        { id: "t-a2", at: 960, duration: 280, target: "a2", action: "draw" }
-        { id: "t-loadgen", at: 1160, duration: 320, target: "loadgen", action: "enter" }
-        { id: "t-mock", at: 1400, duration: 300, target: "mock", action: "enter" }
-        { id: "t-pulse-a", at: 1700, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1880, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1780, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2700, duration: 480, target: "runtime", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "WORKSPACE CRATES", caption = "cli \u2192 runtime \u2192 loadgen-core", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "cli", title = "aiperf-cli", detail = "commands + execute", x = 60, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "cli", anchor: "e" }, to = { nodeId: "runtime", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "runtime", title = "aiperf-runtime", detail = "engine + transports", x = 250, y = 130, width = 170, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "runtime", anchor: "e" }, to = { nodeId: "loadgen", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "loadgen", title = "loadgen-core", detail = "observer seam", x = 460, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "mock", title = "mock-server", detail = "separate target", x = 520, y = 280, width = 120, height = 58, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Signal(id = "motion-sig", from = { nodeId: "cli", anchor: "e" }, to = { nodeId: "loadgen", anchor: "w" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal cli duration 320
+        at 520 trace a1 duration 280
+        at 720 reveal runtime duration 320
+        at 960 trace a2 duration 280
+        at 1160 reveal loadgen duration 320
+        at 1400 reveal mock duration 300
+        at 1780 trace motion-sig duration 1100
+        at 2700 reveal runtime duration 480
+      }
     }
   }
   slide "Startup order" {
@@ -264,102 +106,23 @@ explainer "Rust Architecture" {
     ]
     caption: "Hidden modes short-circuit; public commands fall through."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "STARTUP ORDER"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "execute_mode before dispatch"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "logging"
-          capability: "core.panel"
-          title: "logging"
-          detail: "startup"
-          layout: { x: 70, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "a1"
-          capability: "core.connector"
-          from: { nodeId: "logging", anchor: "e" }
-          to: { nodeId: "execute", anchor: "w" }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "execute"
-          capability: "core.panel"
-          title: "execute_mode?"
-          detail: "hidden argv"
-          layout: { x: 260, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-        },
-        {
-          id: "a2"
-          capability: "core.connector"
-          from: { nodeId: "execute", anchor: "e" }
-          to: { nodeId: "dispatch", anchor: "w" }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "dispatch"
-          capability: "core.panel"
-          title: "dispatch::run"
-          detail: "startup"
-          layout: { x: 450, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 86, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 468, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          from: { nodeId: "logging", anchor: "e" }
-          to: { nodeId: "dispatch", anchor: "w" }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-logging", at: 280, duration: 320, target: "logging", action: "enter" }
-        { id: "t-a1", at: 520, duration: 280, target: "a1", action: "draw" }
-        { id: "t-execute", at: 720, duration: 360, target: "execute", action: "enter" }
-        { id: "t-a2", at: 1000, duration: 280, target: "a2", action: "draw" }
-        { id: "t-dispatch", at: 1200, duration: 320, target: "dispatch", action: "enter" }
-        { id: "t-pulse-a", at: 1600, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1780, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1680, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2600, duration: 480, target: "execute", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "STARTUP ORDER", caption = "execute_mode before dispatch", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "logging", title = "logging", detail = "startup", x = 70, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "logging", anchor: "e" }, to = { nodeId: "execute", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "execute", title = "execute_mode?", detail = "hidden argv", x = 260, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
+      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "execute", anchor: "e" }, to = { nodeId: "dispatch", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "dispatch", title = "dispatch::run", detail = "startup", x = 450, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Signal(id = "motion-sig", from = { nodeId: "logging", anchor: "e" }, to = { nodeId: "dispatch", anchor: "w" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal logging duration 320
+        at 520 trace a1 duration 280
+        at 720 reveal execute duration 360
+        at 1000 trace a2 duration 280
+        at 1200 reveal dispatch duration 320
+        at 1680 trace motion-sig duration 1100
+        at 2600 reveal execute duration 480
+      }
     }
   }
   slide "Command surface" {
@@ -378,93 +141,21 @@ explainer "Rust Architecture" {
     ]
     caption: "Benchmark hot path native; extended surface delegated."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "COMMAND DISPATCH"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "native profile/config/cell"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "native"
-          capability: "core.panel"
-          title: "Native commands"
-          detail: "profile · config · cell"
-          layout: { x: 70, y: 120, width: 220, height: 110 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "split"
-          capability: "core.connector"
-          from: { nodeId: "native", anchor: "e" }
-          to: { nodeId: "delegated", anchor: "w" }
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2 }
-        },
-        {
-          id: "delegated"
-          capability: "core.panel"
-          title: "Delegated commands"
-          detail: "python -m aiperf"
-          layout: { x: 410, y: 120, width: 220, height: 110 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.orange, strokeWidth: 1.8 }
-        },
-        {
-          id: "footer"
-          capability: "core.text"
-          text: "dispatch.rs chooses the path from argv[0]"
-          layout: { x: 50, y: 280, width: 600, height: 24 }
-          style: { fontSize: 13, fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 94, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 462, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          d: "M110 190 H590"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-native", at: 280, duration: 360, target: "native", action: "enter" }
-        { id: "t-split", at: 560, duration: 280, target: "split", action: "draw" }
-        { id: "t-delegated", at: 760, duration: 360, target: "delegated", action: "enter" }
-        { id: "t-footer", at: 1040, duration: 300, target: "footer", action: "enter" }
-        { id: "t-pulse-a", at: 1400, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1580, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1480, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2400, duration: 480, target: "native", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "COMMAND DISPATCH", caption = "native profile/config/cell", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "native", title = "Native commands", detail = "profile · config · cell", x = 70, y = 120, width = 220, height = 110, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "split", mode = "connector", from = { nodeId: "native", anchor: "e" }, to = { nodeId: "delegated", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Panel(id = "delegated", title = "Delegated commands", detail = "python -m aiperf", x = 410, y = 120, width = 220, height = 110, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.orange")
+      sdk.Label(id = "footer", text = "dispatch.rs chooses the path from argv[0]", x = 50, y = 280, width = 600, height = 24, fontSize = 13, align = "middle", inkRole = "@theme.ink.secondary")
+      sdk.Signal(id = "motion-sig", path = "M110 190 H590", x = 0, y = 0, width = 700, height = 400, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal native duration 360
+        at 560 trace split duration 280
+        at 760 reveal delegated duration 360
+        at 1040 reveal footer duration 300
+        at 1480 trace motion-sig duration 1100
+        at 2400 reveal native duration 480
+      }
     }
   }
   slide "Configuration" {
@@ -483,102 +174,23 @@ explainer "Rust Architecture" {
     ]
     caption: "YAML in → validated BenchmarkRun out."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "CONFIG V2"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "BenchmarkRun wire object"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "yaml"
-          capability: "core.panel"
-          title: "benchmark.yaml"
-          detail: "Config v2"
-          layout: { x: 50, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "a1"
-          capability: "core.connector"
-          from: { nodeId: "yaml", anchor: "e" }
-          to: { nodeId: "load", anchor: "w" }
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2 }
-        },
-        {
-          id: "load"
-          capability: "core.panel"
-          title: "yaml + load"
-          detail: "expand + validate"
-          layout: { x: 250, y: 130, width: 170, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-        },
-        {
-          id: "a2"
-          capability: "core.connector"
-          from: { nodeId: "load", anchor: "e" }
-          to: { nodeId: "run", anchor: "w" }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "run"
-          capability: "core.panel"
-          title: "BenchmarkRun"
-          detail: "typed wire object"
-          layout: { x: 470, y: 130, width: 180, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 102, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 456, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          d: "M130 190 H570"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-yaml", at: 280, duration: 320, target: "yaml", action: "enter" }
-        { id: "t-a1", at: 520, duration: 280, target: "a1", action: "draw" }
-        { id: "t-load", at: 720, duration: 320, target: "load", action: "enter" }
-        { id: "t-a2", at: 960, duration: 280, target: "a2", action: "draw" }
-        { id: "t-run", at: 1160, duration: 360, target: "run", action: "enter" }
-        { id: "t-pulse-a", at: 1600, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1780, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1680, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2600, duration: 480, target: "run", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "CONFIG V2", caption = "BenchmarkRun wire object", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "yaml", title = "benchmark.yaml", detail = "Config v2", x = 50, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "yaml", anchor: "e" }, to = { nodeId: "load", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Panel(id = "load", title = "yaml + load", detail = "expand + validate", x = 250, y = 130, width = 170, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "load", anchor: "e" }, to = { nodeId: "run", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "run", title = "BenchmarkRun", detail = "typed wire object", x = 470, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Signal(id = "motion-sig", path = "M130 190 H570", x = 0, y = 0, width = 700, height = 400, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal yaml duration 320
+        at 520 trace a1 duration 280
+        at 720 reveal load duration 320
+        at 960 trace a2 duration 280
+        at 1160 reveal run duration 360
+        at 1680 trace motion-sig duration 1100
+        at 2600 reveal run duration 480
+      }
     }
   }
   slide "Self execution" {
@@ -597,102 +209,23 @@ explainer "Rust Architecture" {
     ]
     caption: "Same binary, new process, protocol on stdio."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "SELF EXECUTE"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "spawn current_exe()"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "parent"
-          capability: "core.panel"
-          title: "profile parent"
-          detail: "operator process"
-          layout: { x: 70, y: 130, width: 170, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-        },
-        {
-          id: "a1"
-          capability: "core.connector"
-          from: { nodeId: "parent", anchor: "e" }
-          to: { nodeId: "spawn", anchor: "w" }
-          style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
-        },
-        {
-          id: "spawn"
-          capability: "core.panel"
-          title: "spawn child"
-          detail: "current_exe()"
-          layout: { x: 290, y: 130, width: 170, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-        },
-        {
-          id: "a2"
-          capability: "core.connector"
-          from: { nodeId: "spawn", anchor: "e" }
-          to: { nodeId: "execute", anchor: "w" }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "execute"
-          capability: "core.panel"
-          title: "--execute"
-          detail: "stdio JSON"
-          layout: { x: 510, y: 130, width: 120, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 110, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 450, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          d: "M150 190 H550"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-parent", at: 280, duration: 320, target: "parent", action: "enter" }
-        { id: "t-a1", at: 520, duration: 280, target: "a1", action: "draw" }
-        { id: "t-spawn", at: 720, duration: 320, target: "spawn", action: "enter" }
-        { id: "t-a2", at: 960, duration: 280, target: "a2", action: "draw" }
-        { id: "t-execute", at: 1160, duration: 360, target: "execute", action: "enter" }
-        { id: "t-pulse-a", at: 1600, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1780, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1680, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2600, duration: 480, target: "spawn", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "SELF EXECUTE", caption = "spawn current_exe()", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "parent", title = "profile parent", detail = "operator process", x = 70, y = 130, width = 170, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "parent", anchor: "e" }, to = { nodeId: "spawn", anchor: "w" }, style = { stroke: "@theme.accent.warning", strokeWidth: 2.2 })
+      sdk.Panel(id = "spawn", title = "spawn child", detail = "current_exe()", x = 290, y = 130, width = 170, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
+      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "spawn", anchor: "e" }, to = { nodeId: "execute", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "execute", title = "--execute", detail = "stdio JSON", x = 510, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Signal(id = "motion-sig", path = "M150 190 H550", x = 0, y = 0, width = 700, height = 400, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal parent duration 320
+        at 520 trace a1 duration 280
+        at 720 reveal spawn duration 320
+        at 960 trace a2 duration 280
+        at 1160 reveal execute duration 360
+        at 1680 trace motion-sig duration 1100
+        at 2600 reveal spawn duration 480
+      }
     }
   }
   slide "Wire contract" {
@@ -711,102 +244,23 @@ explainer "Rust Architecture" {
     ]
     caption: "Envelope v2 in → terminal envelope out."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "PROTOCOL V2"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "Application::handle_v2"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "envelope"
-          capability: "core.panel"
-          title: "Envelope v2"
-          detail: "protocol boundary"
-          layout: { x: 90, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "a1"
-          capability: "core.connector"
-          from: { nodeId: "envelope", anchor: "e" }
-          to: { nodeId: "app", anchor: "w" }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "app"
-          capability: "core.panel"
-          title: "Application"
-          detail: "stock composition"
-          layout: { x: 290, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "a2"
-          capability: "core.connector"
-          from: { nodeId: "app", anchor: "e" }
-          to: { nodeId: "terminal", anchor: "w" }
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-        },
-        {
-          id: "terminal"
-          capability: "core.panel"
-          title: "terminal"
-          detail: "JSONL out"
-          layout: { x: 490, y: 130, width: 120, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 118, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 444, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          d: "M170 190 H530"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-envelope", at: 280, duration: 320, target: "envelope", action: "enter" }
-        { id: "t-a1", at: 520, duration: 280, target: "a1", action: "draw" }
-        { id: "t-app", at: 720, duration: 360, target: "app", action: "enter" }
-        { id: "t-a2", at: 1000, duration: 280, target: "a2", action: "draw" }
-        { id: "t-terminal", at: 1200, duration: 320, target: "terminal", action: "enter" }
-        { id: "t-pulse-a", at: 1600, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1780, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1680, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2600, duration: 480, target: "app", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "PROTOCOL V2", caption = "Application::handle_v2", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "envelope", title = "Envelope v2", detail = "protocol boundary", x = 90, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "envelope", anchor: "e" }, to = { nodeId: "app", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "app", title = "Application", detail = "stock composition", x = 290, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "app", anchor: "e" }, to = { nodeId: "terminal", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Panel(id = "terminal", title = "terminal", detail = "JSONL out", x = 490, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Signal(id = "motion-sig", path = "M170 190 H530", x = 0, y = 0, width = 700, height = 400, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal envelope duration 320
+        at 520 trace a1 duration 280
+        at 720 reveal app duration 360
+        at 1000 trace a2 duration 280
+        at 1200 reveal terminal duration 320
+        at 1680 trace motion-sig duration 1100
+        at 2600 reveal app duration 480
+      }
     }
   }
   slide "Bootstrap" {
@@ -825,111 +279,29 @@ explainer "Rust Architecture" {
     ]
     caption: "Capabilities are frozen before the first request."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "REGISTRY BOOTSTRAP"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "frozen capabilities"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "registry"
-          capability: "core.panel"
-          title: "AIPerfRegistry"
-          detail: "transactional build"
-          layout: { x: 250, y: 90, width: 200, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "loaders"
-          capability: "core.panel"
-          title: "loaders"
-          detail: "registered"
-          layout: { x: 80, y: 220, width: 110, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "samplers"
-          capability: "core.panel"
-          title: "samplers"
-          detail: "registered"
-          layout: { x: 220, y: 220, width: 110, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "endpoints"
-          capability: "core.panel"
-          title: "endpoints"
-          detail: "registered"
-          layout: { x: 360, y: 220, width: 110, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "registry-fan"
-          capability: "core.fan-out"
-          from: { nodeId: "registry", anchor: "s" }
-          to: [
+      sdk.Header(id = "header", title = "REGISTRY BOOTSTRAP", caption = "frozen capabilities", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "registry", title = "AIPerfRegistry", detail = "transactional build", x = 250, y = 90, width = 200, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "loaders", title = "loaders", detail = "registered", x = 80, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "samplers", title = "samplers", detail = "registered", x = 220, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "endpoints", title = "endpoints", detail = "registered", x = 360, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.FanOut(id = "registry-fan", from = { nodeId: "registry", anchor: "s" }, to = [
             { nodeId: "loaders", anchor: "n" },
             { nodeId: "samplers", anchor: "n" },
             { nodeId: "endpoints", anchor: "n" },
             { nodeId: "transports", anchor: "n" }
-          ]
-          axis: "y"
-          junction: { x: 350, y: 190 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2 }
-        },
-        {
-          id: "transports"
-          capability: "core.panel"
-          title: "transports"
-          detail: "registered"
-          layout: { x: 500, y: 220, width: 110, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 126, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 438, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-registry", at: 280, duration: 360, target: "registry", action: "enter" }
-        { id: "t-registry-fan", at: 560, duration: 900, target: "registry-fan", action: "draw" }
-        { id: "t-loaders", at: 760, duration: 260, target: "loaders", action: "enter" }
-        { id: "t-samplers", at: 1060, duration: 260, target: "samplers", action: "enter" }
-        { id: "t-endpoints", at: 1360, duration: 260, target: "endpoints", action: "enter" }
-        { id: "t-transports", at: 1660, duration: 260, target: "transports", action: "enter" }
-        { id: "t-pulse-a", at: 2000, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 2180, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 2080, duration: 1100, target: "registry-fan", action: "trace" }
-        { id: "t-emphasis", at: 3000, duration: 480, target: "registry", action: "emphasis" }
-      ]
+          ], axis = "y", junction = { x: 350, y: 190 }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2 })
+      sdk.Panel(id = "transports", title = "transports", detail = "registered", x = 500, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal registry duration 360
+        at 560 trace registry-fan duration 900
+        at 760 reveal loaders duration 260
+        at 1060 reveal samplers duration 260
+        at 1360 reveal endpoints duration 260
+        at 1660 reveal transports duration 260
+        at 2080 trace registry-fan duration 1100
+        at 3000 reveal registry duration 480
+      }
     }
   }
   slide "Composition root" {
@@ -948,119 +320,27 @@ explainer "Rust Architecture" {
     ]
     caption: "One coordinator owns the whole run lifecycle."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "COORDINATOR"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "validate → prepare → execute"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "validate"
-          capability: "core.panel"
-          title: "validate"
-          detail: "coordinator"
-          layout: { x: 40, y: 130, width: 130, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "a1"
-          capability: "core.line"
-          from: { x: 170, y: 178 }
-          to: { x: 200, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "prepare"
-          capability: "core.panel"
-          title: "prepare"
-          detail: "coordinator"
-          layout: { x: 200, y: 130, width: 130, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "a2"
-          capability: "core.line"
-          from: { x: 330, y: 178 }
-          to: { x: 360, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "execute"
-          capability: "core.panel"
-          title: "execute"
-          detail: "coordinator"
-          layout: { x: 360, y: 130, width: 130, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "a3"
-          capability: "core.line"
-          from: { x: 490, y: 178 }
-          to: { x: 520, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "persist"
-          capability: "core.panel"
-          title: "persist"
-          detail: "coordinator"
-          layout: { x: 520, y: 130, width: 130, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 134, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 432, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          d: "M210 190 H490"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-validate", at: 280, duration: 300, target: "validate", action: "enter" }
-        { id: "t-a1", at: 500, duration: 240, target: "a1", action: "draw" }
-        { id: "t-prepare", at: 660, duration: 300, target: "prepare", action: "enter" }
-        { id: "t-a2", at: 880, duration: 240, target: "a2", action: "draw" }
-        { id: "t-execute", at: 1040, duration: 300, target: "execute", action: "enter" }
-        { id: "t-a3", at: 1260, duration: 240, target: "a3", action: "draw" }
-        { id: "t-persist", at: 1420, duration: 300, target: "persist", action: "enter" }
-        { id: "t-pulse-a", at: 1800, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1980, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1880, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2800, duration: 480, target: "execute", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "COORDINATOR", caption = "validate \u2192 prepare \u2192 execute", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "validate", title = "validate", detail = "coordinator", x = 40, y = 130, width = 130, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a1", mode = "line", from = { x: 170, y: 178 }, to = { x: 200, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "prepare", title = "prepare", detail = "coordinator", x = 200, y = 130, width = 130, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a2", mode = "line", from = { x: 330, y: 178 }, to = { x: 360, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "execute", title = "execute", detail = "coordinator", x = 360, y = 130, width = 130, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a3", mode = "line", from = { x: 490, y: 178 }, to = { x: 520, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "persist", title = "persist", detail = "coordinator", x = 520, y = 130, width = 130, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Signal(id = "motion-sig", path = "M210 190 H490", x = 0, y = 0, width = 700, height = 400, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal validate duration 300
+        at 500 trace a1 duration 240
+        at 660 reveal prepare duration 300
+        at 880 trace a2 duration 240
+        at 1040 reveal execute duration 300
+        at 1260 trace a3 duration 240
+        at 1420 reveal persist duration 300
+        at 1880 trace motion-sig duration 1100
+        at 2800 reveal execute duration 480
+      }
     }
   }
   slide "Time seam" {
@@ -1079,93 +359,21 @@ explainer "Rust Architecture" {
     ]
     caption: "Real time online, virtual time in simulation."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "CLOCK SEAM"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "RealClock / SimClock"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "real"
-          capability: "core.panel"
-          title: "RealClock"
-          detail: "HTTP / gRPC online"
-          layout: { x: 120, y: 130, width: 180, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-        },
-        {
-          id: "split"
-          capability: "core.line"
-          from: { x: 300, y: 178 }
-          to: { x: 400, y: 178 }
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-        },
-        {
-          id: "sim"
-          capability: "core.panel"
-          title: "SimClock"
-          detail: "dynosim + graph"
-          layout: { x: 400, y: 130, width: 180, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-        },
-        {
-          id: "footer"
-          capability: "core.text"
-          text: "scheduling, backoff, and measurement all route through Clock"
-          layout: { x: 50, y: 280, width: 600, height: 24 }
-          style: { fontSize: 13, fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 142, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 426, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          d: "M230 190 H470"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-real", at: 280, duration: 340, target: "real", action: "enter" }
-        { id: "t-split", at: 540, duration: 280, target: "split", action: "draw" }
-        { id: "t-sim", at: 740, duration: 340, target: "sim", action: "enter" }
-        { id: "t-footer", at: 1000, duration: 300, target: "footer", action: "enter" }
-        { id: "t-pulse-a", at: 1400, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1580, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1480, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2400, duration: 480, target: "real", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "CLOCK SEAM", caption = "RealClock / SimClock", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "real", title = "RealClock", detail = "HTTP / gRPC online", x = 120, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "split", mode = "line", from = { x: 300, y: 178 }, to = { x: 400, y: 178 }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Panel(id = "sim", title = "SimClock", detail = "dynosim + graph", x = 400, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Label(id = "footer", text = "scheduling, backoff, and measurement all route through Clock", x = 50, y = 280, width = 600, height = 24, fontSize = 13, align = "middle", inkRole = "@theme.ink.secondary")
+      sdk.Signal(id = "motion-sig", path = "M230 190 H470", x = 0, y = 0, width = 700, height = 400, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal real duration 340
+        at 540 trace split duration 280
+        at 740 reveal sim duration 340
+        at 1000 reveal footer duration 300
+        at 1480 trace motion-sig duration 1100
+        at 2400 reveal real duration 480
+      }
     }
   }
   slide "Inputs" {
@@ -1184,119 +392,27 @@ explainer "Rust Architecture" {
     ]
     caption: "Inputs become endpoint-ready requests once, then reuse handles."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "DATASET PIPELINE"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "load → sample → materialize"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "load"
-          capability: "core.panel"
-          title: "load"
-          detail: "dataset"
-          layout: { x: 40, y: 130, width: 120, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "a1"
-          capability: "core.line"
-          from: { x: 160, y: 178 }
-          to: { x: 190, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "compose"
-          capability: "core.panel"
-          title: "compose"
-          detail: "dataset"
-          layout: { x: 190, y: 130, width: 120, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "a2"
-          capability: "core.line"
-          from: { x: 310, y: 178 }
-          to: { x: 340, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "sample"
-          capability: "core.panel"
-          title: "sample"
-          detail: "dataset"
-          layout: { x: 340, y: 130, width: 120, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "a3"
-          capability: "core.line"
-          from: { x: 460, y: 178 }
-          to: { x: 490, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "materialize"
-          capability: "core.panel"
-          title: "materialize"
-          detail: "dataset"
-          layout: { x: 490, y: 130, width: 120, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 150, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 420, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          d: "M250 190 H450"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-load", at: 280, duration: 300, target: "load", action: "enter" }
-        { id: "t-a1", at: 500, duration: 240, target: "a1", action: "draw" }
-        { id: "t-compose", at: 660, duration: 300, target: "compose", action: "enter" }
-        { id: "t-a2", at: 880, duration: 240, target: "a2", action: "draw" }
-        { id: "t-sample", at: 1040, duration: 300, target: "sample", action: "enter" }
-        { id: "t-a3", at: 1260, duration: 240, target: "a3", action: "draw" }
-        { id: "t-materialize", at: 1420, duration: 300, target: "materialize", action: "enter" }
-        { id: "t-pulse-a", at: 1800, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1980, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1880, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2800, duration: 480, target: "materialize", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "DATASET PIPELINE", caption = "load \u2192 sample \u2192 materialize", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "load", title = "load", detail = "dataset", x = 40, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a1", mode = "line", from = { x: 160, y: 178 }, to = { x: 190, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "compose", title = "compose", detail = "dataset", x = 190, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a2", mode = "line", from = { x: 310, y: 178 }, to = { x: 340, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "sample", title = "sample", detail = "dataset", x = 340, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a3", mode = "line", from = { x: 460, y: 178 }, to = { x: 490, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "materialize", title = "materialize", detail = "dataset", x = 490, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Signal(id = "motion-sig", path = "M250 190 H450", x = 0, y = 0, width = 700, height = 400, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal load duration 300
+        at 500 trace a1 duration 240
+        at 660 reveal compose duration 300
+        at 880 trace a2 duration 240
+        at 1040 reveal sample duration 300
+        at 1260 trace a3 duration 240
+        at 1420 reveal materialize duration 300
+        at 1880 trace motion-sig duration 1100
+        at 2800 reveal materialize duration 480
+      }
     }
   }
   slide "Work generation" {
@@ -1315,102 +431,23 @@ explainer "Rust Architecture" {
     ]
     caption: "Scheduling decides when; transport decides how to send."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "WORKLOAD + PHASES"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "scheduled + phase_runtime"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "workload"
-          capability: "core.panel"
-          title: "Workload"
-          detail: "request-rate / graph"
-          layout: { x: 80, y: 120, width: 180, height: 110 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-        },
-        {
-          id: "a1"
-          capability: "core.line"
-          from: { x: 260, y: 175 }
-          to: { x: 310, y: 175 }
-          style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
-        },
-        {
-          id: "phase"
-          capability: "core.panel"
-          title: "phase_runtime"
-          detail: "warmup · drain"
-          layout: { x: 310, y: 120, width: 180, height: 110 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-        },
-        {
-          id: "a2"
-          capability: "core.line"
-          from: { x: 490, y: 175 }
-          to: { x: 540, y: 175 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "turns"
-          capability: "core.panel"
-          title: "Turns"
-          detail: "dispatch"
-          layout: { x: 540, y: 120, width: 90, height: 110 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 158, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 414, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          d: "M270 190 H430"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-workload", at: 280, duration: 340, target: "workload", action: "enter" }
-        { id: "t-a1", at: 540, duration: 280, target: "a1", action: "draw" }
-        { id: "t-phase", at: 740, duration: 340, target: "phase", action: "enter" }
-        { id: "t-a2", at: 1000, duration: 280, target: "a2", action: "draw" }
-        { id: "t-turns", at: 1200, duration: 340, target: "turns", action: "enter" }
-        { id: "t-pulse-a", at: 1600, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1780, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1680, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2600, duration: 480, target: "phase", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "WORKLOAD + PHASES", caption = "scheduled + phase_runtime", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "workload", title = "Workload", detail = "request-rate / graph", x = 80, y = 120, width = 180, height = 110, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a1", mode = "line", from = { x: 260, y: 175 }, to = { x: 310, y: 175 }, style = { stroke: "@theme.accent.warning", strokeWidth: 2.2 })
+      sdk.Panel(id = "phase", title = "phase_runtime", detail = "warmup · drain", x = 310, y = 120, width = 180, height = 110, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
+      sdk.Edge(id = "a2", mode = "line", from = { x: 490, y: 175 }, to = { x: 540, y: 175 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "turns", title = "Turns", detail = "dispatch", x = 540, y = 120, width = 90, height = 110, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Signal(id = "motion-sig", path = "M270 190 H430", x = 0, y = 0, width = 700, height = 400, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal workload duration 340
+        at 540 trace a1 duration 280
+        at 740 reveal phase duration 340
+        at 1000 trace a2 duration 280
+        at 1200 reveal turns duration 340
+        at 1680 trace motion-sig duration 1100
+        at 2600 reveal phase duration 480
+      }
     }
   }
   slide "Observation seam" {
@@ -1429,102 +466,23 @@ explainer "Rust Architecture" {
     ]
     caption: "Transport sends; observer measures; sink owns the lifecycle."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "OBSERVER SEAM"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "RequestSink + Observer"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "dispatcher"
-          capability: "core.panel"
-          title: "TurnDispatcher"
-          detail: "scheduler side"
-          layout: { x: 70, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-        },
-        {
-          id: "a1"
-          capability: "core.line"
-          from: { x: 220, y: 178 }
-          to: { x: 270, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "sink"
-          capability: "core.panel"
-          title: "RequestSink"
-          detail: "transport side"
-          layout: { x: 270, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "a2"
-          capability: "core.line"
-          from: { x: 420, y: 178 }
-          to: { x: 470, y: 178 }
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-        },
-        {
-          id: "observer"
-          capability: "core.panel"
-          title: "RequestObserver"
-          detail: "measurement"
-          layout: { x: 470, y: 130, width: 160, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 166, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 408, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          d: "M290 190 H410"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-dispatcher", at: 280, duration: 320, target: "dispatcher", action: "enter" }
-        { id: "t-a1", at: 520, duration: 280, target: "a1", action: "draw" }
-        { id: "t-sink", at: 720, duration: 320, target: "sink", action: "enter" }
-        { id: "t-a2", at: 960, duration: 280, target: "a2", action: "draw" }
-        { id: "t-observer", at: 1160, duration: 320, target: "observer", action: "enter" }
-        { id: "t-pulse-a", at: 1600, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1780, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1680, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2600, duration: 480, target: "sink", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "OBSERVER SEAM", caption = "RequestSink + Observer", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "dispatcher", title = "TurnDispatcher", detail = "scheduler side", x = 70, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a1", mode = "line", from = { x: 220, y: 178 }, to = { x: 270, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "sink", title = "RequestSink", detail = "transport side", x = 270, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a2", mode = "line", from = { x: 420, y: 178 }, to = { x: 470, y: 178 }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Panel(id = "observer", title = "RequestObserver", detail = "measurement", x = 470, y = 130, width = 160, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Signal(id = "motion-sig", path = "M290 190 H410", x = 0, y = 0, width = 700, height = 400, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal dispatcher duration 320
+        at 520 trace a1 duration 280
+        at 720 reveal sink duration 320
+        at 960 trace a2 duration 280
+        at 1160 reveal observer duration 320
+        at 1680 trace motion-sig duration 1100
+        at 2600 reveal sink duration 480
+      }
     }
   }
   slide "Parallelism" {
@@ -1543,101 +501,26 @@ explainer "Rust Architecture" {
     ]
     caption: "Scale out by adding worker threads, not shared mutable hot state."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "WORKER MODEL"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "thread-per-core sub-cells"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "coord"
-          capability: "core.panel"
-          title: "Coordinator thread"
-          detail: "workers > 1"
-          layout: { x: 250, y: 90, width: 200, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-        },
-        {
-          id: "w0"
-          capability: "core.panel"
-          title: "Worker 0"
-          detail: "sub-cell"
-          layout: { x: 120, y: 220, width: 110, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "w1"
-          capability: "core.panel"
-          title: "Worker 1"
-          detail: "sub-cell"
-          layout: { x: 290, y: 220, width: 110, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "worker-fan"
-          capability: "core.fan-out"
-          from: { nodeId: "coord", anchor: "s" }
-          to: [
+      sdk.Header(id = "header", title = "WORKER MODEL", caption = "thread-per-core sub-cells", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "coord", title = "Coordinator thread", detail = "workers > 1", x = 250, y = 90, width = 200, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
+      sdk.Panel(id = "w0", title = "Worker 0", detail = "sub-cell", x = 120, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "w1", title = "Worker 1", detail = "sub-cell", x = 290, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.FanOut(id = "worker-fan", from = { nodeId: "coord", anchor: "s" }, to = [
             { nodeId: "w0", anchor: "n" },
             { nodeId: "w1", anchor: "n" },
             { nodeId: "w2", anchor: "n" }
-          ]
-          axis: "y"
-          junction: { x: 350, y: 190 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2 }
-        },
-        {
-          id: "w2"
-          capability: "core.panel"
-          title: "Worker 2"
-          detail: "sub-cell"
-          layout: { x: 460, y: 220, width: 110, height: 70 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 174, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 402, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-coord", at: 280, duration: 340, target: "coord", action: "enter" }
-        { id: "t-worker-fan", at: 540, duration: 900, target: "worker-fan", action: "draw" }
-        { id: "t-w0", at: 720, duration: 260, target: "w0", action: "enter" }
-        { id: "t-w1", at: 1060, duration: 260, target: "w1", action: "enter" }
-        { id: "t-w2", at: 1400, duration: 260, target: "w2", action: "enter" }
-        { id: "t-pulse-a", at: 1800, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1980, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1880, duration: 1100, target: "worker-fan", action: "trace" }
-        { id: "t-emphasis", at: 2800, duration: 480, target: "coord", action: "emphasis" }
-      ]
+          ], axis = "y", junction = { x: 350, y: 190 }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2 })
+      sdk.Panel(id = "w2", title = "Worker 2", detail = "sub-cell", x = 460, y = 220, width = 110, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal coord duration 340
+        at 540 trace worker-fan duration 900
+        at 720 reveal w0 duration 260
+        at 1060 reveal w1 duration 260
+        at 1400 reveal w2 duration 260
+        at 1880 trace worker-fan duration 1100
+        at 2800 reveal coord duration 480
+      }
     }
   }
   slide "Scale-out" {
@@ -1656,102 +539,23 @@ explainer "Rust Architecture" {
     ]
     caption: "Same engine, more processes, partitioned ownership."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "CELLULAR MODE"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "controller + cells + Velo"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "controller"
-          capability: "core.panel"
-          title: "Controller"
-          detail: "rank 0"
-          layout: { x: 70, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-        },
-        {
-          id: "a1"
-          capability: "core.line"
-          from: { x: 220, y: 178 }
-          to: { x: 270, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "velo"
-          capability: "core.panel"
-          title: "Velo"
-          detail: "control plane"
-          layout: { x: 270, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "a2"
-          capability: "core.line"
-          from: { x: 420, y: 178 }
-          to: { x: 470, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "cells"
-          capability: "core.panel"
-          title: "Cells"
-          detail: "load + results"
-          layout: { x: 470, y: 130, width: 160, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 182, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 396, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          d: "M330 190 H370"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-controller", at: 280, duration: 340, target: "controller", action: "enter" }
-        { id: "t-a1", at: 540, duration: 280, target: "a1", action: "draw" }
-        { id: "t-velo", at: 740, duration: 340, target: "velo", action: "enter" }
-        { id: "t-a2", at: 1000, duration: 280, target: "a2", action: "draw" }
-        { id: "t-cells", at: 1200, duration: 340, target: "cells", action: "enter" }
-        { id: "t-pulse-a", at: 1600, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1780, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1680, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2600, duration: 480, target: "velo", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "CELLULAR MODE", caption = "controller + cells + Velo", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "controller", title = "Controller", detail = "rank 0", x = 70, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
+      sdk.Edge(id = "a1", mode = "line", from = { x: 220, y: 178 }, to = { x: 270, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "velo", title = "Velo", detail = "control plane", x = 270, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a2", mode = "line", from = { x: 420, y: 178 }, to = { x: 470, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "cells", title = "Cells", detail = "load + results", x = 470, y = 130, width = 160, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Signal(id = "motion-sig", path = "M330 190 H370", x = 0, y = 0, width = 700, height = 400, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal controller duration 340
+        at 540 trace a1 duration 280
+        at 740 reveal velo duration 340
+        at 1000 trace a2 duration 280
+        at 1200 reveal cells duration 340
+        at 1680 trace motion-sig duration 1100
+        at 2600 reveal velo duration 480
+      }
     }
   }
   slide "Outputs & gates" {
@@ -1770,110 +574,25 @@ explainer "Rust Architecture" {
     ]
     caption: "Measure locally, merge once, export many formats."
     render: @scene {
-      roots: [
-        {
-          id: "header"
-          capability: "core.rect"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-        }
-        {
-          id: "label"
-          capability: "core.text"
-          text: "METRICS + FEATURES"
-          layout: { x: 38, y: 28, width: 320, height: 24 }
-          style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary }
-        }
-        {
-          id: "note"
-          capability: "core.text"
-          text: "native-v2.json + exporters"
-          layout: { x: 360, y: 28, width: 300, height: 24 }
-          style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "end" }
-        },
-        {
-          id: "workers"
-          capability: "core.panel"
-          title: "Workers"
-          detail: "local metrics"
-          layout: { x: 60, y: 130, width: 130, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1.3 }
-        },
-        {
-          id: "a1"
-          capability: "core.line"
-          from: { x: 190, y: 178 }
-          to: { x: 240, y: 178 }
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-        },
-        {
-          id: "report"
-          capability: "core.panel"
-          title: "native-v2.json"
-          detail: "authoritative"
-          layout: { x: 240, y: 130, width: 150, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-        },
-        {
-          id: "a2"
-          capability: "core.line"
-          from: { x: 390, y: 178 }
-          to: { x: 440, y: 178 }
-          style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-        },
-        {
-          id: "exporters"
-          capability: "core.panel"
-          title: "Exporters"
-          detail: "JSON · CSV · Parquet"
-          layout: { x: 440, y: 130, width: 200, height: 96 }
-          style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-        },
-        {
-          id: "footer"
-          capability: "core.text"
-          text: "features: grpc · cellular · dynosim · parquet · pyo3-embed"
-          layout: { x: 50, y: 280, width: 600, height: 24 }
-          style: { fontSize: 13, fill: @theme.ink.secondary, textAnchor: "middle" }
-        },
-        {
-          id: "pulse-a"
-          capability: "core.rect"
-          layout: { x: 190, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.secondary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse A" }
-        }
-        {
-          id: "pulse-b"
-          capability: "core.rect"
-          layout: { x: 390, y: 150, width: 150, height: 80 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 1.5, opacity: 0.4 }
-          accessibility: { label: "motion pulse B" }
-        }
-        {
-          id: "motion-sig"
-          capability: "motion.signal"
-          d: "M125 178 H540"
-          layout: { x: 0, y: 0, width: 700, height: 400 }
-          style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "t-header", at: 0, duration: 280, target: "header", action: "enter" }
-        { id: "t-label", at: 60, duration: 260, target: "label", action: "enter" }
-        { id: "t-note", at: 100, duration: 260, target: "note", action: "enter" }
-        { id: "t-workers", at: 280, duration: 320, target: "workers", action: "enter" }
-        { id: "t-a1", at: 520, duration: 280, target: "a1", action: "draw" }
-        { id: "t-report", at: 720, duration: 340, target: "report", action: "enter" }
-        { id: "t-a2", at: 980, duration: 280, target: "a2", action: "draw" }
-        { id: "t-exporters", at: 1180, duration: 340, target: "exporters", action: "enter" }
-        { id: "t-footer", at: 1440, duration: 300, target: "footer", action: "enter" }
-        { id: "t-pulse-a", at: 1800, duration: 400, target: "pulse-a", action: "enter" }
-        { id: "t-pulse-b", at: 1980, duration: 400, target: "pulse-b", action: "enter" }
-        { id: "t-motion-sig", at: 1880, duration: 1100, target: "motion-sig", action: "draw" }
-        { id: "t-emphasis", at: 2800, duration: 480, target: "report", action: "emphasis" }
-      ]
+      sdk.Header(id = "header", title = "METRICS + FEATURES", caption = "native-v2.json + exporters", x = 18, y = 16, width = 664, height = 44)
+      sdk.Panel(id = "workers", title = "Workers", detail = "local metrics", x = 60, y = 130, width = 130, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Edge(id = "a1", mode = "line", from = { x: 190, y: 178 }, to = { x: 240, y: 178 }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Panel(id = "report", title = "native-v2.json", detail = "authoritative", x = 240, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "a2", mode = "line", from = { x: 390, y: 178 }, to = { x: 440, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "exporters", title = "Exporters", detail = "JSON · CSV · Parquet", x = 440, y = 130, width = 200, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Label(id = "footer", text = "features: grpc · cellular · dynosim · parquet · pyo3-embed", x = 50, y = 280, width = 600, height = 24, fontSize = 13, align = "middle", inkRole = "@theme.ink.secondary")
+      sdk.Signal(id = "motion-sig", path = "M125 178 H540", x = 0, y = 0, width = 700, height = 400, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
+      timeline primary {
+        at 0 reveal header duration 280
+        at 280 reveal workers duration 320
+        at 520 trace a1 duration 280
+        at 720 reveal report duration 340
+        at 980 trace a2 duration 280
+        at 1180 reveal exporters duration 340
+        at 1440 reveal footer duration 300
+        at 1880 trace motion-sig duration 1100
+        at 2800 reveal report duration 480
+      }
     }
   }
 }
