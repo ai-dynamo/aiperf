@@ -84,7 +84,7 @@ def main() -> None:
     crates_root = repo_root / "rust"
 
     violations: list[str] = []
-    for name, manifest_path in workspace_packages(repo_root):
+    for name, manifest_path in workspace_packages(crates_root):
         crate_dir = manifest_path.parent
         # Only govern members that live directly under rust/ (skip excluded
         # test-fixture packages nested deeper in the tree).
