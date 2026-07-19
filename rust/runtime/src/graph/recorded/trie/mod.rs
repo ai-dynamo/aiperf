@@ -119,7 +119,10 @@ pub(crate) fn lower_recorded_graph(
                     $label,
                     now.duration_since($mark)
                 );
-                $mark = now;
+                #[allow(unused_assignments)]
+                {
+                    $mark = now;
+                }
             }
         };
     }

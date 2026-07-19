@@ -187,7 +187,7 @@ pub fn expand_recipe(flags: &ProfileFlags) -> anyhow::Result<Option<RecipeSweep>
             post_process: None,
         }));
     }
-    let mut post_process: Option<PostProcess> = None;
+    let post_process: Option<PostProcess>;
     let axes = match recipe {
         "concurrency-ramp" => {
             post_process = Some(PostProcess::DegradationKnee(DegradationKneeSpec {

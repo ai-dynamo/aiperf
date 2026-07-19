@@ -23,7 +23,7 @@ use std::time::Instant;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use aiperf_runtime::dataset::{DatasetSource, LoadConfig, SegmentStore, TiktokenTokenizer};
+use aiperf_runtime::dataset::{DatasetSource, LoadConfig, TiktokenTokenizer};
 use aiperf_runtime::graph::recorded::{
     PromptCorpus, RecordedTraceInputConfig, compile_weka_trace_input,
 };

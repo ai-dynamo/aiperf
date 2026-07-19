@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 mod common;
-use common::*;
 
 #[tokio::test]
 #[ignore] // requires: Python aiperf_mock_server record-requests recorder (builtin tokenizer, inline JSONL + summary)

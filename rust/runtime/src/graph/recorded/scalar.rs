@@ -147,6 +147,7 @@ mod tests {
         //    With arbitrary_precision this fails: "invalid type: map, expected f64".
         #[derive(serde::Deserialize)]
         struct HasRate {
+            #[allow(dead_code)]
             rate: f64,
         }
         serde_json::from_str::<HasRate>(r#"{"rate": 1.5}"#)

@@ -59,6 +59,7 @@ fn ramp_steady_drain_accumulator() -> MetricsAccumulator {
         steady_state: SteadyStateConfig {
             enabled: true,
             fraction: 0.8,
+            hybrid_latency: false,
         },
         ..MetricsConfig::default()
     });
@@ -133,6 +134,7 @@ fn steady_state_is_gated_off_by_default() {
     let enabled = SteadyStateConfig {
         enabled: true,
         fraction: 0.8,
+        hybrid_latency: false,
     };
     assert!(steady_state_summary(&accumulator, &enabled, 0).is_none());
 }
@@ -142,5 +144,6 @@ fn accumulator_config() -> SteadyStateConfig {
     SteadyStateConfig {
         enabled: true,
         fraction: 0.8,
+        hybrid_latency: false,
     }
 }

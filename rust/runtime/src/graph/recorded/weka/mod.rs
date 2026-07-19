@@ -43,7 +43,10 @@ pub async fn compile_weka_trace_input(
             if timing {
                 let now = clock();
                 eprintln!("[weka-timing] {}: {:.3?}", $label, now.duration_since(mark));
-                mark = now;
+                #[allow(unused_assignments)]
+                {
+                    mark = now;
+                }
             }
         };
     }

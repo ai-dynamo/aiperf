@@ -36,4 +36,8 @@ pub struct SteadyState {
     /// Absent selects the native default (0.8).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fraction: Option<f64>,
+    /// Hybrid latency mode: latency/percentile metrics come from the whole
+    /// profiling phase; only throughput comes from the steady window.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hybrid_latency: bool,
 }

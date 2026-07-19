@@ -56,14 +56,28 @@ static REQ_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const EVENTSTREAM_CONTENT_TYPE: &str = "application/vnd.amazon.eventstream";
 
+/// Wall-clock milliseconds since the Unix epoch, for time-series analysis of
+/// the log (the per-event `*_ms` fields are all relative to each request's
+/// own start, which is enough for per-request timing but not for plotting
+/// trends across the run).
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// One JSONL record, mirroring `logproxy`'s format with an added
 /// `sagemaker` flag on the request event so translated vs. passthrough
-/// requests are distinguishable in the log.
+/// requests are distinguishable in the log. Every variant carries `ts_ms`
+/// (wall-clock time the event was recorded) so a log spanning a whole
+/// benchmark run can be sliced into time buckets for trend analysis.
 #[derive(Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 enum LogEvent {
     Request {
         req_id: u64,
+        ts_ms: u64,
         method: String,
         path: String,
         upstream_path: String,
@@ -74,21 +88,25 @@ enum LogEvent {
     },
     ResponseHead {
         req_id: u64,
+        ts_ms: u64,
         status: u16,
         ttfb_ms: f64,
     },
     FirstDataChunk {
         req_id: u64,
+        ts_ms: u64,
         elapsed_ms: f64,
     },
     Done {
         req_id: u64,
+        ts_ms: u64,
         frames: u64,
         bytes: u64,
         total_ms: f64,
     },
     Error {
         req_id: u64,
+        ts_ms: u64,
         stage: &'static str,
         message: String,
     },
@@ -249,6 +267,7 @@ async fn proxy(
         Ok(u) => u,
         Err(e) => {
             let _ = log_tx.send(LogEvent::Error {
+                ts_ms: now_ms(),
                 req_id,
                 stage: "bad_uri",
                 message: format!("{new_uri}: {e}"),
@@ -263,6 +282,7 @@ async fn proxy(
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
             let _ = log_tx.send(LogEvent::Error {
+                ts_ms: now_ms(),
                 req_id,
                 stage: "request_body_read",
                 message: e.to_string(),
@@ -272,6 +292,7 @@ async fn proxy(
     };
 
     let _ = log_tx.send(LogEvent::Request {
+        ts_ms: now_ms(),
         req_id,
         method: method.to_string(),
         path: path_and_query.clone(),
@@ -304,6 +325,7 @@ async fn proxy(
         Ok(r) => r,
         Err(e) => {
             let _ = log_tx.send(LogEvent::Error {
+                ts_ms: now_ms(),
                 req_id,
                 stage: "upstream_request",
                 message: format!("after {:?}: {e}", start.elapsed()),
@@ -315,6 +337,7 @@ async fn proxy(
     let ttfb = start.elapsed();
     let status = resp.status();
     let _ = log_tx.send(LogEvent::ResponseHead {
+        ts_ms: now_ms(),
         req_id,
         status: status.as_u16(),
         ttfb_ms: ttfb.as_secs_f64() * 1000.0,
@@ -374,6 +397,7 @@ async fn pump_passthrough(
                     if first_data_at.is_none() {
                         first_data_at = Some(Instant::now());
                         let _ = log_tx.send(LogEvent::FirstDataChunk {
+                            ts_ms: now_ms(),
                             req_id,
                             elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
                         });
@@ -387,6 +411,7 @@ async fn pump_passthrough(
             }
             Err(e) => {
                 let _ = log_tx.send(LogEvent::Error {
+                    ts_ms: now_ms(),
                     req_id,
                     stage: "body_stream",
                     message: e.to_string(),
@@ -398,6 +423,7 @@ async fn pump_passthrough(
     }
 
     let _ = log_tx.send(LogEvent::Done {
+        ts_ms: now_ms(),
         req_id,
         frames,
         bytes: total_bytes,
@@ -432,6 +458,7 @@ async fn pump_as_eventstream(
             if first_data_at.is_none() {
                 first_data_at = Some(Instant::now());
                 let _ = log_tx.send(LogEvent::FirstDataChunk {
+                    ts_ms: now_ms(),
                     req_id,
                     elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
                 });
@@ -459,6 +486,7 @@ async fn pump_as_eventstream(
             }
             Err(e) => {
                 let _ = log_tx.send(LogEvent::Error {
+                    ts_ms: now_ms(),
                     req_id,
                     stage: "body_stream",
                     message: e.to_string(),
@@ -477,6 +505,7 @@ async fn pump_as_eventstream(
     }
 
     let _ = log_tx.send(LogEvent::Done {
+        ts_ms: now_ms(),
         req_id,
         frames,
         bytes: total_bytes,

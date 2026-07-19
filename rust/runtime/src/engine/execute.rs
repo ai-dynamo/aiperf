@@ -4593,6 +4593,7 @@ pub(crate) fn metrics_config(
             .steady_state
             .fraction
             .unwrap_or(crate::metrics_core::DEFAULT_STEADY_STATE_FRACTION),
+        hybrid_latency: spec.steady_state.hybrid_latency,
     };
     Ok(MetricsConfig {
         slice_duration_ns,

@@ -100,6 +100,9 @@ fn apply_cli_overrides(
     if let Some(fraction) = flags.steady_state_fraction {
         inputs.steady_state_fraction = Some(fraction);
     }
+    if flags.steady_state_hybrid {
+        inputs.steady_state_hybrid = true;
+    }
     // Dry-run dataset-analysis toggles: `--no-dataset-analysis` suppresses the
     // family; the `--kv-*` / `--dataset-analysis-per-conversation` knobs layer
     // over the config-derived defaults when the analysis is active.
@@ -1490,6 +1493,7 @@ impl Benchmark {
             sketch_metrics: false,
             steady_state: false,
             steady_state_fraction: None,
+            steady_state_hybrid: false,
             image_spec,
             audio_spec,
             video_spec,

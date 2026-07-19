@@ -184,6 +184,10 @@ pub struct SteadyStateSpec {
     /// default (0.8).
     #[serde(default)]
     pub fraction: Option<f64>,
+    /// Hybrid latency mode: latency/percentile metrics come from the whole
+    /// profiling phase, only throughput comes from the steady window.
+    #[serde(default)]
+    pub hybrid_latency: bool,
 }
 
 /// Artifact paths relative to the exclusive run directory.

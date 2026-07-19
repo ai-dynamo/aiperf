@@ -24,8 +24,42 @@
 //! `None` and behavior is unchanged.
 
 use crate::metrics_core::accumulator::{AccumulatorSummary, MetricsAccumulator};
+use crate::metrics_core::catalog::MetricTag;
 use crate::metrics_core::sweepline::StepFn;
 use crate::metrics_core::window::{ExportContext, Phase};
+
+/// Run-level rate metrics ("count over `BenchmarkDuration`") that hybrid mode
+/// takes from the steady-state window rather than the whole-run summary. A
+/// window that includes the ramp-up climb or drain decay mechanically
+/// understates these, since concurrency wasn't at target for the whole span.
+///
+/// Deliberately excludes per-request/per-user metrics (e.g.
+/// `OutputTokenThroughputPerUser`, `E2eOutputTokenThroughput`,
+/// `ImageThroughput`) even though they have "throughput" in the name — those
+/// are `Record`-kind distributions of per-request values, not a single
+/// window-rate derivation, so they belong with the full-population set like
+/// every other percentile metric.
+const STEADY_WINDOW_RATE_TAGS: &[MetricTag] = &[
+    MetricTag::RequestThroughput,
+    MetricTag::InputTokenThroughput,
+    MetricTag::OutputTokenThroughput,
+    MetricTag::TotalTokenThroughput,
+    MetricTag::Goodput,
+];
+
+/// Builds the hybrid summary: latency/percentile metrics from the whole
+/// profiling phase (every request that returned, ramp-up and drain included
+/// — no survivorship bias), with only [`STEADY_WINDOW_RATE_TAGS`] overridden
+/// from the steady-state-windowed summary.
+fn hybrid_summary(accumulator: &MetricsAccumulator, windowed: &AccumulatorSummary) -> AccumulatorSummary {
+    let mut merged = accumulator.export_results(&ExportContext::phase(Phase::Profiling));
+    for &tag in STEADY_WINDOW_RATE_TAGS {
+        if let Some(result) = windowed.result(tag) {
+            merged.insert_result(result.clone());
+        }
+    }
+    merged
+}
 
 /// Wall-clock floor for the steady window before a short-window warning fires.
 const MIN_STEADY_WINDOW_NS: i64 = 10_000_000_000; // 10 seconds
@@ -52,6 +86,20 @@ pub struct SteadyStateConfig {
     /// Clamped into `(0, 1]` at use; the default is
     /// [`DEFAULT_STEADY_STATE_FRACTION`].
     pub fraction: f64,
+    /// Hybrid latency mode: latency/percentile metrics are computed over the
+    /// *whole* profiling phase (every request that returned, including
+    /// ramp-up and drain stragglers — no survivorship bias), while only the
+    /// run-level rate metrics (request/token throughput) are computed over
+    /// the detected steady-state window. Off by default, matching the plain
+    /// windowed-everything behavior; enabled by `--steady-state-hybrid`.
+    ///
+    /// Rationale: a request's latency is a legitimate sample of system
+    /// behavior regardless of when it happened to start, so discarding
+    /// ramp/drain requests from percentiles is a form of survivorship bias.
+    /// Throughput, by contrast, is a *rate* — a window that includes the
+    /// ramp-up climb or the drain decay mechanically understates sustained
+    /// capacity, since concurrency wasn't at target for that whole window.
+    pub hybrid_latency: bool,
 }
 
 impl Default for SteadyStateConfig {
@@ -59,6 +107,7 @@ impl Default for SteadyStateConfig {
         Self {
             enabled: false,
             fraction: DEFAULT_STEADY_STATE_FRACTION,
+            hybrid_latency: false,
         }
     }
 }
@@ -235,8 +284,13 @@ pub fn steady_state_summary(
     let run_end_ns = timestamps.last().map(|&t| t as i64).unwrap_or(0);
 
     // Reuse the shared summary path over the detected half-open time range.
-    let summary =
-        accumulator.export_results(&ExportContext::time_range(window.start_ns, window.end_ns));
+    let windowed = accumulator.export_results(&ExportContext::time_range(window.start_ns, window.end_ns));
+
+    let summary = if config.hybrid_latency {
+        hybrid_summary(accumulator, &windowed)
+    } else {
+        windowed
+    };
 
     let run_duration_ns = (run_end_ns - run_start_ns).max(0);
     let floor_ns =

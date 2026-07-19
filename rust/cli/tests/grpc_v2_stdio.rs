@@ -5,7 +5,6 @@
 
 use std::convert::Infallible;
 use std::io::Write;
-use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
@@ -29,13 +28,6 @@ use tonic::{Code, Request, Response, Status};
 
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_aiperf")
-}
-
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
 }
 
 fn one_json_line(output: &Output) -> Value {
@@ -80,20 +72,6 @@ fn run_child(request: &Value) -> Output {
         .write_all(serde_json::to_string(&request["run"]).unwrap().as_bytes())
         .unwrap();
     child.wait_with_output().unwrap()
-}
-
-fn find_files(root: &Path, name: &str, found: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            find_files(&path, name, found);
-        } else if path.file_name().and_then(|value| value.to_str()) == Some(name) {
-            found.push(path);
-        }
-    }
 }
 
 fn request(operation: &str, artifact_dir: &std::path::Path, url: &str) -> Value {

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 mod common;
-use common::*;
 
 use aiperf_mock_server::dcgm::{DcgmFaker, lookup_gpu};
 use aiperf_runtime::gpu_telemetry::{

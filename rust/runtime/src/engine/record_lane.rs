@@ -597,7 +597,7 @@ mod tests {
     fn outputs_records() -> Vec<CapturedRecord> {
         use crate::engine::records::CapturedModelOutput;
 
-        let mut record = |session_num: u64,
+        let record = |session_num: u64,
                           turn_index: u32,
                           visible: &str,
                           reasoning: Option<&str>,

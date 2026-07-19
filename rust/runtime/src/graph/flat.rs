@@ -232,7 +232,7 @@ impl<M: WireMessage + 'static> FlatGraphActor<M> {
 mod tests {
     use super::*;
     use crate::graph::model::{ChannelRequirement, Count, LlmNode, TraceRecord};
-    use crate::graph::sink::{GraphDispatchOptions, GraphReply};
+    use crate::graph::sink::GraphReply;
     use crate::graph::wire::OpenAiChatMessage;
     use anyhow::Result;
     use async_trait::async_trait;

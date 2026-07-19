@@ -841,6 +841,17 @@ pub struct ProfileFlags {
     #[arg(long = "steady-state-fraction")]
     pub steady_state_fraction: Option<f64>,
 
+    /// Hybrid steady-state latency mode (`--steady-state-hybrid`). Latency and
+    /// percentile metrics are computed over the whole profiling phase
+    /// (every request that returned, ramp-up and drain included - no
+    /// survivorship bias from discarding stragglers), while only run-level
+    /// rate metrics (request/token throughput, goodput) are computed over
+    /// the detected steady-state window (excluding ramp-up/drain, since a
+    /// window that includes them mechanically understates sustained rate).
+    /// Ignored unless `--steady-state` is also set.
+    #[arg(long = "steady-state-hybrid", default_value_t = false)]
+    pub steady_state_hybrid: bool,
+
     /// Synthetic image width mean, pixels (`--image-width-mean`).
     #[arg(long = "image-width-mean")]
     pub image_width_mean: Option<f64>,

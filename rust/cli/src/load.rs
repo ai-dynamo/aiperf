@@ -268,6 +268,8 @@ pub(crate) struct Inputs {
     pub steady_state: bool,
     /// Steady-state occupancy fraction of the concurrency target.
     pub steady_state_fraction: Option<f64>,
+    /// Hybrid steady-state latency mode (full-run latency, windowed throughput).
+    pub steady_state_hybrid: bool,
     /// Synthetic image spec (present when any image flag is set).
     pub image_spec: Option<ImageSpec>,
     /// Synthetic audio spec.
@@ -615,6 +617,7 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
         sketch_metrics: flags.sketch_metrics,
         steady_state: flags.steady_state,
         steady_state_fraction: flags.steady_state_fraction,
+        steady_state_hybrid: flags.steady_state_hybrid,
         image_spec: build_image_spec(flags),
         audio_spec: build_audio_spec(flags),
         video_spec: build_video_spec(flags),
@@ -1028,6 +1031,7 @@ pub(crate) fn build(inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 .then(|| crate::model::metrics::SteadyState {
                     enabled: true,
                     fraction: inputs.steady_state_fraction,
+                    hybrid_latency: inputs.steady_state_hybrid,
                 }),
         }),
         slos: (!inputs.slos.is_empty()).then(|| inputs.slos.clone()),
