@@ -7,10 +7,16 @@
 /**
  * Flow Verifier — IR playhead + Playwright full-play gate for explainer decks.
  *
+ * `npm run flow-verifier` (IR-only, fast) is the default gate. The
+ * Playwright full-deck walk is slow and lives behind
+ * `npm run flow-verifier:extended` (or `--play-only` / omitting `--ir-only`
+ * when invoking this script directly) — run it before landing changes that
+ * touch timeline/scene rendering, not on every invocation.
+ *
  * Usage:
- *   node apps/explainers/scripts/flow-verifier.mjs
- *   node apps/explainers/scripts/flow-verifier.mjs --deck segment-pools
  *   node apps/explainers/scripts/flow-verifier.mjs --ir-only
+ *   node apps/explainers/scripts/flow-verifier.mjs --deck segment-pools
+ *   node apps/explainers/scripts/flow-verifier.mjs
  *   node apps/explainers/scripts/flow-verifier.mjs --play-only --base-url http://127.0.0.1:5173
  *   node apps/explainers/scripts/flow-verifier.mjs --from-flow
  *   node apps/explainers/scripts/flow-verifier.mjs --warn
