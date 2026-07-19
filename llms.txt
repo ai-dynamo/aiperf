@@ -461,7 +461,9 @@ Inputs, endpoints, and graph:
   native dialects, endpoint identity, and the registry consumed by validation and
   execution.
 - [`specs/content-server.md`](specs/content-server.md) — the run-owned HTTP
-  delivery sidecar that serves generated media by URL, and its publication seam.
+  delivery sidecar that serves generated media by URL, its publication seam, and
+  request-correlated media-fetch metrics (`rid`/`mi`/`td` URL tagging, streaming
+  drain into `SidecarMetric` distributions).
 - [`specs/rng.md`](specs/rng.md) — the hash-derived randomness substrate:
   order-independent BLAKE3 stream derivation, generators, and sampling
   distributions.
@@ -472,7 +474,8 @@ Inputs, endpoints, and graph:
   the model-independent-branching contract: pinned/recorded/weighted conditional
   branching and recorded non-LLM content resolved and folded into the flat
   `LlmNode`/`StaticEdge` substrate at lowering, the eager-vs-forbidden
-  (branch-on-live-output) line, and the future eager-conditional compiler.
+  (branch-on-live-output) line, and the built `conditional_graph` eager-conditional
+  compiler (`rust/runtime/src/graph/conditional/`).
 
 Measurement and output:
 
@@ -486,10 +489,10 @@ Measurement and output:
 - [`specs/accuracy.md`](specs/accuracy.md) — the Rust dispatch/capture vs
   pinned-Python grading split, the injected evaluator seam, and sharded capture
   with a single grade.
-- [`specs/dataset-analysis.md`](specs/dataset-analysis.md) — future dry-run
+- [`specs/dataset-analysis.md`](specs/dataset-analysis.md) — built `--dry-run`
   analytical report: dataset shape, turn-by-turn ISL/OSL, prefix/KV-cache reuse
   (ideal and finite-capacity), and the real execution timeline distilled from a
-  dry run's records.
+  dry run's records, emitted as `dataset_analysis.{txt,json,csv,html}`.
 
 Targets:
 

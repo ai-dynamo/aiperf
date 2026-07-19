@@ -38,50 +38,47 @@ reject the sidecar rather than accepting an inert configuration, and continue
 synthetic media generation through the same publisher seam with the inline
 implementation.
 
-## Future requirements
-
-### Request-correlated media-fetch metrics
-
-Today the tracker measures each transfer in full (TTFB, time-to-first-body-byte,
-transfer duration, total latency, bytes, chunks) and then discards it: the only
-caller of `request_snapshot()` is a unit test. The records also carry no benchmark
-identity — `path` is just `images/img_NNNNNN.ext`, which dataset recycling reuses
-across many requests — so a transfer cannot be tied back to the request that
-carried it. This section specifies closing both gaps: correlate every content
-fetch to the originating request (and the specific media slot within it) and
-surface the timings as first-class metrics.
+Every content-server-hosted media fetch is correlated back to the request and
+media slot that carried it, and surfaced as first-class metrics — closing what
+was previously a gap where the tracker measured each transfer but discarded it
+unattributed.
 
 **Correlation key — `(rid, mi)` plus dispatch time, embedded in the media URL.**
 The URL is the only datum that provenance-flows across all three hops (AIPerf →
 inference server → content-server GET); a real inference server does not forward
-AIPerf's `X-Request-ID` header onto its own fetch. At dispatch, each `http(s)`
-`image_url`/`video_url` value whose base matches this run's content server is
-tagged `?rid=<x_request_id>&mi=<media_ordinal>&td=<dispatch_wall_ns>`, where `mi`
-is the zero-based ordinal of the media part within that turn's payload (assigned
-by walk order). `mi` is required, not optional: a single turn may carry many
-media, and `rid` alone collapses them into one ambiguous bucket. Only
-content-server URLs are tagged; user-supplied external image URLs are left
-untouched. The content server already records the raw `query_string`, so capture
-needs no server change; `rid`/`mi`/`td` parse out at drain time. The join key is
-`(rid, mi)`.
+AIPerf's `X-Request-ID` header onto its own fetch. At dispatch,
+`tag_content_urls` (`rust/runtime/src/transport/http/sink.rs`) walks the outgoing
+JSON payload and rewrites every string value that starts with this run's
+content-server base URL, appending
+`?rid=<x_request_id>&mi=<media_ordinal>&td=<dispatch_wall_ns>` (`&` instead of `?`
+if the URL already carries a query string). `tag_media_urls`/`parse_media_tag`
+(`rust/runtime/src/content_server/media_tag.rs`) implement the walk and the
+inverse parse; `mi` is assigned by document walk order and is agnostic to the
+endpoint dialect's media-part shape (Chat `image_url:{url}`, Responses
+`image_url:"<url>"`, Messages `source:{url}`). Only strings whose prefix matches
+the content-server base are rewritten, so user-supplied external URLs are left
+untouched. The content server already records the raw `query_string` verbatim, so
+no server-side change was needed to capture it; `rid`/`mi`/`td` parse back out at
+drain time. The join key is `(rid, mi)`.
 
-**Self-describing records (the linchpin for `time_to_media_fetch`).** Benchmark
-dispatch timestamps are monotonic ns off `RealClockAnchor` (no wall component);
-the tracker records arrival as wall-clock Unix-epoch `timestamp_ns`. Rather than
-reconcile the two clocks across a shared map, the dispatch wall time (`td`,
-`SystemTime::now()` at tag time) travels inside the URL and is recorded verbatim
-in the content server's `query_string`. `time_to_media_fetch = timestamp_ns − td`
-is then computed from the single record with no cross-thread dispatch map and no
-run-start clock pairing — both wall-clock, same epoch.
+**Self-describing records (the linchpin for `time_to_media_fetch`).** The dispatch
+wall time (`td`, captured at tag time) travels inside the URL and is recorded
+verbatim in the content server's `query_string`. `time_to_media_fetch` is computed
+per record as `timestamp_ns − td` (`MediaFetchAggregator::ingest`,
+`rust/runtime/src/content_server/media_metrics.rs`) — both wall-clock, same
+epoch, no cross-thread dispatch map and no run-start clock pairing. A negative
+result (clock skew) is clamped to `0` and counted under `negative_ttmf`.
 
-**Streaming drain (correct at 1M-scale).** A snapshot-at-teardown join is bounded
-by `max_tracked_records` (FIFO eviction) and by retain-all memory, so it silently
-drops requests under load. Instead the tracker forwards each completed record over
-an optional channel to an online aggregator that folds the derived values into
-`DistributionStats` streaming — no retain-all, no bounded-buffer loss. Because
-each record is self-describing (`rid`/`mi`/`td` in the query string), the
-aggregator needs no request-side state. Any record it cannot parse (missing/late
-tag) is counted and logged, never silently discarded.
+**Streaming drain (correct at 1M-scale).** Each completed content-server transfer
+is folded online into `MediaFetchAggregator`, which accumulates per-fetch samples
+(`time_to_media_fetch`, serving latency, time-to-first-byte, transfer duration)
+and a per-request rollup (bytes, fetch count) without retaining the records
+themselves, so memory scales with distinct requests in flight, not total fetch
+volume. `finish()` folds the accumulated samples into six
+`SidecarMetric`/`DistributionStats` gauges (`linear_distribution`, ddof=1). A
+record whose query string carries no parseable `(rid, mi, td)` tag is excluded,
+counted under `unmatched`, and logged via `tracing::warn!` — never silently
+dropped.
 
 **Metrics.** Per `(rid, mi)`, then rolled up per request:
 
@@ -99,17 +96,17 @@ merely unsurfaced. Comparing arrival timestamps across one `rid` reveals serial
 vs concurrent fetching; a request whose carried-media count exceeds its
 `media_fetch_count` reveals a partial/skipped fetch by the inference server.
 
-**Surfaces.** (1) A dedicated **Media** metrics section rendered with the standard
-avg/p50/p90/p99 shape, produced by the streaming aggregator's own
-`DistributionStats` (the domain-neutral `SidecarMetric` channel, as
-`server_metrics` uses) rather than late per-record injection into the main
-accumulator — the scalable fit for the streaming path. (2) A per-record
-`media_records` artifact (JSONL/parquet) keyed by `(rid, mi)` with every timing,
-status, and byte field for offline joining against the request records.
-Considered alternative: registering `Record`-kind catalog metrics so the values
-land inline in the main percentile table and existing per-record artifacts; this
-needs late per-record injection (retain records or a late-fold entry point) that
-does not compose with the streaming, exact-fold hot path at scale.
+**Surfaces.** (1) A dedicated **Media** metrics section (`RunOutcome::media_metrics`
+in `rust/runtime/src/metrics_core/report.rs`, populated from
+`SidecarExecutionState::finalize_media_metrics` in
+`rust/runtime/src/engine/execute.rs`), rendered with the standard avg/p50/p90/p99
+shape from the streaming aggregator's own `SidecarMetric`/`DistributionStats`
+channel — the same domain-neutral channel `server_metrics` uses — rather than
+late per-record injection into the main accumulator. Empty (absent from the
+report) unless a content server served tagged media. (2) A per-record
+`media_records.jsonl` artifact (one `MediaRecord` per line, keyed by `(rid, mi)`,
+written as fetches arrive via `MediaRecordWriter`) with every timing, status, and
+byte field for offline joining against the request records.
 
 **Mock-server prerequisite (built).** Exercising this end to end requires the
 inference server to actually fetch the tagged URLs. The Rust mock server does so
@@ -120,15 +117,19 @@ tagged URL verbatim so `rid`/`mi` reach the content server; see
 ## Source anchors
 
 - `rust/runtime/src/content_server/` (`server.rs`, `tracker.rs`, `publisher.rs`,
-  `model.rs`, `error.rs`).
+  `model.rs`, `error.rs`) — sidecar lifecycle, routes, and the publication seam.
+- `rust/runtime/src/content_server/media_tag.rs` — `tag_media_urls`/
+  `parse_media_tag`, the `(rid, mi, td)` URL-tagging correlation scheme.
+- `rust/runtime/src/content_server/media_metrics.rs` — `MediaFetchAggregator`,
+  `MediaRecord`, `MediaRecordWriter`; the streaming join, the six
+  `SidecarMetric` distributions, and the `media_records.jsonl` artifact writer.
+- `rust/runtime/src/transport/http/sink.rs` (`tag_content_urls`) — dispatch-time
+  tagging of outgoing payloads.
+- `rust/runtime/src/engine/execute.rs` (`finalize_media_metrics`,
+  `MEDIA_RECORDS_FILENAME`) — aggregator/writer lifecycle wiring and drain into
+  `RunOutcome::media_metrics`.
+- `rust/runtime/src/metrics_core/report.rs` (`RunOutcome::media_metrics`) —
+  report-surface field.
 - `rust/runtime/src/dataset/generator/` (media generation and publication seam).
 - `rust/cli/tests/online_v2_stdio.rs`.
 - `docs/tutorials/content-server.md`.
-- Planned touch points for media-fetch metrics: URL tagging at
-  `rust/runtime/src/transport/http/sink/endpoint_dispatch.rs` (dispatch site with
-  `uuid` in scope; graph path unifies at
-  `rust/runtime/src/transport/http/transport/endpoint_binding.rs`); clock pairing
-  at `rust/runtime/src/engine/execute.rs` run start; drain/aggregate/surface in
-  `rust/runtime/src/engine/execute.rs` (mirroring the gpu_telemetry /
-  network_latency `records_path` and `SidecarMetric` seams) and
-  `rust/runtime/src/metrics_core/` (`sidecar.rs`, `catalog.rs`).

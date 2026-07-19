@@ -60,10 +60,10 @@ read the record for the subsystem you are touching.
 | [dataset.md](dataset.md) | The input-resolution plane: the content-addressed segment store and the loader→compose→store→sampler→materializer pipeline. |
 | [endpoint-body-construction.md](endpoint-body-construction.md) | How an endpoint declares its request shape (`format_payload → BodyPlan`) and how the two shared materializers turn segment handles into wire bytes. |
 | [endpoints.md](endpoints.md) | The `Endpoint` dialect adapter: the trait, every native dialect, endpoint identity, and the registry consumed by validation and execution. |
-| [content-server.md](content-server.md) | The run-owned HTTP delivery sidecar that serves generated media by URL, its publication seam, and the planned request-correlated media-fetch metrics (`rid`/`mi` URL tagging, clock bridge, streaming drain). |
+| [content-server.md](content-server.md) | The run-owned HTTP delivery sidecar that serves generated media by URL, its publication seam, and request-correlated media-fetch metrics (`rid`/`mi`/`td` URL tagging, streaming drain into `SidecarMetric` distributions). |
 | [rng.md](rng.md) | The hash-derived randomness substrate: order-independent BLAKE3 stream derivation, generators, and sampling distributions. |
 | [graph-runtime.md](graph-runtime.md) | The Graph-IR runtime: deterministic async dataflow, the `dag_jsonl`/`weka_trace`/`dynamo_trace` compilers, and the trajectory-snapshot/warmup-priming subsystem. |
-| [conditional-graph-lowering.md](conditional-graph-lowering.md) | The model-independent-branching contract: how pinned/recorded/weighted conditional branching and recorded non-LLM content resolve and fold into the flat `LlmNode`/`StaticEdge` substrate at lowering, the eager-vs-forbidden (branch-on-live-output) line, and the future eager-conditional compiler. |
+| [conditional-graph-lowering.md](conditional-graph-lowering.md) | The model-independent-branching contract: how pinned/recorded/weighted conditional branching and recorded non-LLM content resolve and fold into the flat `LlmNode`/`StaticEdge` substrate at lowering, the eager-vs-forbidden (branch-on-live-output) line, and the built `conditional_graph` eager-conditional compiler. |
 
 ### Measurement and output
 
@@ -72,7 +72,7 @@ read the record for the subsystem you are touching.
 | [metrics.md](metrics.md) | The IO-free metrics engine: the column-store accumulator, the metric catalog, sweep curves, and the typed report; exact vs sketch modes. |
 | [telemetry.md](telemetry.md) | Side-channel measurement: GPU telemetry, server metrics, and network latency, feeding values into the metrics seam. |
 | [exporters.md](exporters.md) | The native output plane: the typed report core and the static set of `Exporter` sinks behind one trait. |
-| [dataset-analysis.md](dataset-analysis.md) | Future dry-run analytical report: dataset shape, turn-by-turn ISL/OSL, prefix/KV-cache reuse (ideal and finite-capacity), and the real execution timeline (concurrency, throughput, backlog) distilled from a dry run's records. |
+| [dataset-analysis.md](dataset-analysis.md) | Built `--dry-run` analytical report: dataset shape, turn-by-turn ISL/OSL, prefix/KV-cache reuse (ideal and finite-capacity), and the real execution timeline (concurrency, throughput, backlog) distilled from a dry run's records, emitted as `dataset_analysis.{txt,json,csv,html}`. |
 | [accuracy.md](accuracy.md) | The Rust dispatch/capture vs pinned-Python grading split, the injected evaluator seam, and sharded capture with a single grade. |
 
 ### Targets

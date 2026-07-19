@@ -22,12 +22,7 @@ distributions, turn-by-turn history growth, prefix-cache reuse (ideal and under
 finite KV capacity with eviction), concurrency over the run, achieved throughput,
 and scheduling backlog.
 
-This is a future capability. Nothing described under **Future requirements** is
-built yet; **Built** lists the runtime seams the analysis composes over.
-
 ## Built
-
-The runtime already produces and holds everything the analysis consumes:
 
 - The `dry_run` transport executes the authored workload on a virtual `SimClock`
   and fabricates each request's timing from the analytic latency model
@@ -53,28 +48,30 @@ The runtime already produces and holds everything the analysis consumes:
   from the executor where both records and the dataset are in scope — the
   precedent this analysis follows.
 
-## Future requirements
-
 ### Placement and gating
 
 The analysis is a **runner-driven writer**, not an `Exporter`: it runs inside the
-executor where both the full `captured` record set and the `GraphInputBundle` are
-simultaneously in scope (the report/exporter stage sees neither). It emits its
-artifacts alongside the existing per-record artifact writers.
+executor (`rust/runtime/src/engine/dataset_analysis_writer.rs`) where both the
+retained record set and the compiled `GraphInputBundle` are simultaneously in
+scope (the report/exporter stage sees neither). It emits its artifacts alongside
+the existing per-record artifact writers.
 
-It is **on by default for a dry run** and a no-op otherwise: the point of a dry
-run is this analysis. The CLI populates a new `Artifacts.dataset_analysis_path`
-(and cache-model knobs) whenever `--dry-run` is set; the executor writes the
-report when that path is present. Because a dry-run analysis needs every record,
-the analysis registers as a per-record consumer that forces **retain mode** (the
-existing exact-fold disqualifier seam). A `--no-dataset-analysis` escape and a
-records-cap fallback bound memory for extreme runs; when the cap trips the report
-states plainly that timeline/cache sections were computed on a truncated set.
+It is **on by default for a dry run** and a no-op otherwise (`--dry-run &&
+!--no-dataset-analysis`, `cli/src/load.rs`): the CLI populates
+`Artifacts.dataset_analysis_path` (and the cache-model knobs) whenever `--dry-run`
+is set and not suppressed; the executor writes the report when that path is
+present.
 
-Both the scheduled workloads (request-rate, concurrency, user-centric,
-fixed-schedule) and the graph path must reach the same analysis pass over their
-respective full record collections; the pass takes an iterator of records plus
-the dataset structure and is transport/workload-agnostic.
+On the graph path (recorded `weka_trace`/`dynamo_trace` or authored `dag_jsonl`)
+the per-request structure is present *statically* in the compiled
+`GraphInputBundle`, so a `--dry-run` that dispatches zero records still yields a
+fully populated dataset characterization from each `LlmNode`'s input token count,
+generation cap, conversation id/turn index, and ordered content-addressed prompt
+segment handles — those BLAKE3 prefix-chained handles stand in for exact prefix
+identity (`IdentitySource::HashIds`). The scheduled path has no
+`GraphInputBundle`; there turn observations derive from the retained
+`CapturedRecord` set, and block identities absent from that set fall back to the
+length-structure identity source.
 
 ### Analysis catalog
 
@@ -131,9 +128,8 @@ from caching), Σ decode tokens, prefill:decode ratio, KV footprint in blocks.
 ### Architecture
 
 - `rust/runtime/src/dataset/analysis.rs` — pure-logic, deterministic, serde
-  types (`DatasetAnalysis`, `LengthStats`, `TurnStats`, `TimelineStats`,
-  `CacheReuseAnalysis`, `CacheCurvePoint`) and the analysis functions over a
-  record iterator + dataset structure. Unit-testable in isolation.
+  types and the `analyze` entry point over a record iterator + dataset
+  structure. Unit-testable in isolation.
 - `rust/runtime/src/dataset/analysis/prefix_cache.rs` — block-identity extraction
   (tiered source), the prefix tree for ideal reuse, and the arrival-order LRU
   replay for realized reuse.
@@ -141,25 +137,23 @@ from caching), Σ decode tokens, prefill:decode ratio, KV footprint in blocks.
   `render_table` primitive → `dataset_analysis.txt`.
 - `rust/runtime/src/export/dataset_analysis.rs` — `dataset_analysis.json` and
   `.csv` in the `genai_perf` stat-key style.
-- Executor wiring: a single analysis call beside the per-record artifact writers
-  on both the graph and scheduled paths, gated by `Artifacts.dataset_analysis_path`.
-- CLI: `Artifacts.dataset_analysis_path` populated when `--dry-run`; new flags
-  `--kv-block-size`, `--kv-cache-blocks`, `--dataset-analysis-per-conversation`,
-  `--no-dataset-analysis`; the profile run echoes `dataset_analysis.txt` to the
-  console like the existing summary.
+- `rust/runtime/src/export/analysis_html.rs` — a standalone interactive
+  `dataset_analysis.html` report.
+- `rust/runtime/src/engine/dataset_analysis_writer.rs` — the executor adapter:
+  projects captured records and the compiled `GraphInputBundle` into the
+  neutral analysis inputs and drives all four sink writers.
+- CLI: `Artifacts.dataset_analysis_path` populated when `--dry-run` and not
+  `--no-dataset-analysis` (`cli/src/load.rs`); `--kv-block-size`,
+  `--kv-cache-blocks`, `--dataset-analysis-per-conversation` (`cli/src/flags.rs`).
 
 ### Verification
 
 Analysis-only (no dispatch), so the generated-token timing e2e requirement does
-not apply. Instead:
-- Deterministic **unit tests** with hand-computed fixtures: known ISL/OSL sets →
-  exact percentiles; a small multi-turn + shared-system fixture → exact ideal hit
-  rate, intra/cross split, and a realized LRU hit rate at a known capacity; a
-  known interval set → exact concurrency curve.
-- An **integration test** running the `aiperf` binary with `--dry-run` on a
-  deterministic fixture config, asserting the `dataset_analysis.json` values.
-- A **golden console fixture** for `dataset_analysis.txt` matching the existing
-  `console_txt/golden/*.txt` pattern.
+not apply. Coverage is unit tests across `dataset/analysis.rs`,
+`dataset/analysis/prefix_cache.rs`, and the export/writer modules: hand-computed
+fixtures for known ISL/OSL sets (exact percentiles), multi-turn + shared-system
+fixtures (exact ideal hit rate, intra/cross split, realized LRU hit rate at a
+known capacity), and known interval sets (exact concurrency curve).
 
 ## Source anchors
 
@@ -167,11 +161,15 @@ not apply. Instead:
   and fabricated timing the timeline sections analyze.
 - `rust/runtime/src/metrics_core/ingest.rs` — `RecordIngest` (per-record execution
   data); `rust/runtime/src/engine/records.rs` — `CapturedRecord`.
-- `rust/runtime/src/engine/execute.rs` — `execute_graph_native`, the retained
-  `captured` record set, the exact-fold retain gating, and the per-record artifact
-  writers this analysis sits beside.
+- `rust/runtime/src/engine/dataset_analysis_writer.rs` — executor wiring: maps
+  captured records and the `GraphInputBundle` into analysis inputs and writes
+  `dataset_analysis.{txt,json,csv,html}`.
+- `rust/runtime/src/dataset/analysis.rs`, `dataset/analysis/prefix_cache.rs` —
+  the pure-logic analysis.
+- `rust/runtime/src/export/analysis_txt.rs`, `export/dataset_analysis.rs`,
+  `export/analysis_html.rs` — the four sink writers.
 - `rust/runtime/src/graph/input.rs` — `GraphInputBundle` (compiled dataset,
-  segments, per-turn ISL/OSL and `hash_ids`/`block_size`) available at the
+  segments, per-turn ISL/OSL and prompt-segment handles) available at the
   executor.
 - `rust/runtime/src/dataset/` — the compose/materialize pipeline and the shared
   system/user-context handles; see [dataset.md](dataset.md).
@@ -179,4 +177,4 @@ not apply. Instead:
   console report; `rust/runtime/src/export/genai_perf.rs` — the stat-key style the
   JSON/CSV mirrors.
 - `rust/cli/src/model/artifacts.rs` — the artifact toggle; `rust/cli/src/flags.rs`
-  and `rust/cli/src/load.rs` — the `--dry-run` enable path and new knobs.
+  and `rust/cli/src/load.rs` — the `--dry-run` enable path and the knobs.

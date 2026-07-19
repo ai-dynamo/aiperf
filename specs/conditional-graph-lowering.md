@@ -77,13 +77,15 @@ pass removes are never counted.
 and the node-level `min_start_delay_us` with a running `max`. A recorded
 per-node latency therefore has a well-defined home on a rerouted successor edge.
 
-## Future requirements
+### Eager-conditional graph adapter
 
-### Eager-conditional graph adapter (unbuilt)
-
-A new strict native compiler ingests an authored conditional graph and emits one
-flat `GraphRecord` per trace. It is selected by a new dataset `format` and
-follows the same registration path as the existing graph compilers.
+`rust/runtime/src/graph/conditional/` is a strict native compiler that ingests an
+authored conditional graph and emits one flat `GraphRecord` per trace. It is
+selected by dataset `format: conditional_graph` and is registered through the
+same path as the other graph compilers
+(`ConditionalGraphRunnerGraphInputAdapter` in `engine/graph_input.rs`;
+`conditional_graph` also recognized in `engine/cellular_kind.rs`'s
+graph-classification match alongside `dag_jsonl`/`weka_trace`/`dynamo_trace`).
 
 **Authored model.** A `graph:` block declares state channels, nodes (including
 non-dispatching *replay* nodes that carry recorded `outputs`), and edges
@@ -134,6 +136,28 @@ reduce to *cancel-in-flight-on-live-completion* and are explicitly out of scope:
 Reopening any of these is a separate spec plus adversarial review, not an
 extension of this one.
 
+### Registration footprint
+
+The format touches: `rust/runtime/src/graph/conditional/` (`mod.rs`, `model.rs`,
+`resolve.rs`, `fold.rs`); `ConditionalGraphRunnerGraphInputAdapter` in
+`engine/graph_input.rs` with a `deny_unknown_fields` envelope; the builtin
+resolver array in `engine/graph_input.rs`; and the graph-classification match in
+`engine/cellular_kind.rs`. No runtime executor, reducer, or channel-store change
+was required — the pass emits only `LlmNode`/`StaticEdge`, which the existing
+executor already runs, and eligible single-node resolved traces still reach the
+flat fast path (see [flatgraph-fast-path.md](flatgraph-fast-path.md)).
+
+### Validation
+
+`rust/e2e/tests/test_conditional_graph.rs` drives an authored conditional graph
+(`e2e/tests/fixtures/conditional/conditional_shopping.yaml`) with pinned
+`selected_branches` through the real `aiperf` binary against a deterministic
+`aiperf-mock-server`, asserting the per-record projection for each taken path
+(the branch fan-out, folded replay content, folded edge delays, and the single
+terminal).
+
+## Future requirements
+
 ### Reserved data-model extension: pre-committed arrivals
 
 A seed is a base, never a counted arrival. If a corpus ever requires a recorded
@@ -145,34 +169,17 @@ incrementing `arrival_count` and decrementing `producers_remaining`. This
 preserves the single-executable-kind IR: no dispatch, no reactive machinery, no
 replay node. It is reserved, not built; no current target requires it.
 
-### Registration footprint
-
-Adding the format touches: a new `compile_<format>_input` module under `graph/`;
-a new `GraphInputAdapter` implementation in `engine/graph_input.rs` with a
-`deny_unknown_fields` envelope; the builtin resolver array in
-`engine/graph_input.rs`; the graph-classification match in
-`engine/cellular_kind.rs`; and the scheduled-workload guard in
-`engine/dataset_input.rs`. No runtime executor, reducer, or channel-store change
-is required — the pass emits only `LlmNode`/`StaticEdge`, which the existing
-executor already runs, and eligible single-node resolved traces still reach the
-flat fast path (see [flatgraph-fast-path.md](flatgraph-fast-path.md)).
-
-### Validation
-
-An end-to-end test drives an authored conditional graph with pinned
-`selected_branches` through the real `aiperf` binary against a deterministic
-`aiperf-mock-server`, asserting the per-record projection for each taken path
-(the branch fan-out, folded replay content, folded edge delays, and the single
-terminal). The established graph e2e pattern applies: the `common::Harness`
-driver over the in-repo mock server, and a stdio byte-parity check where a
-resolved graph must match a reference wire.
-
 ## Source anchors
 
 - Flat substrate and per-trace seam: `rust/runtime/src/graph/model.rs`
   (`GraphRecord`, `LlmNode`, `StaticEdge`, `ParsedGraph`, `resolve_trace_graph`,
   `TraceRecord.graph_ref`/`initial_state`).
-- Existing eager per-trace compilers to mirror: `rust/runtime/src/graph/lowering.rs`
+- Eager-conditional adapter: `rust/runtime/src/graph/conditional/` (`mod.rs`,
+  `model.rs`, `resolve.rs`, `fold.rs`) — authored-model decode, branch
+  resolution/pruning, and the replay fold.
+- `rust/e2e/tests/test_conditional_graph.rs`,
+  `rust/e2e/tests/fixtures/conditional/` — e2e coverage.
+- Other eager per-trace compilers over the same seam: `rust/runtime/src/graph/lowering.rs`
   (`lower_catalog`), `rust/runtime/src/graph/recorded/weka/mod.rs`,
   `rust/runtime/src/graph/recorded/dynamo/mod.rs`, and the shared
   `rust/runtime/src/graph/recorded/trie/` lowerer.
