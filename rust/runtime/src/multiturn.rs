@@ -2130,4 +2130,76 @@ mod tests {
         .unwrap();
         assert!(error.to_string().contains("unknown sampler strategy"));
     }
+
+    /// When `conversation_count % grid != 0`, sequential recycle draws cross the
+    /// shard's authored-index residue class. Lookup must still accept those
+    /// sampleable sessions (the failure mode behind "is not sampleable" under
+    /// `--request-count` recycling with `workers > 1`).
+    #[tokio::test]
+    async fn partitioned_sequential_recycle_accepts_cross_residue_raw_payloads() {
+        let payload = |n: u8| {
+            format!(
+                r#"{{"messages":[{{"role":"user","content":"p{n}"}}],"stream":false}}"#
+            )
+        };
+        let jsonl = format!("{}\n{}\n{}\n", payload(0), payload(1), payload(2));
+        let dataset = LoaderRegistry::with_builtin_formats()
+            .unwrap()
+            .build_dataset(
+                Some("raw_payload"),
+                &LoadConfig::new(DatasetSource::Bytes(Bytes::from(jsonl))),
+                &ComposeConfig::new("model", RngRoot::new(Some(1))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dataset.conversations().len(), 3);
+
+        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
+        let endpoint_id = EndpointId::new("chat").unwrap();
+        let endpoint = registry
+            .prepare(
+                &endpoint_id,
+                crate::endpoints::RawEndpointConfig {
+                    streaming: false,
+                    ..crate::endpoints::RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+        let mut table = PreparedEndpointTable::new();
+        let key = table.push(endpoint).unwrap();
+        // Grid width 2 over 3 conversations: positions 0,2,4 map to indices 0,2,1.
+        // Authored ownership keeps indices 0 and 2; recycle position 4 needs index 1.
+        let partition = ModuloCellPartition::new(0, 2).unwrap();
+        let resolver: Rc<dyn PreparedTurnEndpointResolver> = Rc::new(
+            PreparedEndpointTableResolver::single(
+                Rc::new(table),
+                PreparedEndpointReference { key, endpoint_id },
+            )
+            .unwrap(),
+        );
+        let mut source =
+            NativeDatasetConversationSource::sequential_with_prepared_resolver_for_partition(
+                dataset,
+                "model",
+                4,
+                resolver,
+                Some(partition),
+            )
+            .unwrap();
+
+        // Enumeration stays residue-owned (fixed-schedule must not duplicate).
+        assert_eq!(source.conversations().len(), 2);
+
+        let mut seen = Vec::new();
+        for _ in 0..3 {
+            let session = source.next(None).expect("recycle must remain sampleable");
+            seen.push(session.conversation_id.clone());
+            session.build_first_turn(None).unwrap();
+        }
+        // Sequential owned positions 0 → c0, 2 → c2, 4 → c1 (cross-residue recycle).
+        assert_ne!(seen[0], seen[1]);
+        assert_ne!(seen[2], seen[0]);
+        assert_ne!(seen[2], seen[1]);
+    }
 }
