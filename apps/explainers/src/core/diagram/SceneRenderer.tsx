@@ -2518,28 +2518,83 @@ function circleRadius(node: SceneNodeLike, geom: SceneGeometryLike): number {
   return DEFAULT_DOT_RADIUS;
 }
 
+/**
+ * Picks the cue whose window most recently began at or before
+ * `playbackTimeMs`, falling back to the earliest-authored cue when none
+ * has started yet. Authoring the same target with more than one cue of a
+ * kind (e.g. two `trace` cues, meant as "draw early, then confirm later")
+ * is a supported idiom — picking blindly by declaration order (`.at(-1)`)
+ * instead of by which window is actually live discards the earlier cue's
+ * entire animation window, causing a pop-then-restart glitch.
+ */
+function mostRecentlyStartedCue(
+  cues: readonly SceneTimelineCueLike[],
+  playbackTimeMs: number,
+): SceneTimelineCueLike | undefined {
+  let started: SceneTimelineCueLike | undefined;
+  let earliest: SceneTimelineCueLike | undefined;
+  for (const cue of cues) {
+    const atMs = finiteNumber(cue.at);
+    if (earliest === undefined || atMs < finiteNumber(earliest.at)) {
+      earliest = cue;
+    }
+    if (
+      atMs <= playbackTimeMs &&
+      (started === undefined || atMs >= finiteNumber(started.at))
+    ) {
+      started = cue;
+    }
+  }
+  return started ?? earliest;
+}
+
+/**
+ * Picks the cue whose `[at, at + duration]` window currently contains
+ * `playbackTimeMs` (last match wins on overlap), unlike `.at(-1)` which
+ * blindly takes the last-authored cue even if its window isn't active —
+ * silently masking an earlier, currently-active cue of the same kind.
+ */
+function activeWindowCue(
+  cues: readonly SceneTimelineCueLike[],
+  playbackTimeMs: number,
+): SceneTimelineCueLike | undefined {
+  let match: SceneTimelineCueLike | undefined;
+  for (const cue of cues) {
+    const atMs = Math.max(0, finiteNumber(cue.at));
+    const durationMs = Math.max(0, finiteNumber(cue.duration));
+    const inWindow =
+      durationMs <= 0
+        ? playbackTimeMs === atMs
+        : playbackTimeMs >= atMs && playbackTimeMs <= atMs + durationMs;
+    if (inWindow) {
+      match = cue;
+    }
+  }
+  return match;
+}
+
 function enterCueForNode(
   nodeId: string,
   timeline: readonly SceneTimelineCueLike[],
+  playbackTimeMs: number,
 ): SceneTimelineCueLike | undefined {
-  return timeline
-    .filter(
-      (candidate) =>
-        candidate.target === nodeId && isEnterLikeAction(candidate.action),
-    )
-    .at(-1);
+  const cues = timeline.filter(
+    (candidate) =>
+      candidate.target === nodeId && isEnterLikeAction(candidate.action),
+  );
+  return mostRecentlyStartedCue(cues, playbackTimeMs);
 }
 
 function fadeCueForNode(
   nodeId: string,
   timeline: readonly SceneTimelineCueLike[],
+  playbackTimeMs: number,
 ): SceneTimelineCueLike | undefined {
-  return timeline
-    .filter(
-      (candidate) =>
-        candidate.target === nodeId && isFadeLikeAction(candidate.action),
-    )
-    .at(-1);
+  const cues = timeline.filter(
+    (candidate) =>
+      candidate.target === nodeId && isFadeLikeAction(candidate.action),
+  );
+  return mostRecentlyStartedCue(cues, playbackTimeMs);
 }
 
 /** Map cue `at`/`duration` onto opacity and enter state for one node. */
@@ -2548,8 +2603,8 @@ function appearanceForNode(
   timeline: readonly SceneTimelineCueLike[],
   playbackTimeMs: number,
 ): TimelineAppearance {
-  const enterCue = enterCueForNode(nodeId, timeline);
-  const fadeCue = fadeCueForNode(nodeId, timeline);
+  const enterCue = enterCueForNode(nodeId, timeline, playbackTimeMs);
+  const fadeCue = fadeCueForNode(nodeId, timeline, playbackTimeMs);
 
   let enterOpacity = 1;
   let state: TimelineState = "unchanged";
@@ -2598,7 +2653,7 @@ function isFadingOut(
   timeline: readonly SceneTimelineCueLike[],
   playbackTimeMs: number,
 ): boolean {
-  const fadeCue = fadeCueForNode(nodeId, timeline);
+  const fadeCue = fadeCueForNode(nodeId, timeline, playbackTimeMs);
   if (fadeCue === undefined) {
     return false;
   }
@@ -2615,14 +2670,13 @@ function drawProgressForNode(
   playbackTimeMs: number,
   includeTrace = true,
 ): number | undefined {
-  const cue = timeline
-    .filter(
-      (candidate) =>
-        candidate.target === nodeId &&
-        isDrawAction(candidate.action) &&
-        (includeTrace || candidate.action !== "trace"),
-    )
-    .at(-1);
+  const cues = timeline.filter(
+    (candidate) =>
+      candidate.target === nodeId &&
+      isDrawAction(candidate.action) &&
+      (includeTrace || candidate.action !== "trace"),
+  );
+  const cue = mostRecentlyStartedCue(cues, playbackTimeMs);
   if (cue === undefined) {
     return undefined;
   }
@@ -2638,12 +2692,10 @@ function traceProgressForNode(
   timeline: readonly SceneTimelineCueLike[],
   playbackTimeMs: number,
 ): number | undefined {
-  const cue = timeline
-    .filter(
-      (candidate) =>
-        candidate.target === nodeId && candidate.action === "trace",
-    )
-    .at(-1);
+  const cues = timeline.filter(
+    (candidate) => candidate.target === nodeId && candidate.action === "trace",
+  );
+  const cue = mostRecentlyStartedCue(cues, playbackTimeMs);
   if (cue === undefined || playbackTimeMs < finiteNumber(cue.at)) {
     return undefined;
   }
@@ -2661,12 +2713,10 @@ function fanStrokeProgress(
   timeline: readonly SceneTimelineCueLike[],
   playbackTimeMs: number,
 ): number | undefined {
-  const cue = timeline
-    .filter(
-      (candidate) =>
-        candidate.target === nodeId && candidate.action === "trace",
-    )
-    .at(-1);
+  const cues = timeline.filter(
+    (candidate) => candidate.target === nodeId && candidate.action === "trace",
+  );
+  const cue = mostRecentlyStartedCue(cues, playbackTimeMs);
   if (cue === undefined) {
     return undefined;
   }
@@ -2674,6 +2724,25 @@ function fanStrokeProgress(
     return 0;
   }
   return cueProgress(cue, playbackTimeMs);
+}
+
+/**
+ * Dev-only, once-per-node warning: `emphasize` and `pulse` cues both
+ * active for the same node at once silently drop `pulse` (emphasize
+ * wins via `emphasis ?? pulseCue`). Not a rendering bug by itself, but
+ * an authoring ambiguity worth flagging rather than masking.
+ */
+const warnedOverlappingEmphasisNodeIds = new Set<string>();
+function warnOverlappingEmphasisOnce(nodeId: string): void {
+  if (warnedOverlappingEmphasisNodeIds.has(nodeId)) {
+    return;
+  }
+  warnedOverlappingEmphasisNodeIds.add(nodeId);
+  console.warn(
+    `[flow] node "${nodeId}" has overlapping emphasize and pulse cues; ` +
+      "emphasize wins and pulse is ignored for the overlap. Stagger the " +
+      "cue windows if both effects are intended.",
+  );
 }
 
 /**
@@ -2686,12 +2755,11 @@ function emphasisForNode(
   playbackTimeMs: number,
   accentColor: string,
 ): EmphasisAppearance | undefined {
-  const cue = timeline
-    .filter(
-      (candidate) =>
-        candidate.target === nodeId && isEmphasizeAction(candidate.action),
-    )
-    .at(-1);
+  const cues = timeline.filter(
+    (candidate) =>
+      candidate.target === nodeId && isEmphasizeAction(candidate.action),
+  );
+  const cue = activeWindowCue(cues, playbackTimeMs);
   if (cue === undefined) {
     return undefined;
   }
@@ -2730,12 +2798,10 @@ function pulseCueForNode(
   timeline: readonly SceneTimelineCueLike[],
   playbackTimeMs: number,
 ): EmphasisAppearance | undefined {
-  const cue = timeline
-    .filter(
-      (candidate) =>
-        candidate.target === nodeId && isPulseAction(candidate.action),
-    )
-    .at(-1);
+  const cues = timeline.filter(
+    (candidate) => candidate.target === nodeId && isPulseAction(candidate.action),
+  );
+  const cue = activeWindowCue(cues, playbackTimeMs);
   if (cue === undefined) {
     return undefined;
   }
@@ -3528,6 +3594,9 @@ function renderNode(
     playbackTimeMs,
     playback,
   );
+  if (import.meta.env.DEV && emphasis !== undefined && pulseCue !== undefined) {
+    warnOverlappingEmphasisOnce(node.id);
+  }
   const activeEmphasis = emphasis ?? pulseCue;
   const label = node.accessibility?.label ?? node.id;
   const description = node.accessibility?.description;
