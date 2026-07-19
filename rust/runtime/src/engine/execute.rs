@@ -3377,10 +3377,14 @@ async fn execute_native_inner(
         // spawns (worker threads are spawned only after `run_sharded_scheduled`
         // receives this already-fully-built `Arc<ShardedShared>`), from the
         // cell-local (not-yet-thread-sliced) phase specs — see `GlobalAdmission`.
-        let global_admission = if matches!(request.dispatch_mode, DispatchMode::Sharded) {
-            None
-        } else {
-            Some(Arc::new(GlobalAdmission::build(&request.phases)?))
+        // Only `Global` builds shared cross-thread admission gates, to make its
+        // `W` independent scheduling loops jointly exact. `Sharded` slices
+        // per-thread and needs none; `GlobalHop` runs a single coordinator loop
+        // with the full local cap and needs none either (see
+        // `global_hop::run_global_hop` — "one loop, one full-cap local pool").
+        let global_admission = match request.dispatch_mode {
+            DispatchMode::Global => Some(Arc::new(GlobalAdmission::build(&request.phases)?)),
+            DispatchMode::Sharded | DispatchMode::GlobalHop => None,
         };
         let shared = Arc::new(ShardedShared {
             transport_factory: transport_factory.clone(),
@@ -3442,12 +3446,24 @@ async fn execute_native_inner(
         {
             profiling_sidecars.push(sidecar);
         }
-        let outcome = crate::engine::sharded_scheduled::run_sharded_scheduled(
-            shared,
-            profiling_sidecars,
-            clock.clone(),
-        )
-        .await?;
+        // `GlobalHop` runs one coordinator loop hopping turns to worker threads;
+        // `Sharded`/`Global` run `W` independent per-thread scheduling loops.
+        let outcome = match request.dispatch_mode {
+            DispatchMode::GlobalHop => crate::engine::global_hop::run_global_hop(
+                shared,
+                profiling_sidecars,
+                clock.clone(),
+            )
+            .await?,
+            DispatchMode::Sharded | DispatchMode::Global => {
+                crate::engine::sharded_scheduled::run_sharded_scheduled(
+                    shared,
+                    profiling_sidecars,
+                    clock.clone(),
+                )
+                .await?
+            }
+        };
         // Concatenate the per-shard static-accuracy captures (empty for a non-accuracy
         // run); graded once at finalize. Moved out before the record match below.
         accuracy_captures = outcome.accuracy_captures;
