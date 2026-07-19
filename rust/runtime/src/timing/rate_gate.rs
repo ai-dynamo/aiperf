@@ -76,12 +76,18 @@ impl GlobalRateGate {
     ///
     /// Each caller claims a monotonically-increasing slot by atomically
     /// advancing `next_fire_ns`. The caller then sleeps until their fire time
-    /// has arrived according to `clock`.
-    pub async fn wait_turn(self: &Arc<Self>, clock: std::rc::Rc<dyn Clock>) {
+    /// has arrived according to `clock`. Returns the claimed fire time (in
+    /// run-clock nanoseconds) so callers — notably tests proving the
+    /// cross-thread claim property — can record which slot they were
+    /// actually assigned without having to reverse-engineer it from a
+    /// post-sleep clock reading, which is vulnerable to real-clock
+    /// scheduling jitter.
+    pub async fn wait_turn(self: &Arc<Self>, clock: std::rc::Rc<dyn Clock>) -> i64 {
         let fire_ns = self.claim_offset_ns();
         let now_ns = clock.now_ns();
         let duration_ns = fire_ns.saturating_sub(now_ns);
         clock.sleep(duration_ns).await;
+        fire_ns
     }
 }
 
@@ -158,8 +164,12 @@ mod tests {
                     // `Rc<dyn Clock>` and the current-thread runtime are both
                     // `!Send`, so each OS thread constructs its own; sharing
                     // `anchor` keeps every thread's `now_ns()` on one
-                    // timeline so claimed slots line up with observed fire
-                    // times across threads.
+                    // timeline so `wait_turn`'s duration-until-fire sleep is
+                    // computed consistently across threads. The recorded
+                    // values below are the slot each call actually claimed
+                    // (`wait_turn`'s return value), not an observed
+                    // post-sleep clock reading, so they are exact regardless
+                    // of real-clock scheduling jitter.
                     let clock: Rc<dyn Clock> = RealClock::from_anchor(anchor);
                     let local_fire_times =
                         Rc::new(RefCell::new(Vec::with_capacity(CALLS_PER_THREAD)));
@@ -168,8 +178,8 @@ mod tests {
                         let local_fire_times = local_fire_times.clone();
                         async move {
                             for _ in 0..CALLS_PER_THREAD {
-                                gate.wait_turn(clock.clone()).await;
-                                local_fire_times.borrow_mut().push(clock.now_ns());
+                                let fire_ns = gate.wait_turn(clock.clone()).await;
+                                local_fire_times.borrow_mut().push(fire_ns);
                             }
                         }
                     };
@@ -189,12 +199,13 @@ mod tests {
         let times = all_fire_times.lock().unwrap();
         assert_eq!(times.len(), EXPECTED_TOTAL);
 
-        // The gate never wakes a caller before its claimed fire time, and
-        // real-clock scheduling jitter is far smaller than `INTERVAL_NS`, so
-        // rounding each observed fire time down to the interval grid
-        // recovers exactly the slot index that thread claimed via
-        // `fetch_add`. If two threads ever raced to the same slot (a lost
-        // update), two entries would collide on the same bucket here.
+        // `times` holds each call's actual claimed fire time (`wait_turn`'s
+        // return value from `claim_offset_ns`'s `fetch_add`), not a value
+        // recovered from a post-sleep clock reading — so this is immune to
+        // real-clock scheduling jitter. Dividing by `INTERVAL_NS` maps each
+        // claim onto its slot index for readability; if two threads ever
+        // raced to the same slot (a lost update), two entries would collide
+        // here.
         let mut slots: Vec<i64> = times.iter().map(|&t| t / INTERVAL_NS).collect();
         slots.sort_unstable();
         slots.dedup();
