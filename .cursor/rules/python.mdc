@@ -22,7 +22,7 @@ Source-of-truth locations:
 
 - Native CLI and process entry: `rust/cli/`.
 - Runtime and execution engine: `rust/runtime/`; the `engine` feature exposes `aiperf_runtime::engine`.
-- Transport-neutral observer seam: `rust/loadgen-core/`.
+- Transport-neutral observer seam: `rust/runtime/src/dispatch/`.
 - Standalone mock target: `rust/mock-server/`.
 - Python package and delegated command implementation: `src/aiperf/`.
 - Repository architecture index: `llms.txt`.
@@ -62,14 +62,13 @@ The exporter plane writes configured JSON, CSV, Parquet, console, timeslice, ser
 
 The Cargo workspace uses edition 2024 and resolver 3.
 
-- `loadgen-core`: defines `Dispatchable`, `RequestSink<R>`, `RequestObserver`, `ObservedUsage`, endpoint observations, `TraceCollector`, and `CollectorObserver`. It has no engine, router, KV, HTTP, or gRPC dependency.
-- `aiperf-runtime`: library-only runtime composition. It contains clocks, datasets, endpoints, transports, scheduling, graph execution, metrics, exporters, accuracy, adaptive control, telemetry, content serving, cellular support, extension registration, and the feature-gated v2 engine.
+- `aiperf-runtime`: library-only runtime composition. It contains clocks, datasets, endpoints, transports, scheduling, graph execution, metrics, exporters, accuracy, adaptive control, telemetry, content serving, cellular support, extension registration, and the feature-gated v2 engine. The `dispatch` module defines `Dispatchable`, `RequestSink<R>`, `RequestObserver`, `ObservedUsage`, endpoint observations, `TraceCollector`, and `CollectorObserver`.
 - `aiperf-cli`: library plus the `aiperf` binary. It owns command routing, Config v2 loading and expansion, profile projection, self-execution, cellular roles, native searches and sweeps, result rendering, and process signals.
 - `aiperf-mock-server`: standalone HTTP/gRPC inference target with deterministic response generation, latency models, error injection, usage accounting, telemetry, TLS, UDS, balancing, accuracy fixtures, and request recording.
 - `pyext`: packaging-only pyo3 module exposed as `aiperf._native` in the wheel.
 - `e2e`: product integration harness and tests.
 
-Direct internal dependency direction is `aiperf-cli` to `aiperf-runtime` to `loadgen-core`; `aiperf-mock-server` to `aiperf-runtime`; and `e2e` has development dependencies on `aiperf-runtime` and `aiperf-mock-server`. `pyext` depends directly on pyo3. The CLI and mock server are independent executables.
+Direct internal dependency direction is `aiperf-cli` to `aiperf-runtime`; `aiperf-mock-server` to `aiperf-runtime`; and `e2e` has development dependencies on `aiperf-runtime` and `aiperf-mock-server`. `pyext` depends directly on pyo3. The CLI and mock server are independent executables.
 
 ## Runtime modules
 
@@ -97,7 +96,7 @@ All clock-aware runtime code uses `aiperf_runtime::clock::Clock`. `RealClock` su
 
 ### Dispatch and observation
 
-`loadgen_core::sink` is transport-neutral:
+`aiperf_runtime::dispatch::sink` is transport-neutral:
 
 - A transport-native request implements `Dispatchable`.
 - A sink implements `RequestSink<R>` and drives one request to terminal.

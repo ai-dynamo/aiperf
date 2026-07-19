@@ -28,9 +28,7 @@ and asserts, for every workspace member:
 - the umbrella package ``aiperf`` lives at ``rust/aiperf``;
 - every ``aiperf-<capability>`` package lives at ``rust/<capability>``
   (the ``aiperf-`` prefix is stripped from the directory only);
-- ``loadgen-core`` (the intentional cross-product exception) lives at
-  ``rust/loadgen-core``;
-- any other exception is explicitly allowlisted below with its rationale.
+- any exception is explicitly allowlisted below with its rationale.
 
 Fails with a non-zero exit code on any mismatch, so it can gate CI and
 pre-commit. Requires ``cargo`` on PATH.
@@ -49,13 +47,7 @@ from pathlib import Path
 # Packages whose workspace directory intentionally does NOT follow the
 # aiperf-<capability> -> rust/<capability> rule. Each entry maps the Cargo
 # package name to its required directory basename under rust/, with a reason.
-#
-#   loadgen-core: product-neutral shared dispatch/observation contract designed
-#   for both AIPerf and AI-Dynamo Mocker; it must not carry a product prefix.
-#   See §3 of the naming spec.
-ALLOWLISTED_EXCEPTIONS: dict[str, str] = {
-    "loadgen-core": "loadgen-core",
-}
+ALLOWLISTED_EXCEPTIONS: dict[str, str] = {}
 
 
 def workspace_packages(repo_root: Path) -> list[tuple[str, Path]]:

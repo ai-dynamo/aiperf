@@ -53,7 +53,7 @@ execution are dependency injection rather than code paths:
 
 ### Dispatch and observation seam
 
-`loadgen-core` is the transport-neutral nucleus: `Dispatchable`,
+`aiperf_runtime::dispatch` is the transport-neutral nucleus: `Dispatchable`,
 `RequestSink<R>`, `RequestObserver`, `ObservedUsage`, endpoint observations,
 `TraceCollector`, and `CollectorObserver`. A `RequestSink<R>` drives one request
 to terminal and emits arrival, admission, token, classified-token,
@@ -100,6 +100,6 @@ and [exporters.md](exporters.md).
 
 - Workspace manifest: `Cargo.toml`; crate topology in [repository-layout.md](repository-layout.md).
 - Process entry and command routing: `rust/cli/src/{main.rs,dispatch.rs,execute.rs,execute_mode.rs}`.
-- Neutral seam: `rust/loadgen-core/src/`.
+- Neutral seam: `rust/runtime/src/dispatch/`.
 - Runtime composition: `rust/runtime/src/lib.rs` and `rust/runtime/src/engine/`.
 - Module map: `docs/module-organization.md`.

@@ -81,7 +81,7 @@ schema. The generic Responses API, if added, is its own dialect.
   (bidirectional framed messages), `rust/runtime/src/transport/http/sse/` (SSE
   decoder), `rust/runtime/src/body_plan.rs` (materializer contract),
   `rust/runtime/src/dataset/segment.rs` (content handles), and
-  `rust/loadgen-core/src/sink.rs` (`RequestObserver`).
+  `rust/runtime/src/dispatch/sink.rs` (`RequestObserver`).
 - Placement and registration seams:
   `rust/runtime/src/engine/turn_execution.rs` (`WorkerSink`,
   `ExecutionSinkBuilder`) and `rust/runtime/src/extensions/`.
