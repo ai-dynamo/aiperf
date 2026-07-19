@@ -115,7 +115,13 @@ async fn v2_sharded_workers_own_persistent_connections_with_balanced_slices() {
                 "worker_count": 3,
                 "dataset": {
                     "type": "synthetic",
-                    "entries": 1,
+                    // Thread-per-core sharding partitions requests by conversation
+                    // residue class (`two_level_partition`); a dataset narrower than
+                    // `worker_count` caps `workers` down before any sub-cell spawns
+                    // (see `execute_prepared_native_plan_uncommitted_with_runtime_factories`
+                    // in `runtime/src/engine/execute.rs`). Three entries keep all three
+                    // `worker_count=3` sub-cells populated.
+                    "entries": 3,
                     "sampling": "sequential",
                     "prompts": {
                         "isl": {"value": 4.0},
@@ -162,9 +168,13 @@ async fn v2_sharded_workers_own_persistent_connections_with_balanced_slices() {
     let peers = connection_log.peers.lock().unwrap().clone();
     assert_eq!(peers.len(), 9, "one server request per authored turn");
 
-    // Each of the three sharded sub-cells owns one persistent worker-local
-    // connection (concurrency 1 per thread + HTTP keep-alive), so the run uses
-    // exactly three distinct peers.
+    // Each of the three thread-per-core sub-cells owns one persistent
+    // worker-local connection (concurrency 1 per thread + HTTP keep-alive), so
+    // the run uses exactly three distinct peers. Conversation ownership is a
+    // static per-thread partition under both `Sharded` and the default
+    // `Global` dispatch mode (only cross-thread concurrency/rate *admission*
+    // differs between them), so this invariant holds without pinning
+    // `runtime.dispatch`.
     let distinct: std::collections::BTreeSet<_> = peers.iter().collect();
     assert_eq!(
         distinct.len(),
@@ -172,9 +182,11 @@ async fn v2_sharded_workers_own_persistent_connections_with_balanced_slices() {
         "worker_count=3 must open exactly three worker-local connections: {peers:?}"
     );
 
-    // Deterministic-per-topology slice: each sub-cell owns `owned_positions` of
-    // warmup(3) and profiling(6) over three threads — 1 warmup + 2 profiling = 3
-    // turns per connection. The global interleaving across threads is a benign
+    // Deterministic-per-topology slice: each sub-cell owns one of the three
+    // conversations and recycles it for its `owned_positions` of warmup(3) and
+    // profiling(6) over three threads — 1 warmup + 2 profiling = 3 turns per
+    // connection. That per-thread conversation ownership is static regardless
+    // of `runtime.dispatch`; the cross-thread interleaving *order* is a benign
     // scheduling race, but the per-connection turn counts are fixed.
     for peer in &distinct {
         let count = peers.iter().filter(|p| p == peer).count();
