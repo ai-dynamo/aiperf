@@ -49,7 +49,6 @@ explainer "Rust Architecture" {
         after cli-hat reveal engine-hat duration 280
         after engine-hat trace a1 duration 320
         after binary trace motion-sig duration 1100
-        after motion-sig reveal binary duration 480
       }
     }
   }
@@ -86,7 +85,6 @@ explainer "Rust Architecture" {
         after loadgen reveal mock duration 300
         after loadgen trace a2 duration 280
         after loadgen trace motion-sig duration 1100
-        after motion-sig reveal runtime duration 480
       }
     }
   }
@@ -121,7 +119,6 @@ explainer "Rust Architecture" {
         after a1 reveal dispatch duration 320
         after dispatch trace a2 duration 280
         after dispatch trace motion-sig duration 1100
-        after motion-sig reveal execute duration 480
       }
     }
   }
@@ -154,7 +151,6 @@ explainer "Rust Architecture" {
         after delegated reveal footer duration 300
         after delegated trace split duration 280
         after delegated trace motion-sig duration 1100
-        after motion-sig reveal native duration 480
       }
     }
   }
@@ -189,7 +185,6 @@ explainer "Rust Architecture" {
         after a1 reveal run duration 360
         after run trace a2 duration 280
         after run trace motion-sig duration 1100
-        after motion-sig reveal run duration 480
       }
     }
   }
@@ -224,7 +219,6 @@ explainer "Rust Architecture" {
         after a1 reveal execute duration 360
         after execute trace a2 duration 280
         after execute trace motion-sig duration 1100
-        after motion-sig reveal spawn duration 480
       }
     }
   }
@@ -259,7 +253,6 @@ explainer "Rust Architecture" {
         after a1 reveal terminal duration 320
         after terminal trace a2 duration 280
         after terminal trace motion-sig duration 1100
-        after motion-sig reveal app duration 480
       }
     }
   }
@@ -300,7 +293,6 @@ explainer "Rust Architecture" {
         after samplers reveal endpoints duration 260
         after endpoints reveal transports duration 260
         after transports trace registry-fan duration 1100
-        after registry-fan reveal registry duration 480
       }
     }
   }
@@ -339,7 +331,6 @@ explainer "Rust Architecture" {
         after execute trace a3 duration 240
         after a3 reveal persist duration 300
         after persist trace motion-sig duration 1100
-        after motion-sig reveal execute duration 480
       }
     }
   }
@@ -372,7 +363,6 @@ explainer "Rust Architecture" {
         after split reveal sim duration 340
         after sim reveal footer duration 300
         after footer trace motion-sig duration 1100
-        after motion-sig reveal real duration 480
       }
     }
   }
@@ -411,7 +401,6 @@ explainer "Rust Architecture" {
         after sample trace a3 duration 240
         after a3 reveal materialize duration 300
         after materialize trace motion-sig duration 1100
-        after motion-sig reveal materialize duration 480
       }
     }
   }
@@ -446,7 +435,6 @@ explainer "Rust Architecture" {
         after phase trace a2 duration 280
         after a2 reveal turns duration 340
         after turns trace motion-sig duration 1100
-        after motion-sig reveal phase duration 480
       }
     }
   }
@@ -481,7 +469,6 @@ explainer "Rust Architecture" {
         after sink trace a2 duration 280
         after a2 reveal observer duration 320
         after observer trace motion-sig duration 1100
-        after motion-sig reveal sink duration 480
       }
     }
   }
@@ -519,7 +506,6 @@ explainer "Rust Architecture" {
         after w0 reveal w1 duration 260
         after w1 reveal w2 duration 260
         after w2 trace worker-fan duration 1100
-        after worker-fan reveal coord duration 480
       }
     }
   }
@@ -554,7 +540,6 @@ explainer "Rust Architecture" {
         after velo trace a2 duration 280
         after a2 reveal cells duration 340
         after cells trace motion-sig duration 1100
-        after motion-sig reveal velo duration 480
       }
     }
   }
@@ -591,7 +576,6 @@ explainer "Rust Architecture" {
         after a2 reveal exporters duration 340
         after exporters reveal footer duration 300
         after footer trace motion-sig duration 1100
-        after motion-sig reveal report duration 480
       }
     }
   }

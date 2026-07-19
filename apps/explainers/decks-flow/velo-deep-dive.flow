@@ -141,7 +141,6 @@ explainer "Velo deep dive" {
         after s0-a2 reveal s0-ctrl duration 280
         after s0-ctrl reveal s0-src duration 260
         after s0-src trace s0-motion-sig duration 700
-        after s0-motion-sig reveal s0-ctrl duration 400
       }
   }
   }
@@ -257,7 +256,6 @@ explainer "Velo deep dive" {
         after s1-spec trace s1-a4 duration 300
         after s1-a4 reveal s1-reply duration 280
         after s1-reply trace s1-motion-sig duration 700
-        after s1-motion-sig reveal s1-reply duration 400
       }
   }
   }
@@ -415,7 +413,6 @@ explainer "Velo deep dive" {
         after s2-barrier trace s2-aw duration 320
         after s2-aw reveal s2-start duration 260
         after s2-start trace s2-motion-sig duration 700
-        after s2-motion-sig reveal s2-barrier duration 400
       }
   }
   }
@@ -531,7 +528,6 @@ explainer "Velo deep dive" {
         after s3-raw trace s3-a4 duration 300
         after s3-a4 reveal s3-from duration 260
         after s3-from trace s3-motion-sig duration 700
-        after s3-motion-sig reveal s3-raw duration 400
       }
   }
   }
@@ -660,7 +656,6 @@ explainer "Velo deep dive" {
         after s4-a2 reveal s4-agg duration 280
         after s4-agg reveal s4-note duration 200
         after s4-note trace s4-motion-sig duration 700
-        after s4-motion-sig reveal s4-agg duration 400
       }
   }
   }
@@ -777,7 +772,6 @@ explainer "Velo deep dive" {
         after s5-ctrl trace s5-a3 duration 420
         after s5-a3 reveal s5-ack duration 260
         after s5-ack trace s5-motion-sig duration 700
-        after s5-motion-sig reveal s5-ack duration 400
       }
   }
   }
@@ -934,7 +928,6 @@ explainer "Velo deep dive" {
         after s6-merge trace s6-a5 duration 280
         after s6-a5 reveal s6-one duration 260
         after s6-one trace s6-motion-sig duration 700
-        after s6-motion-sig reveal s6-merge duration 400
       }
   }
   }
@@ -1076,7 +1069,6 @@ explainer "Velo deep dive" {
         after s7-a1 trace s7-a2 duration 360
         after s7-a2 reveal s7-note duration 200
         after s7-note trace s7-motion-sig duration 700
-        after s7-motion-sig reveal s7-attach duration 400
       }
   }
   }
@@ -1215,7 +1207,6 @@ explainer "Velo deep dive" {
         after s8-c1 trace s8-a3 duration 340
         after s8-a3 reveal s8-c2 duration 240
         after s8-c2 trace s8-motion-sig duration 700
-        after s8-motion-sig reveal s8-bcast duration 400
       }
   }
   }
@@ -1363,7 +1354,6 @@ explainer "Velo deep dive" {
         after s9-cell-fan reveal s9-note duration 200
         after s9-note trace s9-cell-fan duration 820
         after s9-cell-fan trace s9-agg-fan duration 560
-        after s9-agg-fan reveal s9-ctrl duration 400
       }
   }
   }

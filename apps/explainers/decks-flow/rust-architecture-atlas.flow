@@ -58,7 +58,6 @@ explainer "Rust Architecture Atlas" {
         after a0c reveal mock duration 280
         after mock reveal dyno duration 280
         after execute trace motion-sig-0 duration 900
-        after motion-sig-0 reveal dyno duration 480
       }
     }
   }
@@ -98,7 +97,6 @@ explainer "Rust Architecture Atlas" {
         after loadgen trace a1b duration 420
         after a1b reveal pyext duration 280
         after loadgen trace motion-sig-1 duration 900
-        after motion-sig-1 reveal pyext duration 480
       }
     }
   }
@@ -144,7 +142,6 @@ explainer "Rust Architecture Atlas" {
         after a2c reveal obs duration 280
         after obs reveal nv2 duration 280
         after sink trace motion-sig-2 duration 900
-        after motion-sig-2 reveal nv2 duration 480
       }
     }
   }
@@ -190,7 +187,6 @@ explainer "Rust Architecture Atlas" {
         after a3c reveal app3 duration 280
         after app3 reveal stdout duration 280
         after spawn trace motion-sig-3 duration 900
-        after motion-sig-3 reveal stdout duration 480
       }
     }
   }
@@ -234,7 +230,6 @@ explainer "Rust Architecture Atlas" {
         after turn trace a4c duration 420
         after a4c reveal wn duration 280
         after turn trace motion-sig-4 duration 900
-        after motion-sig-4 reveal wn duration 480
       }
     }
   }
@@ -280,7 +275,6 @@ explainer "Rust Architecture Atlas" {
         after a5c reveal chop duration 280
         after chop reveal gexec duration 280
         after bundle trace motion-sig-5 duration 900
-        after motion-sig-5 reveal gexec duration 480
       }
     }
   }
@@ -326,7 +320,6 @@ explainer "Rust Architecture Atlas" {
         after a6c reveal bind duration 280
         after bind reveal obs6 duration 280
         after key trace motion-sig-6 duration 900
-        after motion-sig-6 reveal obs6 duration 480
       }
     }
   }
@@ -377,7 +370,6 @@ explainer "Rust Architecture Atlas" {
         after a7c reveal compat duration 280
         after compat reveal otlp duration 280
         after otlp trace export-fan duration 900
-        after export-fan reveal otlp duration 480
       }
     }
   }
@@ -433,7 +425,6 @@ explainer "Rust Architecture Atlas" {
         after agg trace result-fan duration 620
         after result-fan reveal merge8 duration 280
         after merge8 trace result-fan duration 900
-        after result-fan reveal merge8 duration 480
       }
     }
   }
@@ -473,7 +464,6 @@ explainer "Rust Architecture Atlas" {
         after search reveal full duration 280
         after full reveal fail duration 280
         after fail trace motion-sig-9 duration 900
-        after motion-sig-9 reveal fail duration 480
       }
     }
   }
@@ -515,7 +505,6 @@ explainer "Rust Architecture Atlas" {
         after tr reveal wl duration 280
         after wl reveal ex duration 280
         after ex trace motion-sig-10 duration 900
-        after motion-sig-10 reveal ex duration 480
       }
     }
   }
