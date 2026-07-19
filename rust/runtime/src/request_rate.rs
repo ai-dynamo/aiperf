@@ -395,11 +395,14 @@ impl Workload for RequestRateWorkload {
                 // so their union is exactly the global rate grid). Anchor it to
                 // phase start plus one interval — matching the local path's
                 // "first arrival is one interval in" — and add a mean-zero
-                // jitter offset from this thread's own generator so Poisson/Gamma
-                // arrivals keep their distribution without perturbing the exact
-                // aggregate rate. No per-thread re-anchor: a claimed slot already
-                // in the past pages through via the `scheduled_ns <= now` yield
-                // path below.
+                // jitter offset from this thread's own generator. This keeps
+                // the aggregate rate exact regardless of jitter, but is a
+                // bounded-scatter approximation, not a reproduction of
+                // Poisson/Gamma arrival-process statistics (see
+                // `GlobalRateGate`'s module doc) — full arrival-pattern parity
+                // for jittered phases is `global-hop`'s job. No per-thread
+                // re-anchor: a claimed slot already in the past pages through
+                // via the `scheduled_ns <= now` yield path below.
                 let jitter_ns = self
                     .intervals
                     .borrow_mut()

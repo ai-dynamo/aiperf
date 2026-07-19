@@ -9,13 +9,18 @@
 //! single global limiter exactly, the way Python's implementation does.
 //!
 //! The shared counter only models the **fixed-interval base grid** (`0`,
-//! `interval_ns`, `2*interval_ns`, ...). Poisson/Gamma jitter is preserved
-//! without giving up exact aggregate rate: a caller draws a mean-zero offset
+//! `interval_ns`, `2*interval_ns`, ...). A caller draws a mean-zero offset
 //! from its own [`IntervalGenerator`](crate::timing::IntervalGenerator)
-//! (`next_interval_ns() - interval_ns()`) and adds it to its claimed base slot.
-//! Because the base slots stay evenly spaced and the offsets are mean-zero, the
-//! aggregate arrival rate remains exactly the configured global rate while each
-//! individual inter-arrival time still carries the distribution's jitter. See
+//! (`next_interval_ns() - interval_ns()`) and adds it to its claimed base slot,
+//! so the aggregate arrival rate remains exactly the configured global rate
+//! regardless of jitter. This is **not** a reproduction of Poisson/Gamma
+//! arrival-process statistics: each thread's own generator still contributes a
+//! bounded, mean-zero scatter around its slot, but the resulting inter-arrival
+//! times are not exponentially distributed and do not carry the authored
+//! distribution's shape (constant-variance grid + offset, not a true renewal
+//! process). Exact global concurrency and exact global *rate* (this type's
+//! job) are the byte-exactness guarantees `Global` mode makes; full
+//! Poisson/Gamma arrival-*pattern* parity requires `global-hop`. See
 //! [`GlobalRateGate::claim_offset_ns`].
 
 use std::sync::Arc;
