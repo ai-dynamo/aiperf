@@ -648,4 +648,245 @@ explainer "Synthetic Dataset Generator" {
       }
     }
   }
+
+  slide "dispatch_body picks the wire representation" {
+    eyebrow: "Dispatch"
+    title: "dispatch_body picks the wire representation"
+    lede: "Turn::dispatch_body(raw_payload, raw_token_ids, messages) builds one SmallVec: raw payload first if present, then raw token ids, and only when both are absent does it fall through to the message list. The no-decode branch calls dispatch_body(None, Some(handle), &[]) so the token-ids handle wins outright. The text-plus-media branches never set raw_token_ids for the whole turn, so their ContentGroups reach the wire through the messages fallback."
+    narration: "dispatch_body has the same three-tier precedence this deck's sibling segment-pools explainer covers for Turn.body generally: raw, then token ids, then messages. The no-decode branch wins on token ids; every text-plus-media turn falls through to messages."
+    term: {
+      word: "dispatch_body"
+      meaning: "Turn::dispatch_body(raw_payload, raw_token_ids, messages) — raw payload wins, then raw token ids, else the message list; this is the only place body precedence is decided."
+    }
+    points: [
+      "`if let Some(raw) = raw_payload { body.push(raw); }` — checked first, always wins when present.",
+      "`if let Some(token_ids) = raw_token_ids { body.push(token_ids); }` — checked second; this is what the no-decode branch sets.",
+      "`if raw_payload.is_none() && raw_token_ids.is_none() { body.extend_from_slice(messages); }` — the text-plus-media ContentGroups only reach `Turn.body` here.",
+      "Evidence: `rust/runtime/src/dataset/model.rs` (`Turn::dispatch_body` and its `dispatch_body_orders_the_representations_and_keeps_coexisting_tokens` test)."
+    ]
+    caption: "Raw → TokenIds → Messages · the no-decode branch short-circuits it, text+media falls through."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "DISPATCH PRECEDENCE",
+        caption = "Raw → TokenIds → Messages · the no-decode branch short-circuits it, text+media falls through.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "dispatch",
+        title = "dispatch_body",
+        detail = "raw, token_ids, messages",
+        x = 30, y = 140, width = 170, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.FanOut(
+        id = "arrow-dispatch-tiers",
+        from = { nodeId: "dispatch", anchor: "e" },
+        to = [{ nodeId: "raw", anchor: "w" }, { nodeId: "tokenids", anchor: "w" }, { nodeId: "messages", anchor: "w" }],
+        axis = "x",
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "raw",
+        title = "raw_payload?",
+        detail = "wins outright",
+        x = 280, y = 70, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "tokenids",
+        title = "raw_token_ids?",
+        detail = "no-decode branch",
+        x = 280, y = 155, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "messages",
+        title = "messages",
+        detail = "text + media groups",
+        x = 280, y = 240, width = 170, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "arrow-out",
+        mode = "route",
+        from = { nodeId: "messages", anchor: "e" },
+        to = { nodeId: "out", anchor: "w" },
+        style = { stroke: theme(accent.orange), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "out",
+        title = "Turn.body",
+        detail = "final SmallVec",
+        x = 500, y = 155, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.orange)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal dispatch duration 280
+        after dispatch trace arrow-dispatch-tiers duration 400
+        after arrow-dispatch-tiers stagger targets [raw, tokenids, messages] step 140 duration 220
+        after messages trace arrow-out duration 320
+        after arrow-out reveal out duration 260
+      }
+    }
+  }
+
+  slide "Recap: shape config to wire Turn" {
+    eyebrow: "Recap"
+    title: "Recap: shape config to wire Turn"
+    lede: "SyntheticDatasetConfig drives SyntheticComposer::compose. requires_raw_token_ids forks into the no-decode branch (generate_token_ids → intern_token_ids → dispatch_body wins on token ids) or the text branch (generate/reuse → decode/encode → intern_text → ContentGroup{Text}). append_media_batch always runs afterward, chaining each media item off the current parent and pushing one ContentGroup per category. Turn::dispatch_body then picks raw, then token ids, then the accumulated ContentGroups as messages."
+    narration: "Shape config forks on requires_raw_token_ids, media batches always join after either branch on the same parent chain, and dispatch_body makes the final call on what reaches the wire."
+    term: {
+      word: "one Turn, one dispatch"
+      meaning: "Every generated value for a turn — text or media, no-decode or not — funnels through exactly one Turn::dispatch_body call that decides the wire shape."
+    }
+    points: [
+      "Fork: `requires_raw_token_ids` — no-decode short-circuits `dispatch_body`; text falls through to `messages`.",
+      "Join: `append_media_batch` always runs after either branch, threading `parent` forward across every media item.",
+      "Decide: `Turn::dispatch_body` — raw, then token ids, then messages, exactly once per turn.",
+      "Evidence: `rust/runtime/src/dataset/loader/synthetic.rs`, `rust/runtime/src/dataset/generator/mod.rs`, `rust/runtime/src/dataset/model.rs`."
+    ]
+    caption: "Fork → generate/reuse → join media → dispatch_body · one Turn per iteration."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "FULL PIPELINE",
+        caption = "Fork → generate/reuse → join media → dispatch_body · one Turn per iteration.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Stepper(
+        id = "phases",
+        steps = ["FORK", "GENERATE", "JOIN MEDIA", "DISPATCH"],
+        linked = true,
+        gap = 20,
+        x = 40, y = 95, width = 620, height = 28
+      )
+      sdk.Panel(
+        id = "fork",
+        title = "requires_raw_token_ids",
+        detail = "fork",
+        x = 30, y = 150, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-fork-generate",
+        mode = "route",
+        from = { nodeId: "fork", anchor: "e" },
+        to = { nodeId: "generate", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "generate",
+        title = "generate / reuse",
+        detail = "text or token ids",
+        x = 200, y = 150, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-generate-media",
+        mode = "route",
+        from = { nodeId: "generate", anchor: "e" },
+        to = { nodeId: "media", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "media",
+        title = "append_media_batch",
+        detail = "chains parent",
+        x = 370, y = 150, width = 150, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "arrow-media-dispatch",
+        mode = "route",
+        from = { nodeId: "media", anchor: "e" },
+        to = { nodeId: "dispatch", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "dispatch",
+        title = "dispatch_body",
+        detail = "→ Turn.body",
+        x = 540, y = 150, width = 140, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header stagger targets [phases-step-0, phases-step-1, phases-step-2, phases-step-3] step 70 duration 160
+        after phases-step-3 reveal fork duration 260
+        after fork trace arrow-fork-generate duration 300
+        after arrow-fork-generate reveal generate duration 260
+        after generate trace arrow-generate-media duration 300
+        after arrow-generate-media reveal media duration 260
+        after media trace arrow-media-dispatch duration 300
+        after arrow-media-dispatch reveal dispatch duration 260
+      }
+    }
+  }
+
+  finalCard: @scene {
+    sdk.Header(
+      id = "final-hdr",
+      title = "Live evidence files",
+      caption = "synthetic dataset path",
+      x = 18, y = 16, width = 664, height = 44,
+      surfaceRole = theme(surface.secondary),
+      inkRole = theme(ink.secondary)
+    )
+    sdk.Panel(
+      id = "f1",
+      title = "rust/runtime/src/dataset/loader/synthetic.rs",
+      detail = "SyntheticComposer::compose · append_media_batch",
+      x = 40, y = 78, width = 620, height = 48,
+      surfaceRole = theme(surface.elevated),
+      strokeRole = theme(accent.secondary)
+    )
+    sdk.Panel(
+      id = "f2",
+      title = "rust/runtime/src/dataset/generator/mod.rs",
+      detail = "SyntheticDatasetConfig · SyntheticPromptConfig · SyntheticPrefixConfig",
+      x = 40, y = 136, width = 620, height = 48,
+      surfaceRole = theme(surface.elevated),
+      strokeRole = theme(accent.tertiary)
+    )
+    sdk.Panel(
+      id = "f3",
+      title = "rust/runtime/src/dataset/model.rs",
+      detail = "Turn.body · Turn::dispatch_body · ContentGroup",
+      x = 40, y = 194, width = 620, height = 48,
+      surfaceRole = theme(surface.elevated),
+      strokeRole = theme(accent.green)
+    )
+    sdk.Panel(
+      id = "f4",
+      title = "rust/runtime/src/dataset/segment.rs",
+      detail = "SegmentPool · Handle · SegmentId (parent chaining)",
+      x = 40, y = 252, width = 620, height = 48,
+      surfaceRole = theme(surface.elevated),
+      strokeRole = theme(accent.warning)
+    )
+
+    timeline main {
+      at 0 reveal final-hdr duration 220
+      at 200 stagger targets [f1, f2, f3, f4] step 180 duration 220
+    }
+  }
 }
