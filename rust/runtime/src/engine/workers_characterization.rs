@@ -730,6 +730,236 @@ mod tests {
         );
     }
 
+    /// Run one prepared native plan under `dispatch_mode`/`workers` and return
+    /// its profiling records. Shared by the `GlobalHop` proofs below.
+    fn run_dispatch_records(
+        registry: &AIPerfRegistry,
+        mock: &FixedMock,
+        workers: usize,
+        dataset: crate::engine::dataset_input::PreparedDatasetInput,
+        phase: PhaseSpec,
+        dispatch_mode: crate::engine::protocol::DispatchMode,
+    ) -> Vec<Value> {
+        let artifact_dir = tempfile::tempdir().unwrap();
+        let request_executor: Arc<dyn RequestExecutorFactory> = Arc::new(HttpExecutionFactory);
+        let factories = native_execution_factories();
+        let spec = plan_with_dispatch(
+            &mock.base_url,
+            artifact_dir.path(),
+            workers,
+            dataset,
+            phase,
+            dispatch_mode,
+        );
+        let report = execute_prepared_native_plan_uncommitted_selected(
+            spec,
+            request_executor,
+            &factories,
+            registry,
+            None,
+        )
+        .expect("native run must complete");
+        assert!(
+            report_error_count(&report) == 0,
+            "expected zero profiling errors, report: {report:?}"
+        );
+        read_records(artifact_dir.path())
+    }
+
+    /// Proves the whole point of `DispatchMode::GlobalHop`: ONE coordinator loop
+    /// hops every turn round-robin to `W` worker threads over the thread-per-core
+    /// hop executor, dispatching every request EXACTLY ONCE and merging the
+    /// worker shards into a DETERMINISTIC global order — the property `Global`
+    /// mode's `W` independent racing loops cannot guarantee.
+    ///
+    /// Exactly-once + deterministic merge are proven end-to-end by data
+    /// equivalence to the authoritative single-thread (`workers = 1`) run: the
+    /// `GlobalHop` `workers = 4` merged record stream must carry the SAME
+    /// per-request `(ISL, OSL)` multiset as the single dispatcher (no dropped,
+    /// duplicated, or reordered-into-a-different-multiset turn), and re-running
+    /// `GlobalHop` must reproduce that stream byte-for-byte after the merge sort.
+    #[test]
+    fn global_hop_dispatches_every_request_exactly_once_in_deterministic_merged_order() {
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let entries = 24;
+        let requests = 24u64;
+        let phase = || -> PhaseSpec {
+            serde_json::from_value(json!({
+                "type": "concurrency",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": requests,
+                "concurrency": 4,
+            }))
+            .unwrap()
+        };
+
+        // Authoritative single dispatcher: workers=1 issues every turn from one
+        // loop in exact global order.
+        let baseline = run_dispatch_records(
+            &registry,
+            &mock,
+            1,
+            build_dataset(&registry, entries, 1),
+            phase(),
+            crate::engine::protocol::DispatchMode::Sharded,
+        );
+        let baseline_keys = sorted_data_keys(&baseline);
+
+        // GlobalHop across 4 worker threads: one coordinator loop hops each turn
+        // round-robin, then merges the shards deterministically.
+        let hop = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_dataset(&registry, entries, 1),
+            phase(),
+            crate::engine::protocol::DispatchMode::GlobalHop,
+        );
+        assert_eq!(
+            hop.len(),
+            requests as usize,
+            "GlobalHop must produce exactly one record per dispatched request \
+             (every turn dispatched exactly once — no loss, no duplicate)"
+        );
+        assert_eq!(
+            sorted_data_keys(&hop),
+            baseline_keys,
+            "GlobalHop's merged record stream must carry the same per-request multiset \
+             the single dispatcher does (exactly-once, deterministically merged)"
+        );
+
+        // Determinism: a second GlobalHop run reproduces the identical merged
+        // record ordering.
+        let hop_again = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_dataset(&registry, entries, 1),
+            phase(),
+            crate::engine::protocol::DispatchMode::GlobalHop,
+        );
+        assert_eq!(
+            sorted_data_keys(&hop_again),
+            sorted_data_keys(&hop),
+            "GlobalHop merge order must be deterministic across runs"
+        );
+    }
+
+    /// `GlobalHop` aggregate-concurrency exactness — the counterpart of
+    /// `global_dispatch_enforces_true_aggregate_concurrency_cap_sharded_does_not`.
+    ///
+    /// A single coordinator loop drives the FULL cell-level concurrency cap
+    /// through one local `SlotPool` (NOT through `GlobalAdmission`, which
+    /// `GlobalHop` deliberately does not consume — see `global_hop`'s module
+    /// doc), so the wire-observed aggregate peak concurrency across all 4 worker
+    /// threads combined never exceeds the authored cap of 3, exactly as `Global`
+    /// mode's shared gate achieves, but here from "one loop, one full-cap local
+    /// pool". Peak concurrency is measured server-side (`FixedMock::peak_concurrent`).
+    #[test]
+    fn global_hop_enforces_true_aggregate_concurrency_cap() {
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let entries = 24;
+        let phase: PhaseSpec = serde_json::from_value(json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": 24u64,
+            "concurrency": 3,
+        }))
+        .unwrap();
+
+        mock.reset_peak();
+        let rows = run_dispatch_records(
+            &registry,
+            &mock,
+            4,
+            build_dataset(&registry, entries, 1),
+            phase,
+            crate::engine::protocol::DispatchMode::GlobalHop,
+        );
+        assert_eq!(rows.len(), 24, "every request must produce one record");
+        let peak = mock.peak_concurrent();
+        assert!(
+            peak <= 3,
+            "GlobalHop must enforce the true aggregate concurrency cap (3) across all \
+             4 worker threads combined, never exceeding it (observed wire peak: {peak})"
+        );
+        assert_eq!(
+            peak, 3,
+            "the cap must actually be reached (proves real cross-thread contention, \
+             not an under-subscribed run); got {peak}"
+        );
+    }
+
+    /// `GlobalHop` aggregate-rate exactness — the counterpart of
+    /// `global_dispatch_paces_true_aggregate_rate_not_workers_times_too_fast`.
+    ///
+    /// The single coordinator loop paces one `Constant` phase at the full global
+    /// rate through the local per-phase interval grid (again NOT via
+    /// `GlobalAdmission`), so the merged `credit_issued_ns` timeline across all
+    /// 4 worker threads advances at the configured aggregate rate, not `W ×` too
+    /// fast.
+    #[test]
+    fn global_hop_paces_true_aggregate_rate() {
+        const WORKERS: usize = 4;
+        const RATE_PER_SEC: f64 = 200.0;
+        const REQUESTS: u64 = 40;
+
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let phase: PhaseSpec = serde_json::from_value(json!({
+            "type": "constant",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": REQUESTS,
+            "rate": RATE_PER_SEC,
+        }))
+        .unwrap();
+
+        let rows = run_dispatch_records(
+            &registry,
+            &mock,
+            WORKERS,
+            build_dataset(&registry, REQUESTS as usize, 1),
+            phase,
+            crate::engine::protocol::DispatchMode::GlobalHop,
+        );
+        assert_eq!(
+            rows.len(),
+            REQUESTS as usize,
+            "every issued request must produce one profiling record"
+        );
+        let mut issued: Vec<i64> = rows
+            .iter()
+            .map(|row| {
+                row.get("metadata")
+                    .and_then(|m| m.get("credit_issued_ns"))
+                    .and_then(Value::as_i64)
+                    .expect("record carries credit_issued_ns for a rate phase")
+            })
+            .collect();
+        issued.sort_unstable();
+        let span_ns = (issued.last().unwrap() - issued.first().unwrap()).max(1);
+        let hop_rate = (REQUESTS as f64 - 1.0) / (span_ns as f64 / 1e9);
+        eprintln!(
+            "global-hop aggregate rate across {WORKERS} threads: {hop_rate:.1}/s \
+             (configured global rate {RATE_PER_SEC}/s)"
+        );
+        assert!(
+            hop_rate < RATE_PER_SEC * 1.35,
+            "GlobalHop must pace the AGGREGATE rate across all {WORKERS} worker threads \
+             at the global {RATE_PER_SEC}/s, NOT ~{WORKERS}x too fast; measured {hop_rate:.1}/s"
+        );
+        assert!(
+            hop_rate > RATE_PER_SEC * 0.65,
+            "GlobalHop aggregate rate must actually reach the configured {RATE_PER_SEC}/s \
+             (proves the run is rate-bound, not stalled); measured {hop_rate:.1}/s"
+        );
+    }
+
     #[test]
     fn concurrency_workers_gt_1_is_sharded_and_data_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();
