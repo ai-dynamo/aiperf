@@ -24,8 +24,13 @@ use crate::extensions::AIPerfRegistry;
 ///   coordinator-owned dispatcher, for cases where `Global`'s shared-admission
 ///   fix alone does not reproduce exact request-to-thread assignment order.
 ///
-/// This enum is currently config-surface only: selecting a mode does not yet
-/// change execution behavior (that wiring lands in a later change).
+/// For `workers>1` scheduled runs this selector changes execution behavior:
+/// `Global`/`GlobalHop` build one per-cell [`crate::timing::GlobalSlotPool`] and
+/// [`crate::timing::rate_gate::GlobalRateGate`] per phase that every worker
+/// thread admits and paces against, so aggregate concurrency and request rate
+/// match a single global limiter; `Sharded` retains the static `1/workers`
+/// per-thread partition. `workers==1` and the single-thread coordinator path
+/// have no cross-thread admission concern, so the mode is inert there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DispatchMode {

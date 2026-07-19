@@ -20,9 +20,10 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::timing::{
-    ArrivalPattern, IntervalGenerator, SlotGuard, SlotPool, make_interval_generator,
+    ArrivalPattern, GlobalRateGate, IntervalGenerator, SlotGuard, SlotPool, make_interval_generator,
 };
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -142,6 +143,13 @@ pub struct RequestRateWorkload {
     intervals: Rc<RefCell<Box<dyn IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
+    /// When set (`global`/`global-hop` dispatch on a rate phase), arrival pacing
+    /// draws its base fire time from this cell-shared gate instead of this
+    /// thread's local `intervals`, so aggregate issuance across all `W` worker
+    /// threads matches one global rate exactly (§`specs/global-exact-dispatch.md`).
+    /// `intervals` is still consulted for the mean-zero Poisson/Gamma jitter
+    /// offset added to each claimed base slot.
+    rate_gate: Option<Arc<GlobalRateGate>>,
     state: Rc<RequestRateState>,
     on_failure: OnFailure,
 }
@@ -202,6 +210,7 @@ impl RequestRateWorkload {
             intervals,
             session_slots,
             prefill_slots,
+            rate_gate: None,
             state: Rc::new(RequestRateState::default()),
             // Transport failures are recorded and issuance continues by default.
             on_failure: OnFailure::for_scheduled_default(),
@@ -214,6 +223,20 @@ impl RequestRateWorkload {
     /// failed request and keeps issuing.
     pub fn with_failure_policy(mut self, on_failure: OnFailure) -> Self {
         self.on_failure = on_failure;
+        self
+    }
+
+    /// Attach a cell-shared [`GlobalRateGate`] so this worker paces against the
+    /// single global request rate rather than its own local `intervals` grid.
+    ///
+    /// Passing `None` (the default) leaves per-thread local pacing unchanged —
+    /// the `Sharded`-dispatch path, and any run that authored no `rate`. When a
+    /// gate is attached, every worker thread in the cell shares the same
+    /// `Arc<GlobalRateGate>`; each `execute` tick claims one distinct base slot
+    /// from it, so the `W` threads together emit exactly the configured global
+    /// rate instead of `W` independent full-rate streams.
+    pub fn with_rate_gate(mut self, rate_gate: Option<Arc<GlobalRateGate>>) -> Self {
+        self.rate_gate = rate_gate;
         self
     }
 
@@ -366,10 +389,33 @@ impl Workload for RequestRateWorkload {
             // Absolute pacing with no catch-up burst. The interval for the
             // following tick is drawn before this tick attempts admission.
             let now_ns = runtime.now_ns();
-            if next_target_ns < now_ns {
-                next_target_ns = now_ns;
-            }
-            let scheduled_ns = next_target_ns;
+            let scheduled_ns = if let Some(gate) = &self.rate_gate {
+                // Global/global-hop dispatch: claim one distinct base slot from
+                // the cell-shared gate (evenly-spaced across all worker threads,
+                // so their union is exactly the global rate grid). Anchor it to
+                // phase start plus one interval — matching the local path's
+                // "first arrival is one interval in" — and add a mean-zero
+                // jitter offset from this thread's own generator so Poisson/Gamma
+                // arrivals keep their distribution without perturbing the exact
+                // aggregate rate. No per-thread re-anchor: a claimed slot already
+                // in the past pages through via the `scheduled_ns <= now` yield
+                // path below.
+                let jitter_ns = self
+                    .intervals
+                    .borrow_mut()
+                    .next_interval_ns()
+                    .saturating_sub(gate.interval_ns());
+                runtime
+                    .start_ns()
+                    .saturating_add(gate.interval_ns())
+                    .saturating_add(gate.claim_offset_ns())
+                    .saturating_add(jitter_ns)
+            } else {
+                if next_target_ns < now_ns {
+                    next_target_ns = now_ns;
+                }
+                next_target_ns
+            };
             if scheduled_ns > now_ns {
                 if !runtime.wait_until_or_stop(scheduled_ns).await {
                     break;
@@ -379,8 +425,10 @@ impl Workload for RequestRateWorkload {
                 // enqueue continuations and release slots.
                 tokio::task::yield_now().await;
             }
-            next_target_ns =
-                scheduled_ns.saturating_add(self.intervals.borrow_mut().next_interval_ns());
+            if self.rate_gate.is_none() {
+                next_target_ns =
+                    scheduled_ns.saturating_add(self.intervals.borrow_mut().next_interval_ns());
+            }
 
             if self.state.has_failed() || !runtime.can_issue(false) {
                 break;

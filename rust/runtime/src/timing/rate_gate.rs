@@ -7,6 +7,16 @@
 //! `sharded_scheduled::slice_phase_for_thread`) with one shared next-fire-time
 //! counter so the aggregate issuance rate across all worker threads matches a
 //! single global limiter exactly, the way Python's implementation does.
+//!
+//! The shared counter only models the **fixed-interval base grid** (`0`,
+//! `interval_ns`, `2*interval_ns`, ...). Poisson/Gamma jitter is preserved
+//! without giving up exact aggregate rate: a caller draws a mean-zero offset
+//! from its own [`IntervalGenerator`](crate::timing::IntervalGenerator)
+//! (`next_interval_ns() - interval_ns()`) and adds it to its claimed base slot.
+//! Because the base slots stay evenly spaced and the offsets are mean-zero, the
+//! aggregate arrival rate remains exactly the configured global rate while each
+//! individual inter-arrival time still carries the distribution's jitter. See
+//! [`GlobalRateGate::claim_offset_ns`].
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -36,15 +46,34 @@ impl GlobalRateGate {
         })
     }
 
+    /// The fixed base interval between successive slots, in nanoseconds
+    /// (`round(1e9 / rate_per_sec)`). Callers use this both to add a phase-start
+    /// anchor and to compute a mean-zero jitter offset relative to the grid.
+    pub fn interval_ns(&self) -> i64 {
+        self.interval_ns
+    }
+
+    /// Atomically claim the next base-grid offset (`0`, `interval_ns`,
+    /// `2*interval_ns`, ...) and return it without waiting.
+    ///
+    /// Each concurrent caller across every worker thread gets a distinct,
+    /// gapless offset via a single `fetch_add`, so the union of all claimed
+    /// offsets is exactly the evenly-spaced grid — the property that keeps the
+    /// aggregate rate exact. The returned value is a *relative* offset from the
+    /// gate's origin; the caller anchors it to phase start and optionally adds a
+    /// mean-zero jitter offset before pacing to it on its own `Clock`.
+    pub fn claim_offset_ns(self: &Arc<Self>) -> i64 {
+        self.next_fire_ns
+            .fetch_add(self.interval_ns, Ordering::SeqCst)
+    }
+
     /// Claim the next fire slot and wait for it via `clock`.
     ///
     /// Each caller claims a monotonically-increasing slot by atomically
     /// advancing `next_fire_ns`. The caller then sleeps until their fire time
     /// has arrived according to `clock`.
     pub async fn wait_turn(self: &Arc<Self>, clock: std::rc::Rc<dyn Clock>) {
-        let fire_ns = self
-            .next_fire_ns
-            .fetch_add(self.interval_ns, Ordering::SeqCst);
+        let fire_ns = self.claim_offset_ns();
         let now_ns = clock.now_ns();
         let duration_ns = fire_ns.saturating_sub(now_ns);
         clock.sleep(duration_ns).await;

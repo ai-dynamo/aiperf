@@ -154,6 +154,13 @@ pub(crate) struct NativeScheduledResources {
     session: Option<Rc<SlotPool>>,
     prefill: Option<Rc<SlotPool>>,
     phase: Rc<dyn ScheduledPhaseResources>,
+    /// Cell-shared request-rate gate for this phase under `global`/`global-hop`
+    /// dispatch (`None` for `sharded` dispatch, non-rate phases, and the
+    /// single-thread coordinator path). When present, a request-rate workload
+    /// paces against it instead of its locally-sliced `intervals`, so aggregate
+    /// arrival rate across all `W` worker threads matches the global rate
+    /// exactly — the rate-pacing analogue of the `session` `GlobalSlotPool`.
+    rate: Option<Arc<crate::timing::GlobalRateGate>>,
 }
 
 /// Select one phase's admission resources for one worker thread under
@@ -183,6 +190,14 @@ fn phase_scheduled_resources(
     shared: &ShardedShared,
     shared_resources: &NativeScheduledResources,
 ) -> Result<NativeScheduledResources> {
+    // A phase's shared rate gate is independent of its concurrency gate: a pure
+    // request-rate phase authors a `rate` but no `concurrency` cap, and a pure
+    // concurrency-burst phase authors the reverse. Resolve the rate gate first
+    // so it attaches even when this phase falls through to the shared local
+    // concurrency pool below.
+    let global_rate = shared.global_admission.as_ref().and_then(|admission| {
+        admission.rate.get(&metrics_phase(phase).ok()?).cloned()
+    });
     let global_pool = shared.global_admission.as_ref().and_then(|admission| {
         admission
             .concurrency
@@ -194,6 +209,7 @@ fn phase_scheduled_resources(
             session: shared_resources.session.clone(),
             prefill: shared_resources.prefill.clone(),
             phase: shared_resources.phase.clone(),
+            rate: global_rate,
         });
     };
     let session = Some(Rc::new(SlotPool::new_global(global_pool)));
@@ -205,6 +221,7 @@ fn phase_scheduled_resources(
         session,
         prefill: shared_resources.prefill.clone(),
         phase: phase_resources,
+        rate: global_rate,
     })
 }
 
@@ -253,6 +270,9 @@ pub(crate) fn native_scheduled_resources(phases: &[PhaseSpec]) -> NativeSchedule
         session,
         prefill,
         phase,
+        // The single-thread coordinator path never builds a `GlobalAdmission`;
+        // rate pacing there is always the local per-phase `intervals` grid.
+        rate: None,
     }
 }
 
@@ -2272,12 +2292,12 @@ pub(crate) struct GlobalAdmission {
     pub(crate) concurrency: HashMap<MetricsPhase, Arc<crate::timing::GlobalSlotPool>>,
     /// One shared rate gate per phase that authors a `rate`.
     ///
-    /// Not yet consumed by execution (only `concurrency` is wired into
-    /// `execute_scheduled_shard` as of this change) — see
-    /// `specs/global-exact-dispatch.md`. Built here so the per-phase gates
-    /// exist and are available for that follow-up without a second
-    /// once-per-cell construction pass.
-    #[allow(dead_code)]
+    /// Consumed by `phase_scheduled_resources`, which hands the per-phase gate
+    /// to that phase's [`RequestRateWorkload`] (via `with_rate_gate`) so every
+    /// worker thread paces against one shared next-fire-time counter. The union
+    /// of the base slots each thread claims is exactly the global rate grid, so
+    /// aggregate arrival rate across all `W` threads matches the configured
+    /// global rate — see `specs/global-exact-dispatch.md`.
     pub(crate) rate: HashMap<MetricsPhase, Arc<crate::timing::GlobalRateGate>>,
 }
 
@@ -3837,7 +3857,11 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                     shared.session.clone(),
                     shared.prefill.clone(),
                 )?
-                .with_failure_policy(on_failure),
+                .with_failure_policy(on_failure)
+                // Under `global`/`global-hop` dispatch this phase paces against
+                // the cell-shared gate; `None` (sharded / single-thread) leaves
+                // local `intervals` pacing intact.
+                .with_rate_gate(shared.rate.clone()),
             ) as Rc<dyn Workload>;
             (
                 workload,
