@@ -3771,7 +3771,13 @@ function renderNode(
     const tip = tipForArrowNode(node, capability);
     const markerId =
       tip !== null ? markerDomId(markerPrefix, tip) : markerPrefix;
-    const drawing = drawProgress !== undefined;
+    // Fan connectors draw exclusively via `trace` cues (drawProgress
+    // excludes trace for fan nodes to avoid double-driving the ball
+    // animation below); fall back to traceProgress so the stroke itself
+    // stays dash-hidden until its own trace cue fires instead of
+    // rendering solid from t=0, ahead of the target nodes fading in.
+    const strokeProgress = drawProgress ?? traceProgress;
+    const drawing = strokeProgress !== undefined;
     const strokeWidth = strokeWidthFromStyle(node.style) * strokeScale;
     const authoredDash = authoredStrokeDasharray(node.style);
     const dashed = isDashedStyle(node.style);
@@ -3790,7 +3796,7 @@ function renderNode(
         showMarker:
           segment.showMarker &&
           semanticTip !== null &&
-          (!drawing || drawProgress >= 1 || playback.reducedMotion),
+          (!drawing || strokeProgress >= 1 || playback.reducedMotion),
       };
     });
     const firstHalf =
@@ -3911,7 +3917,7 @@ function renderNode(
                   ? authoredDash
                   : undefined
             }
-            strokeDashoffset={drawing ? 1 - drawProgress : undefined}
+            strokeDashoffset={drawing ? 1 - strokeProgress : undefined}
             focusable={false}
             aria-hidden="true"
             style={styleToCss(node.style, theme)}
