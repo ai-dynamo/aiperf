@@ -338,9 +338,18 @@ export type TimelineCueEasing =
   | "ease-out"
   | "ease-in-out";
 
+/**
+ * A cue's start time, either an absolute offset (`at 250`) or relative to
+ * the end of a prior cue on the same timeline (`after nodeId +80`). Relative
+ * timing is resolved to an absolute millisecond value during lowering.
+ */
+export type TimelineCueTiming =
+  | Readonly<{ mode: "at"; ms: number }>
+  | Readonly<{ mode: "after"; ref: string; gap: number }>;
+
 export type TimelineCueAst = AstNode<"timeline-cue"> &
   Readonly<{
-    time: number;
+    timing: TimelineCueTiming;
     action: TimelineAction;
     /** Primary / group id; may be `""` when `targets` identifies stagger members. */
     target: string;

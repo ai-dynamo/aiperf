@@ -36,6 +36,7 @@ import type {
   SceneAst,
   TimelineAction,
   TimelineCueAst,
+  TimelineCueTiming,
   TimelineCueEasing,
   ValueAst,
 } from "./ast.js";
@@ -484,7 +485,11 @@ function timelineCueFromPackage(
   if (target === undefined) {
     return undefined;
   }
-  const at = finiteNumber(record.at ?? record.time, 0);
+  const after = typeof record.after === "string" ? record.after : undefined;
+  const timing: TimelineCueTiming =
+    after !== undefined
+      ? { mode: "after", ref: after, gap: finiteNumber(record.gap, 0) }
+      : { mode: "at", ms: finiteNumber(record.at ?? record.time, 0) };
   const duration = finiteNumber(record.duration, 0);
   const step =
     typeof record.step === "number" && Number.isFinite(record.step)
@@ -493,7 +498,7 @@ function timelineCueFromPackage(
   const easing = normalizeTimelineEasing(record.easing);
   return {
     kind: "timeline-cue",
-    time: at,
+    timing,
     duration,
     target,
     action,

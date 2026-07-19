@@ -63,6 +63,7 @@ import type {
   TimelineAst,
   TimelineCueAst,
   TimelineCueEasing,
+  TimelineCueTiming,
   TokenDeclarationAst,
   TokenReferenceAst,
   TypeRefAst,
@@ -76,6 +77,7 @@ import {
   type TokenStream,
 } from "./grammar/explainer.js";
 import {
+  After,
   allTokens,
   Arrow,
   As,
@@ -158,6 +160,7 @@ import {
   On,
   Pad,
   Panel,
+  Plus,
   QuotedString,
   Rail,
   ReadingOrder,
@@ -1933,8 +1936,38 @@ class FlowParser extends EmbeddedActionsParser {
   private readonly timelineCue = this.RULE(
     "timelineCue",
     (): TimelineCueAst => {
-      const start = this.CONSUME(At);
-      const time = this.CONSUME(NumberLiteral);
+      let start!: IToken;
+      const timing = this.OR3<TimelineCueTiming>([
+        {
+          ALT: () => {
+            start = this.CONSUME(At);
+            const time = this.CONSUME(NumberLiteral);
+            return this.ACTION(() => ({
+              mode: "at" as const,
+              ms: numberValue(time),
+            }));
+          },
+        },
+        {
+          ALT: () => {
+            start = this.CONSUME(After);
+            const ref = this.CONSUME3(Identifier);
+            let gap = 0;
+            this.OPTION5(() => {
+              this.CONSUME(Plus);
+              const gapToken = this.CONSUME6(NumberLiteral);
+              this.ACTION(() => {
+                gap = numberValue(gapToken);
+              });
+            });
+            return this.ACTION(() => ({
+              mode: "after" as const,
+              ref: ref.image,
+              gap,
+            }));
+          },
+        },
+      ]);
       return this.OR([
         {
           ALT: () => {
@@ -1972,7 +2005,7 @@ class FlowParser extends EmbeddedActionsParser {
             });
             return this.ACTION(() => ({
               kind: "timeline-cue" as const,
-              time: numberValue(time),
+              timing,
               action: "stagger" as const,
               target: "",
               duration: numberValue(duration),
@@ -2016,7 +2049,7 @@ class FlowParser extends EmbeddedActionsParser {
             });
             return this.ACTION(() => ({
               kind: "timeline-cue" as const,
-              time: numberValue(time),
+              timing,
               action: actionToken.image as TimelineAction,
               target: target.image,
               duration: numberValue(duration),

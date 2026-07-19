@@ -777,9 +777,11 @@ function buildTimeline(
 ): readonly TimelineCueIr[] {
   const cues: TimelineCueIr[] = [];
   for (const timeline of timelines) {
+    const resolvedAt = resolveTimelineCueTiming(timeline.cues);
     timeline.cues.forEach((cue, index) => {
       const baseId = `${timeline.id}-${index}`;
       const sourceMap = cue.sourceMap ?? sourceRange;
+      const at = resolvedAt[index]!;
 
       // Component-instance target: expand through the instance's public actions.
       if (cue.target.length > 0 && actionIndex.has(cue.target)) {
@@ -799,7 +801,7 @@ function buildTimeline(
         pushInstanceActionCues(cues, diagnostics, {
           instanceId: cue.target,
           action: sdkAction,
-          at: cue.time,
+          at,
           duration: cue.duration,
           baseId,
           ...(cue.easing !== undefined ? { easing: cue.easing } : {}),
@@ -827,7 +829,7 @@ function buildTimeline(
       // Freeform / literal node targets (and stagger member lists) pass through.
       cues.push({
         id: baseId,
-        at: cue.time,
+        at,
         duration: cue.duration,
         target: cue.target,
         action: cue.action,

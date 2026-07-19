@@ -258,8 +258,16 @@ function formatScenePrimitive(node: ScenePrimitiveAst): string {
   );
 }
 
+function formatTimelineCueTiming(cue: TimelineCueAst): string {
+  if (cue.timing.mode === "at") {
+    return `at ${cue.timing.ms}`;
+  }
+  const gap = cue.timing.gap === 0 ? "" : ` +${cue.timing.gap}`;
+  return `after ${cue.timing.ref}${gap}`;
+}
+
 function formatTimelineCue(cue: TimelineCueAst): string {
-  const prefix = `${indent(3)}at ${cue.time} ${cue.action}`;
+  const prefix = `${indent(3)}${formatTimelineCueTiming(cue)} ${cue.action}`;
   if (cue.action === "stagger" && cue.targets !== undefined) {
     const parts = [
       prefix,

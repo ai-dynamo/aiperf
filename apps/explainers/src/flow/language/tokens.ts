@@ -143,6 +143,8 @@ export const Gap = keyword("Gap", /gap/);
 export const Children = keyword("Children", /children/);
 export const Camera = keyword("Camera", /camera/);
 export const At = keyword("At", /at/);
+/** Relative timeline cue: `after <ref> [+<gapMs>] reveal ...` fires relative to another cue's end. */
+export const After = keyword("After", /after/);
 export const Frame = keyword("Frame", /frame/);
 export const Zoom = keyword("Zoom", /zoom/);
 export const Timeline = keyword("Timeline", /timeline/);
@@ -212,6 +214,8 @@ export const Comma = createToken({ name: "Comma", pattern: /,/ });
 export const Dot = createToken({ name: "Dot", pattern: /\./ });
 export const Colon = createToken({ name: "Colon", pattern: /:/ });
 export const Equals = createToken({ name: "Equals", pattern: /=/ });
+/** Relative timeline cue gap (`after ref +250 reveal ...`). */
+export const Plus = createToken({ name: "Plus", pattern: /\+/ });
 /** Literal `@` for `@scene` and `@theme.role` explainer package scenes. */
 export const AtSign = createToken({ name: "AtSign", pattern: /@/ });
 /** Hex color literals (`#rgb` / `#rrggbb` / `#rrggbbaa`) inside package scenes. */
@@ -285,6 +289,7 @@ export const allTokens = [
   Children,
   Camera,
   At,
+  After,
   Frame,
   Zoom,
   Timeline,
@@ -344,6 +349,7 @@ export const allTokens = [
   Dot,
   Colon,
   Equals,
+  Plus,
   AtSign,
   HexColor,
   ComponentIdentifier,

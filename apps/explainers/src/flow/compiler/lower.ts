@@ -54,6 +54,7 @@ import {
   lowerFirstClassPackageNode,
 } from "./desugar-scene-primitives.js";
 import type { LinkedDocument, SceneSymbolTable } from "./link.js";
+import { resolveTimelineCueTiming } from "./timeline-timing.js";
 
 const GEOMETRY_KEYS = ["x", "y", "width", "height"] as const;
 type GeometryKey = (typeof GEOMETRY_KEYS)[number];
@@ -369,9 +370,10 @@ function lowerCamera(
 }
 
 function lowerTimeline(timeline: TimelineAst): readonly TimelineCueIr[] {
+  const resolvedAt = resolveTimelineCueTiming(timeline.cues);
   return timeline.cues.map((cue, index) => ({
     id: `${timeline.id}-${index}`,
-    at: cue.time,
+    at: resolvedAt[index]!,
     duration: cue.duration,
     target: cue.target,
     action: cue.action,
