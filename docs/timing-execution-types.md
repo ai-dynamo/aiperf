@@ -10,7 +10,7 @@ runtime, extracted from the code (post-rename `rust/` tree, 2026-07-13) with eac
 type's own doc comment. **◆** marks a trait (an extension seam). Code is truth —
 verify before relying on any row; names drift.
 
-Layers: [1 Clock](#1-clock) · [2 Measurement foundation](#2-measurement--dispatch-foundation-loadgen-core) ·
+Layers: [1 Clock](#1-clock) · [2 Measurement foundation](#2-measurement--dispatch-foundation-aiperf_runtimedispatch) ·
 [3 Timing policy](#3-timing-policy-aiperf_runtimetiming) · [4 Phase orchestration](#4-phase-orchestration-aiperf_runtimetimingphase) ·
 [5 Scheduled execution](#5-scheduled-execution) · [6 HTTP/gRPC dispatch + measurement](#6-http--grpc-dispatch--native-measurement) ·
 [7 Graph execution plane](#7-graph-execution-plane-aiperf_runtimegraph) · [8 Runner wiring](#8-runner-concrete-wiring-aiperf_runtimeengine) ·
@@ -24,7 +24,7 @@ Layers: [1 Clock](#1-clock) · [2 Measurement foundation](#2-measurement--dispat
 | `RealClockAnchor` | struct | Copyable monotonic origin shared by cooperating real-clock runtimes. |
 | `SimClock` | struct | Virtual-time clock advanced by the runtime driver pump. |
 
-## 2. Measurement / dispatch foundation — `loadgen-core`
+## 2. Measurement / dispatch foundation — `aiperf_runtime::dispatch`
 | Type | Kind | Description |
 |---|---|---|
 | `RequestSink` | trait ◆ | Dispatch one request of type `R` to terminal, resolving on completion. |

@@ -4,7 +4,7 @@
 # AIPerf Rust Runtime — Architecture
 
 > Scope: the entire Rust implementation under `rust/` (crates `aiperf-cli` — the `aiperf`
-> binary, `aiperf-runtime`, `loadgen-core`, `aiperf-mock-server`). This document traces the whole path **from the
+> binary, `aiperf-runtime`, `aiperf-mock-server`). This document traces the whole path **from the
 > command line to results**, annotating every component along the way, its structure, and its
 > configuration surface. Every claim is grounded in `crate/src/file.rs`; specs are design
 > intent, code is truth.
@@ -58,9 +58,9 @@ executor runs live or as a deterministic discrete-event simulation.
   graph engine's `drive_sim_with_source` / `drive_real_with_source` also merge an external
   `SimEventSource` (e.g. the in-process dynosim engine).
 
-### 1.2 `{transport}` — `loadgen-core/src/sink.rs`
+### 1.2 `{transport}` — `aiperf-runtime/src/dispatch/sink.rs`
 
-The transport-neutral dispatch/measure seam (extracted so it has zero engine/HTTP/KV deps).
+The transport-neutral dispatch/measure seam (a module-level convention, not a compiler-enforced crate boundary).
 
 - **`Dispatchable: Send + Sync`** — every concrete request implements `uuid()`,
   `input_length()`, `max_output_tokens()`. The crate never names concrete request types.
@@ -95,9 +95,8 @@ backend**.
 
 | Crate | Role | Depends on |
 |---|---|---|
-| `loadgen-core` | The `{transport}` seam + trace collector. Zero engine/HTTP deps. | — |
-| `aiperf-runtime` | Library-only runtime: clocks, transports, endpoints, datasets, RNG, timing/scheduling, graph engine, metrics, exporters, adaptive, accuracy, side-channel telemetry, cellular, dynosim. 16 former `aiperf-*` crates are now modules. Owns the single unified `AIPerfRegistry`/`AIPerfExtension` seam (`extensions`) and — behind the `engine` Cargo feature — hosts the v2 layer `engine` (protocol/registry, execution factories and `*_execution` drivers, `RunnerV2Coordinator`/`RunnerApplication`, cellular controller/cell, control-plane HTTP, GPU/network/server side-channels). **No binary.** | `loadgen-core` (+ optional `dynamo-mocker` under `dynosim`) |
-| `aiperf-cli` | The ONE product binary `aiperf`: BOTH the native entry point (owns `profile`/`config` natively) AND the execution engine. It re-execs ITSELF (`aiperf --execute`, an internal hidden mode) once per run/cell; the execution child is the strict process/stdio/signal harness that composes the v2 layer `aiperf_runtime::engine` (feature `engine`). Protocol-v2 only. | `aiperf-runtime` (with `engine`), `loadgen-core` |
+| `aiperf-runtime` | Library-only runtime: clocks, transports, endpoints, datasets, RNG, timing/scheduling, graph engine, metrics, exporters, adaptive, accuracy, side-channel telemetry, cellular, dynosim. 16 former `aiperf-*` crates are now modules, including the `{transport}` seam + trace collector (`dispatch`, formerly the standalone `loadgen-core` crate). Owns the single unified `AIPerfRegistry`/`AIPerfExtension` seam (`extensions`) and — behind the `engine` Cargo feature — hosts the v2 layer `engine` (protocol/registry, execution factories and `*_execution` drivers, `RunnerV2Coordinator`/`RunnerApplication`, cellular controller/cell, control-plane HTTP, GPU/network/server side-channels). **No binary.** | — (+ optional `dynamo-mocker` under `dynosim`) |
+| `aiperf-cli` | The ONE product binary `aiperf`: BOTH the native entry point (owns `profile`/`config` natively) AND the execution engine. It re-execs ITSELF (`aiperf --execute`, an internal hidden mode) once per run/cell; the execution child is the strict process/stdio/signal harness that composes the v2 layer `aiperf_runtime::engine` (feature `engine`). Protocol-v2 only. | `aiperf-runtime` (with `engine`) |
 | `aiperf-mock-server` | Standalone online test/benchmark inference target (OpenAI/Anthropic/TGI/…); launched independently, **not** in the execution-engine dep graph. | `aiperf-runtime` (only for `aiperf_runtime::rng`) |
 
 `rust/runtime/src/lib.rs` declares the module universe: `clock`, `transport_http`, `transport_grpc`,
