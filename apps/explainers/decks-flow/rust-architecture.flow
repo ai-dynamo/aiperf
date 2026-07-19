@@ -40,7 +40,6 @@ explainer "Rust Architecture" {
       sdk.Panel(id = "cli-hat", title = "public CLI", detail = "outside", x = 90, y = 240, width = 180, height = 55, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
       sdk.Edge(id = "a1", mode = "route", from = { nodeId: "cli-hat", anchor: "e" }, to = { nodeId: "engine-hat", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none" })
       sdk.Panel(id = "engine-hat", title = "execution child", detail = "inside", position = { relativeTo: "cli-hat", anchor: "n", dx: 250 }, width = 180, height = 55, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "binary", anchor: "w" }, to = { nodeId: "binary", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal binary duration 360
@@ -48,7 +47,6 @@ explainer "Rust Architecture" {
         after footer reveal cli-hat duration 280
         after cli-hat reveal engine-hat duration 280
         after engine-hat trace a1 duration 320
-        after binary trace motion-sig duration 1100
       }
     }
   }
@@ -75,7 +73,6 @@ explainer "Rust Architecture" {
       sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "runtime", anchor: "e" }, to = { nodeId: "loadgen", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "loadgen", title = "loadgen-core", detail = "observer seam", x = 460, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       sdk.Panel(id = "mock", title = "mock-server", detail = "separate target", x = 520, y = 280, width = 120, height = 58, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "cli", anchor: "e" }, to = { nodeId: "loadgen", anchor: "w" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal cli duration 320
@@ -84,7 +81,6 @@ explainer "Rust Architecture" {
         after a1 reveal loadgen duration 320
         after loadgen reveal mock duration 300
         after loadgen trace a2 duration 280
-        after loadgen trace motion-sig duration 1100
       }
     }
   }
@@ -110,7 +106,6 @@ explainer "Rust Architecture" {
       sdk.Panel(id = "execute", title = "execute_mode?", detail = "hidden argv", x = 260, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
       sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "execute", anchor: "e" }, to = { nodeId: "dispatch", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "dispatch", title = "dispatch::run", detail = "startup", x = 450, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "logging", anchor: "e" }, to = { nodeId: "dispatch", anchor: "w" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal logging duration 320
@@ -118,7 +113,6 @@ explainer "Rust Architecture" {
         after execute trace a1 duration 280
         after a1 reveal dispatch duration 320
         after dispatch trace a2 duration 280
-        after dispatch trace motion-sig duration 1100
       }
     }
   }
@@ -143,14 +137,12 @@ explainer "Rust Architecture" {
       sdk.Edge(id = "split", mode = "connector", from = { nodeId: "native", anchor: "e" }, to = { nodeId: "delegated", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Panel(id = "delegated", title = "Delegated commands", detail = "python -m aiperf", x = 410, y = 120, width = 220, height = 110, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.orange")
       sdk.Label(id = "footer", text = "dispatch.rs chooses the path from argv[0]", x = 50, y = 280, width = 600, height = 24, fontSize = 13, align = "middle", inkRole = "@theme.ink.secondary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "native", anchor: "w" }, to = { nodeId: "delegated", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal native duration 360
         after native reveal delegated duration 360
         after delegated reveal footer duration 300
         after delegated trace split duration 280
-        after delegated trace motion-sig duration 1100
       }
     }
   }
@@ -176,7 +168,6 @@ explainer "Rust Architecture" {
       sdk.Panel(id = "load", title = "yaml + load", detail = "expand + validate", x = 250, y = 130, width = 170, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
       sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "load", anchor: "e" }, to = { nodeId: "run", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "run", title = "BenchmarkRun", detail = "typed wire object", x = 470, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "yaml", anchor: "w" }, to = { nodeId: "run", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal yaml duration 320
@@ -184,7 +175,6 @@ explainer "Rust Architecture" {
         after load trace a1 duration 280
         after a1 reveal run duration 360
         after run trace a2 duration 280
-        after run trace motion-sig duration 1100
       }
     }
   }
@@ -210,7 +200,6 @@ explainer "Rust Architecture" {
       sdk.Panel(id = "spawn", title = "spawn child", detail = "current_exe()", x = 290, y = 130, width = 170, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
       sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "spawn", anchor: "e" }, to = { nodeId: "execute", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "execute", title = "--execute", detail = "stdio JSON", x = 510, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "parent", anchor: "w" }, to = { nodeId: "execute", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal parent duration 320
@@ -218,7 +207,6 @@ explainer "Rust Architecture" {
         after spawn trace a1 duration 280
         after a1 reveal execute duration 360
         after execute trace a2 duration 280
-        after execute trace motion-sig duration 1100
       }
     }
   }
@@ -244,7 +232,6 @@ explainer "Rust Architecture" {
       sdk.Panel(id = "app", title = "Application", detail = "stock composition", x = 290, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "app", anchor: "e" }, to = { nodeId: "terminal", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       sdk.Panel(id = "terminal", title = "terminal", detail = "JSONL out", x = 490, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "envelope", anchor: "w" }, to = { nodeId: "terminal", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal envelope duration 320
@@ -252,7 +239,6 @@ explainer "Rust Architecture" {
         after app trace a1 duration 280
         after a1 reveal terminal duration 320
         after terminal trace a2 duration 280
-        after terminal trace motion-sig duration 1100
       }
     }
   }
@@ -320,7 +306,6 @@ explainer "Rust Architecture" {
       sdk.Panel(id = "execute", title = "execute", detail = "coordinator", x = 360, y = 130, width = 130, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "a3", mode = "line", from = { x: 490, y: 178 }, to = { x: 520, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "persist", title = "persist", detail = "coordinator", x = 520, y = 130, width = 130, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "validate", anchor: "w" }, to = { nodeId: "persist", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal validate duration 300
@@ -330,7 +315,6 @@ explainer "Rust Architecture" {
         after a2 reveal execute duration 300
         after execute trace a3 duration 240
         after a3 reveal persist duration 300
-        after persist trace motion-sig duration 1100
       }
     }
   }
@@ -355,14 +339,12 @@ explainer "Rust Architecture" {
       sdk.Edge(id = "split", mode = "line", from = { x: 300, y: 178 }, to = { x: 400, y: 178 }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       sdk.Panel(id = "sim", title = "SimClock", detail = "dynosim + graph", x = 400, y = 130, width = 180, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       sdk.Label(id = "footer", text = "scheduling, backoff, and measurement all route through Clock", x = 50, y = 280, width = 600, height = 24, fontSize = 13, align = "middle", inkRole = "@theme.ink.secondary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "real", anchor: "w" }, to = { nodeId: "sim", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal real duration 340
         after real trace split duration 280
         after split reveal sim duration 340
         after sim reveal footer duration 300
-        after footer trace motion-sig duration 1100
       }
     }
   }
@@ -390,7 +372,6 @@ explainer "Rust Architecture" {
       sdk.Panel(id = "sample", title = "sample", detail = "dataset", x = 340, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       sdk.Edge(id = "a3", mode = "line", from = { x: 460, y: 178 }, to = { x: 490, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "materialize", title = "materialize", detail = "dataset", x = 490, y = 130, width = 120, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "load", anchor: "w" }, to = { nodeId: "materialize", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal load duration 300
@@ -400,7 +381,6 @@ explainer "Rust Architecture" {
         after a2 reveal sample duration 300
         after sample trace a3 duration 240
         after a3 reveal materialize duration 300
-        after materialize trace motion-sig duration 1100
       }
     }
   }
@@ -426,7 +406,6 @@ explainer "Rust Architecture" {
       sdk.Panel(id = "phase", title = "phase_runtime", detail = "warmup · drain", x = 310, y = 120, width = 180, height = 110, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
       sdk.Edge(id = "a2", mode = "line", from = { x: 490, y: 175 }, to = { x: 540, y: 175 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "turns", title = "Turns", detail = "dispatch", x = 540, y = 120, width = 90, height = 110, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "workload", anchor: "w" }, to = { nodeId: "turns", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal workload duration 340
@@ -434,7 +413,6 @@ explainer "Rust Architecture" {
         after a1 reveal phase duration 340
         after phase trace a2 duration 280
         after a2 reveal turns duration 340
-        after turns trace motion-sig duration 1100
       }
     }
   }
@@ -460,7 +438,6 @@ explainer "Rust Architecture" {
       sdk.Panel(id = "sink", title = "RequestSink", detail = "transport side", x = 270, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "a2", mode = "line", from = { x: 420, y: 178 }, to = { x: 470, y: 178 }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       sdk.Panel(id = "observer", title = "RequestObserver", detail = "measurement", x = 470, y = 130, width = 160, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "dispatcher", anchor: "w" }, to = { nodeId: "observer", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal dispatcher duration 320
@@ -468,7 +445,6 @@ explainer "Rust Architecture" {
         after a1 reveal sink duration 320
         after sink trace a2 duration 280
         after a2 reveal observer duration 320
-        after observer trace motion-sig duration 1100
       }
     }
   }
@@ -531,7 +507,6 @@ explainer "Rust Architecture" {
       sdk.Panel(id = "velo", title = "Velo", detail = "control plane", x = 270, y = 130, width = 150, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "a2", mode = "line", from = { x: 420, y: 178 }, to = { x: 470, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "cells", title = "Cells", detail = "load + results", x = 470, y = 130, width = 160, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "controller", anchor: "w" }, to = { nodeId: "cells", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal controller duration 340
@@ -539,7 +514,6 @@ explainer "Rust Architecture" {
         after a1 reveal velo duration 340
         after velo trace a2 duration 280
         after a2 reveal cells duration 340
-        after cells trace motion-sig duration 1100
       }
     }
   }
@@ -566,7 +540,6 @@ explainer "Rust Architecture" {
       sdk.Edge(id = "a2", mode = "line", from = { x: 390, y: 178 }, to = { x: 440, y: 178 }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "exporters", title = "Exporters", detail = "JSON · CSV · Parquet", x = 440, y = 130, width = 200, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Label(id = "footer", text = "features: grpc · cellular · dynosim · parquet · pyo3-embed", x = 50, y = 280, width = 600, height = 24, fontSize = 13, align = "middle", inkRole = "@theme.ink.secondary")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "workers", anchor: "w" }, to = { nodeId: "exporters", anchor: "e" }, style = { fill: "none", stroke: "@theme.accent.primary", strokeWidth: 2.4, opacity: 0.55 })
       timeline primary {
         at 0 reveal header duration 280
         after header reveal workers duration 320
@@ -575,7 +548,6 @@ explainer "Rust Architecture" {
         after report trace a2 duration 280
         after a2 reveal exporters duration 340
         after exporters reveal footer duration 300
-        after footer trace motion-sig duration 1100
       }
     }
   }

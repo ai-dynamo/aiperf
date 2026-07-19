@@ -45,7 +45,6 @@ explainer "Cellular algorithm workbook" {
       sdk.Panel(id = "ch-artifacts", title = "artifacts", x = 529, y = 232, width = 145, height = 72, strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "ch-link-0", mode = "route", from = { nodeId: "ch-eligibility", anchor: "e" }, to = { nodeId: "ch-ownership", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Label(id = "footer", text = "route order is evidence order", x = 100, y = 318, width = 500, height = 24, fontSize = 12, align = "middle")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "ch-eligibility", anchor: "e" }, to = { nodeId: "ch-artifacts", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
         after header reveal map-band duration 260
@@ -59,7 +58,6 @@ explainer "Cellular algorithm workbook" {
         after ch-merge reveal ch-artifacts duration 260
         after ch-ownership trace ch-link-0 duration 420
         after ch-link-0 reveal footer duration 260
-        after ch-artifacts trace motion-sig duration 900
       }
     }
   }
@@ -131,7 +129,6 @@ explainer "Cellular algorithm workbook" {
       sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "dispatch", anchor: "e" }, to = { nodeId: "promote", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "promote", anchor: "e" }, to = { nodeId: "validate", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a3", mode = "connector", from = { nodeId: "validate", anchor: "e" }, to = { nodeId: "velo", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig", from = { nodeId: "dispatch", anchor: "e" }, to = { nodeId: "velo", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
         after header reveal dispatch duration 260
@@ -145,7 +142,6 @@ explainer "Cellular algorithm workbook" {
         after a2 reveal velo duration 260
         after velo reveal st-velo duration 260
         after velo trace a3 duration 420
-        after velo trace motion-sig duration 900
       }
     }
   }
@@ -221,7 +217,6 @@ explainer "Cellular algorithm workbook" {
       sdk.Edge(id = "c1", mode = "line", from = { nodeId: "replay", anchor: "e" }, to = { nodeId: "gen", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "c2", mode = "line", from = { nodeId: "gen", anchor: "e" }, to = { nodeId: "start", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Label(id = "ctrl-note", text = "coordination changes · ownership does not", x = 80, y = 292, width = 540, height = 24, fontSize = 12, align = "middle")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "replay", anchor: "e" }, to = { nodeId: "start", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
         after header reveal replay duration 260
@@ -233,7 +228,6 @@ explainer "Cellular algorithm workbook" {
         after start reveal st-s duration 260
         after start trace c2 duration 420
         after c2 reveal ctrl-note duration 260
-        after start trace motion-sig duration 900
       }
     }
   }
@@ -264,7 +258,6 @@ explainer "Cellular algorithm workbook" {
       sdk.Chip(id = "st-miss", label = "BUILT", x = 595, y = 162, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "d1", mode = "line", from = { nodeId: "canon", anchor: "e" }, to = { nodeId: "miss", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "d2", mode = "path", from = { nodeId: "fanout", anchor: "e" }, to = { nodeId: "miss", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig", from = { nodeId: "canon", anchor: "e" }, to = { nodeId: "miss", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
         after header reveal canon duration 260
@@ -275,7 +268,6 @@ explainer "Cellular algorithm workbook" {
         after miss reveal st-miss duration 260
         after miss trace d1 duration 420
         after miss trace d2 duration 420
-        after miss trace motion-sig duration 900
       }
     }
   }
@@ -307,7 +299,6 @@ explainer "Cellular algorithm workbook" {
       sdk.Edge(id = "e1", mode = "line", from = { nodeId: "tlp", anchor: "e" }, to = { nodeId: "iss", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "e2", mode = "line", from = { nodeId: "iss", anchor: "e" }, to = { nodeId: "w0", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "e3", mode = "line", from = { nodeId: "iss", anchor: "e" }, to = { nodeId: "w1", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig", from = { nodeId: "tlp", anchor: "e" }, to = { nodeId: "w0", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
         after header reveal tlp duration 260
@@ -318,7 +309,6 @@ explainer "Cellular algorithm workbook" {
         after e1 reveal w0 duration 260
         after w0 trace e2 duration 420
         after e2 reveal w1 duration 260
-        after w0 trace motion-sig duration 900
         after w1 trace e3 duration 420
       }
     }
@@ -350,7 +340,6 @@ explainer "Cellular algorithm workbook" {
       sdk.Panel(id = "compat", title = "storage compatibility", x = 485, y = 150, width = 190, height = 72, strokeRole = "@theme.accent.primary")
       sdk.Chip(id = "st-compat", label = "BUILT", x = 605, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "cap1", mode = "line", from = { nodeId: "term", anchor: "e" }, to = { nodeId: "fold", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig", from = { nodeId: "term", anchor: "e" }, to = { nodeId: "compat", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
         after header reveal term duration 260
@@ -361,7 +350,6 @@ explainer "Cellular algorithm workbook" {
         after fold trace cap1 duration 420
         after cap1 reveal compat duration 260
         after compat reveal st-compat duration 260
-        after compat trace motion-sig duration 900
       }
     }
   }
@@ -392,7 +380,6 @@ explainer "Cellular algorithm workbook" {
       sdk.Chip(id = "st-rep", label = "PARTIAL", x = 600, y = 153, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary")
       sdk.Edge(id = "m1", mode = "path", from = { nodeId: "sgom", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "m2", mode = "path", from = { nodeId: "fidelity", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig", from = { nodeId: "sgom", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
         after header reveal sgom duration 260
@@ -403,7 +390,6 @@ explainer "Cellular algorithm workbook" {
         after report reveal st-rep duration 260
         after report trace m1 duration 420
         after report trace m2 duration 420
-        after report trace motion-sig duration 900
       }
     }
   }
@@ -437,7 +423,6 @@ explainer "Cellular algorithm workbook" {
       sdk.Edge(id = "ar1", mode = "line", from = { nodeId: "allow", anchor: "e" }, to = { nodeId: "upload", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "ar2", mode = "line", from = { nodeId: "upload", anchor: "e" }, to = { nodeId: "atomic", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "ar3", mode = "line", from = { nodeId: "atomic", anchor: "e" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig", from = { nodeId: "allow", anchor: "e" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
         after header reveal allow duration 260
@@ -451,7 +436,6 @@ explainer "Cellular algorithm workbook" {
         after ar2 reveal barrier duration 260
         after barrier reveal st-bar duration 260
         after barrier trace ar3 duration 420
-        after barrier trace motion-sig duration 900
       }
     }
   }
@@ -490,7 +474,6 @@ explainer "Cellular algorithm workbook" {
       sdk.Edge(id = "rt-a6", mode = "connector", from = { nodeId: "rt-merge", anchor: "e" }, to = { nodeId: "rt-artifacts", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "rt-artifacts", title = "artifacts", x = 613, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.primary")
       sdk.Label(id = "route-cap", text = "canonical scheduled · exact fold · flat merge", x = 80, y = 282, width = 540, height = 24, fontSize = 12, align = "middle")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "rt-eligibility", anchor: "e" }, to = { nodeId: "rt-artifacts", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
         after header reveal rt-eligibility duration 260
@@ -509,7 +492,6 @@ explainer "Cellular algorithm workbook" {
         after rt-a5 reveal rt-artifacts duration 260
         after rt-artifacts reveal route-cap duration 260
         after rt-artifacts trace rt-a6 duration 420
-        after rt-artifacts trace motion-sig duration 900
       }
     }
   }
@@ -576,7 +558,6 @@ explainer "Cellular algorithm workbook" {
       sdk.Panel(id = "left", title = "synthetic → scheduled", x = 45, y = 245, width = 240, height = 70, strokeRole = "@theme.accent.secondary")
       sdk.Panel(id = "right", title = "WEKA → graph", x = 415, y = 245, width = 240, height = 70, strokeRole = "@theme.accent.tertiary")
       sdk.Label(id = "invariant", text = "dataset shape selects the effective run kind", x = 80, y = 345, width = 540, height = 20, fontSize = 12, align = "middle")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "left", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
         after header reveal decision duration 260
@@ -585,7 +566,6 @@ explainer "Cellular algorithm workbook" {
         after dl reveal right duration 260
         after right trace dr duration 420
         after dr reveal invariant duration 260
-        after left trace motion-sig duration 900
       }
     }
   }
@@ -614,7 +594,6 @@ explainer "Cellular algorithm workbook" {
       sdk.Panel(id = "left", title = "exact fold · requests", x = 45, y = 245, width = 240, height = 70, strokeRole = "@theme.accent.secondary")
       sdk.Panel(id = "right", title = "sketch · conversations", x = 415, y = 245, width = 240, height = 70, strokeRole = "@theme.accent.tertiary")
       sdk.Label(id = "invariant", text = "one owner remains invariant", x = 80, y = 345, width = 540, height = 20, fontSize = 12, align = "middle")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "right", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
         after header reveal decision duration 260
@@ -623,7 +602,6 @@ explainer "Cellular algorithm workbook" {
         after dl reveal right duration 260
         after right trace dr duration 420
         after dr reveal invariant duration 260
-        after right trace motion-sig duration 900
       }
     }
   }
@@ -652,7 +630,6 @@ explainer "Cellular algorithm workbook" {
       sdk.Panel(id = "left", title = "same host · flat/local", x = 45, y = 245, width = 240, height = 70, strokeRole = "@theme.accent.secondary")
       sdk.Panel(id = "right", title = "cross host · Stage E/G", x = 415, y = 245, width = 240, height = 70, strokeRole = "@theme.accent.tertiary")
       sdk.Label(id = "invariant", text = "placement changes shipping, not measurement", x = 80, y = 345, width = 540, height = 20, fontSize = 12, align = "middle")
-      sdk.Signal(id = "motion-sig", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "right", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
         after header reveal decision duration 260
@@ -661,7 +638,6 @@ explainer "Cellular algorithm workbook" {
         after dl reveal right duration 260
         after right trace dr duration 420
         after dr reveal invariant duration 260
-        after right trace motion-sig duration 900
       }
     }
   }

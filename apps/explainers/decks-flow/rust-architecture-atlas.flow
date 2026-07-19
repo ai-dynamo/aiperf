@@ -44,7 +44,6 @@ explainer "Rust Architecture Atlas" {
       sdk.Panel(id = "real", title = "real server", detail = "HTTP / gRPC", x = 60, y = 240, width = 150, height = 60, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       sdk.Panel(id = "mock", title = "mock-server", detail = "standalone", x = 250, y = 240, width = 170, height = 60, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       sdk.Panel(id = "dyno", title = "Dynosim", detail = "feature gate", x = 460, y = 240, width = 180, height = 60, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Signal(id = "motion-sig-0", from = { nodeId: "aiperf", anchor: "s" }, to = { nodeId: "execute", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr0 duration 280
         after hdr0 reveal config duration 280
@@ -57,7 +56,6 @@ explainer "Rust Architecture Atlas" {
         after cell trace a0c duration 420
         after a0c reveal mock duration 280
         after mock reveal dyno duration 280
-        after execute trace motion-sig-0 duration 900
       }
     }
   }
@@ -86,7 +84,6 @@ explainer "Rust Architecture Atlas" {
       sdk.Panel(id = "loadgen", title = "loadgen-core", detail = "sink · observer", x = 480, y = 100, width = 180, height = 90, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       sdk.Panel(id = "mock1", title = "mock-server", detail = "→ runtime", x = 250, y = 240, width = 160, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       sdk.Panel(id = "pyext", title = "pyext / e2e", detail = "off hot path", x = 450, y = 240, width = 140, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Signal(id = "motion-sig-1", from = { nodeId: "cli", anchor: "e" }, to = { nodeId: "loadgen", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr1 duration 280
         after hdr1 reveal cli duration 280
@@ -96,7 +93,6 @@ explainer "Rust Architecture Atlas" {
         after loadgen reveal mock1 duration 280
         after loadgen trace a1b duration 420
         after a1b reveal pyext duration 280
-        after loadgen trace motion-sig-1 duration 900
       }
     }
   }
@@ -128,7 +124,6 @@ explainer "Rust Architecture Atlas" {
       sdk.Panel(id = "clock", title = "Clock", detail = "Real / Sim", x = 120, y = 220, width = 150, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       sdk.Panel(id = "obs", title = "Observer", detail = "token · usage", x = 320, y = 220, width = 160, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
       sdk.Panel(id = "nv2", title = "native-v2", detail = "report commit", x = 520, y = 220, width = 150, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Signal(id = "motion-sig-2", from = { nodeId: "app", anchor: "e" }, to = { nodeId: "sink", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr2 duration 280
         after hdr2 reveal app duration 280
@@ -141,7 +136,6 @@ explainer "Rust Architecture Atlas" {
         after sink trace a2c duration 420
         after a2c reveal obs duration 280
         after obs reveal nv2 duration 280
-        after sink trace motion-sig-2 duration 900
       }
     }
   }
@@ -173,7 +167,6 @@ explainer "Rust Architecture Atlas" {
       sdk.Panel(id = "stdin", title = "stdin JSON", detail = "to EOF", x = 80, y = 210, width = 140, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       sdk.Panel(id = "app3", title = "Application", detail = "frozen catalog", x = 280, y = 210, width = 160, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Panel(id = "stdout", title = "stdout JSONL", detail = "one terminal", x = 500, y = 210, width = 160, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
-      sdk.Signal(id = "motion-sig-3", from = { nodeId: "profile", anchor: "e" }, to = { nodeId: "spawn", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr3 duration 280
         after hdr3 reveal profile duration 280
@@ -186,7 +179,6 @@ explainer "Rust Architecture Atlas" {
         after spawn trace a3c duration 420
         after a3c reveal app3 duration 280
         after app3 reveal stdout duration 280
-        after spawn trace motion-sig-3 duration 900
       }
     }
   }
@@ -217,7 +209,6 @@ explainer "Rust Architecture Atlas" {
       sdk.Panel(id = "turn", title = "TurnDispatcher", detail = "place turn", x = 560, y = 90, width = 120, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Panel(id = "w1", title = "workers=1", detail = "co-located LocalSet", x = 120, y = 220, width = 180, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       sdk.Panel(id = "wn", title = "workers>1", detail = "OS thread sub-cells", x = 400, y = 220, width = 200, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
-      sdk.Signal(id = "motion-sig-4", from = { nodeId: "dataset", anchor: "e" }, to = { nodeId: "turn", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr4 duration 280
         after hdr4 reveal dataset duration 280
@@ -229,7 +220,6 @@ explainer "Rust Architecture Atlas" {
         after turn reveal w1 duration 280
         after turn trace a4c duration 420
         after a4c reveal wn duration 280
-        after turn trace motion-sig-4 duration 900
       }
     }
   }
@@ -261,7 +251,6 @@ explainer "Rust Architecture Atlas" {
       sdk.Panel(id = "warm", title = "warmup rewrite", detail = "prime prefixes", x = 80, y = 210, width = 150, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
       sdk.Panel(id = "chop", title = "profiling chop", detail = "from t*", x = 280, y = 210, width = 150, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Panel(id = "gexec", title = "graph executor", detail = "RequestSink", x = 480, y = 210, width = 160, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
-      sdk.Signal(id = "motion-sig-5", from = { nodeId: "trace", anchor: "e" }, to = { nodeId: "bundle", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr5 duration 280
         after hdr5 reveal trace duration 280
@@ -274,7 +263,6 @@ explainer "Rust Architecture Atlas" {
         after bundle trace a5c duration 420
         after a5c reveal chop duration 280
         after chop reveal gexec duration 280
-        after bundle trace motion-sig-5 duration 900
       }
     }
   }
@@ -306,7 +294,6 @@ explainer "Rust Architecture Atlas" {
       sdk.Panel(id = "dialect", title = "dialect", detail = "BodyPlan", x = 80, y = 220, width = 150, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       sdk.Panel(id = "bind", title = "HTTP / gRPC bind", detail = "URI · tensors", x = 280, y = 220, width = 160, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
       sdk.Panel(id = "obs6", title = "observations", detail = "usage · tokens", x = 500, y = 220, width = 150, height = 70, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
-      sdk.Signal(id = "motion-sig-6", from = { nodeId: "profiles", anchor: "e" }, to = { nodeId: "key", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr6 duration 280
         after hdr6 reveal profiles duration 280
@@ -319,7 +306,6 @@ explainer "Rust Architecture Atlas" {
         after key trace a6c duration 420
         after a6c reveal bind duration 280
         after bind reveal obs6 duration 280
-        after key trace motion-sig-6 duration 900
       }
     }
   }
@@ -493,7 +479,6 @@ explainer "Rust Architecture Atlas" {
       sdk.Panel(id = "tr", title = "transports", detail = "HTTP·gRPC", x = 300, y = 270, width = 110, height = 60, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       sdk.Panel(id = "wl", title = "workloads", detail = "sched·graph", x = 430, y = 270, width = 110, height = 60, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       sdk.Panel(id = "ex", title = "exporters", detail = "sinks", x = 560, y = 270, width = 110, height = 60, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Signal(id = "motion-sig-10", from = { nodeId: "ext", anchor: "s" }, to = { nodeId: "ep", anchor: "s" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none", opacity: 0.55, role: "motion" })
       timeline primary {
         at 0 reveal hdr10 duration 280
         after hdr10 reveal ext duration 280
@@ -504,7 +489,6 @@ explainer "Rust Architecture Atlas" {
         after ep reveal tr duration 280
         after tr reveal wl duration 280
         after wl reveal ex duration 280
-        after ex trace motion-sig-10 duration 900
       }
     }
   }

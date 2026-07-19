@@ -54,7 +54,6 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a0b", mode = "connector", from = { nodeId: "cell-k", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       sdk.Label(id = "note0", text = "placement changes · measurement contract does not", x = 120, y = 300, width = 500, height = 20, fontSize = 12, align = "start")
       sdk.Label(id = "ev0", text = "cellular_controller.rs", x = 480, y = 330, width = 180, height = 20, fontSize = 10, align = "end")
-      sdk.Signal(id = "motion-sig-0", from = { nodeId: "authored", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr0 duration 260
         after hdr0 reveal phase0 duration 260
@@ -66,7 +65,6 @@ explainer "Cellular internals" {
         after report reveal note0 duration 260
         after report trace a0b duration 420
         after a0b reveal ev0 duration 260
-        after report trace motion-sig-0 duration 900
       }
     }
   }
@@ -138,7 +136,6 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a2a", mode = "connector", from = { nodeId: "profile", anchor: "e" }, to = { nodeId: "execbin", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "a2b", mode = "connector", from = { nodeId: "execbin", anchor: "e" }, to = { nodeId: "execute", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a2c", mode = "route", from = { nodeId: "execute", anchor: "s" }, to = { nodeId: "stdio", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig-2", from = { nodeId: "profile", anchor: "e" }, to = { nodeId: "execute", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr2 duration 260
         after hdr2 reveal phase2 duration 260
@@ -149,7 +146,6 @@ explainer "Cellular internals" {
         after a2a reveal execute duration 260
         after execute trace a2b duration 420
         after a2b reveal stdio duration 260
-        after execute trace motion-sig-2 duration 900
         after stdio trace a2c duration 420
       }
     }
@@ -180,7 +176,6 @@ explainer "Cellular internals" {
       sdk.Card(id = "roles", title = "controller / cell / aggregator", detail = "native K8s roles", subtitle = "same entrypoints", x = 470, y = 270, width = 200, height = 70, strokeRole = "@theme.accent.tertiary")
       sdk.Edge(id = "a3a", mode = "connector", from = { nodeId: "exec3", anchor: "e" }, to = { nodeId: "ctrl", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "a3b", mode = "route", from = { nodeId: "ctrl", anchor: "s" }, to = { nodeId: "roles", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig-3", from = { nodeId: "exec3", anchor: "e" }, to = { nodeId: "ctrl", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr3 duration 260
         after hdr3 reveal phase3 duration 260
@@ -189,7 +184,6 @@ explainer "Cellular internals" {
         after ctrl reveal single duration 260
         after ctrl trace a3a duration 420
         after a3a reveal roles duration 260
-        after ctrl trace motion-sig-3 duration 900
         after roles trace a3b duration 420
       }
     }
@@ -265,7 +259,6 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a5c0", mode = "path", from = { nodeId: "mod", anchor: "e" }, to = { nodeId: "own0", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       sdk.Edge(id = "a5c1", mode = "path", from = { nodeId: "mod", anchor: "e" }, to = { nodeId: "own1", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       sdk.Edge(id = "a5c2", mode = "path", from = { nodeId: "mod", anchor: "e" }, to = { nodeId: "own2", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig-5", from = { nodeId: "ctrl5", anchor: "e" }, to = { nodeId: "own1", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr5 duration 260
         after hdr5 reveal phase5 duration 260
@@ -278,7 +271,6 @@ explainer "Cellular internals" {
         after own1 trace a5c1 duration 420
         after a5c1 reveal own2 duration 260
         after own2 trace a5c2 duration 420
-        after own1 trace motion-sig-5 duration 900
       }
     }
   }
@@ -313,7 +305,6 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a6a2", mode = "path", from = { nodeId: "c2", anchor: "n" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a6a3", mode = "path", from = { nodeId: "c3", anchor: "n" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a6b", mode = "route", from = { nodeId: "barrier", anchor: "n" }, to = { nodeId: "start", anchor: "e" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig-6", from = { nodeId: "barrier", anchor: "w" }, to = { nodeId: "start", anchor: "e" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr6 duration 260
         after hdr6 reveal phase6 duration 260
@@ -328,7 +319,6 @@ explainer "Cellular internals" {
         after barrier trace a6a3 duration 420
         after a6a3 reveal start duration 260
         after start trace a6b duration 420
-        after start trace motion-sig-6 duration 900
       }
     }
   }
@@ -400,7 +390,6 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a8b", mode = "path", from = { nodeId: "own8", anchor: "e" }, to = { nodeId: "stage", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       sdk.Edge(id = "a8c", mode = "path", from = { nodeId: "velo", anchor: "e" }, to = { nodeId: "cell8", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a8d", mode = "path", from = { nodeId: "stage", anchor: "e" }, to = { nodeId: "cell8", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig-8", from = { nodeId: "own8", anchor: "e" }, to = { nodeId: "cell8", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr8 duration 260
         after hdr8 reveal phase8 duration 260
@@ -412,7 +401,6 @@ explainer "Cellular internals" {
         after a8b reveal cell8 duration 260
         after cell8 trace a8c duration 420
         after cell8 trace a8d duration 420
-        after cell8 trace motion-sig-8 duration 900
       }
     }
   }
@@ -445,7 +433,6 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a9a", mode = "connector", from = { nodeId: "idx", anchor: "e" }, to = { nodeId: "indexed", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "a9b", mode = "path", from = { nodeId: "indexed", anchor: "s" }, to = { nodeId: "inflight", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a9c", mode = "path", from = { nodeId: "inflight", anchor: "s" }, to = { nodeId: "completed", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig-9", from = { nodeId: "idx", anchor: "e" }, to = { nodeId: "completed", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr9 duration 260
         after hdr9 reveal phase9 duration 260
@@ -458,7 +445,6 @@ explainer "Cellular internals" {
         after completed reveal note9 duration 260
         after completed trace a9c duration 420
         after a9c reveal chip9 duration 260
-        after completed trace motion-sig-9 duration 900
       }
     }
   }
@@ -491,7 +477,6 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a10a", mode = "path", from = { nodeId: "env", anchor: "e" }, to = { nodeId: "auto", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "a10b", mode = "path", from = { nodeId: "inputs", anchor: "e" }, to = { nodeId: "auto", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a10c", mode = "path", from = { nodeId: "torigin", anchor: "e" }, to = { nodeId: "auto", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig-10", from = { nodeId: "env", anchor: "e" }, to = { nodeId: "auto", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr10 duration 260
         after hdr10 reveal phase10 duration 260
@@ -504,7 +489,6 @@ explainer "Cellular internals" {
         after auto trace a10b duration 420
         after auto trace a10c duration 420
         after a10c reveal chip10 duration 260
-        after auto trace motion-sig-10 duration 900
       }
     }
   }
@@ -536,7 +520,6 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a11d", mode = "path", from = { nodeId: "slice", anchor: "e" }, to = { nodeId: "w1", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a11b", mode = "path", from = { nodeId: "w0", anchor: "e" }, to = { nodeId: "store", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       sdk.Edge(id = "a11c", mode = "path", from = { nodeId: "w1", anchor: "e" }, to = { nodeId: "store", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig-11", from = { nodeId: "slice", anchor: "e" }, to = { nodeId: "store", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr11 duration 260
         after hdr11 reveal phase11 duration 260
@@ -548,7 +531,6 @@ explainer "Cellular internals" {
         after a11d reveal store duration 260
         after store trace a11b duration 420
         after store trace a11c duration 420
-        after store trace motion-sig-11 duration 900
       }
     }
   }
@@ -624,7 +606,6 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a13a", mode = "path", from = { nodeId: "shard", anchor: "e" }, to = { nodeId: "http", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a13b", mode = "path", from = { nodeId: "shard", anchor: "e" }, to = { nodeId: "dyno", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       sdk.Edge(id = "a13c", mode = "path", from = { nodeId: "http", anchor: "e" }, to = { nodeId: "srv", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig-13", from = { nodeId: "shard", anchor: "e" }, to = { nodeId: "srv", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr13 duration 260
         after hdr13 reveal phase13 duration 260
@@ -636,7 +617,6 @@ explainer "Cellular internals" {
         after dyno trace a13b duration 420
         after a13b reveal srv duration 260
         after srv trace a13c duration 420
-        after srv trace motion-sig-13 duration 900
       }
     }
   }
@@ -671,7 +651,6 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a142", mode = "path", from = { nodeId: "ev2", anchor: "e" }, to = { nodeId: "ev3", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a143", mode = "path", from = { nodeId: "ev3", anchor: "e" }, to = { nodeId: "ev4", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a14v", mode = "path", from = { nodeId: "ev2", anchor: "s" }, to = { nodeId: "cap", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig-14", from = { nodeId: "ev0", anchor: "e" }, to = { nodeId: "ev4", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr14 duration 260
         after hdr14 reveal phase14 duration 260
@@ -685,7 +664,6 @@ explainer "Cellular internals" {
         after a142 reveal ev4 duration 260
         after ev4 trace a143 duration 420
         after a143 reveal cap duration 260
-        after ev4 trace motion-sig-14 duration 900
         after cap trace a14v duration 420
       }
     }
@@ -716,7 +694,6 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a15a", mode = "connector", from = { nodeId: "disp15", anchor: "e" }, to = { nodeId: "retain", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a15b", mode = "connector", from = { nodeId: "retain", anchor: "e" }, to = { nodeId: "part", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       sdk.Label(id = "note15", text = "keeps raw record artifacts available", x = 230, y = 290, width = 500, height = 20, fontSize = 12, align = "start")
-      sdk.Signal(id = "motion-sig-15", from = { nodeId: "disp15", anchor: "e" }, to = { nodeId: "part", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr15 duration 260
         after hdr15 reveal phase15 duration 260
@@ -726,7 +703,6 @@ explainer "Cellular internals" {
         after a15a reveal part duration 260
         after part reveal note15 duration 260
         after part trace a15b duration 420
-        after part trace motion-sig-15 duration 900
       }
     }
   }
@@ -756,7 +732,6 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a16a", mode = "connector", from = { nodeId: "disp16", anchor: "e" }, to = { nodeId: "fold", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a16b", mode = "connector", from = { nodeId: "fold", anchor: "e" }, to = { nodeId: "drop", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       sdk.Label(id = "note16", text = "exact aggregates without retaining rows", x = 230, y = 290, width = 500, height = 20, fontSize = 12, align = "start")
-      sdk.Signal(id = "motion-sig-16", from = { nodeId: "disp16", anchor: "e" }, to = { nodeId: "drop", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr16 duration 260
         after hdr16 reveal phase16 duration 260
@@ -766,7 +741,6 @@ explainer "Cellular internals" {
         after a16a reveal drop duration 260
         after drop reveal note16 duration 260
         after drop trace a16b duration 420
-        after drop trace motion-sig-16 duration 900
       }
     }
   }
@@ -797,7 +771,6 @@ explainer "Cellular internals" {
       sdk.Edge(id = "a17a", mode = "connector", from = { nodeId: "fin", anchor: "e" }, to = { nodeId: "sketch", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a17b", mode = "path", from = { nodeId: "sketch", anchor: "s" }, to = { nodeId: "exact", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "a17c", mode = "path", from = { nodeId: "sketch", anchor: "s" }, to = { nodeId: "approx", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
-      sdk.Signal(id = "motion-sig-17", from = { nodeId: "fin", anchor: "e" }, to = { nodeId: "sketch", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal hdr17 duration 260
         after hdr17 reveal phase17 duration 260
@@ -808,7 +781,6 @@ explainer "Cellular internals" {
         after exact trace a17b duration 420
         after a17b reveal approx duration 260
         after approx trace a17c duration 420
-        after sketch trace motion-sig-17 duration 900
       }
     }
   }
