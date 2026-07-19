@@ -1816,6 +1816,220 @@ mod tests {
         (total, correct)
     }
 
+    /// The subset of one profiling record's fields that a seeded, deterministic
+    /// fixture (fixed synthetic dataset + `FixedMock`'s constant per-chunk
+    /// delays + a seeded RNG) actually promises to reproduce byte-for-byte
+    /// across repeated runs.
+    ///
+    /// This file's own module doc says why the OTHER fields cannot be part of
+    /// that promise: "Multi-worker execution uses real clocks because
+    /// `SimClock` advances only its own reactor" — `workers > 1` (and, per
+    /// [`execute_prepared_native_plan_uncommitted_with_runtime_factories`]'s
+    /// virtual-clock branch, even `workers == 1` unless the run is the
+    /// `dry_run` transport's own `SimClock`-driven graph path, which this
+    /// scheduled-dataset harness does not exercise) always drives real wall
+    /// time. `credit_issued_ns`/`request_start_ns`/`request_ack_ns`/
+    /// `request_end_ns` and every metric computed from them
+    /// (`request_latency`, `inter_token_latency`, `inter_chunk_latency`,
+    /// `time_to_first_token`, `time_to_first_output_token`,
+    /// `time_to_second_token`, `http_req_waiting`,
+    /// `output_token_throughput_per_user`, `prefill_throughput_per_user`) are
+    /// therefore real scheduler-jitter-dependent floats — never byte-identical
+    /// run over run even with fixed `sleep()` durations on the mock side, as
+    /// verified empirically (dumped record shape shows sub-microsecond-precision
+    /// floats such as `25.757441` ms that vary between runs).
+    ///
+    /// What IS byte-exact-reproducible under this deterministic fixture: the
+    /// dispatched turn identity (`conversation_id`, `turn_index`, `session_num`),
+    /// its outcome (`error`, `was_cancelled`, `benchmark_phase`), and every
+    /// data-derived metric that comes from the fixed synthetic dataset and the
+    /// mock's fixed `usage`/token counts rather than from wall time (ISL, OSL,
+    /// output token count, usage fields, and the OSL-mismatch/usage-diff
+    /// percentages, which are ratios of those same fixed counts). Canonicalizing
+    /// to just this subset and sorting by turn identity turns "assert the two
+    /// record sets are equal" into a genuine, false-negative-resistant
+    /// byte-exact comparison (`serde_json` equality on the canonical `Value`,
+    /// not a length or summary-statistic check) instead of a vacuous one.
+    fn canonical_deterministic_view(rows: &[Value]) -> Vec<Value> {
+        const METRIC_ALLOWLIST: &[&str] = &[
+            "input_sequence_length",
+            "output_sequence_length",
+            "output_token_count",
+            "usage_completion_tokens",
+            "usage_completion_tokens_diff_pct",
+            "usage_prompt_tokens",
+            "usage_prompt_tokens_diff_pct",
+            "usage_total_tokens",
+            "osl_mismatch_diff_pct",
+        ];
+        let mut canonical: Vec<Value> = rows
+            .iter()
+            .map(|row| {
+                let metadata = row.get("metadata").cloned().unwrap_or(Value::Null);
+                let metrics = row.get("metrics").and_then(Value::as_object);
+                let canonical_metrics: serde_json::Map<String, Value> = METRIC_ALLOWLIST
+                    .iter()
+                    .filter_map(|tag| {
+                        metrics
+                            .and_then(|m| m.get(*tag))
+                            .map(|value| (tag.to_string(), value.clone()))
+                    })
+                    .collect();
+                json!({
+                    "conversation_id": metadata.get("conversation_id"),
+                    "turn_index": metadata.get("turn_index"),
+                    "session_num": metadata.get("session_num"),
+                    "benchmark_phase": metadata.get("benchmark_phase"),
+                    "was_cancelled": metadata.get("was_cancelled"),
+                    "error": row.get("error"),
+                    "metrics": canonical_metrics,
+                })
+            })
+            .collect();
+        canonical.sort_by(|a, b| {
+            let key = |v: &Value| {
+                (
+                    v.get("conversation_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    v.get("turn_index").and_then(Value::as_i64).unwrap_or(0),
+                )
+            };
+            key(a).cmp(&key(b))
+        });
+        canonical
+    }
+
+    /// Serializes [`canonical_deterministic_view`]'s output to a single
+    /// canonical JSON string so two record sets can be compared with a single
+    /// `assert_eq!` on `String` — a genuine byte-exact comparison over the
+    /// deterministic subset, not a length or summary-statistic check.
+    fn canonical_deterministic_bytes(rows: &[Value]) -> String {
+        serde_json::to_string(&canonical_deterministic_view(rows)).unwrap()
+    }
+
+    /// Proves `DispatchMode::Global` is deterministic: running the SAME
+    /// `concurrency`-phase, `workers = 4`, seeded-RNG fixture three times
+    /// produces byte-identical canonical record output every time (see
+    /// [`canonical_deterministic_view`] for exactly what "byte-identical"
+    /// covers and why, given this file's real-clock, `workers > 1`
+    /// architecture, timestamp-derived fields are excluded from that promise).
+    ///
+    /// This also establishes the pattern
+    /// [`dispatch_mode_is_byte_exact_equivalent_at_workers_eq_1`] reuses for
+    /// `Global`/`Sharded` cross-mode agreement.
+    #[test]
+    fn global_dispatch_is_byte_exact_deterministic_across_repeated_sim_runs() {
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let entries = 16;
+        let requests = 16u64;
+        let phase: PhaseSpec = serde_json::from_value(json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": requests,
+            "concurrency": 4,
+        }))
+        .unwrap();
+
+        let run = || {
+            let rows = run_dispatch_records(
+                &registry,
+                &mock,
+                4,
+                build_dataset(&registry, entries, 1),
+                phase.clone(),
+                crate::engine::protocol::DispatchMode::Global,
+            );
+            assert_eq!(
+                rows.len(),
+                requests as usize,
+                "every dispatched request must produce exactly one record"
+            );
+            canonical_deterministic_bytes(&rows)
+        };
+
+        let first = run();
+        let second = run();
+        let third = run();
+
+        assert_eq!(
+            first, second,
+            "Global dispatch's canonical record output must be byte-identical \
+             across repeated runs of the identical seeded fixture (run 1 vs 2)"
+        );
+        assert_eq!(
+            second, third,
+            "Global dispatch's canonical record output must be byte-identical \
+             across repeated runs of the identical seeded fixture (run 2 vs 3)"
+        );
+    }
+
+    /// Cross-mode agreement where static partitioning provably cannot matter:
+    /// at `workers = 1`, `thread_id = 0`, `slice_phase_for_thread`'s
+    /// `owned_positions(value, 0, 1)` returns `value` unchanged for BOTH the
+    /// `Sharded` per-thread-floor branch and the `Global`
+    /// `global_admits_concurrency_and_rate` branch (which leaves the phase's
+    /// concurrency/rate fields at their cell-local, i.e. already-unsliced,
+    /// value) — see `sharded_scheduled::slice_phase_for_thread` and
+    /// `sharded_scheduled::owned_positions`. There is exactly one worker
+    /// thread to own the full budget either way, so the two dispatch modes
+    /// resolve to the SAME sliced phase and the SAME single-loop coordinator
+    /// path (this file's own module doc: "`workers == 1` uses one co-located
+    /// worker sink on the coordinator's current-thread runtime"). This is the
+    /// general shape of "every case NOT affected by static partitioning must
+    /// produce identical output between modes", verified against the actual
+    /// partitioning math rather than assumed from intuition.
+    ///
+    /// The two dispatch modes are therefore asserted byte-identical over the
+    /// same canonical view [`global_dispatch_is_byte_exact_deterministic_across_repeated_sim_runs`]
+    /// uses.
+    #[test]
+    fn dispatch_mode_is_byte_exact_equivalent_at_workers_eq_1() {
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let entries = 16;
+        let requests = 16u64;
+        let phase: PhaseSpec = serde_json::from_value(json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": requests,
+            "concurrency": 4,
+        }))
+        .unwrap();
+
+        let sharded = run_dispatch_records(
+            &registry,
+            &mock,
+            1,
+            build_dataset(&registry, entries, 1),
+            phase.clone(),
+            crate::engine::protocol::DispatchMode::Sharded,
+        );
+        assert_eq!(sharded.len(), requests as usize);
+
+        let global = run_dispatch_records(
+            &registry,
+            &mock,
+            1,
+            build_dataset(&registry, entries, 1),
+            phase,
+            crate::engine::protocol::DispatchMode::Global,
+        );
+        assert_eq!(global.len(), requests as usize);
+
+        assert_eq!(
+            canonical_deterministic_bytes(&sharded),
+            canonical_deterministic_bytes(&global),
+            "at workers=1, static partitioning cannot differ between Sharded and \
+             Global (owned_positions(value, 0, 1) == value for both branches), so \
+             the two dispatch modes must produce byte-identical canonical output"
+        );
+    }
+
     #[test]
     fn static_accuracy_workers_gt_1_shards_and_tally_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();
