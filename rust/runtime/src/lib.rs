@@ -41,6 +41,7 @@ pub mod cellular;
 pub mod clock;
 pub mod content_server;
 pub mod dataset;
+pub mod dispatch;
 pub mod endpoints;
 pub mod extensions;
 pub mod gpu_telemetry;

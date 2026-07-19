@@ -11,8 +11,8 @@ use std::cell::RefCell;
 
 use uuid::Uuid;
 
-use crate::collector::{ReplayTerminalStatus, TraceCollector, TraceSimulationReport};
-use crate::sink::RequestObserver;
+use super::collector::{ReplayTerminalStatus, TraceCollector, TraceSimulationReport};
+use super::sink::RequestObserver;
 
 /// Collects measurement events from any sink into one `TraceCollector`.
 pub struct CollectorObserver {

@@ -65,7 +65,6 @@ name = "aiperf_runtime"
 path = "src/lib.rs"
 
 [dependencies]
-loadgen-core.workspace = true
 # External deps consolidated from the 16 absorbed aiperf-* library crates.
 anyhow.workspace = true
 arrow = { workspace = true, optional = true }

@@ -12,7 +12,7 @@
 
 use uuid::Uuid;
 
-use crate::collector::ReplayTerminalStatus;
+use super::collector::ReplayTerminalStatus;
 
 /// Semantic class of one streamed token-like content delta.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

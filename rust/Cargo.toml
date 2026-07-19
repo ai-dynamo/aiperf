@@ -8,7 +8,6 @@ resolver = "3"
 # BOTH the entry point and the execution engine, re-execing itself (`aiperf
 # --execute`) over the protocol-v2 stdio seam for each run/probe/cell.
 members = [
-    "loadgen-core",
     "runtime",
     "cli",
     "mock-server",
@@ -25,7 +24,6 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 # internal crates
-loadgen-core = { path = "loadgen-core" }
 aiperf-runtime = { path = "runtime" }
 
 # external (shared versions)
