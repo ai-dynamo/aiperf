@@ -23,6 +23,7 @@ use crate::dataset::{
     EndpointRequestMaterializer, Handle, Overrides, Payload, RequestMaterializer, Sampler,
     SamplerRegistry, SegmentStore, SequentialSampler, TextTokenizer, TiktokenTokenizer,
 };
+use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::endpoints::{
     CreditPhase, Endpoint, EndpointId, EndpointKey, Media as EndpointMedia, PreparedEndpoint,
     PreparedEndpointTable, ShapeLowerer, Turn as EndpointTurn, TurnMessageLowerer,
@@ -32,7 +33,6 @@ use crate::rng::RngRoot;
 use crate::timing::{RunState, StopConfig};
 use anyhow::{Result, anyhow, bail};
 use bytes::Bytes;
-use crate::dispatch::collector::ReplayTerminalStatus;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -2154,7 +2154,9 @@ mod tests {
 
         let mut seen = Vec::new();
         for _ in 0..4 {
-            let session = source.next(None).expect("owned recycle must remain sampleable");
+            let session = source
+                .next(None)
+                .expect("owned recycle must remain sampleable");
             assert!(
                 owned.contains(&session.conversation_id),
                 "giver must not hand out a foreign session {}",
@@ -2188,9 +2190,16 @@ mod tests {
         assert_eq!(owned0.len(), 2);
         assert_eq!(owned1.len(), 1);
         for id in &owned0 {
-            assert!(!owned1.contains(id), "shards must not share a giver session");
+            assert!(
+                !owned1.contains(id),
+                "shards must not share a giver session"
+            );
         }
-        let mut union = owned0.iter().chain(owned1.iter()).cloned().collect::<Vec<_>>();
+        let mut union = owned0
+            .iter()
+            .chain(owned1.iter())
+            .cloned()
+            .collect::<Vec<_>>();
         union.sort();
         let mut expected = all_ids.clone();
         expected.sort();
@@ -2303,7 +2312,9 @@ mod tests {
         let mut source = partitioned_sequential_source(dataset, 0, 2).await;
         let owned = owned_ids(&source);
         for _ in 0..6 {
-            let session = source.next(None).expect("recycle refill must stay sampleable");
+            let session = source
+                .next(None)
+                .expect("recycle refill must stay sampleable");
             assert!(owned.contains(&session.conversation_id));
             session.build_first_turn(None).unwrap();
         }

@@ -49,8 +49,10 @@ pub struct AppState {
 
 /// Pooled plain-HTTP client used to fetch content URLs. `Empty<Bytes>` is the
 /// request body (GET carries none); responses are drained via `BodyExt::collect`.
-pub type ContentFetchClient =
-    hyper_util::client::legacy::Client<hyper_util::client::legacy::connect::HttpConnector, Empty<Bytes>>;
+pub type ContentFetchClient = hyper_util::client::legacy::Client<
+    hyper_util::client::legacy::connect::HttpConnector,
+    Empty<Bytes>,
+>;
 
 pub struct ErrorRng {
     rng: aiperf_runtime::rng::RandomGenerator,

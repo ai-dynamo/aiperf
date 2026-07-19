@@ -3267,7 +3267,9 @@ mod content_url_tests {
 
     #[test]
     fn is_fetchable_url_only_accepts_http_schemes() {
-        assert!(is_fetchable_url("http://host:8090/content/images/img_1.png"));
+        assert!(is_fetchable_url(
+            "http://host:8090/content/images/img_1.png"
+        ));
         assert!(is_fetchable_url("https://host/img.jpg"));
         assert!(!is_fetchable_url("data:image/png;base64,AAAA"));
         assert!(!is_fetchable_url("file:///tmp/img.png"));
@@ -3376,9 +3378,9 @@ mod sagemaker_tests {
             )),
             Ok::<Bytes, Infallible>(sse_done()),
         ]);
-        let out: Vec<Bytes> = futures::executor::block_on(
-            futures::StreamExt::collect::<Vec<_>>(sse_to_eventstream(sse)),
-        )
+        let out: Vec<Bytes> = futures::executor::block_on(futures::StreamExt::collect::<Vec<_>>(
+            sse_to_eventstream(sse),
+        ))
         .into_iter()
         .map(|r| r.unwrap())
         .collect();

@@ -10,9 +10,9 @@
 
 use std::collections::HashMap;
 
-use crate::metrics_core::RecordIngest;
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::ObservedUsage;
+use crate::metrics_core::RecordIngest;
 use uuid::Uuid;
 
 /// Per-request inputs used by quality-filtered goodput.

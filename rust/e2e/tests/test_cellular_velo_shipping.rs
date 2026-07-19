@@ -154,7 +154,10 @@ fn run_modes(h: &AIPerfHarness, cells: u32, velo: bool, hub: bool) -> RunResult 
     // from the run seed, so it alone cannot make the baseline and cellular runs
     // byte-identical. Matches the seed pin the hub-parity test relies on.
     h.run_env(
-        &format!("--config {} --ui simple --random-seed {SEED}", cfg.display()),
+        &format!(
+            "--config {} --ui simple --random-seed {SEED}",
+            cfg.display()
+        ),
         &env,
     )
 }
@@ -350,7 +353,10 @@ fn run_velo_cells(h: &AIPerfHarness, hub: bool, fanout: bool) -> RunResult {
     // the default and hub runs synthesize the byte-identical dataset — the seed pin is
     // what makes two independent cellular runs comparable.
     h.run_env(
-        &format!("--config {} --ui simple --random-seed {SEED}", cfg.display()),
+        &format!(
+            "--config {} --ui simple --random-seed {SEED}",
+            cfg.display()
+        ),
         &env,
     )
 }
@@ -366,7 +372,9 @@ fn assert_velo_run(label: &str, r: &RunResult) {
         r.stderr
     );
     assert!(
-        r.artifacts.find_file("**/cellular-heartbeat.json").is_some(),
+        r.artifacts
+            .find_file("**/cellular-heartbeat.json")
+            .is_some(),
         "{label} {CELLS}-cell run must go through the controller (cellular-heartbeat.json)"
     );
     let observables = velo_observables(r);
@@ -471,7 +479,11 @@ async fn test_cellular_hub_mode_matches_default_velo_path() {
     // outputs.json deterministic text set.
     let od = outputs(&default_path);
     let oh = outputs(&hub_path);
-    assert_eq!(od.len(), oh.len(), "outputs.json row count diverged (default vs hub)");
+    assert_eq!(
+        od.len(),
+        oh.len(),
+        "outputs.json row count diverged (default vs hub)"
+    );
     assert_eq!(
         sorted(&od, |r| output_projection(r)),
         sorted(&oh, |r| output_projection(r)),

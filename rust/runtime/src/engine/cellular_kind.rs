@@ -69,11 +69,10 @@ impl CellularRunKind {
     /// this kind.
     ///
     /// A scheduled multi-turn run tiles its `sessions` budget across cells — cell `k`
-    /// owns `owned_positions(total, k, C)` conversations, aligned with the
-    /// [`PartitionedSampler`](crate::dataset::sampler::PartitionedSampler)
-    /// per-conversation stride. A graph run gets the whole `sessions` budget WHOLE and
-    /// partitions the trace at runtime (`PartitionedGraphTraceSource` over the session
-    /// space), so slicing the budget here would double-partition.
+    /// owns `owned_positions(total, k, C)` conversations, aligned with that cell's
+    /// fixed owned-corpus conversation giver. A graph run gets the whole `sessions`
+    /// budget WHOLE and partitions the trace at runtime (`PartitionedGraphTraceSource`
+    /// over the session space), so slicing the budget here would double-partition.
     pub(crate) fn slices_session_budget(&self) -> bool {
         matches!(self, Self::Scheduled)
     }

@@ -16,6 +16,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::observer::CollectorObserver;
+use crate::dispatch::sink::RequestObserver;
 use crate::metrics_core::MetricsConfig;
 use crate::timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, PhaseBranchStats,
@@ -24,9 +27,6 @@ use crate::timing::{
     ReleasedStuckSlots, SlotPool, drive_phases,
 };
 use anyhow::{Result, anyhow};
-use crate::dispatch::collector::ReplayTerminalStatus;
-use crate::dispatch::observer::CollectorObserver;
-use crate::dispatch::sink::RequestObserver;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
 use uuid::Uuid;

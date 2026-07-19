@@ -15,6 +15,8 @@ use anyhow::{Result, ensure};
 use bytes::Bytes;
 use serde_json::Value;
 
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::{ObservedEndpointMetrics, ObservedUsage, RequestObserver};
 use crate::endpoints::{
     EndpointDescriptor, EndpointResult, ExtractedPayload, ParsedResponse, PreparedEndpoint,
     RequestRecord as EndpointRequestRecord, ServerResponse, Turn,
@@ -25,8 +27,6 @@ use crate::transport::http::transport::endpoint_binding::{
     HttpEndpointBinding, HttpEndpointBindingError, HttpEndpointRequest, HttpEndpointResponseFilter,
     MetadataHttpEndpointBinding, prepare_request,
 };
-use crate::dispatch::collector::ReplayTerminalStatus;
-use crate::dispatch::sink::{ObservedEndpointMetrics, ObservedUsage, RequestObserver};
 
 use crate::multiturn::TurnDataPolicy;
 use crate::scheduled::{ModelResponseMetadata, TurnResponseObserver};

@@ -13,13 +13,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::clock::Clock;
-use crate::metrics_core::{
-    AccumulatorSummary, InferenceDimensions, MetricsAccumulator, MetricsConfig, Phase,
-    RecordIngest, RequestTrace, TokenCounts, UsageMetrics,
-};
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::{
     ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
+};
+use crate::metrics_core::{
+    AccumulatorSummary, InferenceDimensions, MetricsAccumulator, MetricsConfig, Phase,
+    RecordIngest, RequestTrace, TokenCounts, UsageMetrics,
 };
 use rustc_hash::FxHashMap;
 use uuid::Uuid;

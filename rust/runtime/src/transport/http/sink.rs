@@ -30,6 +30,8 @@ use crate::endpoints::chat_request_body;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest, RequestTrace};
 use crate::transport::http::sse::ChatChunk;
 
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
 use crate::metrics::NativeMetricsObserver;
 use crate::transport::core::{
     ConnectionReuseStrategy, DispatchResult, Dispatcher, ErrorDetails, ErrorKind, MeasuredContext,
@@ -40,8 +42,6 @@ use crate::transport::http::config::ClientConfig;
 use crate::transport::http::models::{HttpVersion, RequestConfig};
 use crate::transport::http::transport::http_transport::HttpTransport;
 use crate::transport::measure::{self, WorkerMeasurement};
-use crate::dispatch::collector::ReplayTerminalStatus;
-use crate::dispatch::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
 use serde_json::Value;
 
 pub use crate::multiturn::PreparedEndpointReference;

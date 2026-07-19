@@ -31,10 +31,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::clock::{Clock, RealClock};
-use crate::metrics_core::{AccumulatorSummary, MetricsConfig};
 use crate::dispatch::collector::{ReplayTerminalStatus, TraceSimulationReport};
 use crate::dispatch::observer::CollectorObserver;
 use crate::dispatch::sink::RequestObserver;
+use crate::metrics_core::{AccumulatorSummary, MetricsConfig};
 
 use crate::timing::{
     ArrivalPattern, LinearRamp, Phase, RampDriver, RampHandle, RamperConfig, RunState, SlotPool,

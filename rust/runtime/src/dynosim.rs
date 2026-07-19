@@ -21,6 +21,9 @@ use std::task::{Context as TaskContext, Poll, Waker};
 
 use crate::clock::{Clock, SimClock};
 use crate::dataset::{Handle, TextTokenizer, TiktokenTokenizer};
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::observer::CollectorObserver;
+use crate::dispatch::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
 use crate::endpoints::chat_request_body;
 use crate::graph::bench::{BenchConfig, build_workload};
 use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
@@ -60,9 +63,6 @@ use dynamo_mocker::replay::{
     generate_trace_worker_artifacts_offline_with_kv_event_visibility,
     simulate_concurrency_live_requests, simulate_offline_trace_files,
 };
-use crate::dispatch::collector::ReplayTerminalStatus;
-use crate::dispatch::observer::CollectorObserver;
-use crate::dispatch::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
 use rustc_hash::FxHashMap;
 use tokio::sync::Notify;
 use uuid::Uuid;

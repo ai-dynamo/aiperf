@@ -17,6 +17,7 @@ use crate::dataset::{
     HashIdentityTracePromptStorage, NativeSyntheticMediaGeneratorFactory, SamplerRegistry,
     SegmentStore, TextTokenizer, TraceHashAwareRequestMaterializer,
 };
+use crate::dispatch::sink::RequestObserver;
 use crate::dynosim::{
     CanonicalSharedMetrics, DeferredOfflineGraphFuture, DeferredOfflineGraphRunFactory,
     DeferredOfflineScheduledFuture, DeferredOfflineScheduledRunFactory,
@@ -57,7 +58,6 @@ use crate::rng::{RngRoot, namespace};
 use crate::timing::{BernoulliFixedDelay, DISABLED_PROGRESS_INTERVAL_NS, NoopPhaseObserver};
 use anyhow::{Context, Result, anyhow, ensure};
 use dynamo_mocker::replay::TraceSimulationReport as DynamoSimulationReport;
-use crate::dispatch::sink::RequestObserver;
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 

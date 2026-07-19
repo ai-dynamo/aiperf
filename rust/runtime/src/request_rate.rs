@@ -28,12 +28,12 @@ use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use tokio::sync::Notify;
 
+use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::failure::OnFailure;
 use crate::fixed_schedule::milliseconds_to_ns;
 use crate::multiturn::{ConversationSource, TurnToSend};
 use crate::scheduled::{ScheduledRuntime, Workload};
 use crate::scheduler::LocalTaskScheduler;
-use crate::dispatch::collector::ReplayTerminalStatus;
 
 /// Arrival and admission settings for a request-rate workload.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -555,12 +555,12 @@ mod tests {
     use std::rc::Rc;
 
     use crate::clock::{Clock, SimClock};
+    use crate::dispatch::collector::ReplayTerminalStatus;
+    use crate::dispatch::sink::RequestObserver;
     use crate::graph::runtime::drive_sim;
     use crate::timing::{ArrivalPattern, StopConfig};
     use anyhow::Result;
     use async_trait::async_trait;
-    use crate::dispatch::collector::ReplayTerminalStatus;
-    use crate::dispatch::sink::RequestObserver;
 
     use super::*;
     use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome, TurnDispatcher};

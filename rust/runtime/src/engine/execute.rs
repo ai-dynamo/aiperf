@@ -42,6 +42,8 @@ use crate::dataset::{
     TiktokenEncoding, TiktokenTokenizer, TracePromptStoragePolicy, TraceSynthesisConfig,
     find_tiktoken_model_file,
 };
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::RequestObserver;
 use crate::endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
 use crate::export::otel::OtelRecordAccumulator;
 use crate::extensions::AIPerfRegistry;
@@ -87,8 +89,6 @@ use crate::transport::http::TransportSinkConfig;
 use crate::user_centric::{UserCentricConfig, UserCentricWorkload};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
-use crate::dispatch::collector::ReplayTerminalStatus;
-use crate::dispatch::sink::RequestObserver;
 use uuid::Uuid;
 
 use crate::engine::dataset_input::PreparedDatasetInput;

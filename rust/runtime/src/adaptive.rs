@@ -17,10 +17,10 @@ use crate::adaptive_core::{
     TumblingWindowSampler, UserTarget, UsersActuator,
 };
 use crate::clock::Clock;
+use crate::dispatch::sink::RequestObserver;
 use crate::extensions::TransactionalRegistry;
 use crate::timing::{IntervalGenerator, SlotPool};
 use anyhow::{Context, Result, anyhow, bail};
-use crate::dispatch::sink::RequestObserver;
 
 /// Adaptive control variable selected by the CLI/config layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -19,14 +19,14 @@ use std::rc::Rc;
 use std::task::{Context, Poll};
 
 use crate::clock::Clock;
+use crate::dispatch::collector::{ReplayTerminalStatus, TraceSimulationReport};
+use crate::dispatch::observer::CollectorObserver;
+use crate::dispatch::sink::RequestObserver;
 use crate::endpoints::ParsedResponse;
 use crate::metrics_core::{AccumulatorSummary, InferenceDimensions, MetricsConfig, RequestTrace};
 use crate::timing::{CancellationPolicy, Phase, SlotPool, StopChecker, StopConfig, UrlSelector};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use crate::dispatch::collector::{ReplayTerminalStatus, TraceSimulationReport};
-use crate::dispatch::observer::CollectorObserver;
-use crate::dispatch::sink::RequestObserver;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
 use serde_json::Value;

@@ -411,11 +411,7 @@ pub struct MockServerConfig {
     /// Off by default so existing runs with fake/non-routable URLs are
     /// unaffected; enable to exercise an AIPerf content server (or any URL
     /// host) end to end, triggering its serving and transfer-record path.
-    #[arg(
-        long,
-        env = "MOCK_SERVER_FETCH_CONTENT_URLS",
-        default_value_t = false
-    )]
+    #[arg(long, env = "MOCK_SERVER_FETCH_CONTENT_URLS", default_value_t = false)]
     pub fetch_content_urls: bool,
 
     /// Per-request timeout (seconds) for content-URL fetches when

@@ -13,11 +13,11 @@ use std::cell::Cell;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::endpoints::{ParsedResponse, ResponseData, Turn, UsageView};
-use crate::scheduled::ModelResponseMetadata;
 use crate::dispatch::sink::{
     ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
 };
+use crate::endpoints::{ParsedResponse, ResponseData, Turn, UsageView};
+use crate::scheduled::ModelResponseMetadata;
 
 /// Mutable state accumulated across parsed responses.
 pub(crate) struct EndpointReduceAccumulators<'a> {

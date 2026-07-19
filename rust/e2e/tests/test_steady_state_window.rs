@@ -30,8 +30,13 @@ async fn test_steady_state_emitted_for_concurrency_run() {
     // Threshold is ceil(0.8 * 4) = 4. Measured in-flight overlap (from record
     // start/end timestamps) is at least the threshold inside the window.
     assert_eq!(steady["threshold_concurrency"].as_u64(), Some(4));
-    let peak = steady["peak_concurrency"].as_u64().expect("peak_concurrency");
-    assert!(peak >= 4, "peak concurrency must reach the threshold, got {peak}");
+    let peak = steady["peak_concurrency"]
+        .as_u64()
+        .expect("peak_concurrency");
+    assert!(
+        peak >= 4,
+        "peak concurrency must reach the threshold, got {peak}"
+    );
 
     // The window is a real half-open interval.
     let start = steady["window_start_ns"].as_i64().expect("window_start_ns");

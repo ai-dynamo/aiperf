@@ -1278,8 +1278,9 @@ fn register_timeout() -> std::time::Duration {
 
 /// Builds the protocol-v2 envelope for one cell: the same run with its phase
 /// budgets sliced to the cell's owned share and its own scratch artifact dir.
-/// All cells receive the same dataset and seed; `PartitionedSampler` selects each
-/// cell's owned instances from the shared space.
+/// All cells receive the same dataset and seed; each cell's conversation source
+/// is a fixed giver over its authored-index residue (sampling and recycle stay
+/// inside that set).
 ///
 /// The runner rebuilds each cell's sampler fresh at every phase boundary (the
 /// dataset RNG re-seeds per phase), so a cell draws its owned instances of *each
@@ -1353,16 +1354,14 @@ fn build_cell_envelope(
             phase.insert("requests".to_owned(), serde_json::Value::from(owned));
         }
         // Slice the SESSION (conversation) budget per cell for a scheduled multi-turn run,
-        // aligned with [`PartitionedSampler`]'s per-conversation stride: cell k owns
-        // `owned_positions(total, k, C)` conversations — its share of the first `total`
-        // conversation draws `{k, k+C, ...}`. `owned_positions` tiles exactly, so the
-        // shares sum to `total` and no cell is handed a short budget. The sampler
-        // recycles silently (wraparound),
+        // aligned with each cell's fixed conversation giver (authored-index residue):
+        // cell k owns `owned_positions(total, k, C)` conversations — its share of the
+        // first `total` conversation draws `{k, k+C, ...}`. `owned_positions` tiles
+        // exactly, so the shares sum to `total` and no cell is handed a short budget.
+        // The owned-corpus sampler recycles silently (wraparound) inside that set,
         // so an off-by-one budget would resample a conversation instead of stopping — a
         // silent correctness trap the exact tiling avoids. Graph cells skip this (they get
         // the whole budget and partition the trace themselves).
-        //
-        // [`PartitionedSampler`]: crate::dataset::sampler::PartitionedSampler
         if kind.slices_session_budget()
             && let Some(sessions) = phase.get("sessions").and_then(serde_json::Value::as_u64)
         {
@@ -1644,8 +1643,8 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
         // per-conversation draw index — which the RETAIN merge orders by. It is sound in
         // cellular ONLY on the exact-fold concat merge (order-independent store
         // concatenation), where per-turn order is irrelevant to the merged report. The
-        // per-cell partition unit (conversation, via [`PartitionedSampler`]) matches
-        // the draw unit, and the session budget is sliced by conversation
+        // per-cell partition unit (conversation, via each cell's fixed owned-corpus
+        // giver) matches the draw unit, and the session budget is sliced by conversation
         // (`build_cell_envelope`), so each cell single-passes its owned conversation slice.
         ensure!(
             exact_fold,

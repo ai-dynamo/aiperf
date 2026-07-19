@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 use crate::clock::{Clock, RealClock, RealClockAnchor};
 use crate::dataset::{Handle, Payload, SegmentStore};
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::RequestObserver;
 use crate::endpoints::{
     CreditPhase, EndpointId, EndpointKey, EndpointRegistry, PreparedEndpointTable, PreparedRequest,
     Turn,
@@ -40,8 +42,6 @@ use crate::transport::http::{PreparedEndpointReference, TransportSinkConfig};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
-use crate::dispatch::collector::ReplayTerminalStatus;
-use crate::dispatch::sink::RequestObserver;
 use serde_json::{Map, Value};
 use tokio::sync::mpsc;
 use uuid::Uuid;

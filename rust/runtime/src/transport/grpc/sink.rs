@@ -15,6 +15,10 @@ use bytes::Bytes;
 use serde_json::Value;
 
 use crate::clock::Clock;
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::{
+    Dispatchable, ObservedEndpointMetrics, ObservedUsage, RequestObserver, RequestSink,
+};
 use crate::endpoints::{
     EndpointKey, PreparedEndpoint, PreparedEndpointTable, RequestRecord as EndpointRequestRecord,
     ResponseData, ServerResponse,
@@ -29,10 +33,6 @@ use crate::transport::grpc::{
 };
 use crate::transport::reduce::{
     EndpointReduceAccumulators, TokenEmitter, assistant_message, reduce_parsed_response,
-};
-use crate::dispatch::collector::ReplayTerminalStatus;
-use crate::dispatch::sink::{
-    Dispatchable, ObservedEndpointMetrics, ObservedUsage, RequestObserver, RequestSink,
 };
 use uuid::Uuid;
 
