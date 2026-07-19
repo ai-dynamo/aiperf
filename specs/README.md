@@ -50,6 +50,7 @@ read the record for the subsystem you are touching.
 | [http-transport.md](http-transport.md) | The Clock-injected hyper HTTP stack: wire/protocol support, SSE streaming, endpoint binding, and post-send cancellation. |
 | [grpc-transport.md](grpc-transport.md) | The Clock-injected Tonic gRPC stack: the binding registry, the KServe OIP v2 and Riva families, the protoc-free codec, and the worker-local sink. |
 | [websocket-transport.md](websocket-transport.md) | Built reusable content, SSE, bidirectional framing, measurement, placement, and registration prerequisites plus the future Clock-injected WebSocket transport contract. |
+| [sagemaker-runtime-endpoint.md](sagemaker-runtime-endpoint.md) | Future AWS SageMaker Runtime dialect: `InvokeEndpoint`/`InvokeEndpointWithResponseStream` mock-server routes, the AWS `application/vnd.amazon.eventstream` binary frame codec, and the two-factory client endpoint dialect it composes over. |
 | [offline-cosimulation.md](offline-cosimulation.md) | Socket-free Dynamo co-simulation behind the `dynosim` feature: the steppable clocked engine boundary and the observer contract feeding AIPerf's own measurement. |
 
 ### Inputs, endpoints, and graph
