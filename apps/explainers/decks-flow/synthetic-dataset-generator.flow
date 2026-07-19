@@ -453,4 +453,199 @@ explainer "Synthetic Dataset Generator" {
       }
     }
   }
+
+  slide "Media batches join the same chain" {
+    eyebrow: "Media"
+    title: "Media batches join the same chain"
+    lede: "append_media_batch runs once per configured media category (image, audio, video) after the text branch. Each generated value goes through segments.intern_media(parent, kind, wire), and parent is reassigned to the new handle after every call — so an image segment can chain off the text segment that came before it, and a second image chains off the first. Each full batch becomes its own ContentGroup named image_url, input_audio, or video_url."
+    narration: "append_media_batch interns every generated media value with intern_media, threading parent forward across the whole batch, then pushes one ContentGroup per media category."
+    term: {
+      word: "append_media_batch"
+      meaning: "Shared helper the composer calls once per configured media category; validates one media kind per batch and pushes a single ContentGroup for it."
+    }
+    points: [
+      "`let handle = segments.intern_media(*parent, generated.kind, generated.wire)?; *parent = Some(handle);` — same threading pattern as text interning.",
+      "One batch cannot mix media kinds: `if kind != Some(generated.kind) { return Err(...) }`.",
+      "`turn.content.push(ContentGroup { kind, name: \"image_url\" | \"input_audio\" | \"video_url\", handles })` per category.",
+      "Called unconditionally for whichever of `image_generator`/`audio_generator`/`video_generator` is configured, after either top-level branch.",
+      "Evidence: `rust/runtime/src/dataset/loader/synthetic.rs` (`append_media_batch` function and its three call sites)."
+    ]
+    caption: "intern_media × batch_size, parent threaded forward → one ContentGroup per media category."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "MEDIA BATCH JOIN",
+        caption = "intern_media × batch_size, parent threaded forward → one ContentGroup per media category.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "text-seg",
+        title = "text segment",
+        detail = "parent so far",
+        x = 30, y = 140, width = 140, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-text-img1",
+        mode = "route",
+        from = { nodeId: "text-seg", anchor: "e" },
+        to = { nodeId: "img1", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "img1",
+        title = "image #1",
+        detail = "intern_media",
+        x = 210, y = 140, width = 120, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-img1-img2",
+        mode = "route",
+        from = { nodeId: "img1", anchor: "e" },
+        to = { nodeId: "img2", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "img2",
+        title = "image #2",
+        detail = "intern_media",
+        x = 370, y = 140, width = 120, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-img2-cg",
+        mode = "route",
+        from = { nodeId: "img2", anchor: "e" },
+        to = { nodeId: "cg", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "cg",
+        title = "ContentGroup",
+        detail = "name: image_url",
+        x = 530, y = 140, width = 150, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal text-seg duration 260
+        after text-seg trace arrow-text-img1 duration 320
+        after arrow-text-img1 reveal img1 duration 260
+        after img1 trace arrow-img1-img2 duration 320
+        after arrow-img1-img2 reveal img2 duration 260
+        after img2 trace arrow-img2-cg duration 320
+        after arrow-img2-cg reveal cg duration 260
+      }
+    }
+  }
+
+  slide "Why parent threads through every intern call" {
+    eyebrow: "Parent chaining"
+    title: "Why parent threads through every intern call"
+    lede: "Every intern_text/intern_token_ids/intern_media call takes the current parent handle and returns a new handle that becomes the next call's parent. This is how a turn's system prompt, user context, generated text, and each media item form one content-addressed chain: a child's SegmentId folds its parent's hash, so identical chains across conversations collapse to the same handles, and a turn with text + image + audio ends up as three ContentGroups that all share one ancestor lineage."
+    narration: "Parent threading is what turns independent intern calls into one content-addressed chain, so mixed text-plus-media turns still dedupe shared prefixes across conversations."
+    term: {
+      word: "parent chain"
+      meaning: "The sequence of handles each intern call passes as its parent; SegmentId folds the parent's hash, so a shared chain prefix across turns or conversations collapses to the same handles."
+    }
+    points: [
+      "`let mut parent = None;` starts each conversation; system prompt, user context, prompt text, and every media item update it in turn.",
+      "`turn.content` ends up as multiple `ContentGroup`s (text, image_url, input_audio, video_url) that all descend from the same parent lineage, not independent trees.",
+      "This is the same interning mechanism `segment-pools` explainer covers for SegmentPool generally — this deck shows the synthetic composer's specific call sequence.",
+      "Evidence: `rust/runtime/src/dataset/loader/synthetic.rs` (the `parent` variable threaded through the whole turn loop)."
+    ]
+    caption: "One parent variable, threaded through every intern call · turn.content is multiple groups on one lineage."
+
+    render: @scene {
+      sdk.Header(
+        id = "header",
+        title = "ONE PARENT, MANY GROUPS",
+        caption = "One parent variable, threaded through every intern call · turn.content is multiple groups on one lineage.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "system",
+        title = "system",
+        detail = "parent = None",
+        x = 30, y = 140, width = 110, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "arrow-system-context",
+        mode = "route",
+        from = { nodeId: "system", anchor: "e" },
+        to = { nodeId: "context", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "context",
+        title = "user context",
+        detail = "chains system",
+        x = 170, y = 140, width = 120, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "arrow-context-text",
+        mode = "route",
+        from = { nodeId: "context", anchor: "e" },
+        to = { nodeId: "text", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "text",
+        title = "prompt text",
+        detail = "chains context",
+        x = 320, y = 140, width = 120, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "arrow-text-media",
+        mode = "route",
+        from = { nodeId: "text", anchor: "e" },
+        to = { nodeId: "media", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "media",
+        title = "image / audio / video",
+        detail = "chains text",
+        x = 470, y = 140, width = 170, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Bracket(
+        id = "lineage-bracket",
+        side = "left",
+        x = 25, y = 125, width = 610, height = 90,
+        strokeRole = theme(accent.orange),
+        strokeWidth = 1.5
+      )
+
+      timeline main {
+        at 0 reveal header duration 220
+        after header reveal system duration 260
+        after system trace arrow-system-context duration 300
+        after arrow-system-context reveal context duration 240
+        after context trace arrow-context-text duration 300
+        after arrow-context-text reveal text duration 240
+        after text trace arrow-text-media duration 300
+        after arrow-text-media reveal media duration 260
+        after media reveal lineage-bracket duration 260
+      }
+    }
+  }
 }
