@@ -3,13 +3,17 @@
 
 //! AWS SageMaker Runtime `InvokeEndpoint` / `InvokeEndpointWithResponseStream`.
 //!
-//! Runner-protocol-v2-only factories, following the same alias pattern as the
-//! KServe OpenAI-compatible routes: request body construction and response/
-//! chunk parsing are delegated entirely to [`ChatEndpoint`], since the mock
-//! server (and real SageMaker JumpStart/DJL LMI containers hosting an
-//! OpenAI-chat-shaped model) accept the identical `messages` wire body.
-//! SageMaker has no models-list diagnostic route, so readiness uses a
-//! minimal `POST` inference probe against the invoke path itself, matching
+//! A single runner-protocol-v2-only factory, following the same
+//! endpoint-path/streaming-path convention as `huggingface_generate`
+//! (TGI): one endpoint id exposes both the non-streaming `/invocations`
+//! path and the streaming `/invocations-response-stream` path, and
+//! `--streaming` selects between them at request-binding time. Request
+//! body construction and response/chunk parsing are delegated entirely to
+//! [`ChatEndpoint`], since the mock server (and real SageMaker JumpStart/DJL
+//! LMI containers hosting an OpenAI-chat-shaped model) accept the identical
+//! `messages` wire body for both paths. SageMaker has no models-list
+//! diagnostic route, so readiness uses a minimal `POST` inference probe
+//! against the non-streaming invoke path, matching
 //! [`ChatEndpoint::readiness_policy`]'s `"inference"` mode.
 
 use std::collections::BTreeMap;
@@ -29,30 +33,11 @@ use crate::endpoints::registry::{
     PreparedRequest, ReadinessMethod, ReadinessPolicy, ReadinessSuccess,
 };
 
-const SAGEMAKER_INVOKE_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
-    id: "sagemaker_invoke",
-    aliases: &["sagemaker"],
-    description: "AWS SageMaker Runtime InvokeEndpoint API",
+const SAGEMAKER_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "sagemaker",
+    aliases: &["sagemaker_invoke"],
+    description: "AWS SageMaker Runtime InvokeEndpoint / InvokeEndpointWithResponseStream API",
     endpoint_path: Some("/endpoints/{model_name}/invocations"),
-    streaming_path: None,
-    supports_streaming: false,
-    produces_tokens: true,
-    tokenizes_input: true,
-    requires_raw_token_ids: false,
-    requires_form_data: false,
-    requires_polling: false,
-    requires_inline_media: false,
-    input_modalities: &[Modality::Text],
-    output_modalities: &[Modality::Tokens],
-    metrics_title: "LLM Metrics",
-    service_kind: "sagemaker",
-};
-
-const SAGEMAKER_INVOKE_STREAM_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
-    id: "sagemaker_invoke_stream",
-    aliases: &["sagemaker_stream"],
-    description: "AWS SageMaker Runtime InvokeEndpointWithResponseStream API",
-    endpoint_path: None,
     streaming_path: Some("/endpoints/{model_name}/invocations-response-stream"),
     supports_streaming: true,
     produces_tokens: true,
@@ -67,58 +52,35 @@ const SAGEMAKER_INVOKE_STREAM_DESCRIPTOR: EndpointDescriptor = EndpointDescripto
     service_kind: "sagemaker",
 };
 
-/// Protocol-v2-only factory for AWS SageMaker Runtime `InvokeEndpoint`.
+/// Protocol-v2-only factory for AWS SageMaker Runtime `InvokeEndpoint` and
+/// `InvokeEndpointWithResponseStream`, selected via `--streaming`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct SageMakerInvokeFactory;
+pub struct SageMakerFactory;
 
-/// Protocol-v2-only factory for AWS SageMaker Runtime
-/// `InvokeEndpointWithResponseStream`.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SageMakerInvokeStreamFactory;
+impl EndpointFactory for SageMakerFactory {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &SAGEMAKER_DESCRIPTOR
+    }
 
-macro_rules! sagemaker_factory {
-    ($factory:ty, $descriptor:expr) => {
-        impl EndpointFactory for $factory {
-            fn descriptor(&self) -> &'static EndpointDescriptor {
-                &$descriptor
-            }
-
-            fn prepare(
-                &self,
-                config: EffectiveEndpointConfig,
-            ) -> EndpointResult<Box<dyn PreparedEndpoint>> {
-                prepare_sagemaker(&$descriptor, config)
-            }
-        }
-    };
-}
-
-sagemaker_factory!(SageMakerInvokeFactory, SAGEMAKER_INVOKE_DESCRIPTOR);
-sagemaker_factory!(
-    SageMakerInvokeStreamFactory,
-    SAGEMAKER_INVOKE_STREAM_DESCRIPTOR
-);
-
-fn prepare_sagemaker(
-    descriptor: &'static EndpointDescriptor,
-    config: EffectiveEndpointConfig,
-) -> EndpointResult<Box<dyn PreparedEndpoint>> {
-    let endpoint = Arc::new(ChatEndpoint);
-    let legacy_config = EndpointConfig::from_raw(EndpointType::Chat, config.to_raw());
-    let headers = endpoint.format_headers(&legacy_config);
-    Ok(Box::new(PreparedSageMakerEndpoint {
-        endpoint,
-        descriptor,
-        config,
-        legacy_config,
-        headers,
-    }))
+    fn prepare(
+        &self,
+        config: EffectiveEndpointConfig,
+    ) -> EndpointResult<Box<dyn PreparedEndpoint>> {
+        let endpoint = Arc::new(ChatEndpoint);
+        let legacy_config = EndpointConfig::from_raw(EndpointType::Chat, config.to_raw());
+        let headers = endpoint.format_headers(&legacy_config);
+        Ok(Box::new(PreparedSageMakerEndpoint {
+            endpoint,
+            config,
+            legacy_config,
+            headers,
+        }))
+    }
 }
 
 #[derive(Debug)]
 struct PreparedSageMakerEndpoint {
     endpoint: Arc<ChatEndpoint>,
-    descriptor: &'static EndpointDescriptor,
     config: EffectiveEndpointConfig,
     legacy_config: EndpointConfig,
     headers: BTreeMap<String, String>,
@@ -126,7 +88,7 @@ struct PreparedSageMakerEndpoint {
 
 impl PreparedEndpoint for PreparedSageMakerEndpoint {
     fn descriptor(&self) -> &'static EndpointDescriptor {
-        self.descriptor
+        &SAGEMAKER_DESCRIPTOR
     }
 
     fn config(&self) -> &EffectiveEndpointConfig {
@@ -195,18 +157,12 @@ mod tests {
     }
 
     #[test]
-    fn invoke_descriptor_uses_non_streaming_invocations_path() {
-        let descriptor = SageMakerInvokeFactory.descriptor();
+    fn descriptor_exposes_both_invoke_paths() {
+        let descriptor = SageMakerFactory.descriptor();
         assert_eq!(
             descriptor.endpoint_path,
             Some("/endpoints/{model_name}/invocations")
         );
-        assert!(!descriptor.supports_streaming);
-    }
-
-    #[test]
-    fn invoke_stream_descriptor_uses_streaming_path() {
-        let descriptor = SageMakerInvokeStreamFactory.descriptor();
         assert_eq!(
             descriptor.streaming_path,
             Some("/endpoints/{model_name}/invocations-response-stream")
@@ -216,7 +172,7 @@ mod tests {
 
     #[test]
     fn readiness_policy_posts_minimal_chat_body_to_model_scoped_path() {
-        let prepared = SageMakerInvokeFactory.prepare(default_config()).unwrap();
+        let prepared = SageMakerFactory.prepare(default_config()).unwrap();
         let ReadinessPolicy::Request(request) = prepared.readiness_policy("my-model").unwrap()
         else {
             panic!("expected a single readiness request");
@@ -231,7 +187,7 @@ mod tests {
 
     #[test]
     fn parses_chat_shaped_response_via_delegated_chat_endpoint() {
-        let prepared = SageMakerInvokeFactory.prepare(default_config()).unwrap();
+        let prepared = SageMakerFactory.prepare(default_config()).unwrap();
         let response = ServerResponse::from_json(
             0,
             json!({

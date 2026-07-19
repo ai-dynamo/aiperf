@@ -26,11 +26,11 @@ fn record_status(record: &Value) -> Option<u64> {
     record.get("status").and_then(Value::as_u64)
 }
 
-async fn run(endpoint_type: &str, streaming: bool) -> (AIPerfHarness, RunResult) {
+async fn run(streaming: bool) -> (AIPerfHarness, RunResult) {
     let h = AIPerfHarness::new().await;
     let streaming_flag = if streaming { "--streaming" } else { "" };
     let r = h.run(&format!(
-        "--model {SAGEMAKER_MODEL} --url {} --endpoint-type {endpoint_type} \
+        "--model {SAGEMAKER_MODEL} --url {} --endpoint-type sagemaker \
          {streaming_flag} --isl 32 \
          --osl 16 --osl-stddev 0 \
          --request-count {REQUEST_COUNT} --concurrency {CONCURRENCY} --workers-max 1 \
@@ -39,7 +39,7 @@ async fn run(endpoint_type: &str, streaming: bool) -> (AIPerfHarness, RunResult)
     ));
     assert!(
         r.success(),
-        "{endpoint_type} run failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
+        "sagemaker run (streaming={streaming}) failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
         r.exit_code,
         r.stdout,
         r.stderr
@@ -51,7 +51,7 @@ async fn run(endpoint_type: &str, streaming: bool) -> (AIPerfHarness, RunResult)
 /// Non-streaming; every record is a single OpenAI chat-completion-shaped body.
 #[tokio::test]
 async fn test_sagemaker_invoke_non_streaming() {
-    let (_h, r) = run("sagemaker", false).await;
+    let (_h, r) = run(false).await;
     let records = r.artifacts.raw_records();
     assert_eq!(
         records.len(),
@@ -94,7 +94,7 @@ async fn test_sagemaker_invoke_non_streaming() {
 /// non-streaming variant.
 #[tokio::test]
 async fn test_sagemaker_invoke_streaming() {
-    let (_h, r) = run("sagemaker_stream", true).await;
+    let (_h, r) = run(true).await;
     let records = r.artifacts.raw_records();
     assert_eq!(
         records.len(),

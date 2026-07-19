@@ -441,10 +441,11 @@ Transports:
   content, SSE, bidirectional framing, measurement, placement, and registration
   prerequisites plus the future Clock-injected WebSocket transport contract.
 - [`specs/sagemaker-runtime-endpoint.md`](specs/sagemaker-runtime-endpoint.md) —
-  future AWS SageMaker Runtime dialect: `InvokeEndpoint`/
+  AWS SageMaker Runtime dialect: `InvokeEndpoint`/
   `InvokeEndpointWithResponseStream` mock-server routes, the AWS
-  `application/vnd.amazon.eventstream` binary frame codec, and the two-factory
-  client endpoint dialect it composes over.
+  `application/vnd.amazon.eventstream` binary frame codec, and the
+  single-factory client endpoint dialect it composes over, verified e2e and
+  against a genuine `boto3` client.
 - [`specs/offline-cosimulation.md`](specs/offline-cosimulation.md) — socket-free
   Dynamo co-simulation behind the `dynosim` feature: the steppable clocked engine
   boundary and the observer contract.

@@ -59,7 +59,7 @@ pub use riva::{
     RivaPunctuateTextFactory, RivaTextClassifyFactory, RivaTokenClassifyFactory,
     RivaTransformTextFactory, RivaTtsFactory,
 };
-pub use sagemaker::{SageMakerInvokeFactory, SageMakerInvokeStreamFactory};
+pub use sagemaker::SageMakerFactory;
 pub use tier2::{
     CohereRankingsEndpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint, ImageEditEndpoint,
     ImageGenerationEndpoint, ImageRetrievalEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint,

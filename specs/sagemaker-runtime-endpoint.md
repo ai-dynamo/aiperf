@@ -20,25 +20,25 @@ that does speak `/endpoints/{EndpointName}/invocations` over the wire.
 
 ## Built
 
-- `SageMakerInvokeFactory` / `SageMakerInvokeStreamFactory`
-  (`rust/runtime/src/endpoints/sagemaker.rs`), following the KServe
-  factory/behavior pattern with two factories (not a `supports_streaming`
-  flag) so eventstream-specific decode logic stays isolated to the streaming
-  factory:
-  - `SageMakerInvokeFactory` (id `sagemaker_invoke`, alias `sagemaker`) —
-    non-streaming. `EndpointDescriptor.endpoint_path =
-    "/endpoints/{model_name}/invocations"`. `format_payload` builds an
-    OpenAI-chat-shaped JSON body (reusing existing chat body-building);
-    `parse_response` parses the OpenAI-chat JSON response body directly.
-  - `SageMakerInvokeStreamFactory` (id `sagemaker_invoke_stream`, alias
-    `sagemaker_stream`) — streaming.
-    `EndpointDescriptor.streaming_path =
-    "/endpoints/{model_name}/invocations-response-stream"`. Response
-    decoding goes through the eventstream reader, then each
-    `PayloadPart.Bytes` frame payload is parsed as an
-    OpenAI-chat-completion-chunk, reusing existing chunk-parsing logic from
-    `chat.rs`/`chat_chunk.rs`.
-  Both factories are registered in `rust/runtime/src/endpoints/registry.rs`
+- `SageMakerFactory` (`rust/runtime/src/endpoints/sagemaker.rs`), a single
+  factory/endpoint id (`sagemaker`, alias `sagemaker_invoke`) exposing both
+  invocation paths on one `EndpointDescriptor`, following the same
+  endpoint-path/streaming-path convention as `huggingface_generate` (TGI) in
+  `rust/runtime/src/endpoints/tier2.rs` rather than KServe's separate-factory
+  pattern:
+  - `endpoint_path = "/endpoints/{model_name}/invocations"` — non-streaming
+    `InvokeEndpoint`. `format_payload` builds an OpenAI-chat-shaped JSON body
+    (reusing existing chat body-building); `parse_response` parses the
+    OpenAI-chat JSON response body directly.
+  - `streaming_path = "/endpoints/{model_name}/invocations-response-stream"`
+    — streaming `InvokeEndpointWithResponseStream`, selected by `--streaming`
+    at request-binding time (the same `supports_streaming`-gated path switch
+    every other dual-path dialect uses; see
+    `rust/runtime/src/endpoints/config.rs`). Response decoding goes through
+    the eventstream reader, then each `PayloadPart.Bytes` frame payload is
+    parsed as an OpenAI-chat-completion-chunk, reusing existing
+    chunk-parsing logic from `chat.rs`/`chat_chunk.rs`.
+  The factory is registered in `rust/runtime/src/endpoints/registry.rs`
   alongside the KServe registrations and re-exported from `mod.rs`.
 - Mock-server routes in `rust/mock-server/src/app.rs`/`handlers.rs`, alongside
   the existing KServe/OpenAI routes:
@@ -96,8 +96,8 @@ that does speak `/endpoints/{EndpointName}/invocations` over the wire.
 ## Verification
 
 - `rust/e2e/tests/test_sagemaker_endpoint.rs` drives `aiperf profile` against
-  `aiperf-mock-server` for both the `sagemaker` and `sagemaker_stream`
-  endpoint types, inspecting raw per-record output: response status, parsed
+  `aiperf-mock-server` with `--endpoint-type sagemaker`, both without and
+  with `--streaming`, inspecting raw per-record output: response status, parsed
   OpenAI-chat-completion body shape and content, request/response `model`,
   prompt/completion token usage (non-streaming), and reassembled streamed
   content plus ack-vs-start timing ordering (streaming).
