@@ -89,10 +89,10 @@ impl SlotInner {
 /// wraps a [`GlobalSlotPool`] shared (via `Arc`) across every worker thread in
 /// a `global`/`global-hop` dispatch cell, so `acquire`/`try_acquire` admit
 /// from one true cross-thread counter instead of a thread-local share. A
-/// `SlotPool` in `Global` mode gives up debt tracking (see
-/// [`GlobalSlotPool::set_limit`]) — acceptable because concurrency ramps
-/// combined with `global` dispatch are not yet a supported combination (see
-/// `specs/global-exact-dispatch.md`).
+/// `SlotPool` in `Global` mode carries the same debt-tracked graceful-drain
+/// semantics as `Local` (see [`GlobalSlotPool::set_limit`]), so concurrency
+/// ramps are exact under `global`/`global-hop` dispatch — a limit decrease
+/// never transiently over-admits (see `specs/global-exact-dispatch.md`).
 enum SlotPoolBackend {
     Local(Rc<SlotInner>),
     Global(Arc<GlobalSlotPool>),
@@ -155,12 +155,12 @@ impl SlotPool {
 
     /// Outstanding debt: releases still to be absorbed before slots free up.
     ///
-    /// Always `0` for a `Global`-backed pool: [`GlobalSlotPool`] does not
-    /// track debt (see [`SlotPoolBackend`]).
+    /// A `Global`-backed pool tracks debt with the same semantics as `Local`
+    /// (see [`GlobalSlotPool::set_limit`]).
     pub fn debt(&self) -> usize {
         match &self.backend {
             SlotPoolBackend::Local(inner) => inner.debt.get(),
-            SlotPoolBackend::Global(_) => 0,
+            SlotPoolBackend::Global(pool) => pool.debt(),
         }
     }
 
@@ -202,10 +202,11 @@ impl SlotPool {
     ///   not be drained becomes debt, to be absorbed by future releases.
     ///
     /// Synchronous: any waiters woken by added permits run only once the caller
-    /// yields to the runtime. A `Global`-backed pool has no debt tracking (see
-    /// [`GlobalSlotPool::set_limit`]); calling this with the pool's own current
-    /// limit (the common case: a phase's `configure` resetting the limit to the
-    /// value the pool was already built with) is always a no-op.
+    /// yields to the runtime. A `Global`-backed pool applies the same
+    /// debt-tracked decrease semantics (see [`GlobalSlotPool::set_limit`]);
+    /// calling this with the pool's own current limit (the common case: a
+    /// phase's `configure` resetting the limit to the value the pool was
+    /// already built with) is always a no-op.
     pub fn set_limit(&self, new_limit: usize) {
         match &self.backend {
             SlotPoolBackend::Local(inner) => {
@@ -356,6 +357,12 @@ pub struct GlobalSlotPool {
     release_count: std::sync::atomic::AtomicU64,
     wait_count: std::sync::atomic::AtomicU64,
     current_limit: std::sync::atomic::AtomicUsize,
+    /// Outstanding debt: releases to absorb before slots are freed again after
+    /// a limit decrease. Mirrors [`SlotInner::debt`] but as an atomic, since
+    /// releases run concurrently across worker threads. Every mutation uses a
+    /// compare-and-swap loop so two concurrent releases can never both absorb
+    /// the same unit of debt and drive the count below zero.
+    debt: std::sync::atomic::AtomicUsize,
 }
 
 impl GlobalSlotPool {
@@ -367,7 +374,13 @@ impl GlobalSlotPool {
             release_count: std::sync::atomic::AtomicU64::new(0),
             wait_count: std::sync::atomic::AtomicU64::new(0),
             current_limit: std::sync::atomic::AtomicUsize::new(initial_limit),
+            debt: std::sync::atomic::AtomicUsize::new(0),
         })
+    }
+
+    /// Outstanding debt: releases still to be absorbed before slots free up.
+    pub fn debt(&self) -> usize {
+        self.debt.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Acquire one globally-shared slot, waiting if none are free.
@@ -411,39 +424,77 @@ impl GlobalSlotPool {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Adjust the global concurrency limit.
+    /// Adjust the global concurrency limit, matching [`SlotPool::set_limit`]'s
+    /// debt-tracked semantics exactly.
     ///
-    /// Unlike [`SlotPool::set_limit`], this has no debt tracking: a decrease
-    /// removes as many currently-free permits as are available and silently
-    /// drops any unmet shortfall (in-flight holders still drain normally, but
-    /// the pool may briefly admit more than `new_limit` concurrent holders
-    /// until enough releases catch up). Concurrency ramps combined with
-    /// `global`/`global-hop` dispatch are not yet a supported combination;
-    /// the common caller (a phase's `configure` resetting the limit to the
-    /// value this pool was already built with) always takes the `diff == 0`
-    /// no-op path.
+    /// - **Increase**: cancel outstanding debt first (via a CAS loop, since
+    ///   concurrent releases also mutate debt), then add the leftover as real
+    ///   permits — immediate extra capacity.
+    /// - **Decrease**: drain currently-available permits immediately (one at a
+    ///   time, robust against concurrent acquires stealing a permit mid-drain),
+    ///   and record whatever shortfall could not be drained as **debt**. While
+    ///   `debt > 0`, each [`release`](Self::release) is absorbed by debt instead
+    ///   of freeing a slot, so effective capacity never transiently exceeds
+    ///   `new_limit` even while in-flight holders are still draining down.
+    ///
+    /// The common caller (a phase's `configure` resetting the limit to the
+    /// value this pool was already built with) takes the `diff == 0` no-op path.
+    /// `set_limit` is expected to run from the single control path that applies
+    /// ramp steps, not concurrently with itself.
     pub fn set_limit(&self, new_limit: usize) {
-        let current = self
-            .current_limit
-            .swap(new_limit, std::sync::atomic::Ordering::Relaxed);
+        use std::sync::atomic::Ordering;
+
+        let current = self.current_limit.swap(new_limit, Ordering::Relaxed);
         let diff = new_limit as i64 - current as i64;
         if diff > 0 {
-            self.semaphore.add_permits(diff as usize);
-        } else if diff < 0 {
-            let shortfall = (-diff) as usize;
-            let available = self.semaphore.available_permits();
-            let to_drain = shortfall.min(available);
-            if to_drain > 0 {
-                if let Ok(permits) = self.semaphore.try_acquire_many(to_drain as u32) {
-                    permits.forget();
+            // Increase: cancel debt first, then add the leftover as real permits.
+            let diff = diff as usize;
+            let mut cancel;
+            loop {
+                let debt = self.debt.load(Ordering::Acquire);
+                cancel = diff.min(debt);
+                if cancel == 0 {
+                    break;
                 }
+                if self
+                    .debt
+                    .compare_exchange_weak(debt, debt - cancel, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    break;
+                }
+            }
+            let to_add = diff - cancel;
+            if to_add > 0 {
+                self.semaphore.add_permits(to_add);
+            }
+        } else if diff < 0 {
+            // Decrease: drain available permits now, track the remainder as debt.
+            let mut remaining = (-diff) as usize;
+            while remaining > 0 {
+                match self.semaphore.try_acquire() {
+                    Ok(permit) => {
+                        permit.forget();
+                        remaining -= 1;
+                    }
+                    // No free permit right now: the rest becomes debt, to be
+                    // absorbed by future releases instead of freeing slots.
+                    Err(_) => break,
+                }
+            }
+            if remaining > 0 {
+                self.debt.fetch_add(remaining, Ordering::AcqRel);
             }
         }
     }
 
-    /// Slots currently available across all worker threads.
+    /// Slots currently available to acquirers across all worker threads,
+    /// accounting for outstanding debt (`available_permits - debt`, floored
+    /// at 0). Mirrors [`SlotPool::effective_slots`].
     pub fn effective_slots(&self) -> usize {
-        self.semaphore.available_permits()
+        self.semaphore
+            .available_permits()
+            .saturating_sub(self.debt.load(std::sync::atomic::Ordering::Acquire))
     }
 
     /// A snapshot of instrumentation counters, in the shared [`ConcurrencyStats`] shape.
@@ -459,10 +510,36 @@ impl GlobalSlotPool {
         }
     }
 
+    /// Release one slot. If debt is outstanding (from a limit decrease), the
+    /// release is absorbed by the debt instead of freeing a permit for
+    /// acquirers, mirroring [`SlotInner::release`].
+    ///
+    /// The absorb path is a CAS loop rather than a bare `fetch_sub`: a plain
+    /// `fetch_sub` would let two concurrent releases both observe `debt == 1`
+    /// and each subtract, wrapping the unsigned counter below zero and
+    /// permanently starving acquirers. The CAS re-checks `debt > 0` on every
+    /// attempt, so exactly one release absorbs each unit of debt.
     fn release(&self) {
-        self.semaphore.add_permits(1);
-        self.release_count
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        use std::sync::atomic::Ordering;
+
+        self.release_count.fetch_add(1, Ordering::Relaxed);
+
+        loop {
+            let debt = self.debt.load(Ordering::Acquire);
+            if debt == 0 {
+                // No debt: free a real permit for acquirers.
+                self.semaphore.add_permits(1);
+                return;
+            }
+            if self
+                .debt
+                .compare_exchange_weak(debt, debt - 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                // Debt absorbed this release; no permit freed.
+                return;
+            }
+        }
     }
 }
 
@@ -719,5 +796,153 @@ mod tests {
             "the cap must actually be reached (proves the test exercises real \
              contention, not just an under-subscribed run)"
         );
+    }
+
+    #[test]
+    fn global_set_limit_decrease_creates_debt_and_release_is_absorbed() {
+        // Deterministic single-thread mirror of
+        // `set_limit_decrease_creates_debt_and_release_is_absorbed` for the
+        // `GlobalSlotPool` backend.
+        let pool = GlobalSlotPool::new(4);
+        let g1 = pool.try_acquire().unwrap();
+        let g2 = pool.try_acquire().unwrap();
+        // available = 2, debt = 0
+        assert_eq!(pool.effective_slots(), 2);
+        assert_eq!(pool.debt(), 0);
+
+        // Decrease 4 -> 1: drain the 2 available, remaining shortfall (1) -> debt.
+        pool.set_limit(1);
+        assert_eq!(pool.current_limit(), 1);
+        assert_eq!(pool.debt(), 1);
+        assert_eq!(pool.effective_slots(), 0);
+
+        // First release is absorbed by debt: no slot frees.
+        drop(g1);
+        assert_eq!(pool.debt(), 0);
+        assert_eq!(pool.effective_slots(), 0);
+
+        // Second release now frees a real slot, landing at the reduced cap of 1.
+        drop(g2);
+        assert_eq!(pool.effective_slots(), 1);
+    }
+
+    #[test]
+    fn global_increase_cancels_debt_before_adding_slots() {
+        let pool = GlobalSlotPool::new(4);
+        let mut guards: Vec<GlobalSlotGuard> =
+            (0..4).map(|_| pool.try_acquire().unwrap()).collect();
+        assert_eq!(pool.effective_slots(), 0);
+
+        pool.set_limit(1); // available 0, so all 3 removed become debt.
+        assert_eq!(pool.debt(), 3);
+
+        pool.set_limit(3); // increase by 2: cancels 2 debt, adds 0 real slots.
+        assert_eq!(pool.debt(), 1);
+        assert_eq!(pool.effective_slots(), 0);
+
+        guards.pop(); // release -> debt 1 -> 0
+        assert_eq!(pool.debt(), 0);
+        assert_eq!(pool.effective_slots(), 0);
+        guards.pop(); // release -> frees a real slot
+        assert_eq!(pool.effective_slots(), 1);
+        drop(guards);
+    }
+
+    /// The core property, under real cross-thread concurrency: after a limit
+    /// decrease applied while holders are in flight, the pool must not free
+    /// permits fast enough to let NEW holders push concurrency back above the
+    /// reduced limit — in-flight holders must drain down first.
+    ///
+    /// Design that isolates debt from the benign "already-admitted holders
+    /// drain above the new limit" noise: main holds all 8 initial slots, then
+    /// decreases the limit to 2. Eight worker OS threads churn `acquire ->
+    /// work -> release` continuously. Main then releases the 8 held guards one
+    /// by one. We only record the max concurrency observed STRICTLY AFTER the
+    /// 8 original guards are fully released, i.e. once the pool has settled at
+    /// the reduced limit. With debt, the first 6 releases of the held guards
+    /// are absorbed (concurrency drains 8 -> 2 admitting no new worker), so
+    /// post-drain concurrency is capped at 2. WITHOUT debt, each held release
+    /// frees a permit immediately, letting workers rush in and hold up to 8
+    /// concurrent — the assertion would then fail.
+    #[test]
+    fn global_limit_decrease_never_transiently_over_admits() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::thread;
+
+        let pool = GlobalSlotPool::new(8);
+        // Hold all 8 slots on the main thread so the decrease produces debt.
+        let held: Vec<GlobalSlotGuard> = (0..8).map(|_| pool.try_acquire().unwrap()).collect();
+
+        let concurrent = Arc::new(AtomicUsize::new(0));
+        let max_after_drain = Arc::new(AtomicUsize::new(0));
+        // Flipped true once all 8 original held guards have been released;
+        // only then do workers contribute to `max_after_drain`.
+        let drained = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let pool = pool.clone();
+            let concurrent = concurrent.clone();
+            let max_after_drain = max_after_drain.clone();
+            let drained = drained.clone();
+            let stop = stop.clone();
+            handles.push(thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let local = tokio::task::LocalSet::new();
+                local.block_on(&runtime, async {
+                    while !stop.load(Ordering::Relaxed) {
+                        let guard = pool.acquire().await;
+                        let now = concurrent.fetch_add(1, Ordering::SeqCst) + 1;
+                        if drained.load(Ordering::SeqCst) {
+                            max_after_drain.fetch_max(now, Ordering::SeqCst);
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                        concurrent.fetch_sub(1, Ordering::SeqCst);
+                        drop(guard);
+                    }
+                });
+            }));
+        }
+
+        // Let workers pile up as waiters (all 8 slots are held by main).
+        thread::sleep(std::time::Duration::from_millis(20));
+
+        // Apply the debt-tracked decrease: available == 0, so all 6 removed
+        // slots become debt.
+        pool.set_limit(2);
+        assert_eq!(pool.debt(), 6);
+
+        // Release the 8 held guards one at a time; the first 6 must be absorbed
+        // by debt (no worker admitted) before any real slot frees.
+        for g in held {
+            drop(g);
+            thread::sleep(std::time::Duration::from_millis(2));
+        }
+        // Original holders fully drained; from here the pool has settled at 2.
+        drained.store(true, Ordering::SeqCst);
+
+        // Let workers churn under the settled reduced limit.
+        thread::sleep(std::time::Duration::from_millis(60));
+        stop.store(true, Ordering::Relaxed);
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let observed = max_after_drain.load(Ordering::SeqCst);
+        assert!(
+            observed <= 2,
+            "post-decrease concurrency {observed} exceeded the reduced limit 2 \
+             (debt failed to prevent transient over-admission)"
+        );
+        assert_eq!(
+            observed, 2,
+            "the reduced limit must actually be reached (proves real contention)"
+        );
+        assert_eq!(pool.current_limit(), 2);
+        assert_eq!(pool.debt(), 0, "all debt repaid once holders drained");
     }
 }
