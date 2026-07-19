@@ -410,7 +410,7 @@ mod tests {
                     .on_arrival(uuid::Uuid::nil(), 0);
                 runtime.sampler.borrow_mut().on_terminal(
                     uuid::Uuid::nil(),
-                    loadgen_core::collector::ReplayTerminalStatus::Completed,
+                    crate::dispatch::collector::ReplayTerminalStatus::Completed,
                     20_000_000,
                 );
                 let task = tokio::task::spawn_local(runtime.clone().assessment_loop());

@@ -33,7 +33,7 @@ use crate::fixed_schedule::milliseconds_to_ns;
 use crate::multiturn::{ConversationSource, TurnToSend};
 use crate::scheduled::{ScheduledRuntime, Workload};
 use crate::scheduler::LocalTaskScheduler;
-use loadgen_core::collector::ReplayTerminalStatus;
+use crate::dispatch::collector::ReplayTerminalStatus;
 
 /// Arrival and admission settings for a request-rate workload.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -559,8 +559,8 @@ mod tests {
     use crate::timing::{ArrivalPattern, StopConfig};
     use anyhow::Result;
     use async_trait::async_trait;
-    use loadgen_core::collector::ReplayTerminalStatus;
-    use loadgen_core::sink::RequestObserver;
+    use crate::dispatch::collector::ReplayTerminalStatus;
+    use crate::dispatch::sink::RequestObserver;
 
     use super::*;
     use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome, TurnDispatcher};

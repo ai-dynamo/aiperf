@@ -25,8 +25,8 @@ use crate::transport::http::config::ClientConfig;
 use crate::transport::http::models::{HttpVersion, RequestConfig};
 use crate::transport::http::sse::ChatChunk;
 use crate::transport::http::transport::http_transport::HttpTransport;
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::RequestObserver;
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::RequestObserver;
 
 use crate::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use crate::graph::wire::OpenAiChatMessage;

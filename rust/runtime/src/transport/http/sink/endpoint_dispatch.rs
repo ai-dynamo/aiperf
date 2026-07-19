@@ -25,8 +25,8 @@ use crate::transport::http::transport::endpoint_binding::{
     HttpEndpointBinding, HttpEndpointBindingError, HttpEndpointRequest, HttpEndpointResponseFilter,
     MetadataHttpEndpointBinding, prepare_request,
 };
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::{ObservedEndpointMetrics, ObservedUsage, RequestObserver};
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::{ObservedEndpointMetrics, ObservedUsage, RequestObserver};
 
 use crate::multiturn::TurnDataPolicy;
 use crate::scheduled::{ModelResponseMetadata, TurnResponseObserver};

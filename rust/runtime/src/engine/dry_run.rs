@@ -43,8 +43,8 @@ use bytes::Bytes;
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::{ObservedUsage, RequestObserver};
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::{ObservedUsage, RequestObserver};
 use uuid::Uuid;
 
 use crate::clock::Clock;

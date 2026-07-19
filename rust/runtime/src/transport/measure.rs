@@ -18,8 +18,8 @@ use crate::clock::Clock;
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::metrics_core::{MetricsConfig, RecordIngest};
 use crate::transport::core::{DispatchResult, MeasuredContext};
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::RequestObserver;
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::RequestObserver;
 
 /// A worker-local metric accumulator.
 #[derive(Default)]

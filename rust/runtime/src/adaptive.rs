@@ -20,7 +20,7 @@ use crate::clock::Clock;
 use crate::extensions::TransactionalRegistry;
 use crate::timing::{IntervalGenerator, SlotPool};
 use anyhow::{Context, Result, anyhow, bail};
-use loadgen_core::sink::RequestObserver;
+use crate::dispatch::sink::RequestObserver;
 
 /// Adaptive control variable selected by the CLI/config layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

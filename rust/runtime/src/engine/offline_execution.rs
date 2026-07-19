@@ -57,7 +57,7 @@ use crate::rng::{RngRoot, namespace};
 use crate::timing::{BernoulliFixedDelay, DISABLED_PROGRESS_INTERVAL_NS, NoopPhaseObserver};
 use anyhow::{Context, Result, anyhow, ensure};
 use dynamo_mocker::replay::TraceSimulationReport as DynamoSimulationReport;
-use loadgen_core::sink::RequestObserver;
+use crate::dispatch::sink::RequestObserver;
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 
@@ -760,7 +760,7 @@ impl ValidatedDynosimTransport {
 fn dynamo_report_facts(
     backend: &ValidatedDynosimTransport,
     parity: OfflineMetricParity,
-    performance: &loadgen_core::collector::TraceSimulationReport,
+    performance: &crate::dispatch::collector::TraceSimulationReport,
 ) -> Result<ReportDynamoRunInfo> {
     let parity = ReportDynamoParityInfo::new(
         parity.shared_fields,

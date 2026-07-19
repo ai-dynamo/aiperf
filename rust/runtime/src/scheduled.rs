@@ -24,9 +24,9 @@ use crate::metrics_core::{AccumulatorSummary, InferenceDimensions, MetricsConfig
 use crate::timing::{CancellationPolicy, Phase, SlotPool, StopChecker, StopConfig, UrlSelector};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
-use loadgen_core::observer::CollectorObserver;
-use loadgen_core::sink::RequestObserver;
+use crate::dispatch::collector::{ReplayTerminalStatus, TraceSimulationReport};
+use crate::dispatch::observer::CollectorObserver;
+use crate::dispatch::sink::RequestObserver;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
 use serde_json::Value;

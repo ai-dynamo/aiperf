@@ -3,7 +3,7 @@
 
 //! Online HTTP dispatch over Hyper.
 //!
-//! [`TransportSink`] implements `loadgen_core`'s [`RequestSink`] using the
+//! [`TransportSink`] implements `crate::dispatch`'s [`RequestSink`] using the
 //! clock-injected HTTP client. It is single-threaded (`!Send`, `Rc`-based) and
 //! driven on a `LocalSet`;
 //! admit/token times are stamped from the same clock origin the run loop uses for
@@ -40,8 +40,8 @@ use crate::transport::http::config::ClientConfig;
 use crate::transport::http::models::{HttpVersion, RequestConfig};
 use crate::transport::http::transport::http_transport::HttpTransport;
 use crate::transport::measure::{self, WorkerMeasurement};
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
 use serde_json::Value;
 
 pub use crate::multiturn::PreparedEndpointReference;

@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::endpoints::{ParsedResponse, ResponseData, Turn, UsageView};
 use crate::scheduled::ModelResponseMetadata;
-use loadgen_core::sink::{
+use crate::dispatch::sink::{
     ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
 };
 

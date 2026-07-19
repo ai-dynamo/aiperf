@@ -6,8 +6,8 @@
 use std::rc::Rc;
 
 use crate::clock::Clock;
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::{ObservedTokenKind, ObservedUsage, RequestObserver};
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::{ObservedTokenKind, ObservedUsage, RequestObserver};
 use uuid::Uuid;
 
 use crate::adaptive_core::runtime::SharedWindowSampler;

@@ -32,7 +32,7 @@ use crate::rng::RngRoot;
 use crate::timing::{RunState, StopConfig};
 use anyhow::{Result, anyhow, bail};
 use bytes::Bytes;
-use loadgen_core::collector::ReplayTerminalStatus;
+use crate::dispatch::collector::ReplayTerminalStatus;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1031,6 +1031,10 @@ impl NativeSessionBackend {
 /// Native handle-only dataset source used by online scheduled workloads.
 pub struct NativeDatasetConversationSource {
     dataset: Arc<NativeDataset>,
+    /// This shard's fixed giver corpus: the sampleable conversations it owns.
+    /// Under a multi-worker/cell partition that is the authored-index residue
+    /// class; the sampler recycles only within this set. Unpartitioned sources
+    /// hold every sampleable conversation.
     metadata: Vec<ConversationMetadata>,
     metadata_by_id: HashMap<String, usize>,
     sampler: Box<dyn Sampler>,
@@ -1107,14 +1111,10 @@ impl NativeDatasetConversationSource {
             &primary_model_name,
         )?;
         let dataset = Arc::new(dataset);
-        let sampler = samplers.create(
-            &dataset.metadata().sampling_strategy,
-            &dataset.metadata().conversations,
-            rng_root,
-        )?;
+        let strategy = dataset.metadata().sampling_strategy.clone();
         Self::new_with_endpoint(
             dataset,
-            sampler,
+            |owned| Ok(samplers.create(&strategy, owned, rng_root)?),
             NativeSessionEndpoint::Prepared {
                 primary_model_name,
                 endpoint_resolver,
@@ -1178,10 +1178,9 @@ impl NativeDatasetConversationSource {
             &primary_model_name,
         )?;
         let dataset = Arc::new(dataset);
-        let sampler = SequentialSampler::from_metadata(&dataset.metadata().conversations)?;
         Self::new_with_endpoint(
             dataset,
-            Box::new(sampler),
+            |owned| Ok(Box::new(SequentialSampler::from_metadata(owned)?)),
             NativeSessionEndpoint::Prepared {
                 primary_model_name,
                 endpoint_resolver,
@@ -1196,7 +1195,9 @@ impl NativeDatasetConversationSource {
     #[allow(clippy::too_many_arguments)]
     fn new_with_endpoint(
         dataset: Arc<NativeDataset>,
-        sampler: Box<dyn Sampler>,
+        make_sampler: impl FnOnce(
+            &[crate::dataset::model::ConversationMetadata],
+        ) -> Result<Box<dyn Sampler>>,
         endpoint: NativeSessionEndpoint,
         materializer: Arc<dyn RequestMaterializer>,
         response_tokenizer: Arc<dyn TextTokenizer>,
@@ -1206,30 +1207,39 @@ impl NativeDatasetConversationSource {
         if default_output_tokens == 0 {
             bail!("native dataset default output tokens must be positive");
         }
-        // A cell samples only its partition; an explicit partition supports
-        // thread-local ownership without process-global environment mutation.
-        let sampler = match cell_partition {
-            None => crate::dataset::sampler::PartitionedSampler::from_env(sampler),
-            Some(partition) => {
-                crate::dataset::sampler::PartitionedSampler::for_partition(sampler, Some(partition))
-            }
-        };
-        // Trace workloads enumerate metadata instead of sampling. Apply the same
-        // authored-index ownership here so sub-cells tile conversations without
-        // duplicate replay.
-        let enumeration_partition = match cell_partition {
+        // Resolve this shard's authored-index ownership. Explicit thread partitions
+        // win; otherwise a multi-cell env partition applies. The owned residue is
+        // the fixed giver corpus for both enumeration and sampling — recycle wraps
+        // stay inside it rather than reaching foreign sessions via a position-based
+        // PartitionedSampler over the full dataset.
+        let ownership = match cell_partition {
             Some(partition) if partition.cell_count() > 1 => Some(partition),
-            _ => None,
+            None => ModuloCellPartition::from_env().filter(|partition| partition.cell_count() > 1),
+            Some(_) => None,
         };
-        let metadata = dataset
+        let owned_model: Vec<crate::dataset::model::ConversationMetadata> = dataset
             .sampleable_metadata()
             .enumerate()
             .filter(|(index, _)| {
-                enumeration_partition
+                ownership
                     .map(|partition| partition.owns(*index as u64))
                     .unwrap_or(true)
             })
-            .map(|(_, conversation)| {
+            .map(|(_, conversation)| conversation.clone())
+            .collect();
+        // One sampler over the owned corpus only — the single giver for this shard.
+        // Do not wrap with PartitionedSampler: position filtering over a full-corpus
+        // sequential draw is what requested foreign sessions after recycle.
+        if ownership.is_some() && owned_model.is_empty() {
+            bail!(
+                "conversation partition owns no sampleable sessions; reduce workers/cells \
+                 so every shard receives at least one conversation"
+            );
+        }
+        let sampler = make_sampler(&owned_model)?;
+        let metadata = owned_model
+            .iter()
+            .map(|conversation| {
                 let authored = dataset
                     .get(&conversation.conversation_id)
                     .expect("metadata is projected from a validated conversation");
@@ -2131,29 +2141,95 @@ mod tests {
         assert!(error.to_string().contains("unknown sampler strategy"));
     }
 
-    /// When `conversation_count % grid != 0`, sequential recycle draws cross the
-    /// shard's authored-index residue class. Lookup must still accept those
-    /// sampleable sessions (the failure mode behind "is not sampleable" under
-    /// `--request-count` recycling with `workers > 1`).
+    /// A partitioned shard's sampler is a fixed giver over its authored-index
+    /// residue only. Recycle wraps inside that set (never into a foreign
+    /// session), which is what `--request-count` recycling with `workers > 1`
+    /// requires when `conversation_count % grid != 0`.
     #[tokio::test]
-    async fn partitioned_sequential_recycle_accepts_cross_residue_raw_payloads() {
-        let payload = |n: u8| {
-            format!(
-                r#"{{"messages":[{{"role":"user","content":"p{n}"}}],"stream":false}}"#
-            )
-        };
-        let jsonl = format!("{}\n{}\n{}\n", payload(0), payload(1), payload(2));
+    async fn partitioned_sequential_recycle_stays_inside_owned_raw_payloads() {
+        let dataset = raw_payload_jsonl_dataset(3).await;
+        let mut source = partitioned_sequential_source(dataset, 0, 2).await;
+        assert_eq!(source.conversations().len(), 2);
+        let owned = owned_ids(&source);
+
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            let session = source.next(None).expect("owned recycle must remain sampleable");
+            assert!(
+                owned.contains(&session.conversation_id),
+                "giver must not hand out a foreign session {}",
+                session.conversation_id
+            );
+            seen.push(session.conversation_id.clone());
+            session.build_first_turn(None).unwrap();
+        }
+        // Sequential wrap inside the owned pair: a, b, a, b.
+        assert_eq!(seen[0], seen[2]);
+        assert_eq!(seen[1], seen[3]);
+        assert_ne!(seen[0], seen[1]);
+    }
+
+    /// Both shards of a 2-wide grid own disjoint residues whose union is the
+    /// full raw_payload corpus, and each recycles only inside its own giver.
+    #[tokio::test]
+    async fn partitioned_raw_payload_givers_are_disjoint_and_cover_the_corpus() {
+        let dataset = raw_payload_jsonl_dataset(3).await;
+        let all_ids: Vec<String> = dataset
+            .conversations()
+            .iter()
+            .map(|conversation| conversation.session_id.as_str().to_string())
+            .collect();
+
+        let mut cell0 = partitioned_sequential_source(dataset.clone(), 0, 2).await;
+        let mut cell1 = partitioned_sequential_source(dataset, 1, 2).await;
+        let owned0 = owned_ids(&cell0);
+        let owned1 = owned_ids(&cell1);
+
+        assert_eq!(owned0.len(), 2);
+        assert_eq!(owned1.len(), 1);
+        for id in &owned0 {
+            assert!(!owned1.contains(id), "shards must not share a giver session");
+        }
+        let mut union = owned0.iter().chain(owned1.iter()).cloned().collect::<Vec<_>>();
+        union.sort();
+        let mut expected = all_ids.clone();
+        expected.sort();
+        assert_eq!(union, expected);
+
+        for _ in 0..5 {
+            let session = cell0.next(None).unwrap();
+            assert!(owned0.contains(&session.conversation_id));
+            session.build_first_turn(None).unwrap();
+            let session = cell1.next(None).unwrap();
+            assert!(owned1.contains(&session.conversation_id));
+            session.build_first_turn(None).unwrap();
+        }
+    }
+
+    /// Preferred (shuffle) sampling under a partition still recycles only the
+    /// shard's owned corpus — the fixed giver, not a full-corpus draw filter.
+    #[tokio::test]
+    async fn partitioned_preferred_shuffle_recycles_only_owned_raw_payloads() {
+        let jsonl = (0..5)
+            .map(|n| {
+                format!(r#"{{"messages":[{{"role":"user","content":"p{n}"}}],"stream":false}}"#)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        let mut load = LoadConfig::new(DatasetSource::Bytes(Bytes::from(jsonl)));
+        load.sampling_strategy = Some("shuffle".into());
         let dataset = LoaderRegistry::with_builtin_formats()
             .unwrap()
             .build_dataset(
                 Some("raw_payload"),
-                &LoadConfig::new(DatasetSource::Bytes(Bytes::from(jsonl))),
-                &ComposeConfig::new("model", RngRoot::new(Some(1))),
+                &load,
+                &ComposeConfig::new("model", RngRoot::new(Some(7))),
                 &TiktokenTokenizer::builtin(),
             )
             .await
             .unwrap();
-        assert_eq!(dataset.conversations().len(), 3);
+        assert_eq!(dataset.metadata().sampling_strategy, "shuffle");
 
         let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
         let endpoint_id = EndpointId::new("chat").unwrap();
@@ -2168,9 +2244,6 @@ mod tests {
             .unwrap();
         let mut table = PreparedEndpointTable::new();
         let key = table.push(endpoint).unwrap();
-        // Grid width 2 over 3 conversations: positions 0,2,4 map to indices 0,2,1.
-        // Authored ownership keeps indices 0 and 2; recycle position 4 needs index 1.
-        let partition = ModuloCellPartition::new(0, 2).unwrap();
         let resolver: Rc<dyn PreparedTurnEndpointResolver> = Rc::new(
             PreparedEndpointTableResolver::single(
                 Rc::new(table),
@@ -2178,28 +2251,124 @@ mod tests {
             )
             .unwrap(),
         );
+        let samplers = SamplerRegistry::with_builtin_strategies().unwrap();
         let mut source =
-            NativeDatasetConversationSource::sequential_with_prepared_resolver_for_partition(
+            NativeDatasetConversationSource::preferred_with_prepared_resolver_for_partition(
                 dataset,
                 "model",
                 4,
+                RngRoot::new(Some(7)),
+                &samplers,
                 resolver,
-                Some(partition),
+                Some(ModuloCellPartition::new(0, 2).unwrap()),
             )
             .unwrap();
 
-        // Enumeration stays residue-owned (fixed-schedule must not duplicate).
-        assert_eq!(source.conversations().len(), 2);
-
-        let mut seen = Vec::new();
-        for _ in 0..3 {
-            let session = source.next(None).expect("recycle must remain sampleable");
-            seen.push(session.conversation_id.clone());
+        let owned = owned_ids(&source);
+        assert_eq!(owned.len(), 3); // indices 0,2,4 of five rows
+        for _ in 0..9 {
+            let session = source.next(None).unwrap();
+            assert!(
+                owned.contains(&session.conversation_id),
+                "shuffle giver leaked {}",
+                session.conversation_id
+            );
             session.build_first_turn(None).unwrap();
         }
-        // Sequential owned positions 0 → c0, 2 → c2, 4 → c1 (cross-residue recycle).
-        assert_ne!(seen[0], seen[1]);
-        assert_ne!(seen[2], seen[0]);
-        assert_ne!(seen[2], seen[1]);
+    }
+
+    /// Request-rate construction caches one first turn from the owned giver;
+    /// further giver draws after wraparound must stay sampleable (the issuer
+    /// refills from `ConversationSource::next` after each successful issue —
+    /// the original "is not sampleable" failure mode).
+    #[tokio::test]
+    async fn request_rate_builds_and_owned_recycle_stays_sampleable() {
+        use crate::request_rate::{RequestRateConfig, RequestRateWorkload};
+        use crate::timing::ArrivalPattern;
+
+        let dataset = raw_payload_jsonl_dataset(3).await;
+        RequestRateWorkload::new(
+            RequestRateConfig {
+                arrival_pattern: ArrivalPattern::Constant,
+                request_rate: Some(10.0),
+                arrival_smoothness: None,
+                session_concurrency: None,
+                prefill_concurrency: None,
+                seed: 1,
+            },
+            Box::new(partitioned_sequential_source(dataset.clone(), 0, 2).await),
+        )
+        .expect("request-rate must accept a non-empty owned giver");
+
+        let mut source = partitioned_sequential_source(dataset, 0, 2).await;
+        let owned = owned_ids(&source);
+        for _ in 0..6 {
+            let session = source.next(None).expect("recycle refill must stay sampleable");
+            assert!(owned.contains(&session.conversation_id));
+            session.build_first_turn(None).unwrap();
+        }
+    }
+
+    async fn raw_payload_jsonl_dataset(rows: usize) -> NativeDataset {
+        let jsonl = (0..rows)
+            .map(|n| {
+                format!(r#"{{"messages":[{{"role":"user","content":"p{n}"}}],"stream":false}}"#)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        LoaderRegistry::with_builtin_formats()
+            .unwrap()
+            .build_dataset(
+                Some("raw_payload"),
+                &LoadConfig::new(DatasetSource::Bytes(Bytes::from(jsonl))),
+                &ComposeConfig::new("model", RngRoot::new(Some(1))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn partitioned_sequential_source(
+        dataset: NativeDataset,
+        cell_id: u32,
+        cell_count: u32,
+    ) -> NativeDatasetConversationSource {
+        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
+        let endpoint_id = EndpointId::new("chat").unwrap();
+        let endpoint = registry
+            .prepare(
+                &endpoint_id,
+                crate::endpoints::RawEndpointConfig {
+                    streaming: false,
+                    ..crate::endpoints::RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+        let mut table = PreparedEndpointTable::new();
+        let key = table.push(endpoint).unwrap();
+        let resolver: Rc<dyn PreparedTurnEndpointResolver> = Rc::new(
+            PreparedEndpointTableResolver::single(
+                Rc::new(table),
+                PreparedEndpointReference { key, endpoint_id },
+            )
+            .unwrap(),
+        );
+        NativeDatasetConversationSource::sequential_with_prepared_resolver_for_partition(
+            dataset,
+            "model",
+            4,
+            resolver,
+            Some(ModuloCellPartition::new(cell_id, cell_count).unwrap()),
+        )
+        .unwrap()
+    }
+
+    fn owned_ids(source: &NativeDatasetConversationSource) -> Vec<String> {
+        source
+            .conversations()
+            .iter()
+            .map(|conversation| conversation.conversation_id.clone())
+            .collect()
     }
 }

@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 
 use crate::metrics_core::RecordIngest;
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::ObservedUsage;
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::ObservedUsage;
 use uuid::Uuid;
 
 /// Per-request inputs used by quality-filtered goodput.

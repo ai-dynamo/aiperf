@@ -30,8 +30,8 @@ use crate::transport::grpc::{
 use crate::transport::reduce::{
     EndpointReduceAccumulators, TokenEmitter, assistant_message, reduce_parsed_response,
 };
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::{
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::{
     Dispatchable, ObservedEndpointMetrics, ObservedUsage, RequestObserver, RequestSink,
 };
 use uuid::Uuid;

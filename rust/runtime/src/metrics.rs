@@ -17,8 +17,8 @@ use crate::metrics_core::{
     AccumulatorSummary, InferenceDimensions, MetricsAccumulator, MetricsConfig, Phase,
     RecordIngest, RequestTrace, TokenCounts, UsageMetrics,
 };
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::{
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::sink::{
     ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
 };
 use rustc_hash::FxHashMap;

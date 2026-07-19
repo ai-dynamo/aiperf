@@ -117,7 +117,7 @@ fn percentile(sorted: &[f32], p: f64) -> f64 {
         return 0.0;
     }
     // One shared nearest-rank definition (loadgen-core owns the stats math).
-    let idx = loadgen_core::collector::percentile_rank(sorted.len(), p);
+    let idx = crate::dispatch::collector::percentile_rank(sorted.len(), p);
     sorted[idx] as f64
 }
 

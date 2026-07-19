@@ -60,9 +60,9 @@ use dynamo_mocker::replay::{
     generate_trace_worker_artifacts_offline_with_kv_event_visibility,
     simulate_concurrency_live_requests, simulate_offline_trace_files,
 };
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::observer::CollectorObserver;
-use loadgen_core::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::observer::CollectorObserver;
+use crate::dispatch::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
 use rustc_hash::FxHashMap;
 use tokio::sync::Notify;
 use uuid::Uuid;
@@ -730,7 +730,7 @@ pub trait CanonicalSharedMetrics {
     fn canonical_shared_metric_bytes(&self) -> std::result::Result<Vec<u8>, serde_json::Error>;
 }
 
-impl CanonicalSharedMetrics for loadgen_core::collector::TraceSimulationReport {
+impl CanonicalSharedMetrics for crate::dispatch::collector::TraceSimulationReport {
     fn canonical_shared_metric_bytes(&self) -> std::result::Result<Vec<u8>, serde_json::Error> {
         serde_json::to_vec(self)
     }
@@ -757,7 +757,7 @@ pub struct OfflineGraphReport {
     /// Unified graph throughput/TTFT/native-metrics result.
     pub aiperf: GraphRpsReport,
     /// Full compatibility summary accumulated from the graph request stream.
-    pub performance: loadgen_core::collector::TraceSimulationReport,
+    pub performance: crate::dispatch::collector::TraceSimulationReport,
     /// Dynamo-native scheduler/KV report.
     pub dynamo: DynamoSimulationReport,
     /// Whole-summary byte-parity evidence produced before returning the run.
@@ -769,7 +769,7 @@ pub struct OfflineDirectGraphReport {
     /// Whole-root admission and trace completion outcomes.
     pub workload: GraphWorkloadReport,
     /// Full compatibility summary accumulated from node request events.
-    pub performance: loadgen_core::collector::TraceSimulationReport,
+    pub performance: crate::dispatch::collector::TraceSimulationReport,
     /// Native-v2 metric accumulator output from the same observations.
     pub native_metrics: AccumulatorSummary,
     /// Warmup-only native metrics when authored phases include warmup traffic.
@@ -891,7 +891,7 @@ pub struct OfflineScheduledReport {
     pub aiperf: ScheduledRunReport,
     /// Run-wide compatibility report accumulated from the live observer stream
     /// across every warmup and profiling phase.
-    pub performance: loadgen_core::collector::TraceSimulationReport,
+    pub performance: crate::dispatch::collector::TraceSimulationReport,
     /// Final lifecycle snapshots in authored phase order.
     pub phases: Vec<crate::timing::PhaseStats>,
     /// Non-profiling phase reports retained without merging finalized summaries.
@@ -913,7 +913,7 @@ pub struct OfflineScheduledExecution {
     /// The one profiling-phase report.
     pub profiling: ScheduledRunReport,
     /// Whole-run compatibility metrics from the live cross-phase observer.
-    pub performance: loadgen_core::collector::TraceSimulationReport,
+    pub performance: crate::dispatch::collector::TraceSimulationReport,
     /// Final lifecycle snapshots in authored order.
     pub phases: Vec<crate::timing::PhaseStats>,
     /// Warmup or otherwise excluded phase reports.
@@ -937,7 +937,7 @@ impl OfflineScheduledExecution {
     /// Select the unique profiling result from a shared phase-orchestrator run.
     pub fn phased(
         mut phased: PhasedScheduledRunReport,
-        performance: loadgen_core::collector::TraceSimulationReport,
+        performance: crate::dispatch::collector::TraceSimulationReport,
     ) -> Result<Self> {
         let profiling_indices = phased
             .reports
@@ -965,10 +965,10 @@ impl OfflineScheduledExecution {
 }
 
 fn finish_shared_metrics(
-    aiperf: loadgen_core::collector::TraceSimulationReport,
+    aiperf: crate::dispatch::collector::TraceSimulationReport,
     dynamo: DynamoSimulationReport,
 ) -> Result<(
-    loadgen_core::collector::TraceSimulationReport,
+    crate::dispatch::collector::TraceSimulationReport,
     DynamoSimulationReport,
     OfflineMetricParity,
 )> {
@@ -985,11 +985,11 @@ fn finish_shared_metrics(
 /// so the byte check is skipped while the same resource import and parity accounting
 /// are retained.
 fn finish_shared_metrics_enforcing(
-    mut aiperf: loadgen_core::collector::TraceSimulationReport,
+    mut aiperf: crate::dispatch::collector::TraceSimulationReport,
     dynamo: DynamoSimulationReport,
     enforce_byte_parity: bool,
 ) -> Result<(
-    loadgen_core::collector::TraceSimulationReport,
+    crate::dispatch::collector::TraceSimulationReport,
     DynamoSimulationReport,
     OfflineMetricParity,
 )> {
@@ -1020,7 +1020,7 @@ fn finish_shared_metrics_enforcing(
         dynamo
             .goodput
             .as_ref()
-            .map(|goodput| loadgen_core::collector::TraceGoodputStats {
+            .map(|goodput| crate::dispatch::collector::TraceGoodputStats {
                 completed_requests: goodput.completed_requests,
                 request_throughput_rps: goodput.request_throughput_rps,
                 output_throughput_tok_s: goodput.output_throughput_tok_s,
@@ -1057,8 +1057,8 @@ fn finish_shared_metrics_enforcing(
 
 fn compatibility_report_from_dynamo(
     dynamo: &DynamoSimulationReport,
-) -> loadgen_core::collector::TraceSimulationReport {
-    use loadgen_core::collector::{
+) -> crate::dispatch::collector::TraceSimulationReport {
+    use crate::dispatch::collector::{
         TraceDistributionStats, TraceGoodputStats, TraceInterTokenLatencyStats, TraceLatencyStats,
         TraceRequestCounts, TraceSimulationReport, TraceThroughputStats,
     };
@@ -4649,7 +4649,7 @@ mod tests {
     }
 
     fn assert_metric_parity(
-        aiperf: &loadgen_core::collector::TraceSimulationReport,
+        aiperf: &crate::dispatch::collector::TraceSimulationReport,
         dynamo: &DynamoSimulationReport,
         parity: OfflineMetricParity,
     ) {

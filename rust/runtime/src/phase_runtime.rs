@@ -24,9 +24,9 @@ use crate::timing::{
     ReleasedStuckSlots, SlotPool, drive_phases,
 };
 use anyhow::{Result, anyhow};
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::observer::CollectorObserver;
-use loadgen_core::sink::RequestObserver;
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::observer::CollectorObserver;
+use crate::dispatch::sink::RequestObserver;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
 use uuid::Uuid;
@@ -557,7 +557,7 @@ pub struct AggregatedPhasedScheduledRunReport {
     /// Independently finalized phase lifecycle and performance reports.
     pub phased: PhasedScheduledRunReport,
     /// Whole-run compatibility metrics observed before phase finalization.
-    pub performance: loadgen_core::collector::TraceSimulationReport,
+    pub performance: crate::dispatch::collector::TraceSimulationReport,
 }
 
 /// Drained phased execution plus its still-unreduced whole-run collector.
@@ -587,7 +587,7 @@ trait DeferredAggregateStrategy {
         self: Box<Self>,
         phased: &PhasedScheduledRunReport,
         wall_ms: f64,
-    ) -> loadgen_core::collector::TraceSimulationReport;
+    ) -> crate::dispatch::collector::TraceSimulationReport;
 }
 
 struct DedicatedAggregateCollector {
@@ -603,7 +603,7 @@ impl DeferredAggregateStrategy for DedicatedAggregateCollector {
         self: Box<Self>,
         _phased: &PhasedScheduledRunReport,
         wall_ms: f64,
-    ) -> loadgen_core::collector::TraceSimulationReport {
+    ) -> crate::dispatch::collector::TraceSimulationReport {
         self.collector.finish(wall_ms)
     }
 }
@@ -619,7 +619,7 @@ impl DeferredAggregateStrategy for SinglePhaseAggregateReuse {
         self: Box<Self>,
         phased: &PhasedScheduledRunReport,
         _wall_ms: f64,
-    ) -> loadgen_core::collector::TraceSimulationReport {
+    ) -> crate::dispatch::collector::TraceSimulationReport {
         phased
             .reports
             .first()

@@ -12,7 +12,7 @@ use bytes::Bytes;
 use serde_json::Value;
 use uuid::Uuid;
 
-use loadgen_core::sink::{Dispatchable, RequestObserver};
+use crate::dispatch::sink::{Dispatchable, RequestObserver};
 
 use crate::metrics::RequestMetricMetadata;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};

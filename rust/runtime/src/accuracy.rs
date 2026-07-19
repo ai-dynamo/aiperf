@@ -30,7 +30,7 @@ use crate::metrics_core::{
 use crate::rng::RngRoot;
 use anyhow::Context;
 use async_trait::async_trait;
-use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
+use crate::dispatch::collector::{ReplayTerminalStatus, TraceSimulationReport};
 use serde::Serialize;
 use serde_json::json;
 

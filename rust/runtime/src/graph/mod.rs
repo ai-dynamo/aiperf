@@ -6,7 +6,7 @@
 //! Runs a DAG of chat requests with fan-out/fan-in dependencies and firing-gate
 //! timing: nodes fire when their input channels are ready, dispatch through the
 //! extensible [`sink::GraphSink`] (for example, HTTP or an in-process engine), and
-//! measurement flows to `loadgen_core`'s shared `TraceCollector`. Prompts are
+//! measurement flows to `crate::dispatch`'s shared `TraceCollector`. Prompts are
 //! materialized from a content-addressed [`segment::SegmentStore`] plus dynamic
 //! predecessor replies.
 //!
