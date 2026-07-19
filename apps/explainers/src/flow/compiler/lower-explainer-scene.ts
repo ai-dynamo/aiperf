@@ -54,6 +54,7 @@ import { expandSymbolInvocations } from "./expand-symbols.js";
 import { link, type LinkedDocument } from "./link.js";
 import { lower } from "./lower.js";
 import { collectSymbols } from "./symbols.js";
+import { resolveTimelineCueTiming } from "./timeline-timing.js";
 import { validate } from "./validate.js";
 
 export type LowerExplainerSceneOptions = Readonly<{
@@ -476,18 +477,19 @@ function nativeSceneNeedsPackageLower(scene: SceneAst): boolean {
 }
 
 function nativeSceneToPackageScene(scene: SceneAst): PackageSceneAst {
-  const timeline = scene.timelines.flatMap((timelineAst) =>
-    timelineAst.cues.map((cue, index) => ({
+  const timeline = scene.timelines.flatMap((timelineAst) => {
+    const resolvedAt = resolveTimelineCueTiming(timelineAst.cues);
+    return timelineAst.cues.map((cue, index) => ({
       id: `${timelineAst.id}-${index}`,
-      at: cue.time,
+      at: resolvedAt[index]!,
       duration: cue.duration,
       target: cue.target,
       action: cue.action,
       ...(cue.targets !== undefined ? { targets: cue.targets } : {}),
       ...(cue.step !== undefined ? { step: cue.step } : {}),
       ...(cue.easing !== undefined ? { easing: cue.easing } : {}),
-    })),
-  );
+    }));
+  });
   return {
     kind: "package-scene",
     id: scene.id,

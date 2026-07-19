@@ -40,3 +40,28 @@ export function resolveTimelineCueTiming(
   }
   return resolved;
 }
+
+/**
+ * Cue indices whose `after <ref>` names an id that no earlier cue in the
+ * same timeline has targeted — an unresolvable relative reference (typo,
+ * forward reference, or reference to a node with no prior cue). Callers use
+ * this to fail closed at link/validation time; `resolveTimelineCueTiming`
+ * itself resolves these fail-soft to `gap` so lowering never throws.
+ */
+export function findUnresolvedAfterRefs(
+  cues: readonly TimelineCueAst[],
+): readonly number[] {
+  const seenTargets = new Set<string>();
+  const unresolved: number[] = [];
+  cues.forEach((cue, index) => {
+    if (cue.timing.mode === "after" && !seenTargets.has(cue.timing.ref)) {
+      unresolved.push(index);
+    }
+    if (cue.targets !== undefined) {
+      cue.targets.forEach((id) => seenTargets.add(id));
+    } else if (cue.target.length > 0) {
+      seenTargets.add(cue.target);
+    }
+  });
+  return unresolved;
+}

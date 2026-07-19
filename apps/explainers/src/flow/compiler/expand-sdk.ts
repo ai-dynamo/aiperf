@@ -77,6 +77,10 @@ import {
 } from "./desugar-scene-primitives.js";
 import { expandSymbolInvocations } from "./expand-symbols.js";
 import { collectSymbols } from "./symbols.js";
+import {
+  findUnresolvedAfterRefs,
+  resolveTimelineCueTiming,
+} from "./timeline-timing.js";
 
 const MAX_FOR_ITERATIONS = 1024;
 
@@ -778,6 +782,20 @@ function buildTimeline(
   const cues: TimelineCueIr[] = [];
   for (const timeline of timelines) {
     const resolvedAt = resolveTimelineCueTiming(timeline.cues);
+    for (const unresolvedIndex of findUnresolvedAfterRefs(timeline.cues)) {
+      const unresolvedCue = timeline.cues[unresolvedIndex]!;
+      if (unresolvedCue.timing.mode === "after") {
+        diagnostics.push(
+          diagnostic(
+            "SDK_TIMELINE_UNKNOWN_TARGET",
+            "error",
+            `Timeline "${timeline.id}" cue "after ${unresolvedCue.timing.ref}" does not match any earlier cue's target in this timeline.`,
+            unresolvedCue.sourceMap ?? sourceRange,
+            availableInstancesHint(actionIndex),
+          ),
+        );
+      }
+    }
     timeline.cues.forEach((cue, index) => {
       const baseId = `${timeline.id}-${index}`;
       const sourceMap = cue.sourceMap ?? sourceRange;

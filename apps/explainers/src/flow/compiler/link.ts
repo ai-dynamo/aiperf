@@ -34,6 +34,7 @@ import {
   type Result,
   type SourceRange,
 } from "../schema/index.js";
+import { findUnresolvedAfterRefs } from "./timeline-timing.js";
 
 /** Node ids declared by a scene's render declarations, keyed for lookup. */
 export type SceneSymbolTable = Readonly<{
@@ -580,6 +581,19 @@ export function link(
         );
         if (targetDiagnostic !== undefined) {
           diagnostics.push(targetDiagnostic);
+        }
+      }
+      for (const index of findUnresolvedAfterRefs(timeline.cues)) {
+        const cue = timeline.cues[index]!;
+        if (cue.timing.mode === "after") {
+          diagnostics.push(
+            diagnostic(
+              "LINK_UNKNOWN_REFERENCE",
+              "error",
+              `Timeline "${timeline.id}" cue "after ${cue.timing.ref}" does not match any earlier cue's target in this timeline.`,
+              cue.sourceMap,
+            ),
+          );
         }
       }
     }
