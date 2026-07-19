@@ -36,8 +36,20 @@ const ITL_MS: f64 = 5.0;
 const OSL: usize = 8;
 const ISL: usize = 32;
 const WORKERS: u32 = 4;
-const CONCURRENCY: u32 = 8;
-const REQUEST_COUNT: u64 = 64;
+// `3` does NOT evenly divide `WORKERS = 4`, mirroring
+// `global_dispatch_enforces_true_aggregate_concurrency_cap_sharded_does_not`
+// in `rust/runtime/src/engine/workers_characterization.rs`: `Sharded`
+// mode's per-thread `owned_positions(cap, t, workers).max(1)` floor rounds
+// one thread's `0` share up to `1`, so `Sharded`'s aggregate cap across all
+// 4 threads is `4`, not the authored `3` — verified against a scratch copy
+// of this test with `dispatch: sharded` forced, which observed peak
+// concurrency of 4 at these parameters (vs. `Global`'s genuinely bounded
+// peak <= 3). An evenly divisible cap (the previous `8`/`4` pairing) gives
+// `Sharded` a per-thread share of exactly `2` with no `.max(1)` floor
+// triggered, so `Sharded` and `Global` produce an IDENTICAL peak of 8 —
+// zero discriminating power between the two dispatch modes.
+const CONCURRENCY: u32 = 3;
+const REQUEST_COUNT: u64 = 24;
 
 #[tokio::test]
 async fn global_dispatch_real_clock_concurrency_matches_expected_records() {
@@ -105,8 +117,8 @@ async fn global_dispatch_real_clock_concurrency_matches_expected_records() {
         &records,
         &TunedExpectations::new(TTFT_MS, ITL_MS, OSL)
             .model("gpt-4")
-            // 4 worker threads keeping 8 requests in flight (vs. a lone
-            // concurrency-2 run in `tuned_scheduled_single_turn_raw_timing`)
+            // 4 worker threads keeping 3 requests in flight globally (vs. a
+            // lone concurrency-2 run in `tuned_scheduled_single_turn_raw_timing`)
             // adds real scheduler/OS contention to first-token queue wait;
             // ITL (steady-state per-token pacing) stays knife-edge.
             .tol_ms(15.0, 2.0),
