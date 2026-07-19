@@ -11,6 +11,30 @@ use serde_json::Value;
 
 use crate::extensions::AIPerfRegistry;
 
+/// Admission strategy for `workers>1` scheduled execution.
+///
+/// - `Sharded` statically partitions request budget, concurrency, and rate
+///   `1/workers`-ways up front, per worker thread — today's only behavior,
+///   kept as an explicit throughput-oriented opt-in.
+/// - `Global` (default) admits from one shared [`crate::timing::slots::GlobalSlotPool`]
+///   / [`crate::timing::rate_gate::GlobalRateGate`] per cell, so aggregate
+///   concurrency and rate across all worker threads is byte-exact against a
+///   single global limiter, matching the Python baseline.
+/// - `GlobalHop` additionally routes every individual request through one
+///   coordinator-owned dispatcher, for cases where `Global`'s shared-admission
+///   fix alone does not reproduce exact request-to-thread assignment order.
+///
+/// This enum is currently config-surface only: selecting a mode does not yet
+/// change execution behavior (that wiring lands in a later change).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DispatchMode {
+    Sharded,
+    #[default]
+    Global,
+    GlobalHop,
+}
+
 /// One plugins.yaml-shaped catalog entry.
 #[derive(Debug, Serialize)]
 pub struct CatalogEntry {

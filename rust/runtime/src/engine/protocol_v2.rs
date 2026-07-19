@@ -21,7 +21,9 @@ use anyhow::{Result, anyhow, ensure};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::engine::protocol::{MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec};
+use crate::engine::protocol::{
+    DispatchMode, MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec,
+};
 use crate::engine::sidecar_input::{
     AuthoredSidecarInput, CONTENT_SERVER_SIDECAR_ID, GPU_TELEMETRY_SIDECAR_ID,
     LIVE_STREAMING_SIDECAR_ID, NETWORK_LATENCY_SIDECAR_ID, SERVER_METRICS_SIDECAR_ID,
@@ -141,6 +143,18 @@ fn default_worker_count() -> u64 {
     std::thread::available_parallelism()
         .map(|n| n.get() as u64)
         .unwrap_or(1)
+}
+
+/// Decode the optional `runtime.dispatch` admission-strategy selector.
+///
+/// Absent `dispatch` resolves to [`DispatchMode::default`] (`Global`); an
+/// unrecognized string is a hard decode error rather than a silent fallback.
+fn parse_dispatch_mode(runtime: &Value) -> Result<DispatchMode> {
+    match runtime.get("dispatch") {
+        None | Some(Value::Null) => Ok(DispatchMode::default()),
+        Some(value) => serde_json::from_value(value.clone())
+            .map_err(|error| anyhow!("run.cfg.runtime.dispatch: {error}")),
+    }
 }
 
 /// Exact outer BenchmarkRun shape accepted by the product wire.
@@ -292,6 +306,7 @@ impl BenchmarkRunWireV2 {
             worker_count > 0 && worker_count <= usize::MAX as u64,
             "run.cfg.runtime.workers must be a positive usize"
         );
+        let dispatch = parse_dispatch_mode(&self.cfg.runtime)?;
         let workload = NamedRunnerComponentSpecV2 {
             id: workload_id.parse().expect("built-in workload ID is valid"),
             config: raw_value(serde_json::json!({
@@ -343,6 +358,7 @@ impl BenchmarkRunWireV2 {
             artifacts: serde_json::from_value(self.cfg.artifacts).unwrap_or_default(),
             export: serde_json::from_value(self.cfg.export).unwrap_or_default(),
             sidecars,
+            dispatch,
             resource_presence: ResourcePresenceV2 {
                 models: true,
                 endpoints: true,
@@ -452,6 +468,10 @@ pub struct AuthoredRunSpecV2 {
     pub sidecars: SidecarSpecV2,
     /// Native post-report export policy driving the [`crate::export`] plane.
     pub export: crate::export::ExportConfig,
+    /// Admission strategy for `workers>1` scheduled execution
+    /// (`runtime.dispatch`; defaults to [`DispatchMode::Global`]). Config
+    /// surface only: not yet wired into execution behavior.
+    pub dispatch: DispatchMode,
     resource_presence: ResourcePresenceV2,
 }
 
@@ -485,6 +505,8 @@ struct AuthoredRunWireV2 {
     workload: NamedRunnerComponentSpecV2,
     #[serde(default)]
     resources: AuthoredRunResourcesV2,
+    #[serde(default)]
+    dispatch: DispatchMode,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -520,6 +542,7 @@ impl<'de> Deserialize<'de> for AuthoredRunSpecV2 {
             artifacts: wire.resources.artifacts.unwrap_or_default(),
             sidecars: wire.resources.sidecars.unwrap_or_default(),
             export: crate::export::ExportConfig::default(),
+            dispatch: wire.dispatch,
             resource_presence,
         })
     }
@@ -1197,5 +1220,65 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(error.contains("unknown field `models`"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod dispatch_mode_tests {
+    use super::*;
+
+    fn minimal_wire(runtime: Value) -> BenchmarkRunWireV2 {
+        serde_json::from_value(serde_json::json!({
+            "benchmark_id": "run-1",
+            "artifact_dir": "/tmp/not-created",
+            "cfg": {
+                "models": {"items": [{"name": "model"}]},
+                "endpoint": {"type": "future_endpoint"},
+                "datasets": [{"type": "synthetic", "entries": 1}],
+                "phases": [{"type": "concurrency", "concurrency": 1}],
+                "transport": {"type": "future_transport"},
+                "runtime": runtime,
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn runtime_dispatch_defaults_to_global_when_absent() {
+        let runtime = serde_json::json!({"workers": 4, "cells": 1});
+        assert_eq!(parse_dispatch_mode(&runtime).unwrap(), DispatchMode::Global);
+
+        let authored = minimal_wire(runtime).into_authored().unwrap();
+        assert_eq!(authored.dispatch, DispatchMode::Global);
+    }
+
+    #[test]
+    fn runtime_dispatch_rejects_unknown_variant() {
+        let runtime = serde_json::json!({"workers": 1, "cells": 1, "dispatch": "bogus"});
+        assert!(parse_dispatch_mode(&runtime).is_err());
+
+        let error = match minimal_wire(runtime).into_authored() {
+            Ok(_) => panic!("expected an unknown-dispatch-variant error"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("run.cfg.runtime.dispatch"), "{error}");
+    }
+
+    #[test]
+    fn runtime_dispatch_accepts_every_kebab_case_variant() {
+        for (wire_value, expected) in [
+            ("sharded", DispatchMode::Sharded),
+            ("global", DispatchMode::Global),
+            ("global-hop", DispatchMode::GlobalHop),
+        ] {
+            let runtime = serde_json::json!({"workers": 1, "cells": 1, "dispatch": wire_value});
+            assert_eq!(
+                parse_dispatch_mode(&runtime).unwrap(),
+                expected,
+                "{wire_value}"
+            );
+            let authored = minimal_wire(runtime).into_authored().unwrap();
+            assert_eq!(authored.dispatch, expected, "{wire_value}");
+        }
     }
 }

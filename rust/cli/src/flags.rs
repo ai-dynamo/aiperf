@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 
+use aiperf_runtime::engine::protocol::DispatchMode;
 use clap::Parser;
 
 /// Parsed `aiperf profile` flags.
@@ -79,6 +80,14 @@ pub struct ProfileFlags {
     /// Cellular (multi-process) cell count (`--cells`); `1` = single process.
     #[arg(long = "cells")]
     pub cells: Option<u32>,
+
+    /// Admission strategy for `workers>1` (`--dispatch`): `sharded` (static
+    /// per-thread partition), `global` (default; shared cross-thread
+    /// admission, byte-exact against Python), or `global-hop` (full
+    /// per-request coordinator dispatch). Config surface only: selecting a
+    /// mode does not yet change execution behavior.
+    #[arg(long = "dispatch")]
+    pub dispatch: Option<String>,
 
     /// Mixed ISL/OSL sequence distribution (`--seq-dist` / `--sequence-distribution`),
     /// e.g. `256,128:60;512,256:40` (optional stddev: `256|10,128|5:60`).
@@ -1078,5 +1087,83 @@ impl ProfileFlags {
         let mut argv = vec!["profile".to_string()];
         argv.extend_from_slice(args);
         Self::try_parse_from(argv)
+    }
+
+    /// Resolve `--dispatch` into the validated [`DispatchMode`], defaulting to
+    /// [`DispatchMode::default`] (`Global`) when the flag is absent.
+    pub fn dispatch_mode(&self) -> anyhow::Result<DispatchMode> {
+        match self.dispatch.as_deref() {
+            None => Ok(DispatchMode::default()),
+            Some(value) => serde_json::from_value(serde_json::Value::String(value.to_owned()))
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "--dispatch {value:?} is not a recognized dispatch mode; expected \
+                         \"sharded\", \"global\", or \"global-hop\""
+                    )
+                }),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `ProfileFlags` is large enough that clap's derived parser overflows the
+    // default test-thread stack (see `cli/src/load.rs`'s
+    // `dry_run_projects_dataset_analysis` for the same workaround); run every
+    // case on a generous worker stack.
+    fn on_big_stack(body: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(body)
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
+    fn parse(args: &[&str]) -> ProfileFlags {
+        let owned: Vec<String> = args.iter().map(|value| value.to_string()).collect();
+        ProfileFlags::parse_from_args(&owned).expect("flags should parse")
+    }
+
+    #[test]
+    fn dispatch_flag_parses_global_hop() {
+        on_big_stack(|| {
+            let flags = parse(&["--dispatch", "global-hop"]);
+            assert_eq!(flags.dispatch.as_deref(), Some("global-hop"));
+            assert_eq!(flags.dispatch_mode().unwrap(), DispatchMode::GlobalHop);
+        });
+    }
+
+    #[test]
+    fn dispatch_flag_parses_sharded_and_global() {
+        on_big_stack(|| {
+            assert_eq!(
+                parse(&["--dispatch", "sharded"]).dispatch_mode().unwrap(),
+                DispatchMode::Sharded
+            );
+            assert_eq!(
+                parse(&["--dispatch", "global"]).dispatch_mode().unwrap(),
+                DispatchMode::Global
+            );
+        });
+    }
+
+    #[test]
+    fn dispatch_flag_defaults_to_global_when_absent() {
+        on_big_stack(|| {
+            let flags = parse(&[]);
+            assert!(flags.dispatch.is_none());
+            assert_eq!(flags.dispatch_mode().unwrap(), DispatchMode::Global);
+        });
+    }
+
+    #[test]
+    fn dispatch_flag_rejects_unknown_value() {
+        on_big_stack(|| {
+            let flags = parse(&["--dispatch", "bogus"]);
+            assert!(flags.dispatch_mode().is_err());
+        });
     }
 }
