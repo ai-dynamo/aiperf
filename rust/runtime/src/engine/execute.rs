@@ -2286,8 +2286,12 @@ fn finish_with_shutdown<T>(result: Result<T>, shutdown: Result<()>, label: &str)
 /// enforce the single cell-level target exactly, instead of `W` independent
 /// `1/W`-sliced local limits.
 ///
-/// Only present when [`ShardedShared::dispatch_mode`] is not
-/// [`DispatchMode::Sharded`]; `None` otherwise.
+/// Present only under [`DispatchMode::Global`]; `None` for
+/// [`DispatchMode::Sharded`] (per-thread `1/W` slicing needs no shared gate) and
+/// for [`DispatchMode::GlobalHop`] (its single coordinator loop enforces the
+/// full cap through one local `SlotPool` — see
+/// [`crate::engine::global_hop`]). The shared gate exists specifically to make
+/// `Global`'s `W` independent scheduling loops jointly exact.
 pub(crate) struct GlobalAdmission {
     /// One shared concurrency gate per phase that authors a `concurrency` cap.
     pub(crate) concurrency: HashMap<MetricsPhase, Arc<crate::timing::GlobalSlotPool>>,
