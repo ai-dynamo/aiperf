@@ -31,6 +31,22 @@
 //! cells*W)`, so all threads together stamp a permutation of `0..total`, as
 //! required by [`merge_records_in_global_order`](crate::cellular).
 //!
+//! # Cell-level split under `Global`/`GlobalHop`
+//!
+//! Under [`DispatchMode::Global`]/[`DispatchMode::GlobalHop`] dispatch, the
+//! cell-level split (`owned_positions(global, cell_id, cells)`, applied by the
+//! cellular controller's `build_cell_envelope` before this cell's process ever
+//! starts) is preserved exactly as [`DispatchMode::Sharded`] mode's is; only
+//! the thread-level `/workers` split is replaced by a shared
+//! [`GlobalAdmission`](crate::engine::execute::GlobalAdmission) gate scoped to
+//! this cell alone. Cells remain separate OS processes with no cross-process
+//! shared state (no shared memory, no IPC admission channel), so global
+//! exactness is per-cell, not per-run, when `cells > 1`: each cell
+//! independently enforces its own `1/cells` share of the authored
+//! concurrency/rate, and the union across cells sums back to the authored
+//! global value. See the `global_admission_is_scoped_per_cell_not_across_cells`
+//! test below for the regression guard.
+//!
 //! # Ordinal bases
 //!
 //! The autonomous issuer stamps `phase_base + within*(cells*W) + (c + cells*t)`.
@@ -52,6 +68,8 @@ use crate::phase_runtime::ScheduledPhaseSidecar;
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::engine::cell_launcher::owned_positions;
+#[cfg(test)]
+use crate::engine::execute::GlobalAdmission;
 use crate::engine::execute::{
     ScheduledShardOutcome, ShardRecords, ShardedShared, execute_scheduled_shard, metrics_phase,
 };
@@ -520,5 +538,56 @@ mod tests {
         let bases = compute_phase_ordinal_bases(&phases).unwrap();
         assert_eq!(bases.get(&Phase::Warmup), Some(&0));
         assert_eq!(bases.get(&Phase::Profiling), Some(&8));
+    }
+
+    /// Regression guard for `--cells N` combined with `Global`/`GlobalHop`
+    /// dispatch: `GlobalAdmission` must be built from the CELL-LOCAL phase
+    /// budget (`owned_positions(global, cell_id, cells)`, applied by the
+    /// cellular controller's `build_cell_envelope` before this process ever
+    /// starts — see `execute.rs::run_execute`'s `global_admission` build site
+    /// consuming `request.phases`), never from the raw unsliced global phase
+    /// spec. If it were built from the unsliced spec, each of the `cells`
+    /// separate OS processes would independently enforce a concurrency cap of
+    /// the FULL global value instead of its `1/cells` share, over-subscribing
+    /// the true global cap by a factor of `cells`.
+    #[test]
+    fn global_admission_is_scoped_per_cell_not_across_cells() {
+        // A 2-cell, workers=1, Global-mode phase with global concurrency=10 must
+        // give each cell's GlobalAdmission a concurrency cap of 5 (its
+        // owned_positions share), not 10 (the unsliced global value) — proving
+        // the gate composes with cellular tiling instead of bypassing it.
+        let global_phase: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency", "name": "profiling", "exclude_from_results": false,
+            "requests": 100, "concurrency": 10,
+        }))
+        .unwrap();
+        for cell_id in 0..2u32 {
+            let cell_requests = owned_positions(100, cell_id, 2);
+            let cell_concurrency = owned_positions(10, cell_id, 2).max(1);
+            // Mirror `build_cell_envelope`'s per-cell slice (requests/concurrency),
+            // which runs in the cellular controller BEFORE this cell's process
+            // starts, and hence before `GlobalAdmission::build` ever sees the
+            // phase list. This is the same cell-level narrowing `Sharded` mode's
+            // per-cell budget already receives; only the thread-level split
+            // differs under `Global`/`GlobalHop`.
+            let cell_phase: PhaseSpec = serde_json::from_value(serde_json::json!({
+                "type": "concurrency", "name": "profiling", "exclude_from_results": false,
+                "requests": cell_requests, "concurrency": cell_concurrency,
+            }))
+            .unwrap();
+
+            let admission = GlobalAdmission::build(std::slice::from_ref(&cell_phase)).unwrap();
+            let phase_key = metrics_phase(&global_phase).unwrap();
+            assert_eq!(
+                admission
+                    .concurrency
+                    .get(&phase_key)
+                    .unwrap()
+                    .current_limit(),
+                cell_concurrency as usize,
+                "cell {cell_id}: GlobalAdmission must cap at this cell's owned share, not the \
+                 unsliced global concurrency"
+            );
+        }
     }
 }
