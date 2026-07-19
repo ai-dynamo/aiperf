@@ -108,8 +108,8 @@ use crate::engine::heartbeat_lane::{
 use crate::engine::live_streaming::{LiveResultsSink, PythonLiveStreamingRun, live_phase_observer};
 use crate::engine::network_latency::NetworkLatencyRun;
 use crate::engine::protocol::{
-    AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec, DistributionSpec,
-    FileDatasetSpec, MetricsSpec, ModelSelectionStrategy, ModelsSpec, PhaseSpec,
+    AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec, DispatchMode,
+    DistributionSpec, FileDatasetSpec, MetricsSpec, ModelSelectionStrategy, ModelsSpec, PhaseSpec,
     PublicDatasetSourceSpec, PublicDatasetSpec, RampSpec, RampStrategySpec,
     SequenceDistributionEntrySpec, SourceImageSamplingSpec, SyntheticAudioFormatSpec,
     SyntheticAudioSpec, SyntheticDatasetSpec, SyntheticImageFormatSpec, SyntheticImageSpec,
@@ -235,6 +235,11 @@ pub(crate) struct NativeRunSpec {
     /// path resolves its transport through the injected `RequestExecutorFactory`
     /// and leaves this `None`.
     pub(crate) transport: Option<Arc<dyn crate::engine::registry::NativeTransportExecution>>,
+    /// Admission strategy for `workers>1` scheduled execution (`runtime.dispatch`).
+    /// Consumed only by the sharded thread-per-core path
+    /// ([`ShardedShared::dispatch_mode`]); the single-thread coordinator path
+    /// has no cross-thread admission concern regardless of this value.
+    pub(crate) dispatch_mode: DispatchMode,
 }
 
 /// Protocol-neutral retention of one run's already decoded sidecar inputs.
@@ -2197,6 +2202,50 @@ fn finish_with_shutdown<T>(result: Result<T>, shutdown: Result<()>, label: &str)
     }
 }
 
+/// Per-cell shared admission gates for `Global`/`GlobalHop` dispatch.
+///
+/// Built once per cell, on the main thread, before worker threads spawn, from
+/// this cell's phase specs — the *cell-level* budgets (already narrowed from
+/// the global run by `owned_positions(global, cell_id, cells)` upstream in the
+/// cellular controller), NOT further sliced by `workers`. Every worker thread
+/// in the cell shares the same `Arc<GlobalSlotPool>`/`Arc<GlobalRateGate>` per
+/// phase, so aggregate concurrency and rate across all `W` threads combined
+/// enforce the single cell-level target exactly, instead of `W` independent
+/// `1/W`-sliced local limits.
+///
+/// Only present when [`ShardedShared::dispatch_mode`] is not
+/// [`DispatchMode::Sharded`]; `None` otherwise.
+pub(crate) struct GlobalAdmission {
+    /// One shared concurrency gate per phase that authors a `concurrency` cap.
+    pub(crate) concurrency: HashMap<MetricsPhase, Arc<crate::timing::GlobalSlotPool>>,
+    /// One shared rate gate per phase that authors a `rate`.
+    ///
+    /// Not yet consumed by execution (only `concurrency` is wired into
+    /// `execute_scheduled_shard` as of this change) — see
+    /// `specs/global-exact-dispatch.md`. Built here so the per-phase gates
+    /// exist and are available for that follow-up without a second
+    /// once-per-cell construction pass.
+    pub(crate) rate: HashMap<MetricsPhase, Arc<crate::timing::GlobalRateGate>>,
+}
+
+impl GlobalAdmission {
+    /// Build one gate per phase from the cell-local (unsliced-by-thread) phase specs.
+    pub(crate) fn build(phases: &[PhaseSpec]) -> Result<Self> {
+        let mut concurrency = HashMap::new();
+        let mut rate = HashMap::new();
+        for phase in phases {
+            let phase_key = metrics_phase(phase)?;
+            if let Some(cap) = phase.concurrency() {
+                concurrency.insert(phase_key, crate::timing::GlobalSlotPool::new(cap));
+            }
+            if let Some(r) = phase.rate() {
+                rate.insert(phase_key, crate::timing::GlobalRateGate::new(r));
+            }
+        }
+        Ok(Self { concurrency, rate })
+    }
+}
+
 /// The `Send + Sync` inputs one thread-per-core sub-cell needs to build and run
 /// its whole scheduled pipeline, shared read-only across the `W` worker threads
 /// through an `Arc`.
@@ -2292,6 +2341,12 @@ pub(crate) struct ShardedShared {
     /// Each phase's global ordinal base (env for a controller child, computed for a
     /// lone process), injected identically into every thread's issuer.
     pub(crate) phase_ordinal_bases: HashMap<MetricsPhase, usize>,
+    /// Selected admission strategy for this cell's worker threads.
+    pub(crate) dispatch_mode: DispatchMode,
+    /// Per-phase shared admission gates for `Global`/`GlobalHop` dispatch,
+    /// built once on the main thread from this cell's (already cell-level-sliced,
+    /// not thread-level-sliced) phase budgets. `None` under `Sharded`.
+    pub(crate) global_admission: Option<Arc<GlobalAdmission>>,
 }
 
 /// A sub-cell thread's finished records: kept exactly (retained for the report
@@ -2506,6 +2561,7 @@ pub(crate) async fn execute_scheduled_shard(
                 phase,
                 thread_id,
                 shared.workers,
+                shared.dispatch_mode,
             )
         })
         .collect();
@@ -3202,6 +3258,15 @@ async fn execute_native_inner(
                 profiles.clone(),
             ))
         };
+        // Built once per cell, on the main thread, before any worker thread
+        // spawns (worker threads are spawned only after `run_sharded_scheduled`
+        // receives this already-fully-built `Arc<ShardedShared>`), from the
+        // cell-local (not-yet-thread-sliced) phase specs — see `GlobalAdmission`.
+        let global_admission = if matches!(request.dispatch_mode, DispatchMode::Sharded) {
+            None
+        } else {
+            Some(Arc::new(GlobalAdmission::build(&request.phases)?))
+        };
         let shared = Arc::new(ShardedShared {
             transport_factory: transport_factory.clone(),
             table_factory,
@@ -3243,6 +3308,8 @@ async fn execute_native_inner(
             cells,
             workers: request.workers as u32,
             phase_ordinal_bases,
+            dispatch_mode: request.dispatch_mode,
+            global_admission,
         });
         // Build the once-per-cell profiling-phase side-channel sidecars on the main
         // thread; the sharded runtime drives them over the run window while the

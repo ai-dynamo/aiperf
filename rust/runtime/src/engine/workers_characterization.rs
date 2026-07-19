@@ -324,6 +324,7 @@ mod tests {
             failure_policy: None,
             native_otel_enabled: false,
             transport: None,
+            dispatch_mode: crate::engine::protocol::DispatchMode::Sharded,
         }
     }
 
@@ -824,6 +825,7 @@ mod tests {
             failure_policy: None,
             native_otel_enabled: false,
             transport: None,
+            dispatch_mode: crate::engine::protocol::DispatchMode::Sharded,
         }
     }
 

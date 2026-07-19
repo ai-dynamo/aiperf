@@ -55,7 +55,7 @@ use crate::engine::cell_launcher::owned_positions;
 use crate::engine::execute::{
     ScheduledShardOutcome, ShardRecords, ShardedShared, execute_scheduled_shard, metrics_phase,
 };
-use crate::engine::protocol::PhaseSpec;
+use crate::engine::protocol::{DispatchMode, PhaseSpec};
 
 /// Return a thread's nested dataset and ordinal partition.
 pub(crate) fn two_level_partition(
@@ -84,11 +84,28 @@ pub(crate) fn two_level_partition(
 ///
 /// Admission caps are floored to one. `fixed_schedule` is partitioned by
 /// conversation in [`NativeDatasetConversationSource`](crate::multiturn).
+///
+/// Under [`DispatchMode::Sharded`], this slices `requests`, `concurrency`,
+/// `prefill_concurrency`, and `rate` into this thread's `1/workers` share, as
+/// it always has. Under [`DispatchMode::Global`]/[`DispatchMode::GlobalHop`],
+/// those fields are left at the cell-local (unsliced-by-thread) value: each
+/// thread instead admits from the shared per-cell `GlobalAdmission` gate
+/// (`ShardedShared::global_admission`) built from these same unsliced values.
 pub(crate) fn slice_phase_for_thread(
     phase: &PhaseSpec,
     thread_id: usize,
     workers: u32,
+    dispatch_mode: DispatchMode,
 ) -> PhaseSpec {
+    if !matches!(dispatch_mode, DispatchMode::Sharded) {
+        // `Global`/`GlobalHop`: concurrency, rate, and request budget are
+        // admitted from the shared per-cell `GlobalAdmission` gate instead of a
+        // locally sliced share. Conversation partitioning for
+        // `fixed_schedule`/`user_centric` is unaffected by this branch — it is
+        // computed independently via `two_level_partition`, not through this
+        // function's per-field slicing.
+        return phase.clone();
+    }
     let t = thread_id as u32;
     let owned_budget = |value: u64| owned_positions(value, t, workers);
     // Admission caps split by the same round-robin share, floored to 1 so a cap
@@ -389,19 +406,66 @@ mod tests {
             "prefill_concurrency": 4,
         }))
         .unwrap();
-        let sliced = slice_phase_for_thread(&phase, 0, 4);
+        let sliced = slice_phase_for_thread(&phase, 0, 4, DispatchMode::Sharded);
         assert_eq!(sliced.common().requests, Some(25));
         assert_eq!(sliced.common().prefill_concurrency, Some(1));
         assert_eq!(sliced.concurrency(), Some(2));
         let total: u64 = (0..4)
             .map(|t| {
-                slice_phase_for_thread(&phase, t, 4)
+                slice_phase_for_thread(&phase, t, 4, DispatchMode::Sharded)
                     .common()
                     .requests
                     .unwrap()
             })
             .sum();
         assert_eq!(total, 100);
+    }
+
+    #[test]
+    fn global_mode_does_not_slice_concurrency_or_rate() {
+        let phase: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": 100,
+            "concurrency": 8,
+        }))
+        .unwrap();
+        let sliced = slice_phase_for_thread(&phase, 0, 4, DispatchMode::Global);
+        assert_eq!(sliced.common().requests, Some(100));
+        assert_eq!(sliced.concurrency(), Some(8));
+    }
+
+    #[test]
+    fn global_hop_mode_also_does_not_slice() {
+        let phase: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "poisson",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": 50,
+            "rate": 10.0,
+            "concurrency": 2,
+        }))
+        .unwrap();
+        let sliced = slice_phase_for_thread(&phase, 3, 4, DispatchMode::GlobalHop);
+        assert_eq!(sliced.common().requests, Some(50));
+        assert_eq!(sliced.rate(), Some(10.0));
+        assert_eq!(sliced.concurrency(), Some(2));
+    }
+
+    #[test]
+    fn sharded_mode_still_slices_as_before() {
+        let phase: PhaseSpec = serde_json::from_value(serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": 100,
+            "concurrency": 8,
+        }))
+        .unwrap();
+        let sliced = slice_phase_for_thread(&phase, 0, 4, DispatchMode::Sharded);
+        assert_eq!(sliced.common().requests, Some(25));
+        assert_eq!(sliced.concurrency(), Some(2));
     }
 
     #[test]
@@ -415,7 +479,7 @@ mod tests {
             "concurrency": 2,
         }))
         .unwrap();
-        let sliced = slice_phase_for_thread(&phase, 3, 4);
+        let sliced = slice_phase_for_thread(&phase, 3, 4, DispatchMode::Sharded);
         assert_eq!(sliced.rate(), Some(2.5));
         assert_eq!(sliced.concurrency(), Some(1));
     }
