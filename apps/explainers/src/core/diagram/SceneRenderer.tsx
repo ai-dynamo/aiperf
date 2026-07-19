@@ -157,8 +157,8 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const DEFAULT_DOT_RADIUS = 5;
 const PULSE_CYCLE_MS = 2200;
 const PULSE_DELAY_MS = 800;
-/** Calm SMIL loop — short draw cues must not drive a one-shot zip. */
-const MOTION_DOT_DURATION_S = 4.2;
+/** SMIL loop pace for idle motion dots — matched to typical edge-draw speed. */
+const MOTION_DOT_DURATION_S = 1.6;
 const MOTION_DOT_DELAY_S = 0.55;
 const DASHED_STROKE: string = tokens.diagram.dashed;
 const DOTTED_STROKE = "2 3";
