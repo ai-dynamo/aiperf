@@ -79,12 +79,8 @@ pub(crate) async fn run_global_hop(
     // Full cell partition (thread_id 0 of 1 worker): the single coordinator
     // pipeline owns the whole cell's ordinal share, tiling this cell's slice of
     // 0..total, identical to a `workers == 1` sharded run.
-    let partition = crate::engine::sharded_scheduled::two_level_partition(
-        shared.cell_id,
-        shared.cells,
-        0,
-        1,
-    )?;
+    let partition =
+        crate::engine::sharded_scheduled::two_level_partition(shared.cell_id, shared.cells, 0, 1)?;
     // Un-thread-sliced (full cell-level) phase budgets/caps/rate: `workers == 1`
     // makes `slice_phase_for_thread` a no-op split, leaving the full cap and rate
     // for the single coordinator loop to enforce locally.

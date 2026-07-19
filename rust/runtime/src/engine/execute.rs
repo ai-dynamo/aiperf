@@ -3449,12 +3449,10 @@ async fn execute_native_inner(
         // `GlobalHop` runs one coordinator loop hopping turns to worker threads;
         // `Sharded`/`Global` run `W` independent per-thread scheduling loops.
         let outcome = match request.dispatch_mode {
-            DispatchMode::GlobalHop => crate::engine::global_hop::run_global_hop(
-                shared,
-                profiling_sidecars,
-                clock.clone(),
-            )
-            .await?,
+            DispatchMode::GlobalHop => {
+                crate::engine::global_hop::run_global_hop(shared, profiling_sidecars, clock.clone())
+                    .await?
+            }
             DispatchMode::Sharded | DispatchMode::Global => {
                 crate::engine::sharded_scheduled::run_sharded_scheduled(
                     shared,
