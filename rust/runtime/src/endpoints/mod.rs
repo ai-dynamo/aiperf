@@ -23,6 +23,7 @@ mod metadata;
 mod models;
 mod registry;
 mod riva;
+mod sagemaker;
 mod tier2;
 mod usage;
 mod vllm_generate;
@@ -58,6 +59,7 @@ pub use riva::{
     RivaPunctuateTextFactory, RivaTextClassifyFactory, RivaTokenClassifyFactory,
     RivaTransformTextFactory, RivaTtsFactory,
 };
+pub use sagemaker::{SageMakerInvokeFactory, SageMakerInvokeStreamFactory};
 pub use tier2::{
     CohereRankingsEndpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint, ImageEditEndpoint,
     ImageGenerationEndpoint, ImageRetrievalEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint,

@@ -43,6 +43,7 @@ use crate::endpoints::riva::{
     RivaPunctuateTextFactory, RivaTextClassifyFactory, RivaTokenClassifyFactory,
     RivaTransformTextFactory, RivaTtsFactory,
 };
+use crate::endpoints::sagemaker::{SageMakerInvokeFactory, SageMakerInvokeStreamFactory};
 use crate::endpoints::tier2::{
     CohereRankingsEndpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint, ImageEditEndpoint,
     ImageGenerationEndpoint, ImageRetrievalEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint,
@@ -665,6 +666,8 @@ impl EndpointRegistryBuilder {
         builder.register_factory(RivaNaturalQueryFactory)?;
         builder.register_factory(RivaAnalyzeIntentFactory)?;
         builder.register_factory(RivaAnalyzeEntitiesFactory)?;
+        builder.register_factory(SageMakerInvokeFactory)?;
+        builder.register_factory(SageMakerInvokeStreamFactory)?;
         Ok(())
     }
 
