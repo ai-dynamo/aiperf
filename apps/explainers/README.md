@@ -21,6 +21,7 @@ Routes (hash router):
 - `/#/rust-architecture`
 - `/#/slurm-velo`
 - `/#/dynosim`
+- `/#/synthetic-dataset-generator`
 
 ## Build
 

@@ -22,6 +22,7 @@ const DECK_ROUTES = [
   "/#/cellular-algorithms",
   "/#/dynosim",
   "/#/tstar-warmup",
+  "/#/synthetic-dataset-generator",
 ];
 
 function resolvePlaywright() {

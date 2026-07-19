@@ -20,6 +20,7 @@ export const EXPECTED_DECK_ROUTES = [
   ["cellular-algorithms", "/cellular-algorithms"],
   ["dynosim", "/dynosim"],
   ["tstar-warmup", "/tstar-warmup"],
+  ["synthetic-dataset-generator", "/synthetic-dataset-generator"],
 ] as const;
 
 export type RegisteredDeckId = (typeof EXPECTED_DECK_ROUTES)[number][0];
