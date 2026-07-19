@@ -9,157 +9,123 @@ SPDX-License-Identifier: Apache-2.0
 
 Benchmark AWS SageMaker Runtime's native invocation APIs: `InvokeEndpoint`
 (single request/response) and `InvokeEndpointWithResponseStream` (streamed
-response over AWS's binary `application/vnd.amazon.eventstream` framing). This
-is a future capability; this record separates its requirements from the
-reusable endpoint, transport, and mock-server prerequisites already present in
-the runtime.
+response over AWS's binary `application/vnd.amazon.eventstream` framing).
 
-Today AIPerf only understands SageMaker in one narrow sense: a *dataset* format
-(`sagemaker_data_capture`, see [dataset.md](dataset.md)) that replays captured
-SageMaker request/response pairs recorded by SageMaker Data Capture. That loader
-does not exercise the SageMaker Runtime wire protocol — it deserializes archived
-JSON. No client transport speaks `/endpoints/{EndpointName}/invocations`, and no
-mock-server route serves it.
+AIPerf also understands SageMaker in a separate, unrelated sense: a *dataset*
+format (`sagemaker_data_capture`, see [dataset.md](dataset.md)) that replays
+captured SageMaker request/response pairs recorded by SageMaker Data Capture.
+That loader does not exercise the SageMaker Runtime wire protocol — it
+deserializes archived JSON. This record covers the transport/endpoint dialect
+that does speak `/endpoints/{EndpointName}/invocations` over the wire.
 
 ## Built
 
-The runtime provides the prerequisites the future dialect must compose over:
+- `SageMakerInvokeFactory` / `SageMakerInvokeStreamFactory`
+  (`rust/runtime/src/endpoints/sagemaker.rs`), following the KServe
+  factory/behavior pattern with two factories (not a `supports_streaming`
+  flag) so eventstream-specific decode logic stays isolated to the streaming
+  factory:
+  - `SageMakerInvokeFactory` (id `sagemaker_invoke`, alias `sagemaker`) —
+    non-streaming. `EndpointDescriptor.endpoint_path =
+    "/endpoints/{model_name}/invocations"`. `format_payload` builds an
+    OpenAI-chat-shaped JSON body (reusing existing chat body-building);
+    `parse_response` parses the OpenAI-chat JSON response body directly.
+  - `SageMakerInvokeStreamFactory` (id `sagemaker_invoke_stream`, alias
+    `sagemaker_stream`) — streaming.
+    `EndpointDescriptor.streaming_path =
+    "/endpoints/{model_name}/invocations-response-stream"`. Response
+    decoding goes through the eventstream reader, then each
+    `PayloadPart.Bytes` frame payload is parsed as an
+    OpenAI-chat-completion-chunk, reusing existing chunk-parsing logic from
+    `chat.rs`/`chat_chunk.rs`.
+  Both factories are registered in `rust/runtime/src/endpoints/registry.rs`
+  alongside the KServe registrations and re-exported from `mod.rs`.
+- Mock-server routes in `rust/mock-server/src/app.rs`/`handlers.rs`, alongside
+  the existing KServe/OpenAI routes:
+  - `POST /endpoints/{endpoint_name}/invocations` — non-streaming
+    `InvokeEndpoint`.
+  - `POST /endpoints/{endpoint_name}/invocations-response-stream` — streaming
+    `InvokeEndpointWithResponseStream`, encoded as AWS eventstream binary
+    frames (`Content-Type: application/vnd.amazon.eventstream`) via the
+    `sse_to_eventstream` adapter, which converts the shared SSE-chunk
+    generation path's `data:` lines into `EventStreamMessage::payload_part`
+    frames and drops the SSE `[DONE]` sentinel (AWS eventstream has no
+    terminal sentinel; the stream ends at HTTP body EOF).
+  - `endpoint_name` is the AWS path-segment equivalent of KServe's
+    `{model_name}` and reuses the existing `{model_name}` templating
+    convention on both the client (`endpoint_binding.rs`) and mock-server
+    (`axum::extract::Path`) sides — no new templating token.
+  - Request-body sniffing: the handler accepts either an OpenAI-chat-shaped
+    body (`messages` key present) or a SageMaker JumpStart/DJL-shaped body
+    (`inputs` key present, optional `parameters`), detected by key presence.
+    The response is always OpenAI chat-completion shaped regardless of which
+    request shape was sent, reusing the same response models as the
+    `chat_completions` handler.
+- AWS `application/vnd.amazon.eventstream` binary frame codec in
+  `rust/runtime/src/transport/core/eventstream.rs` (sibling to `sse.rs`):
+  transport-neutral, no HTTP or SSE dependency, so both the mock-server
+  encoder and client decoder share it without a `core -> http` dependency.
+  - `EventStreamMessage { headers, payload }`: `[4B total length][4B headers
+    length][4B prelude CRC32][headers][payload][4B message CRC32]`, with a
+    symmetric encoder (`encode`) and incremental decoder
+    (`EventStreamDecoder`), byte-exact round-trip, independently
+    unit-tested.
+  - **`payload` is the raw inner chat-completion-chunk JSON bytes, with no
+    base64/JSON envelope.** The AWS SageMaker `PayloadPart` event shape's
+    `Bytes` member carries the Smithy `eventpayload` trait, meaning the raw
+    eventstream frame payload IS the blob value directly — there is no
+    `{"PayloadPart":{"Bytes":"<base64>"}}` wrapping on the wire. (An earlier
+    draft of this implementation built that envelope; it was wrong and was
+    caught by wire-compatibility testing against a genuine `boto3`
+    `sagemaker-runtime` client — see Verification.)
+  - Terminal condition: AWS SageMaker eventstream responses end at HTTP body
+    EOF (no `[DONE]` sentinel like SSE); the decoder treats stream close as
+    terminal.
+- Client transport: `rust/runtime/src/transport/http/client/http_client.rs`
+  gates on `is_sse || is_eventstream` for streaming-response box-pinning, and
+  `eventstream_to_sse` adapts raw AWS eventstream binary chunks into
+  synthetic `"data: <json>\n\n"` byte chunks (via `futures::stream::unfold`),
+  feeding the existing, unmodified SSE reader
+  (`rust/runtime/src/transport/http/sse/reader.rs`) — only frame decoding
+  differs from the SSE path, not downstream token/usage/TTFT measurement.
+- Out of scope, unchanged: AWS SigV4 request signing and IAM auth. This
+  dialect targets AIPerf's own mock server and SageMaker-compatible test
+  endpoints for load generation and measurement, not the real authenticated
+  AWS API surface.
 
-- The `EndpointFactory` / `PreparedEndpoint` registry seam
-  (`rust/runtime/src/endpoints/registry.rs`) with `{model_name}` URL-path
-  templating (`rust/runtime/src/transport/http/transport/endpoint_binding.rs:443-449`),
-  demonstrated by the KServe dialect family
-  (`rust/runtime/src/endpoints/kserve.rs`) — one factory per distinct
-  path/verb, a shared prepared-endpoint wrapper, and per-behavior
-  `format_payload`/`parse_response`.
-- A generic, dialect-agnostic SSE reader
-  (`rust/runtime/src/transport/core/sse.rs`,
-  `rust/runtime/src/transport/http/sse/reader.rs`) reached through a single
-  content-type check in `rust/runtime/src/transport/http/client/http_client.rs:672-680`
-  (`is_sse = content_type.starts_with("text/event-stream")`).
-- The mock server's shared SSE-chunk encoding helpers
-  (`rust/mock-server/src/handlers.rs`: `sse_chunk`, `sse_chunk_ser`,
-  `write_sse_into`) and axum dynamic-path routing
-  (`rust/mock-server/src/app.rs`, `Path` extractors in `handlers.rs`), used by
-  existing streaming handlers (`chat_stream`, `messages_stream`, `tgi_stream`).
-- OpenAI-chat-completion request/response models and chunk-parsing logic
-  (`rust/mock-server/src/models.rs`; client-side `rust/runtime/src/endpoints/chat.rs`,
-  `chat_chunk.rs`) that the new dialect reuses rather than duplicates.
-- The `sagemaker_data_capture` dataset loader and composer
-  (`rust/runtime/src/dataset/loader/trace.rs:51-56`), which remains a
-  dataset-format concern independent of this transport-level work.
+## Verification
 
-No SageMaker Runtime transport path, endpoint binding, or AWS eventstream
-frame codec is registered or implemented.
-
-## Future requirements
-
-### Mock-server routes
-
-Two new axum routes in `rust/mock-server/src/app.rs`, alongside the existing
-KServe/OpenAI routes:
-
-- `POST /endpoints/{endpoint_name}/invocations` — non-streaming `InvokeEndpoint`.
-- `POST /endpoints/{endpoint_name}/invocations-response-stream` — streaming
-  `InvokeEndpointWithResponseStream`.
-
-`endpoint_name` is the AWS path-segment equivalent of KServe's `{model_name}`
-and reuses the existing `{model_name}` templating convention on both the
-client (`endpoint_binding.rs`) and mock-server (`axum::extract::Path`) sides —
-no new templating token.
-
-Request-body sniffing: a handler accepts either an OpenAI-chat-shaped body
-(`messages` key present) or a SageMaker JumpStart/DJL-shaped body (`inputs`
-key present, optional `parameters`), detected by key presence. The response is
-always OpenAI chat-completion shaped regardless of which request shape was
-sent, reusing the same response models as the `chat_completions` handler — no
-mirrored JumpStart response encoding path.
-
-### AWS eventstream binary framing
-
-`application/vnd.amazon.eventstream` is AWS's binary streaming frame format
-(distinct from SSE): each message is `[4B total length][4B headers
-length][4B prelude CRC32][headers][payload][4B message CRC32]`. This has no
-existing seam in AIPerf — SSE parsing today is a single hardcoded
-content-type branch (`http_client.rs:672-680`) with no per-dialect decoder
-hook.
-
-New transport-neutral module `rust/runtime/src/transport/core/eventstream.rs`
-(sibling to `sse.rs`):
-
-- `EventStreamMessage { headers, payload }` with a symmetric encoder and
-  decoder, byte-exact round-trip, independently unit-testable.
-- Client transport extends the single `is_sse` boolean at
-  `http_client.rs:672-680` into a small `StreamFraming` selection
-  (`Sse | EventStream | None`) chosen from response `Content-Type`. Each
-  framing has its own reader, but both feed the same downstream
-  token/usage/TTFT recording path — only frame decoding differs, not
-  measurement semantics.
-- Terminal condition: AWS SageMaker eventstream responses end at HTTP body
-  EOF (no `[DONE]` sentinel like SSE); the decoder treats stream close as
-  terminal.
-- Mock-server encoder: a `eventstream_chunk` helper in `handlers.rs` beside
-  `sse_chunk`, wrapping each streamed chat-completion chunk as
-  `{"PayloadPart": {"Bytes": <base64 JSON>}}` per real SageMaker streaming
-  semantics, framed through the new encoder. Response `Content-Type:
-  application/vnd.amazon.eventstream`.
-
-### Client endpoint dialect
-
-New `rust/runtime/src/endpoints/sagemaker.rs`, following the KServe
-factory/behavior pattern with **two factories** (not a `supports_streaming`
-flag) so eventstream-specific decode logic stays isolated to the streaming
-factory:
-
-- `SageMakerInvokeFactory` — non-streaming.
-  `EndpointDescriptor.endpoint_path = "/endpoints/{model_name}/invocations"`.
-  `format_payload` builds an OpenAI-chat-shaped JSON body (reusing existing
-  chat body-building); `parse_response` parses the OpenAI-chat JSON response
-  body directly.
-- `SageMakerInvokeStreamFactory` — streaming.
-  `EndpointDescriptor.streaming_path =
-  "/endpoints/{model_name}/invocations-response-stream"`. Response decoding
-  goes through the new eventstream reader, then each `PayloadPart.Bytes`
-  payload is parsed as an OpenAI-chat-completion-chunk, reusing existing
-  chunk-parsing logic from `chat.rs`/`chat_chunk.rs`.
-
-Both factories register in `rust/runtime/src/endpoints/registry.rs` alongside
-the KServe registrations and re-export from `mod.rs`.
-
-Out of scope: AWS SigV4 request signing and IAM auth. This dialect targets
-AIPerf's own mock server and SageMaker-compatible test endpoints for load
-generation and measurement, not the real authenticated AWS API surface.
-
-### Verification
-
-Per this repository's end-to-end testing requirement for new transport/endpoint
-behavior, a new `rust/e2e/tests/test_sagemaker_endpoint.rs` drives `aiperf
-profile` against `aiperf-mock-server` for both routes with fixed TTFT/ITL
-jitter coefficients at zero, analytic scheduling, and pinned
-tokenizer/ISL/OSL, asserting TTFT, generated-token ITL, request latency, ISL,
-OSL, model, streaming mode, response content, status, and errors per raw
-record — for both the non-streaming and eventstream-streaming routes, and for
-both accepted request-body shapes.
-
-Additional unit coverage:
-
-- Round-trip encode→decode test for the new eventstream codec.
-- Mock-server body-shape sniffing test for both `messages` and `inputs`
-  request shapes.
+- `rust/e2e/tests/test_sagemaker_endpoint.rs` drives `aiperf profile` against
+  `aiperf-mock-server` for both the `sagemaker` and `sagemaker_stream`
+  endpoint types, inspecting raw per-record output: response status, parsed
+  OpenAI-chat-completion body shape and content, request/response `model`,
+  prompt/completion token usage (non-streaming), and reassembled streamed
+  content plus ack-vs-start timing ordering (streaming).
+- Unit coverage: round-trip encode→decode tests for the eventstream codec
+  (`eventstream.rs`), including corrupted-CRC rejection and multi-message
+  buffering across arbitrary chunk boundaries; mock-server body-shape
+  sniffing tests for both `messages` and `inputs` request shapes.
+- Wire-format compatibility was additionally verified manually against a
+  genuine, downloaded AWS client — `boto3`'s `sagemaker-runtime` client,
+  exercising `invoke_endpoint` and `invoke_endpoint_with_response_stream` for
+  both accepted request-body shapes, run standalone (not wired into the
+  `e2e` crate). This caught and drove the fix for the `PayloadPart.Bytes`
+  double-envelope bug described above — a hand-written HTTP test harness
+  would not have caught it, since it would have decoded the wire format the
+  same (wrong) way the mock server encoded it.
 
 ## Source anchors
 
-- `rust/runtime/src/endpoints/kserve.rs`, `registry.rs`, `mod.rs` — dialect
-  pattern this record's client work extends.
-- `rust/runtime/src/transport/http/transport/endpoint_binding.rs`,
-  `rust/runtime/src/transport/http/client/http_client.rs`,
-  `rust/runtime/src/transport/core/sse.rs`,
-  `rust/runtime/src/transport/http/sse/reader.rs` — transport seams this
-  record's eventstream work extends.
+- `rust/runtime/src/endpoints/sagemaker.rs`, `registry.rs`, `mod.rs` — client
+  endpoint dialect.
+- `rust/runtime/src/transport/core/eventstream.rs` — frame codec.
+- `rust/runtime/src/transport/http/client/http_client.rs` — client-side
+  `eventstream_to_sse` adapter and streaming-response framing selection.
 - `rust/mock-server/src/app.rs`, `handlers.rs`, `models.rs` — mock-server
-  seams this record's route work extends.
+  routes, body-shape sniffing, and the `sse_to_eventstream` adapter.
 - `rust/runtime/src/dataset/loader/trace.rs` (`SageMakerDataCaptureDatasetLoader`,
-  `SageMakerDataCaptureComposer`) — the existing, unrelated dataset-format
+  `SageMakerDataCaptureComposer`) — the separate, unrelated dataset-format
   SageMaker support.
 - `rust/e2e/tests/test_sagemaker_data_capture.rs` — existing e2e coverage for
   the dataset loader, not the runtime endpoint.
+- `rust/e2e/tests/test_sagemaker_endpoint.rs` — e2e coverage for this record.
