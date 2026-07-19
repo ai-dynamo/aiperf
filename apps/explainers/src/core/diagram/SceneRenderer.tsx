@@ -2651,6 +2651,32 @@ function traceProgressForNode(
 }
 
 /**
+ * Dash-gating progress for a fan connector's own stroke: 0 (hidden) before
+ * its trace cue starts rather than `undefined` (which renders solid,
+ * un-dashed). traceProgressForNode stays `undefined` pre-cue for ball
+ * rendering, where that's correct — the connector body must not be.
+ */
+function fanStrokeProgress(
+  nodeId: string,
+  timeline: readonly SceneTimelineCueLike[],
+  playbackTimeMs: number,
+): number | undefined {
+  const cue = timeline
+    .filter(
+      (candidate) =>
+        candidate.target === nodeId && candidate.action === "trace",
+    )
+    .at(-1);
+  if (cue === undefined) {
+    return undefined;
+  }
+  if (playbackTimeMs < finiteNumber(cue.at)) {
+    return 0;
+  }
+  return cueProgress(cue, playbackTimeMs);
+}
+
+/**
  * Emphasize/emphasis pulse for a node while its cue window is active.
  * Undefined when idle (no cue, before `at`, or after `at + duration`).
  */
@@ -3773,10 +3799,11 @@ function renderNode(
       tip !== null ? markerDomId(markerPrefix, tip) : markerPrefix;
     // Fan connectors draw exclusively via `trace` cues (drawProgress
     // excludes trace for fan nodes to avoid double-driving the ball
-    // animation below); fall back to traceProgress so the stroke itself
-    // stays dash-hidden until its own trace cue fires instead of
+    // animation below); fall back to fanStrokeProgress so the stroke
+    // itself stays dash-hidden until its own trace cue fires instead of
     // rendering solid from t=0, ahead of the target nodes fading in.
-    const strokeProgress = drawProgress ?? traceProgress;
+    const strokeProgress =
+      drawProgress ?? fanStrokeProgress(node.id, timeline, playbackTimeMs);
     const drawing = strokeProgress !== undefined;
     const strokeWidth = strokeWidthFromStyle(node.style) * strokeScale;
     const authoredDash = authoredStrokeDasharray(node.style);
