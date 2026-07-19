@@ -7,6 +7,12 @@
 /**
  * Flow Verifier — IR playhead + Playwright full-play gate for explainer decks.
  *
+ * There is no generated-package build step — `.flow` is the only source of
+ * truth. The IR pass compiles `decks-flow/*.flow` in-memory (via
+ * `scripts/compile-decks.ts` under `vite-node`), the same strict
+ * `compileExplainerSource` + `validateExplainerSet` pipeline the live app
+ * uses in `src/core/load-deck-flows.ts`.
+ *
  * `npm run flow-verifier` (IR-only, fast) is the default gate. The
  * Playwright full-deck walk is slow and lives behind
  * `npm run flow-verifier:extended` (or `--play-only` / omitting `--ir-only`
@@ -18,21 +24,21 @@
  *   node apps/explainers/scripts/flow-verifier.mjs --deck segment-pools
  *   node apps/explainers/scripts/flow-verifier.mjs
  *   node apps/explainers/scripts/flow-verifier.mjs --play-only --base-url http://127.0.0.1:5173
- *   node apps/explainers/scripts/flow-verifier.mjs --from-flow
  *   node apps/explainers/scripts/flow-verifier.mjs --warn
  *   node apps/explainers/scripts/flow-verifier.mjs --play-only --preview
  */
 
-import { readdir, readFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { verifyPackageIr } from "./flow-verifier/ir.mjs";
 import { verifyPlayAll } from "./flow-verifier/play.mjs";
 
+const execFileAsync = promisify(execFile);
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const EXPLAINERS_ROOT = resolve(__dirname, "..");
-const PACKAGES_DIR = join(EXPLAINERS_ROOT, "src/decks-generated");
 
 function parseArgs(argv) {
   const options = {
@@ -41,7 +47,6 @@ function parseArgs(argv) {
     playOnly: false,
     baseUrl: null,
     warn: false,
-    fromFlow: false,
     strictDraw: false,
     preview: false,
   };
@@ -61,8 +66,6 @@ function parseArgs(argv) {
       options.baseUrl = arg.slice("--base-url=".length);
     } else if (arg === "--warn") {
       options.warn = true;
-    } else if (arg === "--from-flow") {
-      options.fromFlow = true;
     } else if (arg === "--strict-draw") {
       options.strictDraw = true;
     } else if (arg === "--preview") {
@@ -92,7 +95,6 @@ Options:
   --ir-only            Skip Playwright full play
   --play-only          Skip IR playhead pass
   --base-url <url>     Reuse an existing Vite server (skip spawn)
-  --from-flow          Rebuild decks-generated from decks-flow/*.flow first
   --strict-draw        Emit IR warn for mid-draw arrow moments (SceneRenderer defers heads)
   --preview            Play against \`npm run build && npm run preview\` instead of \`vite dev\`
                         (proves production bundling; skip during active deck/compiler migration —
@@ -105,40 +107,20 @@ Playwright resolves from apps/explainers; install browsers with:
 `);
 }
 
-function run(command, args, cwd) {
-  return new Promise((resolveRun, reject) => {
-    const child = spawn(command, args, {
-      cwd,
-      stdio: "inherit",
-      shell: false,
-    });
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) resolveRun();
-      else reject(new Error(`${command} ${args.join(" ")} exited ${code}`));
-    });
-  });
-}
-
-async function rebuildFromFlow() {
-  await run("npm", ["run", "build:explainer-packages"], EXPLAINERS_ROOT);
-}
-
 async function loadPackages(deckFilter) {
-  const names = (await readdir(PACKAGES_DIR))
-    .filter((name) => name.endsWith(".package.json"))
-    .sort();
-  const packages = [];
-  for (const name of names) {
-    const id = name.replace(/\.package\.json$/, "");
-    if (deckFilter && id !== deckFilter) continue;
-    const raw = await readFile(join(PACKAGES_DIR, name), "utf8");
-    packages.push(JSON.parse(raw));
+  const { stdout } = await execFileAsync(
+    "npx",
+    ["vite-node", "scripts/compile-decks.ts"],
+    { cwd: EXPLAINERS_ROOT, maxBuffer: 64 * 1024 * 1024 },
+  );
+  const packages = JSON.parse(stdout);
+  const filtered = deckFilter
+    ? packages.filter((pkg) => pkg.id === deckFilter)
+    : packages;
+  if (deckFilter && filtered.length === 0) {
+    throw new Error(`no compiled package for deck "${deckFilter}"`);
   }
-  if (deckFilter && packages.length === 0) {
-    throw new Error(`no package for deck "${deckFilter}" in ${PACKAGES_DIR}`);
-  }
-  return packages;
+  return filtered;
 }
 
 function formatFinding(f) {
@@ -156,11 +138,6 @@ async function main() {
   if (options.help) {
     printHelp();
     process.exit(0);
-  }
-
-  if (options.fromFlow) {
-    console.error("rebuilding explainer packages from .flow…");
-    await rebuildFromFlow();
   }
 
   /** @type {import("./flow-verifier/ir.mjs").Finding[]} */

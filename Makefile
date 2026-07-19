@@ -28,9 +28,9 @@
 		generate-all-docs test-stress stress-tests test-fern-docs fern-preview fern-release-dryrun internal-help help \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
-		check-agent-files-sync build-explainer-packages \
-		assert-deck-packages assert-no-mentalmodel-registry assert-explainer-packages \
-		flow-verifier flow-verifier-ir
+		check-agent-files-sync \
+		assert-no-mentalmodel-registry assert-explainer-packages \
+		flow-verifier flow-verifier-ir flow-verifier-extended
 
 
 # Include user-defined environment variables
@@ -430,25 +430,22 @@ generate-all-docs: #? generate all documentation files.
 	$(activate_venv) && ./tools/generate_cli_docs.py
 	$(activate_venv) && ./tools/generate_env_vars_docs.py
 
-build-explainer-packages: #? compile apps/explainers/decks-flow/*.flow into decks-generated packages
-	cd apps/explainers && npm run build:explainer-packages
-
-assert-deck-packages: #? require decks-generated packages with narration + scene timelines
-	cd apps/explainers && npm run assert:deck-packages
-
 assert-no-mentalmodel-registry: #? fail if deck-registry imports any MentalModel.tsx
 	cd apps/explainers && npm run assert:no-mentalmodel-registry
 
 assert-sdk-authoring: #? require native sdk.* authoring in decks-flow (strict)
 	cd apps/explainers && npm run assert:sdk-authoring -- --strict
 
-assert-explainer-packages: build-explainer-packages assert-deck-packages assert-no-mentalmodel-registry assert-sdk-authoring flow-verifier-ir #? build + gate flow-backed explainer packages (incl. IR verifier)
+assert-explainer-packages: assert-no-mentalmodel-registry assert-sdk-authoring flow-verifier-ir #? gate flow-backed explainer decks (incl. IR verifier)
 
-flow-verifier-ir: #? IR playhead only (no Playwright)
+flow-verifier-ir: #? IR playhead only (no Playwright); compiles decks-flow/*.flow live, no generated artifacts
 	cd apps/explainers && npm run flow-verifier:ir -- $(FLOW_VERIFIER_ARGS)
 
-flow-verifier: #? IR playhead + Playwright full-play gate for explainer decks
+flow-verifier: #? alias for flow-verifier-ir (IR-only default)
 	cd apps/explainers && npm run flow-verifier -- $(FLOW_VERIFIER_ARGS)
+
+flow-verifier-extended: #? IR playhead + Playwright full-play gate for explainer decks (slow)
+	cd apps/explainers && npm run flow-verifier:extended -- $(FLOW_VERIFIER_ARGS)
 
 add-copyright: #? add the copyright header to the files.
 	$(activate_venv) && ./tools/add_copyright.py

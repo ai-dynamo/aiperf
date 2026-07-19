@@ -8,10 +8,10 @@
  * Assert that `apps/explainers/src/core/deck-registry.ts` does not reach any
  * deck `MentalModel.tsx` via static relative imports (transitive module graph).
  *
- * Registry is packages-only: one `.flow` per deck compiles to DeckPackage under
- * `decks-generated/`; `packageToDeckDefinition` mounts `SceneRenderer`. MentalModel
- * `.tsx` files may remain on disk but must not be reachable from the registry
- * import graph. Always hard-fails on hits.
+ * Registry is packages-only: one `.flow` per deck compiles live in-browser to a
+ * DeckPackage via `load-deck-flows.ts`; `packageToDeckDefinition` mounts
+ * `SceneRenderer`. MentalModel `.tsx` files may remain on disk but must not be
+ * reachable from the registry import graph. Always hard-fails on hits.
  *
  * Usage:
  *   node scripts/assert-no-mentalmodel-registry.mjs
