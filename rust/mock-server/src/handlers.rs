@@ -723,8 +723,13 @@ fn sagemaker_request_to_chat(
     stream: bool,
 ) -> AppResult<ChatCompletionRequest> {
     if body.get("messages").is_some() {
+        // The SageMaker wire body has no `model` field (`endpoint_name` alone
+        // selects the target); seed a placeholder so it always deserializes,
+        // then override it below regardless.
+        let mut patched = body.clone();
+        patched["model"] = Value::String(endpoint_name.to_string());
         let mut req: ChatCompletionRequest =
-            serde_json::from_value(body.clone()).map_err(|e| AppError {
+            serde_json::from_value(patched).map_err(|e| AppError {
                 status: StatusCode::BAD_REQUEST,
                 message: format!("invalid OpenAI-chat-shaped SageMaker request: {e}"),
                 retry_after: None,
@@ -841,7 +846,8 @@ where
                 if rest.is_empty() || rest == b"[DONE]" {
                     continue;
                 }
-                let frame = EventStreamMessage::payload_part(Bytes::from(rest.to_vec())).encode();
+                let envelope = aiperf_runtime::transport::core::encode_payload_part(rest);
+                let frame = EventStreamMessage::payload_part(envelope).encode();
                 yield Ok::<Bytes, Infallible>(frame);
             }
         }
@@ -3298,6 +3304,97 @@ mod content_url_tests {
             ])),
         ];
         assert!(collect_content_urls(&messages).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod sagemaker_tests {
+    use super::*;
+
+    #[test]
+    fn sniffs_openai_chat_shaped_body() {
+        let body = json!({
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 16,
+        });
+        let req = sagemaker_request_to_chat("my-endpoint", &body, false).unwrap();
+        assert_eq!(req.model, "my-endpoint");
+        assert_eq!(req.messages.len(), 1);
+        assert_eq!(req.messages[0].role, "user");
+        assert_eq!(req.max_tokens, Some(16));
+        assert!(!req.stream);
+    }
+
+    #[test]
+    fn endpoint_name_overrides_body_model_field() {
+        let body = json!({
+            "model": "ignored-model",
+            "messages": [{"role": "user", "content": "hi"}],
+        });
+        let req = sagemaker_request_to_chat("my-endpoint", &body, true).unwrap();
+        assert_eq!(req.model, "my-endpoint");
+        assert!(req.stream);
+    }
+
+    #[test]
+    fn sniffs_jumpstart_djl_shaped_body() {
+        let body = json!({
+            "inputs": "tell me a story",
+            "parameters": {"max_new_tokens": 32, "min_new_tokens": 4},
+        });
+        let req = sagemaker_request_to_chat("my-endpoint", &body, false).unwrap();
+        assert_eq!(req.model, "my-endpoint");
+        assert_eq!(req.messages.len(), 1);
+        assert_eq!(req.messages[0].role, "user");
+        assert_eq!(
+            req.messages[0].content,
+            Value::String("tell me a story".to_string())
+        );
+        assert_eq!(req.max_tokens, Some(32));
+        assert_eq!(req.min_tokens, Some(4));
+    }
+
+    #[test]
+    fn jumpstart_shape_without_parameters_has_no_token_caps() {
+        let body = json!({"inputs": "hello"});
+        let req = sagemaker_request_to_chat("my-endpoint", &body, false).unwrap();
+        assert_eq!(req.max_tokens, None);
+        assert_eq!(req.min_tokens, None);
+    }
+
+    #[test]
+    fn rejects_body_missing_both_shapes() {
+        let body = json!({"foo": "bar"});
+        let err = sagemaker_request_to_chat("my-endpoint", &body, false).unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn sse_to_eventstream_drops_done_sentinel_and_wraps_frames() {
+        let sse = futures::stream::iter(vec![
+            Ok::<Bytes, Infallible>(Bytes::from_static(
+                b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+            )),
+            Ok::<Bytes, Infallible>(sse_done()),
+        ]);
+        let out: Vec<Bytes> = futures::executor::block_on(
+            futures::StreamExt::collect::<Vec<_>>(sse_to_eventstream(sse)),
+        )
+        .into_iter()
+        .map(|r| r.unwrap())
+        .collect();
+
+        assert_eq!(out.len(), 1);
+        let mut decoder = aiperf_runtime::transport::core::EventStreamDecoder::new();
+        decoder.push(&out[0]);
+        let messages = decoder.drain_messages().unwrap();
+        assert_eq!(messages.len(), 1);
+        let inner =
+            aiperf_runtime::transport::core::decode_payload_part(&messages[0].payload).unwrap();
+        assert_eq!(
+            &inner[..],
+            b"{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}"
+        );
     }
 }
 
