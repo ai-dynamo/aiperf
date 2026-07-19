@@ -14,6 +14,7 @@
  *   node apps/explainers/scripts/flow-verifier.mjs --play-only --base-url http://127.0.0.1:5173
  *   node apps/explainers/scripts/flow-verifier.mjs --from-flow
  *   node apps/explainers/scripts/flow-verifier.mjs --warn
+ *   node apps/explainers/scripts/flow-verifier.mjs --play-only --preview
  */
 
 import { readdir, readFile } from "node:fs/promises";
@@ -26,7 +27,6 @@ import { verifyPlayAll } from "./flow-verifier/play.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const EXPLAINERS_ROOT = resolve(__dirname, "..");
 const PACKAGES_DIR = join(EXPLAINERS_ROOT, "src/decks-generated");
-const AIPERF_FLOW_ROOT = resolve(EXPLAINERS_ROOT, "../aiperf-flow");
 
 function parseArgs(argv) {
   const options = {
@@ -37,6 +37,7 @@ function parseArgs(argv) {
     warn: false,
     fromFlow: false,
     strictDraw: false,
+    preview: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -58,6 +59,8 @@ function parseArgs(argv) {
       options.fromFlow = true;
     } else if (arg === "--strict-draw") {
       options.strictDraw = true;
+    } else if (arg === "--preview") {
+      options.preview = true;
     } else if (arg === "--help" || arg === "-h") {
       options.help = true;
     } else {
@@ -85,11 +88,14 @@ Options:
   --base-url <url>     Reuse an existing Vite server (skip spawn)
   --from-flow          Rebuild decks-generated from decks-flow/*.flow first
   --strict-draw        Emit IR warn for mid-draw arrow moments (SceneRenderer defers heads)
+  --preview            Play against \`npm run build && npm run preview\` instead of \`vite dev\`
+                        (proves production bundling; skip during active deck/compiler migration —
+                        see .superpowers/sdd/playwright-hardening-report.md)
   --warn               Treat warnings as failures (exit non-zero)
   -h, --help           Show this help
 
-Playwright resolves from apps/aiperf-flow; install browsers with:
-  cd apps/aiperf-flow && npx playwright install chromium
+Playwright resolves from apps/explainers; install browsers with:
+  cd apps/explainers && npx playwright install chromium
 `);
 }
 
@@ -109,7 +115,7 @@ function run(command, args, cwd) {
 }
 
 async function rebuildFromFlow() {
-  await run("npm", ["run", "build:explainer-packages"], AIPERF_FLOW_ROOT);
+  await run("npm", ["run", "build:explainer-packages"], EXPLAINERS_ROOT);
 }
 
 async function loadPackages(deckFilter) {
@@ -170,6 +176,7 @@ async function main() {
       ...(await verifyPlayAll({
         deckRoute: options.deck,
         baseUrl: options.baseUrl,
+        preview: options.preview,
       })),
     );
   }

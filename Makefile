@@ -431,15 +431,18 @@ generate-all-docs: #? generate all documentation files.
 	$(activate_venv) && ./tools/generate_env_vars_docs.py
 
 build-explainer-packages: #? compile apps/explainers/decks-flow/*.flow into decks-generated packages
-	cd apps/aiperf-flow && npm run build:explainer-packages
+	cd apps/explainers && npm run build:explainer-packages
 
 assert-deck-packages: #? require decks-generated packages with narration + scene timelines
-	cd apps/aiperf-flow && npm run assert:deck-packages
+	cd apps/explainers && npm run assert:deck-packages
 
 assert-no-mentalmodel-registry: #? fail if deck-registry imports any MentalModel.tsx
-	cd apps/aiperf-flow && npm run assert:no-mentalmodel-registry
+	cd apps/explainers && npm run assert:no-mentalmodel-registry
 
-assert-explainer-packages: build-explainer-packages assert-deck-packages assert-no-mentalmodel-registry flow-verifier-ir #? build + gate flow-backed explainer packages (incl. IR verifier)
+assert-sdk-authoring: #? require native sdk.* authoring in decks-flow (strict)
+	cd apps/explainers && npm run assert:sdk-authoring -- --strict
+
+assert-explainer-packages: build-explainer-packages assert-deck-packages assert-no-mentalmodel-registry assert-sdk-authoring flow-verifier-ir #? build + gate flow-backed explainer packages (incl. IR verifier)
 
 flow-verifier-ir: #? IR playhead only (no Playwright)
 	cd apps/explainers && npm run flow-verifier:ir -- $(FLOW_VERIFIER_ARGS)

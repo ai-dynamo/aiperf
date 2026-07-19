@@ -24,6 +24,7 @@ export const theme = {
     editor: tokens.bg.page,
     chrome: tokens.bg.chrome,
     elevated: tokens.bg.elevated,
+    panel: tokens.bg.panel,
   },
   fill: { ...tokens.fill },
   stroke: { ...tokens.stroke },
@@ -124,6 +125,16 @@ export function Spacer() {
 
 export function Divider() {
   return <div className="ex-divider" />;
+}
+
+export function BrandMark() {
+  return (
+    <span className="ex-hub-mark" aria-hidden="true">
+      <span className="ex-hub-mark__bar" />
+      <span className="ex-hub-mark__bar" />
+      <span className="ex-hub-mark__bar" />
+    </span>
+  );
 }
 
 export function Text({
@@ -327,10 +338,10 @@ export function StartGate({
         <div className="ex-eyebrow ex-eyebrow--accent" style={{ marginBottom: 8 }}>
           AIPerf Explainers
         </div>
-        <div style={{ color: "var(--ex-text-primary)", fontSize: 28, fontWeight: 700, lineHeight: 1.25, marginBottom: 10 }}>
+        <div className="ex-gate__title">
           {title}
         </div>
-        <div style={{ color: "var(--ex-text-secondary)", fontSize: 18, lineHeight: 1.55, marginBottom: 22 }}>
+        <div className="ex-gate__description">
           Browsers block spoken audio until you click once. After that, slides advance and narrate automatically.
         </div>
         {speechAvailable ? (

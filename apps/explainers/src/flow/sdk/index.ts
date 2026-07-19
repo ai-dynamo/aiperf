@@ -9,6 +9,7 @@ export {
 } from "./provenance.js";
 export {
   AIPERF_SDK_COMPONENTS,
+  canonicalSdkComponentId,
   createSdkRegistry,
   GENERIC_SDK_COMPONENTS,
   lookupSdkComponent,

@@ -38,84 +38,112 @@ explainer "Velo deep dive" {
     caption: "endpoint → _hello → register_peer(controller)."
 
     render: @scene {
-      roots: [
-        {
-          id: "s0-hdr"
-          capability: "core.header"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "CONNECTION RESOLVE" }
-          title: "CONNECTION RESOLVE"
-          caption: "endpoint → _hello → register_peer(controller)."
+      sdk.Header(
+        id = "s0-hdr",
+        title = "CONNECTION RESOLVE",
+        caption = "endpoint → _hello → register_peer(controller).",
+        x = 18,
+        y = 16,
+        width = 664,
+        height = 44,
+        surfaceRole = theme(surface.primary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s0-cell",
+        title = "Cell k",
+        detail = "known coordinate",
+        x = 40,
+        y = 140,
+        width = 160,
+        height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "s0-a1",
+        mode = "connector",
+        from = { nodeId: "s0-cell", anchor: "e" },
+        to = { nodeId: "s0-velo", anchor: "w" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Label(
+        id = "s0-hello",
+        text = "_hello",
+        x = 225,
+        y = 152,
+        width = 50,
+        height = 16,
+        fontSize = 11,
+        weight = "bold",
+        align = "middle",
+        inkRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s0-velo",
+        title = "Velo transport",
+        detail = "resolve PeerInfo",
+        x = 300,
+        y = 140,
+        width = 170,
+        height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "s0-a2",
+        mode = "connector",
+        from = { nodeId: "s0-velo", anchor: "e" },
+        to = { nodeId: "s0-ctrl", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s0-ctrl",
+        title = "Controller",
+        detail = "register_peer",
+        x = 540,
+        y = 140,
+        width = 140,
+        height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Lane(id = "s0-src", title = "tcp:// · uds:// · SLURM_* · k8s", x = 210, y = 270, width = 280, height = 70) {
+        children {
+          sdk.Label(
+            id = "s0-src-detail",
+            text = "coordinate sources",
+            x = 16,
+            y = 36,
+            width = 248,
+            height = 18,
+            fontSize = 11,
+            align = "middle",
+            inkRole = theme(ink.secondary)
+          )
         }
-        {
-          id: "s0-cell"
-          capability: "core.panel"
-          layout: { x: 40, y: 140, width: 160, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "Cell k: known coordinate" }
-          title: "Cell k"
-          detail: "known coordinate"
-        }
-        { id: "s0-a1" capability: "core.connector" from: { nodeId: "s0-cell", anchor: "e" } to: { nodeId: "s0-velo", anchor: "w" } style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
-        { id: "s0-hello" capability: "core.text" text: "_hello" layout: { x: 225, y: 152, width: 50, height: 16 } style: { fontSize: 11, fontWeight: "bold", fill: @theme.ink.tertiary, textAnchor: "middle" } }
-        {
-          id: "s0-velo"
-          capability: "core.panel"
-          layout: { x: 300, y: 140, width: 170, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "Velo transport: resolve PeerInfo" }
-          title: "Velo transport"
-          detail: "resolve PeerInfo"
-        }
-        { id: "s0-a2" capability: "core.connector" from: { nodeId: "s0-velo", anchor: "e" } to: { nodeId: "s0-ctrl", anchor: "w" } style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s0-ctrl"
-          capability: "core.panel"
-          layout: { x: 540, y: 140, width: 140, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "Controller: register_peer" }
-          title: "Controller"
-          detail: "register_peer"
-        }
-        {
-          id: "s0-src"
-          capability: "core.lane"
-          title: "tcp:// · uds:// · SLURM_* · k8s"
-          layout: { x: 210, y: 270, width: 280, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          children: [
-            {
-              id: "s0-src-detail"
-              capability: "core.text"
-              text: "coordinate sources"
-              layout: { x: 16, y: 36, width: 248, height: 18 }
-              style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-            }
-          ]
-        }
+      }
+      sdk.Signal(
+        id = "s0-motion-sig",
+        path = "M110 175 H560",
+        opacity = 0.55,
+        strokeWidth = 2.2,
+        style = { stroke: theme(accent.secondary), fill: "none" }
+      )
 
-        {
-          id: "s0-motion-sig"
-          capability: "motion.signal"
-          d: "M110 175 H560"
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "s0-enter-hdr" at: 0 duration: 260 target: "s0-hdr" action: "enter" }
-        { id: "s0-enter-cell" at: 200 duration: 280 target: "s0-cell" action: "enter" }
-        { id: "s0-draw-a1" at: 420 duration: 360 target: "s0-a1" action: "draw" }
-        { id: "s0-enter-hello" at: 480 duration: 180 target: "s0-hello" action: "enter" }
-        { id: "s0-enter-velo" at: 620 duration: 280 target: "s0-velo" action: "enter" }
-        { id: "s0-draw-a2" at: 840 duration: 360 target: "s0-a2" action: "draw" }
-        { id: "s0-enter-ctrl" at: 1040 duration: 280 target: "s0-ctrl" action: "enter" }
-        { id: "s0-enter-src" at: 1280 duration: 260 target: "s0-src" action: "enter" }
-        { id: "s0-draw-motion" at: 1600 duration: 700 target: "s0-motion-sig" action: "draw" }
-        { id: "s0-emph" at: 2300 duration: 400 target: "s0-ctrl" action: "emphasis" }
-      ]
-    }
+      timeline main {
+        at 0 reveal s0-hdr duration 260
+        at 200 reveal s0-cell duration 280
+        at 420 trace s0-a1 duration 360
+        at 480 reveal s0-hello duration 180
+        at 620 reveal s0-velo duration 280
+        at 840 trace s0-a2 duration 360
+        at 1040 reveal s0-ctrl duration 280
+        at 1280 reveal s0-src duration 260
+        at 1600 trace s0-motion-sig duration 700
+        at 2300 reveal s0-ctrl duration 400
+      }
+  }
   }
 
   slide "The controller answers with the run envelope" {
@@ -135,77 +163,103 @@ explainer "Velo deep dive" {
     caption: "decode CellRegister → spec_for(cell_id) → RegisterReply."
 
     render: @scene {
-      roots: [
-        {
-          id: "s1-hdr"
-          capability: "core.header"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "REGISTRATION REPLY" }
-          title: "REGISTRATION REPLY"
-          caption: "decode CellRegister → spec_for(cell_id) → RegisterReply."
-        }
-        {
-          id: "s1-reg"
-          capability: "core.panel"
-          layout: { x: 30, y: 150, width: 150, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "CellRegister: cell_id: u32" }
-          title: "CellRegister"
-          detail: "cell_id: u32"
-        }
-        { id: "s1-a1" capability: "core.connector" from: { nodeId: "s1-reg", anchor: "e" } to: { nodeId: "s1-peer", anchor: "w" } style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s1-peer"
-          capability: "core.panel"
-          layout: { x: 225, y: 150, width: 150, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "register_peer: return route" }
-          title: "register_peer"
-          detail: "return route"
-        }
-        { id: "s1-a2" capability: "core.connector" from: { nodeId: "s1-peer", anchor: "e" } to: { nodeId: "s1-spec", anchor: "w" } style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s1-spec"
-          capability: "core.panel"
-          layout: { x: 420, y: 150, width: 150, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "spec_for(id): pure lookup" }
-          title: "spec_for(id)"
-          detail: "pure lookup"
-        }
-        { id: "s1-a4" capability: "core.connector" from: { nodeId: "s1-spec", anchor: "s" } to: { nodeId: "s1-reply", anchor: "n" } style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s1-reply"
-          capability: "core.panel"
-          layout: { x: 470, y: 280, width: 200, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "RegisterReply: envelope + start_event" }
-          title: "RegisterReply"
-          detail: "envelope + start_event"
-        }
+      sdk.Header(
+        id = "s1-hdr",
+        title = "REGISTRATION REPLY",
+        caption = "decode CellRegister → spec_for(cell_id) → RegisterReply.",
+        x = 18,
+        y = 16,
+        width = 664,
+        height = 44,
+        surfaceRole = theme(surface.primary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s1-reg",
+        title = "CellRegister",
+        detail = "cell_id: u32",
+        x = 30,
+        y = 150,
+        width = 150,
+        height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s1-a1",
+        mode = "connector",
+        from = { nodeId: "s1-reg", anchor: "e" },
+        to = { nodeId: "s1-peer", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s1-peer",
+        title = "register_peer",
+        detail = "return route",
+        x = 225,
+        y = 150,
+        width = 150,
+        height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s1-a2",
+        mode = "connector",
+        from = { nodeId: "s1-peer", anchor: "e" },
+        to = { nodeId: "s1-spec", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s1-spec",
+        title = "spec_for(id)",
+        detail = "pure lookup",
+        x = 420,
+        y = 150,
+        width = 150,
+        height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s1-a4",
+        mode = "connector",
+        from = { nodeId: "s1-spec", anchor: "s" },
+        to = { nodeId: "s1-reply", anchor: "n" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s1-reply",
+        title = "RegisterReply",
+        detail = "envelope + start_event",
+        x = 470,
+        y = 280,
+        width = 200,
+        height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Signal(
+        id = "s1-motion-sig",
+        path = "M110 170 H560",
+        opacity = 0.55,
+        strokeWidth = 2.2,
+        style = { stroke: theme(accent.secondary), fill: "none" }
+      )
 
-        {
-          id: "s1-motion-sig"
-          capability: "motion.signal"
-          d: "M110 170 H560"
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "s1-enter-hdr" at: 0 duration: 260 target: "s1-hdr" action: "enter" }
-        { id: "s1-enter-reg" at: 200 duration: 260 target: "s1-reg" action: "enter" }
-        { id: "s1-draw-a1" at: 400 duration: 300 target: "s1-a1" action: "draw" }
-        { id: "s1-enter-peer" at: 560 duration: 260 target: "s1-peer" action: "enter" }
-        { id: "s1-draw-a2" at: 760 duration: 300 target: "s1-a2" action: "draw" }
-        { id: "s1-enter-spec" at: 920 duration: 260 target: "s1-spec" action: "enter" }
-        { id: "s1-draw-a4" at: 1240 duration: 300 target: "s1-a4" action: "draw" }
-        { id: "s1-enter-reply" at: 1400 duration: 280 target: "s1-reply" action: "enter" }
-        { id: "s1-draw-motion" at: 1720 duration: 700 target: "s1-motion-sig" action: "draw" }
-        { id: "s1-emph" at: 2420 duration: 400 target: "s1-reply" action: "emphasis" }
-      ]
-    }
+      timeline main {
+        at 0 reveal s1-hdr duration 260
+        at 200 reveal s1-reg duration 260
+        at 400 trace s1-a1 duration 300
+        at 560 reveal s1-peer duration 260
+        at 760 trace s1-a2 duration 300
+        at 920 reveal s1-spec duration 260
+        at 1240 trace s1-a4 duration 300
+        at 1400 reveal s1-reply duration 280
+        at 1720 trace s1-motion-sig duration 700
+        at 2420 reveal s1-reply duration 400
+      }
+  }
   }
 
   slide "Asynchronous arrival, one release" {
@@ -225,98 +279,145 @@ explainer "Velo deep dive" {
     caption: "N registrations → trigger → all awaiters go Ready."
 
     render: @scene {
-      roots: [
-        {
-          id: "s2-hdr"
-          capability: "core.header"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "SYNCHRONIZED START" }
-          title: "SYNCHRONIZED START"
-          caption: "N registrations → trigger → all awaiters go Ready."
-        }
-        {
-          id: "s2-c0"
-          capability: "core.panel"
-          layout: { x: 30, y: 280, width: 80, height: 60 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "c0: register" }
-          title: "c0"
-          detail: "register"
-        }
-        {
-          id: "s2-c1"
-          capability: "core.panel"
-          layout: { x: 130, y: 280, width: 80, height: 60 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "c1: register" }
-          title: "c1"
-          detail: "register"
-        }
-        {
-          id: "s2-c2"
-          capability: "core.panel"
-          layout: { x: 230, y: 280, width: 80, height: 60 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "c2: register" }
-          title: "c2"
-          detail: "register"
-        }
-        {
-          id: "s2-c3"
-          capability: "core.panel"
-          layout: { x: 330, y: 280, width: 80, height: 60 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "c3: register" }
-          title: "c3"
-          detail: "register"
-        }
-        { id: "s2-a0" capability: "core.path" d: "M70 280 C70 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
-        { id: "s2-a1" capability: "core.path" d: "M170 280 C170 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
-        { id: "s2-a2" capability: "core.path" d: "M270 280 C270 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
-        { id: "s2-a3" capability: "core.path" d: "M370 280 C370 230 350 220 460 190" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s2-barrier"
-          capability: "core.panel"
-          layout: { x: 460, y: 150, width: 180, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "Barrier: all_registered → trigger" }
-          title: "Barrier"
-          detail: "all_registered → trigger"
-        }
-        {
-          id: "s2-start"
-          capability: "core.panel"
-          layout: { x: 210, y: 110, width: 220, height: 54 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "START event: wake all awaiters" }
-          title: "START event"
-          detail: "wake all awaiters"
-        }
-        { id: "s2-aw" capability: "core.path" d: "M550 150 C520 120 470 130 430 137" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
+      sdk.Header(
+        id = "s2-hdr",
+        title = "SYNCHRONIZED START",
+        caption = "N registrations → trigger → all awaiters go Ready.",
+        x = 18,
+        y = 16,
+        width = 664,
+        height = 44,
+        surfaceRole = theme(surface.primary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s2-c0",
+        title = "c0",
+        detail = "register",
+        x = 30,
+        y = 280,
+        width = 80,
+        height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "s2-c1",
+        title = "c1",
+        detail = "register",
+        x = 130,
+        y = 280,
+        width = 80,
+        height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "s2-c2",
+        title = "c2",
+        detail = "register",
+        x = 230,
+        y = 280,
+        width = 80,
+        height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "s2-c3",
+        title = "c3",
+        detail = "register",
+        x = 330,
+        y = 280,
+        width = 80,
+        height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s2-a0",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M70 280 C70 230 350 220 460 190",
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Edge(
+        id = "s2-a1",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M170 280 C170 230 350 220 460 190",
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Edge(
+        id = "s2-a2",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M270 280 C270 230 350 220 460 190",
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Edge(
+        id = "s2-a3",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M370 280 C370 230 350 220 460 190",
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s2-barrier",
+        title = "Barrier",
+        detail = "all_registered → trigger",
+        x = 460,
+        y = 150,
+        width = 180,
+        height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s2-start",
+        title = "START event",
+        detail = "wake all awaiters",
+        x = 210,
+        y = 110,
+        width = 220,
+        height = 54,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s2-aw",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M550 150 C520 120 470 130 430 137",
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Signal(
+        id = "s2-motion-sig",
+        path = "M350 300 V150",
+        opacity = 0.55,
+        strokeWidth = 2.2,
+        style = { stroke: theme(accent.secondary), fill: "none" }
+      )
 
-        {
-          id: "s2-motion-sig"
-          capability: "motion.signal"
-          d: "M350 300 V150"
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "s2-enter-hdr" at: 0 duration: 260 target: "s2-hdr" action: "enter" }
-        { id: "s2-enter-c0" at: 200 duration: 220 target: "s2-c0" action: "stagger" targets: ["s2-c0", "s2-c1", "s2-c2", "s2-c3"] step: 100 }
-        { id: "s2-draw-a0" at: 620 duration: 360 target: "s2-a0" action: "draw" }
-        { id: "s2-draw-a1" at: 740 duration: 360 target: "s2-a1" action: "draw" }
-        { id: "s2-draw-a2" at: 860 duration: 360 target: "s2-a2" action: "draw" }
-        { id: "s2-draw-a3" at: 980 duration: 360 target: "s2-a3" action: "draw" }
-        { id: "s2-enter-barrier" at: 1100 duration: 280 target: "s2-barrier" action: "enter" }
-        { id: "s2-draw-aw" at: 1320 duration: 320 target: "s2-aw" action: "draw" }
-        { id: "s2-enter-start" at: 1480 duration: 260 target: "s2-start" action: "enter" }
-        { id: "s2-draw-motion" at: 1800 duration: 700 target: "s2-motion-sig" action: "draw" }
-        { id: "s2-emph" at: 2500 duration: 400 target: "s2-barrier" action: "emphasis" }
-      ]
-    }
+      timeline main {
+        at 0 reveal s2-hdr duration 260
+        at 200 stagger targets [s2-c0, s2-c1, s2-c2, s2-c3] step 100 duration 220
+        at 620 trace s2-a0 duration 360
+        at 740 trace s2-a1 duration 360
+        at 860 trace s2-a2 duration 360
+        at 980 trace s2-a3 duration 360
+        at 1100 reveal s2-barrier duration 280
+        at 1320 trace s2-aw duration 320
+        at 1480 reveal s2-start duration 260
+        at 1800 trace s2-motion-sig duration 700
+        at 2500 reveal s2-barrier duration 400
+      }
+  }
   }
 
   slide "Typed state becomes raw payload bytes" {
@@ -336,77 +437,103 @@ explainer "Velo deep dive" {
     caption: "to_vec → raw payload → from_slice → typed value."
 
     render: @scene {
-      roots: [
-        {
-          id: "s3-hdr"
-          capability: "core.header"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "MESSAGEPACK CODEC" }
-          title: "MESSAGEPACK CODEC"
-          caption: "to_vec → raw payload → from_slice → typed value."
-        }
-        {
-          id: "s3-msg"
-          capability: "core.panel"
-          layout: { x: 30, y: 150, width: 150, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "CellMessage: ttft: NaN · max +∞" }
-          title: "CellMessage"
-          detail: "ttft: NaN · max +∞"
-        }
-        { id: "s3-a1" capability: "core.connector" from: { nodeId: "s3-msg", anchor: "e" } to: { nodeId: "s3-vec", anchor: "w" } style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s3-vec"
-          capability: "core.panel"
-          layout: { x: 225, y: 150, width: 130, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "to_vec: rmp_serde" }
-          title: "to_vec"
-          detail: "rmp_serde"
-        }
-        { id: "s3-a2" capability: "core.connector" from: { nodeId: "s3-vec", anchor: "e" } to: { nodeId: "s3-raw", anchor: "w" } style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s3-raw"
-          capability: "core.panel"
-          layout: { x: 400, y: 150, width: 130, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "raw bytes: Velo payload" }
-          title: "raw bytes"
-          detail: "Velo payload"
-        }
-        { id: "s3-a4" capability: "core.connector" from: { nodeId: "s3-raw", anchor: "s" } to: { nodeId: "s3-from", anchor: "n" } style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s3-from"
-          capability: "core.panel"
-          layout: { x: 555, y: 280, width: 130, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "from_slice: typed again" }
-          title: "from_slice"
-          detail: "typed again"
-        }
+      sdk.Header(
+        id = "s3-hdr",
+        title = "MESSAGEPACK CODEC",
+        caption = "to_vec → raw payload → from_slice → typed value.",
+        x = 18,
+        y = 16,
+        width = 664,
+        height = 44,
+        surfaceRole = theme(surface.primary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s3-msg",
+        title = "CellMessage",
+        detail = "ttft: NaN · max +∞",
+        x = 30,
+        y = 150,
+        width = 150,
+        height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "s3-a1",
+        mode = "connector",
+        from = { nodeId: "s3-msg", anchor: "e" },
+        to = { nodeId: "s3-vec", anchor: "w" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s3-vec",
+        title = "to_vec",
+        detail = "rmp_serde",
+        x = 225,
+        y = 150,
+        width = 130,
+        height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "s3-a2",
+        mode = "connector",
+        from = { nodeId: "s3-vec", anchor: "e" },
+        to = { nodeId: "s3-raw", anchor: "w" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s3-raw",
+        title = "raw bytes",
+        detail = "Velo payload",
+        x = 400,
+        y = 150,
+        width = 130,
+        height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s3-a4",
+        mode = "connector",
+        from = { nodeId: "s3-raw", anchor: "s" },
+        to = { nodeId: "s3-from", anchor: "n" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s3-from",
+        title = "from_slice",
+        detail = "typed again",
+        x = 555,
+        y = 280,
+        width = 130,
+        height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Signal(
+        id = "s3-motion-sig",
+        path = "M90 180 H600",
+        opacity = 0.55,
+        strokeWidth = 2.2,
+        style = { stroke: theme(accent.secondary), fill: "none" }
+      )
 
-        {
-          id: "s3-motion-sig"
-          capability: "motion.signal"
-          d: "M90 180 H600"
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "s3-enter-hdr" at: 0 duration: 260 target: "s3-hdr" action: "enter" }
-        { id: "s3-enter-msg" at: 200 duration: 260 target: "s3-msg" action: "enter" }
-        { id: "s3-draw-a1" at: 400 duration: 300 target: "s3-a1" action: "draw" }
-        { id: "s3-enter-vec" at: 560 duration: 260 target: "s3-vec" action: "enter" }
-        { id: "s3-draw-a2" at: 760 duration: 300 target: "s3-a2" action: "draw" }
-        { id: "s3-enter-raw" at: 920 duration: 260 target: "s3-raw" action: "enter" }
-        { id: "s3-draw-a4" at: 1280 duration: 300 target: "s3-a4" action: "draw" }
-        { id: "s3-enter-from" at: 1440 duration: 260 target: "s3-from" action: "enter" }
-        { id: "s3-draw-motion" at: 1760 duration: 700 target: "s3-motion-sig" action: "draw" }
-        { id: "s3-emph" at: 2460 duration: 400 target: "s3-raw" action: "emphasis" }
-      ]
-    }
+      timeline main {
+        at 0 reveal s3-hdr duration 260
+        at 200 reveal s3-msg duration 260
+        at 400 trace s3-a1 duration 300
+        at 560 reveal s3-vec duration 260
+        at 760 trace s3-a2 duration 300
+        at 920 reveal s3-raw duration 260
+        at 1280 trace s3-a4 duration 300
+        at 1440 reveal s3-from duration 260
+        at 1760 trace s3-motion-sig duration 700
+        at 2460 reveal s3-raw duration 400
+      }
+  }
   }
 
   slide "One fire-and-forget snapshot before the ship" {
@@ -426,77 +553,116 @@ explainer "Velo deep dive" {
     caption: "one snapshot, shipped once → live cross-cell aggregate."
 
     render: @scene {
-      roots: [
-        {
-          id: "s4-hdr"
-          capability: "core.header"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "HEARTBEAT LANE" }
-          title: "HEARTBEAT LANE"
-          caption: "one snapshot, shipped once → live cross-cell aggregate."
-        }
-        {
-          id: "s4-c0"
-          capability: "core.panel"
-          layout: { x: 40, y: 100, width: 140, height: 64 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "cell 0: snapshot" }
-          title: "cell 0"
-          detail: "snapshot"
-        }
-        {
-          id: "s4-c1"
-          capability: "core.panel"
-          layout: { x: 40, y: 190, width: 140, height: 64 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "cell 1: snapshot" }
-          title: "cell 1"
-          detail: "snapshot"
-        }
-        {
-          id: "s4-c2"
-          capability: "core.panel"
-          layout: { x: 40, y: 280, width: 140, height: 64 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.orange, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "cell 2: snapshot, ships last" }
-          title: "cell 2"
-          detail: "snapshot, ships last"
-        }
-        { id: "s4-a0" capability: "core.path" d: "M180 132 C300 132 360 200 440 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
-        { id: "s4-a1" capability: "core.path" d: "M180 222 C300 222 360 200 440 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
-        { id: "s4-a2" capability: "core.path" d: "M180 312 C300 312 360 200 440 200" style: { stroke: @theme.accent.orange, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s4-agg"
-          capability: "core.panel"
-          layout: { x: 440, y: 160, width: 220, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "Controller aggregate: counters + sketches · merged" }
-          title: "Controller aggregate"
-          detail: "counters + sketches · merged"
-        }
-        { id: "s4-note" capability: "core.text" text: "fire-and-forget · shipped once, right before the partition" layout: { x: 110, y: 348, width: 400, height: 16 } style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "start" } }
+      sdk.Header(
+        id = "s4-hdr",
+        title = "HEARTBEAT LANE",
+        caption = "one snapshot, shipped once → live cross-cell aggregate.",
+        x = 18,
+        y = 16,
+        width = 664,
+        height = 44,
+        surfaceRole = theme(surface.primary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s4-c0",
+        title = "cell 0",
+        detail = "snapshot",
+        x = 40,
+        y = 70,
+        width = 140,
+        height = 64,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "s4-c1",
+        title = "cell 1",
+        detail = "snapshot",
+        x = 40,
+        y = 160,
+        width = 140,
+        height = 64,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "s4-c2",
+        title = "cell 2",
+        detail = "snapshot, ships last",
+        x = 40,
+        y = 250,
+        width = 140,
+        height = 64,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.orange)
+      )
+      sdk.Edge(
+        id = "s4-a0",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M180 102 C300 102 360 200 440 200",
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Edge(
+        id = "s4-a1",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M180 192 C300 192 360 200 440 200",
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Edge(
+        id = "s4-a2",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M180 282 C300 282 360 200 440 200",
+        style = { stroke: theme(accent.orange), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s4-agg",
+        title = "Controller aggregate",
+        detail = "counters + sketches · merged",
+        x = 440,
+        y = 160,
+        width = 220,
+        height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Label(
+        id = "s4-note",
+        text = "fire-and-forget · shipped once, right before the partition",
+        x = 110,
+        y = 318,
+        width = 400,
+        height = 16,
+        fontSize = 12,
+        align = "start",
+        inkRole = theme(ink.tertiary)
+      )
+      sdk.Signal(
+        id = "s4-motion-sig",
+        path = "M120 130 H560",
+        opacity = 0.55,
+        strokeWidth = 2.2,
+        style = { stroke: theme(accent.secondary), fill: "none" }
+      )
 
-        {
-          id: "s4-motion-sig"
-          capability: "motion.signal"
-          d: "M120 130 H560"
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "s4-enter-hdr" at: 0 duration: 260 target: "s4-hdr" action: "enter" }
-        { id: "s4-enter-c0" at: 200 duration: 240 target: "s4-c0" action: "stagger" targets: ["s4-c0", "s4-c1", "s4-c2"] step: 120 }
-        { id: "s4-draw-a0" at: 620 duration: 360 target: "s4-a0" action: "draw" }
-        { id: "s4-draw-a1" at: 760 duration: 360 target: "s4-a1" action: "draw" }
-        { id: "s4-draw-a2" at: 900 duration: 360 target: "s4-a2" action: "draw" }
-        { id: "s4-enter-agg" at: 1100 duration: 280 target: "s4-agg" action: "enter" }
-        { id: "s4-enter-note" at: 1320 duration: 200 target: "s4-note" action: "enter" }
-        { id: "s4-draw-motion" at: 1600 duration: 700 target: "s4-motion-sig" action: "draw" }
-        { id: "s4-emph" at: 2300 duration: 400 target: "s4-agg" action: "emphasis" }
-      ]
-    }
+      timeline main {
+        at 0 reveal s4-hdr duration 260
+        at 200 stagger targets [s4-c0, s4-c1, s4-c2] step 120 duration 240
+        at 620 trace s4-a0 duration 360
+        at 760 trace s4-a1 duration 360
+        at 900 trace s4-a2 duration 360
+        at 1100 reveal s4-agg duration 280
+        at 1320 reveal s4-note duration 200
+        at 1600 trace s4-motion-sig duration 700
+        at 2300 reveal s4-agg duration 400
+      }
+  }
   }
 
   slide "Ship the terminal partition home" {
@@ -516,77 +682,104 @@ explainer "Velo deep dive" {
     caption: "ship peer + partition → register_peer(shipper) → CellAck."
 
     render: @scene {
-      roots: [
-        {
-          id: "s5-hdr"
-          capability: "core.header"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "PARTITION SHIP" }
-          title: "PARTITION SHIP"
-          caption: "ship peer + partition → register_peer(shipper) → CellAck."
-        }
-        {
-          id: "s5-fin"
-          capability: "core.panel"
-          layout: { x: 30, y: 150, width: 160, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "Finished cell: ship peer + partition" }
-          title: "Finished cell"
-          detail: "ship peer + partition"
-        }
-        { id: "s5-a1" capability: "core.connector" from: { nodeId: "s5-fin", anchor: "e" } to: { nodeId: "s5-pay", anchor: "w" } style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s5-pay"
-          capability: "core.panel"
-          layout: { x: 250, y: 150, width: 150, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "unary payload: fresh PeerInfo" }
-          title: "unary payload"
-          detail: "fresh PeerInfo"
-        }
-        { id: "s5-a2" capability: "core.connector" from: { nodeId: "s5-pay", anchor: "e" } to: { nodeId: "s5-ctrl", anchor: "w" } style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s5-ctrl"
-          capability: "core.panel"
-          layout: { x: 460, y: 150, width: 200, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "Controller: register_peer(shipper)" }
-          title: "Controller"
-          detail: "register_peer(shipper)"
-        }
-        { id: "s5-a3" capability: "core.path" d: "M560 230 C560 290 300 300 190 290" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s5-ack"
-          capability: "core.panel"
-          layout: { x: 210, y: 280, width: 130, height: 54 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "CellAck: delivered" }
-          title: "CellAck"
-          detail: "delivered"
-        }
+      sdk.Header(
+        id = "s5-hdr",
+        title = "PARTITION SHIP",
+        caption = "ship peer + partition → register_peer(shipper) → CellAck.",
+        x = 18,
+        y = 16,
+        width = 664,
+        height = 44,
+        surfaceRole = theme(surface.primary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s5-fin",
+        title = "Finished cell",
+        detail = "ship peer + partition",
+        x = 30,
+        y = 150,
+        width = 160,
+        height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s5-a1",
+        mode = "connector",
+        from = { nodeId: "s5-fin", anchor: "e" },
+        to = { nodeId: "s5-pay", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s5-pay",
+        title = "unary payload",
+        detail = "fresh PeerInfo",
+        x = 250,
+        y = 150,
+        width = 150,
+        height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "s5-a2",
+        mode = "connector",
+        from = { nodeId: "s5-pay", anchor: "e" },
+        to = { nodeId: "s5-ctrl", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s5-ctrl",
+        title = "Controller",
+        detail = "register_peer(shipper)",
+        x = 460,
+        y = 150,
+        width = 200,
+        height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s5-a3",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M560 230 C560 290 300 300 190 290",
+        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s5-ack",
+        title = "CellAck",
+        detail = "delivered",
+        x = 210,
+        y = 280,
+        width = 130,
+        height = 54,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Signal(
+        id = "s5-motion-sig",
+        path = "M110 180 H590",
+        opacity = 0.55,
+        strokeWidth = 2.2,
+        style = { stroke: theme(accent.secondary), fill: "none" }
+      )
 
-        {
-          id: "s5-motion-sig"
-          capability: "motion.signal"
-          d: "M110 180 H590"
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "s5-enter-hdr" at: 0 duration: 260 target: "s5-hdr" action: "enter" }
-        { id: "s5-enter-fin" at: 200 duration: 260 target: "s5-fin" action: "enter" }
-        { id: "s5-draw-a1" at: 400 duration: 320 target: "s5-a1" action: "draw" }
-        { id: "s5-enter-pay" at: 580 duration: 260 target: "s5-pay" action: "enter" }
-        { id: "s5-draw-a2" at: 780 duration: 320 target: "s5-a2" action: "draw" }
-        { id: "s5-enter-ctrl" at: 960 duration: 280 target: "s5-ctrl" action: "enter" }
-        { id: "s5-draw-a3" at: 1180 duration: 420 target: "s5-a3" action: "draw" }
-        { id: "s5-enter-ack" at: 1460 duration: 260 target: "s5-ack" action: "enter" }
-        { id: "s5-draw-motion" at: 1780 duration: 700 target: "s5-motion-sig" action: "draw" }
-        { id: "s5-emph" at: 2480 duration: 400 target: "s5-ack" action: "emphasis" }
-      ]
-    }
+      timeline main {
+        at 0 reveal s5-hdr duration 260
+        at 200 reveal s5-fin duration 260
+        at 400 trace s5-a1 duration 320
+        at 580 reveal s5-pay duration 260
+        at 780 trace s5-a2 duration 320
+        at 960 reveal s5-ctrl duration 280
+        at 1180 trace s5-a3 duration 420
+        at 1460 reveal s5-ack duration 260
+        at 1780 trace s5-motion-sig duration 700
+        at 2480 reveal s5-ack duration 400
+      }
+  }
   }
 
   slide "Feed the associative reduction center" {
@@ -606,98 +799,144 @@ explainer "Velo deep dive" {
     caption: "records → global-order sort · stores → append + merge."
 
     render: @scene {
-      roots: [
-        {
-          id: "s6-hdr"
-          capability: "core.header"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "MERGE CENTER" }
-          title: "MERGE CENTER"
-          caption: "records → global-order sort · stores → append + merge."
-        }
-        {
-          id: "s6-p0"
-          capability: "core.panel"
-          layout: { x: 30, y: 90, width: 130, height: 52 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "partition 0: records" }
-          title: "partition 0"
-          detail: "records"
-        }
-        {
-          id: "s6-p1"
-          capability: "core.panel"
-          layout: { x: 30, y: 158, width: 130, height: 52 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "partition 1: store" }
-          title: "partition 1"
-          detail: "store"
-        }
-        {
-          id: "s6-p2"
-          capability: "core.panel"
-          layout: { x: 30, y: 226, width: 130, height: 52 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "partition 2: records" }
-          title: "partition 2"
-          detail: "records"
-        }
-        {
-          id: "s6-p3"
-          capability: "core.panel"
-          layout: { x: 30, y: 294, width: 130, height: 52 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "partition 3: store" }
-          title: "partition 3"
-          detail: "store"
-        }
-        { id: "s6-a0" capability: "core.path" d: "M160 116 C280 116 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
-        { id: "s6-a1" capability: "core.path" d: "M160 184 C280 184 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
-        { id: "s6-a2" capability: "core.path" d: "M160 252 C280 252 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
-        { id: "s6-a3" capability: "core.path" d: "M160 320 C280 320 340 200 420 200" style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s6-merge"
-          capability: "core.panel"
-          layout: { x: 420, y: 160, width: 150, height: 80 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "Merge center: associative fold" }
-          title: "Merge center"
-          detail: "associative fold"
-        }
-        { id: "s6-a5" capability: "core.route" from: { nodeId: "s6-merge", anchor: "s" } to: { nodeId: "s6-one", anchor: "n" } style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s6-one"
-          capability: "core.panel"
-          layout: { x: 520, y: 290, width: 160, height: 60 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "one result: order · append · merge" }
-          title: "one result"
-          detail: "order · append · merge"
-        }
+      sdk.Header(
+        id = "s6-hdr",
+        title = "MERGE CENTER",
+        caption = "records → global-order sort · stores → append + merge.",
+        x = 18,
+        y = 16,
+        width = 664,
+        height = 44,
+        surfaceRole = theme(surface.primary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s6-p0",
+        title = "partition 0",
+        detail = "records",
+        x = 30,
+        y = 90,
+        width = 130,
+        height = 52,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "s6-p1",
+        title = "partition 1",
+        detail = "store",
+        x = 30,
+        y = 158,
+        width = 130,
+        height = 52,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "s6-p2",
+        title = "partition 2",
+        detail = "records",
+        x = 30,
+        y = 226,
+        width = 130,
+        height = 52,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "s6-p3",
+        title = "partition 3",
+        detail = "store",
+        x = 30,
+        y = 294,
+        width = 130,
+        height = 52,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "s6-a0",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M160 116 C280 116 340 200 420 200",
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Edge(
+        id = "s6-a1",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M160 184 C280 184 340 200 420 200",
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Edge(
+        id = "s6-a2",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M160 252 C280 252 340 200 420 200",
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Edge(
+        id = "s6-a3",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M160 320 C280 320 340 200 420 200",
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s6-merge",
+        title = "Merge center",
+        detail = "associative fold",
+        x = 420,
+        y = 160,
+        width = 150,
+        height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "s6-a5",
+        mode = "route",
+        from = { nodeId: "s6-merge", anchor: "s" },
+        to = { nodeId: "s6-one", anchor: "n" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s6-one",
+        title = "one result",
+        detail = "order · append · merge",
+        x = 520,
+        y = 290,
+        width = 160,
+        height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Signal(
+        id = "s6-motion-sig",
+        path = "M110 175 H560",
+        opacity = 0.55,
+        strokeWidth = 2.2,
+        style = { stroke: theme(accent.secondary), fill: "none" }
+      )
 
-        {
-          id: "s6-motion-sig"
-          capability: "motion.signal"
-          d: "M110 175 H560"
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "s6-enter-hdr" at: 0 duration: 260 target: "s6-hdr" action: "enter" }
-        { id: "s6-enter-p0" at: 180 duration: 220 target: "s6-p0" action: "stagger" targets: ["s6-p0", "s6-p1", "s6-p2", "s6-p3"] step: 100 }
-        { id: "s6-draw-a0" at: 620 duration: 340 target: "s6-a0" action: "draw" }
-        { id: "s6-draw-a1" at: 740 duration: 340 target: "s6-a1" action: "draw" }
-        { id: "s6-draw-a2" at: 860 duration: 340 target: "s6-a2" action: "draw" }
-        { id: "s6-draw-a3" at: 980 duration: 340 target: "s6-a3" action: "draw" }
-        { id: "s6-enter-merge" at: 1120 duration: 280 target: "s6-merge" action: "enter" }
-        { id: "s6-draw-a5" at: 1480 duration: 280 target: "s6-a5" action: "draw" }
-        { id: "s6-enter-one" at: 1640 duration: 260 target: "s6-one" action: "enter" }
-        { id: "s6-draw-motion" at: 1960 duration: 700 target: "s6-motion-sig" action: "draw" }
-        { id: "s6-emph" at: 2660 duration: 400 target: "s6-merge" action: "emphasis" }
-      ]
-    }
+      timeline main {
+        at 0 reveal s6-hdr duration 260
+        at 180 stagger targets [s6-p0, s6-p1, s6-p2, s6-p3] step 100 duration 220
+        at 620 trace s6-a0 duration 340
+        at 740 trace s6-a1 duration 340
+        at 860 trace s6-a2 duration 340
+        at 980 trace s6-a3 duration 340
+        at 1120 reveal s6-merge duration 280
+        at 1480 trace s6-a5 duration 280
+        at 1640 reveal s6-one duration 260
+        at 1960 trace s6-motion-sig duration 700
+        at 2660 reveal s6-merge duration 400
+      }
+  }
   }
 
   slide "Replay the prefix, then live push" {
@@ -717,93 +956,129 @@ explainer "Velo deep dive" {
     caption: "attach → reply replay ≤ g · live push > g."
 
     render: @scene {
-      roots: [
-        {
-          id: "s7-hdr"
-          capability: "core.header"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "PHASER REPLAY" }
-          title: "PHASER REPLAY"
-          caption: "attach → reply replay ≤ g · live push > g."
-        }
-        {
-          id: "s7-g1"
-          capability: "core.panel"
-          layout: { x: 30, y: 110, width: 80, height: 56 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "g1: replay" }
-          title: "g1"
-          detail: "replay"
-        }
-        {
-          id: "s7-g2"
-          capability: "core.panel"
-          layout: { x: 125, y: 110, width: 80, height: 56 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "g2: replay" }
-          title: "g2"
-          detail: "replay"
-        }
-        {
-          id: "s7-g3"
-          capability: "core.panel"
-          layout: { x: 220, y: 110, width: 80, height: 56 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "g3: replay" }
-          title: "g3"
-          detail: "replay"
-        }
-        {
-          id: "s7-g4"
-          capability: "core.panel"
-          layout: { x: 315, y: 110, width: 80, height: 56 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "g4: live" }
-          title: "g4"
-          detail: "live"
-        }
-        {
-          id: "s7-g5"
-          capability: "core.panel"
-          layout: { x: 410, y: 110, width: 80, height: 56 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "g5: live" }
-          title: "g5"
-          detail: "live"
-        }
-        {
-          id: "s7-attach"
-          capability: "core.panel"
-          layout: { x: 220, y: 250, width: 180, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "attach @ g3: capture boundary" }
-          title: "attach @ g3"
-          detail: "capture boundary"
-        }
-        { id: "s7-a1" capability: "core.path" d: "M310 250 C310 210 250 190 200 168" style: { stroke: @theme.accent.warning, strokeWidth: 2.2, fill: "none" } }
-        { id: "s7-a2" capability: "core.path" d: "M400 260 C480 240 500 200 510 168" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
-        { id: "s7-note" capability: "core.text" text: "reply replays ≤ g3 · active-message pushes > g3" layout: { x: 150, y: 340, width: 420, height: 16 } style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "start" } }
+      sdk.Header(
+        id = "s7-hdr",
+        title = "PHASER REPLAY",
+        caption = "attach → reply replay ≤ g · live push > g.",
+        x = 18,
+        y = 16,
+        width = 664,
+        height = 44,
+        surfaceRole = theme(surface.primary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s7-g1",
+        title = "g1",
+        detail = "replay",
+        x = 30,
+        y = 110,
+        width = 80,
+        height = 56,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s7-g2",
+        title = "g2",
+        detail = "replay",
+        x = 125,
+        y = 110,
+        width = 80,
+        height = 56,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s7-g3",
+        title = "g3",
+        detail = "replay",
+        x = 220,
+        y = 110,
+        width = 80,
+        height = 56,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s7-g4",
+        title = "g4",
+        detail = "live",
+        x = 315,
+        y = 110,
+        width = 80,
+        height = 56,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "s7-g5",
+        title = "g5",
+        detail = "live",
+        x = 410,
+        y = 110,
+        width = 80,
+        height = 56,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "s7-attach",
+        title = "attach @ g3",
+        detail = "capture boundary",
+        x = 220,
+        y = 250,
+        width = 180,
+        height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s7-a1",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M310 250 C310 210 250 190 200 168",
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Edge(
+        id = "s7-a2",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M400 260 C480 240 500 200 510 168",
+        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Label(
+        id = "s7-note",
+        text = "reply replays ≤ g3 · active-message pushes > g3",
+        x = 150,
+        y = 340,
+        width = 420,
+        height = 16,
+        fontSize = 12,
+        align = "start",
+        inkRole = theme(ink.tertiary)
+      )
+      sdk.Signal(
+        id = "s7-motion-sig",
+        path = "M110 130 H590",
+        opacity = 0.55,
+        strokeWidth = 2.2,
+        style = { stroke: theme(accent.secondary), fill: "none" }
+      )
 
-        {
-          id: "s7-motion-sig"
-          capability: "motion.signal"
-          d: "M110 130 H590"
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "s7-enter-hdr" at: 0 duration: 260 target: "s7-hdr" action: "enter" }
-        { id: "s7-enter-g1" at: 180 duration: 220 target: "s7-g1" action: "stagger" targets: ["s7-g1", "s7-g2", "s7-g3", "s7-g4", "s7-g5"] step: 100 }
-        { id: "s7-enter-attach" at: 760 duration: 280 target: "s7-attach" action: "enter" }
-        { id: "s7-draw-a1" at: 980 duration: 360 target: "s7-a1" action: "draw" }
-        { id: "s7-draw-a2" at: 1140 duration: 360 target: "s7-a2" action: "draw" }
-        { id: "s7-enter-note" at: 1400 duration: 200 target: "s7-note" action: "enter" }
-        { id: "s7-draw-motion" at: 1680 duration: 700 target: "s7-motion-sig" action: "draw" }
-        { id: "s7-emph" at: 2380 duration: 400 target: "s7-attach" action: "emphasis" }
-      ]
-    }
+      timeline main {
+        at 0 reveal s7-hdr duration 260
+        at 180 stagger targets [s7-g1, s7-g2, s7-g3, s7-g4, s7-g5] step 100 duration 220
+        at 760 reveal s7-attach duration 280
+        at 980 trace s7-a1 duration 360
+        at 1140 trace s7-a2 duration 360
+        at 1400 reveal s7-note duration 200
+        at 1680 trace s7-motion-sig duration 700
+        at 2380 reveal s7-attach duration 400
+      }
+  }
   }
 
   slide "Broadcast once, retain by modulo" {
@@ -823,89 +1098,126 @@ explainer "Velo deep dive" {
     caption: "publish chunk → replay + live · keep id % cells == cell_id."
 
     render: @scene {
-      roots: [
-        {
-          id: "s8-hdr"
-          capability: "core.header"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "DATASET FLOODGATE" }
-          title: "DATASET FLOODGATE"
-          caption: "publish chunk → replay + live · keep id % cells == cell_id."
-        }
-        {
-          id: "s8-chunk"
-          capability: "core.panel"
-          layout: { x: 30, y: 140, width: 140, height: 90 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "chunk stream: MessagePack + zstd" }
-          title: "chunk stream"
-          detail: "MessagePack + zstd"
-        }
-        { id: "s8-a0" capability: "core.connector" from: { nodeId: "s8-chunk", anchor: "e" } to: { nodeId: "s8-bcast", anchor: "w" } style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s8-bcast"
-          capability: "core.panel"
-          layout: { x: 230, y: 150, width: 120, height: 70 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "broadcast: publish once" }
-          title: "broadcast"
-          detail: "publish once"
-        }
-        {
-          id: "s8-c0"
-          capability: "core.panel"
-          layout: { x: 430, y: 90, width: 230, height: 64 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "cell 0: keep id % 3 == 0" }
-          title: "cell 0"
-          detail: "keep id % 3 == 0"
-        }
-        { id: "s8-a1" capability: "core.path" d: "M350 185 C390 122 400 122 430 122" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s8-c1"
-          capability: "core.panel"
-          layout: { x: 430, y: 180, width: 230, height: 64 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "cell 1: keep id % 3 == 1" }
-          title: "cell 1"
-          detail: "keep id % 3 == 1"
-        }
-        { id: "s8-a2" capability: "core.path" d: "M350 185 C390 212 400 212 430 212" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
-        {
-          id: "s8-c2"
-          capability: "core.panel"
-          layout: { x: 430, y: 270, width: 230, height: 64 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "cell 2: keep id % 3 == 2" }
-          title: "cell 2"
-          detail: "keep id % 3 == 2"
-        }
-        { id: "s8-a3" capability: "core.path" d: "M350 185 C390 302 400 302 430 302" style: { stroke: @theme.accent.green, strokeWidth: 2.2, fill: "none" } }
+      sdk.Header(
+        id = "s8-hdr",
+        title = "DATASET FLOODGATE",
+        caption = "publish chunk → replay + live · keep id % cells == cell_id.",
+        x = 18,
+        y = 16,
+        width = 664,
+        height = 44,
+        surfaceRole = theme(surface.primary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s8-chunk",
+        title = "chunk stream",
+        detail = "MessagePack + zstd",
+        x = 30,
+        y = 140,
+        width = 140,
+        height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s8-a0",
+        mode = "connector",
+        from = { nodeId: "s8-chunk", anchor: "e" },
+        to = { nodeId: "s8-bcast", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s8-bcast",
+        title = "broadcast",
+        detail = "publish once",
+        x = 230,
+        y = 150,
+        width = 120,
+        height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "s8-c0",
+        title = "cell 0",
+        detail = "keep id % 3 == 0",
+        x = 430,
+        y = 90,
+        width = 230,
+        height = 64,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s8-a1",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M350 185 C390 122 400 122 430 122",
+        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s8-c1",
+        title = "cell 1",
+        detail = "keep id % 3 == 1",
+        x = 430,
+        y = 180,
+        width = 230,
+        height = 64,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s8-a2",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M350 185 C390 212 400 212 430 212",
+        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s8-c2",
+        title = "cell 2",
+        detail = "keep id % 3 == 2",
+        x = 430,
+        y = 270,
+        width = 230,
+        height = 64,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s8-a3",
+        mode = "path",
+        from = { x: 0, y: 0 },
+        to = { x: 0, y: 0 },
+        path = "M350 185 C390 302 400 302 430 302",
+        style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Signal(
+        id = "s8-motion-sig",
+        path = "M120 175 H560",
+        opacity = 0.55,
+        strokeWidth = 2.2,
+        style = { stroke: theme(accent.secondary), fill: "none" }
+      )
 
-        {
-          id: "s8-motion-sig"
-          capability: "motion.signal"
-          d: "M120 175 H560"
-          style: { stroke: @theme.accent.secondary, strokeWidth: 2.2, fill: "none", opacity: 0.55 }
-          accessibility: { label: "motion signal" }
-        }
-      ]
-      timeline: [
-        { id: "s8-enter-hdr" at: 0 duration: 260 target: "s8-hdr" action: "enter" }
-        { id: "s8-enter-chunk" at: 200 duration: 260 target: "s8-chunk" action: "enter" }
-        { id: "s8-draw-a0" at: 400 duration: 300 target: "s8-a0" action: "draw" }
-        { id: "s8-enter-bcast" at: 560 duration: 260 target: "s8-bcast" action: "enter" }
-        { id: "s8-draw-a1" at: 760 duration: 340 target: "s8-a1" action: "draw" }
-        { id: "s8-enter-c0" at: 920 duration: 240 target: "s8-c0" action: "enter" }
-        { id: "s8-draw-a2" at: 920 duration: 340 target: "s8-a2" action: "draw" }
-        { id: "s8-enter-c1" at: 1080 duration: 240 target: "s8-c1" action: "enter" }
-        { id: "s8-draw-a3" at: 1080 duration: 340 target: "s8-a3" action: "draw" }
-        { id: "s8-enter-c2" at: 1240 duration: 240 target: "s8-c2" action: "enter" }
-        { id: "s8-draw-motion" at: 1520 duration: 700 target: "s8-motion-sig" action: "draw" }
-        { id: "s8-emph" at: 2220 duration: 400 target: "s8-bcast" action: "emphasis" }
-      ]
-    }
+      timeline main {
+        at 0 reveal s8-hdr duration 260
+        at 200 reveal s8-chunk duration 260
+        at 400 trace s8-a0 duration 300
+        at 560 reveal s8-bcast duration 260
+        at 760 trace s8-a1 duration 340
+        at 920 reveal s8-c0 duration 240
+        at 920 trace s8-a2 duration 340
+        at 1080 reveal s8-c1 duration 240
+        at 1080 trace s8-a3 duration 340
+        at 1240 reveal s8-c2 duration 240
+        at 1520 trace s8-motion-sig duration 700
+        at 2220 reveal s8-bcast duration 400
+      }
+  }
   }
 
   slide "Collapse payload up a fold-only tree" {
@@ -925,180 +1237,214 @@ explainer "Velo deep dive" {
     caption: "fold: cells → aggregators → controller · retain stays flat."
 
     render: @scene {
-      roots: [
-        {
-          id: "s9-hdr"
-          capability: "core.header"
-          layout: { x: 18, y: 16, width: 664, height: 44 }
-          style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-          accessibility: { label: "AGGREGATOR TREE" }
-          title: "AGGREGATOR TREE"
-          caption: "fold: cells → aggregators → controller · retain stays flat."
-        }
-        {
-          id: "s9-ctrl"
-          capability: "core.panel"
-          layout: { x: 270, y: 90, width: 160, height: 64 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "Controller: one report" }
-          title: "Controller"
-          detail: "one report"
-        }
-        {
-          id: "s9-agg0"
-          capability: "core.panel"
-          layout: { x: 120, y: 210, width: 150, height: 60 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "aggregator 0: cells 0–3" }
-          title: "aggregator 0"
-          detail: "cells 0–3"
-        }
-        {
-          id: "s9-agg1"
-          capability: "core.panel"
-          layout: { x: 430, y: 210, width: 150, height: 60 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.warning, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "aggregator 1: cells 4–7" }
-          title: "aggregator 1"
-          detail: "cells 4–7"
-        }
-        {
-          id: "s9-agg-fan"
-          capability: "core.fan-in"
-          from: [
-            { nodeId: "s9-agg0", anchor: "n" },
-            { nodeId: "s9-agg1", anchor: "n" }
-          ]
-          to: { nodeId: "s9-ctrl", anchor: "s" }
-          axis: "y"
-          junction: { x: 350, y: 180 }
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
-        }
-        {
-          id: "s9-c0"
-          capability: "core.panel"
-          layout: { x: 30, y: 320, width: 70, height: 50 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "c0: store" }
-          title: "c0"
-          detail: "store"
-        }
-        {
-          id: "s9-c1"
-          capability: "core.panel"
-          layout: { x: 120, y: 320, width: 70, height: 50 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "c1: store" }
-          title: "c1"
-          detail: "store"
-        }
-        {
-          id: "s9-c2"
-          capability: "core.panel"
-          layout: { x: 210, y: 320, width: 70, height: 50 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "c2: store" }
-          title: "c2"
-          detail: "store"
-        }
-        {
-          id: "s9-c3"
-          capability: "core.panel"
-          layout: { x: 300, y: 320, width: 70, height: 50 }
-          style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.8, radius: 10 }
-          accessibility: { label: "c3: store" }
-          title: "c3"
-          detail: "store"
-        }
-        {
-          id: "s9-cell-fan"
-          capability: "core.fan-in"
-          from: [
-            { nodeId: "s9-c0", anchor: "n" },
-            { nodeId: "s9-c1", anchor: "n" },
-            { nodeId: "s9-c2", anchor: "n" },
-            { nodeId: "s9-c3", anchor: "n" }
-          ]
-          to: { nodeId: "s9-agg0", anchor: "s" }
-          axis: "y"
-          junction: { x: 195, y: 290 }
-          style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2, fill: "none" }
-        }
-        { id: "s9-note" capability: "core.text" text: "fold only · retain stays flat" layout: { x: 430, y: 340, width: 240, height: 16 } style: { fontSize: 12, fontWeight: "normal", fill: @theme.ink.tertiary, textAnchor: "start" } }
-      ]
-      timeline: [
-        { id: "s9-enter-hdr" at: 0 duration: 260 target: "s9-hdr" action: "enter" }
-        { id: "s9-enter-ctrl" at: 200 duration: 260 target: "s9-ctrl" action: "enter" }
-        { id: "s9-enter-agg0" at: 400 duration: 240 target: "s9-agg0" action: "stagger" targets: ["s9-agg0", "s9-agg1"] step: 100 }
-        { id: "s9-draw-agg-fan" at: 680 duration: 460 target: "s9-agg-fan" action: "draw" }
-        { id: "s9-enter-c0" at: 1000 duration: 200 target: "s9-c0" action: "stagger" targets: ["s9-c0", "s9-c1", "s9-c2", "s9-c3"] step: 80 }
-        { id: "s9-draw-cell-fan" at: 1360 duration: 600 target: "s9-cell-fan" action: "draw" }
-        { id: "s9-enter-note" at: 1800 duration: 200 target: "s9-note" action: "enter" }
-        { id: "s9-trace-cell-fan" at: 1960 duration: 820 target: "s9-cell-fan" action: "trace" }
-        { id: "s9-trace-agg-fan" at: 2220 duration: 560 target: "s9-agg-fan" action: "trace" }
-        { id: "s9-emph" at: 2780 duration: 400 target: "s9-ctrl" action: "emphasis" }
-      ]
-    }
+      sdk.Header(
+        id = "s9-hdr",
+        title = "AGGREGATOR TREE",
+        caption = "fold: cells → aggregators → controller · retain stays flat.",
+        x = 18,
+        y = 16,
+        width = 664,
+        height = 44,
+        surfaceRole = theme(surface.primary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s9-ctrl",
+        title = "Controller",
+        detail = "one report",
+        x = 270,
+        y = 90,
+        width = 160,
+        height = 64,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "s9-agg0",
+        title = "aggregator 0",
+        detail = "cells 0–3",
+        x = 120,
+        y = 210,
+        width = 150,
+        height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s9-agg1",
+        title = "aggregator 1",
+        detail = "cells 4–7",
+        x = 430,
+        y = 210,
+        width = 150,
+        height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.FanIn(
+        id = "s9-agg-fan",
+        from = [{ nodeId: "s9-agg0", anchor: "n" }, { nodeId: "s9-agg1", anchor: "n" }],
+        to = { nodeId: "s9-ctrl", anchor: "s" },
+        axis = "y",
+        junction = { x: 350, y: 180 },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Panel(
+        id = "s9-c0",
+        title = "c0",
+        detail = "store",
+        x = 30,
+        y = 320,
+        width = 70,
+        height = 50,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "s9-c1",
+        title = "c1",
+        detail = "store",
+        x = 120,
+        y = 320,
+        width = 70,
+        height = 50,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "s9-c2",
+        title = "c2",
+        detail = "store",
+        x = 210,
+        y = 320,
+        width = 70,
+        height = 50,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "s9-c3",
+        title = "c3",
+        detail = "store",
+        x = 300,
+        y = 320,
+        width = 70,
+        height = 50,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.FanIn(
+        id = "s9-cell-fan",
+        from = [{ nodeId: "s9-c0", anchor: "n" }, { nodeId: "s9-c1", anchor: "n" }, { nodeId: "s9-c2", anchor: "n" }, { nodeId: "s9-c3", anchor: "n" }],
+        to = { nodeId: "s9-agg0", anchor: "s" },
+        axis = "y",
+        junction = { x: 195, y: 290 },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2, fill: "none" }
+      )
+      sdk.Label(
+        id = "s9-note",
+        text = "fold only · retain stays flat",
+        x = 430,
+        y = 340,
+        width = 240,
+        height = 16,
+        fontSize = 12,
+        align = "start",
+        inkRole = theme(ink.tertiary)
+      )
+
+      timeline main {
+        at 0 reveal s9-hdr duration 260
+        at 200 reveal s9-ctrl duration 260
+        at 400 stagger targets [s9-agg0, s9-agg1] step 100 duration 240
+        at 680 trace s9-agg-fan duration 460
+        at 1000 stagger targets [s9-c0, s9-c1, s9-c2, s9-c3] step 80 duration 200
+        at 1360 trace s9-cell-fan duration 600
+        at 1800 reveal s9-note duration 200
+        at 1960 trace s9-cell-fan duration 820
+        at 2220 trace s9-agg-fan duration 560
+        at 2780 reveal s9-ctrl duration 400
+      }
+  }
   }
 
   finalCard: @scene {
-    roots: [
-      {
-        id: "final-hdr"
-        capability: "core.header"
-        layout: { x: 18, y: 16, width: 664, height: 44 }
-        style: { fill: @theme.surface.primary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-        accessibility: { label: "Live evidence files" }
-        title: "Live evidence files"
-        caption: "velo transport"
-        },
-      {
-        id: "f1"
-        capability: "core.panel"
-        layout: { x: 40, y: 72, width: 620, height: 40 }
-        style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.4, radius: 8 }
-        title: "rust/runtime/src/cellular/transport/mod.rs"
-      },
-      {
-        id: "f2"
-        capability: "core.panel"
-        layout: { x: 40, y: 120, width: 620, height: 40 }
-        style: { fill: @theme.surface.elevated, stroke: @theme.accent.green, strokeWidth: 1.4, radius: 8 }
-        title: "rust/runtime/src/cellular/transport/velo_transport.rs"
-      },
-      {
-        id: "f3"
-        capability: "core.panel"
-        layout: { x: 40, y: 168, width: 620, height: 40 }
-        style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.4, radius: 8 }
-        title: "rust/runtime/src/cellular/transport/phaser_velo.rs"
-      },
-      {
-        id: "f4"
-        capability: "core.panel"
-        layout: { x: 40, y: 216, width: 620, height: 40 }
-        style: { fill: @theme.surface.elevated, stroke: @theme.accent.secondary, strokeWidth: 1.4, radius: 8 }
-        title: "rust/runtime/src/cellular/transport/dataset_velo.rs"
-      },
-      {
-        id: "f5"
-        capability: "core.panel"
-        layout: { x: 40, y: 264, width: 620, height: 40 }
-        style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.4, radius: 8 }
-        title: "rust/runtime/src/cellular/heartbeat.rs"
-      },
-      {
-        id: "f6"
-        capability: "core.panel"
-        layout: { x: 40, y: 312, width: 620, height: 40 }
-        style: { fill: @theme.surface.elevated, stroke: @theme.accent.tertiary, strokeWidth: 1.4, radius: 8 }
-        title: "rust/runtime/src/cellular/shard.rs"
-      },
-    ]
-    timeline: [
-      { id: "enter-fh" at: 0 duration: 260 target: "final-hdr" action: "enter" },
-      { id: "enter-f1" at: 120 duration: 220 target: "f1" action: "stagger" targets: ["f1", "f2", "f3", "f4", "f5", "f6"] step: 100 },
-      { id: "emph-f" at: 900 duration: 360 target: "f1" action: "emphasis" }
-    ]
+      sdk.Header(
+        id = "final-hdr",
+        title = "Live evidence files",
+        caption = "velo transport",
+        x = 18,
+        y = 16,
+        width = 664,
+        height = 44,
+        surfaceRole = theme(surface.primary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "f1",
+        title = "rust/runtime/src/cellular/transport/mod.rs",
+        x = 40,
+        y = 72,
+        width = 620,
+        height = 40,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "f2",
+        title = "rust/runtime/src/cellular/transport/velo_transport.rs",
+        x = 40,
+        y = 120,
+        width = 620,
+        height = 40,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "f3",
+        title = "rust/runtime/src/cellular/transport/phaser_velo.rs",
+        x = 40,
+        y = 168,
+        width = 620,
+        height = 40,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "f4",
+        title = "rust/runtime/src/cellular/transport/dataset_velo.rs",
+        x = 40,
+        y = 216,
+        width = 620,
+        height = 40,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "f5",
+        title = "rust/runtime/src/cellular/heartbeat.rs",
+        x = 40,
+        y = 264,
+        width = 620,
+        height = 40,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "f6",
+        title = "rust/runtime/src/cellular/shard.rs",
+        x = 40,
+        y = 312,
+        width = 620,
+        height = 40,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+
+      timeline main {
+        at 0 reveal final-hdr duration 260
+        at 120 stagger targets [f1, f2, f3, f4, f5, f6] step 100 duration 220
+        at 900 reveal f1 duration 360
+      }
   }
 }

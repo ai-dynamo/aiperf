@@ -7,54 +7,55 @@
  * Visual tokens for explainers chrome and diagram defaults.
  * Keep hex values in sync with `:root` custom properties in `index.css`.
  *
- * Green walkthrough skin: solid green = current, soft green = done.
- * Layering (dark → light): page < chrome/stage < elevated/box.
+ * Systems-atlas skin: NVIDIA greens on a restrained graphite frame.
+ * Layering (dark → light): page < chrome < elevated stage.
  */
 export const tokens = {
   text: {
-    primary: "#F4F4F5",
-    secondary: "#A1A1AA",
-    tertiary: "#71717A",
-    quaternary: "#52525B",
-    link: "#86EFAC",
-    onAccent: "#052e16",
+    primary: "#F1F2F4",
+    secondary: "#A7AAB4",
+    tertiary: "#747985",
+    quaternary: "#4F535E",
+    link: "#B8D95A",
+    onAccent: "#090A0D",
   },
   bg: {
-    page: "#09090B",
-    chrome: "#0F0F12",
-    elevated: "#18181B",
+    page: "#08090B",
+    chrome: "#0D0E12",
+    elevated: "#14151A",
+    panel: "#20242A",
   },
   fill: {
-    primary: "rgba(244, 244, 245, 0.14)",
-    secondary: "rgba(244, 244, 245, 0.09)",
-    tertiary: "rgba(244, 244, 245, 0.05)",
-    quaternary: "rgba(244, 244, 245, 0.03)",
+    primary: "rgba(241, 242, 244, 0.12)",
+    secondary: "rgba(241, 242, 244, 0.075)",
+    tertiary: "rgba(241, 242, 244, 0.045)",
+    quaternary: "rgba(241, 242, 244, 0.025)",
   },
   stroke: {
-    primary: "rgba(244, 244, 245, 0.22)",
-    secondary: "rgba(244, 244, 245, 0.12)",
-    tertiary: "rgba(244, 244, 245, 0.07)",
+    primary: "rgba(218, 221, 230, 0.22)",
+    secondary: "rgba(218, 221, 230, 0.11)",
+    tertiary: "rgba(218, 221, 230, 0.06)",
   },
   accent: {
-    primary: "#3FA266",
-    control: "#3FA266",
+    primary: "#76B900",
+    control: "#4DB7C5",
   },
   category: {
-    green: "#3FA266",
-    yellow: "#EAB308",
-    purple: "#A78BFA",
-    blue: "#60A5FA",
-    red: "#FB7185",
-    orange: "#FB923C",
-    cyan: "#22D3EE",
-    gray: "#8A8A8A",
+    green: "#A5C63B",
+    yellow: "#D6B84A",
+    purple: "#8CCB5E",
+    blue: "#669BC4",
+    red: "#C95F73",
+    orange: "#C9864D",
+    cyan: "#4DB7C5",
+    gray: "#7E838E",
   },
   radius: {
-    control: 10,
-    card: 20,
-    stage: 16,
+    control: 999,
+    card: 6,
+    stage: 5,
     pill: 999,
-    box: 14,
+    box: 5,
   },
   diagram: {
     strokeWidth: 1.6,

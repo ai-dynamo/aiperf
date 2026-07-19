@@ -9,7 +9,7 @@ import {
   SceneRenderer,
   type SceneIrLike,
 } from "./diagram/SceneRenderer";
-import { usePrefersReducedMotion } from "./diagram/usePrefersReducedMotion";
+import type { FinalCardProps } from "./types";
 import { Card, CardBody, CardHeader, Pill, Stack } from "./ui";
 
 /**
@@ -56,7 +56,7 @@ export function hasRenderableFinalCard(
  */
 export function finalCardFromScene(
   finalCard: SceneFinalCardRender | undefined,
-): (() => ReactNode) | undefined {
+): ((props: FinalCardProps) => ReactNode) | undefined {
   if (!hasRenderableFinalCard(finalCard)) {
     return undefined;
   }
@@ -72,15 +72,20 @@ export function finalCardFromScene(
     return undefined;
   }
 
-  return function FinalCard(): ReactNode {
-    const reducedMotion = usePrefersReducedMotion();
+  return function FinalCard({
+    playing = true,
+    restartKey = 0,
+    reducedMotion = false,
+    playbackRate = 1,
+  }: FinalCardProps): ReactNode {
     const diagram =
       scene !== undefined ? (
         <SceneRenderer
           scene={scene}
-          playing
-          restartKey={0}
+          playing={playing}
+          restartKey={restartKey}
           reducedMotion={reducedMotion}
+          playbackRate={playbackRate}
         />
       ) : null;
 

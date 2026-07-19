@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { usePrefersReducedMotion } from "./diagram/usePrefersReducedMotion";
 import {
@@ -23,7 +23,9 @@ import {
   useTimedSlideshow,
 } from "./useTimedSlideshow";
 import { useSpeechVoices } from "./useSpeechVoices";
+import { useIdleChrome, usePresentMode } from "./usePresentationMode";
 import {
+  BrandMark,
   Button,
   Pill,
   StartGate,
@@ -75,6 +77,10 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
     : DEFAULT_PLAYBACK_SPEED;
   const [started, setStarted] = useState(false);
   const [restartKey, setRestartKey] = useState(0);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const { presenting, togglePresent } = usePresentMode(shellRef);
+  const { chromeVisible, revealChrome } = useIdleChrome(started, notesOpen);
   const reducedMotion = usePrefersReducedMotion();
   const voices = useSpeechVoices();
   const index = Number.isInteger(stored) && stored >= 0 && stored < slides.length ? stored : 0;
@@ -132,6 +138,21 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
     setStarted(true);
     setPlaying(true);
     bumpRestart();
+    revealChrome();
+  };
+
+  const togglePlayback = () => {
+    if (playing) {
+      stopNarration();
+      setPlaying(false);
+      return;
+    }
+    unlockSpeech();
+    const nextIndex = index === slides.length - 1 ? 0 : index;
+    if (nextIndex !== index) setStored(nextIndex);
+    setStarted(true);
+    setPlaying(true);
+    bumpRestart();
   };
 
   const onKeyDown = (event: {
@@ -149,13 +170,31 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
       event.preventDefault();
       goTo(index + 1);
     }
+    if (event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      void togglePresent();
+    }
+    if (event.key === " ") {
+      event.preventDefault();
+      togglePlayback();
+    }
   };
 
   return (
     <div
-      className={`ex-page ex-shell ${classPrefix}-page`}
+      ref={shellRef}
+      className={[
+        "ex-page",
+        "ex-shell",
+        presenting ? "ex-shell--present" : "",
+        started && !chromeVisible ? "ex-shell--chrome-hidden" : "",
+        `${classPrefix}-page`,
+      ]
+        .filter(Boolean)
+        .join(" ")}
       tabIndex={0}
       onKeyDown={onKeyDown}
+      onPointerDown={revealChrome}
     >
       <style>{deck.css}</style>
       {!started ? (
@@ -170,8 +209,9 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
         />
       ) : null}
 
-      <header className="ex-topbar">
+      <header className="ex-topbar ex-chrome ex-chrome--top">
         <div className="ex-topbar__brand">
+          <BrandMark />
           <Link to="/" className="ex-link ex-link--muted">
             ← Home
           </Link>
@@ -181,19 +221,7 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
           <Button
             className="ex-btn--ghost"
             variant="secondary"
-            onClick={() => {
-              if (playing) {
-                stopNarration();
-                setPlaying(false);
-                return;
-              }
-              unlockSpeech();
-              const nextIndex = index === slides.length - 1 ? 0 : index;
-              if (nextIndex !== index) setStored(nextIndex);
-              setStarted(true);
-              setPlaying(true);
-              bumpRestart();
-            }}
+            onClick={togglePlayback}
           >
             {playing ? "Pause" : index === slides.length - 1 ? "Replay" : "Play"}
           </Button>
@@ -228,105 +256,40 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
               ))}
             </div>
           </div>
+          <Button
+            className="ex-btn--present"
+            variant="secondary"
+            onClick={() => void togglePresent()}
+          >
+            {presenting ? "Exit present" : "Present"}
+          </Button>
         </div>
       </header>
 
-      <nav className="ex-stepper" aria-label="Slide steps">
+      <nav className="ex-progress ex-chrome ex-chrome--progress" aria-label="Slide steps">
         {slides.map((entry, i) => {
           const state = i < index ? "done" : i === index ? "current" : "todo";
           return (
-            <div
+            <button
+              type="button"
               key={`${entry.title}-${i}`}
-              className={`ex-stepper__item ex-stepper__item--${state}`}
+              className={`ex-progress__segment ex-progress__segment--${state}`}
+              title={`${i + 1}. ${stepLabel(entry)}`}
+              aria-label={`Go to slide ${i + 1}: ${entry.title}`}
+              aria-current={i === index ? "step" : undefined}
+              onClick={() => goTo(i)}
             >
-              <button
-                type="button"
-                className="ex-stepper__node"
-                title={entry.title}
-                aria-current={i === index ? "step" : undefined}
-                onClick={() => goTo(i)}
-              >
-                <span className="ex-stepper__dot">{i + 1}</span>
-                <span className="ex-stepper__label">{stepLabel(entry)}</span>
-              </button>
-              {i < slides.length - 1 ? (
-                <span className="ex-stepper__connector" aria-hidden="true" />
-              ) : null}
-            </div>
+              <span className="ex-progress__fill" />
+            </button>
           );
         })}
       </nav>
 
-      <div
+      <main
         key={`slide-${index}-${restartKey}`}
-        className={`ex-content-card ${classPrefix}-slide`}
+        className={`ex-content-card ex-cinematic-stage ${classPrefix}-slide`}
       >
-        <div className={`ex-content-card__copy ${classPrefix}-hero`}>
-          <div className="ex-eyebrow ex-eyebrow--accent">
-            {pad2(index + 1)} / {pad2(slides.length)} · {slide.eyebrow}
-          </div>
-          <h1 className="ex-slide-title">{slide.title}</h1>
-          <p className={`${classPrefix}-lede ex-lede`} style={{ margin: 0 }}>
-            {slide.lede}
-          </p>
-          {slide.term ? (
-            <div className="ex-term">
-              <div className="ex-term__word">{slide.term.word}</div>
-              <div className="ex-term__meaning">{slide.term.meaning}</div>
-            </div>
-          ) : null}
-          <div className={`ex-points ${classPrefix}-points`}>
-            {slide.points.map((point) => (
-              <div key={point} className={`ex-point ${classPrefix}-point`}>
-                <span className="ex-point__mark">·</span>
-                <span>{point}</span>
-              </div>
-            ))}
-          </div>
-
-          {started ? (
-            <Subtitles
-              text={slide.narration}
-              activeWordIndex={activeWordIndex}
-              visible
-            />
-          ) : null}
-
-          <details className="ex-more">
-            <summary>Voice &amp; timing</summary>
-            <div className="ex-more__body">
-              <VoicePicker
-                voices={voices}
-                selectedVoiceURI={voiceURI}
-                speechAvailable={speechAvailable}
-                onVoiceSelect={(next) => {
-                  unlockSpeech();
-                  setVoiceURI(next);
-                  if (started && !narrationEnabled) setNarrationEnabled(true);
-                }}
-              />
-              <div className="ex-duration">
-                Slide ~{formatSlideDuration(slide.narration, speed)} · total{" "}
-                {formatSlideshowDuration(narrations, speed)}
-              </div>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  unlockSpeech();
-                  stopNarration();
-                  setStored(0);
-                  setStarted(true);
-                  setPlaying(true);
-                  bumpRestart();
-                }}
-              >
-                Restart from beginning
-              </Button>
-            </div>
-          </details>
-        </div>
-
-        <div className={`ex-content-card__diagram ${classPrefix}-stage`}>
+        <div className={`ex-content-card__diagram ex-stage-hero ${classPrefix}-stage`}>
           <MentalModel
             slideIndex={index}
             slide={slide}
@@ -336,11 +299,28 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
             playbackRate={speed}
           />
         </div>
-      </div>
 
-      {index === slides.length - 1 && FinalCard ? <FinalCard /> : null}
+        <section className={`ex-content-card__copy ex-stage-copy ${classPrefix}-hero`}>
+          <div className="ex-eyebrow ex-eyebrow--accent">
+            {pad2(index + 1)} / {pad2(slides.length)} · {slide.eyebrow}
+          </div>
+          <h1 className="ex-slide-title">{slide.title}</h1>
+          <p className={`${classPrefix}-lede ex-lede`} style={{ margin: 0 }}>
+            {slide.lede}
+          </p>
+        </section>
+      </main>
 
-      <div className="ex-bottom-nav">
+      {index === slides.length - 1 && FinalCard ? (
+        <FinalCard
+          playing={started && playing}
+          restartKey={restartKey}
+          reducedMotion={reducedMotion}
+          playbackRate={speed}
+        />
+      ) : null}
+
+      <div className="ex-bottom-nav ex-chrome ex-chrome--bottom">
         <div className="ex-bottom-nav__back">
           <Button variant="secondary" disabled={index === 0} onClick={() => goTo(index - 1)}>
             ← Back
@@ -359,6 +339,84 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
           </Button>
         </div>
       </div>
+
+      <Button
+        className="ex-notes-toggle"
+        variant="secondary"
+        onClick={() => setNotesOpen((open) => !open)}
+      >
+        {notesOpen ? "Close notes" : "Speaker notes"}
+      </Button>
+
+      {notesOpen ? (
+        <aside className="ex-speaker-notes" aria-label="Speaker notes">
+          <div className="ex-speaker-notes__header">
+            <div>
+              <div className="ex-eyebrow ex-eyebrow--accent">
+                Slide {pad2(index + 1)} notes
+              </div>
+              <div className="ex-speaker-notes__title">{slide.title}</div>
+            </div>
+            <Button variant="secondary" onClick={() => setNotesOpen(false)}>
+              Close
+            </Button>
+          </div>
+          <div className="ex-speaker-notes__body">
+            {slide.term ? (
+              <div className="ex-term">
+                <div className="ex-term__word">{slide.term.word}</div>
+                <div className="ex-term__meaning">{slide.term.meaning}</div>
+              </div>
+            ) : null}
+            <div className={`ex-points ${classPrefix}-points`}>
+              {slide.points.map((point) => (
+                <div key={point} className={`ex-point ${classPrefix}-point`}>
+                  <span className="ex-point__mark">·</span>
+                  <span>{point}</span>
+                </div>
+              ))}
+            </div>
+            {slide.caption ? <p className="ex-speaker-notes__caption">{slide.caption}</p> : null}
+            <Subtitles
+              text={slide.narration}
+              activeWordIndex={activeWordIndex}
+              visible={started}
+            />
+            <details className="ex-more">
+              <summary>Voice &amp; timing</summary>
+              <div className="ex-more__body">
+                <VoicePicker
+                  voices={voices}
+                  selectedVoiceURI={voiceURI}
+                  speechAvailable={speechAvailable}
+                  onVoiceSelect={(next) => {
+                    unlockSpeech();
+                    setVoiceURI(next);
+                    if (started && !narrationEnabled) setNarrationEnabled(true);
+                  }}
+                />
+                <div className="ex-duration">
+                  Slide ~{formatSlideDuration(slide.narration, speed)} · total{" "}
+                  {formatSlideshowDuration(narrations, speed)}
+                </div>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    unlockSpeech();
+                    stopNarration();
+                    setStored(0);
+                    setStarted(true);
+                    setPlaying(true);
+                    bumpRestart();
+                  }}
+                >
+                  Restart from beginning
+                </Button>
+              </div>
+            </details>
+          </div>
+        </aside>
+      ) : null}
     </div>
   );
 }

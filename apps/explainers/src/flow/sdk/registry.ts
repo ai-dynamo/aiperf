@@ -9,6 +9,7 @@ import { AIPERF_ARCHITECTURE_COMPONENTS } from "./aiperf/architecture.js";
 import { AIPERF_EXECUTION_COMPONENTS } from "./aiperf/execution.js";
 import { AIPERF_METRICS_COMPONENTS } from "./aiperf/metrics.js";
 import { GENERIC_CHROME_COMPONENTS } from "./generic/chrome.js";
+import { GENERIC_COMPOSITE_SDK_COMPONENTS } from "./generic/composites.js";
 import { GENERIC_LAYOUT_SDK_COMPONENTS } from "./generic/layout.js";
 import { GENERIC_MOTION_SDK_COMPONENTS } from "./generic/motion.js";
 import { GENERIC_TOPOLOGY_SDK_COMPONENTS } from "./generic/topology.js";
@@ -96,6 +97,26 @@ function symbolExportFromId(id: string): string {
   return segment.charAt(0).toUpperCase() + segment.slice(1);
 }
 
+/**
+ * Normalizes an authored component id to the registry's canonical lowercase-first
+ * form (e.g. `sdk.Panel` → `sdk.panel`, `sdk.FanOut` → `sdk.fanOut`).
+ *
+ * Native parsing requires capitalized `ComponentIdentifier` tokens after a
+ * namespace qualifier; registry ids use camelCase with a lowercase initial.
+ */
+export function canonicalSdkComponentId(id: string): string {
+  const dot = id.indexOf(".");
+  if (dot < 0) {
+    return id.length === 0 ? id : id.charAt(0).toLowerCase() + id.slice(1);
+  }
+  const namespace = id.slice(0, dot);
+  const name = id.slice(dot + 1);
+  if (name.length === 0) {
+    return id;
+  }
+  return `${namespace}.${name.charAt(0).toLowerCase()}${name.slice(1)}`;
+}
+
 function createSdkDescriptor(id: string): ComponentDescriptor {
   return {
     id,
@@ -149,6 +170,7 @@ const GENERIC_IMPLEMENTATIONS = indexDefinitions([
   ...GENERIC_LAYOUT_SDK_COMPONENTS,
   ...GENERIC_TOPOLOGY_SDK_COMPONENTS,
   ...GENERIC_MOTION_SDK_COMPONENTS,
+  ...GENERIC_COMPOSITE_SDK_COMPONENTS,
 ]);
 
 /** Generic SDK pack component definitions. */
@@ -176,7 +198,8 @@ function buildRegistry(
   const byId = new Map(components.map((entry) => [entry.descriptor.id, entry]));
   return {
     components,
-    lookup: (id: string) => byId.get(id),
+    lookup: (id: string) =>
+      byId.get(id) ?? byId.get(canonicalSdkComponentId(id)),
   };
 }
 

@@ -58,6 +58,7 @@ import type {
   SdkActionName,
   SdkRegistry,
 } from "../sdk/index.js";
+import { canonicalSdkComponentId } from "../sdk/registry.js";
 import {
   buildActionIndex,
   expandSdkInvocation,
@@ -175,9 +176,11 @@ function isNativeEmbeddedSource(
 }
 
 function componentIdOf(invocation: ComponentInvocationAst): string {
-  return invocation.namespace !== undefined
-    ? `${invocation.namespace}.${invocation.name}`
-    : invocation.name;
+  const raw =
+    invocation.namespace !== undefined
+      ? `${invocation.namespace}.${invocation.name}`
+      : invocation.name;
+  return canonicalSdkComponentId(raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -645,6 +648,14 @@ function lowerFreeformBlock(
 // targets through the action index where they resolve.
 // ---------------------------------------------------------------------------
 
+/**
+ * Maps authored timeline action words onto the SDK's public action vocabulary.
+ *
+ * Native cinematic cues author `reveal` / `trace` / `fade` / `exit`; package
+ * decks additionally author `enter` / `draw` / `emphasis` / `pulse`. Both
+ * dialects normalize onto the `SdkActionName` a component instance publishes
+ * so an authored cue can be expanded through the instance's action bindings.
+ */
 const SDK_TIMELINE_ACTION_ALIASES: Readonly<Record<string, SdkActionName>> = {
   reveal: "enter",
   enter: "enter",
@@ -658,37 +669,162 @@ const SDK_TIMELINE_ACTION_ALIASES: Readonly<Record<string, SdkActionName>> = {
   fade: "fade",
 };
 
+/** Default inter-step delay for the `standardReveal` timeline template. */
+const DEFAULT_REVEAL_STEP = 240;
+/** Default per-cue duration for the `standardReveal` timeline template. */
+const DEFAULT_REVEAL_DURATION = 480;
+
+/** Collects every generated / freeform node id in a scene's root subtree. */
+function collectNodeIds(
+  roots: readonly RenderNodeIr[],
+  into: Set<string>,
+): Set<string> {
+  for (const node of roots) {
+    into.add(node.id);
+    if (node.kind === "group" || node.kind === "component") {
+      collectNodeIds(node.children, into);
+    }
+  }
+  return into;
+}
+
+/** Human-readable hint listing the actions an instance publishes. */
+function supportedActionsHint(
+  instanceActions: ReadonlyMap<SdkActionName, readonly string[]>,
+): string {
+  const supported = [...instanceActions.keys()];
+  return supported.length > 0
+    ? `Supported actions for this component instance: ${supported.join(", ")}.`
+    : "This component instance exposes no timeline actions.";
+}
+
+/** Human-readable hint listing the component instances available for targeting. */
+function availableInstancesHint(actionIndex: SdkActionIndex): string {
+  const instances = [...actionIndex.keys()];
+  return instances.length > 0
+    ? `Target a component instance (${instances.join(", ")}) or an existing node id.`
+    : "Target an existing scene node id.";
+}
+
+/**
+ * Fans one authored instance/action cue out to concrete generated node ids.
+ *
+ * Emits one internal cue per bound node id (stable, index-suffixed ids when an
+ * action binds multiple targets). Fails closed — recording a diagnostic and
+ * emitting nothing — when the instance is unknown or the action is not one the
+ * instance publishes, so refactors that change generated ids never silently
+ * drop authored motion.
+ */
+function pushInstanceActionCues(
+  cues: TimelineCueIr[],
+  diagnostics: Diagnostic[],
+  params: Readonly<{
+    instanceId: string;
+    action: SdkActionName;
+    at: number;
+    duration: number;
+    baseId: string;
+    easing?: TimelineCueIr["easing"];
+    actionIndex: SdkActionIndex;
+    sourceMap: SourceRange;
+  }>,
+): void {
+  const instanceActions = params.actionIndex.get(params.instanceId);
+  if (instanceActions === undefined) {
+    diagnostics.push(
+      diagnostic(
+        "SDK_TIMELINE_UNKNOWN_TARGET",
+        "error",
+        `Timeline targets unknown SDK component instance "${params.instanceId}".`,
+        params.sourceMap,
+        availableInstancesHint(params.actionIndex),
+      ),
+    );
+    return;
+  }
+  const bound = instanceActions.get(params.action);
+  if (bound === undefined || bound.length === 0) {
+    diagnostics.push(
+      diagnostic(
+        "SDK_TIMELINE_UNSUPPORTED_ACTION",
+        "error",
+        `SDK component instance "${params.instanceId}" does not support timeline action "${params.action}".`,
+        params.sourceMap,
+        supportedActionsHint(instanceActions),
+      ),
+    );
+    return;
+  }
+  bound.forEach((nodeId, boundIndex) => {
+    cues.push({
+      id: bound.length > 1 ? `${params.baseId}-${boundIndex}` : params.baseId,
+      at: params.at,
+      duration: params.duration,
+      target: nodeId,
+      action: params.action,
+      ...(params.easing !== undefined ? { easing: params.easing } : {}),
+      sourceMap: params.sourceMap,
+    });
+  });
+}
+
 function buildTimeline(
   timelines: readonly TimelineAst[],
   actionIndex: SdkActionIndex,
+  nodeIds: ReadonlySet<string>,
   sourceRange: SourceRange,
+  diagnostics: Diagnostic[],
 ): readonly TimelineCueIr[] {
   const cues: TimelineCueIr[] = [];
   for (const timeline of timelines) {
     timeline.cues.forEach((cue, index) => {
       const baseId = `${timeline.id}-${index}`;
       const sourceMap = cue.sourceMap ?? sourceRange;
-      const sdkAction = SDK_TIMELINE_ACTION_ALIASES[cue.action];
-      const instanceActions =
-        cue.target.length > 0 ? actionIndex.get(cue.target) : undefined;
-      const bound =
-        sdkAction !== undefined ? instanceActions?.get(sdkAction) : undefined;
 
-      if (bound !== undefined && bound.length > 0) {
-        bound.forEach((nodeId, boundIndex) => {
-          cues.push({
-            id: bound.length > 1 ? `${baseId}-${boundIndex}` : baseId,
-            at: cue.time,
-            duration: cue.duration,
-            target: nodeId,
-            action: sdkAction,
-            ...(cue.easing !== undefined ? { easing: cue.easing } : {}),
-            sourceMap,
-          });
+      // Component-instance target: expand through the instance's public actions.
+      if (cue.target.length > 0 && actionIndex.has(cue.target)) {
+        const sdkAction = SDK_TIMELINE_ACTION_ALIASES[cue.action];
+        if (sdkAction === undefined) {
+          diagnostics.push(
+            diagnostic(
+              "SDK_TIMELINE_UNSUPPORTED_ACTION",
+              "error",
+              `Timeline cue action "${cue.action}" is not a public SDK action for component instance "${cue.target}".`,
+              sourceMap,
+              supportedActionsHint(actionIndex.get(cue.target)!),
+            ),
+          );
+          return;
+        }
+        pushInstanceActionCues(cues, diagnostics, {
+          instanceId: cue.target,
+          action: sdkAction,
+          at: cue.time,
+          duration: cue.duration,
+          baseId,
+          ...(cue.easing !== undefined ? { easing: cue.easing } : {}),
+          actionIndex,
+          sourceMap,
         });
         return;
       }
 
+      // A non-stagger target that is neither a component instance nor a real
+      // scene node id is a typo or a leaked generated id: fail closed.
+      if (cue.target.length > 0 && !nodeIds.has(cue.target)) {
+        diagnostics.push(
+          diagnostic(
+            "SDK_TIMELINE_UNKNOWN_TARGET",
+            "error",
+            `Timeline cue targets "${cue.target}", which is neither a component instance nor a scene node.`,
+            sourceMap,
+            availableInstancesHint(actionIndex),
+          ),
+        );
+        return;
+      }
+
+      // Freeform / literal node targets (and stagger member lists) pass through.
       cues.push({
         id: baseId,
         at: cue.time,
@@ -705,6 +841,90 @@ function buildTimeline(
     });
   }
   return cues;
+}
+
+/**
+ * Semantic inputs for the `standardReveal` timeline template.
+ *
+ * Names a header, ordered content nodes, edges, and motion overlays by
+ * component instance id; the template desugars them into the dominant
+ * enter → draw → trace choreography (one call in place of the 8–12 hand cues a
+ * scene otherwise repeats) while keeping generated ids private.
+ */
+export type StandardRevealSpec = Readonly<{
+  /** Chrome/header instance revealed first. */
+  header?: string;
+  /** Content node instances revealed in order after the header. */
+  nodes?: readonly string[];
+  /** Edge instances drawn once their endpoints have entered. */
+  edges?: readonly string[];
+  /** Motion overlay instances traced last. */
+  motion?: readonly string[];
+  /** Base scene time for the first cue (default 0). */
+  start?: number;
+  /** Delay between successive reveal steps (default 240). */
+  step?: number;
+  /** Per-cue duration (default 480). */
+  duration?: number;
+  /** Base id used to seed generated cue ids (default "standard-reveal"). */
+  timelineId?: string;
+}>;
+
+/**
+ * Compiler-side desugar for `sdk.timeline.standardReveal(header, nodes, edges,
+ * motion)`.
+ *
+ * Emits the standard enter → draw → trace cue sequence by referencing each
+ * instance's public action bindings, fanning multi-target actions out to stable
+ * generated ids. Fails closed with the same diagnostics as authored
+ * instance-target cues (unknown instance, unsupported action). The helper is
+ * transport-neutral and deterministic; a native authoring surface for it is a
+ * grammar concern (see the Task 7 report) and is not wired here.
+ */
+export function expandStandardReveal(
+  spec: StandardRevealSpec,
+  actionIndex: SdkActionIndex,
+  sourceRange: SourceRange,
+): Result<readonly TimelineCueIr[]> {
+  const cues: TimelineCueIr[] = [];
+  const diagnostics: Diagnostic[] = [];
+  const step = spec.step ?? DEFAULT_REVEAL_STEP;
+  const duration = spec.duration ?? DEFAULT_REVEAL_DURATION;
+  const timelineId = spec.timelineId ?? "standard-reveal";
+  let at = spec.start ?? 0;
+  let cursor = 0;
+
+  const emit = (instanceId: string, action: SdkActionName): void => {
+    pushInstanceActionCues(cues, diagnostics, {
+      instanceId,
+      action,
+      at,
+      duration,
+      baseId: `${timelineId}-${cursor}`,
+      actionIndex,
+      sourceMap: sourceRange,
+    });
+    cursor += 1;
+    at += step;
+  };
+
+  if (spec.header !== undefined) {
+    emit(spec.header, "enter");
+  }
+  for (const node of spec.nodes ?? []) {
+    emit(node, "enter");
+  }
+  for (const edge of spec.edges ?? []) {
+    emit(edge, "draw");
+  }
+  for (const overlay of spec.motion ?? []) {
+    emit(overlay, "trace");
+  }
+
+  if (hasErrors(diagnostics)) {
+    return { ok: false, diagnostics };
+  }
+  return { ok: true, value: cues, diagnostics };
 }
 
 // ---------------------------------------------------------------------------
@@ -936,7 +1156,17 @@ export function expandSdkInvocations(
   }
 
   const actionIndex = buildActionIndex(instanceIndex);
-  const timeline = buildTimeline(scene.timelines, actionIndex, sourceRange);
+  const nodeIds = collectNodeIds(resolved.value, new Set<string>());
+  const timeline = buildTimeline(
+    scene.timelines,
+    actionIndex,
+    nodeIds,
+    sourceRange,
+    state.diagnostics,
+  );
+  if (hasErrors(state.diagnostics)) {
+    return { status: "error", diagnostics: state.diagnostics };
+  }
   const render = assembleScene(scene, resolved.value, timeline, options, sourceRange);
   if (!render.ok) {
     return {

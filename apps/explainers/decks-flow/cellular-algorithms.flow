@@ -33,132 +33,34 @@ explainer "Cellular algorithm workbook" {
     caption: "eight chapters · one derived route."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.header"
-      title: "WORKBOOK · CHAPTER MAP"
-      caption: "eight chapters · one derived route."
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1, radius: 8 }
-    }
-    {
-      id: "map-band"
-      capability: "core.band"
-      layout: { x: 18, y: 90, width: 664, height: 230 }
-      style: { fill: @theme.surface.secondary, opacity: 0.45 }
-    }
-    {
-      id: "lanes"
-      capability: "core.swimlane"
-      labels: ["plan", "run"]
-      layout: { x: 18, y: 96, width: 80, height: 210 }
-      style: { gap: 24, labelWidth: 70 }
-    }
-    {
-      id: "ch-eligibility"
-      capability: "core.panel"
-      title: "eligibility"
-      detail: "fail closed"
-      layout: { x: 25, y: 104, width: 145, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-    }
-    {
-      id: "ch-link-0"
-      capability: "core.route"
-      from: { nodeId: "ch-eligibility", anchor: "e" }
-      to: { nodeId: "ch-ownership", anchor: "w" }
-      style: { stroke: @theme.accent.secondary, strokeWidth: 1.6, fill: "none", markerEnd: "none" }
-    }
-    {
-      id: "ch-ownership"
-      capability: "core.panel"
-      title: "ownership"
-      detail: "tile work"
-      layout: { x: 193, y: 104, width: 145, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-    }
-    {
-      id: "ch-control"
-      capability: "core.panel"
-      title: "control"
-      detail: "coordinate"
-      layout: { x: 361, y: 104, width: 145, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-    }
-    {
-      id: "ch-distribution"
-      capability: "core.panel"
-      title: "distribution"
-      detail: "deliver"
-      layout: { x: 529, y: 104, width: 145, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-    }
-    {
-      id: "ch-execution"
-      capability: "core.panel"
-      title: "execution"
-      detail: "run shards"
-      layout: { x: 25, y: 232, width: 145, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    {
-      id: "ch-capture"
-      capability: "core.panel"
-      title: "capture"
-      detail: "store"
-      layout: { x: 193, y: 232, width: 145, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    {
-      id: "ch-merge"
-      capability: "core.panel"
-      title: "merge"
-      detail: "reduce"
-      layout: { x: 361, y: 232, width: 145, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    {
-      id: "ch-artifacts"
-      capability: "core.panel"
-      title: "artifacts"
-      detail: "publish"
-      layout: { x: 529, y: 232, width: 145, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    {
-      id: "footer"
-      capability: "core.text"
-      text: "route order is evidence order"
-      layout: { x: 100, y: 318, width: 500, height: 24 }
-      style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
-    }
-    {
-      id: "motion-sig"
-      capability: "motion.signal"
-      d: "M70 132 H630"
-      layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
-      accessibility: { label: "motion signal" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-band", at: 60, duration: 220, target: "map-band", action: "enter" }
-    { id: "t-lanes", at: 100, duration: 220, target: "lanes", action: "enter" }
-    { id: "t-ch-eligibility", at: 350, duration: 320, target: "ch-eligibility", action: "enter" }
-    { id: "t-ch-link-0", at: 420, duration: 240, target: "ch-link-0", action: "draw" }
-    { id: "t-ch-ownership", at: 470, duration: 320, target: "ch-ownership", action: "enter" }
-    { id: "t-ch-control", at: 590, duration: 320, target: "ch-control", action: "enter" }
-    { id: "t-ch-distribution", at: 710, duration: 320, target: "ch-distribution", action: "enter" }
-    { id: "t-ch-execution", at: 830, duration: 320, target: "ch-execution", action: "enter" }
-    { id: "t-ch-capture", at: 950, duration: 320, target: "ch-capture", action: "enter" }
-    { id: "t-ch-merge", at: 1070, duration: 320, target: "ch-merge", action: "enter" }
-    { id: "t-ch-artifacts", at: 1190, duration: 320, target: "ch-artifacts", action: "enter" }
-    { id: "t-footer", at: 1400, duration: 300, target: "footer", action: "enter" }
-    { id: "t-emphasis", at: 1800, duration: 400, target: "ch-eligibility", action: "emphasis" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+      sdk.Header(id = "header", title = "WORKBOOK · CHAPTER MAP", caption = "eight chapters · one derived route.")
+      sdk.Band(id = "map-band", x = 18, y = 90, width = 664, height = 230)
+      sdk.Panel(id = "ch-eligibility", title = "eligibility", x = 25, y = 104, width = 145, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "ch-ownership", title = "ownership", x = 193, y = 104, width = 145, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "ch-control", title = "control", x = 361, y = 104, width = 145, height = 72, strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "ch-distribution", title = "distribution", x = 529, y = 104, width = 145, height = 72, strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "ch-execution", title = "execution", x = 25, y = 232, width = 145, height = 72, strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "ch-capture", title = "capture", x = 193, y = 232, width = 145, height = 72, strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "ch-merge", title = "merge", x = 361, y = 232, width = 145, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "ch-artifacts", title = "artifacts", x = 529, y = 232, width = 145, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "ch-link-0", mode = "route", from = { nodeId: "ch-eligibility", anchor: "e" }, to = { nodeId: "ch-ownership", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Label(id = "footer", text = "route order is evidence order", x = 100, y = 318, width = 500, height = 24, fontSize = 12, align = "middle")
+      sdk.Signal(id = "motion-sig", from = { nodeId: "ch-eligibility", anchor: "e" }, to = { nodeId: "ch-artifacts", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal map-band duration 260
+        at 320 reveal ch-eligibility duration 260
+        at 480 reveal ch-ownership duration 260
+        at 640 reveal ch-control duration 260
+        at 800 reveal ch-distribution duration 260
+        at 960 reveal ch-execution duration 260
+        at 1120 reveal ch-capture duration 260
+        at 1280 reveal ch-merge duration 260
+        at 1440 reveal ch-artifacts duration 260
+        at 1600 trace ch-link-0 duration 420
+        at 1760 reveal footer duration 260
+        at 1920 trace motion-sig duration 900
+      }
     }
   }
 
@@ -179,119 +81,24 @@ explainer "Cellular algorithm workbook" {
     caption: "status labels · source-backed evidence."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-      accessibility: { label: "WORKBOOK · STATUS & EVIDENCE" }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "WORKBOOK · STATUS & EVIDENCE"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "status labels · source-backed evidence."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "algo-built"
-      capability: "core.panel"
-      title: "modulo-cell-ownership"
-      detail: "ordinary route"
-      layout: { x: 35, y: 132, width: 190, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-built"
-      capability: "core.rect"
-      layout: { x: 155, y: 120, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-built-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 155, y: 124, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "algo-partial"
-      capability: "core.panel"
-      title: "final-report-assembly"
-      detail: "named boundary"
-      layout: { x: 255, y: 132, width: 190, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-partial"
-      capability: "core.rect"
-      layout: { x: 375, y: 120, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-partial-text"
-          capability: "core.text"
-          text: "PARTIAL"
-          layout: { x: 375, y: 124, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "algo-gated"
-      capability: "core.panel"
-      title: "phaser-start"
-      detail: "explicit admission"
-      layout: { x: 475, y: 132, width: 190, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-gated"
-      capability: "core.rect"
-      layout: { x: 549, y: 120, width: 116, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-gated-text"
-          capability: "core.text"
-          text: "FEATURE-GATED"
-          layout: { x: 549, y: 124, width: 116, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "evidence"
-      capability: "core.panel"
-      title: "Evidence"
-      detail: "boundary · unit · integration · end-to-end"
-      layout: { x: 110, y: 275, width: 480, height: 54 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-built", at: 400, duration: 360, target: "algo-built", action: "enter" }
-    { id: "t-st-built", at: 450, duration: 280, target: "st-built", action: "enter" }
-    { id: "t-partial", at: 700, duration: 360, target: "algo-partial", action: "enter" }
-    { id: "t-st-partial", at: 750, duration: 280, target: "st-partial", action: "enter" }
-    { id: "t-gated", at: 1000, duration: 360, target: "algo-gated", action: "enter" }
-    { id: "t-st-gated", at: 1050, duration: 280, target: "st-gated", action: "enter" }
-    { id: "t-evidence", at: 1400, duration: 400, target: "evidence", action: "enter" }
-  { id: "t-emphasis-final", at: 2100, duration: 420, target: "algo-built", action: "emphasis" }
-    ]
+      sdk.Header(id = "header", title = "WORKBOOK · STATUS & EVIDENCE", caption = "status labels · source-backed evidence.")
+      sdk.Panel(id = "algo-built", title = "modulo-cell-ownership", x = 35, y = 132, width = 190, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-built", label = "BUILT", x = 155, y = 120, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "algo-partial", title = "final-report-assembly", x = 255, y = 132, width = 190, height = 72, strokeRole = "@theme.accent.tertiary")
+      sdk.Chip(id = "st-partial", label = "PARTIAL", x = 375, y = 120, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "algo-gated", title = "phaser-start", x = 475, y = 132, width = 190, height = 72, strokeRole = "@theme.accent.secondary")
+      sdk.Chip(id = "st-gated", label = "FEATURE-GATED", x = 549, y = 120, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "evidence", title = "Evidence", x = 110, y = 275, width = 480, height = 54, strokeRole = "@theme.accent.primary")
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal algo-built duration 260
+        at 320 reveal st-built duration 260
+        at 480 reveal algo-partial duration 260
+        at 640 reveal st-partial duration 260
+        at 800 reveal algo-gated duration 260
+        at 960 reveal st-gated duration 260
+        at 1120 reveal evidence duration 260
+      }
     }
   }
 
@@ -312,167 +119,34 @@ explainer "Cellular algorithm workbook" {
     caption: "dispatch → promote → admit → validate."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "ELIGIBILITY · FAIL-CLOSED GATES"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "dispatch → promote → admit → validate."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "dispatch"
-      capability: "core.panel"
-      title: "execution-mode-dispatch"
-      detail: "private protocol"
-      layout: { x: 22, y: 150, width: 150, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-d"
-      capability: "core.rect"
-      layout: { x: 102, y: 138, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-d-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 102, y: 142, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "a1"
-      capability: "core.connector"
-      from: { nodeId: "dispatch", anchor: "e" }
-      to: { nodeId: "promote", anchor: "w" }
-      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
-    }
-    {
-      id: "promote"
-      capability: "core.panel"
-      title: "controller-promotion"
-      detail: "cells > 1"
-      layout: { x: 205, y: 150, width: 150, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-p"
-      capability: "core.rect"
-      layout: { x: 285, y: 138, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-p-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 285, y: 142, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "a2"
-      capability: "core.connector"
-      from: { nodeId: "promote", anchor: "e" }
-      to: { nodeId: "validate", anchor: "w" }
-      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
-    }
-    {
-      id: "validate"
-      capability: "core.panel"
-      title: "velo-feature-admission"
-      detail: "require Velo"
-      layout: { x: 388, y: 150, width: 150, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-v"
-      capability: "core.rect"
-      layout: { x: 422, y: 138, width: 116, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-v-text"
-          capability: "core.text"
-          text: "FEATURE-GATED"
-          layout: { x: 422, y: 142, width: 116, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "a3"
-      capability: "core.connector"
-      from: { nodeId: "validate", anchor: "e" }
-      to: { nodeId: "velo", anchor: "w" }
-      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
-    }
-    {
-      id: "velo"
-      capability: "core.panel"
-      title: "run-shape-validation"
-      detail: "fail closed"
-      layout: { x: 570, y: 150, width: 108, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-velo"
-      capability: "core.rect"
-      layout: { x: 608, y: 138, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-velo-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 608, y: 142, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "motion-sig"
-      capability: "motion.signal"
-      from: { nodeId: "dispatch", anchor: "e" }
-      to: { nodeId: "velo", anchor: "w" }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
-      accessibility: { label: "motion signal" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-dispatch", at: 400, duration: 340, target: "dispatch", action: "enter" }
-    { id: "t-st-d", at: 450, duration: 260, target: "st-d", action: "enter" }
-    { id: "t-a1", at: 700, duration: 300, target: "a1", action: "draw" }
-    { id: "t-promote", at: 900, duration: 340, target: "promote", action: "enter" }
-    { id: "t-st-p", at: 950, duration: 260, target: "st-p", action: "enter" }
-    { id: "t-a2", at: 1200, duration: 300, target: "a2", action: "draw" }
-    { id: "t-validate", at: 1400, duration: 340, target: "validate", action: "enter" }
-    { id: "t-st-v", at: 1450, duration: 260, target: "st-v", action: "enter" }
-    { id: "t-a3", at: 1700, duration: 300, target: "a3", action: "draw" }
-    { id: "t-velo", at: 1900, duration: 340, target: "velo", action: "enter" }
-    { id: "t-st-velo", at: 1950, duration: 260, target: "st-velo", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    { id: "t-emphasis-final", at: 2100, duration: 420, target: "dispatch", action: "emphasis" }
-    ]
+      sdk.Header(id = "header", title = "ELIGIBILITY · FAIL-CLOSED GATES", caption = "dispatch → promote → admit → validate.")
+      sdk.Panel(id = "dispatch", title = "execution-mode-dispatch", x = 22, y = 150, width = 150, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-d", label = "BUILT", x = 102, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "promote", title = "controller-promotion", x = 205, y = 150, width = 150, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-p", label = "BUILT", x = 285, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "validate", title = "velo-feature-admission", x = 388, y = 150, width = 150, height = 72, strokeRole = "@theme.accent.secondary")
+      sdk.Chip(id = "st-v", label = "FEATURE-GATED", x = 422, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "velo", title = "run-shape-validation", x = 570, y = 150, width = 108, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-velo", label = "BUILT", x = 608, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "dispatch", anchor: "e" }, to = { nodeId: "promote", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "promote", anchor: "e" }, to = { nodeId: "validate", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Edge(id = "a3", mode = "connector", from = { nodeId: "validate", anchor: "e" }, to = { nodeId: "velo", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Signal(id = "motion-sig", from = { nodeId: "dispatch", anchor: "e" }, to = { nodeId: "velo", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal dispatch duration 260
+        at 320 reveal st-d duration 260
+        at 480 trace a1 duration 420
+        at 640 reveal promote duration 260
+        at 800 reveal st-p duration 260
+        at 960 trace a2 duration 420
+        at 1120 reveal validate duration 260
+        at 1280 reveal st-v duration 260
+        at 1440 trace a3 duration 420
+        at 1600 reveal velo duration 260
+        at 1760 reveal st-velo duration 260
+        at 1920 trace motion-sig duration 900
+      }
     }
   }
 
@@ -493,147 +167,30 @@ explainer "Cellular algorithm workbook" {
     caption: "one position · exactly one owner."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "OWNERSHIP · DISJOINT TILING"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "one position · exactly one owner."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "modulo"
-      capability: "core.panel"
-      title: "modulo-cell-ownership"
-      detail: "i % N == k"
-      layout: { x: 30, y: 145, width: 210, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-mod"
-      capability: "core.rect"
-      layout: { x: 170, y: 133, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-mod-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 170, y: 137, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "o1"
-      capability: "core.fan-out"
-      from: { nodeId: "modulo", anchor: "e" }
-      to: [
-        { nodeId: "c0", anchor: "w" },
-        { nodeId: "c1", anchor: "w" },
-        { nodeId: "c2", anchor: "w" }
-      ]
-      axis: "x"
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "c0"
-      capability: "core.panel"
-      title: "cell 0"
-      detail: "0, 3, 6, …"
-      layout: { x: 290, y: 105, width: 170, height: 58 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "c1"
-      capability: "core.panel"
-      title: "cell 1"
-      detail: "1, 4, 7, …"
-      layout: { x: 290, y: 181, width: 170, height: 58 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "c2"
-      capability: "core.panel"
-      title: "cell 2"
-      detail: "2, 5, 8, …"
-      layout: { x: 290, y: 257, width: 170, height: 58 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "conv"
-      capability: "core.panel"
-      title: "conversation-ownership"
-      detail: "whole sessions"
-      layout: { x: 500, y: 145, width: 170, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-conv"
-      capability: "core.rect"
-      layout: { x: 554, y: 133, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-conv-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 554, y: 137, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "ownership-merge"
-      capability: "core.fan-in"
-      from: [
-        { nodeId: "c0", anchor: "e" },
-        { nodeId: "c1", anchor: "e" },
-        { nodeId: "c2", anchor: "e" }
-      ]
-      to: { nodeId: "conv", anchor: "w" }
-      axis: "x"
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2, fill: "none" }
-    }
-    {
-      id: "inv"
-      capability: "core.text"
-      text: "disjoint + complete"
-      layout: { x: 100, y: 340, width: 500, height: 20 }
-      style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-modulo", at: 400, duration: 360, target: "modulo", action: "enter" }
-    { id: "t-st-mod", at: 450, duration: 260, target: "st-mod", action: "enter" }
-    { id: "t-o1", at: 700, duration: 300, target: "o1", action: "draw" }
-    { id: "t-c0", at: 900, duration: 300, target: "c0", action: "enter" }
-    { id: "t-c1", at: 1050, duration: 300, target: "c1", action: "enter" }
-    { id: "t-c2", at: 1200, duration: 300, target: "c2", action: "enter" }
-    { id: "t-ownership-merge", at: 1320, duration: 520, target: "ownership-merge", action: "draw" }
-    { id: "t-ownership-merge-trace", at: 1500, duration: 900, target: "ownership-merge", action: "trace" }
-    { id: "t-conv", at: 1450, duration: 360, target: "conv", action: "enter" }
-    { id: "t-st-conv", at: 1500, duration: 260, target: "st-conv", action: "enter" }
-    { id: "t-inv", at: 1800, duration: 300, target: "inv", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "o1", action: "trace" }
-    { id: "t-emphasis-final", at: 2100, duration: 420, target: "modulo", action: "emphasis" }
-    ]
+      sdk.Header(id = "header", title = "OWNERSHIP · DISJOINT TILING", caption = "one position · exactly one owner.")
+      sdk.Panel(id = "modulo", title = "modulo-cell-ownership", x = 30, y = 145, width = 210, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-mod", label = "BUILT", x = 170, y = 133, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "c0", title = "cell 0", x = 290, y = 105, width = 170, height = 58, strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "c1", title = "cell 1", x = 290, y = 181, width = 170, height = 58, strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "c2", title = "cell 2", x = 290, y = 257, width = 170, height = 58, strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "conv", title = "conversation-ownership", x = 500, y = 145, width = 170, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-conv", label = "BUILT", x = 554, y = 133, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.FanOut(id = "o1", from = { nodeId: "modulo", anchor: "e" }, to = [{ nodeId: "c0", anchor: "w" }, { nodeId: "c1", anchor: "w" }, { nodeId: "c2", anchor: "w" }], axis = "x", style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.FanIn(id = "ownership-merge", from = [{ nodeId: "c0", anchor: "e" }, { nodeId: "c1", anchor: "e" }, { nodeId: "c2", anchor: "e" }], to = { nodeId: "conv", anchor: "w" }, axis = "x", style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Label(id = "inv", text = "disjoint + complete", x = 100, y = 340, width = 500, height = 20, fontSize = 12, align = "middle")
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal modulo duration 260
+        at 320 reveal st-mod duration 260
+        at 480 reveal c0 duration 260
+        at 640 reveal c1 duration 260
+        at 800 reveal c2 duration 260
+        at 960 trace o1 duration 420
+        at 1120 reveal conv duration 260
+        at 1280 reveal st-conv duration 260
+        at 1440 trace ownership-merge duration 420
+        at 1600 reveal inv duration 260
+      }
     }
   }
 
@@ -654,142 +211,30 @@ explainer "Cellular algorithm workbook" {
     caption: "replay seam · generations · START."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "CONTROL · REPLAY + LIVE + START"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "replay seam · generations · START."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "replay"
-      capability: "core.panel"
-      title: "broadcast-attach-replay"
-      detail: "close seam race"
-      layout: { x: 22, y: 150, width: 185, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-r"
-      capability: "core.rect"
-      layout: { x: 137, y: 138, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-r-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 137, y: 142, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "c1"
-      capability: "core.line"
-      from: { x: 207, y: 186 }
-      to: { x: 250, y: 186 }
-      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
-    }
-    {
-      id: "gen"
-      capability: "core.panel"
-      title: "phaser-generation-advance"
-      detail: "monotonic"
-      layout: { x: 250, y: 150, width: 195, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-g"
-      capability: "core.rect"
-      layout: { x: 375, y: 138, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-g-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 375, y: 142, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "c2"
-      capability: "core.line"
-      from: { x: 445, y: 186 }
-      to: { x: 488, y: 186 }
-      style: { stroke: @theme.accent.warning, strokeWidth: 2.2 }
-    }
-    {
-      id: "start"
-      capability: "core.panel"
-      title: "phaser-start"
-      detail: "opt-in START"
-      layout: { x: 488, y: 150, width: 190, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-s"
-      capability: "core.rect"
-      layout: { x: 562, y: 138, width: 116, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-s-text"
-          capability: "core.text"
-          text: "FEATURE-GATED"
-          layout: { x: 562, y: 142, width: 116, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "ctrl-note"
-      capability: "core.text"
-      text: "coordination changes · ownership does not"
-      layout: { x: 80, y: 292, width: 540, height: 24 }
-      style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
-    }
-    {
-      id: "motion-sig"
-      capability: "motion.signal"
-      d: "M90 205 H610"
-      layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
-      accessibility: { label: "motion signal" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-replay", at: 400, duration: 340, target: "replay", action: "enter" }
-    { id: "t-st-r", at: 450, duration: 260, target: "st-r", action: "enter" }
-    { id: "t-c1", at: 700, duration: 300, target: "c1", action: "draw" }
-    { id: "t-gen", at: 900, duration: 340, target: "gen", action: "enter" }
-    { id: "t-st-g", at: 950, duration: 260, target: "st-g", action: "enter" }
-    { id: "t-c2", at: 1200, duration: 300, target: "c2", action: "draw" }
-    { id: "t-start", at: 1400, duration: 340, target: "start", action: "enter" }
-    { id: "t-st-s", at: 1450, duration: 260, target: "st-s", action: "enter" }
-    { id: "t-ctrl-note", at: 1750, duration: 300, target: "ctrl-note", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    { id: "t-emphasis-final", at: 2100, duration: 420, target: "replay", action: "emphasis" }
-    ]
+      sdk.Header(id = "header", title = "CONTROL · REPLAY + LIVE + START", caption = "replay seam · generations · START.")
+      sdk.Panel(id = "replay", title = "broadcast-attach-replay", x = 22, y = 150, width = 185, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-r", label = "BUILT", x = 137, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "gen", title = "phaser-generation-advance", x = 250, y = 150, width = 195, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-g", label = "BUILT", x = 375, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "start", title = "phaser-start", x = 488, y = 150, width = 190, height = 72, strokeRole = "@theme.accent.secondary")
+      sdk.Chip(id = "st-s", label = "FEATURE-GATED", x = 562, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "c1", mode = "line", from = { nodeId: "replay", anchor: "e" }, to = { nodeId: "gen", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Edge(id = "c2", mode = "line", from = { nodeId: "gen", anchor: "e" }, to = { nodeId: "start", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Label(id = "ctrl-note", text = "coordination changes · ownership does not", x = 80, y = 292, width = 540, height = 24, fontSize = 12, align = "middle")
+      sdk.Signal(id = "motion-sig", from = { nodeId: "replay", anchor: "e" }, to = { nodeId: "start", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal replay duration 260
+        at 320 reveal st-r duration 260
+        at 480 trace c1 duration 420
+        at 640 reveal gen duration 260
+        at 800 reveal st-g duration 260
+        at 960 trace c2 duration 420
+        at 1120 reveal start duration 260
+        at 1280 reveal st-s duration 260
+        at 1440 reveal ctrl-note duration 260
+        at 1600 trace motion-sig duration 900
+      }
     }
   }
 
@@ -810,133 +255,28 @@ explainer "Cellular algorithm workbook" {
     caption: "canonical path · optional verification overlay."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "DISTRIBUTION · CANONICAL + OVERLAY"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "canonical path · optional verification overlay."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "canon"
-      capability: "core.panel"
-      title: "canonical-regeneration"
-      detail: "measured data"
-      layout: { x: 35, y: 122, width: 220, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-canon"
-      capability: "core.rect"
-      layout: { x: 185, y: 110, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-canon-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 185, y: 114, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "fanout"
-      capability: "core.panel"
-      title: "controller-fanout-generation"
-      detail: "verification overlay"
-      layout: { x: 35, y: 245, width: 220, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-fan"
-      capability: "core.rect"
-      layout: { x: 139, y: 233, width: 116, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-fan-text"
-          capability: "core.text"
-          text: "FEATURE-GATED"
-          layout: { x: 139, y: 237, width: 116, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "d1"
-      capability: "core.line"
-      from: { x: 255, y: 158 }
-      to: { x: 440, y: 158 }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "d2"
-      capability: "core.path"
-      d: "M255 281 C340 275 375 230 440 210"
-      layout: { x: 255, y: 210, width: 185, height: 71 }
-      style: { fill: "none", stroke: @theme.accent.warning, strokeWidth: 2.2 }
-    }
-    {
-      id: "miss"
-      capability: "core.panel"
-      title: "distribution-miss"
-      detail: "count · surface · recover"
-      layout: { x: 440, y: 174, width: 225, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-miss"
-      capability: "core.rect"
-      layout: { x: 595, y: 162, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-miss-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 595, y: 166, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "motion-sig"
-      capability: "motion.signal"
-      d: "M80 195 H620"
-      layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
-      accessibility: { label: "motion signal" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-canon", at: 400, duration: 340, target: "canon", action: "enter" }
-    { id: "t-st-canon", at: 450, duration: 260, target: "st-canon", action: "enter" }
-    { id: "t-fanout", at: 700, duration: 340, target: "fanout", action: "enter" }
-    { id: "t-st-fan", at: 750, duration: 260, target: "st-fan", action: "enter" }
-    { id: "t-d1", at: 1000, duration: 300, target: "d1", action: "draw" }
-    { id: "t-d2", at: 1100, duration: 300, target: "d2", action: "draw" }
-    { id: "t-miss", at: 1350, duration: 360, target: "miss", action: "enter" }
-    { id: "t-st-miss", at: 1400, duration: 260, target: "st-miss", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+      sdk.Header(id = "header", title = "DISTRIBUTION · CANONICAL + OVERLAY", caption = "canonical path · optional verification overlay.")
+      sdk.Panel(id = "canon", title = "canonical-regeneration", x = 35, y = 122, width = 220, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-canon", label = "BUILT", x = 185, y = 110, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "fanout", title = "controller-fanout-generation", x = 35, y = 245, width = 220, height = 72, strokeRole = "@theme.accent.secondary")
+      sdk.Chip(id = "st-fan", label = "FEATURE-GATED", x = 139, y = 233, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "miss", title = "distribution-miss", x = 440, y = 174, width = 225, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-miss", label = "BUILT", x = 595, y = 162, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "d1", mode = "line", from = { nodeId: "canon", anchor: "e" }, to = { nodeId: "miss", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Edge(id = "d2", mode = "path", from = { nodeId: "fanout", anchor: "e" }, to = { nodeId: "miss", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Signal(id = "motion-sig", from = { nodeId: "canon", anchor: "e" }, to = { nodeId: "miss", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal canon duration 260
+        at 320 reveal st-canon duration 260
+        at 480 trace d1 duration 420
+        at 640 reveal fanout duration 260
+        at 800 reveal st-fan duration 260
+        at 960 trace d2 duration 420
+        at 1120 reveal miss duration 260
+        at 1280 reveal st-miss duration 260
+        at 1440 trace motion-sig duration 900
+      }
     }
   }
 
@@ -957,134 +297,30 @@ explainer "Cellular algorithm workbook" {
     caption: "global run → cell slice → worker shard."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "EXECUTION · TWO-LEVEL PARTITION"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "global run → cell slice → worker shard."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "tlp"
-      capability: "core.panel"
-      title: "two-level-partition"
-      detail: "cell ownership"
-      layout: { x: 30, y: 150, width: 175, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-tlp"
-      capability: "core.rect"
-      layout: { x: 135, y: 138, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-tlp-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 135, y: 142, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "e1"
-      capability: "core.line"
-      from: { x: 205, y: 186 }
-      to: { x: 260, y: 186 }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "iss"
-      capability: "core.panel"
-      title: "issuance-dispatch-injection"
-      detail: "global identity"
-      layout: { x: 260, y: 150, width: 170, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-iss"
-      capability: "core.rect"
-      layout: { x: 314, y: 138, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-iss-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 314, y: 142, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "e2"
-      capability: "core.line"
-      from: { x: 430, y: 140 }
-      to: { x: 500, y: 140 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "e3"
-      capability: "core.line"
-      from: { x: 430, y: 257 }
-      to: { x: 500, y: 257 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "w0"
-      capability: "core.panel"
-      title: "worker 0"
-      detail: "!Send local sink"
-      layout: { x: 500, y: 108, width: 180, height: 64 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "w1"
-      capability: "core.panel"
-      title: "worker 1"
-      detail: "!Send local sink"
-      layout: { x: 500, y: 225, width: 180, height: 64 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "motion-sig"
-      capability: "motion.signal"
-      d: "M80 195 H620"
-      layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
-      accessibility: { label: "motion signal" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-tlp", at: 400, duration: 340, target: "tlp", action: "enter" }
-    { id: "t-st-tlp", at: 450, duration: 260, target: "st-tlp", action: "enter" }
-    { id: "t-e1", at: 700, duration: 300, target: "e1", action: "draw" }
-    { id: "t-iss", at: 900, duration: 340, target: "iss", action: "enter" }
-    { id: "t-st-iss", at: 950, duration: 260, target: "st-iss", action: "enter" }
-    { id: "t-e2", at: 1150, duration: 280, target: "e2", action: "draw" }
-    { id: "t-e3", at: 1250, duration: 280, target: "e3", action: "draw" }
-    { id: "t-w0", at: 1450, duration: 300, target: "w0", action: "enter" }
-    { id: "t-w1", at: 1600, duration: 300, target: "w1", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+      sdk.Header(id = "header", title = "EXECUTION · TWO-LEVEL PARTITION", caption = "global run → cell slice → worker shard.")
+      sdk.Panel(id = "tlp", title = "two-level-partition", x = 30, y = 150, width = 175, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-tlp", label = "BUILT", x = 135, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "iss", title = "issuance-dispatch-injection", x = 260, y = 150, width = 170, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-iss", label = "BUILT", x = 314, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "w0", title = "worker 0", x = 500, y = 108, width = 180, height = 64, strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "w1", title = "worker 1", x = 500, y = 225, width = 180, height = 64, strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "e1", mode = "line", from = { nodeId: "tlp", anchor: "e" }, to = { nodeId: "iss", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Edge(id = "e2", mode = "line", from = { nodeId: "iss", anchor: "e" }, to = { nodeId: "w0", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Edge(id = "e3", mode = "line", from = { nodeId: "iss", anchor: "e" }, to = { nodeId: "w1", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Signal(id = "motion-sig", from = { nodeId: "tlp", anchor: "e" }, to = { nodeId: "w0", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal tlp duration 260
+        at 320 reveal st-tlp duration 260
+        at 480 trace e1 duration 420
+        at 640 reveal iss duration 260
+        at 800 reveal st-iss duration 260
+        at 960 trace e2 duration 420
+        at 1120 reveal w0 duration 260
+        at 1280 trace e3 duration 420
+        at 1440 reveal w1 duration 260
+        at 1600 trace motion-sig duration 900
+      }
     }
   }
 
@@ -1105,127 +341,28 @@ explainer "Cellular algorithm workbook" {
     caption: "finalize once · select storage fidelity."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "CAPTURE · STORAGE MODES"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "finalize once · select storage fidelity."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "term"
-      capability: "core.panel"
-      title: "terminal-record-finalization"
-      detail: "CapturedRecord"
-      layout: { x: 20, y: 150, width: 165, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-term"
-      capability: "core.rect"
-      layout: { x: 115, y: 138, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-term-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 115, y: 142, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "cap1"
-      capability: "core.line"
-      from: { x: 185, y: 186 }
-      to: { x: 225, y: 186 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "retain"
-      capability: "core.panel"
-      title: "retain-record-capture"
-      detail: "rows + raw artifacts"
-      layout: { x: 225, y: 92, width: 210, height: 60 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    {
-      id: "fold"
-      capability: "core.panel"
-      title: "streaming-exact-fold"
-      detail: "exact store · drop row"
-      layout: { x: 225, y: 170, width: 210, height: 60 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    {
-      id: "sketch"
-      capability: "core.panel"
-      title: "tagged-sketch-merge"
-      detail: "bounded percentiles"
-      layout: { x: 225, y: 248, width: 210, height: 60 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
-    }
-    {
-      id: "compat"
-      capability: "core.panel"
-      title: "storage compatibility"
-      detail: "artifact authority"
-      layout: { x: 485, y: 150, width: 190, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-compat"
-      capability: "core.rect"
-      layout: { x: 605, y: 138, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-compat-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 605, y: 142, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "motion-sig"
-      capability: "motion.signal"
-      d: "M80 195 H620"
-      layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
-      accessibility: { label: "motion signal" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-term", at: 400, duration: 340, target: "term", action: "enter" }
-    { id: "t-st-term", at: 450, duration: 260, target: "st-term", action: "enter" }
-    { id: "t-cap1", at: 700, duration: 300, target: "cap1", action: "draw" }
-    { id: "t-retain", at: 900, duration: 300, target: "retain", action: "enter" }
-    { id: "t-fold", at: 1050, duration: 300, target: "fold", action: "enter" }
-    { id: "t-sketch", at: 1200, duration: 300, target: "sketch", action: "enter" }
-    { id: "t-compat", at: 1450, duration: 340, target: "compat", action: "enter" }
-    { id: "t-st-compat", at: 1500, duration: 260, target: "st-compat", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+      sdk.Header(id = "header", title = "CAPTURE · STORAGE MODES", caption = "finalize once · select storage fidelity.")
+      sdk.Panel(id = "term", title = "terminal-record-finalization", x = 20, y = 150, width = 165, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-term", label = "BUILT", x = 115, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "retain", title = "retain-record-capture", x = 225, y = 92, width = 210, height = 60, strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "fold", title = "streaming-exact-fold", x = 225, y = 170, width = 210, height = 60, strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "sketch", title = "tagged-sketch-merge", x = 225, y = 248, width = 210, height = 60, strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "compat", title = "storage compatibility", x = 485, y = 150, width = 190, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-compat", label = "BUILT", x = 605, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "cap1", mode = "line", from = { nodeId: "term", anchor: "e" }, to = { nodeId: "fold", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Signal(id = "motion-sig", from = { nodeId: "term", anchor: "e" }, to = { nodeId: "compat", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal term duration 260
+        at 320 reveal st-term duration 260
+        at 480 trace cap1 duration 420
+        at 640 reveal retain duration 260
+        at 800 reveal fold duration 260
+        at 960 reveal sketch duration 260
+        at 1120 reveal compat duration 260
+        at 1280 reveal st-compat duration 260
+        at 1440 trace motion-sig duration 900
+      }
     }
   }
 
@@ -1246,133 +383,28 @@ explainer "Cellular algorithm workbook" {
     caption: "partition set → validated reduction → report."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "MERGE · EXPLICIT LAWS"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "partition set → validated reduction → report."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "sgom"
-      capability: "core.panel"
-      title: "scheduled-global-ordinal-merge"
-      detail: "dense permutation"
-      layout: { x: 25, y: 116, width: 220, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-sgom"
-      capability: "core.rect"
-      layout: { x: 175, y: 104, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-sgom-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 175, y: 108, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "fidelity"
-      capability: "core.panel"
-      title: "merged-report-fidelity-boundary"
-      detail: "graph · fold · sketch"
-      layout: { x: 25, y: 246, width: 220, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-fid"
-      capability: "core.rect"
-      layout: { x: 175, y: 234, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-fid-text"
-          capability: "core.text"
-          text: "PARTIAL"
-          layout: { x: 175, y: 238, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "m1"
-      capability: "core.path"
-      d: "M245 152 C350 155 385 182 445 195"
-      layout: { x: 245, y: 152, width: 200, height: 43 }
-      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "m2"
-      capability: "core.path"
-      d: "M245 282 C350 275 385 228 445 210"
-      layout: { x: 245, y: 210, width: 200, height: 72 }
-      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "report"
-      capability: "core.panel"
-      title: "final-report-assembly"
-      detail: "publish merged report"
-      layout: { x: 445, y: 165, width: 225, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-rep"
-      capability: "core.rect"
-      layout: { x: 600, y: 153, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-rep-text"
-          capability: "core.text"
-          text: "PARTIAL"
-          layout: { x: 600, y: 157, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "motion-sig"
-      capability: "motion.signal"
-      d: "M80 195 H620"
-      layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
-      accessibility: { label: "motion signal" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-sgom", at: 400, duration: 340, target: "sgom", action: "enter" }
-    { id: "t-st-sgom", at: 450, duration: 260, target: "st-sgom", action: "enter" }
-    { id: "t-fidelity", at: 700, duration: 340, target: "fidelity", action: "enter" }
-    { id: "t-st-fid", at: 750, duration: 260, target: "st-fid", action: "enter" }
-    { id: "t-m1", at: 1000, duration: 300, target: "m1", action: "draw" }
-    { id: "t-m2", at: 1100, duration: 300, target: "m2", action: "draw" }
-    { id: "t-report", at: 1350, duration: 360, target: "report", action: "enter" }
-    { id: "t-st-rep", at: 1400, duration: 260, target: "st-rep", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+      sdk.Header(id = "header", title = "MERGE · EXPLICIT LAWS", caption = "partition set → validated reduction → report.")
+      sdk.Panel(id = "sgom", title = "scheduled-global-ordinal-merge", x = 25, y = 116, width = 220, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-sgom", label = "BUILT", x = 175, y = 104, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "fidelity", title = "merged-report-fidelity-boundary", x = 25, y = 246, width = 220, height = 72, strokeRole = "@theme.accent.tertiary")
+      sdk.Chip(id = "st-fid", label = "PARTIAL", x = 175, y = 234, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "report", title = "final-report-assembly", x = 445, y = 165, width = 225, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-rep", label = "PARTIAL", x = 600, y = 153, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "m1", mode = "path", from = { nodeId: "sgom", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Edge(id = "m2", mode = "path", from = { nodeId: "fidelity", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Signal(id = "motion-sig", from = { nodeId: "sgom", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal sgom duration 260
+        at 320 reveal st-sgom duration 260
+        at 480 trace m1 duration 420
+        at 640 reveal fidelity duration 260
+        at 800 reveal st-fid duration 260
+        at 960 trace m2 duration 420
+        at 1120 reveal report duration 260
+        at 1280 reveal st-rep duration 260
+        at 1440 trace motion-sig duration 900
+      }
     }
   }
 
@@ -1393,166 +425,34 @@ explainer "Cellular algorithm workbook" {
     caption: "allowlist → upload → atomic publish → barrier."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "ARTIFACTS · AUTHORITY + FAILURE"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "allowlist → upload → atomic publish → barrier."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "allow"
-      capability: "core.panel"
-      title: "artifact-authority-allowlist"
-      detail: "relative paths"
-      layout: { x: 20, y: 150, width: 160, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-allow"
-      capability: "core.rect"
-      layout: { x: 64, y: 138, width: 116, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-allow-text"
-          capability: "core.text"
-          text: "FEATURE-GATED"
-          layout: { x: 64, y: 142, width: 116, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "ar1"
-      capability: "core.line"
-      from: { x: 180, y: 186 }
-      to: { x: 215, y: 186 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "upload"
-      capability: "core.panel"
-      title: "HTTP zstd upload"
-      detail: ".partial file"
-      layout: { x: 215, y: 150, width: 150, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-up"
-      capability: "core.rect"
-      layout: { x: 249, y: 138, width: 116, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-up-text"
-          capability: "core.text"
-          text: "FEATURE-GATED"
-          layout: { x: 249, y: 142, width: 116, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "ar2"
-      capability: "core.line"
-      from: { x: 365, y: 186 }
-      to: { x: 400, y: 186 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "atomic"
-      capability: "core.panel"
-      title: "atomic replace"
-      detail: "publish"
-      layout: { x: 400, y: 150, width: 130, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-at"
-      capability: "core.rect"
-      layout: { x: 414, y: 138, width: 116, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-at-text"
-          capability: "core.text"
-          text: "FEATURE-GATED"
-          layout: { x: 414, y: 142, width: 116, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "ar3"
-      capability: "core.line"
-      from: { x: 530, y: 186 }
-      to: { x: 565, y: 186 }
-      style: { stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "barrier"
-      capability: "core.panel"
-      title: "completion barrier"
-      detail: "all files"
-      layout: { x: 565, y: 150, width: 115, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-bar"
-      capability: "core.rect"
-      layout: { x: 564, y: 138, width: 116, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-bar-text"
-          capability: "core.text"
-          text: "FEATURE-GATED"
-          layout: { x: 564, y: 142, width: 116, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "motion-sig"
-      capability: "motion.signal"
-      d: "M80 195 H620"
-      layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
-      accessibility: { label: "motion signal" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-allow", at: 400, duration: 320, target: "allow", action: "enter" }
-    { id: "t-st-allow", at: 450, duration: 240, target: "st-allow", action: "enter" }
-    { id: "t-ar1", at: 700, duration: 280, target: "ar1", action: "draw" }
-    { id: "t-upload", at: 900, duration: 320, target: "upload", action: "enter" }
-    { id: "t-st-up", at: 950, duration: 240, target: "st-up", action: "enter" }
-    { id: "t-ar2", at: 1150, duration: 280, target: "ar2", action: "draw" }
-    { id: "t-atomic", at: 1350, duration: 320, target: "atomic", action: "enter" }
-    { id: "t-st-at", at: 1400, duration: 240, target: "st-at", action: "enter" }
-    { id: "t-ar3", at: 1600, duration: 280, target: "ar3", action: "draw" }
-    { id: "t-barrier", at: 1800, duration: 320, target: "barrier", action: "enter" }
-    { id: "t-st-bar", at: 1850, duration: 240, target: "st-bar", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+      sdk.Header(id = "header", title = "ARTIFACTS · AUTHORITY + FAILURE", caption = "allowlist → upload → atomic publish → barrier.")
+      sdk.Panel(id = "allow", title = "artifact-authority-allowlist", x = 20, y = 150, width = 160, height = 72, strokeRole = "@theme.accent.secondary")
+      sdk.Chip(id = "st-allow", label = "FEATURE-GATED", x = 64, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "upload", title = "HTTP zstd upload", x = 215, y = 150, width = 150, height = 72, strokeRole = "@theme.accent.secondary")
+      sdk.Chip(id = "st-up", label = "FEATURE-GATED", x = 249, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "atomic", title = "atomic replace", x = 400, y = 150, width = 130, height = 72, strokeRole = "@theme.accent.secondary")
+      sdk.Chip(id = "st-at", label = "FEATURE-GATED", x = 414, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "barrier", title = "completion barrier", x = 565, y = 150, width = 115, height = 72, strokeRole = "@theme.accent.secondary")
+      sdk.Chip(id = "st-bar", label = "FEATURE-GATED", x = 564, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "ar1", mode = "line", from = { nodeId: "allow", anchor: "e" }, to = { nodeId: "upload", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Edge(id = "ar2", mode = "line", from = { nodeId: "upload", anchor: "e" }, to = { nodeId: "atomic", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Edge(id = "ar3", mode = "line", from = { nodeId: "atomic", anchor: "e" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Signal(id = "motion-sig", from = { nodeId: "allow", anchor: "e" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal allow duration 260
+        at 320 reveal st-allow duration 260
+        at 480 trace ar1 duration 420
+        at 640 reveal upload duration 260
+        at 800 reveal st-up duration 260
+        at 960 trace ar2 duration 420
+        at 1120 reveal atomic duration 260
+        at 1280 reveal st-at duration 260
+        at 1440 trace ar3 duration 420
+        at 1600 reveal barrier duration 260
+        at 1760 reveal st-bar duration 260
+        at 1920 trace motion-sig duration 900
+      }
     }
   }
 
@@ -1573,179 +473,44 @@ explainer "Cellular algorithm workbook" {
     caption: "selectors → ordered algorithms → artifacts."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "COMPOSITION · CANONICAL ROUTE"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "selectors → ordered algorithms → artifacts."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "rt-eligibility"
-      capability: "core.panel"
-      title: "eligibility"
-      detail: "gate"
-      layout: { x: 18, y: 160, width: 74, height: 64 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-    }
-    {
-      id: "rt-a0"
-      capability: "core.connector"
-      from: { nodeId: "rt-eligibility", anchor: "e" }
-      to: { nodeId: "rt-ownership", anchor: "w" }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "rt-ownership"
-      capability: "core.panel"
-      title: "ownership"
-      detail: "route"
-      layout: { x: 103, y: 160, width: 74, height: 64 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-    }
-    {
-      id: "rt-a1"
-      capability: "core.connector"
-      from: { nodeId: "rt-ownership", anchor: "e" }
-      to: { nodeId: "rt-control", anchor: "w" }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "rt-control"
-      capability: "core.panel"
-      title: "control"
-      detail: "route"
-      layout: { x: 188, y: 160, width: 74, height: 64 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-    }
-    {
-      id: "rt-a2"
-      capability: "core.connector"
-      from: { nodeId: "rt-control", anchor: "e" }
-      to: { nodeId: "rt-distribution", anchor: "w" }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "rt-distribution"
-      capability: "core.panel"
-      title: "distribution"
-      detail: "route"
-      layout: { x: 273, y: 160, width: 74, height: 64 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-    }
-    {
-      id: "rt-a3"
-      capability: "core.connector"
-      from: { nodeId: "rt-distribution", anchor: "e" }
-      to: { nodeId: "rt-execution", anchor: "w" }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "rt-execution"
-      capability: "core.panel"
-      title: "execution"
-      detail: "route"
-      layout: { x: 358, y: 160, width: 74, height: 64 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    {
-      id: "rt-a4"
-      capability: "core.connector"
-      from: { nodeId: "rt-execution", anchor: "e" }
-      to: { nodeId: "rt-capture", anchor: "w" }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "rt-capture"
-      capability: "core.panel"
-      title: "capture"
-      detail: "route"
-      layout: { x: 443, y: 160, width: 74, height: 64 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    {
-      id: "rt-a5"
-      capability: "core.connector"
-      from: { nodeId: "rt-capture", anchor: "e" }
-      to: { nodeId: "rt-merge", anchor: "w" }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "rt-merge"
-      capability: "core.panel"
-      title: "merge"
-      detail: "route"
-      layout: { x: 528, y: 160, width: 74, height: 64 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    {
-      id: "rt-a6"
-      capability: "core.connector"
-      from: { nodeId: "rt-merge", anchor: "e" }
-      to: { nodeId: "rt-artifacts", anchor: "w" }
-      style: { stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "rt-artifacts"
-      capability: "core.panel"
-      title: "artifacts"
-      detail: "route"
-      layout: { x: 613, y: 160, width: 74, height: 64 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    {
-      id: "route-cap"
-      capability: "core.text"
-      text: "canonical scheduled · exact fold · flat merge"
-      layout: { x: 80, y: 282, width: 540, height: 24 }
-      style: { fontSize: 12, fill: @theme.ink.secondary, textAnchor: "middle" }
-    }
-    {
-      id: "motion-sig"
-      capability: "motion.signal"
-      from: { nodeId: "rt-eligibility", anchor: "e" }
-      to: { nodeId: "rt-artifacts", anchor: "w" }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
-      accessibility: { label: "motion signal" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-rt-eligibility", at: 400, duration: 280, target: "rt-eligibility", action: "enter" }
-    { id: "t-rt-a0", at: 480, duration: 240, target: "rt-a0", action: "draw" }
-    { id: "t-rt-ownership", at: 540, duration: 280, target: "rt-ownership", action: "enter" }
-    { id: "t-rt-a1", at: 620, duration: 240, target: "rt-a1", action: "draw" }
-    { id: "t-rt-control", at: 680, duration: 280, target: "rt-control", action: "enter" }
-    { id: "t-rt-a2", at: 760, duration: 240, target: "rt-a2", action: "draw" }
-    { id: "t-rt-distribution", at: 820, duration: 280, target: "rt-distribution", action: "enter" }
-    { id: "t-rt-a3", at: 900, duration: 240, target: "rt-a3", action: "draw" }
-    { id: "t-rt-execution", at: 960, duration: 280, target: "rt-execution", action: "enter" }
-    { id: "t-rt-a4", at: 1040, duration: 240, target: "rt-a4", action: "draw" }
-    { id: "t-rt-capture", at: 1100, duration: 280, target: "rt-capture", action: "enter" }
-    { id: "t-rt-a5", at: 1180, duration: 240, target: "rt-a5", action: "draw" }
-    { id: "t-rt-merge", at: 1240, duration: 280, target: "rt-merge", action: "enter" }
-    { id: "t-rt-a6", at: 1320, duration: 240, target: "rt-a6", action: "draw" }
-    { id: "t-rt-artifacts", at: 1380, duration: 280, target: "rt-artifacts", action: "enter" }
-    { id: "t-route-cap", at: 1600, duration: 300, target: "route-cap", action: "enter" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    { id: "t-emphasis-final", at: 2100, duration: 420, target: "rt-eligibility", action: "emphasis" }
-    ]
+      sdk.Header(id = "header", title = "COMPOSITION · CANONICAL ROUTE", caption = "selectors → ordered algorithms → artifacts.")
+      sdk.Panel(id = "rt-eligibility", title = "eligibility", x = 18, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "rt-a0", mode = "connector", from = { nodeId: "rt-eligibility", anchor: "e" }, to = { nodeId: "rt-ownership", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "rt-ownership", title = "ownership", x = 103, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "rt-a1", mode = "connector", from = { nodeId: "rt-ownership", anchor: "e" }, to = { nodeId: "rt-control", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "rt-control", title = "control", x = 188, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "rt-a2", mode = "connector", from = { nodeId: "rt-control", anchor: "e" }, to = { nodeId: "rt-distribution", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Panel(id = "rt-distribution", title = "distribution", x = 273, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "rt-a3", mode = "connector", from = { nodeId: "rt-distribution", anchor: "e" }, to = { nodeId: "rt-execution", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Panel(id = "rt-execution", title = "execution", x = 358, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "rt-a4", mode = "connector", from = { nodeId: "rt-execution", anchor: "e" }, to = { nodeId: "rt-capture", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Panel(id = "rt-capture", title = "capture", x = 443, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.tertiary")
+      sdk.Edge(id = "rt-a5", mode = "connector", from = { nodeId: "rt-capture", anchor: "e" }, to = { nodeId: "rt-merge", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Panel(id = "rt-merge", title = "merge", x = 528, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "rt-a6", mode = "connector", from = { nodeId: "rt-merge", anchor: "e" }, to = { nodeId: "rt-artifacts", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "rt-artifacts", title = "artifacts", x = 613, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.primary")
+      sdk.Label(id = "route-cap", text = "canonical scheduled · exact fold · flat merge", x = 80, y = 282, width = 540, height = 24, fontSize = 12, align = "middle")
+      sdk.Signal(id = "motion-sig", from = { nodeId: "rt-eligibility", anchor: "e" }, to = { nodeId: "rt-artifacts", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal rt-eligibility duration 260
+        at 320 trace rt-a0 duration 420
+        at 480 reveal rt-ownership duration 260
+        at 640 trace rt-a1 duration 420
+        at 800 reveal rt-control duration 260
+        at 960 trace rt-a2 duration 420
+        at 1120 reveal rt-distribution duration 260
+        at 1280 trace rt-a3 duration 420
+        at 1440 reveal rt-execution duration 260
+        at 1600 trace rt-a4 duration 420
+        at 1760 reveal rt-capture duration 260
+        at 1920 trace rt-a5 duration 420
+        at 2080 reveal rt-merge duration 260
+        at 2240 trace rt-a6 duration 420
+        at 2400 reveal rt-artifacts duration 260
+        at 2560 reveal route-cap duration 260
+        at 2720 trace motion-sig duration 900
+      }
     }
   }
 
@@ -1766,117 +531,24 @@ explainer "Cellular algorithm workbook" {
     caption: "built · feature-gated · partial."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-      accessibility: { label: "COMPOSITION · STATUS BRANCHES" }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "COMPOSITION · STATUS BRANCHES"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "built · feature-gated · partial."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "canon-route"
-      capability: "core.panel"
-      title: "canonical route"
-      detail: "ownership + execution"
-      layout: { x: 35, y: 118, width: 195, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-cr"
-      capability: "core.rect"
-      layout: { x: 160, y: 106, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.primary, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-cr-text"
-          capability: "core.text"
-          text: "BUILT"
-          layout: { x: 160, y: 110, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.primary, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "branches"
-      capability: "core.panel"
-      title: "phaser / fan-out / Stage E"
-      detail: "explicit branches"
-      layout: { x: 252, y: 118, width: 195, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-br"
-      capability: "core.rect"
-      layout: { x: 331, y: 106, width: 116, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.warning, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-br-text"
-          capability: "core.text"
-          text: "FEATURE-GATED"
-          layout: { x: 331, y: 110, width: 116, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.warning, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "partials"
-      capability: "core.panel"
-      title: "report / telemetry / cancel"
-      detail: "named limitations"
-      layout: { x: 469, y: 118, width: 195, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.caution, strokeWidth: 1.8 }
-    }
-    {
-      id: "st-pa"
-      capability: "core.rect"
-      layout: { x: 594, y: 106, width: 70, height: 22 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.accent.caution, strokeWidth: 1.4 }
-      children: [
-        {
-          id: "st-pa-text"
-          capability: "core.text"
-          text: "PARTIAL"
-          layout: { x: 594, y: 110, width: 70, height: 16 }
-          style: { fontSize: 9, fontWeight: "bold", fill: @theme.accent.caution, textAnchor: "middle" }
-        }
-      ]
-    }
-    {
-      id: "status-msg"
-      capability: "core.text"
-      text: "status text travels with every selected algorithm"
-      layout: { x: 60, y: 280, width: 580, height: 28 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "middle" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-canon-route", at: 400, duration: 340, target: "canon-route", action: "enter" }
-    { id: "t-st-cr", at: 450, duration: 260, target: "st-cr", action: "enter" }
-    { id: "t-branches", at: 750, duration: 340, target: "branches", action: "enter" }
-    { id: "t-st-br", at: 800, duration: 260, target: "st-br", action: "enter" }
-    { id: "t-partials", at: 1100, duration: 340, target: "partials", action: "enter" }
-    { id: "t-st-pa", at: 1150, duration: 260, target: "st-pa", action: "enter" }
-    { id: "t-status-msg", at: 1500, duration: 360, target: "status-msg", action: "enter" }
-  ]
+      sdk.Header(id = "header", title = "COMPOSITION · STATUS BRANCHES", caption = "built · feature-gated · partial.")
+      sdk.Panel(id = "canon-route", title = "canonical route", x = 35, y = 118, width = 195, height = 72, strokeRole = "@theme.accent.primary")
+      sdk.Chip(id = "st-cr", label = "BUILT", x = 160, y = 106, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "branches", title = "phaser / fan-out / Stage E", x = 252, y = 118, width = 195, height = 72, strokeRole = "@theme.accent.secondary")
+      sdk.Chip(id = "st-br", label = "FEATURE-GATED", x = 331, y = 106, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "partials", title = "report / telemetry / cancel", x = 469, y = 118, width = 195, height = 72, strokeRole = "@theme.accent.tertiary")
+      sdk.Chip(id = "st-pa", label = "PARTIAL", x = 594, y = 106, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary")
+      sdk.Label(id = "status-msg", text = "status text travels with every selected algorithm", x = 60, y = 280, width = 580, height = 28, fontSize = 12, align = "middle")
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal canon-route duration 260
+        at 320 reveal st-cr duration 260
+        at 480 reveal branches duration 260
+        at 640 reveal st-br duration 260
+        at 800 reveal partials duration 260
+        at 960 reveal st-pa duration 260
+        at 1120 reveal status-msg duration 260
+      }
     }
   }
 
@@ -1897,94 +569,24 @@ explainer "Cellular algorithm workbook" {
     caption: "authored intent → dataset classification → runtime."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "DECISION · EFFECTIVE RUN KIND"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "authored intent → dataset classification → runtime."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "decision"
-      capability: "core.panel"
-      title: "run-kind-classification"
-      detail: "route selector"
-      layout: { x: 245, y: 92, width: 210, height: 64 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-    }
-    {
-      id: "dl"
-      capability: "core.path"
-      d: "M300 156 C230 195 190 215 165 245"
-      layout: { x: 165, y: 156, width: 135, height: 89 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "dr"
-      capability: "core.path"
-      d: "M400 156 C470 195 510 215 535 245"
-      layout: { x: 400, y: 156, width: 135, height: 89 }
-      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "left"
-      capability: "core.panel"
-      title: "synthetic → scheduled"
-      detail: "left route"
-      layout: { x: 45, y: 245, width: 240, height: 70 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "right"
-      capability: "core.panel"
-      title: "WEKA → graph"
-      detail: "right route"
-      layout: { x: 415, y: 245, width: 240, height: 70 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    {
-      id: "invariant"
-      capability: "core.text"
-      text: "dataset shape selects the effective run kind"
-      layout: { x: 80, y: 345, width: 540, height: 20 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-    }
-    {
-      id: "motion-sig"
-      capability: "motion.signal"
-      d: "M350 125 V320"
-      layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
-      accessibility: { label: "motion signal" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-decision", at: 400, duration: 360, target: "decision", action: "enter" }
-    { id: "t-dl", at: 700, duration: 320, target: "dl", action: "draw" }
-    { id: "t-dr", at: 800, duration: 320, target: "dr", action: "draw" }
-    { id: "t-left", at: 1100, duration: 340, target: "left", action: "enter" }
-    { id: "t-right", at: 1250, duration: 340, target: "right", action: "enter" }
-    { id: "t-invariant", at: 1550, duration: 300, target: "invariant", action: "enter" }
-    { id: "t-emphasis", at: 1850, duration: 400, target: "decision", action: "emphasis" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+      sdk.Header(id = "header", title = "DECISION · EFFECTIVE RUN KIND", caption = "authored intent → dataset classification → runtime.")
+      sdk.Panel(id = "decision", title = "run-kind-classification", x = 245, y = 92, width = 210, height = 64, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "dl", mode = "path", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "left", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Edge(id = "dr", mode = "path", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "right", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Panel(id = "left", title = "synthetic → scheduled", x = 45, y = 245, width = 240, height = 70, strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "right", title = "WEKA → graph", x = 415, y = 245, width = 240, height = 70, strokeRole = "@theme.accent.tertiary")
+      sdk.Label(id = "invariant", text = "dataset shape selects the effective run kind", x = 80, y = 345, width = 540, height = 20, fontSize = 12, align = "middle")
+      sdk.Signal(id = "motion-sig", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "left", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal decision duration 260
+        at 320 reveal left duration 260
+        at 480 trace dl duration 420
+        at 640 reveal right duration 260
+        at 800 trace dr duration 420
+        at 960 reveal invariant duration 260
+        at 1120 trace motion-sig duration 900
+      }
     }
   }
 
@@ -2005,94 +607,24 @@ explainer "Cellular algorithm workbook" {
     caption: "storage fidelity · ownership granularity."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "DECISION · FIDELITY + OWNERSHIP"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "storage fidelity · ownership granularity."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "decision"
-      capability: "core.panel"
-      title: "storage + ownership"
-      detail: "route selector"
-      layout: { x: 245, y: 92, width: 210, height: 64 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-    }
-    {
-      id: "dl"
-      capability: "core.path"
-      d: "M300 156 C230 195 190 215 165 245"
-      layout: { x: 165, y: 156, width: 135, height: 89 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "dr"
-      capability: "core.path"
-      d: "M400 156 C470 195 510 215 535 245"
-      layout: { x: 400, y: 156, width: 135, height: 89 }
-      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "left"
-      capability: "core.panel"
-      title: "exact fold · requests"
-      detail: "left route"
-      layout: { x: 45, y: 245, width: 240, height: 70 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "right"
-      capability: "core.panel"
-      title: "sketch · conversations"
-      detail: "right route"
-      layout: { x: 415, y: 245, width: 240, height: 70 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    {
-      id: "invariant"
-      capability: "core.text"
-      text: "one owner remains invariant"
-      layout: { x: 80, y: 345, width: 540, height: 20 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-    }
-    {
-      id: "motion-sig"
-      capability: "motion.signal"
-      d: "M350 125 V320"
-      layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
-      accessibility: { label: "motion signal" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-decision", at: 400, duration: 360, target: "decision", action: "enter" }
-    { id: "t-dl", at: 700, duration: 320, target: "dl", action: "draw" }
-    { id: "t-dr", at: 800, duration: 320, target: "dr", action: "draw" }
-    { id: "t-left", at: 1100, duration: 340, target: "left", action: "enter" }
-    { id: "t-right", at: 1250, duration: 340, target: "right", action: "enter" }
-    { id: "t-invariant", at: 1550, duration: 300, target: "invariant", action: "enter" }
-    { id: "t-emphasis", at: 1850, duration: 400, target: "decision", action: "emphasis" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+      sdk.Header(id = "header", title = "DECISION · FIDELITY + OWNERSHIP", caption = "storage fidelity · ownership granularity.")
+      sdk.Panel(id = "decision", title = "storage + ownership", x = 245, y = 92, width = 210, height = 64, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "dl", mode = "path", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "left", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Edge(id = "dr", mode = "path", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "right", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Panel(id = "left", title = "exact fold · requests", x = 45, y = 245, width = 240, height = 70, strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "right", title = "sketch · conversations", x = 415, y = 245, width = 240, height = 70, strokeRole = "@theme.accent.tertiary")
+      sdk.Label(id = "invariant", text = "one owner remains invariant", x = 80, y = 345, width = 540, height = 20, fontSize = 12, align = "middle")
+      sdk.Signal(id = "motion-sig", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "right", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal decision duration 260
+        at 320 reveal left duration 260
+        at 480 trace dl duration 420
+        at 640 reveal right duration 260
+        at 800 trace dr duration 420
+        at 960 reveal invariant duration 260
+        at 1120 trace motion-sig duration 900
+      }
     }
   }
 
@@ -2113,94 +645,24 @@ explainer "Cellular algorithm workbook" {
     caption: "deployment → topology + Stage E/G."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "DECISION · PLACEMENT + SHIPPING"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "deployment → topology + Stage E/G."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "decision"
-      capability: "core.panel"
-      title: "deployment placement"
-      detail: "route selector"
-      layout: { x: 245, y: 92, width: 210, height: 64 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.warning, strokeWidth: 1.8 }
-    }
-    {
-      id: "dl"
-      capability: "core.path"
-      d: "M300 156 C230 195 190 215 165 245"
-      layout: { x: 165, y: 156, width: 135, height: 89 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.2 }
-    }
-    {
-      id: "dr"
-      capability: "core.path"
-      d: "M400 156 C470 195 510 215 535 245"
-      layout: { x: 400, y: 156, width: 135, height: 89 }
-      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "left"
-      capability: "core.panel"
-      title: "same host · flat/local"
-      detail: "left route"
-      layout: { x: 45, y: 245, width: 240, height: 70 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.primary, strokeWidth: 1.8 }
-    }
-    {
-      id: "right"
-      capability: "core.panel"
-      title: "cross host · Stage E/G"
-      detail: "right route"
-      layout: { x: 415, y: 245, width: 240, height: 70 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    {
-      id: "invariant"
-      capability: "core.text"
-      text: "placement changes shipping, not measurement"
-      layout: { x: 80, y: 345, width: 540, height: 20 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "middle" }
-    }
-    {
-      id: "motion-sig"
-      capability: "motion.signal"
-      d: "M350 125 V320"
-      layout: { x: 0, y: 0, width: 700, height: 400 }
-      style: { fill: "none", stroke: @theme.accent.primary, strokeWidth: 2.4, opacity: 0.55,  markerEnd: "none"}
-      accessibility: { label: "motion signal" }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-decision", at: 400, duration: 360, target: "decision", action: "enter" }
-    { id: "t-dl", at: 700, duration: 320, target: "dl", action: "draw" }
-    { id: "t-dr", at: 800, duration: 320, target: "dr", action: "draw" }
-    { id: "t-left", at: 1100, duration: 340, target: "left", action: "enter" }
-    { id: "t-right", at: 1250, duration: 340, target: "right", action: "enter" }
-    { id: "t-invariant", at: 1550, duration: 300, target: "invariant", action: "enter" }
-    { id: "t-emphasis", at: 1850, duration: 400, target: "decision", action: "emphasis" }
-  { id: "t-motion-sig", at: 700, duration: 900, target: "motion-sig", action: "draw" }
-    ]
+      sdk.Header(id = "header", title = "DECISION · PLACEMENT + SHIPPING", caption = "deployment → topology + Stage E/G.")
+      sdk.Panel(id = "decision", title = "deployment placement", x = 245, y = 92, width = 210, height = 64, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "dl", mode = "path", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "left", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      sdk.Edge(id = "dr", mode = "path", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "right", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
+      sdk.Panel(id = "left", title = "same host · flat/local", x = 45, y = 245, width = 240, height = 70, strokeRole = "@theme.accent.secondary")
+      sdk.Panel(id = "right", title = "cross host · Stage E/G", x = 415, y = 245, width = 240, height = 70, strokeRole = "@theme.accent.tertiary")
+      sdk.Label(id = "invariant", text = "placement changes shipping, not measurement", x = 80, y = 345, width = 540, height = 20, fontSize = 12, align = "middle")
+      sdk.Signal(id = "motion-sig", from = { nodeId: "decision", anchor: "s" }, to = { nodeId: "right", anchor: "n" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal decision duration 260
+        at 320 reveal left duration 260
+        at 480 trace dl duration 420
+        at 640 reveal right duration 260
+        at 800 trace dr duration 420
+        at 960 reveal invariant duration 260
+        at 1120 trace motion-sig duration 900
+      }
     }
   }
 
@@ -2221,61 +683,16 @@ explainer "Cellular algorithm workbook" {
     caption: "maintainer map → exhaustive source canvas."
 
     render: @scene {
-    roots: [
-{
-      id: "header"
-      capability: "core.rect"
-      layout: { x: 18, y: 16, width: 664, height: 44 }
-      style: { fill: @theme.surface.secondary, stroke: @theme.ink.secondary, strokeWidth: 1 }
-      accessibility: { label: "REFERENCE · EXHAUSTIVE CATALOG" }
-    }
-    {
-      id: "label"
-      capability: "core.text"
-      text: "REFERENCE · EXHAUSTIVE CATALOG"
-      layout: { x: 38, y: 28, width: 360, height: 24 }
-      style: { fontSize: 14, fontWeight: "bold", fill: @theme.ink.primary, textAnchor: "start" }
-    }
-    {
-      id: "note"
-      capability: "core.text"
-      text: "maintainer map → exhaustive source canvas."
-      layout: { x: 400, y: 28, width: 260, height: 24 }
-      style: { fontSize: 11, fill: @theme.ink.secondary, textAnchor: "end" }
-    }
-    {
-      id: "pages"
-      capability: "core.panel"
-      title: "~100 algorithm pages"
-      detail: "pseudocode · frames · gates · failures · evidence"
-      layout: { x: 70, y: 110, width: 560, height: 82 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.secondary, strokeWidth: 1.8 }
-    }
-    {
-      id: "ref-a"
-      capability: "core.path"
-      d: "M350 192 V245"
-      layout: { x: 350, y: 192, width: 1, height: 53 }
-      style: { fill: "none", stroke: @theme.accent.tertiary, strokeWidth: 2.2 }
-    }
-    {
-      id: "canvas"
-      capability: "core.panel"
-      title: "docs/canvases/cellular-algorithm-workbook.canvas.tsx"
-      detail: "exhaustive maintainer lookup"
-      layout: { x: 70, y: 245, width: 560, height: 72 }
-      style: { fill: @theme.surface.primary, stroke: @theme.accent.tertiary, strokeWidth: 1.8 }
-    }
-    ]
-  timeline: [
-    { id: "t-header", at: 0, duration: 300, target: "header", action: "enter" }
-    { id: "t-label", at: 80, duration: 280, target: "label", action: "enter" }
-    { id: "t-note", at: 120, duration: 280, target: "note", action: "enter" }
-    { id: "t-pages", at: 400, duration: 400, target: "pages", action: "enter" }
-    { id: "t-ref-a", at: 800, duration: 320, target: "ref-a", action: "draw" }
-    { id: "t-canvas", at: 1100, duration: 400, target: "canvas", action: "enter" }
-    { id: "t-emphasis", at: 1550, duration: 450, target: "canvas", action: "emphasis" }
-  ]
+      sdk.Header(id = "header", title = "REFERENCE · EXHAUSTIVE CATALOG", caption = "maintainer map → exhaustive source canvas.")
+      sdk.Panel(id = "pages", title = "~100 algorithm pages", x = 70, y = 75, width = 560, height = 82, strokeRole = "@theme.accent.primary")
+      sdk.Edge(id = "ref-a", mode = "path", from = { nodeId: "pages", anchor: "s" }, to = { nodeId: "canvas", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
+      sdk.Panel(id = "canvas", title = "docs/canvases/cellular-algorithm-workbook.canvas.tsx", x = 70, y = 210, width = 560, height = 72, strokeRole = "@theme.accent.secondary")
+      timeline primary {
+        at 0 reveal header duration 260
+        at 160 reveal pages duration 260
+        at 320 trace ref-a duration 420
+        at 480 reveal canvas duration 260
+      }
     }
   }
 }

@@ -152,44 +152,20 @@ function hasStaggeredBranchMotion(timeline, nodesById) {
 }
 
 /**
- * Verify one DeckPackage's scenes (static + optional mid-draw contract samples).
+ * Verify one scene's geometry/timeline contract (shared by slide `render.scene`
+ * and `finalCard.scene` — both are `SceneIrLike` and must satisfy the same
+ * SceneRenderer invariants).
  *
  * SceneRenderer contract: arrowheads appear only when drawProgress >= 1
  * (or reduced motion / no draw cue). Play layer asserts the live SVG side.
  *
- * @returns {Finding[]}
+ * @param {string} deck
+ * @param {string} slideLabel
+ * @param {object} scene
+ * @param {{ viewport?: unknown; strictDraw?: boolean }} options
+ * @param {Finding[]} findings
  */
-export function verifyPackageIr(pkg, options = {}) {
-  const deck = pkg?.id ?? "unknown";
-  const findings = [];
-  const slides = Array.isArray(pkg?.slides) ? pkg.slides : [];
-
-  if (slides.length === 0) {
-    findings.push(
-      finding("error", deck, "*", "empty-slides", "package has no slides"),
-    );
-    return findings;
-  }
-
-  slides.forEach((slide, index) => {
-    const slideLabel = `${index}:${slide?.id ?? slide?.title ?? "slide"}`;
-    const render = slide?.render;
-    if (render == null) return;
-
-    const scene = render.scene;
-    if (scene == null || typeof scene !== "object") {
-      findings.push(
-        finding(
-          "error",
-          deck,
-          slideLabel,
-          "missing-scene",
-          "render present without scene",
-        ),
-      );
-      return;
-    }
-
+function verifySceneIr(deck, slideLabel, scene, options, findings) {
     const roots = scene.roots;
     const timeline = scene.timeline;
     const viewport = sceneViewport(scene, options.viewport);
@@ -532,7 +508,56 @@ export function verifyPackageIr(pkg, options = {}) {
         }
       }
     }
+}
+
+/**
+ * Verify one DeckPackage's scenes (static + optional mid-draw contract samples).
+ *
+ * Checks every slide's `render.scene` plus, when authored, `finalCard.scene`
+ * (three decks ship a scene-backed final card that is otherwise unchecked by
+ * this static gate — Play exercises it live, but IR must catch authoring
+ * regressions before a browser run).
+ *
+ * @returns {Finding[]}
+ */
+export function verifyPackageIr(pkg, options = {}) {
+  const deck = pkg?.id ?? "unknown";
+  const findings = [];
+  const slides = Array.isArray(pkg?.slides) ? pkg.slides : [];
+
+  if (slides.length === 0) {
+    findings.push(
+      finding("error", deck, "*", "empty-slides", "package has no slides"),
+    );
+    return findings;
+  }
+
+  slides.forEach((slide, index) => {
+    const slideLabel = `${index}:${slide?.id ?? slide?.title ?? "slide"}`;
+    const render = slide?.render;
+    if (render == null) return;
+
+    const scene = render.scene;
+    if (scene == null || typeof scene !== "object") {
+      findings.push(
+        finding(
+          "error",
+          deck,
+          slideLabel,
+          "missing-scene",
+          "render present without scene",
+        ),
+      );
+      return;
+    }
+
+    verifySceneIr(deck, slideLabel, scene, options, findings);
   });
+
+  const finalCardScene = pkg?.finalCard?.scene;
+  if (finalCardScene != null && typeof finalCardScene === "object") {
+    verifySceneIr(deck, "finalCard", finalCardScene, options, findings);
+  }
 
   return findings;
 }

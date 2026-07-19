@@ -31,9 +31,8 @@ npm run preview
 
 ## Browser Flow toolchain
 
-`apps/explainers` owns its browser-safe Flow toolchain under `src/flow`; it
-does not import, alias, or build against first-party modules from
-`apps/aiperf-flow`.
+`apps/explainers` owns the Flow language, compiler, SDK, runtime evaluator,
+developer verifier, and production renderer under `src/flow`.
 
 `src/flow/index.ts` is the public browser-safe barrel (compiler, formatter,
 schema, SDK). It is not the application production entry. Live deck loading
@@ -54,11 +53,10 @@ renderer. `SceneRenderer` remains the production rendering path.
 
 The browser boundary excludes Node filesystem, CLI, and process APIs; network
 module fetching; Playwright; alternate React applications and Canvas backends;
-and narration, WASM, worker, and inspection UI subsystems. Future changes in
-`apps/aiperf-flow` are synchronized manually: retain comparable local file
-names where practical, port only browser-safe behavior, and re-run the build,
-fail-closed import-boundary scan, and documentation consistency check after
-each sync.
+and narration, WASM, worker, and inspection UI subsystems. Build-time scripts
+under `scripts/` may use Node APIs while importing the same local compiler used
+by the browser. Re-run the build, fail-closed import-boundary scan, and
+documentation consistency check after toolchain changes.
 
 ## Deploy to GitHub Pages
 

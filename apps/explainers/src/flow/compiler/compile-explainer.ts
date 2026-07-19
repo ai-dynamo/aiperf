@@ -27,6 +27,11 @@ import {
   type ExplainerLowerInput,
   type ExplainerLowerOptions,
 } from "./lower-explainer.js";
+import {
+  validateSdkAuthoring,
+  type SdkAuthoringPolicy,
+  type SdkAuthoringSceneInput,
+} from "./validate-sdk-authoring.js";
 import { validateExplainerTimelines } from "./validate-explainer-timelines.js";
 
 /** Canonical validation policy for explainer compile / lower (re-export). */
@@ -37,7 +42,64 @@ export type CompileExplainerRequest = ExplainerCompileOptions &
   Readonly<{
     source: string;
     sourceName: string;
+    /**
+     * Strict SDK-authoring gate control.
+     *
+     * Enforcement is phased so package-form decks keep compiling until they
+     * migrate to native `sdk.*` authoring:
+     *
+     * - `true`: fail compilation on any prohibited bespoke / package-form
+     *   signature (the final migrated `strict: true` build).
+     * - `false`: skip the gate entirely.
+     * - `undefined` (default): report prohibited signatures as warnings without
+     *   failing, keeping the pre-migration corpus compilable.
+     */
+    strictSdkAuthoring?: boolean;
   }>;
+
+/** Resolves the phased SDK-authoring policy from the compile request. */
+function resolveSdkAuthoringPolicy(
+  request: CompileExplainerRequest,
+): SdkAuthoringPolicy {
+  if (request.strictSdkAuthoring === true) {
+    return "strict";
+  }
+  if (request.strictSdkAuthoring === false) {
+    return "off";
+  }
+  return "report";
+}
+
+/**
+ * Pairs each authored scene (raw AST) with its lowered `SceneIr` so the strict
+ * authoring gate can detect package-form scenes and bespoke signatures using
+ * both source structure and compiler-only SDK provenance.
+ */
+function collectSdkAuthoringScenes(
+  explainer: ExplainerLowerInput,
+  pkg: DeckPackage,
+): SdkAuthoringSceneInput[] {
+  const scenes: SdkAuthoringSceneInput[] = [];
+  explainer.slides.forEach((slide, index) => {
+    if (slide.sceneIr === undefined) {
+      return;
+    }
+    const lowered = pkg.slides[index];
+    scenes.push({
+      slideId: lowered?.id ?? `slide-${index}`,
+      rawScene: slide.sceneIr,
+      scene: lowered?.render?.scene,
+    });
+  });
+  if (explainer.finalCard !== undefined) {
+    scenes.push({
+      slideId: "finalCard",
+      rawScene: explainer.finalCard,
+      scene: pkg.finalCard?.scene,
+    });
+  }
+  return scenes;
+}
 
 function unknownRange(sourceName: string): SourceRange {
   return {
@@ -134,15 +196,28 @@ export function compileExplainerSource(
     return packaged;
   }
 
+  const authoringPolicy = resolveSdkAuthoringPolicy(request);
+  const authoring = validateSdkAuthoring(
+    collectSdkAuthoringScenes(explainer.value, packaged.value),
+    { policy: authoringPolicy },
+  );
+
+  const diagnostics = [
+    ...parsed.diagnostics,
+    ...explainer.diagnostics,
+    ...lowered.diagnostics,
+    ...timelines.diagnostics,
+    ...packaged.diagnostics,
+    ...authoring.diagnostics,
+  ];
+
+  if (!authoring.ok) {
+    return { ok: false, diagnostics };
+  }
+
   return {
     ok: true,
     value: packaged.value,
-    diagnostics: [
-      ...parsed.diagnostics,
-      ...explainer.diagnostics,
-      ...lowered.diagnostics,
-      ...timelines.diagnostics,
-      ...packaged.diagnostics,
-    ],
+    diagnostics,
   };
 }

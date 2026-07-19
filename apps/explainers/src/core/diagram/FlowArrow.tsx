@@ -32,16 +32,18 @@ export function FlowArrow({
   fill = "none",
   strokeWidth = tokens.diagram.strokeWidth,
   strokeDasharray,
+  style,
   ...pathProps
 }: FlowArrowProps) {
   const theme = useHostTheme();
+  const strokeColor = color ?? theme.category.green;
 
   return (
     <path
       {...pathProps}
       d={d}
       fill={fill}
-      stroke={color ?? theme.category.green}
+      stroke={strokeColor}
       strokeWidth={strokeWidth}
       // Round caps poke past the geometric end into the tip; keep butt when
       // a marker is attached so the stroke stops cleanly at the tip base.
@@ -54,6 +56,10 @@ export function FlowArrow({
             : undefined
       }
       markerEnd={showMarker ? `url(#${markerId})` : undefined}
+      style={{
+        filter: `drop-shadow(0 0 3px color-mix(in srgb, ${strokeColor} 55%, transparent))`,
+        ...style,
+      }}
     />
   );
 }

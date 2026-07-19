@@ -35,6 +35,14 @@ export type MentalModelProps = {
   playbackRate?: number;
 };
 
+/** Playback state shared by the shell and an authored finale scene. */
+export type FinalCardProps = {
+  playing?: boolean;
+  restartKey?: number;
+  reducedMotion?: boolean;
+  playbackRate?: number;
+};
+
 export type DeckDefinition = {
   id: string;
   route: string;
@@ -48,7 +56,7 @@ export type DeckDefinition = {
   MentalModel: (props: MentalModelProps) => ReactNode;
   css: string;
   /** Optional end card; package decks omit this unless DeckPackage.finalCard is set. */
-  FinalCard?: () => ReactNode;
+  FinalCard?: (props: FinalCardProps) => ReactNode;
 };
 
 export function slideNarrations(slides: readonly SlideDefinition[]): readonly string[] {

@@ -61,6 +61,7 @@ export function loadDeckPackages(): readonly DeckPackage[] {
       sourceName: path,
       capabilities: FOUNDATION_CAPABILITIES,
       strict: true,
+      strictSdkAuthoring: true,
     });
 
     if (!result.ok || hasErrors(result.diagnostics)) {

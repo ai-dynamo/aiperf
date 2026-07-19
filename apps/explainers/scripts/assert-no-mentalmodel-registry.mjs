@@ -16,7 +16,6 @@
  * Usage:
  *   node scripts/assert-no-mentalmodel-registry.mjs
  *   npm run assert:no-mentalmodel-registry
- *   (from apps/aiperf-flow) npm run assert:no-mentalmodel-registry
  *   make assert-no-mentalmodel-registry
  *   make assert-explainer-packages
  */

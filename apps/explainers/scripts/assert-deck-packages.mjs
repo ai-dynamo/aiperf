@@ -16,7 +16,6 @@
  * Usage:
  *   node scripts/assert-deck-packages.mjs
  *   npm run assert:deck-packages
- *   (from apps/aiperf-flow) npm run assert:deck-packages
  *   make assert-deck-packages
  *   make assert-explainer-packages
  */
