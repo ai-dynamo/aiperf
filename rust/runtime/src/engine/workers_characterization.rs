@@ -626,6 +626,110 @@ mod tests {
         );
     }
 
+    /// Rate-pacing analogue of
+    /// `global_dispatch_enforces_true_aggregate_concurrency_cap_sharded_does_not`.
+    ///
+    /// Proves `DispatchMode::Global` paces the AGGREGATE request rate across all
+    /// `W` worker threads at the single configured global rate, not `W ×` too
+    /// fast. Before the `GlobalRateGate` was actually consumed, `slice_phase_for_thread`
+    /// left `rate` UNSLICED under `Global`, so each of the 4 worker threads paced
+    /// a `Constant` phase at the full `RATE_PER_SEC`, producing a merged arrival
+    /// stream at ≈ `4 × RATE_PER_SEC`. With the shared gate consumed, every
+    /// thread claims one distinct slot from the same evenly-spaced base grid, so
+    /// the merged `credit_issued_ns` timeline advances at exactly one interval
+    /// per request — one global rate.
+    ///
+    /// The aggregate rate is measured end-to-end from the emitted per-record
+    /// `credit_issued_ns` (actual wire issue times, merged across every worker
+    /// thread's records), not from client-side pacing bookkeeping — the same
+    /// merged-timeline proof shape the concurrency test uses server-side.
+    #[test]
+    fn global_dispatch_paces_true_aggregate_rate_not_workers_times_too_fast() {
+        const WORKERS: usize = 4;
+        const RATE_PER_SEC: f64 = 200.0; // 5ms base interval.
+        const REQUESTS: u64 = 40; // 10 per thread at W=4.
+
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let phase: PhaseSpec = serde_json::from_value(json!({
+            "type": "constant",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": REQUESTS,
+            "rate": RATE_PER_SEC,
+        }))
+        .unwrap();
+
+        // Collect the merged `credit_issued_ns` timeline across all worker
+        // threads' records and derive the aggregate issuance rate from its span.
+        let measure_aggregate_rate = |dispatch_mode: crate::engine::protocol::DispatchMode| -> f64 {
+            let artifact_dir = tempfile::tempdir().unwrap();
+            let request_executor: Arc<dyn RequestExecutorFactory> = Arc::new(HttpExecutionFactory);
+            let factories = native_execution_factories();
+            let spec = plan_with_dispatch(
+                &mock.base_url,
+                artifact_dir.path(),
+                WORKERS,
+                build_dataset(&registry, REQUESTS as usize, 1),
+                phase.clone(),
+                dispatch_mode,
+            );
+            let report = execute_prepared_native_plan_uncommitted_selected(
+                spec,
+                request_executor,
+                &factories,
+                &registry,
+                None,
+            )
+            .expect("native run must complete");
+            assert!(
+                report_error_count(&report) == 0,
+                "expected zero profiling errors, report: {report:?}"
+            );
+            let rows = read_records(artifact_dir.path());
+            assert_eq!(
+                rows.len(),
+                REQUESTS as usize,
+                "every issued request must produce one profiling record"
+            );
+            let mut issued: Vec<i64> = rows
+                .iter()
+                .map(|row| {
+                    row.get("metadata")
+                        .and_then(|m| m.get("credit_issued_ns"))
+                        .and_then(Value::as_i64)
+                        .expect("record carries credit_issued_ns for a rate phase")
+                })
+                .collect();
+            issued.sort_unstable();
+            let span_ns = (issued.last().unwrap() - issued.first().unwrap()).max(1);
+            // (N-1) intervals span the merged timeline.
+            (REQUESTS as f64 - 1.0) / (span_ns as f64 / 1e9)
+        };
+
+        let global_rate = measure_aggregate_rate(crate::engine::protocol::DispatchMode::Global);
+        eprintln!(
+            "global-mode aggregate rate across {WORKERS} threads: {global_rate:.1}/s \
+             (configured global rate {RATE_PER_SEC}/s)"
+        );
+        // Global mode must pace the aggregate at the configured rate. A generous
+        // band (±35%) still cleanly rejects the pre-fix ≈4× regression (which
+        // would land near 800/s), while tolerating real-clock issue jitter.
+        assert!(
+            global_rate < RATE_PER_SEC * 1.35,
+            "Global dispatch must pace the AGGREGATE rate across all {WORKERS} worker \
+             threads at the global {RATE_PER_SEC}/s, NOT ~{WORKERS}x too fast; the \
+             unsliced-but-unconsumed-gate regression paced every thread at the full \
+             rate for a merged ~{:.0}/s. Measured aggregate: {global_rate:.1}/s",
+            RATE_PER_SEC * WORKERS as f64
+        );
+        assert!(
+            global_rate > RATE_PER_SEC * 0.65,
+            "Global aggregate rate must actually reach the configured {RATE_PER_SEC}/s \
+             (proves the run is rate-bound, not stalled); measured {global_rate:.1}/s"
+        );
+    }
+
     #[test]
     fn concurrency_workers_gt_1_is_sharded_and_data_matches_single_thread() {
         let registry = AIPerfRegistry::builtin().unwrap();
