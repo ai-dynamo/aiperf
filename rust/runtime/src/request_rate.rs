@@ -401,7 +401,19 @@ impl Workload for RequestRateWorkload {
                 match self.try_issue_new_session(runtime.clone(), scheduled_ns) {
                     Ok(NewSessionOutcome::Issued) => {}
                     Ok(NewSessionOutcome::NoSlot) => {
-                        if next_target_ns <= runtime.now_ns() {
+                        // A `Global`-backed session pool (`global`/`global-hop`
+                        // dispatch) may next free a slot on a DIFFERENT worker
+                        // thread's release, which never fires this thread's own
+                        // `state.progress` `Notify` (only THIS thread's own
+                        // `enqueue`/`release_session` calls do). Blocking on it
+                        // here would deadlock a thread holding zero local
+                        // guards forever, so fall through to the yield-and-retry
+                        // path instead — see `SlotPool::is_global`'s doc comment.
+                        let session_pool_is_global = self
+                            .session_slots
+                            .as_ref()
+                            .is_some_and(|pool| pool.is_global());
+                        if next_target_ns <= runtime.now_ns() && !session_pool_is_global {
                             // A session slot stays held until its continuation
                             // completes, so waiting on that slot here can hide
                             // the queued continuation that must release it.

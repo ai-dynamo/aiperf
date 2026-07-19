@@ -156,6 +156,58 @@ pub(crate) struct NativeScheduledResources {
     phase: Rc<dyn ScheduledPhaseResources>,
 }
 
+/// Select one phase's admission resources for one worker thread under
+/// `global`/`global-hop` dispatch.
+///
+/// The ordinary cross-phase-persistent `shared_resources` (one `SlotPool`
+/// reused, resized via `set_limit`, across every phase in the run so a
+/// seamless warmup->profiling handoff keeps its session guards live) is a
+/// `Sharded`-mode-only property: a `Local` `SlotPool`'s limit can be resized
+/// in place, but a `Global`-backed one cannot swap the `Arc<GlobalSlotPool>`
+/// it draws from without breaking in-flight guards. So when this phase both
+/// (a) authors a `concurrency` cap and (b) the cell built a shared gate for
+/// it (`ShardedShared::global_admission`), this thread gets its OWN
+/// `SlotPool::new_global` over that gate's `Arc<GlobalSlotPool>` — the same
+/// `Arc` every other worker thread in the cell holds — instead of continuing
+/// to draw from `shared_resources`'s persistent local pool. Every other case
+/// (Sharded dispatch, or a phase with no concurrency cap, e.g.
+/// `fixed_schedule`) falls back to `shared_resources` unchanged.
+///
+/// A known approximation: under `Global`/`GlobalHop`, a seamless
+/// warmup->profiling transition that carries session guards across the
+/// boundary switches from one phase's `GlobalSlotPool` to the next phase's
+/// (rather than resizing one persistent pool in place, as `Sharded` does).
+/// See `specs/global-exact-dispatch.md`.
+fn phase_scheduled_resources(
+    phase: &PhaseSpec,
+    shared: &ShardedShared,
+    shared_resources: &NativeScheduledResources,
+) -> Result<NativeScheduledResources> {
+    let global_pool = shared.global_admission.as_ref().and_then(|admission| {
+        admission
+            .concurrency
+            .get(&metrics_phase(phase).ok()?)
+            .cloned()
+    });
+    let Some(global_pool) = global_pool else {
+        return Ok(NativeScheduledResources {
+            session: shared_resources.session.clone(),
+            prefill: shared_resources.prefill.clone(),
+            phase: shared_resources.phase.clone(),
+        });
+    };
+    let session = Some(Rc::new(SlotPool::new_global(global_pool)));
+    let phase_resources: Rc<dyn ScheduledPhaseResources> = Rc::new(SlotPoolPhaseResources::new(
+        session.clone(),
+        shared_resources.prefill.clone(),
+    ));
+    Ok(NativeScheduledResources {
+        session,
+        prefill: shared_resources.prefill.clone(),
+        phase: phase_resources,
+    })
+}
+
 /// Construct run-wide scheduled admission resources from authored phase
 /// policy without selecting a transport or clock implementation.
 pub(crate) fn native_scheduled_resources(phases: &[PhaseSpec]) -> NativeScheduledResources {
@@ -2225,6 +2277,7 @@ pub(crate) struct GlobalAdmission {
     /// `specs/global-exact-dispatch.md`. Built here so the per-phase gates
     /// exist and are available for that follow-up without a second
     /// once-per-cell construction pass.
+    #[allow(dead_code)]
     pub(crate) rate: HashMap<MetricsPhase, Arc<crate::timing::GlobalRateGate>>,
 }
 
@@ -2587,6 +2640,11 @@ pub(crate) async fn execute_scheduled_shard(
 
         let mut plans = Vec::with_capacity(sliced_phases.len());
         for (phase_index, phase) in sliced_phases.iter().enumerate() {
+            // Under `global`/`global-hop`, a phase with a shared cell-level
+            // concurrency gate admits from that gate (this thread's OWN
+            // SlotPool::new_global handle over it) instead of the persistent
+            // local `shared_resources` pool. See `phase_scheduled_resources`.
+            let phase_resources = phase_scheduled_resources(phase, shared, &shared_resources)?;
             let mut plan = build_native_scheduled_phase_plan_with_source_factory(
                 phase_index,
                 phase,
@@ -2604,7 +2662,7 @@ pub(crate) async fn execute_scheduled_shard(
                 &shared.benchmark_id,
                 &shared.artifact_dir,
                 &shared.endpoint_urls,
-                &shared_resources,
+                &phase_resources,
                 shared
                     .wants_adaptive_record
                     .then(|| capture.clone() as Rc<dyn AdaptiveTerminalRecordSource>),

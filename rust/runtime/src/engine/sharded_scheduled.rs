@@ -85,27 +85,36 @@ pub(crate) fn two_level_partition(
 /// Admission caps are floored to one. `fixed_schedule` is partitioned by
 /// conversation in [`NativeDatasetConversationSource`](crate::multiturn).
 ///
-/// Under [`DispatchMode::Sharded`], this slices `requests`, `concurrency`,
-/// `prefill_concurrency`, and `rate` into this thread's `1/workers` share, as
-/// it always has. Under [`DispatchMode::Global`]/[`DispatchMode::GlobalHop`],
-/// those fields are left at the cell-local (unsliced-by-thread) value: each
-/// thread instead admits from the shared per-cell `GlobalAdmission` gate
-/// (`ShardedShared::global_admission`) built from these same unsliced values.
+/// `requests` and `prefill_concurrency` are ALWAYS sliced into this thread's
+/// `1/workers` share, in every dispatch mode: `GlobalAdmission` (built from
+/// these same phase specs) is a `concurrency`/`rate` admission gate only, with
+/// no shared total-dispatched-request counter or shared prefill gate, so the
+/// total work budget and prefill admission must still be statically
+/// partitioned or a `Global`-dispatch run would attempt `workers` DUPLICATE
+/// copies of the full request budget (`workers`x over-dispatch) instead of
+/// the authored total. This is a deliberate narrowing of
+/// `specs/global-exact-dispatch.md`'s literal "leaves requests ... unsliced"
+/// framing to what `GlobalAdmission`'s two gates actually cover; a
+/// request-count-sharing gate is future work.
+///
+/// `concurrency` and `rate` (the two fields `GlobalAdmission` DOES provide a
+/// shared gate for) slice under [`DispatchMode::Sharded`] exactly as before.
+/// Under [`DispatchMode::Global`]/[`DispatchMode::GlobalHop`], on the
+/// request-rate phase shapes (`Concurrency`/`Poisson`/`Constant`/`Gamma`)
+/// only, they are left at the cell-local (unsliced-by-thread) value: each
+/// thread instead admits concurrency from the shared per-cell
+/// `GlobalAdmission` gate (`ShardedShared::global_admission`). `UserCentric`
+/// and `FixedSchedule` are unaffected by dispatch mode: `UserCentric` builds
+/// its own internal session pool independent of the shared
+/// `NativeScheduledResources`/`GlobalAdmission` seam this change wires, and
+/// `FixedSchedule` has no concurrency/rate concept at all — both are called
+/// out as follow-up scope in `specs/global-exact-dispatch.md`.
 pub(crate) fn slice_phase_for_thread(
     phase: &PhaseSpec,
     thread_id: usize,
     workers: u32,
     dispatch_mode: DispatchMode,
 ) -> PhaseSpec {
-    if !matches!(dispatch_mode, DispatchMode::Sharded) {
-        // `Global`/`GlobalHop`: concurrency, rate, and request budget are
-        // admitted from the shared per-cell `GlobalAdmission` gate instead of a
-        // locally sliced share. Conversation partitioning for
-        // `fixed_schedule`/`user_centric` is unaffected by this branch — it is
-        // computed independently via `two_level_partition`, not through this
-        // function's per-field slicing.
-        return phase.clone();
-    }
     let t = thread_id as u32;
     let owned_budget = |value: u64| owned_positions(value, t, workers);
     // Admission caps split by the same round-robin share, floored to 1 so a cap
@@ -113,6 +122,10 @@ pub(crate) fn slice_phase_for_thread(
     // thread — the same bounded trade the cellular per-cell split accepts.
     let owned_cap = |value: usize| owned_positions(value as u64, t, workers).max(1) as usize;
     let scaled_rate = |rate: f64| rate / workers as f64;
+    // Global/GlobalHop admit concurrency+rate from the shared per-cell gate on
+    // the request-rate phase shapes, so this thread's LOCAL slice of those two
+    // fields is left at the cell-local (unsliced) value instead of `1/workers`.
+    let global_admits_concurrency_and_rate = !matches!(dispatch_mode, DispatchMode::Sharded);
 
     let mut sliced = phase.clone();
     match &mut sliced {
@@ -121,7 +134,9 @@ pub(crate) fn slice_phase_for_thread(
             concurrency,
         } => {
             slice_common(common, &owned_budget, &owned_cap);
-            *concurrency = owned_cap(*concurrency);
+            if !global_admits_concurrency_and_rate {
+                *concurrency = owned_cap(*concurrency);
+            }
         }
         PhaseSpec::Poisson {
             common,
@@ -134,9 +149,11 @@ pub(crate) fn slice_phase_for_thread(
             concurrency,
         } => {
             slice_common(common, &owned_budget, &owned_cap);
-            *rate = scaled_rate(*rate);
-            if let Some(cap) = concurrency {
-                *cap = owned_cap(*cap);
+            if !global_admits_concurrency_and_rate {
+                *rate = scaled_rate(*rate);
+                if let Some(cap) = concurrency {
+                    *cap = owned_cap(*cap);
+                }
             }
         }
         PhaseSpec::Gamma {
@@ -146,13 +163,16 @@ pub(crate) fn slice_phase_for_thread(
             ..
         } => {
             slice_common(common, &owned_budget, &owned_cap);
-            *rate = scaled_rate(*rate);
-            if let Some(cap) = concurrency {
-                *cap = owned_cap(*cap);
+            if !global_admits_concurrency_and_rate {
+                *rate = scaled_rate(*rate);
+                if let Some(cap) = concurrency {
+                    *cap = owned_cap(*cap);
+                }
             }
         }
         // Open-loop churn is aggregate-equivalent across shards, but the
-        // per-turn-shape split is timing-dependent.
+        // per-turn-shape split is timing-dependent. Unaffected by dispatch
+        // mode: `UserCentric` owns its own session pool (see the function doc).
         PhaseSpec::UserCentric {
             common,
             rate,
@@ -422,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn global_mode_does_not_slice_concurrency_or_rate() {
+    fn global_mode_does_not_slice_concurrency_but_still_slices_requests() {
         let phase: PhaseSpec = serde_json::from_value(serde_json::json!({
             "type": "concurrency",
             "name": "profiling",
@@ -432,12 +452,18 @@ mod tests {
         }))
         .unwrap();
         let sliced = slice_phase_for_thread(&phase, 0, 4, DispatchMode::Global);
-        assert_eq!(sliced.common().requests, Some(100));
+        // `requests` still slices under Global: GlobalAdmission has no shared
+        // total-dispatched-request counter, only concurrency/rate gates (see
+        // this function's doc comment) — leaving `requests` unsliced would
+        // make every thread attempt the FULL budget, a workers-x over-dispatch.
+        assert_eq!(sliced.common().requests, Some(25));
+        // `concurrency` is the field GlobalAdmission actually gates, so it
+        // stays at the cell-local (unsliced) value.
         assert_eq!(sliced.concurrency(), Some(8));
     }
 
     #[test]
-    fn global_hop_mode_also_does_not_slice() {
+    fn global_hop_mode_also_does_not_slice_rate_but_still_slices_requests() {
         let phase: PhaseSpec = serde_json::from_value(serde_json::json!({
             "type": "poisson",
             "name": "profiling",
@@ -448,7 +474,7 @@ mod tests {
         }))
         .unwrap();
         let sliced = slice_phase_for_thread(&phase, 3, 4, DispatchMode::GlobalHop);
-        assert_eq!(sliced.common().requests, Some(50));
+        assert_eq!(sliced.common().requests, Some(12));
         assert_eq!(sliced.rate(), Some(10.0));
         assert_eq!(sliced.concurrency(), Some(2));
     }

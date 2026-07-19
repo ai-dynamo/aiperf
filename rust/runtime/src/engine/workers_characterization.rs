@@ -57,10 +57,22 @@ mod tests {
     ///
     /// A multi-threaded runtime accepts concurrent worker connections. Responses
     /// contain `FIXED_OSL` timed chunks, authoritative usage, and `[DONE]`.
+    ///
+    /// Tracks the peak number of requests concurrently mid-response (from first
+    /// scheduled byte through `[DONE]`) via `current`/`peak`, so a test can
+    /// prove the actually-observed concurrency at the wire never exceeded an
+    /// admission cap — independent of what the client-side admission bookkeeping
+    /// itself claims.
     struct FixedMock {
         base_url: String,
         shutdown: Option<tokio::sync::oneshot::Sender<()>>,
         thread: Option<std::thread::JoinHandle<()>>,
+        // Held only so `Drop`/reuse keeps a live handle; the increment/decrement
+        // pair in `serve_sse` is the actual instrumentation, `peak` is what
+        // tests read.
+        #[allow(dead_code)]
+        current: Arc<std::sync::atomic::AtomicUsize>,
+        peak: Arc<std::sync::atomic::AtomicUsize>,
     }
 
     impl FixedMock {
@@ -70,42 +82,68 @@ mod tests {
             let addr = listener.local_addr().unwrap();
             let base_url = format!("http://{addr}");
             let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+            let current = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let peak = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let thread = std::thread::Builder::new()
                 .name("fixed-mock".into())
-                .spawn(move || {
-                    let runtime = tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(2)
-                        .enable_all()
-                        .build()
-                        .unwrap();
-                    runtime.block_on(async move {
-                        let listener = tokio::net::TcpListener::from_std(
-                            std::net::TcpListener::from(listener),
-                        )
-                        .unwrap();
-                        let mut shutdown_rx = shutdown_rx;
-                        loop {
-                            tokio::select! {
-                                _ = &mut shutdown_rx => break,
-                                accepted = listener.accept() => {
-                                    let Ok((stream, _)) = accepted else { continue };
-                                    tokio::spawn(async move {
-                                        let service = service_fn(serve_sse);
-                                        let _ = hyper::server::conn::http1::Builder::new()
-                                            .serve_connection(TokioIo::new(stream), service)
-                                            .await;
-                                    });
+                .spawn({
+                    let current = current.clone();
+                    let peak = peak.clone();
+                    move || {
+                        let runtime = tokio::runtime::Builder::new_multi_thread()
+                            .worker_threads(2)
+                            .enable_all()
+                            .build()
+                            .unwrap();
+                        runtime.block_on(async move {
+                            let listener = tokio::net::TcpListener::from_std(
+                                std::net::TcpListener::from(listener),
+                            )
+                            .unwrap();
+                            let mut shutdown_rx = shutdown_rx;
+                            loop {
+                                tokio::select! {
+                                    _ = &mut shutdown_rx => break,
+                                    accepted = listener.accept() => {
+                                        let Ok((stream, _)) = accepted else { continue };
+                                        let current = current.clone();
+                                        let peak = peak.clone();
+                                        tokio::spawn(async move {
+                                            let service = service_fn(move |request| {
+                                                serve_sse(request, current.clone(), peak.clone())
+                                            });
+                                            let _ = hyper::server::conn::http1::Builder::new()
+                                                .serve_connection(TokioIo::new(stream), service)
+                                                .await;
+                                        });
+                                    }
                                 }
                             }
-                        }
-                    });
+                        });
+                    }
                 })
                 .unwrap();
             Self {
                 base_url,
                 shutdown: Some(shutdown_tx),
                 thread: Some(thread),
+                current,
+                peak,
             }
+        }
+
+        /// The maximum number of requests observed concurrently mid-response
+        /// (server-side, wire-observed — not the client's own admission
+        /// bookkeeping) since this mock was spawned or last reset.
+        fn peak_concurrent(&self) -> usize {
+            self.peak.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        /// Reset the peak-concurrency high-water mark so the same mock (and its
+        /// already-warm connection pool) can be reused for a second run without
+        /// carrying over the first run's peak.
+        fn reset_peak(&self) {
+            self.peak.store(0, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -122,12 +160,16 @@ mod tests {
 
     async fn serve_sse(
         _request: Request<hyper::body::Incoming>,
+        current: Arc<std::sync::atomic::AtomicUsize>,
+        peak: Arc<std::sync::atomic::AtomicUsize>,
     ) -> Result<
         HttpResponse<StreamBody<impl stream::Stream<Item = Result<Frame<Bytes>, Infallible>>>>,
         Infallible,
     > {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Frame<Bytes>, Infallible>>();
         tokio::spawn(async move {
+            let now = current.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            peak.fetch_max(now, std::sync::atomic::Ordering::SeqCst);
             tokio::time::sleep(Duration::from_millis(MOCK_TTFT_MS)).await;
             for index in 0..FIXED_OSL {
                 if index > 0 {
@@ -145,6 +187,7 @@ mod tests {
                 });
                 let frame = format!("data: {chunk}\n\n");
                 if tx.send(Ok(Frame::data(Bytes::from(frame)))).is_err() {
+                    current.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                     return;
                 }
             }
@@ -161,6 +204,7 @@ mod tests {
             });
             let _ = tx.send(Ok(Frame::data(Bytes::from(format!("data: {usage}\n\n")))));
             let _ = tx.send(Ok(Frame::data(Bytes::from_static(b"data: [DONE]\n\n"))));
+            current.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         });
         let body = StreamBody::new(tokio_stream::wrappers::UnboundedReceiverStream::new(rx));
         Ok(HttpResponse::builder()
@@ -300,6 +344,24 @@ mod tests {
         dataset: crate::engine::dataset_input::PreparedDatasetInput,
         phase: PhaseSpec,
     ) -> NativeRunSpec {
+        plan_with_dispatch(
+            base_url,
+            artifact_dir,
+            workers,
+            dataset,
+            phase,
+            crate::engine::protocol::DispatchMode::Sharded,
+        )
+    }
+
+    fn plan_with_dispatch(
+        base_url: &str,
+        artifact_dir: &Path,
+        workers: usize,
+        dataset: crate::engine::dataset_input::PreparedDatasetInput,
+        phase: PhaseSpec,
+        dispatch_mode: crate::engine::protocol::DispatchMode,
+    ) -> NativeRunSpec {
         NativeRunSpec {
             benchmark_id: "characterization".into(),
             random_seed: Some(7),
@@ -324,7 +386,7 @@ mod tests {
             failure_policy: None,
             native_otel_enabled: false,
             transport: None,
-            dispatch_mode: crate::engine::protocol::DispatchMode::Sharded,
+            dispatch_mode,
         }
     }
 
@@ -455,6 +517,113 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         keys
+    }
+
+    /// Proves the whole point of `DispatchMode::Global`: with a concurrency cap
+    /// that does NOT evenly divide `workers` (`concurrency = 3`, `workers = 4`),
+    /// `Sharded` mode's per-thread `owned_positions(cap, t, workers).max(1)`
+    /// floor over-subscribes — one thread's share rounds down to `0`, which the
+    /// `.max(1)` floor bumps back up to `1`, so `Sharded`'s aggregate cap across
+    /// all 4 threads is `4`, not the authored `3` (see
+    /// `sharded_scheduled::slice_phase_for_thread`'s "Admission caps are floored
+    /// to one" doc comment). `Global` mode instead admits every thread from the
+    /// SAME shared `GlobalSlotPool`, so the wire-observed peak concurrency
+    /// across all worker threads combined never exceeds the authored cap of 3,
+    /// even though each thread issues without any local partition of it.
+    ///
+    /// Peak concurrency is measured server-side (`FixedMock::peak_concurrent`),
+    /// not from client-side admission bookkeeping, so this is a true
+    /// end-to-end proof of the aggregate cap actually enforced on the wire —
+    /// the same kind of proof `GlobalSlotPool`'s own cross-OS-thread test uses,
+    /// applied here at the full `ScheduledRuntime`/`ShardedShared` integration
+    /// level via `aiperf-mock-server`-shaped HTTP execution.
+    #[test]
+    fn global_dispatch_enforces_true_aggregate_concurrency_cap_sharded_does_not() {
+        // Proves the whole point of `DispatchMode::Global`: with a concurrency
+        // cap that does NOT evenly divide `workers` (`concurrency = 3`,
+        // `workers = 4`), `Sharded` mode's per-thread
+        // `owned_positions(cap, t, workers).max(1)` floor over-subscribes —
+        // one thread's share rounds down to `0`, which the `.max(1)` floor
+        // bumps back up to `1`, so `Sharded`'s aggregate cap across all 4
+        // threads is `4`, not the authored `3` (see
+        // `sharded_scheduled::slice_phase_for_thread`'s "Admission caps are
+        // floored to one" doc comment). `Global` mode instead admits every
+        // thread from the SAME shared `GlobalSlotPool`, so the wire-observed
+        // peak concurrency across all worker threads combined never exceeds
+        // the authored cap of 3, even though each thread issues without any
+        // local partition of it.
+        //
+        // Peak concurrency is measured server-side
+        // (`FixedMock::peak_concurrent`), not from client-side admission
+        // bookkeeping, so this is a true end-to-end proof of the aggregate
+        // cap actually enforced on the wire — the same kind of proof
+        // `GlobalSlotPool`'s own cross-OS-thread test uses, applied here at
+        // the full `ScheduledRuntime`/`ShardedShared` integration level via
+        // HTTP execution against a real mock server.
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let mock = FixedMock::spawn();
+        let entries = 24;
+        let requests = 24u64;
+        let phase = |concurrency: usize| -> PhaseSpec {
+            serde_json::from_value(json!({
+                "type": "concurrency",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": requests,
+                "concurrency": concurrency,
+            }))
+            .unwrap()
+        };
+        let run = |dispatch_mode: crate::engine::protocol::DispatchMode| {
+            let artifact_dir = tempfile::tempdir().unwrap();
+            let request_executor: Arc<dyn RequestExecutorFactory> = Arc::new(HttpExecutionFactory);
+            let factories = native_execution_factories();
+            let spec = plan_with_dispatch(
+                &mock.base_url,
+                artifact_dir.path(),
+                4,
+                build_dataset(&registry, entries, 1),
+                phase(3),
+                dispatch_mode,
+            );
+            let report = execute_prepared_native_plan_uncommitted_selected(
+                spec,
+                request_executor,
+                &factories,
+                &registry,
+                None,
+            )
+            .expect("native run must complete");
+            assert!(
+                report_error_count(&report) == 0,
+                "expected zero profiling errors, report: {report:?}"
+            );
+        };
+
+        run(crate::engine::protocol::DispatchMode::Sharded);
+        let sharded_peak = mock.peak_concurrent();
+        assert_eq!(
+            sharded_peak, 4,
+            "Sharded mode's per-thread floor-to-1 admission cap is EXPECTED to \
+             over-subscribe the authored cap of 3 up to the worker count of 4 \
+             (documented, accepted trade — not the bug Global mode fixes); got {sharded_peak}"
+        );
+
+        mock.reset_peak();
+        run(crate::engine::protocol::DispatchMode::Global);
+        let global_peak = mock.peak_concurrent();
+        assert!(
+            global_peak <= 3,
+            "Global dispatch must enforce the true aggregate concurrency cap (3) \
+             across all 4 worker threads combined, never exceeding it \
+             (observed wire-side peak concurrent requests: {global_peak})"
+        );
+        assert_eq!(
+            global_peak, 3,
+            "the cap must actually be reached (proves this test exercises real \
+             contention across all 4 worker threads, not an under-subscribed run); \
+             got {global_peak}"
+        );
     }
 
     #[test]

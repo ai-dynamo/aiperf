@@ -131,6 +131,20 @@ impl SlotPool {
         }
     }
 
+    /// Whether this pool draws from a shared cross-thread [`GlobalSlotPool`]
+    /// rather than a thread-local semaphore.
+    ///
+    /// Callers that pair a `SlotPool` with a thread-local completion
+    /// notification (e.g. a `tokio::sync::Notify` only ever fired by this
+    /// SAME thread's own releases) must check this before blocking on that
+    /// notification: a `Global`-backed pool's next release may come from a
+    /// DIFFERENT worker thread entirely, so a thread holding zero local
+    /// guards would wait on a notification that never fires — see
+    /// `request_rate::RequestRateWorkload::execute`'s `NoSlot` handling.
+    pub fn is_global(&self) -> bool {
+        matches!(self.backend, SlotPoolBackend::Global(_))
+    }
+
     /// The current configured concurrency limit.
     pub fn current_limit(&self) -> usize {
         match &self.backend {
@@ -672,8 +686,8 @@ mod tests {
                     local.block_on(&runtime, async {
                         for _ in 0..6 {
                             let guard = pool.acquire().await;
-                            let now = concurrent.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                                + 1;
+                            let now =
+                                concurrent.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                             max_seen.fetch_max(now, std::sync::atomic::Ordering::SeqCst);
                             if now > 2 {
                                 errors.lock().unwrap().push(format!(
