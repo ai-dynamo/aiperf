@@ -1,0 +1,103 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Native port of the reference NVIDIA "AIPerf Rust Runtime" architecture deck.
+//! Chapter 1 (Open): Cover, Thesis, Orientation. Later chapters appended by
+//! Tasks 5-10. Every visual is a registered `sdk.*` component — no freeform SVG.
+
+explainer "Rust Architecture — Deck Port" {
+  id: "rust-architecture-deck-port"
+  route: "/rust-architecture-deck-port"
+  topic: "architecture"
+  storagePrefix: "rust-architecture-deck-port-explainer"
+  classPrefix: "deck-rust-architecture-deck-port"
+  eyebrowLabel: "ARCHITECTURE DEEP DIVE"
+  startGateTitle: "AIPerf Rust Runtime"
+
+  hub: {
+    highlight: "Rust runtime"
+    title: "AIPerf Rust Runtime · 49-slide deck port"
+    description: "A native port of the reference NVIDIA architecture deck — every slide rebuilt from composable SDK primitives."
+  }
+
+  slide "Cover" {
+    eyebrow: "ARCHITECTURE DEEP DIVE"
+    title: "AIPerf Rust Runtime"
+    lede: "From the command line to results — every component on the product path, and the two seams that hold it together."
+    narration: "The cover opens the deck: a green monospace kicker over the huge title 'AIPerf Rust Runtime', the one-line thesis subtitle, and a green-barred byline reading 'Anthony Casagrande · 2026'."
+    caption: "Architecture Deep Dive · AIPerf Rust Runtime."
+    render: @scene {
+      sdk.Caption(id = "cover-eyebrow", text = "ARCHITECTURE DEEP DIVE", x = 54, y = 66, width = 460, height = 20, inkRole = theme(accent.primary))
+      sdk.Title(id = "cover-title", text = "AIPerf Rust Runtime", x = 54, y = 104, width = 600, height = 64, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "cover-lede", text = "From the command line to results — every\ncomponent on the product path, and the two\nseams that hold it together", x = 54, y = 194, width = 540, height = 84, inkRole = theme(ink.secondary))
+      sdk.IconLabel(id = "cover-byline", label = "Anthony Casagrande · 2026", icon = "user", x = 54, y = 314, width = 340, height = 36, inkRole = theme(ink.primary), strokeRole = theme(accent.primary))
+      timeline main {
+        at 0 reveal cover-eyebrow duration 200
+        after cover-eyebrow reveal cover-title duration 260
+        after cover-title reveal cover-lede duration 240
+        after cover-lede reveal cover-byline duration 200
+      }
+    }
+  }
+
+  slide "Thesis" {
+    eyebrow: "THE WHOLE IDEA IN ONE SLIDE"
+    title: "AIPerf is Python-orchestrated, Rust-executed"
+    lede: "One protocol-v2 envelope in, one authoritative report out."
+    narration: "The whole idea in one slide: Python orchestrates, Rust executes. A four-box pipeline runs Python → protocol-v2 envelope → aiperf-runner → native-v2.json, with the envelope box highlighted green as the single hand-off. Three green-topped takeaway cells restate the split: Python owns config, aiperf-runner is the only Rust exe, and two trait seams make one codebase run three ways."
+    caption: "Python-orchestrated, Rust-executed · one envelope in, one report out."
+    render: @scene {
+      sdk.Caption(id = "thesis-eyebrow", text = "THE WHOLE IDEA IN ONE SLIDE", x = 40, y = 22, width = 460, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "thesis-title", text = "AIPerf is Python-orchestrated, Rust-executed", x = 40, y = 46, width = 630, height = 34, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "thesis-sub", text = "one protocol-v2 envelope in, one authoritative report out", x = 40, y = 86, width = 630, height = 24, inkRole = theme(ink.secondary))
+
+      sdk.Shape(id = "thesis-p1", variant = "rounded", label = "Python", x = 34, y = 128, width = 120, height = 44, strokeRole = theme(ink.tertiary))
+      sdk.Caption(id = "thesis-p1-sub", text = "Config-v2", x = 34, y = 176, width = 120, height = 16, inkRole = theme(ink.tertiary))
+      sdk.Arrow(id = "thesis-a1", label = "to envelope", from = { nodeId: "thesis-p1", anchor: "e" }, to = { nodeId: "thesis-p2", anchor: "w" }, x = 154, y = 150, width = 40, height = 0, strokeRole = theme(accent.primary))
+      sdk.Shape(id = "thesis-p2", variant = "rounded", label = "protocol-v2 envelope", x = 194, y = 128, width = 156, height = 44, surfaceRole = theme(surface.secondary), strokeRole = theme(accent.primary))
+      sdk.Caption(id = "thesis-p2-sub", text = "one JSON line", x = 194, y = 176, width = 156, height = 16, inkRole = theme(ink.tertiary))
+      sdk.Arrow(id = "thesis-a2", label = "to runner", from = { nodeId: "thesis-p2", anchor: "e" }, to = { nodeId: "thesis-p3", anchor: "w" }, x = 350, y = 150, width = 40, height = 0, strokeRole = theme(accent.primary))
+      sdk.Shape(id = "thesis-p3", variant = "rounded", label = "aiperf-runner", x = 390, y = 128, width = 140, height = 44, strokeRole = theme(ink.primary))
+      sdk.Caption(id = "thesis-p3-sub", text = "the only Rust exe", x = 390, y = 176, width = 140, height = 16, inkRole = theme(ink.tertiary))
+      sdk.Arrow(id = "thesis-a3", label = "to output", from = { nodeId: "thesis-p3", anchor: "e" }, to = { nodeId: "thesis-p4", anchor: "w" }, x = 530, y = 150, width = 40, height = 0, strokeRole = theme(accent.primary))
+      sdk.Shape(id = "thesis-p4", variant = "rounded", label = "native-v2.json", x = 570, y = 128, width = 120, height = 44, strokeRole = theme(ink.tertiary))
+      sdk.Caption(id = "thesis-p4-sub", text = "+ terminal line", x = 570, y = 176, width = 120, height = 16, inkRole = theme(ink.tertiary))
+
+      sdk.CompareGrid(id = "thesis-takeaways", columns = 3, items = [{ label: "Python owns config", detail: "sweep planning and presentation; pipes exactly one JSON envelope to a fresh runner child" }, { label: "aiperf-runner", detail: "the only Rust executable on the product path — validate, drive the load test, write the report" }, { label: "Two trait seams", detail: "{clock} and {transport} make the identical code run in three interchangeable modes" }], x = 4, y = 228)
+
+      timeline main {
+        at 0 reveal thesis-eyebrow duration 180
+        after thesis-eyebrow reveal thesis-title duration 220
+        after thesis-title reveal thesis-sub duration 180
+        after thesis-sub stagger targets [thesis-p1, thesis-p2, thesis-p3, thesis-p4] step 90 duration 160
+        after thesis-p4 stagger targets [thesis-p1-sub, thesis-p2-sub, thesis-p3-sub, thesis-p4-sub] step 60 duration 120
+        after thesis-p4-sub trace thesis-a1 duration 140
+        after thesis-a1 trace thesis-a2 duration 140
+        after thesis-a2 trace thesis-a3 duration 140
+        after thesis-a3 reveal thesis-takeaways duration 260
+      }
+    }
+  }
+
+  slide "Orientation" {
+    eyebrow: "ORIENTATION"
+    title: "What the runner does, in order"
+    lede: "Everything from a single envelope arriving on stdin to a terminal line on stdout."
+    narration: "Orientation walks the runner's six ordered stages left to right: 01 VALIDATE the envelope against frozen registries, 02 SELECT a transport and workload, 03 DRIVE a phased load test over the injected Clock, 04 MEASURE lock-free per worker, 05 REPORT the authoritative native-v2.json, and 06 EMIT one terminal JSONL line."
+    caption: "Six stages · from stdin envelope to stdout line."
+    render: @scene {
+      sdk.Title(id = "orient-title", text = "What the runner does, in order", x = 40, y = 30, width = 620, height = 36, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "orient-sub", text = "Everything from a single envelope arriving on stdin to a terminal line on stdout", x = 40, y = 76, width = 620, height = 24, inkRole = theme(ink.secondary))
+      sdk.StepChain(id = "orient-chain", direction = "row", steps = [{ number: "01", label: "VALIDATE", detail: "Envelope vs frozen registries; fail closed" }, { number: "02", label: "SELECT", detail: "Pick a {transport, workload}; build data or graph" }, { number: "03", label: "DRIVE", detail: "Phased load test over one injected Clock" }, { number: "04", label: "MEASURE", detail: "Fine-grained timing, lock-free per worker" }, { number: "05", label: "REPORT", detail: "Write native-v2.json; fan out exporters" }, { number: "06", label: "EMIT", detail: "One terminal JSONL line on stdout" }], x = 0, y = 132)
+      timeline main {
+        at 0 reveal orient-title duration 200
+        after orient-title reveal orient-sub duration 180
+        after orient-sub reveal orient-chain duration 320
+      }
+    }
+  }
+
+  // slides appended by Tasks 5-10
+}
