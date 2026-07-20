@@ -659,8 +659,7 @@ explainer "Segment Pools" {
       )
       sdk.Signal(
         id = "motion-sig",
-        from = { nodeId: "token", anchor: "e" },
-        to = { nodeId: "out", anchor: "w" },
+        edge = "arrow-out",
         opacity = 0.55,
         strokeWidth = 2.4,
         style = { stroke: theme(accent.tertiary) }

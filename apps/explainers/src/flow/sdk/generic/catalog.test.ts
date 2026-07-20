@@ -363,12 +363,28 @@ describe("generic SDK catalog", () => {
       });
       expect(
         stepper.value.roots[0]?.kind === "group"
-          ? stepper.value.roots[0].children.map((child) => child.id)
+          ? stepper.value.roots[0].children.map((child) => ({
+              id: child.id,
+              capabilityId: child.capabilityId,
+              props: child.props,
+            }))
           : [],
       ).toEqual([
-        "semantic-step-0",
-        "semantic-step-1",
-        "semantic-step-2",
+        {
+          id: "semantic-step-0",
+          capabilityId: "core.chip",
+          props: { label: "1. layout", index: 0 },
+        },
+        {
+          id: "semantic-step-1",
+          capabilityId: "core.chip",
+          props: { label: "2. slots", index: 1 },
+        },
+        {
+          id: "semantic-step-2",
+          capabilityId: "core.chip",
+          props: { label: "3. timeline", index: 2 },
+        },
       ]);
     }
   });
@@ -478,6 +494,8 @@ describe("generic SDK catalog", () => {
     ["sdk.panel", { id: "panel", title: "Title", detail: "Detail" }],
     ["sdk.card", { id: "card", title: "Title", detail: "Detail", subtitle: "Sub" }],
     ["sdk.chip", { id: "chip", label: "Ready" }],
+    ["sdk.lane", { id: "lane", title: "Lane" }],
+    ["sdk.band", { id: "band", title: "Band" }],
   ] as const)("%s keeps generated chrome out of authored children", (componentId, props) => {
     const result = createSdkRegistry().lookup(componentId)!.factory(
       props,
@@ -795,6 +813,42 @@ describe("generic SDK catalog", () => {
       expect(result.ok).toBe(false);
       expect(!result.ok && result.diagnostics[0]?.code).toBe("SDK_SIGNAL_MODE_CONFLICT");
     }
+
+    const flow = createSdkRegistry().lookup("sdk.flow")!;
+    const flowWithEdge = flow.factory(
+      {
+        id: "flow",
+        edge: true,
+        from: { nodeId: "a", anchor: "e" },
+        to: { nodeId: "b", anchor: "w" },
+      },
+      {},
+      {
+        instanceId: "flow",
+        sourceMap: SOURCE_MAP,
+        themeTokens: new Map(),
+      },
+    );
+    expect(flowWithEdge.ok).toBe(true);
+    if (flowWithEdge.ok) {
+      const edge = flowWithEdge.value.roots.find(
+        (node) => node.id === "flow__edge",
+      );
+      const signalNode = flowWithEdge.value.roots.find(
+        (node) => node.id === "flow__signal",
+      );
+      expect(edge).toMatchObject({
+        capabilityId: "core.connector",
+        from: { nodeId: "a", anchor: "e" },
+        to: { nodeId: "b", anchor: "w" },
+      });
+      expect(signalNode).toMatchObject({
+        capabilityId: "motion.signal",
+        edgeRef: "flow__edge",
+      });
+      expect(signalNode).not.toHaveProperty("from");
+      expect(signalNode).not.toHaveProperty("to");
+    }
   });
 
   it("keeps emitted action bindings within each public action contract", () => {
@@ -838,13 +892,13 @@ describe("generic SDK catalog", () => {
     }
   });
 
-  it("lays rail collection items in a content-sized row", () => {
+  it("emits semantic lane roots for compact collection chrome", () => {
     const registry = createSdkRegistry();
-    const railIds = ["sdk.tagList", "sdk.breadcrumb", "sdk.tabs", "sdk.pagination"] as const;
+    const laneIds = ["sdk.tagList", "sdk.breadcrumb", "sdk.tabs", "sdk.pagination"] as const;
     const items = ["Alpha", "Beta", "Gamma"];
     const containerWidth = 260;
 
-    for (const componentId of railIds) {
+    for (const componentId of laneIds) {
       const result = registry.lookup(componentId)!.factory(
         { id: "rail", items, width: containerWidth, height: 32 },
         {},
@@ -860,23 +914,111 @@ describe("generic SDK catalog", () => {
         continue;
       }
       const root = result.value.roots[0];
-      expect(root?.capabilityId, componentId).toBe("layout.rail");
-      expect(root?.kind === "group" && root.children.length, componentId).toBe(items.length);
-      if (root?.kind !== "group") {
-        continue;
+      expect(root?.capabilityId, componentId).toBe("core.lane");
+      expect(root?.kind === "group" && root.children.length, componentId).toBe(0);
+      expect(root?.props?.steps, componentId).toEqual(items);
+      expect(root?.geometry.width, componentId).toBe(containerWidth);
+    }
+  });
+
+  it("maps collection primitives to semantic panel and stepper chrome", () => {
+    const registry = createSdkRegistry();
+    const cases = [
+      [
+        "sdk.stat",
+        { id: "stat", title: "Requests", items: ["84,211"] },
+        "core.panel",
+        { title: "Requests", detail: "84,211" },
+      ],
+      [
+        "sdk.metric",
+        { id: "metric", title: "P95", items: ["18.7 ms"] },
+        "core.panel",
+        { title: "P95", detail: "18.7 ms" },
+      ],
+      [
+        "sdk.keyValue",
+        { id: "kv", items: ["region", "us-west"] },
+        "core.panel",
+        { title: "region", detail: "us-west" },
+      ],
+      [
+        "sdk.timeline",
+        { id: "tl", items: ["warm", "steady", "drain"] },
+        "core.stepper",
+        { steps: ["warm", "steady", "drain"] },
+      ],
+      [
+        "sdk.timelineItem",
+        { id: "tli", title: "Warmup", detail: "ramp concurrency" },
+        "core.panel",
+        { title: "Warmup", detail: "ramp concurrency" },
+      ],
+    ] as const;
+
+    for (const [componentId, props, capabilityId, expectedProps] of cases) {
+      const result = registry.lookup(componentId)!.factory(props, {}, {
+        instanceId: props.id,
+        sourceMap: SOURCE_MAP,
+        themeTokens: new Map(),
+      });
+      expect(result.ok, componentId).toBe(true);
+      if (result.ok) {
+        expect(result.value.roots[0], componentId).toMatchObject({
+          capabilityId,
+          props: expectedProps,
+        });
+        expect(
+          result.value.roots[0]?.kind === "group"
+            ? result.value.roots[0].children
+            : undefined,
+          componentId,
+        ).toEqual([]);
       }
-      for (const child of root.children) {
-        expect(child.geometry.y, `${componentId}:${child.id}`).toBe(0);
-        // Rail layout sums child widths; full-bleed items overflow 2–3×.
-        expect(child.geometry.width, `${componentId}:${child.id}`).toBeLessThan(
-          containerWidth / items.length,
-        );
-      }
-      const totalItemWidth = root.children.reduce(
-        (sum, child) => sum + child.geometry.width,
-        0,
-      );
-      expect(totalItemWidth, componentId).toBeLessThanOrEqual(containerWidth);
+    }
+  });
+
+  it("uses core.panel with a managed column stack for sdk.section children", () => {
+    const result = createSdkRegistry().lookup("sdk.section")!.factory(
+      { id: "section", title: "Run workspace" },
+      { children: [CHILD] },
+      { instanceId: "section", sourceMap: SOURCE_MAP, themeTokens: new Map() },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const root = result.value.roots[0];
+      expect(root).toMatchObject({
+        capabilityId: "core.panel",
+        props: { title: "Run workspace" },
+        style: expect.objectContaining({ direction: "column" }),
+      });
+      expect(root?.kind === "group" ? root.children[0] : undefined).toMatchObject({
+        id: "section__stack",
+        capabilityId: "layout.stack",
+        style: expect.objectContaining({ direction: "column" }),
+      });
+    }
+  });
+
+  it("lays sdk.rating stars in a horizontal rail", () => {
+    const result = createSdkRegistry().lookup("sdk.rating")!.factory(
+      { id: "rating", value: 0.8, min: 0, max: 1 },
+      {},
+      { instanceId: "rating", sourceMap: SOURCE_MAP, themeTokens: new Map() },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.roots[0]).toMatchObject({
+        capabilityId: "layout.rail",
+        style: expect.objectContaining({ direction: "row" }),
+      });
+      expect(
+        result.value.roots[0]?.kind === "group"
+          ? result.value.roots[0].children.length
+          : 0,
+      ).toBe(5);
     }
   });
 

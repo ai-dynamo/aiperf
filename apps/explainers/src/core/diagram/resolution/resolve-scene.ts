@@ -271,6 +271,7 @@ function appendFinalValidationDiagnostics(input: {
 }): void {
   const viewport = input.scene.viewport ?? { width: 700, height: 400 };
   const siblingGroups = new Map<string, string[]>();
+  const escapedNodeIds = new Set<string>();
   for (const [id, node] of input.nodesById) {
     const bounds = input.worldGeometryById.get(id);
     if (
@@ -291,6 +292,7 @@ function appendFinalValidationDiagnostics(input: {
       siblingGroups.set(key, siblings);
     }
     if (boundsEscapeViewport(bounds, viewport)) {
+      escapedNodeIds.add(id);
       input.diagnostics.push({
         code: "SCENE_VIEWPORT_ESCAPE",
         severity: "warning",
@@ -310,12 +312,19 @@ function appendFinalValidationDiagnostics(input: {
       ) {
         const leftId = siblingIds[leftIndex];
         const rightId = siblingIds[rightIndex];
+        const leftNode = input.nodesById.get(leftId);
+        const rightNode = input.nodesById.get(rightId);
+        if (
+          capabilityOf(leftNode ?? { id: "" }) === "core.band" ||
+          capabilityOf(rightNode ?? { id: "" }) === "core.band"
+        ) {
+          continue;
+        }
         const left = input.worldGeometryById.get(leftId);
         const right = input.worldGeometryById.get(rightId);
         if (left === undefined || right === undefined || !boundsOverlap(left, right)) {
           continue;
         }
-        const rightNode = input.nodesById.get(rightId);
         input.diagnostics.push({
           code: "SCENE_ABSOLUTE_SIBLING_OVERLAP",
           severity: "warning",
@@ -328,7 +337,12 @@ function appendFinalValidationDiagnostics(input: {
     }
   }
   for (const part of input.generatedPartsById.values()) {
-    if (!boundsEscapeViewport(part.geometry, viewport)) continue;
+    if (
+      escapedNodeIds.has(part.ownerId) ||
+      !boundsEscapeViewport(part.geometry, viewport)
+    ) {
+      continue;
+    }
     input.diagnostics.push({
       code: "SCENE_VIEWPORT_ESCAPE",
       severity: "warning",

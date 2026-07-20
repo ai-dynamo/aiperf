@@ -385,6 +385,7 @@ describe("theme-role and token style values through package lowering", () => {
     const primitive: ScenePrimitiveAst = {
       kind: "scene-primitive",
       id: "chip",
+      primitive: "chip",
       capability: "core.chip",
       props: [
         {

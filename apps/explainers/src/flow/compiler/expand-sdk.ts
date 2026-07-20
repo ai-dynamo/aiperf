@@ -977,7 +977,7 @@ function buildTimeline(
  * Semantic inputs for the `standardReveal` timeline template.
  *
  * Names a header, ordered content nodes, edges, and motion overlays by
- * component instance id; the template desugars them into the dominant
+ * component instance id; the template expands them into the dominant
  * enter → draw → trace choreography (one call in place of the 8–12 hand cues a
  * scene otherwise repeats) while keeping generated ids private.
  */
@@ -1001,7 +1001,7 @@ export type StandardRevealSpec = Readonly<{
 }>;
 
 /**
- * Compiler-side desugar for `sdk.timeline.standardReveal(header, nodes, edges,
+ * Compiler-side expansion for `sdk.timeline.standardReveal(header, nodes, edges,
  * motion)`.
  *
  * Emits the standard enter → draw → trace cue sequence by referencing each

@@ -84,6 +84,10 @@ function gapOf(node: SceneNodeLike, fallback = 12): number {
     : fallback;
 }
 
+function capabilityOf(node: SceneNodeLike): string {
+  return node.capabilityId ?? node.capability ?? "";
+}
+
 function presentationOf(node: SceneNodeLike): string | undefined {
   return stringProp(node, "presentation");
 }
@@ -121,6 +125,13 @@ function generatedTextId(
 export function hasNativeSemanticChrome(node: SceneNodeLike): boolean {
   const capability = node.capabilityId ?? node.capability ?? "";
   if (node.props === undefined) {
+    return false;
+  }
+  if (
+    capability === "core.stepper" &&
+    Array.isArray(node.children) &&
+    node.children.length > 0
+  ) {
     return false;
   }
   const presentation = presentationOf(node);
@@ -226,25 +237,13 @@ export function resolveSemanticChrome(
     };
   }
 
-  const title =
-    stringProp(node, "title") ??
-    stringProp(node, "label") ??
-    stringProp(node, "text");
-  const detail =
-    stringProp(node, "detail") ?? stringProp(node, "caption");
-  const subtitle = stringProp(node, "subtitle");
-  const isDiagram = capability.startsWith("diagram.");
-  const isDiagramBoundary = capability === "diagram.boundary";
   if (capability === "core.stepper") {
     const steps = stringArrayProp(node, "steps");
     const children = node.children ?? [];
     if (
       steps.length === 0 ||
       (children.length > 0 &&
-        children.some(
-          (child) =>
-            (child.capabilityId ?? child.capability ?? "") !== "core.step",
-        ))
+        children.some((child) => capabilityOf(child) !== "core.step"))
     ) {
       return { boxes: [], texts: [] };
     }
@@ -283,6 +282,16 @@ export function resolveSemanticChrome(
     });
     return { boxes, texts };
   }
+
+  const title =
+    stringProp(node, "title") ??
+    stringProp(node, "label") ??
+    stringProp(node, "text");
+  const detail =
+    stringProp(node, "detail") ?? stringProp(node, "caption");
+  const subtitle = stringProp(node, "subtitle");
+  const isDiagram = capability.startsWith("diagram.");
+  const isDiagramBoundary = capability === "diagram.boundary";
 
   // Frames place managed content at `padding`; chrome must share that x-origin.
   const framePadding =

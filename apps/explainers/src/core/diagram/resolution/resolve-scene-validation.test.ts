@@ -98,4 +98,29 @@ describe("resolved scene final validation", () => {
       }),
     );
   });
+
+  it("reports an escaping semantic chrome owner without duplicate generated-part escapes", () => {
+    const scene: SceneIrLike = {
+      viewport: { width: 100, height: 80 },
+      roots: [
+        {
+          id: "s2-note",
+          kind: "group",
+          capabilityId: "core.note",
+          geometry: { x: 80, y: 20, width: 60, height: 36 },
+          props: { text: "Escapes with its generated chrome." },
+          children: [],
+        },
+      ],
+      timeline: [],
+    };
+
+    const escapes = resolveScene(scene).diagnostics.filter(
+      ({ code }) => code === "SCENE_VIEWPORT_ESCAPE",
+    );
+
+    expect(escapes).toEqual([
+      expect.objectContaining({ nodeIds: ["s2-note"] }),
+    ]);
+  });
 });

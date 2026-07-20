@@ -56,9 +56,6 @@ import type {
 
 const INSET = 8;
 const TITLE_HEIGHT = 22;
-const DETAIL_HEIGHT = 20;
-const SUBTITLE_HEIGHT = 16;
-const HEADER_TEXT_HEIGHT = 24;
 
 const HEADER_DEFAULT_GEOMETRY = { x: 18, y: 16, width: 664, height: 66 } as const;
 const PANEL_DEFAULT_GEOMETRY = { width: 160, height: 70 } as const;

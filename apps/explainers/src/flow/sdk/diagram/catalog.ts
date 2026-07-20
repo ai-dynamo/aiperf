@@ -236,7 +236,7 @@ function childFragments(slots: Slots): readonly SceneFragment[] {
 function semanticPorts(
   spec: DiagramSpec,
   context: SdkExpansionContext,
-  box: GeometryIr,
+  _box: GeometryIr,
   props: Props,
 ): Record<string, ConnectorEndpointIr> {
   const ports: Record<string, ConnectorEndpointIr> = {
@@ -245,8 +245,9 @@ function semanticPorts(
     output: { nodeId: context.instanceId, anchor: "e" },
   };
   if (spec.category === "storage") {
-    ports.read = { nodeId: context.instanceId, anchor: "w" };
-    ports.write = { nodeId: context.instanceId, anchor: "e" };
+    // Writers approach from the west; readers depart to the east.
+    ports.write = { nodeId: context.instanceId, anchor: "w" };
+    ports.read = { nodeId: context.instanceId, anchor: "e" };
   }
   if (spec.category === "messaging") {
     ports.producer = { nodeId: context.instanceId, anchor: "w" };
@@ -270,12 +271,7 @@ function semanticPorts(
     });
   }
   if (spec.id === "sdk.retry" || spec.id === "sdk.loop") {
-    ports.back = {
-      nodeId: context.instanceId,
-      x: box.x,
-      y: box.y + box.height,
-      anchor: "s",
-    };
+    ports.back = { nodeId: context.instanceId, anchor: "s" };
   }
   return ports;
 }

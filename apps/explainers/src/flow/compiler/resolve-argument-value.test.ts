@@ -10,7 +10,9 @@ import type {
   ComponentInvocationAst,
   DocumentAst,
   PropAssignmentAst,
+  RectAst,
   SceneAst,
+  ScenePrimitiveAst,
 } from "../language/ast.js";
 import type { LinkedDocument } from "./link.js";
 import { lower } from "./lower.js";
@@ -132,14 +134,29 @@ describe("resolveArgumentValue array-literal and ref", () => {
   });
 
   it("preserves array literals and refs when lowering explainer scenes", () => {
-    // `fade` forces the package-scene path in lowerExplainerScene, which uses
-    // that module's resolveArgumentValue (not lower.ts).
-    const invocation: ComponentInvocationAst = {
-      kind: "component-invocation",
-      name: "core.stepper",
+    // Scene-primitive forces the package-scene path (and its resolveArgumentValue)
+    // without requiring a catalog-registered component name. Timeline targets a
+    // rect because scene-primitive ids are not link reference targets.
+    const rect: RectAst = {
+      kind: "rect",
+      id: "node",
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+      fill: { kind: "literal", value: "#f00", sourceMap: SOURCE_MAP },
+      label: "node",
+      role: "",
+      description: "",
+      fallback: { kind: "fallback", text: "node", sourceMap: SOURCE_MAP },
       sourceMap: SOURCE_MAP,
+    };
+    const primitive: ScenePrimitiveAst = {
+      kind: "scene-primitive",
+      id: "steps",
+      primitive: "stepper",
+      capability: "core.stepper",
       props: [
-        prop("id", literal("steps")),
         prop(
           "steps",
           arrayLiteral([
@@ -150,6 +167,8 @@ describe("resolveArgumentValue array-literal and ref", () => {
         ),
         prop("source", ref("controller.output")),
       ],
+      sourceMap: SOURCE_MAP,
+      fallback: { kind: "fallback", text: "steps", sourceMap: SOURCE_MAP },
     };
 
     const scene: SceneAst = {
@@ -157,7 +176,7 @@ describe("resolveArgumentValue array-literal and ref", () => {
       id: "scene",
       title: "Scene",
       sourceMap: SOURCE_MAP,
-      renderDeclarations: [invocation],
+      renderDeclarations: [rect, primitive],
       cameras: [],
       timelines: [
         {
@@ -170,7 +189,7 @@ describe("resolveArgumentValue array-literal and ref", () => {
               sourceMap: SOURCE_MAP,
               timing: { mode: "at", ms: 0 },
               action: "fade",
-              target: "steps",
+              target: "node",
               duration: 200,
             },
           ],
@@ -181,17 +200,12 @@ describe("resolveArgumentValue array-literal and ref", () => {
     };
 
     const result = lowerExplainerScene(scene);
-    if (!result.ok) {
-      // Temporary diagnostic dump for investigation.
-      // eslint-disable-next-line no-console
-      console.log(JSON.stringify(result.diagnostics, null, 2));
-    }
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
     }
 
-    const root = result.value.scene.roots[0];
+    const root = result.value.scene.roots.find((node) => node.id === "steps");
     expect(root).toMatchObject({
       id: "steps",
       capabilityId: "core.stepper",

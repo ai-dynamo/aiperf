@@ -120,12 +120,26 @@ describe("diagram SDK catalog", () => {
     const messaging = registry.lookup("sdk.queue")!.factory({ id: "node" }, {}, context);
     const network = registry.lookup("sdk.gateway")!.factory({ id: "node" }, {}, context);
 
-    expect(storage.ok && storage.value.ports.read).toBeDefined();
-    expect(storage.ok && storage.value.ports.write).toBeDefined();
+    expect(storage.ok && storage.value.ports.write).toEqual({
+      nodeId: "node",
+      anchor: "w",
+    });
+    expect(storage.ok && storage.value.ports.read).toEqual({
+      nodeId: "node",
+      anchor: "e",
+    });
     expect(messaging.ok && messaging.value.ports.producer).toBeDefined();
     expect(messaging.ok && messaging.value.ports.consumer).toBeDefined();
     expect(network.ok && network.value.ports.inbound).toBeDefined();
     expect(network.ok && network.value.ports.outbound).toBeDefined();
+
+    const retry = registry.lookup("sdk.retry")!.factory({ id: "node" }, {}, context);
+    expect(retry.ok && retry.value.ports.back).toEqual({
+      nodeId: "node",
+      anchor: "s",
+    });
+    expect(retry.ok && retry.value.ports.back && "x" in retry.value.ports.back).toBe(false);
+    expect(retry.ok && retry.value.ports.back && "y" in retry.value.ports.back).toBe(false);
   });
 
   it("emits standard diagram chrome as semantic root props", () => {
@@ -179,7 +193,10 @@ describe("diagram SDK catalog", () => {
       collectDescendantIds(result.value.roots);
       expect(descendantIds.has("server__title")).toBe(false);
 
-      const resolved = resolveScene({ roots: result.value.roots });
+      const resolved = resolveScene({
+        roots: result.value.roots,
+        timeline: [],
+      });
       expect(resolved.generatedPartsById.get("server__title")).toMatchObject({
         ownerId: "server",
         role: "title",

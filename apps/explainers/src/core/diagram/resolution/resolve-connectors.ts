@@ -172,6 +172,10 @@ function isMotionSignal(node: SceneNodeLike): boolean {
   );
 }
 
+function isDecorativeConnector(node: SceneNodeLike): boolean {
+  return capabilityOf(node) === "core.divider" || node.kind === "divider";
+}
+
 function isEdgeBoundMotionSignal(node: SceneNodeLike): boolean {
   return (
     isMotionSignal(node) &&
@@ -614,6 +618,9 @@ function validatePath(
     );
   }
   if (!authored || parsed.vertices.length < 2) {
+    return;
+  }
+  if (isDecorativeConnector(candidate.node)) {
     return;
   }
   for (const obstacle of candidate.obstacles) {

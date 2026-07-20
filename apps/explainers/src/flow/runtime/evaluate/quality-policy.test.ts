@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { Bounds } from "../../display-list.js";
+import type { Bounds } from "../display-list.js";
 import {
   applyQualityPolicy,
   qualityPolicyProfile,
@@ -18,8 +18,8 @@ const BOUNDS: Bounds = { x: 0, y: 0, width: 10, height: 10 };
 function pathCommand(
   id: string,
   order: number,
-  extras: Partial<QualityAnnotatedCommand> = {},
-): QualityAnnotatedCommand {
+  extras: Partial<Omit<Extract<QualityAnnotatedCommand, { kind: "path" }>, "kind">> = {},
+): Extract<QualityAnnotatedCommand, { kind: "path" }> {
   return {
     id,
     kind: "path",

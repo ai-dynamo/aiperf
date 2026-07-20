@@ -614,12 +614,12 @@ const stepperFactory: SdkComponentFactory = (props, slots, context) => {
           (text, index): RenderNodeIr => ({
             kind: "group",
             id: `${id}-step-${index}`,
-            capabilityId: "core.step",
-            // Semantic steps remain indexable/verifiable Scene nodes. Native
-            // stepper layout replaces x/width at render time from label text.
+            capabilityId: "core.chip",
+            // Semantic step chips remain indexable/verifiable Scene nodes.
+            // Managed stepper layout replaces x/width from their label text.
             geometry: { x: 0, y: 0, width: 72, height: 26 },
             style: {},
-            props: { label: text, index },
+            props: { label: `${index + 1}. ${text}`, index },
             accessibility: { label: text },
             fallback: text,
             sourceMap: context.sourceMap,

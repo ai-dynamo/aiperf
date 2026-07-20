@@ -489,16 +489,11 @@ function buildFlowEdgeNode(
 }
 
 const flowFactory: SdkComponentFactory = (props, _slots, context) => {
-  const signalResult = buildSignalNode(props, context, "sdk.flow", "signal");
-  if (!signalResult.ok) {
-    return signalResult;
-  }
-  const signalNode = signalResult.value;
-
   const roots: RenderNodeIr[] = [];
   const ports: Record<string, ConnectorEndpointIr> = {};
   const drawTargets: string[] = [];
 
+  let signalProps: PropRecord = props;
   if (boolProp(props, "edge", false)) {
     const edgeResult = buildFlowEdgeNode(props, context);
     if (!edgeResult.ok) {
@@ -507,7 +502,27 @@ const flowFactory: SdkComponentFactory = (props, _slots, context) => {
     roots.push(edgeResult.value);
     ports.edge = { nodeId: edgeResult.value.id };
     drawTargets.push(edgeResult.value.id);
+    // Bind the companion signal to the edge so resolution shares one path
+    // instead of duplicating from/to geometry as a standalone signal.
+    const {
+      from: _from,
+      to: _to,
+      path: _path,
+      points: _points,
+      edge: _edgeFlag,
+      ...rest
+    } = props;
+    signalProps = {
+      ...rest,
+      edge: edgeResult.value.id,
+    };
   }
+
+  const signalResult = buildSignalNode(signalProps, context, "sdk.flow", "signal");
+  if (!signalResult.ok) {
+    return signalResult;
+  }
+  const signalNode = signalResult.value;
 
   roots.push(signalNode);
   ports.signal = { nodeId: signalNode.id };

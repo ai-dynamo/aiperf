@@ -120,8 +120,8 @@ const CATALOG: readonly CatalogSpec[] = [
   { id: "sdk.codeBlock", capabilityId: "core.group", family: "text", width: 320, height: 140, actions: CHROME_ACTIONS },
   { id: "sdk.quote", capabilityId: "core.group", family: "text", width: 280, height: 88, actions: CHROME_ACTIONS },
   { id: "sdk.list", capabilityId: "core.group", family: "collection", width: 240, height: 96, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
-  { id: "sdk.keyValue", capabilityId: "core.group", family: "collection", width: 220, height: 32, actions: CHROME_ACTIONS },
-  { id: "sdk.propertyList", capabilityId: "core.group", family: "collection", width: 260, height: 120, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
+  { id: "sdk.keyValue", capabilityId: "core.panel", family: "collection", width: 220, height: 32, actions: CHROME_ACTIONS },
+  { id: "sdk.propertyList", capabilityId: "core.panel", family: "collection", width: 260, height: 120, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
   { id: "sdk.badge", capabilityId: "core.chip", family: "shape", width: 88, height: 26, actions: CHROME_ACTIONS },
   { id: "sdk.statusDot", capabilityId: "core.circle", family: "shape", width: 14, height: 14, actions: CHROME_ACTIONS },
   { id: "sdk.avatar", capabilityId: "core.group", family: "icon", width: 48, height: 48, actions: CHROME_ACTIONS },
@@ -129,24 +129,24 @@ const CATALOG: readonly CatalogSpec[] = [
   { id: "sdk.alert", capabilityId: "core.panel", family: "shape", width: 280, height: 72, actions: CHROME_ACTIONS },
   { id: "sdk.statusCard", capabilityId: "core.panel", family: "shape", width: 220, height: 88, actions: CHROME_ACTIONS },
   { id: "sdk.emptyState", capabilityId: "core.panel", family: "icon", width: 260, height: 140, actions: CHROME_ACTIONS },
-  { id: "sdk.stat", capabilityId: "core.group", family: "collection", width: 150, height: 72, actions: CHROME_ACTIONS },
-  { id: "sdk.metric", capabilityId: "core.group", family: "collection", width: 190, height: 80, actions: CHROME_ACTIONS },
-  { id: "sdk.table", capabilityId: "core.group", family: "collection", width: 420, height: 180, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
+  { id: "sdk.stat", capabilityId: "core.panel", family: "collection", width: 150, height: 72, actions: CHROME_ACTIONS },
+  { id: "sdk.metric", capabilityId: "core.panel", family: "collection", width: 190, height: 80, actions: CHROME_ACTIONS },
+  { id: "sdk.table", capabilityId: "core.panel", family: "collection", width: 420, height: 180, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
   { id: "sdk.tableRow", capabilityId: "layout.rail", family: "container", width: 420, height: 32, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
   { id: "sdk.tableCell", capabilityId: "core.group", family: "container", width: 120, height: 32, actions: CHROME_ACTIONS, slots: CHILDREN_SLOT },
-  { id: "sdk.tagList", capabilityId: "layout.rail", family: "collection", width: 260, height: 32, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
-  { id: "sdk.breadcrumb", capabilityId: "layout.rail", family: "collection", width: 300, height: 28, actions: LAYOUT_ACTIONS },
-  { id: "sdk.tabs", capabilityId: "layout.rail", family: "collection", width: 300, height: 34, actions: LAYOUT_ACTIONS },
-  { id: "sdk.pagination", capabilityId: "layout.rail", family: "collection", width: 220, height: 30, actions: LAYOUT_ACTIONS },
-  { id: "sdk.timeline", capabilityId: "core.group", family: "collection", width: 300, height: 160, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
-  { id: "sdk.timelineItem", capabilityId: "core.group", family: "collection", width: 240, height: 48, actions: CHROME_ACTIONS, slots: CHILDREN_SLOT },
+  { id: "sdk.tagList", capabilityId: "core.lane", family: "collection", width: 260, height: 32, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
+  { id: "sdk.breadcrumb", capabilityId: "core.lane", family: "collection", width: 300, height: 28, actions: LAYOUT_ACTIONS },
+  { id: "sdk.tabs", capabilityId: "core.lane", family: "collection", width: 300, height: 34, actions: LAYOUT_ACTIONS },
+  { id: "sdk.pagination", capabilityId: "core.lane", family: "collection", width: 220, height: 30, actions: LAYOUT_ACTIONS },
+  { id: "sdk.timeline", capabilityId: "core.stepper", family: "collection", width: 300, height: 160, actions: LAYOUT_ACTIONS, slots: COLLECTION_SLOTS },
+  { id: "sdk.timelineItem", capabilityId: "core.panel", family: "collection", width: 240, height: 48, actions: CHROME_ACTIONS, slots: CHILDREN_SLOT },
   { id: "sdk.progress", capabilityId: "core.group", family: "indicator", width: 220, height: 18, actions: INDICATOR_ACTIONS },
   { id: "sdk.meter", capabilityId: "core.group", family: "indicator", width: 220, height: 22, actions: INDICATOR_ACTIONS },
   { id: "sdk.gauge", capabilityId: "core.group", family: "indicator", width: 120, height: 72, actions: INDICATOR_ACTIONS },
   { id: "sdk.sparkline", capabilityId: "core.group", family: "indicator", width: 160, height: 48, actions: INDICATOR_ACTIONS },
   { id: "sdk.rating", capabilityId: "layout.rail", family: "indicator", width: 120, height: 24, actions: CHROME_ACTIONS },
   { id: "sdk.semaphore", capabilityId: "layout.rail", family: "indicator", width: 72, height: 24, actions: INDICATOR_ACTIONS },
-  { id: "sdk.section", capabilityId: "core.group", family: "container", width: 360, height: 220, actions: LAYOUT_ACTIONS, slots: CHILDREN_SLOT },
+  { id: "sdk.section", capabilityId: "core.panel", family: "container", width: 360, height: 220, actions: LAYOUT_ACTIONS, slots: CHILDREN_SLOT },
   { id: "sdk.toolbar", capabilityId: "layout.rail", family: "container", width: 360, height: 44, actions: LAYOUT_ACTIONS, slots: CHILDREN_SLOT },
   { id: "sdk.splitPane", capabilityId: "layout.stack", family: "container", width: 480, height: 240, actions: LAYOUT_ACTIONS, slots: CHILDREN_SLOT },
   { id: "sdk.mediaObject", capabilityId: "core.group", family: "container", width: 320, height: 96, actions: LAYOUT_ACTIONS, slots: {
@@ -750,31 +750,90 @@ function containerFactory(spec: CatalogSpec): SdkComponentFactory {
     const box = geometry(props, spec);
     const fragments = childFragments(slots);
     const label = visibleText(props, spec.id.slice(4));
+    const title = stringProp(props, "title") ?? label;
+    const detail = stringProp(props, "detail");
     const suppliedRoots = rootsOf(fragments);
     const childRoots =
       suppliedRoots.length > 0 || spec.id === "sdk.spacer"
         ? suppliedRoots
-        : [
-            textNode(
-              `${context.instanceId}__label`,
-              label,
-              { x: 6, y: 6, width: Math.max(box.width - 12, 0), height: Math.max(box.height - 12, 0) },
+        : spec.id === "sdk.section" || spec.id === "sdk.splitPane"
+          ? []
+          : [
+              textNode(
+                `${context.instanceId}__label`,
+                label,
+                { x: 6, y: 6, width: Math.max(box.width - 12, 0), height: Math.max(box.height - 12, 0) },
+                context,
+                spec.id,
+                "label",
+                { fontSize: 10, textAnchor: "middle", fill: "@theme.ink.secondary" },
+              ),
+            ];
+    const direction =
+      stringProp(props, "direction") ??
+      (spec.id === "sdk.section"
+        ? "column"
+        : spec.id === "sdk.splitPane"
+          ? "row"
+          : "row");
+    const semanticProps: Record<string, JsonValue> | undefined =
+      spec.id === "sdk.section"
+        ? {
+            title,
+            ...(detail !== undefined ? { detail } : {}),
+          }
+        : spec.id === "sdk.splitPane"
+          ? {
+              ...(stringProp(props, "title") !== undefined
+                ? { title: stringProp(props, "title")! }
+                : stringProp(props, "label") !== undefined
+                  ? { title: stringProp(props, "label")! }
+                  : {}),
+              ...(detail !== undefined ? { detail } : {}),
+            }
+          : undefined;
+    // Section keeps a managed column stack so slotted children lay out under
+    // panel chrome; splitPane uses layout.stack with a row (or authored) stack.
+    const managedChildren =
+      spec.id === "sdk.section" && childRoots.length > 0
+        ? [
+            origin(
+              {
+                kind: "group",
+                id: `${context.instanceId}__stack`,
+                capabilityId: "layout.stack",
+                geometry: {
+                  x: 8,
+                  y: 36,
+                  width: Math.max(box.width - 16, 0),
+                  height: Math.max(box.height - 44, 0),
+                },
+                style: {
+                  coordinateSpace: "local",
+                  direction: "column",
+                  gap: numberProp(props, "gap", 8),
+                },
+                accessibility: { label: `${title} content` },
+                fallback: title,
+                sourceMap: context.sourceMap,
+                children: childRoots,
+              },
               context,
               spec.id,
-              "label",
-              { fontSize: 10, textAnchor: "middle", fill: "@theme.ink.secondary" },
+              "stack",
             ),
-          ];
-    const root = groupNode(spec, context, box, label, childRoots, {
+          ]
+        : childRoots;
+    const root = groupNode(spec, context, box, title, managedChildren, {
       coordinateSpace: "local",
-      direction: stringProp(props, "direction") ?? (spec.id === "sdk.splitPane" ? "row" : "row"),
+      direction,
       gap: numberProp(props, "gap", 8),
       // layout.pad reads style.inset / style.pad (never style.padding).
       ...(spec.id === "sdk.inset" ? { inset: numberProp(props, "gap", 12) } : {}),
       ...(spec.id === "sdk.section" || spec.id === "sdk.tableCell"
         ? { ...variantStyle(props), radius: 6 }
         : {}),
-    });
+    }, semanticProps);
     const ports: Record<string, ConnectorEndpointIr> = { self: { nodeId: root.id } };
     fragments.forEach((fragment, index) => {
       const child = fragment.roots[0];
@@ -908,58 +967,50 @@ function tableFactory(spec: CatalogSpec): SdkComponentFactory {
         : [];
       const labels = authoredColumns.length > 0 ? authoredColumns : stringItems(props);
       const cellLabels = labels.length > 0 ? labels : [visibleText(props, "table")];
-      const rowHeight = Math.min(32, box.height);
-      const columnWidth = box.width / cellLabels.length;
-      const cells = cellLabels.map((label, index) =>
-        textNode(
-          `${context.instanceId}__cell-0-${index}`,
-          label,
-          { x: index * columnWidth, y: 0, width: columnWidth, height: rowHeight },
-          context,
-          spec.id,
-          `cell-0-${index}`,
-          { fontSize: 10, fontWeight: "bold", textAnchor: "middle" },
-        ),
-      );
-      const rowId = `${context.instanceId}__row-0`;
-      const row = origin(
-        {
-          kind: "group",
-          id: rowId,
-          capabilityId: "layout.rail",
-          geometry: { x: 0, y: 0, width: box.width, height: rowHeight },
-          style: { coordinateSpace: "local", direction: "row", gap: 0 },
-          accessibility: { label: "table header" },
-          fallback: cellLabels.join(", "),
-          sourceMap: context.sourceMap,
-          children: cells,
-        },
+      const title = stringProp(props, "title") ?? cellLabels[0] ?? "table";
+      const detail =
+        stringProp(props, "detail") ??
+        (cellLabels.length > 1 ? cellLabels.slice(1).join(" · ") : undefined);
+      const root = groupNode(
+        spec,
         context,
-        spec.id,
-        "row-0",
+        box,
+        title,
+        [],
+        {
+          coordinateSpace: "local",
+          direction: "column",
+          gap: 0,
+          overflow: "hidden",
+          ...variantStyle(props),
+          radius: 6,
+        },
+        {
+          title,
+          ...(detail !== undefined ? { detail } : {}),
+          ...(cellLabels.length > 0 ? { steps: [...cellLabels] } : {}),
+        },
       );
-      const root = groupNode(spec, context, box, visibleText(props, "table"), [row], {
-        coordinateSpace: "local",
-        direction: "column",
-        gap: 0,
-        overflow: "hidden",
-      });
-      const ports: Record<string, ConnectorEndpointIr> = {
-        self: { nodeId: root.id },
-        "row[0]": { nodeId: rowId },
-      };
-      cells.forEach((cell, index) => {
-        ports[`cell[0][${index}]`] = { nodeId: cell.id };
-      });
-      return success([root], ports, actionsFor(spec, root.id, [rowId]));
+      return success([root], { self: { nodeId: root.id } }, actionsFor(spec, root.id, []));
     }
     const children = rootsOf(rows);
-    const root = groupNode(spec, context, box, visibleText(props, "table"), children, {
-      coordinateSpace: "local",
-      direction: "column",
-      gap: numberProp(props, "gap", 0),
-      overflow: "hidden",
-    });
+    const title = stringProp(props, "title") ?? visibleText(props, "table");
+    const root = groupNode(
+      spec,
+      context,
+      box,
+      title,
+      children,
+      {
+        coordinateSpace: "local",
+        direction: "column",
+        gap: numberProp(props, "gap", 0),
+        overflow: "hidden",
+        ...variantStyle(props),
+        radius: 6,
+      },
+      { title },
+    );
     const ports: Record<string, ConnectorEndpointIr> = { self: { nodeId: root.id } };
     rows.forEach((fragment, rowIndex) => {
       const row = fragment.roots[0];
@@ -982,50 +1033,162 @@ function tableFactory(spec: CatalogSpec): SdkComponentFactory {
   };
 }
 
+function collectionSemanticProps(
+  spec: CatalogSpec,
+  props: Props,
+  texts: readonly string[],
+): Readonly<{ capabilityId: string; props: Record<string, JsonValue>; label: string }> {
+  const label = visibleText(props, spec.id.slice(4));
+  const authoredTitle = stringProp(props, "title");
+  const title = authoredTitle ?? texts[0] ?? label;
+  const authoredDetail = stringProp(props, "detail");
+  const detail =
+    authoredDetail ??
+    (authoredTitle !== undefined && texts.length > 0
+      ? texts.join(" · ")
+      : texts.length > 1
+        ? texts.slice(1).join(" · ")
+        : undefined);
+  if (spec.id === "sdk.timeline") {
+    return {
+      capabilityId: "core.stepper",
+      label: title,
+      props: { steps: [...texts] },
+    };
+  }
+  if (spec.id === "sdk.timelineItem") {
+    return {
+      capabilityId: "core.panel",
+      label: title,
+      props: {
+        title,
+        ...(detail !== undefined ? { detail } : {}),
+      },
+    };
+  }
+  if (
+    spec.id === "sdk.tagList" ||
+    spec.id === "sdk.breadcrumb" ||
+    spec.id === "sdk.tabs" ||
+    spec.id === "sdk.pagination"
+  ) {
+    return {
+      capabilityId: "core.lane",
+      label: title,
+      props: {
+        title: texts.length > 0 ? texts.join(spec.id === "sdk.breadcrumb" ? " / " : " · ") : title,
+        ...(detail !== undefined && texts.length <= 1 ? { detail } : {}),
+        ...(texts.length > 0 ? { steps: [...texts] } : {}),
+      },
+    };
+  }
+  // stat / metric / keyValue / propertyList (and other panel-like collections)
+  return {
+    capabilityId: "core.panel",
+    label: title,
+    props: {
+      title,
+      ...(detail !== undefined ? { detail } : {}),
+      ...(texts.length > 0 ? { steps: [...texts] } : {}),
+    },
+  };
+}
+
 function collectionFactory(spec: CatalogSpec): SdkComponentFactory {
   return (props, slots, context) => {
     const box = geometry(props, spec);
     const fragments = childFragments(slots);
     const suppliedRoots = rootsOf(fragments);
     const itemTexts = stringItems(props);
-    const texts = itemTexts.length > 0 ? itemTexts : [visibleText(props, spec.id.slice(4))];
-    // layout.rail sums child widths along a row; full-bleed stacked items overflow.
-    const rail = spec.capabilityId === "layout.rail";
-    const rowHeight = Math.max(20, Math.min(32, box.height / Math.max(texts.length, 1)));
-    const generated = texts.map((text, index) =>
-      textNode(
-        `${context.instanceId}__item-${index}`,
-        text,
-        rail
-          ? {
-              x: 0,
-              y: 0,
-              // Width 0 requests intrinsic/content sizing from core.text layout.
-              width: 0,
-              height: Math.max(box.height, rowHeight),
+    const texts =
+      itemTexts.length > 0
+        ? itemTexts
+        : (() => {
+            const fallback = visibleText(props, spec.id.slice(4));
+            const title = stringProp(props, "title");
+            const detail = stringProp(props, "detail");
+            if (title !== undefined && detail !== undefined) {
+              return [title, detail];
             }
-          : {
-              x: 8,
-              y: index * rowHeight,
-              width: Math.max(box.width - 16, 0),
-              height: rowHeight,
-            },
-        context,
-        spec.id,
-        `item-${index}`,
-        {
-          fontSize: spec.id === "sdk.stat" || spec.id === "sdk.metric" ? 14 : 11,
-          fontWeight: index === 0 && (spec.id === "sdk.stat" || spec.id === "sdk.metric") ? "bold" : "normal",
-          textAnchor: "start",
+            if (title !== undefined) {
+              return [title];
+            }
+            return [fallback];
+          })();
+    // Keep loose text generation only for sdk.list; other collections map to
+    // semantic chrome capabilities with synthesized title/detail/steps.
+    if (spec.id === "sdk.list") {
+      const rail = spec.capabilityId === "layout.rail";
+      const rowHeight = Math.max(20, Math.min(32, box.height / Math.max(texts.length, 1)));
+      const generated = texts.map((text, index) =>
+        textNode(
+          `${context.instanceId}__item-${index}`,
+          text,
+          rail
+            ? {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: Math.max(box.height, rowHeight),
+              }
+            : {
+                x: 8,
+                y: index * rowHeight,
+                width: Math.max(box.width - 16, 0),
+                height: rowHeight,
+              },
+          context,
+          spec.id,
+          `item-${index}`,
+          {
+            fontSize: 11,
+            fontWeight: "normal",
+            textAnchor: "start",
+          },
+        ),
+      );
+      const children = suppliedRoots.length > 0 ? suppliedRoots : generated;
+      const root = groupNode(spec, context, box, visibleText(props, "list"), children, {
+        coordinateSpace: "local",
+        direction: "column",
+        gap: numberProp(props, "gap", 6),
+      });
+      const ports: Record<string, ConnectorEndpointIr> = { self: { nodeId: root.id } };
+      children.forEach((child, index) => {
+        ports[`item[${index}]`] = { nodeId: child.id };
+      });
+      return success(
+        [root],
+        ports,
+        actionsFor(spec, root.id, children.map((child) => child.id)),
+      );
+    }
+
+    const semantic = collectionSemanticProps(spec, props, texts);
+    const children = suppliedRoots;
+    const root = origin(
+      {
+        kind: "group",
+        id: context.instanceId,
+        capabilityId: semantic.capabilityId,
+        geometry: box,
+        style: {
+          coordinateSpace: "local",
+          direction: spec.id === "sdk.timeline" ? "row" : "column",
+          gap: numberProp(props, "gap", 6),
+          ...variantStyle(props),
+          radius: 6,
         },
-      ),
+        props: semantic.props,
+        accessibility: { label: semantic.label },
+        fallback: semantic.label,
+        sourceMap: context.sourceMap,
+        children,
+      },
+      context,
+      spec.id,
+      "root",
     );
-    const children = suppliedRoots.length > 0 ? suppliedRoots : generated;
-    const root = groupNode(spec, context, box, visibleText(props, spec.id.slice(4)), children, {
-      coordinateSpace: "local",
-      direction: spec.id === "sdk.timeline" ? "column" : "row",
-      gap: numberProp(props, "gap", 6),
-    });
     const ports: Record<string, ConnectorEndpointIr> = { self: { nodeId: root.id } };
     children.forEach((child, index) => {
       ports[`item[${index}]`] = { nodeId: child.id };
@@ -1165,7 +1328,19 @@ function indicatorFactory(spec: CatalogSpec): SdkComponentFactory {
         ),
       );
     }
-    const root = groupNode(spec, context, box, visibleText(props, spec.id.slice(4)), children);
+    const root = groupNode(
+      spec,
+      context,
+      box,
+      visibleText(props, spec.id.slice(4)),
+      children,
+      {
+        coordinateSpace: "local",
+        ...(spec.id === "sdk.rating" || spec.id === "sdk.semaphore"
+          ? { direction: "row", gap: numberProp(props, "gap", 4) }
+          : {}),
+      },
+    );
     return success(
       [root],
       {

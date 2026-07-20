@@ -210,4 +210,104 @@ flow "Doc" as doc {
       result.diagnostics.some((d) => d.code === "PROP_MISSING_REQUIRED"),
     ).toBe(true);
   });
+
+  it("reports LINK_UNKNOWN_NAME or COMPONENT_UNKNOWN for an unregistered invocation", () => {
+    const catalog = createComponentCatalog([widgetDescriptor()]);
+    expect(catalog.ok).toBe(true);
+    if (!catalog.ok) {
+      return;
+    }
+
+    const result = compileSource({
+      source: `
+flow "Doc" as doc {
+  language 1
+  scene "Scene" as scene {
+    MissingThing(id = "x")
+    narrate "${NARRATION}"
+    reading-order x
+  }
+}
+`,
+      sourceName: "compile-source-unknown-component.test.flow",
+      capabilities: FOUNDATION_CAPABILITIES,
+      strict: false,
+      components: catalog.value,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.diagnostics.some(
+        (d) =>
+          d.code === "LINK_UNKNOWN_NAME" || d.code === "COMPONENT_UNKNOWN",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("lowerExplainerScene wires the component catalog", () => {
+  it("reports PROP_MISSING_REQUIRED when components are supplied", () => {
+    const catalog = createComponentCatalog([widgetDescriptor()]);
+    expect(catalog.ok).toBe(true);
+    if (!catalog.ok) {
+      return;
+    }
+
+    const scene: SceneAst = {
+      kind: "scene",
+      id: "scene",
+      title: "Scene",
+      sourceMap: SOURCE_MAP,
+      readingOrder: {
+        kind: "reading-order",
+        references: ["x"],
+        sourceMap: SOURCE_MAP,
+      },
+      narration: { kind: "narration", text: NARRATION, sourceMap: SOURCE_MAP },
+      renderDeclarations: [
+        {
+          kind: "component-invocation",
+          name: "Widget",
+          sourceMap: SOURCE_MAP,
+          props: [prop("id", literal("x"))],
+        },
+      ],
+      cameras: [],
+      timelines: [
+        {
+          kind: "timeline",
+          id: "main",
+          sourceMap: SOURCE_MAP,
+          cues: [
+            {
+              kind: "timeline-cue",
+              sourceMap: SOURCE_MAP,
+              timing: { mode: "at", ms: 0 },
+              action: "enter",
+              target: "x",
+              duration: 100,
+            },
+          ],
+        },
+      ],
+      interactions: [],
+      responsiveVariants: [],
+    };
+
+    const result = lowerExplainerScene(scene, {
+      capabilities: FOUNDATION_CAPABILITIES,
+      strict: false,
+      components: catalog.value,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.diagnostics.some((d) => d.code === "PROP_MISSING_REQUIRED")) {
+      expect(result.diagnostics.map((d) => `${d.code}: ${d.message}`)).toEqual(
+        [],
+      );
+    }
+    expect(
+      result.diagnostics.some((d) => d.code === "PROP_MISSING_REQUIRED"),
+    ).toBe(true);
+  });
 });

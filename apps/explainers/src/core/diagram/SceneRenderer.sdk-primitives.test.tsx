@@ -14,6 +14,53 @@ import { estimateTextWidth, stepperChipWidth } from "./text-metrics.js";
 afterEach(cleanup);
 
 describe("SceneRenderer SDK foundations", () => {
+  it("paints authored core.path glyphs when they are excluded from connector resolution", () => {
+    const scene: SceneIrLike = {
+      id: "icon-glyph-scene",
+      roots: [
+        {
+          id: "check-icon",
+          kind: "connector",
+          capabilityId: "core.path",
+          geometry: { x: 40, y: 50, width: 24, height: 24 },
+          style: {
+            fill: "none",
+            stroke: "#76b900",
+            strokeWidth: 1.75,
+            markerEnd: "none",
+          },
+          path: "M4 12 L9 17 L20 5",
+          accessibility: { label: "check" },
+        },
+      ],
+      timeline: [],
+    };
+
+    // Glyph icons reuse path IR but are intentionally excluded from routed
+    // connector resolution — the renderer must still paint authored `path`.
+    expect(resolveScene(scene).connectorsById.has("check-icon")).toBe(false);
+
+    const { container } = render(
+      <SceneRenderer scene={scene} playing={false} restartKey={0} />,
+    );
+
+    const node = container.querySelector('[data-flow-node-id="check-icon"]');
+    const path = node?.querySelector("path");
+    expect(path).not.toBeNull();
+    expect(path?.getAttribute("d")).toContain("M");
+    // Local glyph coordinates are translated by the node geometry origin.
+    const translated = [...(node?.querySelectorAll("g[transform]") ?? [])].some(
+      (group) => {
+        const transform = group.getAttribute("transform") ?? "";
+        return /translate\(\s*40[\s,]+50\s*\)/.test(transform);
+      },
+    );
+    const d = path?.getAttribute("d") ?? "";
+    const pathOffset =
+      d.includes("M44") || d.includes("M 44") || /M\s*44[\s,]/.test(d);
+    expect(translated || pathOffset).toBe(true);
+  });
+
   it("renders core.image component nodes as SVG images", () => {
     const { container } = render(
       <SceneRenderer
@@ -212,9 +259,9 @@ describe("SceneRenderer SDK foundations", () => {
             {
               id: "stepper-step-0",
               kind: "group",
-              capabilityId: "core.step",
+              capabilityId: "core.chip",
               geometry: { x: 0, y: 0, width: 100, height: 26 },
-              props: { label: "Stepper copy", index: 0 },
+              props: { label: "1. Stepper copy", index: 0 },
               children: [],
             },
           ],

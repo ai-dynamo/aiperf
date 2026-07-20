@@ -195,7 +195,11 @@ function verifyWorkerSlide(pkg, snapshots, findings) {
       ),
     );
   }
-  const motion = connectors.get("s10-motion");
+  const motionNode = sceneNodeById(scene, "s10-motion");
+  const motion =
+    motionNode?.id === undefined
+      ? undefined
+      : connectors.get(motionNode.id);
   if (motion?.d !== edge?.d) {
     findings.push(
       finding(

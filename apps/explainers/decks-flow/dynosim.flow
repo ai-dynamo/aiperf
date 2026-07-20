@@ -219,8 +219,7 @@ explainer "Dynosim" {
       )
       sdk.Signal(
         id = "s1-motion-sig",
-        from = { nodeId: "s1-feat", anchor: "e" },
-        to = { nodeId: "s1-ids", anchor: "w" },
+        edge = "s1-a1",
         opacity = 0.55,
         strokeWidth = 2.2,
         style = { stroke: theme(accent.primary) }

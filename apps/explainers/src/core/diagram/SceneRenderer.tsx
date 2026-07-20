@@ -3999,7 +3999,11 @@ function renderNode(
     }
   } else if (isArrowLike(node, capability)) {
     const resolvedConnector = index.connectorsById.get(node.id);
-    const dRaw = resolvedConnector?.d;
+    // Glyph icons / sparklines emit `core.path` with authored `path` and are
+    // excluded from connector resolution — fall back to arrowPathData so they
+    // still paint, then translate local glyph coords by the node origin.
+    const dRaw =
+      resolvedConnector?.d ?? arrowPathData(node, index, layoutOrigin);
     if (dRaw !== undefined) {
       const stroke = paintFromStyle(node.style, "stroke", theme, themeAccent);
       const tip =
@@ -4024,7 +4028,11 @@ function renderNode(
       const dashed = isDashedStyle(node.style);
       const markerId =
         tip !== null ? markerDomId(markerPrefix, tip) : markerPrefix;
-      body = (
+      const translateLocalGlyph =
+        resolvedConnector === undefined &&
+        capability === "core.path" &&
+        (geom.x !== 0 || geom.y !== 0);
+      const arrow = (
         <>
           <FlowArrow
             d={d}
@@ -4068,6 +4076,11 @@ function renderNode(
             />
           ) : null}
         </>
+      );
+      body = translateLocalGlyph ? (
+        <g transform={`translate(${geom.x} ${geom.y})`}>{arrow}</g>
+      ) : (
+        arrow
       );
     }
   }

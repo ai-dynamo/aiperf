@@ -150,6 +150,43 @@ describe("resolveConnectors", () => {
     );
   });
 
+  it("skips obstacle-noise diagnostics for decorative dividers but keeps them for content connectors", () => {
+    const blocker = panel("blocker", {
+      x: 130,
+      y: 35,
+      width: 40,
+      height: 30,
+    });
+    const props = {
+      from: { x: 80, y: 50 },
+      to: { x: 220, y: 50 },
+      path: "M80 50 L220 50",
+    };
+    const divider: SceneNodeLike = {
+      ...edge({ id: "divider", ...props }),
+      capabilityId: "core.divider",
+    };
+
+    const dividerResult = resolve(divider, [blocker]);
+    const contentResult = resolve(edge({ id: "content-edge", ...props }), [blocker]);
+    const obstacleDiagnosticCodes = new Set([
+      "SCENE_CONNECTOR_INTERSECTION",
+      "SCENE_CONNECTOR_VISUALLY_AMBIGUOUS",
+    ]);
+
+    expect(
+      dividerResult.diagnostics.filter(({ code }) => obstacleDiagnosticCodes.has(code)),
+    ).toEqual([]);
+    expect(
+      contentResult.diagnostics.map(({ code }) => code),
+    ).toEqual(
+      expect.arrayContaining([
+        "SCENE_CONNECTOR_INTERSECTION",
+        "SCENE_CONNECTOR_VISUALLY_AMBIGUOUS",
+      ]),
+    );
+  });
+
   it("reports missing endpoint geometry instead of silently collapsing to the origin", () => {
     const result = resolve(edge({ from: { nodeId: "missing", anchor: "e" } }));
     const resolved = result.connectorsById.get("edge");
@@ -229,14 +266,21 @@ describe("resolveConnectors", () => {
   });
 
   it("reports standalone motion signals that duplicate an existing connector", () => {
-    const credit = edge({ id: "request-credit" });
+    const authoredPath = "M80 50 L220 50";
+    const credit = edge({
+      id: "request-credit",
+      d: authoredPath,
+      from: { nodeId: "a", anchor: "e" },
+      to: { nodeId: "b", anchor: "w" },
+    });
     const duplicate: SceneNodeLike = {
       id: "motion",
       kind: "connector",
       capabilityId: "motion.signal",
       geometry: { x: 0, y: 0, width: 0, height: 0 },
-      from: { nodeId: "source", anchor: "e" },
-      to: { nodeId: "target", anchor: "w" },
+      d: authoredPath,
+      from: { nodeId: "a", anchor: "e" },
+      to: { nodeId: "b", anchor: "w" },
       style: {},
     };
     const result = resolve(credit, [duplicate]);

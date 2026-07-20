@@ -281,10 +281,10 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "para-h", title = "SDK.PARAGRAPH", caption = "bounded prose", x = 18, y = 16, width = 664, height = 44)
       sdk.Paragraph(id = "para-hero", text = "Requests stay in-region unless capacity falls below the configured safety margin.", x = 44, y = 108, width = 220, height = 88)
       sdk.Label(id = "para-hero-l", text = "HERO · POLICY EXPLANATION", x = 44, y = 210, width = 350, height = 18)
-      sdk.Paragraph(id = "para-v1", text = "Pin revisions before comparing runs.", x = 440, y = 110, width = 200, height = 62, inkRole = theme(ink.primary))
-      sdk.Paragraph(id = "para-v2", text = "Metrics refresh every 10 seconds.", x = 440, y = 222, width = 200, height = 62, inkRole = theme(ink.secondary))
-      sdk.Label(id = "para-v1-l", text = "GUIDANCE", x = 440, y = 194, width = 200, height = 16)
-      sdk.Label(id = "para-v2-l", text = "SUPPORTING", x = 440, y = 306, width = 200, height = 16)
+      sdk.Paragraph(id = "para-v1", text = "Pin revisions before comparing runs.", x = 440, y = 240, width = 200, height = 62, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "para-v2", text = "Metrics refresh every 10 seconds.", x = 440, y = 352, width = 200, height = 62, inkRole = theme(ink.secondary))
+      sdk.Label(id = "para-v1-l", text = "GUIDANCE", x = 440, y = 324, width = 200, height = 16)
+      sdk.Label(id = "para-v2-l", text = "SUPPORTING", x = 440, y = 436, width = 200, height = 16)
       timeline main { at 0 reveal para-h duration 160 after para-h reveal para-hero duration 240 after para-hero reveal para-hero-l duration 140 after para-hero-l reveal para-v1 duration 160 after para-v1 reveal para-v1-l duration 120 after para-v1-l reveal para-v2 duration 160 after para-v2 reveal para-v2-l duration 120 }
     }
   }
@@ -883,12 +883,12 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "rating-h", title = "SDK.RATING", caption = "five-step score", x = 18, y = 16, width = 664, height = 44)
       sdk.Rating(id = "rating-hero", label = "response quality", value = 0.8, x = 100, y = 125, width = 240, height = 48)
       sdk.Label(id = "rating-hero-l", text = "HERO · 4 / 5 QUALITY", x = 70, y = 215, width = 300, height = 18)
-      sdk.Rating(id = "rating-v1", label = "low", value = 0.2, x = 430, y = 95, width = 160, height = 36)
-      sdk.Label(id = "rating-v1-l", text = "LOW", x = 430, y = 157, width = 160, height = 14)
-      sdk.Rating(id = "rating-v2", label = "medium", value = 0.6, x = 430, y = 183, width = 160, height = 36)
-      sdk.Label(id = "rating-v2-l", text = "MEDIUM", x = 430, y = 245, width = 160, height = 14)
-      sdk.Rating(id = "rating-v3", label = "excellent", value = 1, x = 430, y = 271, width = 160, height = 36)
-      sdk.Label(id = "rating-v3-l", text = "EXCELLENT", x = 430, y = 333, width = 160, height = 14)
+      sdk.Rating(id = "rating-v1", label = "low", value = 0.2, x = 430, y = 100, width = 72, height = 48)
+      sdk.Label(id = "rating-v1-l", text = "LOW", x = 430, y = 340, width = 72, height = 14)
+      sdk.Rating(id = "rating-v2", label = "medium", value = 0.6, x = 510, y = 100, width = 72, height = 48)
+      sdk.Label(id = "rating-v2-l", text = "MEDIUM", x = 510, y = 340, width = 72, height = 14)
+      sdk.Rating(id = "rating-v3", label = "excellent", value = 1, x = 590, y = 100, width = 72, height = 48)
+      sdk.Label(id = "rating-v3-l", text = "EXCELLENT", x = 590, y = 340, width = 80, height = 14)
       timeline main { at 0 reveal rating-h duration 160 after rating-h reveal rating-hero duration 240 after rating-hero reveal rating-hero-l duration 140 after rating-hero-l reveal rating-v1 duration 140 after rating-v1 reveal rating-v1-l duration 100 after rating-v1-l reveal rating-v2 duration 140 after rating-v2 reveal rating-v2-l duration 100 after rating-v2-l reveal rating-v3 duration 140 after rating-v3 reveal rating-v3-l duration 100 }
     }
   }

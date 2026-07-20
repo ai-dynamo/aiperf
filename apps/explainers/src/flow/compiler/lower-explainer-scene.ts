@@ -13,7 +13,7 @@
 //!
 //! Native paths reuse the document scene lowerer when only rect/connector
 //! nodes are present. Package paths (and native scenes with Task-2 primitives
-//! / extended timeline cues) normalize into strict `SceneIr`, desugaring
+//! / extended timeline cues) normalize into strict `SceneIr`, expanding
 //! geometry macros and preserving first-class layout / motion / stagger.
 
 import {
@@ -38,6 +38,7 @@ import {
   sceneIrSchema,
   type CameraKeyframeIr,
   type CapabilityRegistryManifest,
+  type ComponentCatalog,
   type Diagnostic,
   type GeometryIr,
   type InteractionIr,
@@ -70,6 +71,11 @@ export type LowerExplainerSceneOptions = Readonly<{
   capabilities?: CapabilityRegistryManifest;
   /** Enables strict capability fail-closed and native narration checks. */
   strict?: boolean;
+  /**
+   * When provided, enables COMPONENT_UNKNOWN / prop validation on native
+   * scenes and treats catalog `id` / `symbolExport` names as known at link.
+   */
+  components?: ComponentCatalog;
   /**
    * Owning slide / document source range. Used so embedded `@scene`
    * diagnostics identify the original `.flow` file instead of placeholders.
@@ -195,7 +201,11 @@ function validateNativeScene(
     return expanded;
   }
 
-  const linked = link(expanded.value);
+  const linked = link(expanded.value, {
+    ...(options.components === undefined
+      ? {}
+      : { components: options.components }),
+  });
   if (!linked.ok) {
     return linked;
   }
@@ -203,7 +213,12 @@ function validateNativeScene(
   if (options.capabilities === undefined) {
     return linked;
   }
-  return validate(linked.value, options.capabilities, options.strict ?? false);
+  return validate(
+    linked.value,
+    options.capabilities,
+    options.strict ?? false,
+    options.components,
+  );
 }
 
 function sceneRange(

@@ -355,7 +355,7 @@ explainer "AIPerf vs Locust" {
       sdk.Note(
         id = "s2-note",
         text = "No other delay mechanism exists in this loop — the pause is only ever this one sleep call",
-        x = 60, y = 320, width = 580, height = 30
+        x = 50, y = 320, width = 580, height = 30
       )
       sdk.Signal(
         id = "s2-motion",
@@ -606,7 +606,7 @@ explainer "AIPerf vs Locust" {
         id = "s4-r2",
         title = "report",
         detail = "worker → coordinator",
-        x = 360, y = 108, width = 110, height = 50,
+        x = 335, y = 108, width = 110, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -628,7 +628,7 @@ explainer "AIPerf vs Locust" {
         id = "s4-merge",
         title = "Running total",
         detail = "extended, not recomputed, each tick",
-        x = 530, y = 101, width = 130, height = 78,
+        x = 475, y = 101, width = 130, height = 78,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -703,20 +703,20 @@ explainer "AIPerf vs Locust" {
   slide "AIPerf: process topology" {
     eyebrow: "AIPerf architecture"
     title: "One native binary; thread-per-core workers inside it"
-    lede: "`aiperf profile` resolves Config v2 and re-executes the same `aiperf` binary as `--execute` over stdio. That single process owns scheduling, dataset, transport, and metrics in-process — not as forked message-routing services. When `workers == 1` the sink co-locates on the coordinator thread; when `workers > 1` each OS thread is a self-contained sub-cell."
+    lede: "`aiperf profile` resolves Config v2 and re-executes the same `aiperf` binary as `--execute` over stdio. That single process owns scheduling, dataset, transport, and metrics as in-process modules — one native runtime, where Locust instead spreads work across separate worker processes. When `workers == 1` the sink co-locates on the coordinator thread; when `workers > 1` each OS thread is a self-contained sub-cell."
 
-    narration: "One native binary re-execs itself for --execute. Workers are thread-per-core sub-cells, not forked ZMQ processes. Optional --cells adds a controller merge."
+    narration: "One native binary re-execs itself for --execute. Workers are thread-per-core sub-cells inside that one process. Optional --cells adds a controller merge over Velo."
 
     term: {
       word: "execute process"
-      meaning: "The same `aiperf` binary running in hidden `--execute` mode after `profile` projects Config v2 onto a protocol-v2 request over stdio. It is both the public CLI and the execution engine — scheduling, admission, transport sinks, and metrics live in-process. Parallelism is thread-per-core workers, not a fork-based multiprocess proxy mesh."
+      meaning: "The same `aiperf` binary running in hidden `--execute` mode after `profile` projects Config v2 onto a protocol-v2 request over stdio. It is both the public CLI and the execution engine — scheduling, admission, transport sinks, and metrics live in-process. Parallelism is thread-per-core workers inside that one process."
     }
 
     points: [
       "`profile` → Config v2 → re-exec `aiperf --execute` over stdio; one native binary, no separate runner.",
-      "Dataset, scheduling/admission, transport, and metrics stay in-process modules — not forked OS services.",
+      "Dataset, scheduling/admission, transport, and metrics stay in-process modules on one native runtime.",
       "`workers == 1`: co-located sink on the coordinator thread. `workers > 1`: each OS thread is a self-contained sub-cell.",
-      "Optional `--cells N` promotes a controller that partitions work and merges cell results — not a ZMQ proxy mesh."
+      "Optional `--cells N` promotes a controller that partitions work and merges cell results over Velo control traffic."
     ]
 
     caption: "One binary · in-process runtime · thread-per-core workers · optional cellular merge."
@@ -885,32 +885,32 @@ explainer "AIPerf vs Locust" {
     }
   }
 
-  slide "AIPerf: internal message topology" {
+  slide "AIPerf: in-process admission and dispatch" {
     eyebrow: "AIPerf architecture"
-    title: "In-process admission and dispatch — no proxy mesh"
-    lede: "Admission, credit issuance, and observation stay inside the `--execute` process. `runtime.dispatch` selects how workers share a concurrency/rate gate (`sharded`, `global`, or `global-hop`). Optional cellular mode adds a controller that merges cell results over Velo control traffic — measured load still rides HTTP or gRPC directly, never a shared message-routing proxy layer."
+    title: "Admission and dispatch live inside one process"
+    lede: "Admission, credit issuance, and observation stay inside the `--execute` process. `runtime.dispatch` selects how workers share a concurrency/rate gate (`sharded`, `global`, or `global-hop`). Optional cellular mode adds a controller that merges cell results over Velo control traffic — measured load rides HTTP or gRPC directly from each worker."
 
-    narration: "No ZMQ proxy mesh. Admission and dispatch are in-process. Cellular merge uses Velo for control only; load stays on HTTP or gRPC."
+    narration: "Admission and dispatch are in-process. Cellular merge uses Velo for control only; measured load stays on HTTP or gRPC."
 
     term: {
       word: "dispatch mode"
-      meaning: "How `workers > 1` admits and issues work inside one cell: `sharded` partitions budgets statically per thread, `global` admits concurrency and rate from a shared per-cell gate, and `global-hop` additionally routes every request through one coordinator-owned dispatcher for exact global issuance order. None of these are a fork-based message-routing proxy mesh."
+      meaning: "How `workers > 1` admits and issues work inside one cell: `sharded` partitions budgets statically per thread, `global` admits concurrency and rate from a shared per-cell gate, and `global-hop` additionally routes every request through one coordinator-owned dispatcher for exact global issuance order. All three run inside one process."
     }
 
     points: [
-      "Admission and credit issuance live in-process — workers do not receive work over coordinator-hosted proxies.",
+      "Admission and credit issuance live in-process — workers draw work straight from a shared in-process gate.",
       "Each worker owns a LocalSet, transport sink, and local capture; metrics merge at phase boundaries.",
       "`dispatch` chooses sharded, global, or global-hop sharing of the concurrency/rate gate — still one process.",
-      "Optional `--cells`: controller merges records or folded stores over Velo; inference traffic is not proxied."
+      "Optional `--cells`: controller merges records or folded stores over Velo; inference traffic stays on HTTP or gRPC."
     ]
 
-    caption: "In-process gates and sinks — cellular merge is not a ZMQ proxy mesh."
+    caption: "In-process gates and sinks; cellular merge rides Velo control traffic."
 
     render: @scene {
       sdk.Header(
         id = "s6-hdr",
-        title = "IN-PROCESS · NO PROXY MESH",
-        caption = "In-process gates and sinks — cellular merge is not a ZMQ proxy mesh.",
+        title = "IN-PROCESS ADMISSION · DISPATCH",
+        caption = "In-process gates and sinks; cellular merge rides Velo control traffic.",
         x = 18, y = 16, width = 664, height = 44,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
@@ -1018,7 +1018,7 @@ explainer "AIPerf vs Locust" {
         to = { nodeId: "s6-timing", anchor: "e" },
         opacity = 0.4,
         strokeWidth = 2,
-        label = "in-process, not ZMQ",
+        label = "in-process gate",
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -1045,7 +1045,7 @@ explainer "AIPerf vs Locust" {
   slide "AIPerf: the credit lifecycle" {
     eyebrow: "AIPerf architecture"
     title: "Created, gated, dispatched, stuck to a conversation, returned"
-    lede: "A credit is built and admitted before a worker runs it. Multi-turn conversations stick to whichever worker handled the first turn, so session state and cache locality survive the whole conversation. Completion observes the request and releases the admission slot in-process — not over a separate proxy return channel."
+    lede: "A credit is built and admitted before a worker runs it. Multi-turn conversations stick to whichever worker handled the first turn, so session state and cache locality survive the whole conversation. Completion observes the request and releases the admission slot in-process."
 
     narration: "Turn one goes to the least-loaded worker; every later turn sticks to that same worker. Completion releases the slot in-process."
 
@@ -1058,7 +1058,7 @@ explainer "AIPerf vs Locust" {
       "Admission blocks issuance until the run is ready to dispatch work to workers.",
       "First turn of a conversation: least-loaded worker selection. Later turns: routed back to the same worker.",
       "The sticky mapping exists only while more turns are expected, and is torn down on the conversation's final turn.",
-      "Credit completion observes the request and releases the admission slot in-process — no ZMQ return channel."
+      "Credit completion observes the request and releases the admission slot in-process, then frees it for reuse."
     ]
 
     caption: "First turn picks the worker; every later turn goes back to the same one."
@@ -1265,7 +1265,7 @@ explainer "AIPerf vs Locust" {
         id = "s8-c5",
         title = "Duration",
         detail = "if configured · vote: no",
-        x = 610, y = 80, width = 55, height = 72,
+        x = 540, y = 160, width = 55, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
