@@ -953,4 +953,272 @@ explainer "Rust Architecture — Deck Port" {
   }
 
   // slides appended by Tasks 9-10
+
+  slide "K · RaggedSeries" {
+    eyebrow: "COLUMNSTORE · RAGGED BACKEND"
+    title: "RaggedSeries — a CSR list backend for ICL"
+    lede: "Variable-length per-record series stored in one contiguous buffer with row offsets — no per-row allocation."
+    narration: "Component K, the ragged ColumnStore backend — RaggedSeries, a CSR list backend for in-context-learning shots. Variable-length per-record series live in one contiguous values arena plus an offsets vector, so a ragged row is a slice, never a heap-allocated Vec. Row i equals values from indptr[i] to indptr[i+1]; an indptr of zero, three, four, seven reconstructs record zero of length three, record one of length one, and record two of length three. It sits beside NumericColumn, where NaN marks absence, in the same absolute-request-index alignment. append_store merges worker shards by concatenating buffers and shifting offsets. Sweep-lines read the ragged ICL series directly for tokens-in-flight and concurrency curves."
+    caption: "CSR values arena + indptr · row = slice · append_store shifts offsets."
+    render: @scene {
+      sdk.Shape(id = "rs-badge", variant = "rect", label = "K", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "rs-badge-l", text = "K", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "rs-kicker", text = "COLUMNSTORE · RAGGED BACKEND", x = 82, y = 20, width = 540, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "rs-title", text = "RaggedSeries — a CSR list backend for ICL", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "rs-sub", text = "Variable-length per-record series in one contiguous buffer with row offsets — no per-row allocation", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "rs-arena-label", text = "VALUES ARENA (ONE CONTIGUOUS BUFFER)", x = 40, y = 112, width = 300, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "rs-arena", items = ["v0", "v1", "v2", "v3", "v4", "v5", "v6"], gap = 6, x = 40, y = 132, width = 300, height = 26)
+      sdk.Caption(id = "rs-indptr-label", text = "INDPTR", x = 40, y = 168, width = 300, height = 16, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "rs-indptr", text = "[ 0, 3, 4, 7 ] · row i = values[indptr[i] .. indptr[i+1]]", x = 40, y = 188, width = 300, height = 30, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "rs-rows-label", text = "RECONSTRUCTED ROWS", x = 40, y = 226, width = 300, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "rs-rows", items = ["record 0 · len 3", "1 · 1", "record 2 · len 3"], gap = 8, x = 40, y = 246, width = 300, height = 26)
+      sdk.Caption(id = "rs-right-label", text = "RAGGED ROW BACKEND", x = 360, y = 112, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "rs-b1", text = "One flat values arena + offsets vector — a ragged row is a slice, never a heap-allocated Vec", x = 360, y = 132, width = 320, height = 40, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "rs-b2", text = "Sits beside NumericColumn (NaN = absence) in the same absolute-request-index alignment", x = 360, y = 176, width = 320, height = 40, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "rs-b3", text = "append_store merges worker shards by concatenating buffers and shifting offsets", x = 360, y = 220, width = 320, height = 30, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "rs-note", text = "Sweep-lines read the ragged ICL series directly for tokens-in-flight and concurrency curves", x = 360, y = 258, width = 320, height = 30, inkRole = theme(ink.secondary))
+      timeline main {
+        at 0 reveal rs-badge duration 160
+        at 0 reveal rs-badge-l duration 160
+        after rs-badge reveal rs-kicker duration 140
+        after rs-kicker reveal rs-title duration 200
+        after rs-title reveal rs-sub duration 160
+        after rs-sub reveal rs-arena-label duration 140
+        after rs-arena-label reveal rs-arena duration 160
+        after rs-arena reveal rs-indptr-label duration 140
+        after rs-indptr-label reveal rs-indptr duration 160
+        after rs-indptr reveal rs-rows-label duration 140
+        after rs-rows-label reveal rs-rows duration 160
+        after rs-rows reveal rs-right-label duration 140
+        after rs-right-label stagger targets [rs-b1, rs-b2, rs-b3] step 90 duration 180
+        after rs-b3 reveal rs-note duration 160
+      }
+    }
+  }
+
+  slide "L · Reporting and export" {
+    eyebrow: "REPORTING AND EXPORT"
+    title: "One authoritative report, a fan-out of exporters"
+    lede: "Sole atomic create_new + rename; the registry orders local-file writers before network uploaders, all best-effort."
+    narration: "Component L — reporting and export: one authoritative report, a fan-out of exporters. NativeReport is schema_version 2.0 — run, summary, metrics, server_metrics, accuracy, and errors, with finite-or-absent values. It is written once through a sole atomic path: refuse if exists, temp create_new, then atomic rename, before run_exporters. The registry orders local-file writers first — GenaiPerfV1, ConsoleTxt, Timeslice, AccuracyCsv, ServerMetrics, and Parquet — then network uploaders Otel, Mlflow, and Wandb, all best-effort. GenaiPerfV1 is byte-for-byte versus the retired Python emitter, and ConsoleTxt reproduces Rich box geometry; run_exporters logs and never aborts the run."
+    caption: "Atomic create_new + rename · local writers before network uploaders."
+    render: @scene {
+      sdk.Shape(id = "rp-badge", variant = "rect", label = "L", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "rp-badge-l", text = "L", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "rp-kicker", text = "REPORTING AND EXPORT", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "rp-title", text = "One authoritative report, a fan-out of exporters", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "rp-sub", text = "Sole atomic create_new + rename; the registry orders local-file writers before network uploaders, all best-effort", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "rp-report-label", text = "NATIVEREPORT · schema_version 2.0", x = 40, y = 112, width = 300, height = 16, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "rp-report", text = "run, summary, metrics, server_metrics, accuracy, errors · finite-or-absent values", x = 40, y = 132, width = 300, height = 44, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "rp-atomic-label", text = "ATOMIC WRITE", x = 40, y = 186, width = 300, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "rp-atomic", items = ["refuse if exists →", "temp create_new →", "atomic rename → run_exporters"], gap = 8, x = 40, y = 206, width = 300, height = 26)
+      sdk.Caption(id = "rp-local-label", text = "LOCAL-FILE WRITERS", x = 360, y = 112, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "rp-local", items = ["GenaiPerfV1", "ConsoleTxt", "Timeslice", "AccuracyCsv", "ServerMetrics", "Parquet"], gap = 8, x = 360, y = 132, width = 320, height = 52)
+      sdk.Caption(id = "rp-net-label", text = "NETWORK UPLOADERS", x = 360, y = 196, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "rp-net", items = ["Otel", "Mlflow", "Wandb"], gap = 8, x = 360, y = 216, width = 320, height = 26)
+      sdk.Caption(id = "rp-note", text = "GenaiPerfV1 byte-for-byte vs the retired Python emitter; ConsoleTxt reproduces Rich box geometry; run_exporters logs and never aborts", x = 360, y = 250, width = 320, height = 44, inkRole = theme(ink.secondary))
+      timeline main {
+        at 0 reveal rp-badge duration 160
+        at 0 reveal rp-badge-l duration 160
+        after rp-badge reveal rp-kicker duration 140
+        after rp-kicker reveal rp-title duration 200
+        after rp-title reveal rp-sub duration 160
+        after rp-sub reveal rp-report-label duration 140
+        after rp-report-label reveal rp-report duration 160
+        after rp-report reveal rp-atomic-label duration 140
+        after rp-atomic-label reveal rp-atomic duration 180
+        after rp-atomic reveal rp-local-label duration 140
+        after rp-local-label reveal rp-local duration 200
+        after rp-local reveal rp-net-label duration 140
+        after rp-net-label reveal rp-net duration 160
+        after rp-net reveal rp-note duration 160
+      }
+    }
+  }
+
+  slide "M · Adaptive scale" {
+    eyebrow: "ADAPTIVE SCALE"
+    title: "Ramp until failure, step back to the knee"
+    lede: "Discover raises the load knob each window until an SLA breach — then Sustain holds the last-passing boundary."
+    narration: "Component M — adaptive scale: ramp until failure, step back to the knee. Discover monotonically raises the load knob each assessment window until an SLA-threshold breach; then Sustain holds the last-passing boundary, the knee. Four control variables can be driven: concurrency, prefill_concurrency, request_rate, and users. The object-safe seam is ControlActuator, SlaEvaluator, StepPolicy, Controller, and WindowSampler. It steps by SLA-margin-scaled or fixed-percent, and the same futures run online and offline — everything sits behind Clock and ControlActuator."
+    caption: "Discover ramps to breach · Sustain holds the knee · object-safe seam."
+    render: @scene {
+      sdk.Shape(id = "ad-badge", variant = "rect", label = "M", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ad-badge-l", text = "M", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ad-kicker", text = "ADAPTIVE SCALE", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "ad-title", text = "Ramp until failure, step back to the knee", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ad-sub", text = "Discover raises the load knob each window until an SLA breach — then Sustain holds the last-passing boundary", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ad-disc-label", text = "DISCOVER", x = 40, y = 116, width = 300, height = 16, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "ad-disc", text = "monotonically raises the load knob each assessment window until the SLA threshold is breached", x = 40, y = 136, width = 300, height = 44, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ad-sust-label", text = "SUSTAIN", x = 40, y = 190, width = 300, height = 16, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "ad-sust", text = "steps back and holds the last-passing boundary — the knee", x = 40, y = 210, width = 300, height = 30, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ad-vars-label", text = "FOUR CONTROL VARIABLES", x = 360, y = 116, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "ad-vars", items = ["concurrency", "prefill_concurrency", "request_rate", "users"], gap = 8, x = 360, y = 136, width = 320, height = 52)
+      sdk.Caption(id = "ad-seam-label", text = "OBJECT-SAFE SEAM", x = 360, y = 196, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "ad-seam", items = ["ControlActuator", "SlaEvaluator", "StepPolicy", "Controller", "WindowSampler"], gap = 8, x = 360, y = 216, width = 320, height = 52)
+      sdk.Paragraph(id = "ad-note", text = "Steps by SLA-margin-scaled or fixed-percent · same futures online and offline, everything behind Clock and ControlActuator", x = 360, y = 274, width = 320, height = 44, inkRole = theme(ink.secondary))
+      timeline main {
+        at 0 reveal ad-badge duration 160
+        at 0 reveal ad-badge-l duration 160
+        after ad-badge reveal ad-kicker duration 140
+        after ad-kicker reveal ad-title duration 200
+        after ad-title reveal ad-sub duration 160
+        after ad-sub reveal ad-disc-label duration 140
+        after ad-disc-label reveal ad-disc duration 160
+        after ad-disc reveal ad-sust-label duration 140
+        after ad-sust-label reveal ad-sust duration 160
+        after ad-sust reveal ad-vars-label duration 140
+        after ad-vars-label reveal ad-vars duration 180
+        after ad-vars reveal ad-seam-label duration 140
+        after ad-seam-label reveal ad-seam duration 180
+        after ad-seam reveal ad-note duration 160
+      }
+    }
+  }
+
+  slide "N · Accuracy" {
+    eyebrow: "ACCURACY"
+    title: "Rust drives, a Python worker grades"
+    lede: "Accuracy is not a dispatch workload — problems flow through the ordinary online scheduler, transport and observer."
+    narration: "Component N — accuracy: Rust drives, a Python worker grades. Accuracy is not a dispatch workload; problems flow through the ordinary online scheduler, transport, and observer. Rust owns scheduling, IO and timing, and metrics; the Python Lighteval worker owns dataset prep and prompts, hidden tests, and grading. They talk over EVALUATOR_PROTOCOL_VERSION one — versioned JSONL over stdio, env_clear plus an allowlist, and data-hiding by deny_unknown_fields. Problems are graded in batches, joined by AccuracyAccumulator, giving a Wilson confidence interval, accuracy-at-load, and correct-answers-per-kWh drawn from the telemetry sidecar's energy metric."
+    caption: "Rust owns scheduling/IO/metrics · Python worker grades over versioned stdio."
+    render: @scene {
+      sdk.Shape(id = "ac-badge", variant = "rect", label = "N", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ac-badge-l", text = "N", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ac-kicker", text = "ACCURACY", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "ac-title", text = "Rust drives, a Python worker grades", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ac-sub", text = "Accuracy is not a dispatch workload — problems flow through the ordinary online scheduler, transport and observer", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.CompareGrid(id = "ac-split", columns = 2, items = [{ label: "Rust owns", detail: "scheduling · IO and timing · metrics" }, { label: "Python / Lighteval worker owns", detail: "dataset prep & prompts · hidden tests · grading" }], x = 40, y = 118)
+      sdk.Caption(id = "ac-proto", text = "EVALUATOR_PROTOCOL_VERSION = 1 — versioned JSONL stdio · env_clear + allowlist · data-hiding by deny_unknown_fields", x = 40, y = 252, width = 640, height = 30, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ac-note", text = "Graded in batches, joined by AccuracyAccumulator — Wilson CI, accuracy-at-load, correct-answers-per-kWh from the sidecar's energy metric", x = 40, y = 298, width = 640, height = 30, inkRole = theme(ink.secondary))
+      timeline main {
+        at 0 reveal ac-badge duration 160
+        at 0 reveal ac-badge-l duration 160
+        after ac-badge reveal ac-kicker duration 140
+        after ac-kicker reveal ac-title duration 200
+        after ac-title reveal ac-sub duration 160
+        after ac-sub reveal ac-split duration 320
+        after ac-split reveal ac-proto duration 180
+        after ac-proto reveal ac-note duration 160
+      }
+    }
+  }
+
+  slide "O · Side-channel telemetry" {
+    eyebrow: "SIDE-CHANNEL TELEMETRY"
+    title: "Four Clock-injected sources, one metric series"
+    lede: "Continuous scrapes dedup identical bodies into gauge distributions; boundary scrapes give exact reset-clamped counter deltas."
+    narration: "Component O — side-channel telemetry: four Clock-injected sources, one metric series. Continuous scrapes dedup identical bodies into gauge distributions; boundary scrapes give exact reset-clamped counter deltas. The four sources are gpu_telemetry, a DCGM-first source with per-GPU energy, power, and efficiency joins; network_latency, a fresh-TCP-connect RTT calibration with per-target stats; server_metrics, a Prometheus parser over a vLLM and SGLang atlas with boundary deltas; and content_server, an Axum server that turns images and videos into stable HTTP URLs. All four converge as SidecarMetric, a shared series into the native report, barrier-synchronized to phases as ScheduledPhaseSidecars."
+    caption: "gpu_telemetry · network_latency · server_metrics · content_server → SidecarMetric."
+    render: @scene {
+      sdk.Shape(id = "oc-badge", variant = "rect", label = "O", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "oc-badge-l", text = "O", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "oc-kicker", text = "SIDE-CHANNEL TELEMETRY", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "oc-title", text = "Four Clock-injected sources, one metric series", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "oc-sub", text = "Continuous scrapes dedup identical bodies into gauge distributions; boundary scrapes give exact reset-clamped counter deltas", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.CardGrid(id = "oc-sources", columns = 2, cards = [{ title: "gpu_telemetry", detail: "DCGM-first · per-GPU energy/power/efficiency joins", accent: "green" }, { title: "network_latency", detail: "fresh-TCP-connect RTT calibration, per-target stats", accent: "green" }, { title: "server_metrics", detail: "Prometheus parser, vLLM/SGLang atlas, boundary deltas", accent: "green" }, { title: "content_server", detail: "Axum server, images/videos → stable HTTP URLs", accent: "green" }], x = 40, y = 116)
+      sdk.Caption(id = "oc-sink", text = "→ SidecarMetric — a shared series into the native report, barrier-synchronized to phases as ScheduledPhaseSidecars", x = 40, y = 360, width = 640, height = 30, inkRole = theme(ink.secondary))
+      timeline main {
+        at 0 reveal oc-badge duration 160
+        at 0 reveal oc-badge-l duration 160
+        after oc-badge reveal oc-kicker duration 140
+        after oc-kicker reveal oc-title duration 200
+        after oc-title reveal oc-sub duration 160
+        after oc-sub reveal oc-sources duration 360
+        after oc-sources reveal oc-sink duration 180
+      }
+    }
+  }
+
+  slide "P · Cellular" {
+    eyebrow: "CELLULAR MULTI-PROCESS"
+    title: "A controller spawns N cells, merges one report"
+    lede: "The union of ordinals is validated as a permutation of 0..total, stable-sorted and re-ingested — byte-identical to a single-cell run."
+    narration: "Component P — cellular multi-process: a controller spawns N cells and merges one report. The union of ordinals is validated as a permutation of zero to total, stable-sorted and re-ingested, byte-identical to a single-cell run. Partition uses ModuloCellPartition with isolated stream roots; issuance uses a global ordinal, never a shared atomic; shards are raw RecordIngest over MessagePack carrying NaN and plus-infinity; heartbeats carry live t-digest percentiles for a progress lane. It is fail-closed: HTTP transport only, synthetic single-turn, request-bounded phases, requests at least cell_count — it rejects duration, sessions, adaptive, and multi-turn."
+    caption: "controller → N cells → merged report · byte-identical · fail-closed."
+    render: @scene {
+      sdk.Shape(id = "ce-badge", variant = "rect", label = "P", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ce-badge-l", text = "P", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ce-kicker", text = "CELLULAR MULTI-PROCESS", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "ce-title", text = "A controller spawns N cells, merges one report", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ce-sub", text = "The union of ordinals is validated as a permutation of 0..total, stable-sorted and re-ingested — byte-identical to a single-cell run", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ce-topo", text = "controller (--cells N) → cell k where i%N==k → merged report · byte-identical", x = 40, y = 106, width = 640, height = 16, inkRole = theme(accent.primary))
+      sdk.CardGrid(id = "ce-cards", columns = 2, cards = [{ title: "Partition", detail: "ModuloCellPartition · isolated stream roots", accent: "green" }, { title: "Issuance", detail: "global ordinal, never a shared atomic", accent: "green" }, { title: "Shard", detail: "raw RecordIngest over MessagePack (NaN/+inf)", accent: "green" }, { title: "Heartbeat", detail: "live t-digest percentiles for a progress lane", accent: "green" }], x = 40, y = 128)
+      sdk.Caption(id = "ce-note", text = "Fail-closed: HTTP transport only, synthetic single-turn, request-bounded phases, requests ≥ cell_count — rejects duration, sessions, adaptive and multi-turn", x = 40, y = 366, width = 640, height = 30, inkRole = theme(ink.secondary))
+      timeline main {
+        at 0 reveal ce-badge duration 160
+        at 0 reveal ce-badge-l duration 160
+        after ce-badge reveal ce-kicker duration 140
+        after ce-kicker reveal ce-title duration 200
+        after ce-title reveal ce-sub duration 160
+        after ce-sub reveal ce-topo duration 160
+        after ce-topo reveal ce-cards duration 360
+        after ce-cards reveal ce-note duration 160
+      }
+    }
+  }
+
+  slide "Q · Dynosim" {
+    eyebrow: "DYNOSIM CO-SIMULATION"
+    title: "Co-simulate Dynamo in-process, no sockets"
+    lede: "AIPerf owns clock, workload, observers and report; dynamo-mocker owns scheduler and perf-model behind SteppableReplay."
+    narration: "Component Q — Dynosim co-simulation: co-simulate Dynamo in-process, with no sockets. AIPerf owns the clock, workload, observers, and report; dynamo-mocker owns the scheduler and perf-model behind SteppableReplay. Two modes differ only in the clock and driver axis: dynosim_offline runs a Sim clock through drive_sim_with_source with enforced byte-exact parity versus Dynamo, while dynosim_online runs a Real clock through drive_real_with_source with relaxed parity. DynosimSink reuses the same RequestSink, HttpRequestDispatcher, and TurnDispatcher seams; EngineHost bridges the DES or wall clock as a SimEventSource; token priority is raw_token_ids, then trace_hash_ids, then chat body. It requires worker_count equal to one; dynamo-full adds the router, ZMQ, KV, and AIC surface."
+    caption: "offline byte-exact vs online relaxed · same sink seams · worker_count == 1."
+    render: @scene {
+      sdk.Shape(id = "dy-badge", variant = "rect", label = "Q", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "dy-badge-l", text = "Q", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "dy-kicker", text = "DYNOSIM CO-SIMULATION", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "dy-title", text = "Co-simulate Dynamo in-process, no sockets", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "dy-sub", text = "AIPerf owns clock, workload, observers and report; dynamo-mocker owns scheduler and perf-model behind SteppableReplay", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.CompareGrid(id = "dy-modes", columns = 2, items = [{ label: "dynosim_offline", detail: "Sim clock · drive_sim_with_source · enforced byte-exact parity vs Dynamo" }, { label: "dynosim_online", detail: "Real clock · drive_real_with_source · relaxed parity" }], x = 40, y = 108)
+      sdk.Caption(id = "dy-axis", text = "The two modes differ only in the clock / driver axis", x = 40, y = 232, width = 640, height = 16, inkRole = theme(ink.secondary))
+      sdk.CompareGrid(id = "dy-comp", columns = 3, items = [{ label: "DynosimSink", detail: "same RequestSink / HttpRequestDispatcher / TurnDispatcher seams" }, { label: "EngineHost", detail: "bridges the DES/wall clock as a SimEventSource" }, { label: "token priority", detail: "raw_token_ids → trace_hash_ids → chat body" }], x = 4, y = 256)
+      sdk.Caption(id = "dy-note", text = "Requires worker_count == 1 · dynamo-full adds the router / ZMQ / KV / AIC surface", x = 40, y = 380, width = 640, height = 16, inkRole = theme(ink.secondary))
+      timeline main {
+        at 0 reveal dy-badge duration 160
+        at 0 reveal dy-badge-l duration 160
+        after dy-badge reveal dy-kicker duration 140
+        after dy-kicker reveal dy-title duration 200
+        after dy-title reveal dy-sub duration 160
+        after dy-sub reveal dy-modes duration 320
+        after dy-modes reveal dy-axis duration 140
+        after dy-axis reveal dy-comp duration 320
+        after dy-comp reveal dy-note duration 160
+      }
+    }
+  }
+
+  slide "R · Mock server" {
+    eyebrow: "MOCK SERVER"
+    title: "A deterministic, standalone inference target"
+    lede: "OpenAI / Anthropic / TGI-compatible; Python does not supervise it — it supplies an ordinary online URL."
+    narration: "Component R — the mock server: a deterministic, standalone inference target. It is OpenAI, Anthropic, and TGI-compatible; Python does not supervise it — it simply supplies an ordinary online URL. It offers two latency models over goodput versus offered load: an analytic curve and a queue-threshold model whose goodput batch-collapses past the queue threshold. Server features include a prefix cache with SGLang-style eviction over chain-hash blocks, a DCGM faker producing 100 Hz throughput-driven per-GPU telemetry, TCP_NODELAY over a manual accept loop with no Nagle on SSE chunks, and a --fast mode with zero latency and no scheduler or cache. It emits seven Prometheus dialects, including vllm, sglang, trtllm, and dynamo families."
+    caption: "Deterministic OpenAI/Anthropic/TGI target · two latency models · 7 dialects."
+    render: @scene {
+      sdk.Shape(id = "ms-badge", variant = "rect", label = "R", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ms-badge-l", text = "R", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ms-kicker", text = "MOCK SERVER", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "ms-title", text = "A deterministic, standalone inference target", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ms-sub", text = "OpenAI / Anthropic / TGI-compatible; Python does not supervise it — it supplies an ordinary online URL", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ms-lat-label", text = "TWO LATENCY MODELS · GOODPUT vs LOAD", x = 40, y = 106, width = 640, height = 16, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "ms-lat", text = "an analytic curve vs a queue-threshold model — goodput batch-collapses past the queue threshold", x = 40, y = 126, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ms-feat-label", text = "SERVER FEATURES", x = 40, y = 158, width = 640, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "ms-feat", items = ["prefix cache · SGLang-style eviction, chain-hash blocks", "DCGM faker · 100 Hz, throughput-driven per-GPU telemetry", "TCP_NODELAY · manual accept loop, no Nagle on SSE chunks", "--fast · zero latency, no scheduler or cache"], gap = 8, x = 40, y = 178, width = 640, height = 52)
+      sdk.Caption(id = "ms-dial-label", text = "7 PROMETHEUS DIALECTS", x = 40, y = 244, width = 640, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "ms-dial", items = ["vllm:*", "sglang:*", "trtllm:*", "dynamo_*", "+3"], gap = 8, x = 40, y = 264, width = 640, height = 26)
+      timeline main {
+        at 0 reveal ms-badge duration 160
+        at 0 reveal ms-badge-l duration 160
+        after ms-badge reveal ms-kicker duration 140
+        after ms-kicker reveal ms-title duration 200
+        after ms-title reveal ms-sub duration 160
+        after ms-sub reveal ms-lat-label duration 140
+        after ms-lat-label reveal ms-lat duration 160
+        after ms-lat reveal ms-feat-label duration 140
+        after ms-feat-label reveal ms-feat duration 220
+        after ms-feat reveal ms-dial-label duration 140
+        after ms-dial-label reveal ms-dial duration 180
+      }
+    }
+  }
 }
