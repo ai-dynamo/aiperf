@@ -1172,8 +1172,9 @@ explainer "Rust Architecture — Deck Port" {
       sdk.Paragraph(id = "dy-sub", text = "AIPerf owns clock, workload, observers and report; dynamo-mocker owns scheduler and perf-model behind SteppableReplay", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
       sdk.CompareGrid(id = "dy-modes", columns = 2, items = [{ label: "dynosim_offline", detail: "Sim clock · drive_sim_with_source · enforced byte-exact parity vs Dynamo" }, { label: "dynosim_online", detail: "Real clock · drive_real_with_source · relaxed parity" }], x = 40, y = 108)
       sdk.Caption(id = "dy-axis", text = "The two modes differ only in the clock / driver axis", x = 40, y = 232, width = 640, height = 16, inkRole = theme(ink.secondary))
-      sdk.CompareGrid(id = "dy-comp", columns = 3, items = [{ label: "DynosimSink", detail: "same RequestSink / HttpRequestDispatcher / TurnDispatcher seams" }, { label: "EngineHost", detail: "bridges the DES/wall clock as a SimEventSource" }, { label: "token priority", detail: "raw_token_ids → trace_hash_ids → chat body" }], x = 4, y = 256)
-      sdk.Caption(id = "dy-note", text = "Requires worker_count == 1 · dynamo-full adds the router / ZMQ / KV / AIC surface", x = 40, y = 380, width = 640, height = 16, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "dy-comp-label", text = "SHARED SEAMS", x = 40, y = 256, width = 640, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "dy-comp", items = ["DynosimSink · same RequestSink / HttpRequestDispatcher / TurnDispatcher seams", "EngineHost · bridges the DES/wall clock as a SimEventSource", "token priority · raw_token_ids → trace_hash_ids → chat body"], gap = 8, x = 40, y = 276, width = 640, height = 52)
+      sdk.Caption(id = "dy-note", text = "Requires worker_count == 1 · dynamo-full adds the router / ZMQ / KV / AIC surface", x = 40, y = 340, width = 640, height = 16, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal dy-badge duration 160
         at 0 reveal dy-badge-l duration 160
@@ -1182,7 +1183,8 @@ explainer "Rust Architecture — Deck Port" {
         after dy-title reveal dy-sub duration 160
         after dy-sub reveal dy-modes duration 320
         after dy-modes reveal dy-axis duration 140
-        after dy-axis reveal dy-comp duration 320
+        after dy-axis reveal dy-comp-label duration 140
+        after dy-comp-label reveal dy-comp duration 200
         after dy-comp reveal dy-note duration 160
       }
     }
