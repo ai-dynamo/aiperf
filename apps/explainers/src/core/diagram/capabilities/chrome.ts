@@ -127,10 +127,13 @@ export function hasNativeSemanticChrome(node: SceneNodeLike): boolean {
   if (node.props === undefined) {
     return false;
   }
+  // Layout-managed steppers expand into chip (or other) children that own
+  // paint. Compatibility `core.step` children still share chrome ownership.
   if (
     capability === "core.stepper" &&
     Array.isArray(node.children) &&
-    node.children.length > 0
+    node.children.length > 0 &&
+    node.children.some((child) => capabilityOf(child) !== "core.step")
   ) {
     return false;
   }
@@ -174,7 +177,7 @@ export function resolveSemanticChrome(
         id: `${node.id}__chrome`,
         role: "chrome",
         geometry,
-        radius: radiusOf(node, 6),
+        radius: radiusOf(node, 0),
       },
       boxes: [],
       texts: [
@@ -217,7 +220,7 @@ export function resolveSemanticChrome(
         id: `${node.id}__chrome`,
         role: "chrome",
         geometry,
-        radius: radiusOf(node, 8),
+        radius: radiusOf(node, 0),
       },
       boxes: [],
       texts: [
@@ -263,7 +266,7 @@ export function resolveSemanticChrome(
           width,
           height: STEPPER_CHIP_HEIGHT,
         },
-        radius: 4,
+        radius: 0,
       });
       texts.push({
         id: `${stepId}__label`,
@@ -397,8 +400,8 @@ export function resolveSemanticChrome(
         capability === "core.chip"
           ? Math.max(geometry.height / 2, 4)
           : capability === "core.band"
-            ? 6
-            : 8,
+            ? 0
+            : 0,
       ),
     },
     boxes: [],

@@ -33,8 +33,10 @@ import {
 } from "./connector-routing.js";
 import { FlowArrow } from "./FlowArrow";
 import { MotionSignal } from "./MotionSignal";
+import { isMotionSignalNode } from "./node-classification.js";
 import { hasNativeSemanticChrome } from "./capabilities/chrome.js";
 import { resolveScene } from "./resolution/resolve-scene.js";
+import { isRoutingObstacle } from "./resolution/resolve-connectors.js";
 import type {
   ResolvedConnector,
   ResolvedGeneratedPart,
@@ -136,12 +138,6 @@ const LOCAL_LAYOUT_CAPABILITIES = new Set([
 
 /** Container groups that paint a chrome rect behind nested children. */
 const CHROME_GROUP_CAPABILITIES = new Set(["core.panel", "core.header"]);
-
-const MOTION_SIGNAL_CAPABILITIES = new Set([
-  "motion.signal",
-  "motion.dot",
-  "core.motion",
-]);
 
 type CameraTransform = Readonly<{ x: number; y: number; zoom: number }>;
 
@@ -1777,13 +1773,13 @@ function connectorAxisOf(
 /**
  * Nodes eligible to act as routing obstacles. Connectors, fans, motion signals,
  * and the arrow family are never obstacles; positive-area filtering happens in
- * {@link curveObstacles}.
+ * {@link curveObstacles} via {@link isRoutingObstacle}.
  */
 function isRouteObstacleNode(node: SceneNodeLike): boolean {
   const capability = capabilityOf(node);
   return (
     !ARROW_CAPABILITIES.has(capability) &&
-    !MOTION_SIGNAL_CAPABILITIES.has(capability) &&
+    !isMotionSignalNode(node, capability) &&
     node.kind !== "connector" &&
     node.kind !== "fan"
   );
@@ -1815,12 +1811,20 @@ function curveObstacles(
     }
   }
   const obstacles: RouteObstacle[] = [];
+  const generatedPartIds =
+    index.generatedPartsById.size > 0
+      ? new Set(index.generatedPartsById.keys())
+      : undefined;
   for (const [id, geometry] of index.worldGeometryById) {
     if (excludedIds.has(id)) {
       continue;
     }
     const candidate = index.nodesById.get(id);
-    if (candidate === undefined || !isRouteObstacleNode(candidate)) {
+    if (
+      candidate === undefined ||
+      !isRouteObstacleNode(candidate) ||
+      !isRoutingObstacle(candidate, geometry, generatedPartIds)
+    ) {
       continue;
     }
     if (
@@ -1988,34 +1992,6 @@ function omitCompanionTimelineCues(
     // Orphan cue that named a companion (`…-motion-sig-dot`).
     return !(/motion[-_]?sig/i.test(target) && /-dot$/i.test(target));
   });
-}
-
-/** Traveling MentalModel-style motion dots (often authored as `motion-sig` paths). */
-function isMotionSignalNode(node: SceneNodeLike, capability = ""): boolean {
-  const cap = capability.length > 0 ? capability : capabilityOf(node);
-  if (isDotLike(node, cap)) {
-    return false;
-  }
-  if (MOTION_SIGNAL_CAPABILITIES.has(cap)) {
-    return true;
-  }
-  if (/motion[-_]?sig/i.test(node.id)) {
-    return true;
-  }
-  const label = (node.accessibility?.label ?? "").toLowerCase();
-  if (label.includes("motion signal")) {
-    return true;
-  }
-  const motion = node.style?.motion;
-  const role = node.style?.role;
-  return (
-    motion === true ||
-    motion === 1 ||
-    motion === "signal" ||
-    motion === "dot" ||
-    role === "motion" ||
-    role === "motion-signal"
-  );
 }
 
 /** Rects tagged for a gentle float/pulse (style.pulse, motion.pulse, or pulse-* ids). */
@@ -3217,7 +3193,7 @@ function strokeWidthFromStyle(
 
 function cornerRadiusFromStyle(
   style: SceneNodeLike["style"],
-  fallback = 14,
+  fallback = 0,
 ): number {
   const radius = style?.radius ?? style?.rx ?? style?.borderRadius;
   return typeof radius === "number" && Number.isFinite(radius) ? radius : fallback;
@@ -3642,7 +3618,7 @@ function renderNode(
         y={geom.y}
         width={geom.width}
         height={geom.height}
-        rx={cornerRadiusFromStyle(node.style, 10)}
+        rx={cornerRadiusFromStyle(node.style, 0)}
         fill={fillPaint}
         stroke={strokePaint}
         strokeWidth={

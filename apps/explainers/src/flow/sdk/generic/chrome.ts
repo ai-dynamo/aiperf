@@ -659,7 +659,7 @@ const CHIP_DESCRIPTOR = makeDescriptor("sdk.chip", "Chip", "core.chip", {
   y: { type: "number", required: false, default: 0 },
   width: { type: "number", required: false, default: CHIP_DEFAULT_GEOMETRY.width },
   height: { type: "number", required: false, default: CHIP_DEFAULT_GEOMETRY.height },
-  radius: { type: "number", required: false, default: 9 },
+  radius: { type: "number", required: false, default: 0 },
   surfaceRole: { type: "string", required: false },
   strokeRole: { type: "string", required: false },
 });
@@ -679,7 +679,7 @@ const chipFactory: SdkComponentFactory = (props, _slots, context) => {
     width: numberProp(props, "width") ?? CHIP_DEFAULT_GEOMETRY.width,
     height: numberProp(props, "height") ?? CHIP_DEFAULT_GEOMETRY.height,
   };
-  const radius = numberProp(props, "radius") ?? 9;
+  const radius = numberProp(props, "radius") ?? 0;
   const surfaceRole = stringProp(props, "surfaceRole");
   const strokeRole = stringProp(props, "strokeRole");
 
@@ -729,7 +729,7 @@ const NOTE_DESCRIPTOR = makeDescriptor("sdk.note", "Note", "core.note", {
   y: { type: "number", required: false, default: 0 },
   width: { type: "number", required: false, default: NOTE_DEFAULT_GEOMETRY.width },
   height: { type: "number", required: false, default: NOTE_DEFAULT_GEOMETRY.height },
-  radius: { type: "number", required: false, default: 6 },
+  radius: { type: "number", required: false, default: 0 },
   strokeWidth: { type: "number", required: false, default: 1 },
   surfaceRole: { type: "string", required: false, default: "@theme.surface.elevated" },
   strokeRole: { type: "string", required: false, default: "@theme.ink.secondary" },
@@ -754,7 +754,7 @@ const noteFactory: SdkComponentFactory = (props, _slots, context) => {
   const surfaceRole = stringProp(props, "surfaceRole") ?? "@theme.surface.elevated";
   const strokeRole = stringProp(props, "strokeRole") ?? "@theme.ink.secondary";
   const inkRole = stringProp(props, "inkRole") ?? "@theme.ink.secondary";
-  const radius = numberProp(props, "radius") ?? 6;
+  const radius = numberProp(props, "radius") ?? 0;
   const strokeWidth = numberProp(props, "strokeWidth") ?? 1;
 
   const captionId = `${rootId}__caption`;
@@ -990,7 +990,7 @@ const legendFactory: SdkComponentFactory = (props, _slots, context) => {
           width: LEGEND_SWATCH_SIZE,
           height: LEGEND_SWATCH_SIZE,
         },
-        style: { fill: entry.colorRole ?? LEGEND_DEFAULT_SWATCH_ROLE, radius: 2 },
+        style: { fill: entry.colorRole ?? LEGEND_DEFAULT_SWATCH_ROLE, radius: 0 },
         label: entry.label,
         sourceMap: context.sourceMap,
       }),
