@@ -21,7 +21,7 @@ explainer "AIPerf vs Locust" {
     title: "Cooperative green threads vs ledger-admitted tasks"
     lede: "Locust's unit of concurrency is a lightweight cooperative thread, one per simulated user. AIPerf's unit of concurrency is an admitted credit, realized as a lightweight task — a single worker process hosts many of these running at once."
 
-    narration: "Both tools are built around message-passing between processes — Locust for coordinating its master and worker processes, AIPerf for coordinating essentially everything it runs. The unit each tool actually multiplies to reach a target in-flight-request count is different. Locust's is a green thread: one per simulated user, cheap, cooperatively scheduled. AIPerf's is a credit: one per individually admitted in-flight request, realized inside a worker process as its own lightweight task. A worker process is an execution host, not the concurrency unit itself — it runs many credits concurrently on its one event loop, with no cap of its own. The fair comparison is green thread to credit; a single AIPerf worker process is closer to what a whole fleet of Locust worker processes would be, since it hosts many concurrent units of work at once, not one."
+    narration: "Locust's concurrency unit is a green thread. AIPerf's is a credit, realized as a task inside a worker process. One worker hosts many credits at once."
 
     term: {
       word: "concurrency unit"
@@ -49,64 +49,186 @@ explainer "AIPerf vs Locust" {
       sdk.Panel(
         id = "s1-locust",
         title = "Locust",
-        detail = "virtual user → cooperative green thread",
-        x = 60, y = 100, width = 240, height = 90,
+        detail = "N virtual users",
+        x = 40, y = 80, width = 260, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
-        id = "s1-aiperf",
-        title = "AIPerf",
-        detail = "admitted credit → lightweight task",
-        x = 400, y = 100, width = 240, height = 90,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.primary)
+        id = "s1-t1",
+        title = "thread 1",
+        detail = "1 in-flight request",
+        x = 50, y = 150, width = 75, height = 50,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "s1-t2",
+        title = "thread 2",
+        detail = "1 in-flight request",
+        x = 135, y = 150, width = 75, height = 50,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "s1-t3",
+        title = "thread 3",
+        detail = "1 in-flight request",
+        x = 220, y = 150, width = 75, height = 50,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Label(
+        id = "s1-tdots",
+        text = "... thread N",
+        x = 60, y = 208, width = 220, height = 20,
+        fontSize = 12,
+        inkRole = theme(ink.tertiary)
+      )
+      sdk.Edge(
+        id = "s1-lt1",
+        mode = "route",
+        from = { nodeId: "s1-locust", anchor: "s" },
+        to = { nodeId: "s1-t1", anchor: "n" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 1.4 }
+      )
+      sdk.Edge(
+        id = "s1-lt2",
+        mode = "route",
+        from = { nodeId: "s1-locust", anchor: "s" },
+        to = { nodeId: "s1-t2", anchor: "n" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 1.4 }
+      )
+      sdk.Edge(
+        id = "s1-lt3",
+        mode = "route",
+        from = { nodeId: "s1-locust", anchor: "s" },
+        to = { nodeId: "s1-t3", anchor: "n" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 1.4 }
+      )
+      sdk.Label(
+        id = "s1-lcount",
+        text = "concurrency = N threads",
+        x = 50, y = 235, width = 250, height = 20,
+        fontSize = 12,
+        weight = "bold",
+        inkRole = theme(accent.secondary)
       )
       sdk.Divider(
         id = "s1-div",
         axis = "y",
-        x = 350, y = 90, length = 200,
+        x = 335, y = 80, length = 260,
         strokeRole = theme(ink.tertiary)
       )
       sdk.Panel(
-        id = "s1-host",
-        title = "One worker process",
-        detail = "hosts many credits at once — not one",
-        x = 380, y = 220, width = 280, height = 60,
+        id = "s1-aiperf",
+        title = "AIPerf",
+        detail = "1 worker process",
+        x = 380, y = 80, width = 260, height = 60,
         surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.warning)
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Panel(
+        id = "s1-c1",
+        title = "credit → task",
+        detail = "1 in-flight request",
+        x = 390, y = 150, width = 75, height = 50,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Panel(
+        id = "s1-c2",
+        title = "credit → task",
+        detail = "1 in-flight request",
+        x = 475, y = 150, width = 75, height = 50,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Panel(
+        id = "s1-c3",
+        title = "credit → task",
+        detail = "1 in-flight request",
+        x = 560, y = 150, width = 75, height = 50,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Label(
+        id = "s1-cdots",
+        text = "... many more credits, one process",
+        x = 390, y = 208, width = 260, height = 20,
+        fontSize = 12,
+        inkRole = theme(ink.tertiary)
       )
       sdk.Edge(
-        id = "s1-e1",
+        id = "s1-ac1",
         mode = "route",
         from = { nodeId: "s1-aiperf", anchor: "s" },
-        to = { nodeId: "s1-host", anchor: "n" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2 }
+        to = { nodeId: "s1-c1", anchor: "n" },
+        style = { stroke: theme(accent.primary), strokeWidth: 1.4 }
       )
-      sdk.Note(
-        id = "s1-note",
-        text = "The worker process is an execution host, not the concurrency unit itself",
-        x = 60, y = 300, width = 580, height = 30
+      sdk.Edge(
+        id = "s1-ac2",
+        mode = "route",
+        from = { nodeId: "s1-aiperf", anchor: "s" },
+        to = { nodeId: "s1-c2", anchor: "n" },
+        style = { stroke: theme(accent.primary), strokeWidth: 1.4 }
+      )
+      sdk.Edge(
+        id = "s1-ac3",
+        mode = "route",
+        from = { nodeId: "s1-aiperf", anchor: "s" },
+        to = { nodeId: "s1-c3", anchor: "n" },
+        style = { stroke: theme(accent.primary), strokeWidth: 1.4 }
+      )
+      sdk.Label(
+        id = "s1-acount",
+        text = "concurrency = credits, not processes",
+        x = 390, y = 235, width = 260, height = 20,
+        fontSize = 12,
+        weight = "bold",
+        inkRole = theme(accent.primary)
+      )
+      sdk.Panel(
+        id = "s1-host",
+        title = "One process hosts many units",
+        detail = "the process is an execution host, not the unit itself",
+        x = 60, y = 285, width = 580, height = 50,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
       )
       sdk.Signal(
         id = "s1-motion",
         from = { nodeId: "s1-locust", anchor: "e" },
         to = { nodeId: "s1-aiperf", anchor: "w" },
-        opacity = 0.45,
-        strokeWidth = 2.2,
+        opacity = 0.4,
+        strokeWidth = 2,
         label = "thread vs credit, not process",
         style = { stroke: theme(accent.tertiary) }
       )
 
       timeline main {
-        at 0 reveal s1-hdr duration 260
-        after s1-hdr reveal s1-locust duration 280
-        after s1-locust reveal s1-div duration 220
-        after s1-div reveal s1-aiperf duration 280
-        after s1-aiperf trace s1-e1 duration 260
-        after s1-e1 reveal s1-host duration 260
-        after s1-host reveal s1-note duration 260
-        after s1-note trace s1-motion duration 900
+        at 0 reveal s1-hdr duration 240
+        after s1-hdr reveal s1-locust duration 240
+        after s1-locust trace s1-lt1 duration 160
+        after s1-lt1 reveal s1-t1 duration 160
+        after s1-t1 trace s1-lt2 duration 160
+        after s1-lt2 reveal s1-t2 duration 160
+        after s1-t2 trace s1-lt3 duration 160
+        after s1-lt3 reveal s1-t3 duration 160
+        after s1-t3 reveal s1-tdots duration 180
+        after s1-tdots reveal s1-lcount duration 200
+        after s1-lcount reveal s1-div duration 200
+        after s1-div reveal s1-aiperf duration 240
+        after s1-aiperf trace s1-ac1 duration 160
+        after s1-ac1 reveal s1-c1 duration 160
+        after s1-c1 trace s1-ac2 duration 160
+        after s1-ac2 reveal s1-c2 duration 160
+        after s1-c2 trace s1-ac3 duration 160
+        after s1-ac3 reveal s1-c3 duration 160
+        after s1-c3 reveal s1-cdots duration 180
+        after s1-cdots reveal s1-acount duration 200
+        after s1-acount reveal s1-host duration 260
+        after s1-host trace s1-motion duration 900
       }
     }
   }
@@ -116,7 +238,7 @@ explainer "AIPerf vs Locust" {
     title: "Execute a task, yield, execute the next one — forever"
     lede: "Starting a virtual user spawns a real cooperative green thread. Inside it, a simple loop runs: pick a task, execute it, then pause. With no configured think-time, that pause reduces to a bare cooperative yield — no time actually passes."
 
-    narration: "The loop inside a virtual user is plain: while running, pick the next task if none is queued, execute it, then call a wait step. That wait step is implemented as a cooperative sleep for however many seconds the user's think-time function returns — nothing else. When a simulated user's think-time is configured to always return zero, that sleep call becomes a zero-duration sleep. A zero-duration cooperative sleep does not block for any wall-clock time — it performs exactly one hand-off to the scheduler, letting other ready green threads run, then resumes immediately. So the effective behavior with no think-time configured is: fire a request, and the instant it completes, loop back and fire the next one, paced only by request latency and scheduling fairness, not by any artificial delay."
+    narration: "Execute a task, then pause for think-time. At think-time zero, the pause is a bare yield — so the loop never really stops."
 
     term: {
       word: "cooperative yield"
@@ -142,75 +264,125 @@ explainer "AIPerf vs Locust" {
         inkRole = theme(ink.secondary)
       )
       sdk.Panel(
-        id = "s2-exec",
-        title = "Execute task",
+        id = "s2-exec1",
+        title = "Execute task A",
         detail = "runs the simulated request",
-        x = 80, y = 100, width = 220, height = 80,
+        x = 40, y = 90, width = 160, height = 70,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Edge(
         id = "s2-e1",
         mode = "connector",
-        from = { nodeId: "s2-exec", anchor: "e" },
-        to = { nodeId: "s2-wait", anchor: "w" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+        from = { nodeId: "s2-exec1", anchor: "e" },
+        to = { nodeId: "s2-wait1", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2 }
       )
       sdk.Panel(
-        id = "s2-wait",
+        id = "s2-wait1",
         title = "Pause",
-        detail = "cooperative sleep for think-time",
-        x = 380, y = 100, width = 220, height = 80,
+        detail = "sleep(think_time)",
+        x = 230, y = 90, width = 130, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "s2-e2",
+        mode = "connector",
+        from = { nodeId: "s2-wait1", anchor: "e" },
+        to = { nodeId: "s2-exec2", anchor: "w" },
+        style = { stroke: theme(accent.primary), strokeWidth: 2 }
+      )
+      sdk.Panel(
+        id = "s2-exec2",
+        title = "Execute task B",
+        detail = "next queued task",
+        x = 390, y = 90, width = 160, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Edge(
+        id = "s2-e3",
+        mode = "connector",
+        from = { nodeId: "s2-exec2", anchor: "e" },
+        to = { nodeId: "s2-wait2", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2 }
+      )
+      sdk.Panel(
+        id = "s2-wait2",
+        title = "Pause",
+        detail = "sleep(think_time)",
+        x = 560, y = 90, width = 90, height = 70,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Edge(
         id = "s2-loop",
         mode = "route",
-        from = { nodeId: "s2-wait", anchor: "s" },
-        to = { nodeId: "s2-exec", anchor: "s" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2, dash: [4, 3] }
+        from = { nodeId: "s2-wait2", anchor: "s" },
+        to = { nodeId: "s2-exec1", anchor: "s" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 1.6, dash: [4, 3] }
+      )
+      sdk.Label(
+        id = "s2-looplabel",
+        text = "repeats forever, for the life of the run",
+        x = 220, y = 178, width = 280, height = 20,
+        fontSize = 12,
+        inkRole = theme(ink.tertiary)
+      )
+      sdk.Divider(
+        id = "s2-div",
+        axis = "x",
+        x = 40, y = 210, length = 610,
+        strokeRole = theme(ink.tertiary)
       )
       sdk.Panel(
         id = "s2-zero",
-        title = "Think-time = zero",
-        detail = "the pause becomes a bare yield, 0 delay",
-        x = 160, y = 240, width = 400, height = 70,
+        title = "think_time = 0",
+        detail = "sleep(0) → cooperative yield, no delay",
+        x = 40, y = 230, width = 280, height = 70,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
-      sdk.Edge(
-        id = "s2-e2",
-        mode = "route",
-        from = { nodeId: "s2-wait", anchor: "s" },
-        to = { nodeId: "s2-zero", anchor: "n" },
-        style = { stroke: theme(accent.green), strokeWidth: 2 }
+      sdk.Panel(
+        id = "s2-nonzero",
+        title = "think_time = t > 0",
+        detail = "sleep(t) → real wall-clock delay",
+        x = 380, y = 230, width = 280, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
       )
       sdk.Note(
         id = "s2-note",
         text = "No other delay mechanism exists in this loop — the pause is only ever this one sleep call",
-        x = 60, y = 335, width = 580, height = 30
+        x = 60, y = 320, width = 580, height = 30
       )
       sdk.Signal(
         id = "s2-motion",
-        from = { nodeId: "s2-exec", anchor: "center" },
-        to = { nodeId: "s2-wait", anchor: "center" },
-        opacity = 0.45,
-        strokeWidth = 2.2,
-        label = "continuous loop",
+        from = { nodeId: "s2-zero", anchor: "center" },
+        to = { nodeId: "s2-nonzero", anchor: "center" },
+        opacity = 0.4,
+        strokeWidth = 2,
+        label = "same code path, different delay",
         style = { stroke: theme(accent.primary) }
       )
 
       timeline main {
-        at 0 reveal s2-hdr duration 260
-        after s2-hdr reveal s2-exec duration 260
-        after s2-exec trace s2-e1 duration 280
-        after s2-e1 reveal s2-wait duration 260
-        after s2-wait trace s2-loop duration 320
-        after s2-loop reveal s2-zero duration 260
-        after s2-zero trace s2-e2 duration 240
-        after s2-e2 reveal s2-note duration 260
-        after s2-note trace s2-motion duration 900
+        at 0 reveal s2-hdr duration 240
+        after s2-hdr reveal s2-exec1 duration 220
+        after s2-exec1 trace s2-e1 duration 220
+        after s2-e1 reveal s2-wait1 duration 220
+        after s2-wait1 trace s2-e2 duration 220
+        after s2-e2 reveal s2-exec2 duration 220
+        after s2-exec2 trace s2-e3 duration 220
+        after s2-e3 reveal s2-wait2 duration 220
+        after s2-wait2 trace s2-loop duration 300
+        after s2-loop reveal s2-looplabel duration 200
+        after s2-looplabel reveal s2-div duration 180
+        after s2-div reveal s2-zero duration 240
+        after s2-zero reveal s2-nonzero duration 240
+        after s2-nonzero reveal s2-note duration 240
+        after s2-note trace s2-motion duration 800
       }
     }
   }
@@ -220,7 +392,7 @@ explainer "AIPerf vs Locust" {
     title: "A coordinator distributes users; a scheduler decides how"
     lede: "The coordinator process spawns no simulated users itself — it directs separate worker processes over a request-routing message channel. A distribution scheduler places users on workers round robin, and interleaves which user type comes next by configured weight."
 
-    narration: "The coordinator process doesn't spawn any simulated-user threads itself — it expects worker processes to connect, then directs them to start and stop simulated users on its behalf. The channel underneath is a routing-style socket: the coordinator can address a message to one specific connected worker, each worker is uniquely identified, and every message is a small structured envelope. To decide which worker gets the next simulated user, the distribution scheduler just cycles through the connected workers in order — plain round robin. Which simulated-user type to place next, independent of which worker, comes from a weighted interleaving scheme, so a configured 5:1 ratio between two user types produces an evenly spread pattern rather than five in a row followed by one."
+    narration: "The coordinator directs worker processes, never spawning users itself. Placement is round robin; user-type mix is weighted interleaving."
 
     term: {
       word: "distribution scheduler"
@@ -248,32 +420,40 @@ explainer "AIPerf vs Locust" {
       sdk.Panel(
         id = "s3-master",
         title = "Coordinator process",
-        detail = "routes to specific workers",
-        x = 260, y = 80, width = 220, height = 80,
+        detail = "round-robin cursor: → B next",
+        x = 250, y = 70, width = 240, height = 70,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Panel(
         id = "s3-w1",
-        title = "Worker process A",
-        detail = "connected, addressable",
-        x = 60, y = 200, width = 180, height = 70,
+        title = "Worker A",
+        detail = "connected",
+        x = 40, y = 180, width = 140, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
         id = "s3-w2",
-        title = "Worker process B",
-        detail = "connected, addressable",
-        x = 280, y = 200, width = 180, height = 70,
+        title = "Worker B",
+        detail = "connected · next",
+        x = 200, y = 180, width = 140, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Panel(
+        id = "s3-w3",
+        title = "Worker C",
+        detail = "connected",
+        x = 360, y = 180, width = 140, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
-        id = "s3-w3",
-        title = "Worker process C",
-        detail = "connected, addressable",
-        x = 500, y = 200, width = 180, height = 70,
+        id = "s3-w4",
+        title = "Worker D",
+        detail = "connected",
+        x = 520, y = 180, width = 140, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -282,26 +462,49 @@ explainer "AIPerf vs Locust" {
         mode = "route",
         from = { nodeId: "s3-master", anchor: "s" },
         to = { nodeId: "s3-w1", anchor: "n" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2 }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 1.6 }
       )
       sdk.Edge(
         id = "s3-e2",
         mode = "route",
         from = { nodeId: "s3-master", anchor: "s" },
         to = { nodeId: "s3-w2", anchor: "n" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2 }
+        style = { stroke: theme(accent.primary), strokeWidth: 2.4 }
       )
       sdk.Edge(
         id = "s3-e3",
         mode = "route",
         from = { nodeId: "s3-master", anchor: "s" },
         to = { nodeId: "s3-w3", anchor: "n" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2 }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 1.6 }
       )
-      sdk.Note(
-        id = "s3-note",
-        text = "Round-robin cycles worker placement; weighted interleaving spreads user types evenly",
-        x = 60, y = 300, width = 580, height = 30
+      sdk.Edge(
+        id = "s3-e4",
+        mode = "route",
+        from = { nodeId: "s3-master", anchor: "s" },
+        to = { nodeId: "s3-w4", anchor: "n" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 1.6 }
+      )
+      sdk.Label(
+        id = "s3-cycle",
+        text = "round robin: A → B → C → D → A → ...",
+        x = 60, y = 255, width = 560, height = 20,
+        fontSize = 12,
+        inkRole = theme(accent.tertiary)
+      )
+      sdk.Divider(
+        id = "s3-div",
+        axis = "x",
+        x = 40, y = 285, length = 610,
+        strokeRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s3-weight",
+        title = "5:1 weighted interleave",
+        detail = "A A A B A A A A A B A A",
+        x = 60, y = 300, width = 560, height = 45,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
       )
       sdk.Signal(
         id = "s3-motion",
@@ -314,16 +517,20 @@ explainer "AIPerf vs Locust" {
       )
 
       timeline main {
-        at 0 reveal s3-hdr duration 260
-        after s3-hdr reveal s3-master duration 280
-        after s3-master trace s3-e1 duration 240
-        after s3-e1 reveal s3-w1 duration 240
-        after s3-w1 trace s3-e2 duration 240
-        after s3-e2 reveal s3-w2 duration 240
-        after s3-e2 trace s3-e3 duration 240
-        after s3-e3 reveal s3-w3 duration 240
-        after s3-w3 reveal s3-note duration 260
-        after s3-note trace s3-motion duration 800
+        at 0 reveal s3-hdr duration 240
+        after s3-hdr reveal s3-master duration 240
+        after s3-master trace s3-e1 duration 200
+        after s3-e1 reveal s3-w1 duration 200
+        after s3-w1 trace s3-e2 duration 200
+        after s3-e2 reveal s3-w2 duration 200
+        after s3-w2 trace s3-e3 duration 200
+        after s3-e3 reveal s3-w3 duration 200
+        after s3-w3 trace s3-e4 duration 200
+        after s3-e4 reveal s3-w4 duration 200
+        after s3-w4 reveal s3-cycle duration 220
+        after s3-cycle reveal s3-div duration 180
+        after s3-div reveal s3-weight duration 260
+        after s3-weight trace s3-motion duration 800
       }
     }
   }
@@ -333,7 +540,7 @@ explainer "AIPerf vs Locust" {
     title: "Stats push every few seconds; stop drains only between tasks"
     lede: "Every worker pushes its own already-aggregated stats to the coordinator on a fixed, short interval, and the coordinator merges them into a running total. Stopping is a real drain, but only if a grace period is configured, and only up to the next task boundary."
 
-    narration: "Each worker process runs a background loop: send a stats snapshot, then pause on a fixed interval of a few seconds, forever. Each snapshot already contains that worker's own aggregated statistics; the coordinator doesn't recompute from raw samples, it merges each worker's total into its own running total on that same short cadence. On stopping, Locust does have a genuine core drain mechanism, not just something a user script has to build: if a grace period is configured, a stopping simulated user's state flips to a stopping flag, and the per-user loop checks that flag and exits only after the CURRENT task returns — not immediately. The coordinator then waits, bounded by that grace period plus a safety margin, for every worker's active-user count to actually reach zero before proceeding. But that protection has an exact edge: if a green thread happens to be paused between tasks — not executing one — when the stop signal arrives, it's terminated immediately regardless of the configured grace period, because there's no task in progress to let finish. And if no grace period is configured at all, every green thread is terminated immediately, full stop, no exceptions."
+    narration: "Stats merge in every few seconds. Stopping drains only up to a task boundary, and only with a grace period configured — otherwise it's an instant kill."
 
     term: {
       word: "bounded drain"
@@ -358,34 +565,91 @@ explainer "AIPerf vs Locust" {
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
+      sdk.Label(
+        id = "s4-t0",
+        text = "t=0s",
+        x = 60, y = 74, width = 60, height = 18,
+        fontSize = 11,
+        inkRole = theme(ink.tertiary)
+      )
       sdk.Panel(
-        id = "s4-worker",
-        title = "Worker stats loop",
-        detail = "send → pause → repeat, every few seconds",
-        x = 60, y = 100, width = 240, height = 80,
+        id = "s4-r0",
+        title = "report",
+        detail = "worker → coordinator",
+        x = 40, y = 92, width = 110, height = 50,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Label(
+        id = "s4-t1",
+        text = "t=3s",
+        x = 220, y = 74, width = 60, height = 18,
+        fontSize = 11,
+        inkRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s4-r1",
+        title = "report",
+        detail = "worker → coordinator",
+        x = 200, y = 92, width = 110, height = 50,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Label(
+        id = "s4-t2",
+        text = "t=6s",
+        x = 380, y = 74, width = 60, height = 18,
+        fontSize = 11,
+        inkRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s4-r2",
+        title = "report",
+        detail = "worker → coordinator",
+        x = 360, y = 92, width = 110, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Edge(
-        id = "s4-e1",
-        mode = "connector",
-        from = { nodeId: "s4-worker", anchor: "e" },
-        to = { nodeId: "s4-merge", anchor: "w" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+        id = "s4-e01",
+        mode = "route",
+        from = { nodeId: "s4-r0", anchor: "e" },
+        to = { nodeId: "s4-r1", anchor: "w" },
+        style = { stroke: theme(ink.tertiary), strokeWidth: 1.4, dash: [3, 3] }
+      )
+      sdk.Edge(
+        id = "s4-e12",
+        mode = "route",
+        from = { nodeId: "s4-r1", anchor: "e" },
+        to = { nodeId: "s4-r2", anchor: "w" },
+        style = { stroke: theme(ink.tertiary), strokeWidth: 1.4, dash: [3, 3] }
       )
       sdk.Panel(
         id = "s4-merge",
-        title = "Incremental merge",
-        detail = "into the coordinator's running total",
-        x = 400, y = 100, width = 240, height = 80,
+        title = "Running total",
+        detail = "extended, not recomputed, each tick",
+        x = 530, y = 85, width = 130, height = 65,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "s4-e2m",
+        mode = "connector",
+        from = { nodeId: "s4-r2", anchor: "e" },
+        to = { nodeId: "s4-merge", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2 }
+      )
+      sdk.Divider(
+        id = "s4-div",
+        axis = "x",
+        x = 40, y = 190, length = 610,
+        strokeRole = theme(ink.tertiary)
       )
       sdk.Panel(
         id = "s4-inTask",
         title = "Executing a task",
         detail = "grace period: finishes, then exits",
-        x = 60, y = 230, width = 260, height = 70,
+        x = 40, y = 210, width = 260, height = 65,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -393,14 +657,17 @@ explainer "AIPerf vs Locust" {
         id = "s4-inWait",
         title = "Paused between tasks",
         detail = "terminated immediately, no exception",
-        x = 380, y = 230, width = 260, height = 70,
+        x = 340, y = 210, width = 260, height = 65,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
-      sdk.Note(
-        id = "s4-note",
-        text = "No grace period configured at all: every green thread terminated immediately, task or not",
-        x = 60, y = 330, width = 580, height = 30
+      sdk.Panel(
+        id = "s4-nograce",
+        title = "No grace period configured",
+        detail = "every green thread terminated immediately, task or not",
+        x = 40, y = 295, width = 560, height = 55,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
       )
       sdk.Signal(
         id = "s4-motion",
@@ -413,14 +680,22 @@ explainer "AIPerf vs Locust" {
       )
 
       timeline main {
-        at 0 reveal s4-hdr duration 260
-        after s4-hdr reveal s4-worker duration 260
-        after s4-worker trace s4-e1 duration 280
-        after s4-e1 reveal s4-merge duration 260
-        after s4-merge reveal s4-inTask duration 260
-        after s4-inTask reveal s4-inWait duration 260
-        after s4-inWait reveal s4-note duration 260
-        after s4-note trace s4-motion duration 800
+        at 0 reveal s4-hdr duration 240
+        after s4-hdr reveal s4-t0 duration 140
+        after s4-t0 reveal s4-r0 duration 200
+        after s4-r0 trace s4-e01 duration 180
+        after s4-e01 reveal s4-t1 duration 140
+        after s4-t1 reveal s4-r1 duration 200
+        after s4-r1 trace s4-e12 duration 180
+        after s4-e12 reveal s4-t2 duration 140
+        after s4-t2 reveal s4-r2 duration 200
+        after s4-r2 trace s4-e2m duration 220
+        after s4-e2m reveal s4-merge duration 220
+        after s4-merge reveal s4-div duration 180
+        after s4-div reveal s4-inTask duration 240
+        after s4-inTask reveal s4-inWait duration 240
+        after s4-inWait reveal s4-nograce duration 260
+        after s4-nograce trace s4-motion duration 800
       }
     }
   }
@@ -430,7 +705,7 @@ explainer "AIPerf vs Locust" {
     title: "One coordinator process launches and hosts everything else"
     lede: "The command-line invocation becomes a coordinator process, which starts several internal message-routing proxies inside itself, then forks a handful of always-needed processes as real operating-system processes — and worker processes are spawned dynamically, on command, after the run starts."
 
-    narration: "The coordinator process is where a benchmark run actually lands — it hosts its internal message-routing proxies directly inside itself, not as separate processes, and forks every other required service as a genuine, separate operating-system process: a dataset-loading process, a timing and dispatch process, a worker-orchestration process, and a results-processing process are always present, plus optional processes for telemetry, server-side metrics, network-latency probing, and an API server, depending on configuration. Worker processes themselves are not part of that initial fixed set — they're spawned dynamically in response to an internal command, computed after the worker-orchestration process sizes itself based on available CPU, and the coordinator process is the one that actually creates each worker as a new process. A results-processing tier scales alongside the worker count automatically."
+    narration: "The coordinator hosts internal proxies and forks the always-needed processes. Workers spawn dynamically, on command, sized by CPU."
 
     term: {
       word: "coordinator process"
@@ -459,7 +734,7 @@ explainer "AIPerf vs Locust" {
         id = "s5-sc",
         title = "Coordinator process",
         detail = "hosts internal proxies · forks services",
-        x = 220, y = 80, width = 260, height = 80,
+        x = 220, y = 68, width = 260, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -467,23 +742,23 @@ explainer "AIPerf vs Locust" {
         id = "s5-dm",
         title = "Dataset process",
         detail = "always forked",
-        x = 40, y = 200, width = 150, height = 60,
+        x = 30, y = 165, width = 145, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Panel(
         id = "s5-tm",
-        title = "Timing/dispatch process",
+        title = "Timing/dispatch",
         detail = "always forked",
-        x = 210, y = 200, width = 150, height = 60,
+        x = 195, y = 165, width = 145, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Panel(
         id = "s5-wm",
-        title = "Worker-orchestration process",
+        title = "Worker orchestration",
         detail = "always forked",
-        x = 380, y = 200, width = 150, height = 60,
+        x = 360, y = 165, width = 145, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -491,7 +766,7 @@ explainer "AIPerf vs Locust" {
         id = "s5-rm",
         title = "Results process",
         detail = "always forked",
-        x = 550, y = 200, width = 150, height = 60,
+        x = 525, y = 165, width = 145, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -500,39 +775,78 @@ explainer "AIPerf vs Locust" {
         mode = "route",
         from = { nodeId: "s5-sc", anchor: "s" },
         to = { nodeId: "s5-dm", anchor: "n" },
-        style = { stroke: theme(accent.warning), strokeWidth: 1.6 }
+        style = { stroke: theme(accent.warning), strokeWidth: 1.4 }
       )
       sdk.Edge(
         id = "s5-e2",
         mode = "route",
         from = { nodeId: "s5-sc", anchor: "s" },
         to = { nodeId: "s5-tm", anchor: "n" },
-        style = { stroke: theme(accent.warning), strokeWidth: 1.6 }
+        style = { stroke: theme(accent.warning), strokeWidth: 1.4 }
       )
       sdk.Edge(
         id = "s5-e3",
         mode = "route",
         from = { nodeId: "s5-sc", anchor: "s" },
         to = { nodeId: "s5-wm", anchor: "n" },
-        style = { stroke: theme(accent.warning), strokeWidth: 1.6 }
+        style = { stroke: theme(accent.warning), strokeWidth: 1.4 }
       )
       sdk.Edge(
         id = "s5-e4",
         mode = "route",
         from = { nodeId: "s5-sc", anchor: "s" },
         to = { nodeId: "s5-rm", anchor: "n" },
-        style = { stroke: theme(accent.warning), strokeWidth: 1.6 }
+        style = { stroke: theme(accent.warning), strokeWidth: 1.4 }
+      )
+      sdk.Panel(
+        id = "s5-opt1",
+        title = "Telemetry",
+        detail = "optional",
+        x = 30, y = 235, width = 100, height = 40,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s5-opt2",
+        title = "Server metrics",
+        detail = "optional",
+        x = 145, y = 235, width = 110, height = 40,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s5-opt3",
+        title = "Network latency",
+        detail = "optional",
+        x = 270, y = 235, width = 120, height = 40,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s5-opt4",
+        title = "API server",
+        detail = "optional",
+        x = 405, y = 235, width = 100, height = 40,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(ink.tertiary)
+      )
+      sdk.Edge(
+        id = "s5-e5",
+        mode = "route",
+        from = { nodeId: "s5-sc", anchor: "s" },
+        to = { nodeId: "s5-opt2", anchor: "n" },
+        style = { stroke: theme(ink.tertiary), strokeWidth: 1, dash: [3, 3] }
       )
       sdk.Panel(
         id = "s5-workers",
         title = "N × worker process",
-        detail = "spawned dynamically, on command",
-        x = 210, y = 300, width = 320, height = 60,
+        detail = "spawned dynamically, sized by CPU count",
+        x = 195, y = 300, width = 300, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Edge(
-        id = "s5-e5",
+        id = "s5-e6",
         mode = "route",
         from = { nodeId: "s5-wm", anchor: "s" },
         to = { nodeId: "s5-workers", anchor: "n" },
@@ -549,18 +863,23 @@ explainer "AIPerf vs Locust" {
       )
 
       timeline main {
-        at 0 reveal s5-hdr duration 260
-        after s5-hdr reveal s5-sc duration 280
-        after s5-sc trace s5-e1 duration 220
-        after s5-e1 reveal s5-dm duration 220
-        after s5-sc trace s5-e2 duration 220
-        after s5-e2 reveal s5-tm duration 220
-        after s5-sc trace s5-e3 duration 220
-        after s5-e3 reveal s5-wm duration 220
-        after s5-sc trace s5-e4 duration 220
-        after s5-e4 reveal s5-rm duration 220
-        after s5-wm trace s5-e5 duration 260
-        after s5-e5 reveal s5-workers duration 260
+        at 0 reveal s5-hdr duration 240
+        after s5-hdr reveal s5-sc duration 240
+        after s5-sc trace s5-e1 duration 180
+        after s5-e1 reveal s5-dm duration 180
+        after s5-sc trace s5-e2 duration 180
+        after s5-e2 reveal s5-tm duration 180
+        after s5-sc trace s5-e3 duration 180
+        after s5-e3 reveal s5-wm duration 180
+        after s5-sc trace s5-e4 duration 180
+        after s5-e4 reveal s5-rm duration 180
+        after s5-rm reveal s5-opt1 duration 160
+        after s5-opt1 reveal s5-opt2 duration 160
+        after s5-opt2 trace s5-e5 duration 200
+        after s5-e5 reveal s5-opt3 duration 160
+        after s5-opt3 reveal s5-opt4 duration 160
+        after s5-opt4 trace s5-e6 duration 240
+        after s5-e6 reveal s5-workers duration 260
         after s5-workers trace s5-motion duration 800
       }
     }
@@ -571,7 +890,7 @@ explainer "AIPerf vs Locust" {
     title: "A different message-passing pattern for each different job"
     lede: "A broadcast-style status bus for general messaging, an addressed request/reply channel for on-demand dataset lookups, a fire-and-forget streaming channel for raw results — all hosted inside the coordinator process — plus a dedicated credit-dispatch channel and a separate credit-return channel, both bound directly by the timing/dispatch process."
 
-    narration: "AIPerf doesn't use one message-passing pattern for everything — it picks the pattern that matches each job. Broadcast-style status and lifecycle messages ride a publish/subscribe bus that every process publishes to and listens on. Workers occasionally need to ask the dataset process for a conversation on demand, so that's an addressed request/reply channel. Raw inference results stream from workers toward the results-processing tier as fire-and-forget pushes. Credit dispatch specifically is not routed through the shared proxies at all — the timing/dispatch process binds its own addressed channel directly, and each worker connects to it with its own identity, so a credit can be sent to one specific worker by name. Credit returns ride a completely separate one-way channel rather than going back over the same connection, so the dispatch direction never has to double as a return path."
+    narration: "Each job gets its own channel: broadcast, addressed lookup, or stream. Credit dispatch and return bypass the shared proxies entirely."
 
     term: {
       word: "addressed dispatch"
@@ -597,32 +916,18 @@ explainer "AIPerf vs Locust" {
         inkRole = theme(ink.secondary)
       )
       sdk.Panel(
-        id = "s6-proxy",
-        title = "Coordinator-hosted channels",
-        detail = "status bus · dataset lookup · raw results",
-        x = 40, y = 90, width = 300, height = 90,
+        id = "s6-coord",
+        title = "Coordinator-hosted proxies",
+        detail = "shared by every process",
+        x = 40, y = 68, width = 300, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Panel(
-        id = "s6-credit",
-        title = "Timing/dispatch process (direct)",
-        detail = "credit dispatch · credit return",
-        x = 380, y = 90, width = 260, height = 90,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.warning)
-      )
-      sdk.Divider(
-        id = "s6-div",
-        axis = "y",
-        x = 350, y = 80, length = 200,
-        strokeRole = theme(ink.tertiary)
-      )
-      sdk.Panel(
         id = "s6-bus",
         title = "Status bus",
-        detail = "broadcast to every process",
-        x = 40, y = 220, width = 140, height = 60,
+        detail = "broadcast, every process listens",
+        x = 30, y = 140, width = 160, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -630,7 +935,7 @@ explainer "AIPerf vs Locust" {
         id = "s6-dset",
         title = "Dataset lookup",
         detail = "addressed request/reply",
-        x = 200, y = 220, width = 140, height = 60,
+        x = 210, y = 140, width = 160, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -638,19 +943,79 @@ explainer "AIPerf vs Locust" {
         id = "s6-raw",
         title = "Raw results",
         detail = "fire-and-forget stream",
-        x = 360, y = 220, width = 140, height = 60,
+        x = 390, y = 140, width = 160, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
-      sdk.Note(
-        id = "s6-note",
-        text = "Dispatch addresses one worker by identity; a separate one-way channel carries returns",
-        x = 60, y = 320, width = 580, height = 32
+      sdk.Edge(
+        id = "s6-e1",
+        mode = "route",
+        from = { nodeId: "s6-coord", anchor: "s" },
+        to = { nodeId: "s6-bus", anchor: "n" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 1.4 }
+      )
+      sdk.Edge(
+        id = "s6-e2",
+        mode = "route",
+        from = { nodeId: "s6-coord", anchor: "s" },
+        to = { nodeId: "s6-dset", anchor: "n" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 1.4 }
+      )
+      sdk.Edge(
+        id = "s6-e3",
+        mode = "route",
+        from = { nodeId: "s6-coord", anchor: "s" },
+        to = { nodeId: "s6-raw", anchor: "n" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 1.4 }
+      )
+      sdk.Divider(
+        id = "s6-div",
+        axis = "x",
+        x = 40, y = 215, length = 610,
+        strokeRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s6-timing",
+        title = "Timing/dispatch process",
+        detail = "binds its own channels directly",
+        x = 220, y = 235, width = 260, height = 55,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s6-dispatch",
+        title = "Credit dispatch",
+        detail = "addressed to one worker",
+        x = 60, y = 310, width = 220, height = 50,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s6-return",
+        title = "Credit return",
+        detail = "separate one-way channel",
+        x = 400, y = 310, width = 220, height = 50,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s6-e4",
+        mode = "route",
+        from = { nodeId: "s6-timing", anchor: "s" },
+        to = { nodeId: "s6-dispatch", anchor: "n" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2 }
+      )
+      sdk.Edge(
+        id = "s6-e5",
+        mode = "route",
+        from = { nodeId: "s6-timing", anchor: "s" },
+        to = { nodeId: "s6-return", anchor: "n" },
+        style = { stroke: theme(accent.green), strokeWidth: 2 }
       )
       sdk.Signal(
         id = "s6-motion",
-        from = { nodeId: "s6-proxy", anchor: "e" },
-        to = { nodeId: "s6-credit", anchor: "w" },
+        from = { nodeId: "s6-coord", anchor: "e" },
+        to = { nodeId: "s6-timing", anchor: "e" },
         opacity = 0.4,
         strokeWidth = 2,
         label = "shared vs direct-bound",
@@ -658,15 +1023,21 @@ explainer "AIPerf vs Locust" {
       )
 
       timeline main {
-        at 0 reveal s6-hdr duration 260
-        after s6-hdr reveal s6-proxy duration 280
-        after s6-proxy reveal s6-div duration 220
-        after s6-div reveal s6-credit duration 280
-        after s6-credit reveal s6-bus duration 220
-        after s6-bus reveal s6-dset duration 220
-        after s6-dset reveal s6-raw duration 220
-        after s6-raw reveal s6-note duration 260
-        after s6-note trace s6-motion duration 800
+        at 0 reveal s6-hdr duration 240
+        after s6-hdr reveal s6-coord duration 240
+        after s6-coord trace s6-e1 duration 180
+        after s6-e1 reveal s6-bus duration 200
+        after s6-coord trace s6-e2 duration 180
+        after s6-e2 reveal s6-dset duration 200
+        after s6-coord trace s6-e3 duration 180
+        after s6-e3 reveal s6-raw duration 200
+        after s6-raw reveal s6-div duration 180
+        after s6-div reveal s6-timing duration 240
+        after s6-timing trace s6-e4 duration 200
+        after s6-e4 reveal s6-dispatch duration 220
+        after s6-timing trace s6-e5 duration 200
+        after s6-e5 reveal s6-return duration 220
+        after s6-return trace s6-motion duration 800
       }
     }
   }
@@ -676,7 +1047,7 @@ explainer "AIPerf vs Locust" {
     title: "Created, gated, dispatched, stuck to a conversation, returned"
     lede: "A credit is built and handed to the credit router, which won't dispatch anything until every worker has announced it's ready. Multi-turn conversations stick to whichever worker handled the first turn, so session state and cache locality survive the whole conversation."
 
-    narration: "A credit's life starts by acquiring a concurrency slot and incrementing a sent counter, then building the credit and handing it to the router. Before any of that can happen, the run has already waited for at least one worker to announce readiness, with a timeout — a startup gate that exists specifically to close the race where a credit could be issued before any worker exists to receive it. Each worker announces itself once, on start; the router treats that as the signal to register the worker and, on the very first one, to unblock anything waiting on worker availability. Dispatch itself has a memory: the router keeps a map from conversation identifier to worker, and if a credit belongs to a conversation whose earlier turn already landed on a specific worker, it's routed there again — so that worker's cached session state, and any resulting locality on the inference server's side, both stay warm across the whole conversation. Only a conversation's first turn goes through least-loaded worker selection; the sticky mapping is created only if more turns are coming, and torn down on the conversation's final turn. When a worker finishes, it returns the credit over a completely separate one-way channel, not back over the dispatch connection, so the dispatch direction never has to double as a return path."
+    narration: "Turn one goes to the least-loaded worker; every later turn sticks to that same worker. Returns ride a separate channel."
 
     term: {
       word: "sticky routing"
@@ -703,61 +1074,98 @@ explainer "AIPerf vs Locust" {
       )
       sdk.Stepper(
         id = "s7-steps",
-        steps = ["credit is created", "readiness gate", "sticky or least-loaded", "returned"],
+        steps = ["credit created", "readiness gate", "sticky or least-loaded", "returned"],
         linked = true,
         gap = 14,
-        x = 40, y = 70, width = 600, height = 26
+        x = 40, y = 68, width = 600, height = 24
       )
       sdk.Panel(
         id = "s7-t1",
         title = "Turn 1",
-        detail = "least-loaded worker",
-        x = 60, y = 130, width = 180, height = 80,
+        detail = "least-loaded selection",
+        x = 40, y = 110, width = 150, height = 65,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Panel(
-        id = "s7-worker",
-        title = "A worker process",
-        detail = "sticky mapping created",
-        x = 300, y = 130, width = 200, height = 80,
+        id = "s7-wa",
+        title = "Worker A",
+        detail = "load: low",
+        x = 230, y = 100, width = 120, height = 45,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "s7-wb",
+        title = "Worker B",
+        detail = "load: chosen",
+        x = 230, y = 150, width = 120, height = 45,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s7-wc",
+        title = "Worker C",
+        detail = "load: high",
+        x = 230, y = 200, width = 120, height = 45,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(accent.tertiary)
       )
       sdk.Edge(
         id = "s7-e1",
         mode = "connector",
         from = { nodeId: "s7-t1", anchor: "e" },
-        to = { nodeId: "s7-worker", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+        to = { nodeId: "s7-wb", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
       )
       sdk.Panel(
-        id = "s7-t2",
-        title = "Turn 2, Turn 3, ...",
-        detail = "same worker, sticky routed",
-        x = 300, y = 250, width = 200, height = 80,
+        id = "s7-map",
+        title = "sticky map",
+        detail = "conversation → Worker B",
+        x = 400, y = 150, width = 150, height = 45,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
       sdk.Edge(
         id = "s7-e2",
+        mode = "connector",
+        from = { nodeId: "s7-wb", anchor: "e" },
+        to = { nodeId: "s7-map", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 1.6 }
+      )
+      sdk.Panel(
+        id = "s7-t2",
+        title = "Turn 2, 3, ...",
+        detail = "reads sticky map",
+        x = 400, y = 100, width = 150, height = 40,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s7-e2b",
         mode = "route",
-        from = { nodeId: "s7-worker", anchor: "s" },
-        to = { nodeId: "s7-t2", anchor: "n" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+        from = { nodeId: "s7-t2", anchor: "s" },
+        to = { nodeId: "s7-map", anchor: "n" },
+        style = { stroke: theme(accent.warning), strokeWidth: 1.6, dash: [3, 3] }
+      )
+      sdk.Divider(
+        id = "s7-div",
+        axis = "x",
+        x = 40, y = 260, length = 610,
+        strokeRole = theme(ink.tertiary)
       )
       sdk.Panel(
         id = "s7-return",
         title = "Credit returned",
-        detail = "separate one-way channel",
-        x = 540, y = 130, width = 130, height = 80,
+        detail = "worker → separate one-way return channel",
+        x = 220, y = 280, width = 260, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
       sdk.Edge(
         id = "s7-e3",
         mode = "route",
-        from = { nodeId: "s7-worker", anchor: "e" },
+        from = { nodeId: "s7-wb", anchor: "s" },
         to = { nodeId: "s7-return", anchor: "n" },
         style = { stroke: theme(accent.green), strokeWidth: 2 }
       )
@@ -772,15 +1180,20 @@ explainer "AIPerf vs Locust" {
       )
 
       timeline main {
-        at 0 reveal s7-hdr duration 260
-        after s7-hdr stagger targets [s7-steps-step-0, s7-steps-step-1, s7-steps-step-2, s7-steps-step-3] step 70 duration 200
-        after s7-steps-step-3 reveal s7-t1 duration 260
-        after s7-t1 trace s7-e1 duration 280
-        after s7-e1 reveal s7-worker duration 260
-        after s7-worker trace s7-e2 duration 280
-        after s7-e2 reveal s7-t2 duration 260
-        after s7-worker trace s7-e3 duration 260
-        after s7-e3 reveal s7-return duration 260
+        at 0 reveal s7-hdr duration 240
+        after s7-hdr stagger targets [s7-steps-step-0, s7-steps-step-1, s7-steps-step-2, s7-steps-step-3] step 60 duration 180
+        after s7-steps-step-3 reveal s7-t1 duration 220
+        after s7-t1 reveal s7-wa duration 160
+        after s7-wa reveal s7-wb duration 160
+        after s7-wb reveal s7-wc duration 160
+        after s7-wc trace s7-e1 duration 240
+        after s7-e1 trace s7-e2 duration 200
+        after s7-e2 reveal s7-map duration 220
+        after s7-map reveal s7-t2 duration 200
+        after s7-t2 trace s7-e2b duration 220
+        after s7-e2b reveal s7-div duration 180
+        after s7-div trace s7-e3 duration 220
+        after s7-e3 reveal s7-return duration 240
         after s7-return trace s7-motion duration 800
       }
     }
@@ -791,7 +1204,7 @@ explainer "AIPerf vs Locust" {
     title: "Several independent stop conditions; every applicable one must agree"
     lede: "A checker builds only the subset of stop conditions that apply to the current run, then combines them with AND — every active condition has to independently permit continuing, every time, before the next request goes out."
 
-    narration: "AIPerf defines several distinct stop conditions: a couple of lifecycle conditions that are always active, and a few optional ones — request count, session count, and duration — that switch on only when their corresponding setting is configured. A checker evaluates which conditions apply at the start of a run and keeps only those, then combines them with a plain logical AND, not an OR. There's no scenario where one permissive condition overrides a stricter one; every active condition has to agree before a request can go out. The request-count condition specifically opts out entirely when the alternate overshoot-style stop mode is configured, handing the stop decision to a different mechanism instead."
+    narration: "Only the configured conditions activate, and they combine with AND, never OR — every active one must agree."
 
     term: {
       word: "condition checker"
@@ -819,40 +1232,48 @@ explainer "AIPerf vs Locust" {
       sdk.Panel(
         id = "s8-c1",
         title = "Lifecycle",
-        detail = "always active",
-        x = 40, y = 90, width = 140, height = 70,
+        detail = "always active · vote: yes",
+        x = 30, y = 80, width = 130, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Panel(
         id = "s8-c2",
         title = "DAG lifecycle",
-        detail = "always active",
-        x = 200, y = 90, width = 140, height = 70,
+        detail = "always active · vote: yes",
+        x = 175, y = 80, width = 130, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Panel(
         id = "s8-c3",
         title = "Request count",
-        detail = "if configured",
-        x = 360, y = 90, width = 140, height = 70,
+        detail = "if configured · vote: yes",
+        x = 320, y = 80, width = 130, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
         id = "s8-c4",
         title = "Session count",
-        detail = "if configured",
-        x = 520, y = 90, width = 140, height = 70,
+        detail = "if configured · vote: yes",
+        x = 465, y = 80, width = 130, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
+        id = "s8-c5",
+        title = "Duration",
+        detail = "if configured · vote: no",
+        x = 610, y = 80, width = 55, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
         id = "s8-and",
-        title = "Combined with AND",
-        detail = "across every active condition",
-        x = 240, y = 220, width = 220, height = 70,
+        title = "AND",
+        detail = "one \"no\" is enough to stop",
+        x = 260, y = 190, width = 200, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -861,47 +1282,73 @@ explainer "AIPerf vs Locust" {
         mode = "route",
         from = { nodeId: "s8-c1", anchor: "s" },
         to = { nodeId: "s8-and", anchor: "n" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 1.6 }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 1.4 }
       )
       sdk.Edge(
         id = "s8-e2",
         mode = "route",
         from = { nodeId: "s8-c2", anchor: "s" },
         to = { nodeId: "s8-and", anchor: "n" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 1.6 }
+        style = { stroke: theme(accent.tertiary), strokeWidth: 1.4 }
       )
       sdk.Edge(
         id = "s8-e3",
         mode = "route",
         from = { nodeId: "s8-c3", anchor: "s" },
         to = { nodeId: "s8-and", anchor: "n" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.6 }
+        style = { stroke: theme(accent.secondary), strokeWidth: 1.4 }
       )
       sdk.Edge(
         id = "s8-e4",
         mode = "route",
         from = { nodeId: "s8-c4", anchor: "s" },
         to = { nodeId: "s8-and", anchor: "n" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 1.6 }
+        style = { stroke: theme(accent.secondary), strokeWidth: 1.4 }
+      )
+      sdk.Edge(
+        id = "s8-e5",
+        mode = "route",
+        from = { nodeId: "s8-c5", anchor: "s" },
+        to = { nodeId: "s8-and", anchor: "n" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2 }
+      )
+      sdk.Panel(
+        id = "s8-result",
+        title = "Run stops",
+        detail = "because Duration voted no",
+        x = 260, y = 285, width = 200, height = 50,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s8-e6",
+        mode = "connector",
+        from = { nodeId: "s8-and", anchor: "s" },
+        to = { nodeId: "s8-result", anchor: "n" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
       )
       sdk.Note(
         id = "s8-note",
         text = "The request-count condition disables itself entirely when overshoot-style stopping is on",
-        x = 60, y = 320, width = 580, height = 30
+        x = 30, y = 350, width = 620, height = 22
       )
 
       timeline main {
-        at 0 reveal s8-hdr duration 260
-        after s8-hdr reveal s8-c1 duration 220
-        after s8-c1 reveal s8-c2 duration 220
-        after s8-c2 reveal s8-c3 duration 220
-        after s8-c3 reveal s8-c4 duration 220
-        after s8-c4 reveal s8-and duration 260
-        after s8-and trace s8-e1 duration 220
-        after s8-e1 trace s8-e2 duration 220
-        after s8-e2 trace s8-e3 duration 220
-        after s8-e3 trace s8-e4 duration 220
-        after s8-e4 reveal s8-note duration 260
+        at 0 reveal s8-hdr duration 240
+        after s8-hdr reveal s8-c1 duration 180
+        after s8-c1 reveal s8-c2 duration 180
+        after s8-c2 reveal s8-c3 duration 180
+        after s8-c3 reveal s8-c4 duration 180
+        after s8-c4 reveal s8-c5 duration 180
+        after s8-c5 reveal s8-and duration 220
+        after s8-and trace s8-e1 duration 180
+        after s8-e1 trace s8-e2 duration 180
+        after s8-e2 trace s8-e3 duration 180
+        after s8-e3 trace s8-e4 duration 180
+        after s8-e4 trace s8-e5 duration 200
+        after s8-e5 trace s8-e6 duration 220
+        after s8-e6 reveal s8-result duration 220
+        after s8-result reveal s8-note duration 220
       }
     }
   }
@@ -911,7 +1358,7 @@ explainer "AIPerf vs Locust" {
     title: "Reproducing Locust's semantics needed two independent bypasses"
     lede: "The request-count condition disables itself when overshoot-style stopping is on — but that alone wasn't enough. A separate internal cap, used for other bookkeeping, had to be told to stand down too."
 
-    narration: "Getting AIPerf to behave like Locust's poll-then-kill stop semantics wasn't a matter of just turning off the request-count condition — there were two independent limits enforcing the same cap from different places, and both had to be bypassed at once. The request-count condition already excludes itself when overshoot-style stopping is configured. But a separate internal cap check, used elsewhere to compute whether a credit is the final one, is a completely different piece of logic — and it explicitly documents that it must also be disabled here, because disabling the stop condition alone would not be enough. Once both are bypassed, the overshoot mechanism takes over entirely: in one mode it checks completed count against target on a fixed interval and repeats; in the other, there's no polling loop at all — a callback fires the instant the completed count crosses target. Either way, once triggered, every in-flight credit across every worker is cancelled immediately and the run is marked complete — no grace period, deliberately matching the poll-then-kill behavior being reproduced."
+    narration: "Two independent request-count limits had to be disabled at once, not one — then every in-flight credit is cancelled immediately."
 
     term: {
       word: "dual bypass"
@@ -940,7 +1387,7 @@ explainer "AIPerf vs Locust" {
         id = "s9-gate1",
         title = "Request-count condition",
         detail = "disabled when overshoot mode is on",
-        x = 40, y = 100, width = 260, height = 80,
+        x = 40, y = 70, width = 260, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -948,15 +1395,29 @@ explainer "AIPerf vs Locust" {
         id = "s9-gate2",
         title = "Separate internal cap",
         detail = "also had to be disabled",
-        x = 380, y = 100, width = 260, height = 80,
+        x = 380, y = 70, width = 260, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
+      sdk.Divider(
+        id = "s9-div",
+        axis = "x",
+        x = 40, y = 150, length = 610,
+        strokeRole = theme(ink.tertiary)
+      )
       sdk.Panel(
-        id = "s9-poller",
-        title = "Overshoot mechanism",
-        detail = "polling or instant-callback mode",
-        x = 200, y = 220, width = 260, height = 70,
+        id = "s9-poll",
+        title = "Poll mode",
+        detail = "check on a fixed interval, repeat",
+        x = 100, y = 170, width = 200, height = 55,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s9-instant",
+        title = "Instant-callback mode",
+        detail = "no polling loop, fires the moment target crosses",
+        x = 360, y = 170, width = 220, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -964,30 +1425,42 @@ explainer "AIPerf vs Locust" {
         id = "s9-e1",
         mode = "route",
         from = { nodeId: "s9-gate1", anchor: "s" },
-        to = { nodeId: "s9-poller", anchor: "w" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2 }
+        to = { nodeId: "s9-poll", anchor: "n" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 1.6 }
       )
       sdk.Edge(
         id = "s9-e2",
         mode = "route",
         from = { nodeId: "s9-gate2", anchor: "s" },
-        to = { nodeId: "s9-poller", anchor: "e" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2 }
+        to = { nodeId: "s9-instant", anchor: "n" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 1.6 }
       )
       sdk.Panel(
         id = "s9-abandon",
         title = "Cancel every in-flight credit",
         detail = "no grace period — matches poll-then-kill",
-        x = 200, y = 330, width = 260, height = 60,
+        x = 190, y = 260, width = 300, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Edge(
         id = "s9-e3",
         mode = "route",
-        from = { nodeId: "s9-poller", anchor: "s" },
-        to = { nodeId: "s9-abandon", anchor: "n" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+        from = { nodeId: "s9-poll", anchor: "s" },
+        to = { nodeId: "s9-abandon", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2 }
+      )
+      sdk.Edge(
+        id = "s9-e4",
+        mode = "route",
+        from = { nodeId: "s9-instant", anchor: "s" },
+        to = { nodeId: "s9-abandon", anchor: "e" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2 }
+      )
+      sdk.Note(
+        id = "s9-note",
+        text = "One limit alone would still stop new sends at the old target — both had to give way",
+        x = 30, y = 335, width = 620, height = 24
       )
       sdk.Signal(
         id = "s9-motion",
@@ -1000,15 +1473,19 @@ explainer "AIPerf vs Locust" {
       )
 
       timeline main {
-        at 0 reveal s9-hdr duration 260
-        after s9-hdr reveal s9-gate1 duration 260
-        after s9-gate1 reveal s9-gate2 duration 260
+        at 0 reveal s9-hdr duration 240
+        after s9-hdr reveal s9-gate1 duration 220
+        after s9-gate1 reveal s9-gate2 duration 220
         after s9-gate2 trace s9-motion duration 700
-        after s9-motion trace s9-e1 duration 260
-        after s9-e1 trace s9-e2 duration 260
-        after s9-e2 reveal s9-poller duration 260
-        after s9-poller trace s9-e3 duration 260
-        after s9-e3 reveal s9-abandon duration 260
+        after s9-motion reveal s9-div duration 180
+        after s9-div trace s9-e1 duration 200
+        after s9-e1 reveal s9-poll duration 220
+        after s9-poll trace s9-e2 duration 200
+        after s9-e2 reveal s9-instant duration 220
+        after s9-instant trace s9-e3 duration 220
+        after s9-e3 trace s9-e4 duration 220
+        after s9-e4 reveal s9-abandon duration 240
+        after s9-abandon reveal s9-note duration 220
       }
     }
   }
@@ -1018,7 +1495,7 @@ explainer "AIPerf vs Locust" {
     title: "One event loop, one lightweight task per in-flight credit"
     lede: "A worker doesn't throttle itself — no internal limit on how much it runs at once. Every credit it receives becomes an independent task on its one event loop, sharing one pooled HTTP connection. Concurrency admission happens entirely upstream, at credit issuance."
 
-    narration: "Inside a single worker process, receiving a credit schedules an independent lightweight task on that process's one event loop, tracked in a simple lookup keyed by credit identity. There's no internal limit inside the worker capping how many of these run at once — the worker will happily run however many tasks it's been handed. The actual outbound HTTP calls share one pooled connection manager, sized generously — in the thousands — so it's essentially never the constraint. A worker's own code makes no admission decisions at all; every constraint on how much is running at once was already applied upstream, at the moment the timing/dispatch process decided whether a credit could be issued in the first place. Whatever a worker is handed, it runs — which is exactly why the credit ledger, not the worker, is where AIPerf's concurrency guarantee actually lives."
+    narration: "Every credit becomes its own task, no worker-side limit. The real gate is upstream, at slot acquisition before dispatch."
 
     term: {
       word: "task-per-credit"
@@ -1044,62 +1521,141 @@ explainer "AIPerf vs Locust" {
         inkRole = theme(ink.secondary)
       )
       sdk.Panel(
+        id = "s10-worker",
+        title = "One worker process, one event loop",
+        detail = "",
+        x = 30, y = 68, width = 460, height = 150,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
         id = "s10-recv",
-        title = "Credit received",
-        detail = "on the worker's dispatch connection",
-        x = 40, y = 100, width = 180, height = 70,
+        title = "Credit in",
+        detail = "",
+        x = 45, y = 90, width = 90, height = 45,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
-      sdk.Edge(
-        id = "s10-e1",
-        mode = "connector",
-        from = { nodeId: "s10-recv", anchor: "e" },
-        to = { nodeId: "s10-task", anchor: "w" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2 }
-      )
       sdk.Panel(
-        id = "s10-task",
-        title = "Lightweight task",
-        detail = "one per credit, no limit here",
-        x = 260, y = 100, width = 200, height = 70,
+        id = "s10-task1",
+        title = "task 1",
+        detail = "",
+        x = 165, y = 82, width = 90, height = 40,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
+      sdk.Panel(
+        id = "s10-task2",
+        title = "task 2",
+        detail = "",
+        x = 165, y = 132, width = 90, height = 40,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Panel(
+        id = "s10-task3",
+        title = "task 3",
+        detail = "",
+        x = 165, y = 182, width = 90, height = 40,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Label(
+        id = "s10-taskdots",
+        text = "... no internal limit",
+        x = 165, y = 225, width = 150, height = 18,
+        fontSize = 11,
+        inkRole = theme(ink.tertiary)
+      )
+      sdk.Edge(
+        id = "s10-e1",
+        mode = "route",
+        from = { nodeId: "s10-recv", anchor: "e" },
+        to = { nodeId: "s10-task1", anchor: "w" },
+        style = { stroke: theme(accent.primary), strokeWidth: 1.4 }
+      )
       sdk.Edge(
         id = "s10-e2",
-        mode = "connector",
-        from = { nodeId: "s10-task", anchor: "e" },
-        to = { nodeId: "s10-pool", anchor: "w" },
-        style = { stroke: theme(accent.secondary), strokeWidth: 2 }
-      )
-      sdk.Panel(
-        id = "s10-pool",
-        title = "Connection pool",
-        detail = "sized generously",
-        x = 500, y = 100, width = 160, height = 70,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.secondary)
-      )
-      sdk.Panel(
-        id = "s10-upstream",
-        title = "Real gate: slot acquisition",
-        detail = "happens before dispatch, not inside the worker",
-        x = 140, y = 240, width = 420, height = 70,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.warning)
+        mode = "route",
+        from = { nodeId: "s10-recv", anchor: "e" },
+        to = { nodeId: "s10-task2", anchor: "w" },
+        style = { stroke: theme(accent.primary), strokeWidth: 1.4 }
       )
       sdk.Edge(
         id = "s10-e3",
         mode = "route",
-        from = { nodeId: "s10-recv", anchor: "s" },
-        to = { nodeId: "s10-upstream", anchor: "w" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2, dash: [4, 3] }
+        from = { nodeId: "s10-recv", anchor: "e" },
+        to = { nodeId: "s10-task3", anchor: "w" },
+        style = { stroke: theme(accent.primary), strokeWidth: 1.4 }
+      )
+      sdk.Panel(
+        id = "s10-pool",
+        title = "Shared connection pool",
+        detail = "sized generously",
+        x = 310, y = 130, width = 150, height = 50,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "s10-e4",
+        mode = "route",
+        from = { nodeId: "s10-task1", anchor: "e" },
+        to = { nodeId: "s10-pool", anchor: "n" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 1.4 }
+      )
+      sdk.Edge(
+        id = "s10-e5",
+        mode = "route",
+        from = { nodeId: "s10-task2", anchor: "e" },
+        to = { nodeId: "s10-pool", anchor: "w" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 1.4 }
+      )
+      sdk.Edge(
+        id = "s10-e6",
+        mode = "route",
+        from = { nodeId: "s10-task3", anchor: "e" },
+        to = { nodeId: "s10-pool", anchor: "s" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 1.4 }
+      )
+      sdk.Panel(
+        id = "s10-step1",
+        title = "1. request a slot",
+        detail = "before dispatch",
+        x = 30, y = 240, width = 200, height = 45,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s10-step2",
+        title = "2. slot granted",
+        detail = "only then is a credit sent",
+        x = 260, y = 240, width = 200, height = 45,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s10-e7",
+        mode = "connector",
+        from = { nodeId: "s10-step1", anchor: "e" },
+        to = { nodeId: "s10-step2", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2 }
+      )
+      sdk.Edge(
+        id = "s10-e8",
+        mode = "route",
+        from = { nodeId: "s10-step2", anchor: "e" },
+        to = { nodeId: "s10-recv", anchor: "s" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2, dash: [4, 3] }
+      )
+      sdk.Note(
+        id = "s10-note",
+        text = "The worker itself never decides how much concurrency it runs — it only executes",
+        x = 30, y = 305, width = 620, height = 24
       )
       sdk.Signal(
         id = "s10-motion",
-        from = { nodeId: "s10-task", anchor: "center" },
-        to = { nodeId: "s10-upstream", anchor: "center" },
+        from = { nodeId: "s10-task2", anchor: "center" },
+        to = { nodeId: "s10-step1", anchor: "center" },
         opacity = 0.4,
         strokeWidth = 2,
         label = "gate is upstream",
@@ -1107,15 +1663,26 @@ explainer "AIPerf vs Locust" {
       )
 
       timeline main {
-        at 0 reveal s10-hdr duration 260
-        after s10-hdr reveal s10-recv duration 260
-        after s10-recv trace s10-e1 duration 260
-        after s10-e1 reveal s10-task duration 260
-        after s10-task trace s10-e2 duration 260
-        after s10-e2 reveal s10-pool duration 260
-        after s10-pool reveal s10-upstream duration 260
-        after s10-upstream trace s10-e3 duration 280
-        after s10-e3 trace s10-motion duration 800
+        at 0 reveal s10-hdr duration 240
+        after s10-hdr reveal s10-worker duration 220
+        after s10-worker reveal s10-recv duration 200
+        after s10-recv trace s10-e1 duration 180
+        after s10-e1 reveal s10-task1 duration 180
+        after s10-recv trace s10-e2 duration 180
+        after s10-e2 reveal s10-task2 duration 180
+        after s10-recv trace s10-e3 duration 180
+        after s10-e3 reveal s10-task3 duration 180
+        after s10-task3 reveal s10-taskdots duration 160
+        after s10-taskdots trace s10-e4 duration 160
+        after s10-e4 trace s10-e5 duration 160
+        after s10-e5 trace s10-e6 duration 160
+        after s10-e6 reveal s10-pool duration 220
+        after s10-pool reveal s10-step1 duration 220
+        after s10-step1 trace s10-e7 duration 200
+        after s10-e7 reveal s10-step2 duration 220
+        after s10-step2 trace s10-e8 duration 240
+        after s10-e8 reveal s10-note duration 220
+        after s10-note trace s10-motion duration 800
       }
     }
   }
@@ -1125,7 +1692,7 @@ explainer "AIPerf vs Locust" {
     title: "Where the two architectures actually diverge"
     lede: "Both reach exact steady-state concurrency. Locust does it structurally, one green thread per user with a zero-delay loop; AIPerf does it with an explicit credit ledger a worker never even sees the gating logic for. The ledger is also what makes AIPerf's stop-at-N exact where Locust's is necessarily poll-then-kill."
 
-    narration: "Tracing both down to how they actually work lands on one real divergence, not several. Locust's concurrency is exact once you account for zero think-time and simultaneous user spawn — N green threads, each with at most one in-flight request, is a structural guarantee of the loop itself, no coordinator required. AIPerf's concurrency is exact too, but for a different reason: a slot is explicitly acquired before every dispatch, and the worker that eventually runs the request never makes an admission decision at all. That difference is invisible until you need to stop at an exact total count. Locust has no counter a stop condition could check against — its periodic stats report only fires every few seconds, so stopping at N is necessarily poll, then terminate every green thread, in-flight work included. AIPerf's stop condition reads the exact same counter the credit ledger already maintains, so it can gate the cutoff synchronously and then genuinely drain, waiting on a signal that fires exactly when the last credit returns. AIPerf can also deliberately disable that advantage — its overshoot mode reproduces Locust's poll-then-kill on purpose, for direct comparison, which took bypassing two independent internal limits to pull off cleanly."
+    narration: "Both hit exact concurrency. The divergence is the stop condition: a checkable counter gives AIPerf an exact gate and a real drain; Locust has none, so it polls and kills."
 
     term: {
       word: "the actual divergence"
@@ -1154,7 +1721,7 @@ explainer "AIPerf vs Locust" {
         id = "s11-locust",
         title = "Locust",
         detail = "exact via loop structure · no counter",
-        x = 40, y = 100, width = 280, height = 100,
+        x = 30, y = 68, width = 290, height = 65,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1162,50 +1729,131 @@ explainer "AIPerf vs Locust" {
         id = "s11-aiperf",
         title = "AIPerf",
         detail = "exact via credit ledger · has a counter",
-        x = 380, y = 100, width = 280, height = 100,
+        x = 360, y = 68, width = 290, height = 65,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Divider(
         id = "s11-div",
         axis = "y",
-        x = 350, y = 90, length = 160,
+        x = 335, y = 68, length = 260,
+        strokeRole = theme(ink.tertiary)
+      )
+      sdk.Label(
+        id = "s11-ltime",
+        text = "poll cadence:",
+        x = 30, y = 150, width = 100, height = 18,
+        fontSize = 11,
+        inkRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s11-p0",
+        title = "check",
+        detail = "t=0s",
+        x = 30, y = 172, width = 70, height = 40,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s11-p1",
+        title = "check",
+        detail = "t=3s",
+        x = 120, y = 172, width = 70, height = 40,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s11-p2",
+        title = "kill all",
+        detail = "target crossed",
+        x = 210, y = 172, width = 100, height = 40,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s11-pe1",
+        mode = "route",
+        from = { nodeId: "s11-p0", anchor: "e" },
+        to = { nodeId: "s11-p1", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 1.4, dash: [3, 3] }
+      )
+      sdk.Edge(
+        id = "s11-pe2",
+        mode = "route",
+        from = { nodeId: "s11-p1", anchor: "e" },
+        to = { nodeId: "s11-p2", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 1.4, dash: [3, 3] }
+      )
+      sdk.Label(
+        id = "s11-atime",
+        text = "synchronous check:",
+        x = 360, y = 150, width = 140, height = 18,
+        fontSize = 11,
+        inkRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s11-a0",
+        title = "check",
+        detail = "every dispatch",
+        x = 360, y = 172, width = 90, height = 40,
+        surfaceRole = theme(surface.base),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "s11-a1",
+        title = "gate + drain",
+        detail = "target reached, exact",
+        x = 470, y = 172, width = 120, height = 40,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s11-ae1",
+        mode = "route",
+        from = { nodeId: "s11-a0", anchor: "e" },
+        to = { nodeId: "s11-a1", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2 }
+      )
+      sdk.Divider(
+        id = "s11-div2",
+        axis = "x",
+        x = 30, y = 240, length = 620,
         strokeRole = theme(ink.tertiary)
       )
       sdk.Panel(
         id = "s11-stop-l",
-        title = "Stop at N",
-        detail = "poll every few seconds, then kill",
-        x = 60, y = 240, width = 240, height = 70,
+        title = "Result: stop at N",
+        detail = "overshoots, then kills every thread",
+        x = 30, y = 260, width = 290, height = 65,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
       sdk.Panel(
         id = "s11-stop-a",
-        title = "Stop at N",
-        detail = "synchronous gate, real drain",
-        x = 400, y = 240, width = 240, height = 70,
+        title = "Result: stop at N",
+        detail = "exact cutoff, then a real drain",
+        x = 360, y = 260, width = 290, height = 65,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
       sdk.Edge(
         id = "s11-e1",
         mode = "route",
-        from = { nodeId: "s11-locust", anchor: "s" },
+        from = { nodeId: "s11-p2", anchor: "s" },
         to = { nodeId: "s11-stop-l", anchor: "n" },
         style = { stroke: theme(accent.warning), strokeWidth: 2 }
       )
       sdk.Edge(
         id = "s11-e2",
         mode = "route",
-        from = { nodeId: "s11-aiperf", anchor: "s" },
+        from = { nodeId: "s11-a1", anchor: "s" },
         to = { nodeId: "s11-stop-a", anchor: "n" },
         style = { stroke: theme(accent.green), strokeWidth: 2 }
       )
       sdk.Signal(
         id = "s11-motion",
-        from = { nodeId: "s11-locust", anchor: "center" },
-        to = { nodeId: "s11-aiperf", anchor: "center" },
+        from = { nodeId: "s11-stop-l", anchor: "center" },
+        to = { nodeId: "s11-stop-a", anchor: "center" },
         opacity = 0.45,
         strokeWidth = 2.2,
         label = "the counter is the difference",
@@ -1213,14 +1861,25 @@ explainer "AIPerf vs Locust" {
       )
 
       timeline main {
-        at 0 reveal s11-hdr duration 260
-        after s11-hdr reveal s11-locust duration 280
-        after s11-locust reveal s11-div duration 220
-        after s11-div reveal s11-aiperf duration 280
-        after s11-aiperf trace s11-e1 duration 260
-        after s11-e1 reveal s11-stop-l duration 260
-        after s11-aiperf trace s11-e2 duration 260
-        after s11-e2 reveal s11-stop-a duration 260
+        at 0 reveal s11-hdr duration 240
+        after s11-hdr reveal s11-locust duration 240
+        after s11-locust reveal s11-div duration 200
+        after s11-div reveal s11-aiperf duration 240
+        after s11-aiperf reveal s11-ltime duration 160
+        after s11-ltime reveal s11-p0 duration 160
+        after s11-p0 trace s11-pe1 duration 180
+        after s11-pe1 reveal s11-p1 duration 160
+        after s11-p1 trace s11-pe2 duration 180
+        after s11-pe2 reveal s11-p2 duration 200
+        after s11-p2 reveal s11-atime duration 160
+        after s11-atime reveal s11-a0 duration 160
+        after s11-a0 trace s11-ae1 duration 200
+        after s11-ae1 reveal s11-a1 duration 200
+        after s11-a1 reveal s11-div2 duration 180
+        after s11-div2 trace s11-e1 duration 220
+        after s11-e1 reveal s11-stop-l duration 220
+        after s11-div2 trace s11-e2 duration 220
+        after s11-e2 reveal s11-stop-a duration 220
         after s11-stop-a trace s11-motion duration 900
       }
     }
