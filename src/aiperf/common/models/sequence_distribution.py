@@ -32,21 +32,31 @@ Examples:
 
 from __future__ import annotations
 
+import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 import orjson
 
 from aiperf.common import random_generator as rng
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.enums import RangeRatioMode
 from aiperf.common.utils import load_json_str
 
 if TYPE_CHECKING:
     from aiperf.common.random_generator import RandomGenerator
 
 logger = AIPerfLogger(__name__)
+
+
+@runtime_checkable
+class SequenceLengthSampler(Protocol):
+    """Anything that yields an (ISL, OSL) pair per call."""
+
+    def sample(self) -> tuple[int, int]: ...
 
 
 def _validate_probability_sum(pairs: list[SequenceLengthPair]) -> None:
@@ -517,3 +527,194 @@ def create_balanced_distribution(
     seq_pairs = [SequenceLengthPair(isl, osl, prob_per_pair) for isl, osl in pairs]
 
     return SequenceLengthDistribution(seq_pairs)
+
+
+@dataclass(frozen=True)
+class _ModeConfig:
+    ratio_min: float
+    ratio_max: float
+    ratio_max_exclusive: bool
+    input_floor: int
+    adjust_mean: Callable[[int, int], int]
+    compute_low: Callable[[int, float], int]
+    compute_high: Callable[[int, float], int]
+
+    def validate_ratio(self, name: str, value: float) -> None:
+        upper_ok = (
+            value < self.ratio_max
+            if self.ratio_max_exclusive
+            else value <= self.ratio_max
+        )
+        if not (self.ratio_min <= value and upper_ok):
+            hi_bracket = ")" if self.ratio_max_exclusive else "]"
+            raise ValueError(
+                f"{name} must be in [{self.ratio_min}, {self.ratio_max}{hi_bracket}, got {value}"
+            )
+
+
+_MODE_CONFIG: dict[RangeRatioMode, _ModeConfig] = {
+    RangeRatioMode.VLLM: _ModeConfig(
+        ratio_min=0.0,
+        ratio_max=1.0,
+        ratio_max_exclusive=True,
+        input_floor=0,
+        adjust_mean=lambda mean, n: max(0, mean - n),
+        compute_low=lambda mean, r: math.floor(mean * (1 - r)),
+        compute_high=lambda mean, r: math.ceil(mean * (1 + r)),
+    ),
+    RangeRatioMode.SGLANG: _ModeConfig(
+        ratio_min=0.0,
+        ratio_max=1.0,
+        ratio_max_exclusive=False,
+        input_floor=1,
+        adjust_mean=lambda mean, n: max(1, mean - n),
+        compute_low=lambda mean, r: int(mean * r),
+        compute_high=lambda mean, r: mean,
+    ),
+}
+
+
+class RangeRatioDistribution:
+    """Uniform ISL/OSL sampling in a ratio-defined integer window around configured means.
+
+    Supports two modes (see :class:`RangeRatioMode`):
+
+    - ``VLLM`` (default): symmetric window ``[floor(mean*(1-r)), ceil(mean*(1+r))]``.
+      ``r`` must satisfy ``0.0 <= r < 1.0``. Matches ``vllm bench serve``.
+    - ``SGLANG``: lower-bounded window ``[max(1, int(mean*r)), mean]``. ``r`` must
+      satisfy ``0.0 <= r <= 1.0``. Matches ``sglang.bench_serving``.
+
+    When ``num_special_tokens > 0``, the ISL mean is reduced before bounds are
+    computed. The adjustment is mode-specific: vllm uses ``max(0, mean - n)``
+    (allowing a zero-length range); sglang uses ``max(1, mean - n)`` (matching
+    its per-sample ``max(1, len - num_special)`` clamp). OSL is not adjusted
+    because ``max_tokens`` is passed directly to the server.
+    """
+
+    def __init__(
+        self,
+        isl_mean: int,
+        osl_mean: int,
+        input_ratio: float,
+        output_ratio: float,
+        *,
+        mode: RangeRatioMode = RangeRatioMode.VLLM,
+        num_special_tokens: int = 0,
+    ) -> None:
+        if isl_mean < 1:
+            raise ValueError(f"Input sequence length mean must be >= 1, got {isl_mean}")
+        if osl_mean < 1:
+            raise ValueError(
+                f"Output sequence length mean must be >= 1, got {osl_mean}"
+            )
+        if num_special_tokens < 0:
+            raise ValueError(
+                f"num_special_tokens must be >= 0, got {num_special_tokens}"
+            )
+
+        cfg = _MODE_CONFIG[mode]
+        cfg.validate_ratio("input_range_ratio", input_ratio)
+        cfg.validate_ratio("output_range_ratio", output_ratio)
+
+        self._rng = rng.derive("models.range_ratio.distribution")
+        self._isl_mean = int(isl_mean)
+        self._osl_mean = int(osl_mean)
+        self._input_ratio = float(input_ratio)
+        self._output_ratio = float(output_ratio)
+        self._mode = mode
+        self._num_special_tokens = num_special_tokens
+
+        adjusted_isl_mean = cfg.adjust_mean(self._isl_mean, num_special_tokens)
+        self._input_low, self._input_high = self._compute_bounds(
+            adjusted_isl_mean, self._input_ratio, cfg, floor=cfg.input_floor
+        )
+        self._output_low, self._output_high = self._compute_bounds(
+            self._osl_mean, self._output_ratio, cfg, floor=1
+        )
+
+    @staticmethod
+    def _compute_bounds(
+        mean: int, ratio: float, cfg: _ModeConfig, *, floor: int
+    ) -> tuple[int, int]:
+        return max(floor, cfg.compute_low(mean, ratio)), max(
+            floor, cfg.compute_high(mean, ratio)
+        )
+
+    def sample(self) -> tuple[int, int]:
+        """Sample a single (ISL, OSL) pair with independent uniform integers."""
+        isl = int(self._rng.integers(self._input_low, self._input_high + 1))
+        osl = int(self._rng.integers(self._output_low, self._output_high + 1))
+        return isl, osl
+
+    @property
+    def input_bounds(self) -> tuple[int, int]:
+        """Inclusive [low, high] integer bounds for ISL sampling."""
+        return self._input_low, self._input_high
+
+    @property
+    def output_bounds(self) -> tuple[int, int]:
+        """Inclusive [low, high] integer bounds for OSL sampling."""
+        return self._output_low, self._output_high
+
+    @property
+    def mode(self) -> RangeRatioMode:
+        return self._mode
+
+    def __repr__(self) -> str:
+        return (
+            f"RangeRatioDistribution(mode={self._mode}, isl_mean={self._isl_mean}, "
+            f"osl_mean={self._osl_mean}, input_ratio={self._input_ratio}, "
+            f"output_ratio={self._output_ratio})"
+        )
+
+    @classmethod
+    def parse_cli_value(
+        cls,
+        value: str,
+        mode: RangeRatioMode = RangeRatioMode.VLLM,
+    ) -> tuple[float, float]:
+        """Parse a ``--random-range-ratio`` CLI value into (input_ratio, output_ratio).
+
+        Accepts either a plain float string (``"0.3"``) applied to both dimensions,
+        or a JSON object (``'{"input": 0.3, "output": 0.5}'``) for independent values.
+        """
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("--random-range-ratio value cannot be empty")
+
+        value = value.strip()
+
+        try:
+            ratio = float(value)
+        except ValueError:
+            try:
+                data = orjson.loads(value)
+            except orjson.JSONDecodeError as e:
+                raise ValueError(
+                    f"--random-range-ratio must be a float or a JSON object with "
+                    f"'input' and 'output' keys, got: {value!r} ({e})"
+                ) from e
+            if not isinstance(data, dict):
+                raise ValueError(
+                    f"--random-range-ratio must be a float or a JSON object with "
+                    f"'input' and 'output' keys, got: {value!r}"
+                ) from None
+            missing = {"input", "output"} - data.keys()
+            if missing:
+                raise ValueError(
+                    f"--random-range-ratio JSON object missing keys: {sorted(missing)}"
+                ) from None
+            extra = data.keys() - {"input", "output"}
+            if extra:
+                raise ValueError(
+                    f"--random-range-ratio JSON object has unexpected keys: {sorted(extra)}"
+                ) from None
+            input_ratio = float(data["input"])
+            output_ratio = float(data["output"])
+        else:
+            input_ratio = output_ratio = ratio
+
+        cfg = _MODE_CONFIG[mode]
+        cfg.validate_ratio("--random-range-ratio input", input_ratio)
+        cfg.validate_ratio("--random-range-ratio output", output_ratio)
+
+        return input_ratio, output_ratio
