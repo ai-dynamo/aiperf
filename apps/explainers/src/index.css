@@ -197,7 +197,7 @@ button:focus-visible {
 .ex-hub-mark__bar {
   display: block;
   width: 3px;
-  border-radius: 1px;
+  border-radius: 0;
   background: var(--ex-accent);
 }
 
@@ -490,7 +490,7 @@ a.ex-card:hover .ex-card__arrow {
 .ex-stepper__dot {
   width: 16px;
   height: 16px;
-  border-radius: 999px;
+  border-radius: 0;
   display: grid;
   place-items: center;
   font-family: var(--ex-mono);
@@ -681,7 +681,7 @@ a.ex-card:hover .ex-card__arrow {
 .ex-term {
   position: relative;
   padding: 10px 12px 10px 14px;
-  border-radius: 4px;
+  border-radius: 0;
   background: linear-gradient(
     135deg,
     color-mix(in srgb, var(--ex-accent) 10%, transparent),
@@ -750,7 +750,7 @@ a.ex-card:hover .ex-card__arrow {
 
 .ex-subtitles {
   border: 1px solid var(--ex-stroke-tertiary);
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--ex-fill-quaternary);
   padding: 6px 10px;
   min-width: 0;
@@ -783,7 +783,7 @@ a.ex-card:hover .ex-card__arrow {
 .ex-subtitles__word {
   display: inline;
   margin-right: 0.35em;
-  border-radius: 3px;
+  border-radius: 0;
   padding: 0;
   white-space: normal;
   overflow-wrap: break-word;
@@ -805,7 +805,7 @@ a.ex-card:hover .ex-card__arrow {
 
 .ex-more {
   border: 1px solid var(--ex-stroke-tertiary);
-  border-radius: 4px;
+  border-radius: 0;
   background: transparent;
   padding: 0;
 }
@@ -1353,7 +1353,7 @@ a.ex-card:hover .ex-card__arrow {
   display: block;
   width: 100%;
   height: 2px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--ex-stroke-primary);
   transition:
     height 140ms ease,
