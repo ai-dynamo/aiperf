@@ -46,7 +46,14 @@ export type PointIr = Readonly<{
  *
  * Allowed `anchor` values (when `nodeId` is set): `center`, `n` / `s` / `e` /
  * `w`, `ne` / `nw` / `se` / `sw`, plus aliases `top` / `bottom` / `left` /
- * `right`. Kept as `string` so packages may pass through unknown anchors.
+ * `right`. Curved connectors (`style.route: "curve"` or `sdk.edge mode: "curve"`)
+ * use these anchors as endpoint normals: the cubic leaves and enters
+ * tangentially, and SceneRenderer routes it around other scene nodes with a
+ * deterministic visibility-graph search, separates parallel siblings into lanes,
+ * and degrades to the direct anchor curve when no obstacle-free route exists.
+ * The authored start and end points are always attached exactly. Curve behavior
+ * is tuned by the open-style controls `clearance`, `curvature`, `avoidObstacles`,
+ * `preferredSide`, `bundle`, and `parallelGap` (see `topology.ts`).
  */
 export type ConnectorEndpointIr = Readonly<{
   nodeId?: string | undefined;

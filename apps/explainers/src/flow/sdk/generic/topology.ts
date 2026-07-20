@@ -9,8 +9,20 @@
  *
  * `sdk.edge` unifies `core.connector` / `core.route` / `core.path` /
  * `core.line` behind one `mode` prop; `sdk.route` is a thin alias that
- * forces `mode: "route"`. `sdk.pipeline` wires auto edges between
- * consecutive slot fragments without repositioning them. `sdk.fanOut` /
+ * forces `mode: "route"`. `mode: "curve"` (rendered as `core.connector` with
+ * `style.route = "curve"`) selects deterministic anchor-aware cubic routing
+ * between any of the nine perimeter anchors on connected nodes. Curved edges
+ * leave and enter tangentially, arc around other scene nodes (obstacles),
+ * separate into lanes when several share the same endpoints, and arc as a loop
+ * when an edge returns to its own node. Six optional open-style controls tune
+ * it, all falling back to defaults on absent/invalid values:
+ * `style.clearance` (obstacle padding, default 12), `style.curvature`
+ * (0.05–0.95 bow, default 0.45), `style.avoidObstacles` (default true),
+ * `style.preferredSide` (`auto`/`n`/`s`/`e`/`w`, default `auto`),
+ * `style.bundle` (merge parallel edges into one corridor, default false), and
+ * `style.parallelGap` (lane spacing, default 8). `sdk.pipeline` wires auto
+ * edges between consecutive slot fragments and places them left-to-right when
+ * per-node x/y are omitted. `sdk.fanOut` /
  * `sdk.fanIn` wrap the existing first-class fan IR (`core.fan-out` /
  * `core.fan-in`) with semantic ports and actions.
  *
@@ -123,10 +135,6 @@ function fail(
 
 function slotFragments(slots: SlotRecord, key: string): readonly SceneFragment[] {
   return slots[key] ?? [];
-}
-
-function flattenRoots(fragments: readonly SceneFragment[]): readonly RenderNodeIr[] {
-  return fragments.flatMap((fragment) => fragment.roots);
 }
 
 function primaryRootId(fragment: SceneFragment): string | undefined {
@@ -316,17 +324,22 @@ function geometryFromEndpointsOrProps(
 
 // --- sdk.edge / sdk.route ----------------------------------------------------
 
-type EdgeMode = "connector" | "route" | "path" | "line";
+type EdgeMode = "connector" | "route" | "path" | "line" | "curve";
 
 const EDGE_MODE_CAPABILITY: Readonly<Record<EdgeMode, string>> = {
   connector: "core.connector",
   route: "core.route",
   path: "core.path",
   line: "core.line",
+  curve: "core.connector",
 };
 
 function edgeModeFromProp(value: string | undefined): EdgeMode | undefined {
-  return value === "connector" || value === "route" || value === "path" || value === "line"
+  return value === "connector" ||
+    value === "route" ||
+    value === "path" ||
+    value === "line" ||
+    value === "curve"
     ? value
     : undefined;
 }
@@ -370,6 +383,9 @@ function buildEdgeFragment(
   let style: Record<string, StyleValueIr> = {};
   if (mode === "route") {
     style.route = "elbow";
+  }
+  if (mode === "curve") {
+    style.route = "curve";
   }
   if (mode === "path" || mode === "line") {
     style.fill = "none";
@@ -480,6 +496,35 @@ function portOrRootEndpoint(
   return rootId !== undefined ? { nodeId: rootId, anchor } : { x: 0, y: 0 };
 }
 
+const PIPELINE_DEFAULT_GAP = 24;
+const PIPELINE_DEFAULT_NODE_WIDTH = 96;
+const PIPELINE_DEFAULT_NODE_HEIGHT = 56;
+
+/** Place a pipeline stage root at a local (x, y), preserving size. */
+function placePipelineNode(node: RenderNodeIr, x: number, y: number): RenderNodeIr {
+  const geometry = node.geometry ?? {
+    x: 0,
+    y: 0,
+    width: PIPELINE_DEFAULT_NODE_WIDTH,
+    height: PIPELINE_DEFAULT_NODE_HEIGHT,
+  };
+  return {
+    ...node,
+    geometry: {
+      ...geometry,
+      x,
+      y,
+      width: geometry.width > 0 ? geometry.width : PIPELINE_DEFAULT_NODE_WIDTH,
+      height: geometry.height > 0 ? geometry.height : PIPELINE_DEFAULT_NODE_HEIGHT,
+    },
+  };
+}
+
+/**
+ * Ordered stages wired left-to-right. Slot children keep their ids/ports; the
+ * factory assigns non-overlapping local geometry so stages do not stack at
+ * the origin when authors omit per-node x/y (the common pipeline pattern).
+ */
 const pipelineFactory: SdkComponentFactory = (props, slots, context) => {
   const nodes = slotFragments(slots, "nodes");
   if (nodes.length < 2) {
@@ -492,14 +537,50 @@ const pipelineFactory: SdkComponentFactory = (props, slots, context) => {
   }
   const mode = edgeModeFromProp(stringProp(props, "edgeMode")) ?? "connector";
   const capabilityId = EDGE_MODE_CAPABILITY[mode];
+  const gap = numberProp(props, "gap", PIPELINE_DEFAULT_GAP);
+  const authored = geometryFromProps(props);
   const baseStyle: Record<string, StyleValueIr> =
-    mode === "route" ? { route: "elbow", fill: "none" } : { fill: "none" };
+    mode === "route"
+      ? { route: "elbow", fill: "none" }
+      : mode === "curve"
+        ? { route: "curve", fill: "none" }
+        : { fill: "none" };
+
+  let cursorX = 0;
+  let maxHeight = 0;
+  const placedRoots: RenderNodeIr[] = [];
+  const placedFragments: SceneFragment[] = [];
+  for (const fragment of nodes) {
+    const root = fragment.roots[0];
+    if (root === undefined) {
+      continue;
+    }
+    const placed = placePipelineNode(root, cursorX, 0);
+    const width = placed.geometry?.width ?? PIPELINE_DEFAULT_NODE_WIDTH;
+    const height = placed.geometry?.height ?? PIPELINE_DEFAULT_NODE_HEIGHT;
+    placedRoots.push(placed);
+    placedFragments.push({
+      roots: [placed, ...fragment.roots.slice(1)],
+      ports: fragment.ports,
+      actions: fragment.actions,
+    });
+    cursorX += width + gap;
+    maxHeight = Math.max(maxHeight, height);
+  }
+  if (placedRoots.length < 2) {
+    return fail(
+      context,
+      "SDK_PIPELINE_NODES_REQUIRED",
+      `sdk.pipeline "${context.instanceId}" requires at least two placeable "nodes" slot roots.`,
+    );
+  }
+  const contentWidth = Math.max(0, cursorX - gap);
 
   const edges: RenderNodeIr[] = [];
   const edgePorts: Record<string, ConnectorEndpointIr> = {};
-  for (let index = 0; index < nodes.length - 1; index += 1) {
-    const sourceFragment = nodes[index]!;
-    const targetFragment = nodes[index + 1]!;
+  for (let index = 0; index < placedFragments.length - 1; index += 1) {
+    const sourceFragment = placedFragments[index]!;
+    const targetFragment = placedFragments[index + 1]!;
     const source = portOrRootEndpoint(sourceFragment, ["output", "result", "next", "self"], "e");
     const target = portOrRootEndpoint(targetFragment, ["input", "control", "self"], "w");
     const edgeId = nodeId(context, `edge-${index}`);
@@ -525,15 +606,36 @@ const pipelineFactory: SdkComponentFactory = (props, slots, context) => {
     edgePorts[`edge[${index}]`] = { nodeId: edgeId };
   }
 
-  const nodeRoots = flattenRoots(nodes);
-  const roots = [...nodeRoots, ...edges];
+  const edgeIds = edges.map((edge) => edge.id);
+  const groupLabel = stringProp(props, "label") ?? "pipeline";
+  const group: RenderNodeIr = withOrigin(
+    {
+      kind: "group",
+      id: context.instanceId,
+      capabilityId: "core.group",
+      geometry: {
+        x: authored.x,
+        y: authored.y,
+        width: authored.width > 0 ? Math.max(authored.width, contentWidth) : contentWidth,
+        height: authored.height > 0 ? Math.max(authored.height, maxHeight) : maxHeight,
+      },
+      style: { coordinateSpace: "local" },
+      accessibility: { label: groupLabel },
+      fallback: groupLabel,
+      sourceMap: context.sourceMap,
+      children: [...placedRoots, ...edges],
+    },
+    context,
+    "sdk.pipeline",
+    "root",
+  );
   const ports: Record<string, ConnectorEndpointIr> = {
-    ...mergeChildPorts(nodes, "node"),
+    self: { nodeId: context.instanceId },
+    ...mergeChildPorts(placedFragments, "node"),
     ...edgePorts,
   };
-  const edgeIds = edges.map((edge) => edge.id);
-  return ok(roots, ports, {
-    enter: [...nodeRoots.map((root) => root.id), ...edgeIds],
+  return ok([group], ports, {
+    enter: [context.instanceId, ...placedRoots.map((root) => root.id), ...edgeIds],
     draw: edgeIds,
     trace: edgeIds,
   });
@@ -546,7 +648,12 @@ export const SDK_PIPELINE: SdkComponentDefinition = {
     props: {
       id: { type: "string", required: true },
       edgeMode: { type: "string", required: false, default: "connector" },
+      gap: { type: "number", required: false, default: PIPELINE_DEFAULT_GAP },
       label: { type: "string", required: false },
+      x: { type: "number", required: false, default: 0 },
+      y: { type: "number", required: false, default: 0 },
+      width: { type: "number", required: false, default: 0 },
+      height: { type: "number", required: false, default: 0 },
     },
     slots: {
       nodes: { accepts: "sdk.*", required: true },

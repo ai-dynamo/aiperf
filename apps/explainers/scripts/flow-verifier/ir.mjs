@@ -19,9 +19,11 @@ import {
   isMotionCompanionDot,
   isMotionSignalNode,
   nodeIds,
+  normalizeCurveRouteOptions,
   pathPoints,
   pointNearBox,
   resolveFanGeometry,
+  routeCurve,
   sceneViewport,
   timelineDurationMs,
   walkNodes,
@@ -508,6 +510,250 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
         }
       }
     }
+}
+
+const CURVE_ANCHORS = [
+  "center",
+  "n",
+  "s",
+  "e",
+  "w",
+  "ne",
+  "nw",
+  "se",
+  "sw",
+];
+
+function pointFinite(point) {
+  return (
+    point != null &&
+    Number.isFinite(point.x) &&
+    Number.isFinite(point.y)
+  );
+}
+
+function routeFinite(result) {
+  if (/NaN|Infinity/.test(result.d)) return false;
+  if (!result.waypoints.every(pointFinite)) return false;
+  for (const segment of result.segments) {
+    if (
+      !pointFinite(segment.start) ||
+      !pointFinite(segment.control1) ||
+      !pointFinite(segment.control2) ||
+      !pointFinite(segment.end)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function samePoint(a, b) {
+  return Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6;
+}
+
+/** Build the deterministic synthetic routing scenarios (deck-independent). */
+function buildCurveScenarios() {
+  const scenarios = [];
+  const middle = { id: "middle", bounds: { x: 170, y: 55, width: 60, height: 90 } };
+  for (const fromAnchor of CURVE_ANCHORS) {
+    for (const toAnchor of CURVE_ANCHORS) {
+      scenarios.push({
+        id: `anchors-${fromAnchor}-${toAnchor}`,
+        start: { x: 40, y: 100 },
+        end: { x: 360, y: 100 },
+        fromAnchor,
+        toAnchor,
+        obstacles: [middle],
+      });
+    }
+  }
+  scenarios.push({
+    id: "two-obstacles",
+    start: { x: 40, y: 100 },
+    end: { x: 420, y: 100 },
+    fromAnchor: "e",
+    toAnchor: "w",
+    obstacles: [
+      { id: "a", bounds: { x: 140, y: 40, width: 50, height: 120 } },
+      { id: "b", bounds: { x: 260, y: 40, width: 50, height: 120 } },
+    ],
+  });
+  scenarios.push({
+    id: "same-side",
+    start: { x: 60, y: 80 },
+    end: { x: 300, y: 80 },
+    fromAnchor: "n",
+    toAnchor: "n",
+    obstacles: [],
+  });
+  scenarios.push({
+    id: "overlapping-bounds",
+    start: { x: 100, y: 100 },
+    end: { x: 130, y: 110 },
+    fromAnchor: "e",
+    toAnchor: "w",
+    sourceId: "src",
+    targetId: "dst",
+    sourceBounds: { x: 60, y: 60, width: 80, height: 80 },
+    targetBounds: { x: 90, y: 70, width: 80, height: 80 },
+    obstacles: [],
+  });
+  scenarios.push({
+    id: "self-loop",
+    start: { x: 120, y: 60 },
+    end: { x: 160, y: 60 },
+    fromAnchor: "n",
+    toAnchor: "n",
+    sourceId: "self",
+    targetId: "self",
+    sourceBounds: { x: 100, y: 60, width: 80, height: 60 },
+    targetBounds: { x: 100, y: 60, width: 80, height: 60 },
+    obstacles: [],
+  });
+  const parallelBase = {
+    start: { x: 40, y: 100 },
+    end: { x: 320, y: 100 },
+    fromAnchor: "e",
+    toAnchor: "w",
+    obstacles: [],
+  };
+  for (const [index, laneOffset] of [-8, 0, 8].entries()) {
+    scenarios.push({
+      id: `parallel-${index}`,
+      ...parallelBase,
+      laneOffset,
+      group: "parallel",
+    });
+  }
+  for (const index of [0, 1, 2]) {
+    scenarios.push({
+      id: `bundle-${index}`,
+      ...parallelBase,
+      laneOffset: 0,
+      group: "bundle",
+    });
+  }
+  scenarios.push({
+    id: "forced-fallback",
+    start: { x: 40, y: 100 },
+    end: { x: 360, y: 100 },
+    fromAnchor: "e",
+    toAnchor: "w",
+    // Inflated bounds contain both endpoints, so the router cannot avoid it and
+    // must emit a deterministic penetrating fallback with reported ids.
+    obstacles: [{ id: "wall", bounds: { x: 0, y: 60, width: 400, height: 80 } }],
+    expectFallback: true,
+  });
+  return scenarios;
+}
+
+/**
+ * Deck-independent verification of the deterministic curved router: determinism,
+ * finite geometry, exact endpoints, no unexpected obstacle penetration, correct
+ * fallback reporting, and lane/bundle separation. Returns only errors so a clean
+ * run reports zero findings.
+ *
+ * @returns {Finding[]}
+ */
+export function verifyAdvancedCurveRouting() {
+  const deck = "curve-router";
+  const findings = [];
+  const scenarios = buildCurveScenarios();
+  const byId = new Map();
+  for (const scenario of scenarios) {
+    const input = {
+      edgeId: scenario.id,
+      start: scenario.start,
+      end: scenario.end,
+      fromAnchor: scenario.fromAnchor,
+      toAnchor: scenario.toAnchor,
+      sourceId: scenario.sourceId,
+      targetId: scenario.targetId,
+      sourceBounds: scenario.sourceBounds,
+      targetBounds: scenario.targetBounds,
+      obstacles: scenario.obstacles ?? [],
+      siblings: [],
+      options: normalizeCurveRouteOptions(scenario.style),
+      laneOffset: scenario.laneOffset,
+    };
+    const first = routeCurve(input);
+    const second = routeCurve(input);
+    byId.set(scenario.id, first);
+
+    if (first.d !== second.d) {
+      findings.push(
+        finding("error", deck, scenario.id, "curve-nondeterministic", "repeated routeCurve produced different SVG"),
+      );
+    }
+    if (!routeFinite(first)) {
+      findings.push(
+        finding("error", deck, scenario.id, "curve-non-finite", `non-finite route geometry: ${first.d}`),
+      );
+    }
+    const expectStart = {
+      x: Math.round(scenario.start.x * 1000) / 1000,
+      y: Math.round(scenario.start.y * 1000) / 1000,
+    };
+    const expectEnd = {
+      x: Math.round(scenario.end.x * 1000) / 1000,
+      y: Math.round(scenario.end.y * 1000) / 1000,
+    };
+    const gotStart = first.segments[0]?.start ?? first.waypoints[0];
+    const gotEnd = first.segments.at(-1)?.end ?? first.waypoints.at(-1);
+    if (gotStart === undefined || !samePoint(gotStart, expectStart)) {
+      findings.push(
+        finding("error", deck, scenario.id, "curve-start-drift", "route does not begin at the authored start"),
+      );
+    }
+    if (gotEnd === undefined || !samePoint(gotEnd, expectEnd)) {
+      findings.push(
+        finding("error", deck, scenario.id, "curve-end-drift", "route does not end at the authored end"),
+      );
+    }
+    if (first.penetratedObstacleIds.length > 0 && !first.usedFallback) {
+      findings.push(
+        finding(
+          "error",
+          deck,
+          scenario.id,
+          "curve-penetration",
+          `route pierces ${first.penetratedObstacleIds.join(", ")} without fallback`,
+        ),
+      );
+    }
+    if (scenario.expectFallback) {
+      if (!first.usedFallback) {
+        findings.push(
+          finding("error", deck, scenario.id, "curve-expected-fallback", "expected a deterministic fallback route"),
+        );
+      }
+      if (first.penetratedObstacleIds.length === 0) {
+        findings.push(
+          finding("error", deck, scenario.id, "curve-fallback-no-ids", "fallback route did not report penetrated obstacles"),
+        );
+      }
+    }
+  }
+
+  // Parallel lanes must separate; bundled edges must coincide.
+  const parallelDs = new Set(
+    ["parallel-0", "parallel-1", "parallel-2"].map((id) => byId.get(id)?.d),
+  );
+  if (parallelDs.size !== 3) {
+    findings.push(
+      finding("error", deck, "parallel", "curve-lanes-collapsed", "parallel lanes did not separate into distinct routes"),
+    );
+  }
+  const bundleDs = new Set(
+    ["bundle-0", "bundle-1", "bundle-2"].map((id) => byId.get(id)?.d),
+  );
+  if (bundleDs.size !== 1) {
+    findings.push(
+      finding("error", deck, "bundle", "curve-bundle-split", "bundled edges did not share one corridor"),
+    );
+  }
+  return findings;
 }
 
 /**

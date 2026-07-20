@@ -17,6 +17,10 @@
  * - stack / grid / rail: `direction`, `cols`, `gap` (also via `style`)
  * - lane / band / swimlane / stepper: structure macros (`title`, `steps`, `labels`, `linked`)
  * - route / elbow / connector: `from`, `to`, `via`, `axis`
+ * - curved connectors: `style.route: "curve"` (or `sdk.edge mode: "curve"`)
+ *   with optional obstacle-aware controls `style.clearance`, `style.curvature`,
+ *   `style.avoidObstacles`, `style.preferredSide`, `style.bundle`, and
+ *   `style.parallelGap`
  * - fan-out / fan-in: scalar or array `from` / `to`, `axis`, `junction`
  * - motion.signal: `d`, or `from` / `to`
  * - stagger cues: `targets`, `step`, `easing`; actions `stagger` /

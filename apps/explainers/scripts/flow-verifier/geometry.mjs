@@ -591,6 +591,668 @@ function elbowPathData(start, end, via, axis) {
   return `M${start.x} ${start.y} V${midY} H${end.x} V${end.y}`;
 }
 
+function normalizeVector(vector) {
+  const length = Math.hypot(vector.x, vector.y);
+  if (length < 1e-6) {
+    return { x: 1, y: 0 };
+  }
+  return { x: vector.x / length, y: vector.y / length };
+}
+
+function anchorExitDirection(anchor, peer, self) {
+  switch (String(anchor ?? "center").toLowerCase()) {
+    case "left":
+    case "west":
+    case "w":
+      return { x: -1, y: 0 };
+    case "right":
+    case "east":
+    case "e":
+      return { x: 1, y: 0 };
+    case "top":
+    case "north":
+    case "n":
+      return { x: 0, y: -1 };
+    case "bottom":
+    case "south":
+    case "s":
+      return { x: 0, y: 1 };
+    case "ne":
+      return normalizeVector({ x: 1, y: -1 });
+    case "nw":
+      return normalizeVector({ x: -1, y: -1 });
+    case "se":
+      return normalizeVector({ x: 1, y: 1 });
+    case "sw":
+      return normalizeVector({ x: -1, y: 1 });
+    case "center":
+    case "middle":
+    case "c":
+      if (peer && self) {
+        return normalizeVector({ x: peer.x - self.x, y: peer.y - self.y });
+      }
+      return { x: 1, y: 0 };
+    default:
+      return { x: 1, y: 0 };
+  }
+}
+
+// --- Deterministic obstacle-aware curved router (Node mirror of the TS core) ---
+// Kept byte-behavior-equivalent to
+// src/core/diagram/connector-routing-{types,geometry,search}.ts so the verifier
+// exercises the same routing the renderer produces.
+
+const CUBIC_SAMPLE_COUNT = 33;
+const CANONICAL_SCALE = 1000;
+const MIN_HANDLE = 12;
+const MAX_HANDLE = 180;
+const CORNER_EPSILON = 0.5;
+const CURVATURE_LADDER = [1, 0.5, 0.25, 0.05];
+const LANE_OFFSET_LADDER = [1, 0.75, 0.5, 0.25];
+
+/** Default routing options; matches DEFAULT_CURVE_ROUTE_OPTIONS in the TS core. */
+export const DEFAULT_CURVE_ROUTE_OPTIONS = Object.freeze({
+  clearance: 12,
+  curvature: 0.45,
+  avoidObstacles: true,
+  preferredSide: "auto",
+  bundle: false,
+  parallelGap: 8,
+});
+
+function roundCanonical(value) {
+  if (!Number.isFinite(value)) return 0;
+  const rounded = Math.round(value * CANONICAL_SCALE) / CANONICAL_SCALE;
+  return rounded === 0 ? 0 : rounded;
+}
+
+function canonicalPointKey(point) {
+  return `${roundCanonical(point.x)},${roundCanonical(point.y)}`;
+}
+
+function inflateBounds(bounds, amount) {
+  const pad = Number.isFinite(amount) && amount > 0 ? amount : 0;
+  return {
+    x: bounds.x - pad,
+    y: bounds.y - pad,
+    width: bounds.width + pad * 2,
+    height: bounds.height + pad * 2,
+  };
+}
+
+function pointInBounds(point, bounds, strict = false) {
+  const left = bounds.x;
+  const right = bounds.x + bounds.width;
+  const top = bounds.y;
+  const bottom = bounds.y + bounds.height;
+  if (strict) {
+    return point.x > left && point.x < right && point.y > top && point.y < bottom;
+  }
+  return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
+}
+
+function segmentIntersectsBounds(start, end, bounds, allowBoundary = true) {
+  const left = bounds.x;
+  const right = bounds.x + bounds.width;
+  const top = bounds.y;
+  const bottom = bounds.y + bounds.height;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  let t0 = 0;
+  let t1 = 1;
+  const p = [-dx, dx, -dy, dy];
+  const q = [start.x - left, right - start.x, start.y - top, bottom - start.y];
+  for (let i = 0; i < 4; i += 1) {
+    const pi = p[i];
+    const qi = q[i];
+    if (pi === 0) {
+      if (qi < 0) return false;
+    } else {
+      const r = qi / pi;
+      if (pi < 0) {
+        if (r > t1) return false;
+        if (r > t0) t0 = r;
+      } else {
+        if (r < t0) return false;
+        if (r < t1) t1 = r;
+      }
+    }
+  }
+  if (t0 > t1) return false;
+  if (!allowBoundary) return true;
+  const mid = (t0 + t1) / 2;
+  const midPoint = { x: start.x + dx * mid, y: start.y + dy * mid };
+  return pointInBounds(midPoint, bounds, true);
+}
+
+function segmentIsVisible(start, end, obstacles) {
+  if (!Number.isFinite(start.x) || !Number.isFinite(start.y)) return false;
+  if (!Number.isFinite(end.x) || !Number.isFinite(end.y)) return false;
+  for (const obstacle of obstacles) {
+    if (segmentIntersectsBounds(start, end, obstacle.bounds, true)) return false;
+  }
+  return true;
+}
+
+function simplifyWaypoints(points) {
+  const deduped = [];
+  for (const point of points) {
+    const previous = deduped[deduped.length - 1];
+    if (
+      previous === undefined ||
+      roundCanonical(previous.x) !== roundCanonical(point.x) ||
+      roundCanonical(previous.y) !== roundCanonical(point.y)
+    ) {
+      deduped.push(point);
+    }
+  }
+  if (deduped.length <= 2) return deduped;
+  const simplified = [deduped[0]];
+  for (let i = 1; i < deduped.length - 1; i += 1) {
+    const prev = simplified[simplified.length - 1];
+    const curr = deduped[i];
+    const next = deduped[i + 1];
+    const cross =
+      (curr.x - prev.x) * (next.y - prev.y) - (curr.y - prev.y) * (next.x - prev.x);
+    if (Math.abs(cross) > 1e-6) simplified.push(curr);
+  }
+  simplified.push(deduped[deduped.length - 1]);
+  return simplified;
+}
+
+function cubicPoint(segment, t) {
+  const u = 1 - t;
+  const a = u * u * u;
+  const b = 3 * u * u * t;
+  const c = 3 * u * t * t;
+  const d = t * t * t;
+  return {
+    x: a * segment.start.x + b * segment.control1.x + c * segment.control2.x + d * segment.end.x,
+    y: a * segment.start.y + b * segment.control1.y + c * segment.control2.y + d * segment.end.y,
+  };
+}
+
+function cubicPenetrations(segment, obstacles) {
+  const hits = new Set();
+  for (const obstacle of obstacles) {
+    for (let i = 0; i < CUBIC_SAMPLE_COUNT; i += 1) {
+      const t = i / (CUBIC_SAMPLE_COUNT - 1);
+      if (pointInBounds(cubicPoint(segment, t), obstacle.bounds, true)) {
+        hits.add(obstacle.id);
+        break;
+      }
+    }
+  }
+  return [...hits].sort((left, right) => left.localeCompare(right));
+}
+
+function routeBounds(points) {
+  if (points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  return {
+    x: roundCanonical(minX),
+    y: roundCanonical(minY),
+    width: roundCanonical(maxX - minX),
+    height: roundCanonical(maxY - minY),
+  };
+}
+
+function unit(vector) {
+  const length = Math.hypot(vector.x, vector.y);
+  if (length < 1e-6) return { x: 1, y: 0 };
+  return { x: vector.x / length, y: vector.y / length };
+}
+
+function distance2(a, b) {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+function clampHandle(length, curvature) {
+  const raw = length * curvature;
+  if (!Number.isFinite(raw)) return MIN_HANDLE;
+  return Math.min(Math.max(raw, MIN_HANDLE), MAX_HANDLE);
+}
+
+function obstacleCorners(obstacles) {
+  const seen = new Set();
+  const corners = [];
+  for (const obstacle of obstacles) {
+    const { x, y, width, height } = obstacle.bounds;
+    const candidates = [
+      { x: x - CORNER_EPSILON, y: y - CORNER_EPSILON },
+      { x: x + width + CORNER_EPSILON, y: y - CORNER_EPSILON },
+      { x: x - CORNER_EPSILON, y: y + height + CORNER_EPSILON },
+      { x: x + width + CORNER_EPSILON, y: y + height + CORNER_EPSILON },
+    ];
+    for (const candidate of candidates) {
+      if (obstacles.some((other) => pointInBounds(candidate, other.bounds, true))) continue;
+      const key = canonicalPointKey(candidate);
+      if (!seen.has(key)) {
+        seen.add(key);
+        corners.push({ x: roundCanonical(candidate.x), y: roundCanonical(candidate.y) });
+      }
+    }
+  }
+  return corners;
+}
+
+function shortestVisiblePath(start, end, obstacles) {
+  const startNode = { point: start, key: canonicalPointKey(start) };
+  const endNode = { point: end, key: canonicalPointKey(end) };
+  const nodes = [startNode];
+  const seenKeys = new Set([startNode.key]);
+  for (const corner of obstacleCorners(obstacles)) {
+    const key = canonicalPointKey(corner);
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      nodes.push({ point: corner, key });
+    }
+  }
+  if (!seenKeys.has(endNode.key)) {
+    seenKeys.add(endNode.key);
+    nodes.push(endNode);
+  }
+  nodes.sort((a, b) => a.key.localeCompare(b.key));
+
+  const gScore = new Map();
+  const cameFrom = new Map();
+  const nodeByKey = new Map();
+  for (const node of nodes) nodeByKey.set(node.key, node);
+  gScore.set(startNode.key, 0);
+  const open = new Set([startNode.key]);
+  const heuristic = (node) => distance2(node.point, end);
+
+  while (open.size > 0) {
+    let currentKey;
+    let bestF = Infinity;
+    for (const key of open) {
+      const g = gScore.get(key) ?? Infinity;
+      const node = nodeByKey.get(key);
+      const f = g + heuristic(node);
+      if (
+        f < bestF - 1e-9 ||
+        (Math.abs(f - bestF) <= 1e-9 && (currentKey === undefined || key.localeCompare(currentKey) < 0))
+      ) {
+        bestF = f;
+        currentKey = key;
+      }
+    }
+    if (currentKey === undefined) break;
+    if (currentKey === endNode.key) {
+      const path = [];
+      let cursor = currentKey;
+      while (cursor !== undefined) {
+        path.push(nodeByKey.get(cursor).point);
+        cursor = cameFrom.get(cursor);
+      }
+      path.reverse();
+      return path;
+    }
+    open.delete(currentKey);
+    const current = nodeByKey.get(currentKey);
+    const currentG = gScore.get(currentKey) ?? Infinity;
+    for (const neighbor of nodes) {
+      if (neighbor.key === currentKey) continue;
+      if (!segmentIsVisible(current.point, neighbor.point, obstacles)) continue;
+      const tentative = currentG + distance2(current.point, neighbor.point);
+      const known = gScore.get(neighbor.key) ?? Infinity;
+      if (tentative < known - 1e-9) {
+        cameFrom.set(neighbor.key, currentKey);
+        gScore.set(neighbor.key, tentative);
+        open.add(neighbor.key);
+      }
+    }
+  }
+  return undefined;
+}
+
+function travelTangents(points, fromDir, toDir) {
+  const tangents = [];
+  for (let i = 0; i < points.length; i += 1) {
+    if (i === 0) {
+      tangents.push(unit(fromDir));
+    } else if (i === points.length - 1) {
+      tangents.push(unit({ x: -toDir.x, y: -toDir.y }));
+    } else {
+      tangents.push(unit({ x: points[i + 1].x - points[i - 1].x, y: points[i + 1].y - points[i - 1].y }));
+    }
+  }
+  return tangents;
+}
+
+function smoothPolyline(points, fromDir, toDir, curvature) {
+  const segments = [];
+  if (points.length < 2) return segments;
+  const tangents = travelTangents(points, fromDir, toDir);
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i];
+    const b = points[i + 1];
+    const handle = clampHandle(distance2(a, b), curvature);
+    segments.push({
+      start: a,
+      control1: { x: a.x + tangents[i].x * handle, y: a.y + tangents[i].y * handle },
+      control2: { x: b.x - tangents[i + 1].x * handle, y: b.y - tangents[i + 1].y * handle },
+      end: b,
+    });
+  }
+  return segments;
+}
+
+function endpointExitDirection(anchor, peer, self) {
+  return unit(anchorExitDirection(anchor, peer, self));
+}
+
+function resolveWaypoints(start, end, obstacles, clearance) {
+  const inflated = obstacles
+    .map((obstacle) => ({ id: obstacle.id, bounds: inflateBounds(obstacle.bounds, clearance) }))
+    .filter(
+      (obstacle) =>
+        !pointInBounds(start, obstacle.bounds, true) && !pointInBounds(end, obstacle.bounds, true),
+    );
+  if (inflated.length === 0 || segmentIsVisible(start, end, inflated)) {
+    return { waypoints: [start, end], feasible: true };
+  }
+  const path = shortestVisiblePath(start, end, inflated);
+  if (path === undefined || path.length < 2) {
+    return { waypoints: [start, end], feasible: false };
+  }
+  return { waypoints: simplifyWaypoints(path), feasible: true };
+}
+
+function formatNumber(value) {
+  return String(roundCanonical(value));
+}
+
+function segmentsToPathData(start, segments) {
+  if (segments.length === 0) return `M${formatNumber(start.x)} ${formatNumber(start.y)}`;
+  let d = `M${formatNumber(start.x)} ${formatNumber(start.y)}`;
+  for (const segment of segments) {
+    d +=
+      ` C${formatNumber(segment.control1.x)} ${formatNumber(segment.control1.y)}` +
+      ` ${formatNumber(segment.control2.x)} ${formatNumber(segment.control2.y)}` +
+      ` ${formatNumber(segment.end.x)} ${formatNumber(segment.end.y)}`;
+  }
+  return d;
+}
+
+function readNumber(record, key) {
+  const value = record?.[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function readBoolean(record, key) {
+  const value = record?.[key];
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
+}
+
+function readPreferredSide(record, key) {
+  const value = record?.[key];
+  if (typeof value !== "string") return undefined;
+  switch (value.toLowerCase()) {
+    case "auto":
+      return "auto";
+    case "n":
+    case "north":
+    case "top":
+      return "n";
+    case "s":
+    case "south":
+    case "bottom":
+      return "s";
+    case "e":
+    case "east":
+    case "right":
+      return "e";
+    case "w":
+    case "west":
+    case "left":
+      return "w";
+    default:
+      return undefined;
+  }
+}
+
+export function normalizeCurveRouteOptions(style) {
+  const clearanceRaw = readNumber(style, "clearance");
+  const curvatureRaw = readNumber(style, "curvature");
+  const parallelGapRaw = readNumber(style, "parallelGap") ?? readNumber(style, "laneGap");
+  return {
+    clearance:
+      clearanceRaw !== undefined && clearanceRaw >= 0
+        ? clearanceRaw
+        : DEFAULT_CURVE_ROUTE_OPTIONS.clearance,
+    curvature:
+      curvatureRaw !== undefined
+        ? Math.min(Math.max(curvatureRaw, 0.05), 0.95)
+        : DEFAULT_CURVE_ROUTE_OPTIONS.curvature,
+    avoidObstacles: readBoolean(style, "avoidObstacles") ?? DEFAULT_CURVE_ROUTE_OPTIONS.avoidObstacles,
+    preferredSide: readPreferredSide(style, "preferredSide") ?? DEFAULT_CURVE_ROUTE_OPTIONS.preferredSide,
+    bundle: readBoolean(style, "bundle") ?? DEFAULT_CURVE_ROUTE_OPTIONS.bundle,
+    parallelGap:
+      parallelGapRaw !== undefined && parallelGapRaw >= 0
+        ? parallelGapRaw
+        : DEFAULT_CURVE_ROUTE_OPTIONS.parallelGap,
+  };
+}
+
+function segmentBoundsPoints(start, segments) {
+  const points = [start];
+  for (const segment of segments) {
+    points.push(segment.control1, segment.control2, segment.end);
+  }
+  return points;
+}
+
+function penetratedIds(segments, obstacles) {
+  const hits = new Set();
+  for (const segment of segments) {
+    for (const id of cubicPenetrations(segment, obstacles)) hits.add(id);
+  }
+  return [...hits].sort((a, b) => a.localeCompare(b));
+}
+
+function chordNormal(a, b) {
+  return unit({ x: -(b.y - a.y), y: b.x - a.x });
+}
+
+function applyLaneOffset(points, offset) {
+  if (!Number.isFinite(offset) || offset === 0 || points.length < 2) return points;
+  const start = points[0];
+  const end = points[points.length - 1];
+  if (points.length === 2) {
+    const normal = chordNormal(start, end);
+    const mid = {
+      x: (start.x + end.x) / 2 + normal.x * offset,
+      y: (start.y + end.y) / 2 + normal.y * offset,
+    };
+    return [start, mid, end];
+  }
+  const shifted = [start];
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const normal = chordNormal(points[i - 1], points[i + 1]);
+    shifted.push({ x: points[i].x + normal.x * offset, y: points[i].y + normal.y * offset });
+  }
+  shifted.push(end);
+  return shifted;
+}
+
+function selfLoopCandidates(input) {
+  const bounds = input.sourceBounds ?? input.targetBounds;
+  if (bounds === undefined) return [];
+  const gap = input.options.clearance + input.options.parallelGap;
+  const start = { x: roundCanonical(input.start.x), y: roundCanonical(input.start.y) };
+  const end = { x: roundCanonical(input.end.x), y: roundCanonical(input.end.y) };
+  const left = bounds.x - gap;
+  const right = bounds.x + bounds.width + gap;
+  const top = bounds.y - gap;
+  const bottom = bounds.y + bounds.height + gap;
+  return [
+    [start, { x: start.x, y: top }, { x: end.x, y: top }, end],
+    [start, { x: right, y: start.y }, { x: right, y: end.y }, end],
+    [start, { x: start.x, y: bottom }, { x: end.x, y: bottom }, end],
+    [start, { x: left, y: start.y }, { x: left, y: end.y }, end],
+  ];
+}
+
+function renderPolyline(waypoints, fromDir, toDir, obstacles, curvature) {
+  let bestSegments = smoothPolyline(waypoints, fromDir, toDir, curvature);
+  let bestPenetrations = penetratedIds(bestSegments, obstacles);
+  if (bestPenetrations.length > 0) {
+    for (const factor of CURVATURE_LADDER) {
+      const candidate = smoothPolyline(waypoints, fromDir, toDir, Math.max(curvature * factor, 0.02));
+      const penetrations = penetratedIds(candidate, obstacles);
+      if (penetrations.length < bestPenetrations.length) {
+        bestSegments = candidate;
+        bestPenetrations = penetrations;
+      }
+      if (penetrations.length === 0) break;
+    }
+  }
+  return { segments: bestSegments, penetrations: bestPenetrations };
+}
+
+/** Node mirror of routeCurve in connector-routing-search.ts. */
+export function routeCurve(input) {
+  const options = input.options ?? DEFAULT_CURVE_ROUTE_OPTIONS;
+  const start = { x: roundCanonical(input.start.x), y: roundCanonical(input.start.y) };
+  const end = { x: roundCanonical(input.end.x), y: roundCanonical(input.end.y) };
+  const fromDir = endpointExitDirection(input.fromAnchor, end, start);
+  const toDir = endpointExitDirection(input.toAnchor, start, end);
+  const obstacles = input.obstacles ?? [];
+
+  const isSelfLoop =
+    input.sourceId !== undefined &&
+    input.sourceId === input.targetId &&
+    Math.hypot(end.x - start.x, end.y - start.y) < 1e-3 * (options.clearance + 1) + 4;
+
+  let waypoints = [start, end];
+  let feasible = true;
+  if (isSelfLoop) {
+    const candidates = selfLoopCandidates(input);
+    let bestLoop;
+    let bestLoopWaypoints;
+    for (const candidate of candidates) {
+      const rendered = renderPolyline(candidate, fromDir, toDir, obstacles, options.curvature);
+      if (rendered.penetrations.length === 0) {
+        bestLoop = rendered;
+        bestLoopWaypoints = candidate;
+        break;
+      }
+      if (bestLoop === undefined || rendered.penetrations.length < bestLoop.penetrations.length) {
+        bestLoop = rendered;
+        bestLoopWaypoints = candidate;
+      }
+    }
+    if (bestLoop !== undefined && bestLoopWaypoints !== undefined) {
+      return {
+        d: segmentsToPathData(start, bestLoop.segments),
+        waypoints: bestLoopWaypoints,
+        segments: bestLoop.segments,
+        bounds: routeBounds(segmentBoundsPoints(start, bestLoop.segments)),
+        usedFallback: bestLoop.penetrations.length > 0,
+        penetratedObstacleIds: bestLoop.penetrations,
+      };
+    }
+  }
+
+  if (options.avoidObstacles && obstacles.length > 0) {
+    const resolved = resolveWaypoints(start, end, obstacles, options.clearance);
+    waypoints = resolved.waypoints;
+    feasible = resolved.feasible;
+  }
+
+  let best = renderPolyline(waypoints, fromDir, toDir, obstacles, options.curvature);
+  let bestWaypoints = waypoints;
+  const laneOffset = input.laneOffset ?? 0;
+  if (laneOffset !== 0) {
+    for (const factor of LANE_OFFSET_LADDER) {
+      const offsetWaypoints = applyLaneOffset(waypoints, laneOffset * factor);
+      const rendered = renderPolyline(offsetWaypoints, fromDir, toDir, obstacles, options.curvature);
+      if (rendered.penetrations.length <= best.penetrations.length) {
+        best = rendered;
+        bestWaypoints = offsetWaypoints;
+        break;
+      }
+    }
+  }
+
+  return {
+    d: segmentsToPathData(start, best.segments),
+    waypoints: bestWaypoints,
+    segments: best.segments,
+    bounds: routeBounds(segmentBoundsPoints(start, best.segments)),
+    usedFallback: !feasible || best.penetrations.length > 0,
+    penetratedObstacleIds: best.penetrations,
+  };
+}
+
+/**
+ * Validate a resolved route: emit an error for unexpected obstacle penetration
+ * and a warning for an explicit deterministic fallback.
+ */
+export function verifyCurveRouteResult(edgeId, result, obstacles) {
+  const findings = [];
+  const penetrations = penetratedIds(result.segments, obstacles ?? []);
+  if (penetrations.length > 0 && !result.usedFallback) {
+    findings.push({
+      severity: "error",
+      code: "CURVE_OBSTACLE_PENETRATION",
+      edgeId,
+      obstacleIds: penetrations,
+    });
+  }
+  if (result.usedFallback) {
+    findings.push({
+      severity: "warn",
+      code: "CURVE_FALLBACK",
+      edgeId,
+      obstacleIds: result.penetratedObstacleIds ?? [],
+    });
+  }
+  return findings;
+}
+
+function isElbowRoute(node) {
+  const capability = capabilityOf(node);
+  if (capability === "core.elbow" || capability === "core.route") {
+    return true;
+  }
+  if (node?.kind === "elbow") {
+    return true;
+  }
+  return node?.style?.route === "elbow";
+}
+
+function isCurveRoute(node) {
+  if (node?.style?.route === "curve") {
+    return true;
+  }
+  return capabilityOf(node) === "core.curve";
+}
+
+function endpointAnchor(endpoint) {
+  return typeof endpoint?.anchor === "string" && endpoint.anchor.length > 0
+    ? endpoint.anchor
+    : undefined;
+}
+
 export function arrowPathData(node, nodesById) {
   if (typeof node?.d === "string" && node.d.trim()) return node.d;
   if (typeof node?.path === "string" && node.path.trim()) return node.path;
@@ -601,13 +1263,21 @@ export function arrowPathData(node, nodesById) {
   const start = resolveEndpoint(from, nodesById);
   const end = resolveEndpoint(to, nodesById);
   if (start && end) {
-    const capability = capabilityOf(node);
-    if (
-      capability === "core.elbow" ||
-      capability === "core.route" ||
-      node?.kind === "elbow" ||
-      node?.style?.route === "elbow"
-    ) {
+    if (isCurveRoute(node)) {
+      return routeCurve({
+        edgeId: String(node?.id ?? ""),
+        start,
+        end,
+        fromAnchor: endpointAnchor(from),
+        toAnchor: endpointAnchor(to),
+        sourceId: typeof from?.nodeId === "string" ? from.nodeId : undefined,
+        targetId: typeof to?.nodeId === "string" ? to.nodeId : undefined,
+        obstacles: [],
+        siblings: [],
+        options: normalizeCurveRouteOptions(node?.style),
+      }).d;
+    }
+    if (isElbowRoute(node)) {
       const via = resolveEndpoint(node?.via, nodesById);
       const styledAxis = node?.style?.axis;
       const axis =

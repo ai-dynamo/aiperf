@@ -21,6 +21,18 @@ import {
   resolveMarkerTip,
   type ResolvedMarkerTip,
 } from "./arrow-tips";
+import {
+  elbowPathData,
+  isCurveRoute,
+  isElbowRoute,
+  normalizeCurveRouteOptions,
+  routeCurve,
+  translateRoutePath,
+  type CurveRouteOptions,
+  type CurveRouteResult,
+  type RouteObstacle,
+  type RoutedSibling,
+} from "./connector-routing.js";
 import { FlowArrow } from "./FlowArrow";
 import { MotionSignal } from "./MotionSignal";
 
@@ -258,6 +270,14 @@ const ZERO_ORIGIN: LayoutOrigin = { x: 0, y: 0 };
 type SceneNodeIndex = Readonly<{
   nodesById: ReadonlyMap<string, SceneNodeLike>;
   worldGeometryById: ReadonlyMap<string, SceneGeometryLike>;
+  ancestorIdsById: ReadonlyMap<string, readonly string[]>;
+  /**
+   * World-space curved routes resolved once per scene in document order, so
+   * parallel lanes, bundles, and self-loops account for sibling edges. Consumers
+   * rebase into their drawing frame; edges with non-node endpoints are absent and
+   * fall back to per-call resolution.
+   */
+  curveRoutesById: ReadonlyMap<string, CurveRouteResult>;
 }>;
 
 type ScenePoint = Readonly<{ x: number; y: number }>;
@@ -624,13 +644,19 @@ function computeStackLayout(
   }
   const width =
     parentGeom.width > 0
-      ? parentGeom.width
+      ? Math.max(
+          parentGeom.width,
+          direction === "row" ? cursor : cross,
+        )
       : direction === "row"
         ? cursor
         : cross;
   const height =
     parentGeom.height > 0
-      ? parentGeom.height
+      ? Math.max(
+          parentGeom.height,
+          direction === "column" ? cursor : cross,
+        )
       : direction === "column"
         ? cursor
         : cross;
@@ -689,8 +715,14 @@ function computeGridLayout(
   return {
     parentGeom: {
       ...parentGeom,
-      width: parentGeom.width > 0 ? parentGeom.width : contentWidth,
-      height: parentGeom.height > 0 ? parentGeom.height : contentHeight,
+      width:
+        parentGeom.width > 0
+          ? Math.max(parentGeom.width, contentWidth)
+          : contentWidth,
+      height:
+        parentGeom.height > 0
+          ? Math.max(parentGeom.height, contentHeight)
+          : contentHeight,
     },
     childGeoms,
   };
@@ -713,15 +745,22 @@ function computeRailLayout(
   }
   const authored = children.map((child) => geometryOf(child));
   const totalGap = gap * Math.max(count - 1, 0);
+  const maxChildWidth = Math.max(...authored.map((g) => g.width), 0);
+  const maxChildHeight = Math.max(...authored.map((g) => g.height), 0);
   let parentWidth = parentGeom.width;
   let parentHeight = parentGeom.height;
   if (direction === "row") {
+    const minContentWidth =
+      authored.reduce((sum, g) => sum + (g.width > 0 ? g.width : maxChildWidth), 0) + totalGap;
     if (parentWidth <= 0) {
-      const maxChild = Math.max(...authored.map((g) => g.width), 1);
-      parentWidth = maxChild * count + totalGap;
+      parentWidth = minContentWidth > 0 ? minContentWidth : maxChildWidth * count + totalGap;
+    } else {
+      parentWidth = Math.max(parentWidth, minContentWidth);
     }
     if (parentHeight <= 0) {
-      parentHeight = Math.max(...authored.map((g) => g.height), 0);
+      parentHeight = maxChildHeight;
+    } else {
+      parentHeight = Math.max(parentHeight, maxChildHeight);
     }
     const slot = Math.max((parentWidth - totalGap) / count, 0);
     const childGeoms = authored.map((g, index) => ({
@@ -736,11 +775,18 @@ function computeRailLayout(
     };
   }
   if (parentHeight <= 0) {
-    const maxChild = Math.max(...authored.map((g) => g.height), 1);
-    parentHeight = maxChild * count + totalGap;
+    const minContentHeight =
+      authored.reduce((sum, g) => sum + (g.height > 0 ? g.height : maxChildHeight), 0) + totalGap;
+    parentHeight = minContentHeight > 0 ? minContentHeight : maxChildHeight * count + totalGap;
+  } else {
+    const minContentHeight =
+      authored.reduce((sum, g) => sum + (g.height > 0 ? g.height : maxChildHeight), 0) + totalGap;
+    parentHeight = Math.max(parentHeight, minContentHeight);
   }
   if (parentWidth <= 0) {
-    parentWidth = Math.max(...authored.map((g) => g.width), 0);
+    parentWidth = maxChildWidth;
+  } else {
+    parentWidth = Math.max(parentWidth, maxChildWidth);
   }
   const slot = Math.max((parentHeight - totalGap) / count, 0);
   const childGeoms = authored.map((g, index) => ({
@@ -790,6 +836,7 @@ function resolveContainerLayout(
 function indexSceneNodes(roots: readonly SceneNodeLike[]): SceneNodeIndex {
   const nodesById = new Map<string, SceneNodeLike>();
   const worldGeometryById = new Map<string, SceneGeometryLike>();
+  const ancestorIdsById = new Map<string, readonly string[]>();
 
   const visit = (
     node: SceneNodeLike,
@@ -797,6 +844,7 @@ function indexSceneNodes(roots: readonly SceneNodeLike[]): SceneNodeIndex {
     originY: number,
     coordsAreLocal: boolean,
     geometryOverride: SceneGeometryLike | undefined,
+    ancestors: readonly string[],
   ): void => {
     let authored = geometryOverride ?? geometryOf(node);
     const relative = node.relativePosition;
@@ -829,25 +877,169 @@ function indexSceneNodes(roots: readonly SceneNodeLike[]): SceneNodeIndex {
       : laidOutParent;
     nodesById.set(node.id, node);
     worldGeometryById.set(node.id, worldGeom);
+    ancestorIdsById.set(node.id, ancestors);
 
     if (!Array.isArray(kids) || kids.length === 0) {
       return;
     }
+    const childAncestors = [...ancestors, node.id];
     const local = childrenUseLocalLayout(node, laidOutParent, kids);
     kids.forEach((child, index) => {
       const childOverride = childGeoms?.[index];
       if (local) {
-        visit(child, worldGeom.x, worldGeom.y, true, childOverride);
+        visit(child, worldGeom.x, worldGeom.y, true, childOverride, childAncestors);
       } else {
-        visit(child, 0, 0, false, childOverride);
+        visit(child, 0, 0, false, childOverride, childAncestors);
       }
     });
   };
 
   for (const root of roots) {
-    visit(root, 0, 0, false, undefined);
+    visit(root, 0, 0, false, undefined, []);
   }
-  return { nodesById, worldGeometryById };
+  const curveRoutesById = resolveSceneCurveRoutes(
+    nodesById,
+    worldGeometryById,
+    ancestorIdsById,
+  );
+  return { nodesById, worldGeometryById, ancestorIdsById, curveRoutesById };
+}
+
+/** World-space endpoint of a curved edge when it is anchored to a known node. */
+function sceneCurveEndpointWorld(
+  endpoint: ScenePointLike | undefined,
+  worldGeometryById: ReadonlyMap<string, SceneGeometryLike>,
+): Readonly<{ point: ScenePoint; id: string; anchor: string | undefined }> | undefined {
+  const id =
+    typeof endpoint?.nodeId === "string" && endpoint.nodeId.length > 0
+      ? endpoint.nodeId
+      : undefined;
+  if (id === undefined) {
+    return undefined;
+  }
+  const world = worldGeometryById.get(id);
+  if (world === undefined) {
+    return undefined;
+  }
+  const anchor = typeof endpoint?.anchor === "string" ? endpoint.anchor : undefined;
+  return { point: nodeAnchorPoint(world, anchor), id, anchor };
+}
+
+/**
+ * Resolve every node-anchored curved edge once, in document order, so parallel
+ * edges separate into deterministic lanes (or collapse into a bundle) and
+ * self-loops arc around their box. Routes are world-space; consumers rebase them.
+ */
+function resolveSceneCurveRoutes(
+  nodesById: ReadonlyMap<string, SceneNodeLike>,
+  worldGeometryById: ReadonlyMap<string, SceneGeometryLike>,
+  ancestorIdsById: ReadonlyMap<string, readonly string[]>,
+): ReadonlyMap<string, CurveRouteResult> {
+  type CurveEdge = Readonly<{
+    node: SceneNodeLike;
+    from: ScenePointLike | undefined;
+    to: ScenePointLike | undefined;
+    start: ScenePoint;
+    end: ScenePoint;
+    fromId: string;
+    toId: string;
+    fromAnchor: string | undefined;
+    toAnchor: string | undefined;
+    options: CurveRouteOptions;
+  }>;
+
+  const edges: CurveEdge[] = [];
+  for (const node of nodesById.values()) {
+    if (!isCurveRoute(node)) {
+      continue;
+    }
+    const from = singleScenePoint(node.from);
+    const to = singleScenePoint(node.to);
+    const source = sceneCurveEndpointWorld(from, worldGeometryById);
+    const target = sceneCurveEndpointWorld(to, worldGeometryById);
+    if (source === undefined || target === undefined) {
+      continue;
+    }
+    edges.push({
+      node,
+      from,
+      to,
+      start: source.point,
+      end: target.point,
+      fromId: source.id,
+      toId: target.id,
+      fromAnchor: source.anchor,
+      toAnchor: target.anchor,
+      options: normalizeCurveRouteOptions(node.style),
+    });
+  }
+
+  // Assign symmetric lane offsets to edges sharing endpoints and anchors.
+  const laneOffsetByNode = new Map<string, number>();
+  const groups = new Map<string, CurveEdge[]>();
+  for (const edge of edges) {
+    const key = `${edge.fromId}\u0000${edge.toId}\u0000${edge.fromAnchor ?? ""}\u0000${edge.toAnchor ?? ""}`;
+    const group = groups.get(key);
+    if (group === undefined) {
+      groups.set(key, [edge]);
+    } else {
+      group.push(edge);
+    }
+  }
+  for (const group of groups.values()) {
+    if (group.length < 2) {
+      continue;
+    }
+    if (group.every((edge) => edge.options.bundle)) {
+      for (const edge of group) {
+        laneOffsetByNode.set(edge.node.id, 0);
+      }
+      continue;
+    }
+    const ordered = [...group].sort((left, right) => left.node.id.localeCompare(right.node.id));
+    const count = ordered.length;
+    ordered.forEach((edge, index) => {
+      const lane = index - (count - 1) / 2;
+      laneOffsetByNode.set(edge.node.id, lane * edge.options.parallelGap);
+    });
+  }
+
+  const tempIndex: SceneNodeIndex = {
+    nodesById,
+    worldGeometryById,
+    ancestorIdsById,
+    curveRoutesById: new Map(),
+  };
+  const routes = new Map<string, CurveRouteResult>();
+  const siblings: RoutedSibling[] = [];
+  for (const edge of edges) {
+    const route = routeCurve({
+      edgeId: edge.node.id,
+      start: edge.start,
+      end: edge.end,
+      fromAnchor: edge.fromAnchor,
+      toAnchor: edge.toAnchor,
+      sourceId: edge.fromId,
+      targetId: edge.toId,
+      sourceBounds: worldGeometryById.get(edge.fromId),
+      targetBounds: worldGeometryById.get(edge.toId),
+      obstacles: curveObstacles(edge.from, edge.to, tempIndex, edge.options),
+      siblings,
+      options: edge.options,
+      laneOffset: laneOffsetByNode.get(edge.node.id) ?? 0,
+    });
+    routes.set(edge.node.id, route);
+    siblings.push({
+      id: edge.node.id,
+      sourceId: edge.fromId,
+      targetId: edge.toId,
+      fromAnchor: edge.fromAnchor,
+      toAnchor: edge.toAnchor,
+      waypoints: route.waypoints,
+      segments: route.segments,
+    });
+  }
+  return routes;
 }
 
 /** Center point of world-space geometry. */
@@ -1103,17 +1295,15 @@ function motionSignalPathData(
   if (hasNodeEndpoint) {
     const start = resolveMotionEndpoint(from, to, index, layoutOrigin, "from");
     const end = resolveMotionEndpoint(to, from, index, layoutOrigin, "to");
-    raw =
-      node.via !== undefined || connectorAxisOf(node) !== undefined
-        ? elbowPathData(
-            start,
-            end,
-            node.via === undefined
-              ? undefined
-              : resolveEndpoint(node.via, index, layoutOrigin),
-            connectorAxisOf(node),
-          )
-        : `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} L${formatPathNumber(end.x)} ${formatPathNumber(end.y)}`;
+    raw = motionConnectorPathData(
+      node,
+      start,
+      end,
+      from,
+      to,
+      index,
+      layoutOrigin,
+    );
   } else {
     const authored =
       typeof node.d === "string" && node.d.length > 0
@@ -2212,19 +2402,6 @@ function isCircleOrEllipse(node: SceneNodeLike, capability: string): boolean {
   return node.kind === "circle" || node.kind === "ellipse";
 }
 
-function isElbowConnector(node: SceneNodeLike, capability: string): boolean {
-  if (capability === "core.elbow" || capability === "core.route") {
-    return true;
-  }
-  if (node.style?.route === "elbow") {
-    return true;
-  }
-  if (node.kind === "elbow") {
-    return true;
-  }
-  return false;
-}
-
 function connectorAxisOf(
   node: SceneNodeLike,
 ): "x" | "y" | undefined {
@@ -2239,33 +2416,137 @@ function connectorAxisOf(
 }
 
 /**
- * Orthogonal elbow path: `M x1 y1 H/V mid H/V x2 y2`.
- * `via` supplies the bend coordinate; otherwise midpoint. `axis` prefers the
- * first segment direction (`x` → horizontal first).
+ * Nodes eligible to act as routing obstacles. Connectors, fans, motion signals,
+ * and the arrow family are never obstacles; positive-area filtering happens in
+ * {@link curveObstacles}.
  */
-function elbowPathData(
+function isRouteObstacleNode(node: SceneNodeLike): boolean {
+  const capability = capabilityOf(node);
+  return (
+    !ARROW_CAPABILITIES.has(capability) &&
+    !MOTION_SIGNAL_CAPABILITIES.has(capability) &&
+    node.kind !== "connector" &&
+    node.kind !== "fan"
+  );
+}
+
+/**
+ * World-space obstacle rectangles for one curved edge. The source, target, and
+ * their ancestor containers are excluded so a curve is never blocked by the very
+ * boxes it connects; zero-area and non-finite geometry is dropped. The result is
+ * id-sorted for deterministic routing.
+ */
+function curveObstacles(
+  from: ScenePointLike | undefined,
+  to: ScenePointLike | undefined,
+  index: SceneNodeIndex,
+  options: CurveRouteOptions,
+): readonly RouteObstacle[] {
+  if (!options.avoidObstacles) {
+    return [];
+  }
+  const excludedIds = new Set<string>();
+  for (const endpoint of [from, to]) {
+    const id = endpoint?.nodeId;
+    if (typeof id === "string" && id.length > 0) {
+      excludedIds.add(id);
+      for (const ancestor of index.ancestorIdsById.get(id) ?? []) {
+        excludedIds.add(ancestor);
+      }
+    }
+  }
+  const obstacles: RouteObstacle[] = [];
+  for (const [id, geometry] of index.worldGeometryById) {
+    if (excludedIds.has(id)) {
+      continue;
+    }
+    const candidate = index.nodesById.get(id);
+    if (candidate === undefined || !isRouteObstacleNode(candidate)) {
+      continue;
+    }
+    if (
+      !Number.isFinite(geometry.x) ||
+      !Number.isFinite(geometry.y) ||
+      !Number.isFinite(geometry.width) ||
+      !Number.isFinite(geometry.height) ||
+      !(geometry.width > 0) ||
+      !(geometry.height > 0)
+    ) {
+      continue;
+    }
+    obstacles.push({ id, bounds: geometry });
+  }
+  obstacles.sort((left, right) => left.id.localeCompare(right.id));
+  return obstacles;
+}
+
+/**
+ * Resolve a curved edge into a single canonical route, shared by both the drawn
+ * stroke and any motion signal that travels it. Endpoints are lifted to world
+ * space so obstacle geometry lines up, then the resolved route is rebased back
+ * into the current drawing frame by subtracting `layoutOrigin`.
+ */
+function resolvedCurveRoute(
+  node: SceneNodeLike,
+  from: ScenePointLike | undefined,
+  to: ScenePointLike | undefined,
+  index: SceneNodeIndex,
+  layoutOrigin: LayoutOrigin,
+): CurveRouteResult {
+  // Prefer the scene-level route (sibling lanes, bundles, self-loops), rebased
+  // from world space into this node's drawing frame.
+  const sceneRoute = index.curveRoutesById.get(node.id);
+  if (sceneRoute !== undefined) {
+    return translateRoutePath(sceneRoute, -layoutOrigin.x, -layoutOrigin.y);
+  }
+  const frameStart = resolveEndpoint(from, index, layoutOrigin);
+  const frameEnd = resolveEndpoint(to, index, layoutOrigin);
+  const start = { x: frameStart.x + layoutOrigin.x, y: frameStart.y + layoutOrigin.y };
+  const end = { x: frameEnd.x + layoutOrigin.x, y: frameEnd.y + layoutOrigin.y };
+  const options = normalizeCurveRouteOptions(node.style);
+  const fromId = typeof from?.nodeId === "string" && from.nodeId.length > 0 ? from.nodeId : undefined;
+  const toId = typeof to?.nodeId === "string" && to.nodeId.length > 0 ? to.nodeId : undefined;
+  const route = routeCurve({
+    edgeId: node.id,
+    start,
+    end,
+    fromAnchor: typeof from?.anchor === "string" ? from.anchor : undefined,
+    toAnchor: typeof to?.anchor === "string" ? to.anchor : undefined,
+    sourceId: fromId,
+    targetId: toId,
+    sourceBounds: fromId !== undefined ? index.worldGeometryById.get(fromId) : undefined,
+    targetBounds: toId !== undefined ? index.worldGeometryById.get(toId) : undefined,
+    obstacles: curveObstacles(from, to, index, options),
+    siblings: [],
+    options,
+  });
+  return translateRoutePath(route, -layoutOrigin.x, -layoutOrigin.y);
+}
+
+/** Resolve connector geometry for motion overlays on node-linked endpoints. */
+function motionConnectorPathData(
+  node: SceneNodeLike,
   start: Readonly<{ x: number; y: number }>,
   end: Readonly<{ x: number; y: number }>,
-  via: Readonly<{ x: number; y: number }> | undefined,
-  axis: "x" | "y" | undefined,
+  from: ScenePointLike | undefined,
+  to: ScenePointLike | undefined,
+  index: SceneNodeIndex,
+  layoutOrigin: LayoutOrigin,
 ): string {
-  const dx = Math.abs(end.x - start.x);
-  const dy = Math.abs(end.y - start.y);
-  const preferX =
-    axis === "y" ? false : axis === "x" ? true : dx >= dy;
-  if (via !== undefined) {
-    // Route through the via bend point (both axes), then finish to end.
-    if (preferX) {
-      return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} H${formatPathNumber(via.x)} V${formatPathNumber(via.y)} H${formatPathNumber(end.x)} V${formatPathNumber(end.y)}`;
-    }
-    return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} V${formatPathNumber(via.y)} H${formatPathNumber(via.x)} V${formatPathNumber(end.y)} H${formatPathNumber(end.x)}`;
+  if (isCurveRoute(node)) {
+    return resolvedCurveRoute(node, from, to, index, layoutOrigin).d;
   }
-  if (preferX) {
-    const midX = (start.x + end.x) / 2;
-    return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} H${formatPathNumber(midX)} V${formatPathNumber(end.y)} H${formatPathNumber(end.x)}`;
+  if (isElbowRoute(node) || node.via !== undefined || connectorAxisOf(node) !== undefined) {
+    return elbowPathData(
+      start,
+      end,
+      node.via === undefined
+        ? undefined
+        : resolveEndpoint(node.via, index, layoutOrigin),
+      connectorAxisOf(node),
+    );
   }
-  const midY = (start.y + end.y) / 2;
-  return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} V${formatPathNumber(midY)} H${formatPathNumber(end.x)} V${formatPathNumber(end.y)}`;
+  return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} L${formatPathNumber(end.x)} ${formatPathNumber(end.y)}`;
 }
 
 /**
@@ -3089,6 +3370,13 @@ function styleToCss(
       key === "gap" ||
       key === "route" ||
       key === "axis" ||
+      key === "clearance" ||
+      key === "curvature" ||
+      key === "avoidObstacles" ||
+      key === "preferredSide" ||
+      key === "bundle" ||
+      key === "parallelGap" ||
+      key === "laneGap" ||
       key === "coordinateSpace" ||
       // Caps are owned by FlowArrow (butt under markers / draw reveal).
       key === "strokeLinecap" ||
@@ -3130,9 +3418,12 @@ function arrowPathData(
   const from = singleScenePoint(node.from);
   const to = singleScenePoint(node.to);
   if (from !== undefined || to !== undefined) {
+    if (isCurveRoute(node)) {
+      return resolvedCurveRoute(node, from, to, index, layoutOrigin).d;
+    }
     const start = resolveEndpoint(from, index, layoutOrigin);
     const end = resolveEndpoint(to, index, layoutOrigin);
-    if (isElbowConnector(node, capabilityOf(node))) {
+    if (isElbowRoute(node)) {
       const via =
         node.via !== undefined
           ? resolveEndpoint(node.via, index, layoutOrigin)
@@ -4133,9 +4424,8 @@ function renderNode(
             style={styleToCss(node.style, theme)}
             data-flow-arrowhead={showMarker ? "true" : "false"}
             data-flow-tip={tip?.key}
-            data-flow-elbow={
-              isElbowConnector(node, capability) ? "true" : undefined
-            }
+            data-flow-elbow={isElbowRoute(node) ? "true" : undefined}
+            data-flow-curve={isCurveRoute(node) ? "true" : undefined}
           />
           {/* Tip only near the end of long draws — short cues used to zip a
               progress-driven ball along the whole stroke in <300ms. */}

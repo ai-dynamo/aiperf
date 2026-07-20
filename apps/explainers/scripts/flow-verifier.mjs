@@ -32,7 +32,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { verifyPackageIr } from "./flow-verifier/ir.mjs";
+import { verifyAdvancedCurveRouting, verifyPackageIr } from "./flow-verifier/ir.mjs";
 import { verifyPlayAll } from "./flow-verifier/play.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -144,6 +144,8 @@ async function main() {
   const findings = [];
 
   if (!options.playOnly) {
+    console.error("IR: verifying advanced curve routing matrix…");
+    findings.push(...verifyAdvancedCurveRouting());
     const packages = await loadPackages(options.deck);
     console.error(`IR: verifying ${packages.length} package(s)…`);
     for (const pkg of packages) {

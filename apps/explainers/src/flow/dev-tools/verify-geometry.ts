@@ -11,6 +11,15 @@ import type {
   SceneIr,
   TimelineCueIr,
 } from "../schema/index.js";
+import {
+  elbowPathData,
+  isCurveRoute,
+  isElbowRoute,
+  normalizeCurveRouteOptions,
+  routeCurve,
+  type CurveRouteResult,
+  type RouteObstacle,
+} from "../../core/diagram/connector-routing.js";
 
 /** Default SceneRenderer viewport. */
 export const DEFAULT_VIEWPORT = Object.freeze({
@@ -649,26 +658,49 @@ function pathDataFromPoints(
     );
 }
 
-function elbowPathData(
-  start: Point,
-  end: Point,
-  via: Point | null,
-  axis: unknown,
-): string {
-  const dx = Math.abs(end.x - start.x);
-  const dy = Math.abs(end.y - start.y);
-  const preferX = axis === "y" ? false : axis === "x" ? true : dx >= dy;
-  if (via) {
-    return preferX
-      ? `M${start.x} ${start.y} H${via.x} V${via.y} H${end.x} V${end.y}`
-      : `M${start.x} ${start.y} V${via.y} H${via.x} V${end.y} H${end.x}`;
+function endpointAnchor(endpoint: unknown): string | undefined {
+  const value = record(endpoint);
+  return typeof value.anchor === "string" && value.anchor.length > 0
+    ? value.anchor
+    : undefined;
+}
+
+/** Route-metadata finding raised when a curved edge misbehaves. */
+export type CurveRouteFinding = Readonly<{
+  severity: "error" | "warn";
+  code: "CURVE_OBSTACLE_PENETRATION" | "CURVE_FALLBACK";
+  edgeId: string;
+  obstacleIds: readonly string[];
+}>;
+
+/**
+ * Classify a resolved route: an error when it pierces an obstacle without
+ * declaring a fallback, and a warning whenever it degrades to a deterministic
+ * fallback route.
+ */
+export function verifyCurveRouteResult(
+  edgeId: string,
+  result: CurveRouteResult,
+  _obstacles: readonly RouteObstacle[],
+): readonly CurveRouteFinding[] {
+  const findings: CurveRouteFinding[] = [];
+  if (result.penetratedObstacleIds.length > 0 && !result.usedFallback) {
+    findings.push({
+      severity: "error",
+      code: "CURVE_OBSTACLE_PENETRATION",
+      edgeId,
+      obstacleIds: result.penetratedObstacleIds,
+    });
   }
-  if (preferX) {
-    const midX = (start.x + end.x) / 2;
-    return `M${start.x} ${start.y} H${midX} V${end.y} H${end.x}`;
+  if (result.usedFallback) {
+    findings.push({
+      severity: "warn",
+      code: "CURVE_FALLBACK",
+      edgeId,
+      obstacleIds: result.penetratedObstacleIds,
+    });
   }
-  const midY = (start.y + end.y) / 2;
-  return `M${start.x} ${start.y} V${midY} H${end.x} V${end.y}`;
+  return findings;
 }
 
 /** Resolves authored connector forms into SVG path data. */
@@ -684,22 +716,32 @@ export function arrowPathData(
   const start = resolveEndpoint(value.from, nodesById);
   const end = resolveEndpoint(value.to, nodesById);
   if (start && end) {
-    const capability = capabilityOf(node);
-    const style = styleOf(node);
-    if (
-      capability === "core.elbow" ||
-      capability === "core.route" ||
-      value.kind === "elbow" ||
-      style.route === "elbow"
-    ) {
+    if (isCurveRoute(node)) {
+      const fromValue = record(value.from);
+      const toValue = record(value.to);
+      return routeCurve({
+        edgeId: typeof value.id === "string" ? value.id : "",
+        start,
+        end,
+        fromAnchor: endpointAnchor(value.from),
+        toAnchor: endpointAnchor(value.to),
+        sourceId: typeof fromValue.nodeId === "string" ? fromValue.nodeId : undefined,
+        targetId: typeof toValue.nodeId === "string" ? toValue.nodeId : undefined,
+        obstacles: [],
+        siblings: [],
+        options: normalizeCurveRouteOptions(styleOf(node)),
+      }).d;
+    }
+    if (isElbowRoute(node)) {
       const via = resolveEndpoint(value.via, nodesById);
+      const style = styleOf(node);
       const axis =
         value.axis === "x" || value.axis === "y"
           ? value.axis
           : style.axis === "x" || style.axis === "y"
             ? style.axis
             : undefined;
-      return elbowPathData(start, end, via, axis);
+      return elbowPathData(start, end, via ?? undefined, axis);
     }
     return `M${start.x} ${start.y} L${end.x} ${end.y}`;
   }
