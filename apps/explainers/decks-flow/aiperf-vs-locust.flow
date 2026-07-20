@@ -108,9 +108,9 @@ explainer "AIPerf vs Locust" {
 
     points: [
       "User.start(group) calls group.spawn(run_user, self) — a gevent.Greenlet, not an OS thread or process.",
-      "Concurrency comes from gevent's cooperative scheduler switching greenlets at I/O yield points.",
-      "Within one OS process, only one greenlet executes Python bytecode at a time.",
-      "Evidence: locust/user/users.py — `self._greenlet = group.spawn(run_user, self)`."
+      "With wait_time=0, each greenlet loops immediately after its request completes — at most one in-flight request per user.",
+      "N users spawned at once means exactly N in flight at steady state — concurrency is exact, just not centrally counted.",
+      "Evidence: locust/user/users.py — `self._greenlet = group.spawn(run_user, self)`; locust_user_concurrency_num_requests.py — `wait_time = constant(0)`."
     ]
 
     caption: "One OS process, many greenlets, cooperative interleaving."
@@ -680,33 +680,144 @@ explainer "AIPerf vs Locust" {
     }
   }
 
-  slide "Side by side" {
-    eyebrow: "Side by side"
-    title: "Simulated concurrency vs synchronized concurrency"
-    lede: "Locust's concurrency is an emergent property of how gevent schedules greenlets. AIPerf's concurrency is an explicit invariant the timing_manager enforces by counting outstanding credits."
+  slide "AIPerf: how stop conditions work" {
+    eyebrow: "AIPerf architecture"
+    title: "The credit ledger makes the cutoff exact, and draining optional"
+    lede: "Because timing_manager already tracks every outstanding credit, a request-count limit is a synchronous counter check in the admission path, not a poll — and the same ledger tells the runner exactly when every in-flight request has finished, so it can wait for a real drain instead of killing anything."
 
-    narration: "Put next to each other, the contrast is at the level of what 'concurrency' even means to each tool. For Locust, concurrency is however many virtual-user greenlets happen to be alive and not currently blocked — a consequence of the scheduler's behavior, distributed at coarse grain across worker processes if you scale out. For AIPerf, concurrency is a number the timing_manager process actively tracks and enforces, one credit per permitted in-flight request, dispatched to real OS-process workers over ZMQ. Neither model is right or wrong on its own — they're different answers to the same question of how to keep N requests in flight at once, and that difference in mechanism is the fact this deck exists to state plainly."
+    narration: "AIPerf's default stop condition is RequestCountStopCondition. Its whole implementation is one line: can_send_any_turn returns true while requests_sent is less than the configured total — checked inline, synchronously, every time the timing manager is about to admit a new request. There's no periodic timer involved in deciding when to stop issuing; the ledger that already exists for credit dispatch is the same ledger the stop condition reads. Once issuance stops, the phase doesn't exit immediately either — it awaits an event, all_credits_returned_event, that only gets set once every credit that was ever issued has come back. That's a real drain, not a fixed wait: it ends exactly when the last in-flight request completes, whenever that is. AIPerf can also explicitly replicate Locust's poll-then-kill behavior on request — an opt-in overshoot mode that bypasses this exact gate and abandons stragglers on a timer, specifically for comparing against tools that don't have a credit ledger to check against. That mode exists because Locust's mechanism does; it isn't the default because AIPerf doesn't need it to be."
 
     term: {
-      word: "emergent vs enforced concurrency"
-      meaning: "Emergent: the in-flight count falls out of how a scheduler happens to interleave many cheap units (Locust's greenlets). Enforced: the in-flight count is a variable a coordinator explicitly tracks and gates admission against (AIPerf's credits)."
+      word: "exact-cutoff admission"
+      meaning: "Stopping request issuance the instant a target count is reached, verified by a synchronous check against a counter that's already being maintained for another purpose (credit dispatch) — as opposed to periodically polling an aggregate stat and killing work once it's noticed to be over target."
     }
 
     points: [
-      "Locust: User → greenlet → gevent cooperative scheduler → emergent concurrency.",
-      "AIPerf: timing_manager → credit → ZMQ ROUTER-DEALER → worker OS process → enforced concurrency.",
-      "Locust scales out via master/worker OS processes; the greenlet model is unchanged inside each.",
-      "AIPerf's workers are always OS processes, from concurrency=1 upward — there's no cooperative-greenlet tier.",
-      "Consequence: AIPerf's credit ledger can gate admission exactly; Locust's stop-at-N is necessarily poll-then-kill."
+      "Default: RequestCountStopCondition.can_send_any_turn() — `requests_sent < total_expected_requests`, checked inline, not polled.",
+      "After issuance stops, the phase awaits all_credits_returned_event — set exactly when every issued credit has returned; a real drain.",
+      "Opt-in overshoot mode bypasses the exact gate and abandons stragglers on a timer, deliberately reproducing Locust's semantics for direct comparison.",
+      "Evidence: aiperf/timing/phase/stop_conditions.py — RequestCountStopCondition; aiperf/credit/callback_handler.py — all_credits_returned_event."
     ]
 
-    caption: "Same goal, different machinery: gevent scheduling vs credit-gated processes."
+    caption: "Same counter for dispatch and cutoff — no polling, and draining is exact."
+
+    render: @scene {
+      sdk.Header(
+        id = "s5b-hdr",
+        title = "SAME LEDGER, EXACT CUTOFF",
+        caption = "Same counter for dispatch and cutoff — no polling, and draining is exact.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s5b-locust",
+        title = "Locust",
+        detail = "poll every 3.0s → kill all",
+        x = 40, y = 90, width = 260, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "s5b-aiperf",
+        title = "AIPerf",
+        detail = "inline counter check → real drain",
+        x = 380, y = 90, width = 260, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Divider(
+        id = "s5b-div",
+        axis = "y",
+        x = 350, y = 80, length = 190,
+        strokeRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s5b-gate",
+        title = "can_send_any_turn()",
+        detail = "requests_sent < total_expected_requests",
+        x = 380, y = 200, width = 260, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Edge(
+        id = "s5b-e1",
+        mode = "route",
+        from = { nodeId: "s5b-aiperf", anchor: "s" },
+        to = { nodeId: "s5b-gate", anchor: "n" },
+        style = { stroke: theme(accent.primary), strokeWidth: 2 }
+      )
+      sdk.Panel(
+        id = "s5b-drain",
+        title = "all_credits_returned_event",
+        detail = "set when the last credit returns",
+        x = 380, y = 280, width = 260, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s5b-e2",
+        mode = "route",
+        from = { nodeId: "s5b-gate", anchor: "s" },
+        to = { nodeId: "s5b-drain", anchor: "n" },
+        style = { stroke: theme(accent.green), strokeWidth: 2 }
+      )
+      sdk.Note(
+        id = "s5b-note",
+        text = "Opt-in overshoot mode exists to reproduce Locust's poll-then-kill for direct comparison — not the default",
+        x = 40, y = 360, width = 600, height = 32
+      )
+      sdk.Signal(
+        id = "s5b-motion",
+        from = { nodeId: "s5b-locust", anchor: "center" },
+        to = { nodeId: "s5b-aiperf", anchor: "center" },
+        opacity = 0.45,
+        strokeWidth = 2.2,
+        label = "poll+kill vs gate+drain",
+        style = { stroke: theme(accent.tertiary) }
+      )
+
+      timeline main {
+        at 0 reveal s5b-hdr duration 260
+        after s5b-hdr reveal s5b-locust duration 280
+        after s5b-locust reveal s5b-div duration 220
+        after s5b-div reveal s5b-aiperf duration 280
+        after s5b-aiperf trace s5b-e1 duration 260
+        after s5b-e1 reveal s5b-gate duration 260
+        after s5b-gate trace s5b-e2 duration 260
+        after s5b-e2 reveal s5b-drain duration 260
+        after s5b-drain reveal s5b-note duration 280
+        after s5b-note trace s5b-motion duration 900
+      }
+    }
+  }
+
+  slide "Side by side" {
+    eyebrow: "Side by side"
+    title: "Self-limiting by loop structure vs centrally enforced by ledger"
+    lede: "Both tools hit an exact target concurrency in steady state — that part is not the difference. Locust gets there structurally (N users, wait_time=0, one request per user at a time); AIPerf gets there because a coordinator explicitly counts and gates every admission."
+
+    narration: "Put next to each other, the honest contrast is not 'exact vs approximate' — both land on exactly the configured concurrency once the run reaches steady state. With wait_time set to zero and every user spawned at once, N Locust greenlets structurally maintain at most one in-flight request each, so N users means N in flight, self-limiting by the shape of the loop itself with no coordinator required. AIPerf reaches the same exact number by the opposite route: a coordinator process, timing_manager, explicitly counts outstanding credits and only admits a new request when the count allows it. The two mechanisms diverge somewhere else entirely — at the stop condition. Locust's greenlets have no shared counter to check a total-requests target against, so stopping at N total requires the poll-then-kill pattern from three slides back. AIPerf's coordinator already has the exact counter a stop condition needs, so it can gate the cutoff with the same synchronous check it uses for admission, and drain exactly rather than killing anything."
+
+    term: {
+      word: "self-limiting vs centrally enforced"
+      meaning: "Self-limiting: an invariant that holds because of how a unit's own loop is shaped (Locust — one greenlet, one in-flight request at a time, by construction). Centrally enforced: an invariant a separate coordinator actively counts and gates admission against (AIPerf — timing_manager's credit ledger)."
+    }
+
+    points: [
+      "Locust: N users, wait_time=0, one in-flight request per greenlet — concurrency = N by construction, no coordinator needed.",
+      "AIPerf: timing_manager counts outstanding credits and gates new admissions against that count explicitly.",
+      "Both hit exact steady-state concurrency; they diverge at the stop condition, not the concurrency mechanism.",
+      "Consequence: AIPerf's admission counter doubles as an exact stop-at-N gate; Locust has no counter to check, so it polls and kills."
+    ]
+
+    caption: "Same steady-state concurrency, different stop-condition consequences."
 
     render: @scene {
       sdk.Header(
         id = "s6-hdr",
-        title = "TWO ANSWERS, ONE QUESTION",
-        caption = "Same goal, different machinery: gevent scheduling vs credit-gated processes.",
+        title = "SAME CONCURRENCY, DIFFERENT MECHANISM",
+        caption = "Same steady-state concurrency, different stop-condition consequences.",
         x = 18, y = 16, width = 664, height = 44,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
@@ -714,14 +825,14 @@ explainer "AIPerf vs Locust" {
       sdk.Panel(
         id = "s6-locust",
         title = "Locust",
-        detail = "User → greenlet → gevent scheduler",
+        detail = "N users · wait_time=0 · 1 in-flight each",
         x = 40, y = 100, width = 280, height = 100,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Label(
         id = "s6-locust-l",
-        text = "emergent concurrency",
+        text = "self-limiting by loop structure",
         x = 60, y = 210, width = 240, height = 22,
         fontSize = 13,
         inkRole = theme(accent.secondary)
@@ -736,7 +847,7 @@ explainer "AIPerf vs Locust" {
       )
       sdk.Label(
         id = "s6-aiperf-l",
-        text = "enforced concurrency",
+        text = "centrally enforced by ledger",
         x = 400, y = 210, width = 240, height = 22,
         fontSize = 13,
         inkRole = theme(accent.primary)
@@ -749,7 +860,7 @@ explainer "AIPerf vs Locust" {
       )
       sdk.Note(
         id = "s6-note",
-        text = "Neither is wrong — they are different mechanisms for the same target: N requests in flight",
+        text = "Both hit the exact target concurrency — the counter that makes AIPerf's cutoff exact is what Locust's loop never needed to have",
         x = 60, y = 260, width = 580, height = 32
       )
       sdk.Signal(
@@ -758,7 +869,7 @@ explainer "AIPerf vs Locust" {
         to = { nodeId: "s6-aiperf", anchor: "w" },
         opacity = 0.45,
         strokeWidth = 2.2,
-        label = "same target, different mechanism",
+        label = "same concurrency, different mechanism",
         style = { stroke: theme(accent.tertiary) }
       )
 
