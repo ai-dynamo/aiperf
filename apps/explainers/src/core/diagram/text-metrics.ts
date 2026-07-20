@@ -37,6 +37,69 @@ export function estimateTextWidth(
   return Math.ceil(text.length * unit * ratio * SCENE_TEXT_SCALE);
 }
 
+/** Font family scene text renders with, kept in sync with `index.css`'s `font-family`. */
+const SCENE_FONT_FAMILY =
+  'Manrope, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+
+let canvasMeasureContext: CanvasRenderingContext2D | null | undefined;
+
+/**
+ * Lazily creates (and caches) a canvas 2D context for real glyph-metric text
+ * measurement, feature-testing it first: jsdom's canvas shim (when the
+ * optional native `canvas` package isn't installed) accepts `measureText`
+ * calls but always reports a width of `0`, which would silently make every
+ * wrap decision collapse to one word per line. If the probe measurement
+ * isn't a plausible positive width, this returns `null` and callers fall
+ * back to the deterministic character-width estimate — this is what keeps
+ * test/SSR/CI environments deterministic while a real browser gets accurate
+ * glyph metrics instead of a per-character guess.
+ */
+function getCanvasMeasureContext(): CanvasRenderingContext2D | null {
+  if (canvasMeasureContext !== undefined) {
+    return canvasMeasureContext;
+  }
+  canvasMeasureContext = null;
+  try {
+    if (typeof document === "undefined") {
+      return canvasMeasureContext;
+    }
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (ctx === null || typeof ctx.measureText !== "function") {
+      return canvasMeasureContext;
+    }
+    const probeWidth = ctx.measureText("metrics probe").width;
+    if (!(probeWidth > 0)) {
+      return canvasMeasureContext;
+    }
+    canvasMeasureContext = ctx;
+  } catch {
+    canvasMeasureContext = null;
+  }
+  return canvasMeasureContext;
+}
+
+/**
+ * Measures `text`'s real rendered width via canvas glyph metrics when a
+ * working canvas context is available (a real browser), falling back to
+ * `estimateTextWidth`'s deterministic character-count model otherwise. The
+ * canvas path applies the same `SCENE_TEXT_SCALE` factor `estimateTextWidth`
+ * already bakes in, so callers see one consistent unit convention regardless
+ * of which measurement backend actually served the call.
+ */
+export function measureTextWidth(
+  text: string,
+  fontSize: number,
+  weight: "normal" | "bold" = "normal",
+): number {
+  const ctx = getCanvasMeasureContext();
+  if (ctx === null) {
+    return estimateTextWidth(text, fontSize, weight);
+  }
+  ctx.font = `${weight === "bold" ? "700" : "400"} ${fontSize}px ${SCENE_FONT_FAMILY}`;
+  return Math.ceil(ctx.measureText(text).width * SCENE_TEXT_SCALE);
+}
+
 export function stepperChipWidth(label: string, index: number): number {
   const text = `${index + 1}. ${label}`;
   return Math.max(
@@ -47,9 +110,12 @@ export function stepperChipWidth(label: string, index: number): number {
 
 /**
  * Greedy word-wrap: packs whitespace-separated words onto lines that fit
- * `maxWidth` per `estimateTextWidth`, breaking only between words (never
- * mid-word). A single word wider than `maxWidth` on its own still occupies
- * its own line rather than being split or dropped.
+ * `maxWidth`, breaking only between words (never mid-word). A single word
+ * wider than `maxWidth` on its own still occupies its own line rather than
+ * being split or dropped. Uses `measureTextWidth` (real canvas glyph metrics
+ * when available, the deterministic character-count estimate otherwise), so
+ * wrap decisions are as accurate as the runtime environment allows while
+ * staying deterministic in tests/SSR.
  */
 export function wrapTextToWidth(
   text: string,
@@ -68,7 +134,7 @@ export function wrapTextToWidth(
   for (let i = 1; i < words.length; i += 1) {
     const word = words[i];
     const candidate = `${current} ${word}`;
-    if (estimateTextWidth(candidate, fontSize, weight) <= maxWidth) {
+    if (measureTextWidth(candidate, fontSize, weight) <= maxWidth) {
       current = candidate;
     } else {
       lines.push(current);

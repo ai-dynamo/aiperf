@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   SCENE_TEXT_SCALE,
   estimateTextWidth,
+  measureTextWidth,
   scaledSceneFontSize,
   stepperChipWidth,
   wrapTextToWidth,
@@ -74,5 +75,28 @@ describe("wrapTextToWidth", () => {
     // equal-width assumption; update this assertion if text-metrics.ts's
     // width constants ever diverge for bold).
     expect(boldLines.length).toBe(normalLines.length);
+  });
+});
+
+describe("measureTextWidth", () => {
+  it("falls back to estimateTextWidth deterministically when no working canvas context exists", () => {
+    // jsdom (this test environment) has no real canvas backend installed, so
+    // getContext("2d") throws "Not implemented" — measureTextWidth must catch
+    // that and fall back rather than let it propagate, and the fallback must
+    // match estimateTextWidth exactly (same unit convention, no double-scaling).
+    expect(measureTextWidth("sample text", 14, "normal")).toBe(
+      estimateTextWidth("sample text", 14, "normal"),
+    );
+    expect(measureTextWidth("bold sample", 16, "bold")).toBe(
+      estimateTextWidth("bold sample", 16, "bold"),
+    );
+  });
+
+  it("never throws even when repeatedly called (canvas probe result is cached, not re-thrown per call)", () => {
+    expect(() => {
+      for (let i = 0; i < 5; i += 1) {
+        measureTextWidth(`call ${i}`, 14);
+      }
+    }).not.toThrow();
   });
 });
