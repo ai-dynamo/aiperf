@@ -10,9 +10,12 @@ import {
   DETAIL_HEIGHT,
   estimateTextWidth,
   INSET,
+  scaledSceneFontSize,
+  SCENE_LINE_HEIGHT_RATIO,
   stepperChipWidth,
   SUBTITLE_HEIGHT,
   TITLE_HEIGHT,
+  wrapTextToWidth,
 } from "../text-metrics.js";
 import { LEGEND_DEFINITION } from "../../../flow/sdk/generic/chrome.js";
 import {
@@ -421,11 +424,50 @@ describe("native Scene capability layout", () => {
     expect(layout.bounds.height).toBeGreaterThan(20);
   });
 
-  it("grows text to fit node text at the authored font size", () => {
+  it("wraps text within its authored width, growing height instead of width", () => {
+    // A positive authored width (with no `nowrap`) is a wrap constraint, not
+    // a minimum to grow past — SceneRenderer wraps this same text to this
+    // same width at paint time, so this resolver must NOT grow width to fit
+    // the text on one line (that would silently defeat the paint-time wrap
+    // and let the text overflow past its box — the exact bug this fixes).
     const text = node("label", "core.text", 80, 10, {
       kind: "text",
       text: "An authoritative long label",
       style: { fontSize: 20 },
+    });
+
+    const layout = resolveCapabilityLayout(text, []);
+    const scaledFontSize = scaledSceneFontSize(20);
+    const expectedLineCount = wrapTextToWidth(text.text!, 80, scaledFontSize, "normal").length;
+
+    expect(layout.bounds.width).toBe(80);
+    expect(layout.bounds.height).toBe(
+      Math.max(10, expectedLineCount * scaledFontSize * SCENE_LINE_HEIGHT_RATIO),
+    );
+    expect(layout.bounds.height).toBeGreaterThan(10);
+  });
+
+  it("still grows width to fit a single line when the node has no authored width constraint", () => {
+    // authored width 0 means "no width constraint, size to content" — the
+    // original grow-to-fit-single-line behavior is correct here since there
+    // is no box to wrap within.
+    const text = node("label", "core.text", 0, 10, {
+      kind: "text",
+      text: "An authoritative long label",
+      style: { fontSize: 20 },
+    });
+
+    const layout = resolveCapabilityLayout(text, []);
+
+    expect(layout.bounds.width).toBe(estimateTextWidth(text.text!, 20));
+    expect(layout.bounds.height).toBeGreaterThan(10);
+  });
+
+  it("still grows width to fit a single line when whiteSpace is nowrap", () => {
+    const text = node("label", "core.text", 80, 10, {
+      kind: "text",
+      text: "An authoritative long label",
+      style: { fontSize: 20, whiteSpace: "nowrap" },
     });
 
     const layout = resolveCapabilityLayout(text, []);

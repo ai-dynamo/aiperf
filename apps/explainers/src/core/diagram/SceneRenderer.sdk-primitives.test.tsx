@@ -4,9 +4,14 @@
  */
 
 import { cleanup, render } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { SceneRenderer } from "./SceneRenderer";
+import {
+  SceneRenderer,
+  fanSegmentFromAtomic,
+  shortenPathForArrowhead,
+  splitFanTrajectoryAtJunction,
+} from "./SceneRenderer";
 import { resolveScene } from "./resolution/resolve-scene.js";
 import type { SceneIrLike } from "./scene-types.js";
 import { estimateTextWidth, stepperChipWidth } from "./text-metrics.js";
@@ -59,6 +64,49 @@ describe("SceneRenderer SDK foundations", () => {
     const pathOffset =
       d.includes("M44") || d.includes("M 44") || /M\s*44[\s,]/.test(d);
     expect(translated || pathOffset).toBe(true);
+  });
+
+  it("prefers authored cloud glyph path over dummy from/to fallback endpoints", () => {
+    // sdk.IconLabel stamps local from/to (0,0)-(24,24) beside the glyph path.
+    // SceneRenderer must paint the authored cloud outline, not the diagonal
+    // connector fallback, when core.path is excluded from connector resolution.
+    const cloudPath =
+      "M7 19 H18 A4 4 0 0 0 18 11 A6 6 0 0 0 6.5 9 A5 5 0 0 0 4.5 15";
+    const scene: SceneIrLike = {
+      id: "cloud-glyph-scene",
+      roots: [
+        {
+          id: "il-v3__icon",
+          kind: "connector",
+          capabilityId: "core.path",
+          geometry: { x: 8, y: 8, width: 24, height: 24 },
+          style: {
+            fill: "none",
+            stroke: "#76b900",
+            strokeWidth: 1.75,
+            markerEnd: "none",
+          },
+          from: { x: 0, y: 0 },
+          to: { x: 24, y: 24 },
+          path: cloudPath,
+          accessibility: { label: "cloud" },
+        },
+      ],
+      timeline: [],
+    };
+
+    expect(resolveScene(scene).connectorsById.has("il-v3__icon")).toBe(false);
+
+    const { container } = render(
+      <SceneRenderer scene={scene} playing={false} restartKey={0} />,
+    );
+
+    const d =
+      container
+        .querySelector('[data-flow-node-id="il-v3__icon"] path')
+        ?.getAttribute("d") ?? "";
+    expect(d).toContain("A4 4 0 0 0 18 11");
+    expect(d).not.toMatch(/^M\s*0[\s,]+\s*0\s+L\s*24[\s,]+\s*24/);
   });
 
   it("renders core.image component nodes as SVG images", () => {
@@ -199,7 +247,12 @@ describe("SceneRenderer SDK foundations", () => {
               id: "panel__title",
               kind: "text",
               capabilityId: "core.text",
-              geometry: { x: 8, y: 8, width: 160, height: 22 },
+              // Wide enough that this text stays on one line (this test
+              // checks duplicate-paint-ownership resolution, not wrapping —
+              // a narrower width would now legitimately wrap across
+              // multiple <tspan>s per the wrap-respecting layout fix, and
+              // exact-string textContent equality wouldn't hold post-wrap).
+              geometry: { x: 8, y: 8, width: 260, height: 22 },
               text: "Authored compatibility title",
             },
           ],
@@ -1099,6 +1152,229 @@ describe("SceneRenderer SDK foundations", () => {
       // Pausing must not unmount/remount the SMIL loop — that would restart
       // `begin={delay}` from zero and desync the dot from the timeline.
       expect(dotWhilePaused).not.toBeNull();
+    });
+
+    it("freezes (not just keeps mounted) an idle motion signal's SMIL loop on pause", () => {
+      // jsdom does not implement pauseAnimations/unpauseAnimations at all;
+      // stub them so the regression can assert MotionSignal actually calls
+      // the browser's own freeze mechanism instead of merely staying mounted
+      // while the animation keeps running underneath.
+      const pauseAnimations = vi.fn();
+      const unpauseAnimations = vi.fn();
+      const proto = SVGSVGElement.prototype as SVGSVGElement & {
+        pauseAnimations?: () => void;
+        unpauseAnimations?: () => void;
+      };
+      const originalPause = proto.pauseAnimations;
+      const originalUnpause = proto.unpauseAnimations;
+      proto.pauseAnimations = pauseAnimations;
+      proto.unpauseAnimations = unpauseAnimations;
+      try {
+        const scene: SceneIrLike = {
+          roots: [
+            {
+              id: "source",
+              kind: "group",
+              capabilityId: "core.panel",
+              geometry: { x: 20, y: 80, width: 120, height: 60 },
+              style: {},
+              props: { title: "Source" },
+            },
+            {
+              id: "target",
+              kind: "group",
+              capabilityId: "core.panel",
+              geometry: { x: 300, y: 80, width: 120, height: 60 },
+              style: {},
+              props: { title: "Target" },
+            },
+            {
+              id: "signal",
+              kind: "motion",
+              capabilityId: "motion.signal",
+              geometry: { x: 0, y: 0, width: 0, height: 0 },
+              style: {},
+              from: { nodeId: "source", anchor: "e" },
+              to: { nodeId: "target", anchor: "w" },
+            },
+          ],
+          timeline: [],
+        };
+
+        const { container, rerender } = render(
+          <SceneRenderer scene={scene} playing restartKey={0} />,
+        );
+        const dot = () =>
+          container.querySelector('[data-flow-motion-signal="signal"]');
+        expect(dot()?.getAttribute("data-motion-paused")).toBeNull();
+        expect(pauseAnimations).not.toHaveBeenCalled();
+
+        rerender(<SceneRenderer scene={scene} playing={false} restartKey={0} />);
+        expect(dot()?.getAttribute("data-motion-paused")).toBe("true");
+        expect(pauseAnimations).toHaveBeenCalled();
+
+        rerender(<SceneRenderer scene={scene} playing restartKey={0} />);
+        expect(dot()?.getAttribute("data-motion-paused")).toBeNull();
+        expect(unpauseAnimations).toHaveBeenCalled();
+      } finally {
+        proto.pauseAnimations = originalPause;
+        proto.unpauseAnimations = originalUnpause;
+      }
+    });
+
+    it("extends scene duration to the last authored camera keyframe, not just cue ends", () => {
+      const scene: SceneIrLike = {
+        roots: [
+          {
+            id: "panel",
+            kind: "group",
+            capabilityId: "core.panel",
+            geometry: { x: 20, y: 20, width: 120, height: 60 },
+            style: {},
+            props: { title: "Panel" },
+          },
+        ],
+        // The only cue ends at 100ms — far shorter than the camera track.
+        timeline: [
+          { id: "enter", at: 0, duration: 100, action: "enter", target: "panel" },
+        ],
+        camera: [
+          { at: 0, x: 350, y: 200, zoom: 1 },
+          { at: 1000, x: 350, y: 200, zoom: 4 },
+        ],
+      };
+
+      // `reducedMotion` snaps `playbackTimeMs` to the scene's computed
+      // duration — if duration were derived from cues alone (100ms) the
+      // camera would sample far short of its final keyframe.
+      const { container } = render(
+        <SceneRenderer scene={scene} playing={false} restartKey={0} reducedMotion />,
+      );
+      const svg = container.querySelector("svg.scene-renderer");
+      const viewBox = svg?.getAttribute("viewBox") ?? "";
+      const [, , visibleWidth, visibleHeight] = viewBox
+        .split(/\s+/)
+        .map(Number);
+      // Fully zoomed (zoom = 4): 700/4 = 175, 400/4 = 100.
+      expect(visibleWidth).toBeCloseTo(175, 0);
+      expect(visibleHeight).toBeCloseTo(100, 0);
+    });
+
+    it("inserts an off-trajectory junction into the polyline instead of dropping the ball split", () => {
+      // A single straight segment: the nearest vertex to the junction is a
+      // trajectory endpoint, which used to make the split bail out entirely.
+      const d = "M0 0 L100 0";
+      const result = splitFanTrajectoryAtJunction(d, { x: 40, y: 5 });
+      expect(result).not.toBeUndefined();
+      expect(result?.head).toContain("M0 0");
+      expect(result?.head).toContain("L40 0");
+      expect(result?.tail).toContain("M40 0");
+      expect(result?.tail).toContain("L100 0");
+    });
+
+    it("orients a fan segment toward its destination by distance when neither atomic endpoint matches it exactly", () => {
+      const span = {
+        axis: "h" as const,
+        fixed: 0,
+        from: 0,
+        to: 100,
+        role: "branch" as const,
+        // Far from both atomic endpoints (not within the pointsNear epsilon)
+        // but much closer to `from` (0) than `to` (100).
+        destination: { x: 10, y: 0 },
+      };
+      const segment = fanSegmentFromAtomic("branch-span", span);
+      expect(segment.showMarker).toBe(true);
+      // The marker sits at the path's terminal point — it must land on the
+      // end closest to the destination (the `from` side), not default to
+      // the atomic span's `to` side.
+      expect(segment.d).toBe("M100 0 L0 0");
+    });
+
+    it("truncates a multi-segment arrow path at true arc length instead of rewriting only the last command's endpoint", () => {
+      // jsdom implements neither getTotalLength nor getPointAtLength (and
+      // does not even expose `SVGPathElement` as a global) — stub a
+      // straight-polyline-accurate version on the live prototype so the DOM
+      // cut path can run.
+      const samplePath = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "path",
+      );
+      const proto = Object.getPrototypeOf(samplePath) as SVGPathElement & {
+        getTotalLength?: () => number;
+        getPointAtLength?: (length: number) => DOMPoint;
+      };
+      const originalTotalLength = proto.getTotalLength;
+      const originalPointAtLength = proto.getPointAtLength;
+      const pointsOf = (path: SVGPathElement): Array<Readonly<{ x: number; y: number }>> => {
+        const raw = path.getAttribute("d") ?? "";
+        const points: Array<{ x: number; y: number }> = [];
+        for (const match of raw.matchAll(
+          /[ML]\s*(-?\d+(?:\.\d+)?)[\s,]+(-?\d+(?:\.\d+)?)/gi,
+        )) {
+          points.push({ x: Number(match[1]), y: Number(match[2]) });
+        }
+        return points;
+      };
+      proto.getTotalLength = function (this: SVGPathElement) {
+        const points = pointsOf(this);
+        let total = 0;
+        for (let i = 1; i < points.length; i++) {
+          total += Math.hypot(
+            points[i]!.x - points[i - 1]!.x,
+            points[i]!.y - points[i - 1]!.y,
+          );
+        }
+        return total;
+      };
+      proto.getPointAtLength = function (
+        this: SVGPathElement,
+        length: number,
+      ) {
+        const points = pointsOf(this);
+        if (points.length === 0) {
+          return { x: 0, y: 0 } as DOMPoint;
+        }
+        let remaining = Math.max(0, length);
+        for (let i = 1; i < points.length; i++) {
+          const segmentLength = Math.hypot(
+            points[i]!.x - points[i - 1]!.x,
+            points[i]!.y - points[i - 1]!.y,
+          );
+          if (remaining <= segmentLength || i === points.length - 1) {
+            const t =
+              segmentLength === 0 ? 0 : Math.min(1, remaining / segmentLength);
+            return {
+              x: points[i - 1]!.x + (points[i]!.x - points[i - 1]!.x) * t,
+              y: points[i - 1]!.y + (points[i]!.y - points[i - 1]!.y) * t,
+            } as DOMPoint;
+          }
+          remaining -= segmentLength;
+        }
+        const last = points[points.length - 1]!;
+        return { x: last.x, y: last.y } as DOMPoint;
+      };
+
+      try {
+        // Total length 203 (200 + 3); an inset of 6 cuts 6 units back from
+        // the end, landing at length 197 — inside the *first* segment, not
+        // the short trailing vertical one.
+        const d = "M0 0 L200 0 L200 3";
+        const result = shortenPathForArrowhead(d, 1, 6);
+        const numbers = [...result.matchAll(/-?\d+(?:\.\d+)?/g)].map(Number);
+        const [x1, _y1, x2, y2] = numbers.slice(-4);
+        // The old chord-rewrite would move only the last L's endpoint to
+        // (197, 0), leaving a backward stub from (200, 0) to (197, 0) whose
+        // tangent points in -x — the wrong arrowhead direction. The fixed
+        // arc-length truncation instead ends the whole path at (~197, 0)
+        // while still heading in the path's true (+x) direction.
+        expect(x2).toBeGreaterThan(x1 ?? 0);
+        expect(y2).toBeCloseTo(0, 1);
+        expect(x2).toBeCloseTo(197, 0);
+      } finally {
+        proto.getTotalLength = originalTotalLength;
+        proto.getPointAtLength = originalPointAtLength;
+      }
     });
   });
 });

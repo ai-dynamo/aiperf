@@ -15,6 +15,7 @@ import {
   DEFAULT_SCENE_FONT_SIZE,
   DETAIL_HEIGHT,
   INSET,
+  SCENE_LINE_HEIGHT_RATIO,
   STEPPER_CHIP_HEIGHT,
   STEPPER_MIN_CHIP_WIDTH,
   SUBTITLE_HEIGHT,
@@ -22,6 +23,7 @@ import {
   estimateTextWidth,
   scaledSceneFontSize,
   stepperChipWidth,
+  wrapTextToWidth,
 } from "../text-metrics.js";
 import type {
   CapabilityLayout,
@@ -616,6 +618,32 @@ export function resolveTextLayout(
     DEFAULT_SCENE_FONT_SIZE,
   );
   const weight = node.style?.fontWeight === "bold" ? "bold" : "normal";
+  const whiteSpace = node.style?.whiteSpace;
+  const hasManualBreaks = text.includes("\n") || whiteSpace === "pre";
+  const canWrap = authored.width > 0 && whiteSpace !== "nowrap" && !hasManualBreaks;
+
+  if (canWrap) {
+    // Respect the authored width as the wrap constraint instead of growing
+    // it to fit the whole text on one line: `SceneRenderer` wraps this same
+    // text to this same width at paint time (see its `wrapTextToWidth`
+    // call), so growing the width here would silently defeat that wrap —
+    // exactly the bug that let long detail text overflow past its box.
+    const scaledFontSize = scaledSceneFontSize(fontSize);
+    const lineCount = Math.max(
+      wrapTextToWidth(text, authored.width, scaledFontSize, weight).length,
+      1,
+    );
+    // Single-line content keeps the exact pre-existing height formula (no
+    // line-height multiplier) so this fix doesn't change any node that isn't
+    // actually wrapping — only content that genuinely wraps to 2+ lines
+    // needs the taller, line-height-stacked box.
+    const height =
+      lineCount <= 1
+        ? Math.max(authored.height, scaledFontSize)
+        : Math.max(authored.height, lineCount * scaledFontSize * SCENE_LINE_HEIGHT_RATIO);
+    return capabilityLayout({ ...authored, height }, childGeometries);
+  }
+
   return capabilityLayout(
     {
       ...authored,

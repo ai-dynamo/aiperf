@@ -1170,13 +1170,13 @@ explainer "Rust Architecture — Deck Port" {
       sdk.Caption(id = "dy-kicker", text = "DYNOSIM CO-SIMULATION", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
       sdk.Title(id = "dy-title", text = "Co-simulate Dynamo in-process, no sockets", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
       sdk.Paragraph(id = "dy-sub", text = "AIPerf owns clock, workload, observers and report; dynamo-mocker owns scheduler and perf-model behind SteppableReplay", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
-      sdk.CompareGrid(id = "dy-modes", columns = 2, items = [{ label: "dynosim_offline", detail: "Sim clock · drive_sim_with_source · enforced byte-exact parity vs Dynamo" }, { label: "dynosim_online", detail: "Real clock · drive_real_with_source · relaxed parity" }], x = 40, y = 108)
-      sdk.Caption(id = "dy-axis", text = "The two modes differ only in the clock / driver axis", x = 40, y = 232, width = 640, height = 16, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "dy-comp-label", text = "SHARED SEAMS", x = 40, y = 256, width = 640, height = 16, inkRole = theme(accent.primary))
-      sdk.Paragraph(id = "dy-c1", text = "DynosimSink · same RequestSink / HttpRequestDispatcher / TurnDispatcher seams", x = 40, y = 276, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "dy-c2", text = "EngineHost · bridges the DES/wall clock as a SimEventSource", x = 40, y = 300, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Paragraph(id = "dy-c3", text = "token priority · raw_token_ids → trace_hash_ids → chat body", x = 40, y = 324, width = 660, height = 20, inkRole = theme(ink.secondary))
-      sdk.Caption(id = "dy-note", text = "Requires worker_count == 1 · dynamo-full adds the router / ZMQ / KV / AIC surface", x = 40, y = 352, width = 660, height = 16, inkRole = theme(ink.secondary))
+      sdk.CompareGrid(id = "dy-modes", columns = 2, items = [{ label: "dynosim_offline", detail: "Sim clock · drive_sim_with_source · enforced byte-exact parity vs Dynamo" }, { label: "dynosim_online", detail: "Real clock · drive_real_with_source · relaxed parity" }], x = 40, y = 124)
+      sdk.Caption(id = "dy-axis", text = "The two modes differ only in the clock / driver axis", x = 40, y = 248, width = 640, height = 16, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "dy-comp-label", text = "SHARED SEAMS", x = 40, y = 272, width = 640, height = 16, inkRole = theme(accent.primary))
+      sdk.Paragraph(id = "dy-c1", text = "DynosimSink · same RequestSink / HttpRequestDispatcher / TurnDispatcher seams", x = 40, y = 292, width = 660, height = 20, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "dy-c2", text = "EngineHost · bridges the DES/wall clock as a SimEventSource", x = 40, y = 316, width = 660, height = 20, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "dy-c3", text = "token priority · raw_token_ids → trace_hash_ids → chat body", x = 40, y = 340, width = 660, height = 20, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "dy-note", text = "Requires worker_count == 1 · dynamo-full adds the router / ZMQ / KV / AIC surface", x = 40, y = 368, width = 660, height = 16, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal dy-badge duration 160
         at 0 reveal dy-badge-l duration 160
