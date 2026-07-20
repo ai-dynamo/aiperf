@@ -6,7 +6,7 @@
 
 ## Summary
 
-Compacted absolute compositions that exceeded the 700×400 scene viewport after intrinsic growth. All **18** `SCENE_VIEWPORT_ESCAPE` warnings in the two scoped decks are cleared (45 → 27 repo-wide).
+Compacted absolute compositions that exceeded the 700×400 scene viewport after intrinsic growth. Cleared **22** verifier warnings across the two scoped decks (**0** remain); repo-wide escapes **45 → 36** per scout baseline.
 
 ## Fixed node IDs
 

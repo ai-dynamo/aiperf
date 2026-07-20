@@ -181,6 +181,11 @@ describe("resolveArgumentValue array-literal and ref", () => {
     };
 
     const result = lowerExplainerScene(scene);
+    if (!result.ok) {
+      // Temporary diagnostic dump for investigation.
+      // eslint-disable-next-line no-console
+      console.log(JSON.stringify(result.diagnostics, null, 2));
+    }
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;

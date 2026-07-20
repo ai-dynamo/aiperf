@@ -467,7 +467,14 @@ export function resolveScene(scene: SceneIrLike): ResolvedScene {
     for (const part of parts) {
       const authoredOwner = nodesById.get(part.id);
       const generatedOwner = generatedPartsById.get(part.id);
-      const priorOwnerId = authoredOwner?.id ?? generatedOwner?.ownerId;
+      const isSemanticStepperPart =
+        part.role === "step" &&
+        authoredOwner !== undefined &&
+        capabilityOf(authoredOwner) === "core.step" &&
+        (ancestorIdsById.get(authoredOwner.id) ?? []).includes(node.id);
+      const priorOwnerId =
+        (isSemanticStepperPart ? undefined : authoredOwner?.id) ??
+        generatedOwner?.ownerId;
       if (priorOwnerId !== undefined) {
         diagnostics.push({
           code: "SCENE_DUPLICATE_PAINT_OWNER",
@@ -503,7 +510,31 @@ export function resolveScene(scene: SceneIrLike): ResolvedScene {
         id: part.id,
         ownerId: node.id,
         role: part.role,
+        kind: "geometry" in part ? "box" : "text",
         geometry: partGeometry,
+        ...("geometry" in part
+          ? { radius: part.radius }
+          : {
+              text: part.text,
+              fontSize: part.fontSize,
+              ...(part.fontWeight === undefined
+                ? {}
+                : { fontWeight: part.fontWeight }),
+              ...(part.fontFamily === undefined
+                ? {}
+                : { fontFamily: part.fontFamily }),
+              ...(part.fontStyle === undefined
+                ? {}
+                : { fontStyle: part.fontStyle }),
+              ...(part.whiteSpace === undefined
+                ? {}
+                : { whiteSpace: part.whiteSpace }),
+              anchor: part.anchor,
+              ...(part.tone === undefined ? {} : { tone: part.tone }),
+              ...(part.inkRole === undefined
+                ? {}
+                : { inkRole: part.inkRole }),
+            }),
       };
       generatedPartsById.set(part.id, generatedPart);
       worldGeometryById.set(part.id, partGeometry);

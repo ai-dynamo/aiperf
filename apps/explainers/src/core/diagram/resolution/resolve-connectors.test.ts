@@ -228,6 +228,29 @@ describe("resolveConnectors", () => {
     );
   });
 
+  it("reports standalone motion signals that duplicate an existing connector", () => {
+    const credit = edge({ id: "request-credit" });
+    const duplicate: SceneNodeLike = {
+      id: "motion",
+      kind: "connector",
+      capabilityId: "motion.signal",
+      geometry: { x: 0, y: 0, width: 0, height: 0 },
+      from: { nodeId: "source", anchor: "e" },
+      to: { nodeId: "target", anchor: "w" },
+      style: {},
+    };
+    const result = resolve(credit, [duplicate]);
+
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "SCENE_SIGNAL_DUPLICATES_EDGE",
+        severity: "error",
+        nodeIds: ["motion", "request-credit"],
+        repair: 'Reference the existing edge with edge = "request-credit".',
+      }),
+    );
+  });
+
   it("carries penetrating curve fallback metadata into diagnostics", () => {
     const blocker = panel("blocker", {
       x: 75,

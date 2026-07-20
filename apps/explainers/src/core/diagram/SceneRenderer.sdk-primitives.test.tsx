@@ -581,26 +581,36 @@ describe("SceneRenderer SDK foundations", () => {
   });
 
   it("renders intrinsically sized semantic stepper labels", () => {
+    const scene: SceneIrLike = {
+      roots: [
+        {
+          id: "steps",
+          kind: "group",
+          capabilityId: "core.stepper",
+          geometry: { x: 10, y: 20, width: 160, height: 90 },
+          style: { gap: 16 },
+          props: {
+            steps: ["layout", "slots", "timeline"],
+            linked: true,
+          },
+          accessibility: { label: "Layout steps" },
+          children: [],
+        },
+      ],
+      timeline: [],
+    };
+    expect(
+      [...resolveScene(scene).generatedPartsById.values()]
+        .filter(({ ownerId, kind }) => ownerId === "steps" && kind === "text")
+        .map(({ id }) => id),
+    ).toEqual([
+      "steps-step-0__label",
+      "steps-step-1__label",
+      "steps-step-2__label",
+    ]);
     const { container } = render(
       <SceneRenderer
-        scene={{
-          roots: [
-            {
-              id: "steps",
-              kind: "group",
-              capabilityId: "core.stepper",
-              geometry: { x: 10, y: 20, width: 160, height: 90 },
-              style: { gap: 16 },
-              props: {
-                steps: ["layout", "slots", "timeline"],
-                linked: true,
-              },
-              accessibility: { label: "Layout steps" },
-              children: [],
-            },
-          ],
-          timeline: [],
-        }}
+        scene={scene}
         playing={false}
         restartKey={0}
       />,

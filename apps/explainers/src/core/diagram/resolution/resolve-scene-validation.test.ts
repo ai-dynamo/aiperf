@@ -11,6 +11,54 @@ import type { SceneIrLike } from "../scene-types.js";
 import { resolveScene } from "./resolve-scene.js";
 
 describe("resolved scene final validation", () => {
+  it("ignores decorative bands but reports overlapping content siblings", () => {
+    const scene: SceneIrLike = {
+      viewport: { width: 200, height: 100 },
+      roots: [
+        {
+          id: "band",
+          kind: "rect",
+          capabilityId: "core.band",
+          geometry: { x: 0, y: 10, width: 180, height: 30 },
+          children: [],
+        },
+        {
+          id: "band-chip",
+          kind: "group",
+          capabilityId: "core.chip",
+          geometry: { x: 20, y: 20, width: 80, height: 20 },
+          children: [],
+        },
+        {
+          id: "first-chip",
+          kind: "group",
+          capabilityId: "core.chip",
+          geometry: { x: 20, y: 60, width: 80, height: 20 },
+          children: [],
+        },
+        {
+          id: "second-chip",
+          kind: "group",
+          capabilityId: "core.chip",
+          geometry: { x: 60, y: 70, width: 80, height: 20 },
+          children: [],
+        },
+      ],
+      timeline: [],
+    };
+
+    const overlaps = resolveScene(scene).diagnostics.filter(
+      ({ code }) => code === "SCENE_ABSOLUTE_SIBLING_OVERLAP",
+    );
+
+    expect(overlaps).not.toContainEqual(
+      expect.objectContaining({ nodeIds: ["band", "band-chip"] }),
+    );
+    expect(overlaps).toContainEqual(
+      expect.objectContaining({ nodeIds: ["first-chip", "second-chip"] }),
+    );
+  });
+
   it("reports overlapping absolute siblings and viewport escape", () => {
     const scene: SceneIrLike = {
       viewport: { width: 100, height: 80 },

@@ -30,6 +30,7 @@ import type {
 import {
   diagnostic,
   hasErrors,
+  type ComponentCatalog,
   type Diagnostic,
   type Result,
   type SourceRange,
@@ -74,6 +75,12 @@ export type ModuleResolver = (
 /** Optional host services used while linking a parsed document. */
 export type LinkOptions = Readonly<{
   resolveModule?: ModuleResolver;
+  /**
+   * When provided, unqualified invocations matching a catalog `id` or
+   * `symbolExport` are treated as known (not `LINK_UNKNOWN_NAME`), so later
+   * `validate(..., components)` can run prop / COMPONENT_UNKNOWN checks.
+   */
+  components?: ComponentCatalog;
 }>;
 
 /** Identity of an exported member reached through a namespace alias. */
@@ -345,14 +352,25 @@ function collectComponentInvocations(
   }
 }
 
-function localComponentNames(document: DocumentAst): ReadonlySet<string> {
-  return new Set(document.symbols.map(({ name }) => name));
+function localComponentNames(
+  document: DocumentAst,
+  components?: ComponentCatalog,
+): ReadonlySet<string> {
+  const names = new Set(document.symbols.map(({ name }) => name));
+  if (components !== undefined) {
+    for (const descriptor of components.components) {
+      names.add(descriptor.id);
+      names.add(descriptor.symbolExport);
+    }
+  }
+  return names;
 }
 
 function qualifiedNameDiagnostics(
   document: DocumentAst,
   imports: ReadonlyMap<string, ResolvedModule>,
   declaredAliases: ReadonlySet<string>,
+  components?: ComponentCatalog,
 ): Readonly<{
   qualifiedNames: ReadonlyMap<ComponentInvocationAst, ResolvedQualifiedName>;
   diagnostics: readonly Diagnostic[];
@@ -390,7 +408,7 @@ function qualifiedNameDiagnostics(
       left.sourceMap.end.offset - right.sourceMap.end.offset,
   );
 
-  const locals = localComponentNames(document);
+  const locals = localComponentNames(document, components);
   const qualifiedNames = new Map<
     ComponentInvocationAst,
     ResolvedQualifiedName
@@ -405,7 +423,7 @@ function qualifiedNameDiagnostics(
             "error",
             `Unknown component or symbol "${invocation.name}".`,
             invocation.sourceMap,
-            `Declare \`symbol ${invocation.name}(...)\` in this document or fix the name.`,
+            `Declare \`symbol ${invocation.name}(...)\` in this document, register it in the component catalog, or fix the name.`,
           ),
         );
       }
@@ -459,6 +477,7 @@ export function link(
     document,
     moduleResolution.imports,
     moduleResolution.declaredAliases,
+    options.components,
   );
   const diagnostics: Diagnostic[] = [
     ...moduleResolution.diagnostics,

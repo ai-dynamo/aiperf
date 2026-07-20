@@ -205,7 +205,7 @@ describe("verifier geometry layout parity", () => {
               scene,
             },
           },
-        },
+        ],
       },
       { snapshots: [{ slideId: "stack-circle", snapshot }] },
     );

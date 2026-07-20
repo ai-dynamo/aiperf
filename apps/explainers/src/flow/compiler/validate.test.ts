@@ -19,6 +19,7 @@ import {
 } from "../schema/index.js";
 import { compileSource } from "./compile-source.js";
 import type { LinkedDocument } from "./link.js";
+import { lowerExplainerScene } from "./lower-explainer-scene.js";
 import { validate } from "./validate.js";
 
 const SOURCE_MAP = {
@@ -180,7 +181,7 @@ describe("validate component invocations", () => {
 });
 
 describe("compileSource wires the component catalog", () => {
-  it("reports COMPONENT_UNKNOWN through compileSource when components are supplied", () => {
+  it("reports PROP_MISSING_REQUIRED through compileSource when components are supplied", () => {
     const catalog = createComponentCatalog([widgetDescriptor()]);
     expect(catalog.ok).toBe(true);
     if (!catalog.ok) {
@@ -192,7 +193,7 @@ describe("compileSource wires the component catalog", () => {
 flow "Doc" as doc {
   language 1
   scene "Scene" as scene {
-    MissingThing(id = "x")
+    Widget(id = "x")
     narrate "${NARRATION}"
     reading-order x
   }
@@ -205,14 +206,8 @@ flow "Doc" as doc {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.diagnostics.some((d) => d.code === "COMPONENT_UNKNOWN")) {
-      // Surface other diagnostics if the catalog path was never reached.
-      expect(result.diagnostics.map((d) => `${d.code}: ${d.message}`)).toEqual(
-        [],
-      );
-    }
     expect(
-      result.diagnostics.some((d) => d.code === "COMPONENT_UNKNOWN"),
+      result.diagnostics.some((d) => d.code === "PROP_MISSING_REQUIRED"),
     ).toBe(true);
   });
 });

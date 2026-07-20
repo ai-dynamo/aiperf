@@ -12,8 +12,10 @@ import type {
 import {
   DETAIL_HEIGHT,
   INSET,
+  STEPPER_CHIP_HEIGHT,
   SUBTITLE_HEIGHT,
   TITLE_HEIGHT,
+  stepperChipWidth,
 } from "../text-metrics.js";
 import { managedLayoutOptions } from "./layout.js";
 
@@ -60,6 +62,26 @@ export type SemanticChrome = Readonly<{
 function stringProp(node: SceneNodeLike, key: string): string | undefined {
   const value = node.props?.[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function stringArrayProp(
+  node: SceneNodeLike,
+  key: string,
+): readonly string[] {
+  const value = node.props?.[key];
+  return Array.isArray(value)
+    ? value.filter(
+        (entry): entry is string =>
+          typeof entry === "string" && entry.length > 0,
+      )
+    : [];
+}
+
+function gapOf(node: SceneNodeLike, fallback = 12): number {
+  const value = node.style?.gap ?? node.props?.gap;
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, value)
+    : fallback;
 }
 
 function presentationOf(node: SceneNodeLike): string | undefined {
@@ -119,6 +141,7 @@ export function hasNativeSemanticChrome(node: SceneNodeLike): boolean {
       "core.note",
       "core.lane",
       "core.band",
+      "core.stepper",
       "layout.frame",
     ].includes(capability)
   );
@@ -213,7 +236,52 @@ export function resolveSemanticChrome(
   const isDiagram = capability.startsWith("diagram.");
   const isDiagramBoundary = capability === "diagram.boundary";
   if (capability === "core.stepper") {
-    return { boxes: [], texts: [] };
+    const steps = stringArrayProp(node, "steps");
+    const children = node.children ?? [];
+    if (
+      steps.length === 0 ||
+      (children.length > 0 &&
+        children.some(
+          (child) =>
+            (child.capabilityId ?? child.capability ?? "") !== "core.step",
+        ))
+    ) {
+      return { boxes: [], texts: [] };
+    }
+    const gap = gapOf(node);
+    let cursorX = geometry.x;
+    const boxes: SemanticBoxPart[] = [];
+    const texts: SemanticTextPart[] = [];
+    steps.forEach((step, index) => {
+      const stepId = `${node.id}-step-${index}`;
+      const width = stepperChipWidth(step, index);
+      boxes.push({
+        id: stepId,
+        role: "step",
+        geometry: {
+          x: cursorX,
+          y: geometry.y,
+          width,
+          height: STEPPER_CHIP_HEIGHT,
+        },
+        radius: 4,
+      });
+      texts.push({
+        id: `${stepId}__label`,
+        role: "label",
+        text: `${index + 1}. ${step}`,
+        x: cursorX,
+        y: geometry.y,
+        width,
+        height: STEPPER_CHIP_HEIGHT,
+        fontSize: 11,
+        fontWeight: "bold",
+        anchor: "middle",
+        ...(inkRole !== undefined ? { inkRole } : {}),
+      });
+      cursorX += width + gap;
+    });
+    return { boxes, texts };
   }
 
   // Frames place managed content at `padding`; chrome must share that x-origin.

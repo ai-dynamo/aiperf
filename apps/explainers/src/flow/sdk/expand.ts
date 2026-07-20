@@ -250,6 +250,39 @@ function availablePorts(entry: SdkInstanceEntry): string {
   return names.length > 0 ? names.join(", ") : "(none)";
 }
 
+/**
+ * Splits `instance.port` preferring the longest registered instance id that is
+ * a proper prefix of `target`. This supports authored ids that contain dots
+ * (e.g. `aiperf.controller.output`) without breaking indexed ports
+ * (`cells.worker.0` → instance `cells`, port `worker.0`).
+ */
+function splitInstancePort(
+  target: string,
+  index: SdkInstanceIndex,
+): { instanceId: string; port: string } | undefined {
+  let best: { instanceId: string; port: string } | undefined;
+  for (const instanceId of index.keys()) {
+    const prefix = `${instanceId}.`;
+    if (!target.startsWith(prefix) || target.length <= prefix.length) {
+      continue;
+    }
+    if (best === undefined || instanceId.length > best.instanceId.length) {
+      best = { instanceId, port: target.slice(prefix.length) };
+    }
+  }
+  if (best !== undefined) {
+    return best;
+  }
+  const separator = target.indexOf(".");
+  if (separator <= 0 || separator >= target.length - 1) {
+    return undefined;
+  }
+  return {
+    instanceId: target.slice(0, separator),
+    port: target.slice(separator + 1),
+  };
+}
+
 /** Resolves a single `instance.port` reference against the instance index. */
 export function resolveRef(
   target: string,
@@ -257,8 +290,8 @@ export function resolveRef(
   sourceMap: SourceRange,
   diagnostics: Diagnostic[],
 ): ConnectorEndpointIr | undefined {
-  const separator = target.indexOf(".");
-  if (separator <= 0 || separator >= target.length - 1) {
+  const split = splitInstancePort(target, index);
+  if (split === undefined) {
     diagnostics.push(
       diagnostic(
         "SDK_REF_AMBIGUOUS",
@@ -270,8 +303,7 @@ export function resolveRef(
     );
     return undefined;
   }
-  const instanceId = target.slice(0, separator);
-  const port = target.slice(separator + 1);
+  const { instanceId, port } = split;
   const entry = index.get(instanceId);
   if (entry === undefined) {
     diagnostics.push(

@@ -195,6 +195,29 @@ function verifyWorkerSlide(pkg, snapshots, findings) {
       ),
     );
   }
+  const motion = connectors.get("s10-motion");
+  if (motion?.d !== edge?.d) {
+    findings.push(
+      finding(
+        "error",
+        pkg.id,
+        slideLabel,
+        "worker-motion-path",
+        "s10-motion must resolve to the same path as s10-e8",
+      ),
+    );
+  }
+  if (motion?.showArrowhead !== false || motion?.directed !== false) {
+    findings.push(
+      finding(
+        "error",
+        pkg.id,
+        slideLabel,
+        "worker-motion-policy",
+        "s10-motion must resolve as an undirected signal without an arrowhead",
+      ),
+    );
+  }
 
   if (
     snapshot.diagnostics.some(

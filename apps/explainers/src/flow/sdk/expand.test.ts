@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { Diagnostic } from "../schema/index.js";
 import { resolveRef, type SdkInstanceEntry, type SdkInstanceIndex } from "./expand.js";
 
 const SOURCE_RANGE = {
@@ -36,13 +37,13 @@ describe("resolveRef dotted instance ids", () => {
         entry("aiperf.controller", { output: { nodeId: "controller-out" } }),
       ],
     ]);
-    const diagnostics: never[] = [];
+    const diagnostics: Diagnostic[] = [];
 
     const resolved = resolveRef(
       "aiperf.controller.output",
       index,
       SOURCE_RANGE,
-      diagnostics as never[],
+      diagnostics,
     );
 
     expect(diagnostics).toEqual([]);
@@ -53,13 +54,13 @@ describe("resolveRef dotted instance ids", () => {
     const index: SdkInstanceIndex = new Map([
       ["cells", entry("cells", { "worker[0]": { nodeId: "worker-0" } })],
     ]);
-    const diagnostics: never[] = [];
+    const diagnostics: Diagnostic[] = [];
 
     const resolved = resolveRef(
       "cells.worker.0",
       index,
       SOURCE_RANGE,
-      diagnostics as never[],
+      diagnostics,
     );
 
     expect(diagnostics).toEqual([]);

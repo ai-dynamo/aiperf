@@ -806,6 +806,7 @@ export function resolveConnectors(
   }
 
   resolveEdgeBoundMotionSignals(input, connectorsById, diagnostics);
+  detectDuplicateStandaloneSignals(input, connectorsById, diagnostics);
 
   diagnostics.sort(diagnosticOrder);
   return Object.freeze({
@@ -884,5 +885,56 @@ function resolveEdgeBoundMotionSignals(
         penetratedObstacleIds: referenced.penetratedObstacleIds,
       }),
     );
+  }
+}
+
+function connectorsMatch(
+  left: ResolvedConnector,
+  right: ResolvedConnector,
+): boolean {
+  return (
+    left.d === right.d &&
+    left.source.x === right.source.x &&
+    left.source.y === right.source.y &&
+    left.target.x === right.target.x &&
+    left.target.y === right.target.y
+  );
+}
+
+function detectDuplicateStandaloneSignals(
+  input: ResolveConnectorsInput,
+  connectorsById: Map<string, ResolvedConnector>,
+  diagnostics: SceneResolutionDiagnostic[],
+): void {
+  const motionNodes = [...input.nodesById.values()]
+    .filter((node) => isMotionSignal(node) && !isEdgeBoundMotionSignal(node))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  for (const node of motionNodes) {
+    const motion = connectorsById.get(node.id);
+    if (motion === undefined) {
+      continue;
+    }
+    for (const [otherId, other] of connectorsById) {
+      if (otherId === node.id) {
+        continue;
+      }
+      const otherNode = input.nodesById.get(otherId);
+      if (otherNode === undefined || isMotionSignal(otherNode)) {
+        continue;
+      }
+      if (connectorsMatch(motion, other)) {
+        diagnostics.push(
+          makeDiagnostic(
+            node,
+            "SCENE_SIGNAL_DUPLICATES_EDGE",
+            "error",
+            `Motion signal "${node.id}" duplicates connector "${otherId}".`,
+            [node.id, otherId],
+            `Reference the existing edge with edge = "${otherId}".`,
+          ),
+        );
+        break;
+      }
+    }
   }
 }

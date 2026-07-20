@@ -279,8 +279,8 @@ explainer "SDK Generic Catalog" {
     caption: "Write for scanning: one idea per paragraph."
     render: @scene {
       sdk.Header(id = "para-h", title = "SDK.PARAGRAPH", caption = "bounded prose", x = 18, y = 16, width = 664, height = 44)
-      sdk.Paragraph(id = "para-hero", text = "Requests stay in-region unless capacity falls below the configured safety margin.", x = 44, y = 108, width = 300, height = 120)
-      sdk.Label(id = "para-hero-l", text = "HERO · POLICY EXPLANATION", x = 44, y = 246, width = 350, height = 18)
+      sdk.Paragraph(id = "para-hero", text = "Requests stay in-region unless capacity falls below the configured safety margin.", x = 44, y = 108, width = 220, height = 88)
+      sdk.Label(id = "para-hero-l", text = "HERO · POLICY EXPLANATION", x = 44, y = 210, width = 350, height = 18)
       sdk.Paragraph(id = "para-v1", text = "Pin revisions before comparing runs.", x = 440, y = 110, width = 200, height = 62, inkRole = theme(ink.primary))
       sdk.Paragraph(id = "para-v2", text = "Metrics refresh every 10 seconds.", x = 440, y = 222, width = 200, height = 62, inkRole = theme(ink.secondary))
       sdk.Label(id = "para-v1-l", text = "GUIDANCE", x = 440, y = 194, width = 200, height = 16)
@@ -882,13 +882,13 @@ explainer "SDK Generic Catalog" {
     render: @scene {
       sdk.Header(id = "rating-h", title = "SDK.RATING", caption = "five-step score", x = 18, y = 16, width = 664, height = 44)
       sdk.Rating(id = "rating-hero", label = "response quality", value = 0.8, x = 100, y = 125, width = 240, height = 48)
-      sdk.Label(id = "rating-hero-l", text = "HERO · 4 / 5 QUALITY", x = 70, y = 205, width = 300, height = 18)
-      sdk.Rating(id = "rating-v1", label = "low", value = 0.2, x = 430, y = 95, width = 160, height = 24)
-      sdk.Label(id = "rating-v1-l", text = "LOW", x = 430, y = 141, width = 160, height = 14)
-      sdk.Rating(id = "rating-v2", label = "medium", value = 0.6, x = 430, y = 167, width = 160, height = 24)
-      sdk.Label(id = "rating-v2-l", text = "MEDIUM", x = 430, y = 213, width = 160, height = 14)
-      sdk.Rating(id = "rating-v3", label = "excellent", value = 1, x = 430, y = 239, width = 160, height = 24)
-      sdk.Label(id = "rating-v3-l", text = "EXCELLENT", x = 430, y = 285, width = 160, height = 14)
+      sdk.Label(id = "rating-hero-l", text = "HERO · 4 / 5 QUALITY", x = 70, y = 215, width = 300, height = 18)
+      sdk.Rating(id = "rating-v1", label = "low", value = 0.2, x = 430, y = 95, width = 160, height = 36)
+      sdk.Label(id = "rating-v1-l", text = "LOW", x = 430, y = 157, width = 160, height = 14)
+      sdk.Rating(id = "rating-v2", label = "medium", value = 0.6, x = 430, y = 183, width = 160, height = 36)
+      sdk.Label(id = "rating-v2-l", text = "MEDIUM", x = 430, y = 245, width = 160, height = 14)
+      sdk.Rating(id = "rating-v3", label = "excellent", value = 1, x = 430, y = 271, width = 160, height = 36)
+      sdk.Label(id = "rating-v3-l", text = "EXCELLENT", x = 430, y = 333, width = 160, height = 14)
       timeline main { at 0 reveal rating-h duration 160 after rating-h reveal rating-hero duration 240 after rating-hero reveal rating-hero-l duration 140 after rating-hero-l reveal rating-v1 duration 140 after rating-v1 reveal rating-v1-l duration 100 after rating-v1-l reveal rating-v2 duration 140 after rating-v2 reveal rating-v2-l duration 100 after rating-v2-l reveal rating-v3 duration 140 after rating-v3 reveal rating-v3-l duration 100 }
     }
   }
@@ -903,12 +903,12 @@ explainer "SDK Generic Catalog" {
       sdk.Header(id = "sem-h", title = "SDK.SEMAPHORE", caption = "three-state health", x = 18, y = 16, width = 664, height = 44)
       sdk.Semaphore(id = "sem-hero", label = "admission healthy", value = 1, x = 120, y = 125, width = 180, height = 60)
       sdk.Label(id = "sem-hero-l", text = "HERO · ADMISSION OPEN", x = 70, y = 215, width = 280, height = 18)
-      sdk.Semaphore(id = "sem-v1", label = "blocked", value = 0, x = 450, y = 100, width = 90, height = 28)
-      sdk.Label(id = "sem-v1-l", text = "BLOCKED", x = 450, y = 146, width = 120, height = 16)
-      sdk.Semaphore(id = "sem-v2", label = "caution", value = 0.5, x = 450, y = 172, width = 90, height = 28)
-      sdk.Label(id = "sem-v2-l", text = "CAUTION", x = 450, y = 218, width = 120, height = 16)
-      sdk.Semaphore(id = "sem-v3", label = "healthy", value = 1, x = 450, y = 244, width = 90, height = 28)
-      sdk.Label(id = "sem-v3-l", text = "HEALTHY", x = 450, y = 290, width = 120, height = 16)
+      sdk.Semaphore(id = "sem-v1", label = "blocked", value = 0, x = 450, y = 100, width = 90, height = 36)
+      sdk.Label(id = "sem-v1-l", text = "BLOCKED", x = 450, y = 156, width = 120, height = 16)
+      sdk.Semaphore(id = "sem-v2", label = "caution", value = 0.5, x = 450, y = 182, width = 90, height = 36)
+      sdk.Label(id = "sem-v2-l", text = "CAUTION", x = 450, y = 238, width = 120, height = 16)
+      sdk.Semaphore(id = "sem-v3", label = "healthy", value = 1, x = 450, y = 264, width = 90, height = 36)
+      sdk.Label(id = "sem-v3-l", text = "HEALTHY", x = 450, y = 320, width = 120, height = 16)
       timeline main { at 0 reveal sem-h duration 160 after sem-h reveal sem-hero duration 240 after sem-hero reveal sem-hero-l duration 140 after sem-hero-l reveal sem-v1 duration 140 after sem-v1 reveal sem-v1-l duration 100 after sem-v1-l reveal sem-v2 duration 140 after sem-v2 reveal sem-v2-l duration 100 after sem-v2-l reveal sem-v3 duration 140 after sem-v3 reveal sem-v3-l duration 100 }
     }
   }
@@ -978,9 +978,9 @@ explainer "SDK Generic Catalog" {
       sdk.SplitPane(id = "split-hero", label = "configure and inspect", direction = "row", gap = 14, x = 35, y = 85, width = 390, height = 210) { children { sdk.Section(id = "split-left", title = "Configuration", width = 180, height = 190) sdk.Section(id = "split-right", title = "Results", width = 180, height = 190, strokeRole = theme(accent.primary)) } }
       sdk.Label(id = "split-hero-l", text = "HERO · CONFIG + RESULTS", x = 35, y = 310, width = 390, height = 18)
       sdk.SplitPane(id = "split-v1", label = "horizontal", direction = "row", gap = 8, x = 450, y = 95, width = 200, height = 90) { children { sdk.Shape(id = "split-v1a", label = "A") sdk.Shape(id = "split-v1b", label = "B") } }
-      sdk.SplitPane(id = "split-v2", label = "vertical", direction = "column", gap = 8, x = 450, y = 232, width = 200, height = 90) { children { sdk.Shape(id = "split-v2a", label = "A") sdk.Shape(id = "split-v2b", label = "B") } }
+      sdk.SplitPane(id = "split-v2", label = "vertical", direction = "column", gap = 8, x = 450, y = 220, width = 200, height = 90) { children { sdk.Shape(id = "split-v2a", label = "A") sdk.Shape(id = "split-v2b", label = "B") } }
       sdk.Label(id = "split-v1-l", text = "HORIZONTAL", x = 450, y = 204, width = 200, height = 16)
-      sdk.Label(id = "split-v2-l", text = "VERTICAL", x = 450, y = 336, width = 200, height = 16)
+      sdk.Label(id = "split-v2-l", text = "VERTICAL", x = 450, y = 360, width = 200, height = 16)
       timeline main { at 0 reveal split-h duration 160 after split-h reveal split-hero duration 240 after split-hero reveal split-hero-l duration 140 after split-hero-l reveal split-v1 duration 160 after split-v1 reveal split-v1-l duration 120 after split-v1-l reveal split-v2 duration 160 after split-v2 reveal split-v2-l duration 120 }
     }
   }

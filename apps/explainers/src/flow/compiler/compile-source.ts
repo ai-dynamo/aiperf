@@ -49,7 +49,11 @@ export function compileSource(request: CompileRequest): Result<FlowIr> {
     return expanded;
   }
 
-  const linked = link(expanded.value);
+  const linked = link(expanded.value, {
+    ...(request.components === undefined
+      ? {}
+      : { components: request.components }),
+  });
   if (!linked.ok) {
     return linked;
   }

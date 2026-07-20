@@ -33,12 +33,12 @@ import {
 } from "./connector-routing.js";
 import { FlowArrow } from "./FlowArrow";
 import { MotionSignal } from "./MotionSignal";
-import {
-  hasNativeSemanticChrome,
-  resolveSemanticChrome,
-} from "./capabilities/chrome.js";
+import { hasNativeSemanticChrome } from "./capabilities/chrome.js";
 import { resolveScene } from "./resolution/resolve-scene.js";
-import type { ResolvedConnector } from "./resolution/types.js";
+import type {
+  ResolvedConnector,
+  ResolvedGeneratedPart,
+} from "./resolution/types.js";
 import type {
   SceneCameraKeyframeLike,
   SceneGeometryLike,
@@ -182,6 +182,7 @@ type SceneNodeIndex = Readonly<{
   nodesById: ReadonlyMap<string, SceneNodeLike>;
   worldGeometryById: ReadonlyMap<string, SceneGeometryLike>;
   ancestorIdsById: ReadonlyMap<string, readonly string[]>;
+  generatedPartsById: ReadonlyMap<string, ResolvedGeneratedPart>;
   connectorsById: ReadonlyMap<string, ResolvedConnector>;
 }>;
 
@@ -3466,7 +3467,16 @@ function renderNode(
       />
     );
   } else if (hasNativeSemanticChrome(node)) {
-    const semantic = resolveSemanticChrome(node, geom);
+    const semanticParts = [...index.generatedPartsById.values()].filter(
+      (part) => part.ownerId === node.id,
+    );
+    const rootBox = semanticParts.find(
+      (part) => part.kind === "box" && part.role === "chrome",
+    );
+    const boxes = semanticParts.filter(
+      (part) => part.kind === "box" && part.role !== "chrome",
+    );
+    const texts = semanticParts.filter((part) => part.kind === "text");
     const { fill: fillPaint, stroke: strokePaint } = chalkRectPaints(
       node.style,
       theme,
@@ -3475,14 +3485,14 @@ function renderNode(
     );
     body = (
       <>
-        {semantic.rootBox === undefined ? null : (
+        {rootBox === undefined ? null : (
           <rect
-            id={semantic.rootBox.id}
-            x={semantic.rootBox.geometry.x}
-            y={semantic.rootBox.geometry.y}
-            width={semantic.rootBox.geometry.width}
-            height={semantic.rootBox.geometry.height}
-            rx={semantic.rootBox.radius}
+            id={rootBox.id}
+            x={rootBox.geometry.x}
+            y={rootBox.geometry.y}
+            width={rootBox.geometry.width}
+            height={rootBox.geometry.height}
+            rx={rootBox.radius}
             fill={fillPaint}
             stroke={strokePaint}
             strokeWidth={strokeWidthFromStyle(node.style, 1.3) * strokeScale}
@@ -3492,9 +3502,9 @@ function renderNode(
             data-flow-semantic-chrome={capability}
           />
         )}
-        {semantic.boxes.map((box) => (
+        {boxes.map((box) => (
           <rect
-            key={box.id}
+            key={`generated-box-${box.id}`}
             id={box.id}
             x={box.geometry.x}
             y={box.geometry.y}
@@ -3509,32 +3519,37 @@ function renderNode(
             data-flow-semantic-chrome={capability}
           />
         ))}
-        {semantic.texts.map((part) => {
-          const centered = part.anchor === "middle";
+        {texts.map((part) => {
+          const anchor = part.anchor ?? "start";
+          const centered = anchor === "middle";
           const inkFallback =
             part.tone === "secondary"
               ? theme.text.secondary
               : theme.text.primary;
           return (
             <text
-              key={part.id}
+              key={`generated-text-${part.id}`}
               id={part.id}
               x={
                 centered
-                  ? part.x + part.width / 2
-                  : part.anchor === "end"
-                    ? part.x + part.width
-                    : part.x
+                  ? part.geometry.x + part.geometry.width / 2
+                  : anchor === "end"
+                    ? part.geometry.x + part.geometry.width
+                    : part.geometry.x
               }
-              y={centered ? part.y + part.height / 2 : part.y}
+              y={
+                centered
+                  ? part.geometry.y + part.geometry.height / 2
+                  : part.geometry.y
+              }
               dominantBaseline={centered ? "middle" : "hanging"}
-              textAnchor={part.anchor}
+              textAnchor={anchor}
               fill={
                 part.inkRole !== undefined
                   ? resolveThemePaint(part.inkRole, theme, inkFallback)
                   : inkFallback
               }
-              fontSize={scaledSceneFontSize(part.fontSize)}
+              fontSize={scaledSceneFontSize(part.fontSize ?? 14)}
               fontWeight={part.fontWeight}
               fontFamily={part.fontFamily}
               fontStyle={part.fontStyle}
@@ -3547,7 +3562,7 @@ function renderNode(
               aria-hidden="true"
               data-flow-semantic-text={capability}
             >
-              {part.text}
+              {part.text ?? ""}
             </text>
           );
         })}
@@ -4189,6 +4204,7 @@ export function SceneRenderer({
       nodesById: resolved.nodesById,
       worldGeometryById: resolved.worldGeometryById,
       ancestorIdsById: resolved.ancestorIdsById,
+      generatedPartsById: resolved.generatedPartsById,
       connectorsById: resolved.connectorsById,
     };
     const authoredTimeline = Array.isArray(scene.timeline) ? scene.timeline : [];

@@ -27,6 +27,7 @@ export type SceneResolutionDiagnostic = Readonly<{
 export type ResolvedGeneratedPart = Readonly<{
   id: string;
   ownerId: string;
+  kind: "box" | "text";
   role:
     | "chrome"
     | "title"
@@ -36,6 +37,16 @@ export type ResolvedGeneratedPart = Readonly<{
     | "label"
     | "step";
   geometry: SceneGeometryLike;
+  radius?: number;
+  text?: string;
+  fontSize?: number;
+  fontWeight?: string;
+  fontFamily?: string;
+  fontStyle?: string;
+  whiteSpace?: string;
+  anchor?: "start" | "middle" | "end";
+  tone?: "primary" | "secondary";
+  inkRole?: string;
 }>;
 
 /** Finite world-space point in a resolved scene. */
