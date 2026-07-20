@@ -7,55 +7,56 @@
  * Visual tokens for explainers chrome and diagram defaults.
  * Keep hex values in sync with `:root` custom properties in `index.css`.
  *
- * Systems-atlas skin: NVIDIA greens on a restrained graphite frame.
- * Layering (dark → light): page < chrome < elevated stage.
+ * NVIDIA-deck skin: flat white slides, NVIDIA green accent, boxy corners.
+ * Matches the reference deck's editorial print language, not a dark app chrome.
  */
 export const tokens = {
   text: {
-    primary: "#F1F2F4",
-    secondary: "#A7AAB4",
-    tertiary: "#747985",
-    quaternary: "#4F535E",
-    link: "#B8D95A",
-    onAccent: "#090A0D",
+    primary: "#000000",
+    secondary: "#555555",
+    tertiary: "#A7A7A7",
+    quaternary: "#C4C4C4",
+    link: "#3D6B00",
+    onAccent: "#000000",
   },
   bg: {
-    page: "#08090B",
-    chrome: "#0D0E12",
-    elevated: "#14151A",
-    panel: "#20242A",
+    page: "#FFFFFF",
+    chrome: "#FAFAFA",
+    elevated: "#FFFFFF",
+    panel: "#F7F7F7",
   },
   fill: {
-    primary: "rgba(241, 242, 244, 0.12)",
-    secondary: "rgba(241, 242, 244, 0.075)",
-    tertiary: "rgba(241, 242, 244, 0.045)",
-    quaternary: "rgba(241, 242, 244, 0.025)",
+    primary: "rgba(15, 12, 8, 0.08)",
+    secondary: "rgba(15, 12, 8, 0.05)",
+    tertiary: "rgba(15, 12, 8, 0.03)",
+    quaternary: "rgba(15, 12, 8, 0.015)",
   },
   stroke: {
-    primary: "rgba(218, 221, 230, 0.22)",
-    secondary: "rgba(218, 221, 230, 0.11)",
-    tertiary: "rgba(218, 221, 230, 0.06)",
+    primary: "#111111",
+    secondary: "#E4E4E4",
+    tertiary: "#EFEFEF",
   },
   accent: {
     primary: "#76B900",
-    control: "#4DB7C5",
+    tint: "#F2F7EA",
+    control: "#3987A6",
   },
   category: {
-    green: "#A5C63B",
-    yellow: "#D6B84A",
-    purple: "#8CCB5E",
-    blue: "#669BC4",
-    red: "#C95F73",
-    orange: "#C9864D",
-    cyan: "#4DB7C5",
+    green: "#5E8A1F",
+    yellow: "#B08A1E",
+    purple: "#6E4FA6",
+    blue: "#2A78D6",
+    red: "#A63244",
+    orange: "#B05E2A",
+    cyan: "#3987A6",
     gray: "#7E838E",
   },
   radius: {
-    control: 999,
-    card: 6,
-    stage: 5,
-    pill: 999,
-    box: 5,
+    control: 0,
+    card: 0,
+    stage: 0,
+    pill: 0,
+    box: 0,
   },
   diagram: {
     strokeWidth: 1.6,

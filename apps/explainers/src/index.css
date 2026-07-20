@@ -3,59 +3,62 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Roboto+Mono:wght@400;500&display=swap");
+
 /*
  * CSS custom properties mirror `src/core/tokens.ts`.
  * Prefer these vars in chrome classes; SVG/diagram code uses the TS theme bridge.
  */
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  --ex-text-primary: #f1f2f4;
-  --ex-text-secondary: #a7aab4;
-  --ex-text-tertiary: #747985;
-  --ex-text-quaternary: #4f535e;
-  --ex-text-link: #b8d95a;
-  --ex-text-on-accent: #090a0d;
+  --ex-text-primary: #000000;
+  --ex-text-secondary: #555555;
+  --ex-text-tertiary: #a7a7a7;
+  --ex-text-quaternary: #c4c4c4;
+  --ex-text-link: #3d6b00;
+  --ex-text-on-accent: #000000;
 
-  --ex-bg-page: #08090b;
-  --ex-bg-chrome: #0d0e12;
-  --ex-bg-elevated: #14151a;
-  --ex-bg-panel: #20242a;
+  --ex-bg-page: #ffffff;
+  --ex-bg-chrome: #fafafa;
+  --ex-bg-elevated: #ffffff;
+  --ex-bg-panel: #f7f7f7;
 
-  --ex-fill-primary: rgba(241, 242, 244, 0.12);
-  --ex-fill-secondary: rgba(241, 242, 244, 0.075);
-  --ex-fill-tertiary: rgba(241, 242, 244, 0.045);
-  --ex-fill-quaternary: rgba(241, 242, 244, 0.025);
+  --ex-fill-primary: rgba(15, 12, 8, 0.08);
+  --ex-fill-secondary: rgba(15, 12, 8, 0.05);
+  --ex-fill-tertiary: rgba(15, 12, 8, 0.03);
+  --ex-fill-quaternary: rgba(15, 12, 8, 0.015);
 
-  --ex-stroke-primary: rgba(218, 221, 230, 0.22);
-  --ex-stroke-secondary: rgba(218, 221, 230, 0.11);
-  --ex-stroke-tertiary: rgba(218, 221, 230, 0.06);
+  --ex-stroke-primary: #111111;
+  --ex-stroke-secondary: #e4e4e4;
+  --ex-stroke-tertiary: #efefef;
 
   --ex-accent: #76b900;
-  --ex-accent-soft: #527f12;
-  --ex-accent-control: #4db7c5;
-  --ex-accent-done: #a5c63b;
-  --ex-category-green: #a5c63b;
-  --ex-category-yellow: #d6b84a;
-  --ex-category-purple: #8ccb5e;
-  --ex-category-blue: #669bc4;
-  --ex-category-red: #c95f73;
-  --ex-category-orange: #c9864d;
-  --ex-category-cyan: #4db7c5;
+  --ex-accent-soft: #5e9400;
+  --ex-accent-control: #3987a6;
+  --ex-accent-done: #5e8a1f;
+  --ex-accent-tint: #f2f7ea;
+  --ex-category-green: #5e8a1f;
+  --ex-category-yellow: #b08a1e;
+  --ex-category-purple: #6e4fa6;
+  --ex-category-blue: #2a78d6;
+  --ex-category-red: #a63244;
+  --ex-category-orange: #b05e2a;
+  --ex-category-cyan: #3987a6;
   --ex-category-gray: #7e838e;
 
-  --ex-radius-control: 999px;
-  --ex-radius-card: 6px;
-  --ex-radius-stage: 5px;
-  --ex-radius-pill: 999px;
+  --ex-radius-control: 0px;
+  --ex-radius-card: 0px;
+  --ex-radius-stage: 0px;
+  --ex-radius-pill: 0px;
 
-  --ex-grid-line: rgba(218, 221, 230, 0.025);
+  --ex-grid-line: rgba(15, 12, 8, 0);
   --ex-grid-size: 52px;
-  --ex-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --ex-mono: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --ex-chrome-fade-ms: 320ms;
 
   font-family:
-    Inter,
+    Manrope,
     ui-sans-serif,
     system-ui,
     -apple-system,
