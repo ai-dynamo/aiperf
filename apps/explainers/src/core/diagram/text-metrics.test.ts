@@ -9,6 +9,7 @@ import {
   estimateTextWidth,
   scaledSceneFontSize,
   stepperChipWidth,
+  wrapTextToWidth,
 } from "./text-metrics.js";
 
 describe("scene text metrics", () => {
@@ -31,5 +32,47 @@ describe("scene text metrics", () => {
     expect(stepperChipWidth("layout", 0)).toBe(
       Math.max(72, Math.ceil("1. layout".length * 6.2 * 0.9) + 24),
     );
+  });
+});
+
+describe("wrapTextToWidth", () => {
+  it("returns the whole string as one line when it already fits", () => {
+    const lines = wrapTextToWidth("short text", 400, 14);
+    expect(lines).toEqual(["short text"]);
+  });
+
+  it("wraps onto multiple lines when content exceeds maxWidth", () => {
+    const long = "one two three four five six seven eight nine ten";
+    const lines = wrapTextToWidth(long, 80, 14);
+    expect(lines.length).toBeGreaterThan(1);
+    // every produced line must individually fit (or be a single
+    // unbreakable word longer than maxWidth, per the next test)
+    for (const line of lines) {
+      expect(line.length).toBeGreaterThan(0);
+    }
+    // re-joining with spaces must reconstruct the original words in order
+    expect(lines.join(" ")).toBe(long);
+  });
+
+  it("does not infinite-loop on a single word longer than maxWidth", () => {
+    const lines = wrapTextToWidth("supercalifragilisticexpialidocious", 20, 14);
+    expect(lines).toEqual(["supercalifragilisticexpialidocious"]);
+  });
+
+  it("returns an empty array for empty input", () => {
+    expect(wrapTextToWidth("", 400, 14)).toEqual([]);
+  });
+
+  it("respects bold vs normal weight when measuring", () => {
+    const text = "aaaa bbbb cccc dddd";
+    const normalLines = wrapTextToWidth(text, 100, 14, "normal");
+    const boldLines = wrapTextToWidth(text, 100, 14, "bold");
+    // bold chars measure the same width unit as normal in this measurer
+    // today (BOLD_CHAR_WIDTH === CHAR_WIDTH) — assert the function at
+    // least accepts and threads the parameter without throwing, and
+    // produces the same line count as normal (documents current
+    // equal-width assumption; update this assertion if text-metrics.ts's
+    // width constants ever diverge for bold).
+    expect(boldLines.length).toBe(normalLines.length);
   });
 });

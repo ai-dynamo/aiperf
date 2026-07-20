@@ -44,3 +44,37 @@ export function stepperChipWidth(label: string, index: number): number {
     estimateTextWidth(text, 11, "bold") + STEPPER_CHIP_PAD,
   );
 }
+
+/**
+ * Greedy word-wrap: packs whitespace-separated words onto lines that fit
+ * `maxWidth` per `estimateTextWidth`, breaking only between words (never
+ * mid-word). A single word wider than `maxWidth` on its own still occupies
+ * its own line rather than being split or dropped.
+ */
+export function wrapTextToWidth(
+  text: string,
+  maxWidth: number,
+  fontSize: number,
+  weight: "normal" | "bold" = "normal",
+): string[] {
+  const words = text.split(/\s+/).filter((word) => word.length > 0);
+  if (words.length === 0) {
+    return [];
+  }
+
+  const lines: string[] = [];
+  let current = words[0];
+
+  for (let i = 1; i < words.length; i += 1) {
+    const word = words[i];
+    const candidate = `${current} ${word}`;
+    if (estimateTextWidth(candidate, fontSize, weight) <= maxWidth) {
+      current = candidate;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  lines.push(current);
+  return lines;
+}
