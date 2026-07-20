@@ -12,6 +12,7 @@ import { DIAGRAM_SDK_COMPONENTS } from "./diagram/catalog.js";
 import { GENERIC_CATALOG_COMPONENTS } from "./generic/catalog.js";
 import { GENERIC_CHROME_COMPONENTS } from "./generic/chrome.js";
 import { GENERIC_COMPOSITE_SDK_COMPONENTS } from "./generic/composites.js";
+import { DECK_COMPOSITE_SDK_COMPONENTS } from "./generic/deck-composites.js";
 import { GENERIC_LAYOUT_SDK_COMPONENTS } from "./generic/layout.js";
 import { GENERIC_MOTION_SDK_COMPONENTS } from "./generic/motion.js";
 import { GENERIC_TOPOLOGY_SDK_COMPONENTS } from "./generic/topology.js";
@@ -353,12 +354,21 @@ const GENERIC_IMPLEMENTATIONS = indexDefinitions([
   ...DIAGRAM_SDK_COMPONENTS,
 ]);
 
-/** Generic SDK pack component definitions. */
-export const GENERIC_SDK_COMPONENTS: readonly SdkComponentDefinition[] =
-  GENERIC_COMPONENT_ORDER.map(([id, actions]) => {
+/**
+ * Generic SDK pack component definitions.
+ *
+ * The fixed `GENERIC_COMPONENT_ORDER` roster maps canonical generic ids to
+ * their implementation (or a stub). The deck-port composites live outside that
+ * roster — they are additive `sdk.*` shapes with their own ids, so they are
+ * appended after the ordered roster rather than replacing a stub in it.
+ */
+export const GENERIC_SDK_COMPONENTS: readonly SdkComponentDefinition[] = [
+  ...GENERIC_COMPONENT_ORDER.map(([id, actions]) => {
     const implemented = GENERIC_IMPLEMENTATIONS.get(id);
     return implemented ?? createStubDefinition(id, actions);
-  });
+  }),
+  ...DECK_COMPOSITE_SDK_COMPONENTS,
+];
 
 /** AIPerf SDK pack component definitions. */
 export const AIPERF_SDK_COMPONENTS: readonly SdkComponentDefinition[] = [
