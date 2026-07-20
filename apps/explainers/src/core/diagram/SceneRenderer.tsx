@@ -3609,8 +3609,8 @@ function renderNode(
         aria-hidden="true"
         style={{
           filter: remappedAccentFill
-            ? `drop-shadow(0 8px 14px rgba(0, 0, 0, 0.4)) drop-shadow(0 0 8px color-mix(in srgb, ${strokePaint} 45%, transparent))`
-            : "drop-shadow(0 6px 10px rgba(0, 0, 0, 0.3))",
+            ? `drop-shadow(0 8px 14px rgba(15, 12, 8, 0.16)) drop-shadow(0 0 8px color-mix(in srgb, ${strokePaint} 45%, transparent))`
+            : "drop-shadow(0 6px 10px rgba(15, 12, 8, 0.12))",
           ...styleToCss(node.style, theme),
           ...pulseFloat,
           ...(pulseOpacity !== undefined ? { opacity: pulseOpacity } : {}),
@@ -3657,7 +3657,7 @@ function renderNode(
           ...(capability === "core.panel"
             ? {
                 filter:
-                  "drop-shadow(0 5px 7px rgba(0, 0, 0, 0.32))",
+                  "drop-shadow(0 5px 7px rgba(15, 12, 8, 0.13))",
               }
             : {}),
           ...styleToCss(node.style, theme),
