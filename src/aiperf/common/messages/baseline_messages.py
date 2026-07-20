@@ -16,6 +16,11 @@ class PhaseBaselineRequestMessage(Message):
 
     message_type: MessageTypeT = MessageType.PHASE_BASELINE_REQUEST
 
+    request_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Timestamp of the request in nanoseconds",
+    )
     phase_id: str = Field(
         ..., description="Unique runtime ID pairing boundary requests."
     )

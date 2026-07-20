@@ -1309,138 +1309,44 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if not concrete_phase_stats:
             return None
 
-        phase_results: list[PhaseProfileResults] = []
         acc_items = [
             (acc_type, acc)
             for acc_type, acc in self._accumulators.items()
             if acc in self._metric_record_accumulators
         ]
-
         cfg = getattr(getattr(self, "run", None), "cfg", None)
-        gpu_telemetry_disabled = bool(getattr(cfg, "gpu_telemetry_disabled", False))
-        server_metrics_disabled = bool(getattr(cfg, "server_metrics_disabled", False))
-        telemetry_errors = [
-            ErrorDetailsCount(error_details=error_details, count=count)
-            for error_details, count in self._telemetry_state.error_counts.items()
-        ]
-        server_metrics_errors = [
-            ErrorDetailsCount(error_details=error_details, count=count)
-            for error_details, count in self._server_metrics_state.error_counts.items()
-        ]
+        telemetry_errors = self._phase_error_counts(self._telemetry_state.error_counts)
+        server_metrics_errors = self._phase_error_counts(
+            self._server_metrics_state.error_counts
+        )
 
+        phase_results: list[PhaseProfileResults] = []
         for stats in concrete_phase_stats:
             if stats.phase_index is None:
                 continue
-            phase_metric_start_ns = stats.start_ns
-            phase_metric_end_ns = stats.requests_end_ns
-            phase_baseline_start_ns = stats.baseline_start_ns or stats.start_ns
-            phase_baseline_end_ns = stats.baseline_end_ns or stats.requests_end_ns
-            records_results: list[MetricResult] = []
-            error_results: list[ErrorDetails] = []
-            ctx = ExportContext(
-                start_ns=phase_metric_start_ns,
-                end_ns=phase_metric_end_ns,
-                phase=stats.phase,
-                phase_index=stats.phase_index,
-                phase_name=stats.phase_name,
-                phase_kind=stats.phase_kind or stats.phase.value,
-                is_phase_scoped=True,
-                error_summary=self._error_tracker.get_error_summary_for_phase(
-                    stats.phase, phase_index=stats.phase_index
-                ),
-                cancelled=cancelled,
+            ctx = self._phase_metric_export_context(stats, cancelled)
+            records_results, error_results = await self._phase_metric_results(
+                acc_items, ctx
             )
-            if acc_items:
-                summaries = await asyncio.gather(
-                    *[
-                        self._summarize_one_accumulator(acc_type, acc, ctx)
-                        for acc_type, acc in acc_items
-                    ],
-                    return_exceptions=False,
-                )
-                for acc_type, summary in summaries:
-                    self._bucket_accumulator_summary(
-                        acc_type, summary, records_results, error_results
-                    )
-
-            telemetry_results = None
-            telemetry_warnings: list[str] = []
-            if (
-                self._gpu_telemetry_accumulator is not None
-                and not gpu_telemetry_disabled
-            ):
-                try:
-                    telemetry_results = (
-                        await self._gpu_telemetry_accumulator.export_results(
-                            ExportContext(
-                                start_ns=phase_baseline_start_ns,
-                                end_ns=phase_baseline_end_ns,
-                                phase=stats.phase,
-                                phase_index=stats.phase_index,
-                                phase_name=stats.phase_name,
-                                phase_kind=stats.phase_kind or stats.phase.value,
-                                is_phase_scoped=True,
-                                error_summary=telemetry_errors,
-                            )
-                        )
-                    )
-                    if telemetry_results is None:
-                        telemetry_warnings.append(
-                            "No GPU telemetry data available for this phase."
-                        )
-                except Exception as e:  # noqa: BLE001 - phase artifact remains best-effort
-                    telemetry_warnings.append(
-                        f"GPU telemetry phase export failed: {type(e).__name__}: {e}"
-                    )
-
-            server_metrics_results = None
-            server_metrics_warnings: list[str] = []
-            if (
-                self._server_metrics_accumulator is not None
-                and not server_metrics_disabled
-            ):
-                try:
-                    server_metrics_results = (
-                        await self._server_metrics_accumulator.export_results(
-                            ExportContext(
-                                start_ns=phase_baseline_start_ns,
-                                end_ns=phase_baseline_end_ns,
-                                phase=stats.phase,
-                                phase_index=stats.phase_index,
-                                phase_name=stats.phase_name,
-                                phase_kind=stats.phase_kind or stats.phase.value,
-                                is_phase_scoped=True,
-                                error_summary=server_metrics_errors,
-                            )
-                        )
-                    )
-                    if server_metrics_results is None:
-                        server_metrics_warnings.append(
-                            "No server metrics data available for this phase."
-                        )
-                except Exception as e:  # noqa: BLE001
-                    server_metrics_warnings.append(
-                        f"Server metrics phase export failed: {type(e).__name__}: {e}"
-                    )
-
+            telemetry_results, telemetry_warnings = await self._phase_telemetry_results(
+                stats,
+                telemetry_errors,
+                bool(getattr(cfg, "gpu_telemetry_disabled", False)),
+            )
+            (
+                server_metrics_results,
+                server_metrics_warnings,
+            ) = await self._phase_server_metrics_results(
+                stats,
+                server_metrics_errors,
+                bool(getattr(cfg, "server_metrics_disabled", False)),
+            )
             phase_results.append(
-                PhaseProfileResults(
-                    phase_index=stats.phase_index,
-                    profiling_index=stats.profiling_index,
-                    phase_name=stats.phase_name
-                    or f"{stats.phase.value}_{stats.phase_index}",
-                    phase_kind=stats.phase_kind or stats.phase.value,
-                    records=records_results,
-                    start_ns=stats.start_ns,
-                    end_ns=stats.requests_end_ns,
-                    baseline_start_ns=stats.baseline_start_ns,
-                    baseline_end_ns=stats.baseline_end_ns,
-                    was_cancelled=stats.was_cancelled or cancelled,
-                    successful_request_count=stats.success_records,
-                    error_request_count=stats.error_records,
-                    error_summary=self._error_tracker.get_error_summary_for_phase(
-                        stats.phase, phase_index=stats.phase_index
-                    ),
+                self._create_phase_profile_result(
+                    stats=stats,
+                    cancelled=cancelled,
+                    records_results=records_results,
+                    error_results=error_results,
                     telemetry_results=telemetry_results,
                     server_metrics_results=server_metrics_results,
                     telemetry_warnings=telemetry_warnings,
@@ -1448,6 +1354,142 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
             )
         return phase_results or None
+
+    @staticmethod
+    def _phase_error_counts(
+        error_counts: dict[ErrorDetails, int],
+    ) -> list[ErrorDetailsCount]:
+        return [
+            ErrorDetailsCount(error_details=error_details, count=count)
+            for error_details, count in error_counts.items()
+        ]
+
+    def _phase_metric_export_context(
+        self, stats: PhaseRecordsStats, cancelled: bool
+    ) -> ExportContext:
+        return ExportContext(
+            start_ns=stats.start_ns,
+            end_ns=stats.requests_end_ns,
+            phase=stats.phase,
+            phase_index=stats.phase_index,
+            phase_name=stats.phase_name,
+            phase_kind=stats.phase_kind or stats.phase.value,
+            is_phase_scoped=True,
+            error_summary=self._error_tracker.get_error_summary_for_phase(
+                stats.phase, phase_index=stats.phase_index
+            ),
+            cancelled=cancelled,
+        )
+
+    @staticmethod
+    def _phase_baseline_export_context(
+        stats: PhaseRecordsStats, error_summary: list[ErrorDetailsCount]
+    ) -> ExportContext:
+        return ExportContext(
+            start_ns=stats.baseline_start_ns or stats.start_ns,
+            end_ns=stats.baseline_end_ns or stats.requests_end_ns,
+            phase=stats.phase,
+            phase_index=stats.phase_index,
+            phase_name=stats.phase_name,
+            phase_kind=stats.phase_kind or stats.phase.value,
+            is_phase_scoped=True,
+            error_summary=error_summary,
+        )
+
+    async def _phase_metric_results(
+        self,
+        acc_items: list[tuple[AccumulatorType, AccumulatorProtocol]],
+        ctx: ExportContext,
+    ) -> tuple[list[MetricResult], list[ErrorDetails]]:
+        records_results: list[MetricResult] = []
+        error_results: list[ErrorDetails] = []
+        if not acc_items:
+            return records_results, error_results
+
+        summaries = await asyncio.gather(
+            *[
+                self._summarize_one_accumulator(acc_type, acc, ctx)
+                for acc_type, acc in acc_items
+            ],
+            return_exceptions=False,
+        )
+        for acc_type, summary in summaries:
+            self._bucket_accumulator_summary(
+                acc_type, summary, records_results, error_results
+            )
+        return records_results, error_results
+
+    async def _phase_telemetry_results(
+        self,
+        stats: PhaseRecordsStats,
+        telemetry_errors: list[ErrorDetailsCount],
+        disabled: bool,
+    ) -> tuple[Any | None, list[str]]:
+        if self._gpu_telemetry_accumulator is None or disabled:
+            return None, []
+        try:
+            results = await self._gpu_telemetry_accumulator.export_results(
+                self._phase_baseline_export_context(stats, telemetry_errors)
+            )
+        except Exception as e:  # noqa: BLE001 - phase artifact remains best-effort
+            return None, [f"GPU telemetry phase export failed: {type(e).__name__}: {e}"]
+        if results is None:
+            return None, ["No GPU telemetry data available for this phase."]
+        return results, []
+
+    async def _phase_server_metrics_results(
+        self,
+        stats: PhaseRecordsStats,
+        server_metrics_errors: list[ErrorDetailsCount],
+        disabled: bool,
+    ) -> tuple[Any | None, list[str]]:
+        if self._server_metrics_accumulator is None or disabled:
+            return None, []
+        try:
+            results = await self._server_metrics_accumulator.export_results(
+                self._phase_baseline_export_context(stats, server_metrics_errors)
+            )
+        except Exception as e:  # noqa: BLE001 - phase artifact remains best-effort
+            return None, [
+                f"Server metrics phase export failed: {type(e).__name__}: {e}"
+            ]
+        if results is None:
+            return None, ["No server metrics data available for this phase."]
+        return results, []
+
+    def _create_phase_profile_result(
+        self,
+        *,
+        stats: PhaseRecordsStats,
+        cancelled: bool,
+        records_results: list[MetricResult],
+        error_results: list[ErrorDetails],
+        telemetry_results: Any | None,
+        server_metrics_results: Any | None,
+        telemetry_warnings: list[str],
+        server_metrics_warnings: list[str],
+    ) -> PhaseProfileResults:
+        return PhaseProfileResults(
+            phase_index=stats.phase_index,
+            profiling_index=stats.profiling_index,
+            phase_name=stats.phase_name or f"{stats.phase.value}_{stats.phase_index}",
+            phase_kind=stats.phase_kind or stats.phase.value,
+            records=records_results,
+            start_ns=stats.start_ns,
+            end_ns=stats.requests_end_ns,
+            baseline_start_ns=stats.baseline_start_ns,
+            baseline_end_ns=stats.baseline_end_ns,
+            was_cancelled=stats.was_cancelled or cancelled,
+            successful_request_count=stats.success_records,
+            error_request_count=stats.error_records,
+            error_summary=self._error_tracker.get_error_summary_for_phase(
+                stats.phase, phase_index=stats.phase_index
+            ),
+            telemetry_results=telemetry_results,
+            server_metrics_results=server_metrics_results,
+            telemetry_warnings=telemetry_warnings,
+            server_metrics_warnings=server_metrics_warnings,
+        )
 
     def _has_records_for_phase(self, phase: CreditPhase) -> bool:
         phase_trackers = getattr(self._records_tracker, "_phase_trackers", {})

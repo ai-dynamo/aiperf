@@ -330,11 +330,11 @@ class ExporterManager(AIPerfLoggerMixin):
         # The recording console stays pinned to the configured width so the saved
         # profile_export_console.txt artifact (and non-tty CI logs) match a fixed
         # layout regardless of the live terminal size.
-        recording_console = Console(
+        recording_console = self._fixed_width_console(
+            width=width,
             record=True,
             file=io.StringIO(),
             force_terminal=True,
-            width=width,
         )
         await self._run_console_exporters(recording_console)
         self._write_console_txt(recording_console)
@@ -342,7 +342,13 @@ class ExporterManager(AIPerfLoggerMixin):
         if console.is_terminal:
             # Render a fresh copy at the live terminal's own width so interactive
             # tables aren't hard-wrapped to the fixed export width.
-            await self._run_console_exporters(console)
+            live_width = getattr(console, "_width", None) or console.width
+            live_console = self._fixed_width_console(
+                width=live_width,
+                file=console.file,
+                force_terminal=True,
+            )
+            await self._run_console_exporters(live_console)
         else:
             # Without a tty, replay the fixed-width recorded text so non-tty CI
             # logs match the saved .txt artifact.
@@ -352,6 +358,22 @@ class ExporterManager(AIPerfLoggerMixin):
                 console.file.flush()
 
         self.debug("Exporting console data completed")
+
+    @staticmethod
+    def _fixed_width_console(
+        *,
+        width: int,
+        file: Any,
+        record: bool = False,
+        force_terminal: bool | None = None,
+    ) -> Console:
+        return Console(
+            record=record,
+            file=file,
+            force_terminal=force_terminal,
+            width=width,
+            _environ={"TERM": "xterm", "COLUMNS": str(width)},
+        )
 
     async def _run_console_exporters(self, console: Console) -> None:
         """Run every registered console exporter, rendering into `console`."""
