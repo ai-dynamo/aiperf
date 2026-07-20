@@ -13,6 +13,7 @@ import {
 export const EXPECTED_DECK_ROUTES = [
   ["rust-architecture", "/rust-architecture"],
   ["rust-architecture-atlas", "/rust-architecture-atlas"],
+  ["rust-architecture-deck-port", "/rust-architecture-deck-port"],
   ["segment-pools", "/segment-pools"],
   ["slurm-velo", "/slurm-velo"],
   ["velo-deep-dive", "/velo-deep-dive"],
