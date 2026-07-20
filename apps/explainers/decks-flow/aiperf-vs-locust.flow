@@ -1,0 +1,629 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+explainer "AIPerf vs Locust" {
+  id: "aiperf-vs-locust"
+  route: "/aiperf-vs-locust"
+  topic: "benchmarking"
+  storagePrefix: "aiperf-vs-locust-explainer"
+  classPrefix: "deck-aiperf-vs-locust"
+  eyebrowLabel: "AIPERF VS LOCUST"
+  startGateTitle: "Same backend, different measurement — where the numbers actually diverge"
+
+  hub: {
+    highlight: "aiperf vs locust"
+    title: "worker count · stop condition · cache state · client overhead"
+    description: "A field report claimed AIPerf ran 3x slower than Locust on the same GPU. Walking the actual confounds — none of them were AIPerf being slow."
+  }
+
+  slide "The claim" {
+    eyebrow: "The claim"
+    title: "Same GPU, same model — AIPerf looked 3x slower"
+    lede: "A field comparison ran AIPerf against Locust on the same SageMaker endpoint and found AIPerf's p99 request latency multiple times higher. Same instance, same model — so why the gap?"
+
+    narration: "The starting claim was simple: AIPerf and Locust hit the same SageMaker endpoint, same model, and AIPerf came out looking three times slower on p99 latency. The natural read is that AIPerf itself is the slow tool. Every slide after this one is a confound that turned out to explain part of that gap — with zero code-level performance difference between the tools once each one is actually controlled for."
+
+    term: {
+      word: "confound"
+      meaning: "A variable that differs between two conditions being compared, other than the one variable you meant to test — here, tool identity was the intended variable, but worker count, stop condition, and cache state all differed too."
+    }
+
+    points: [
+      "Reported: AIPerf p99 latency ~3x Locust's, same endpoint, same model.",
+      "Four independent confounds were found stacked on top of each other, not one root cause.",
+      "None of them required a code fix inside AIPerf's request path to close.",
+      "Evidence: Slack thread cross-referencing MTP vs vanilla endpoints, cache hit rates from the server's own metrics."
+    ]
+
+    caption: "Four stacked confounds — not one slow tool."
+
+    render: @scene {
+      sdk.Header(
+        id = "s1-hdr",
+        title = "AIPERF 3x SLOWER?",
+        caption = "Four stacked confounds — not one slow tool.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s1-aiperf",
+        title = "AIPerf",
+        detail = "p99 ≈ 46s (reported)",
+        x = 60, y = 110, width = 220, height = 100,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s1-locust",
+        title = "Locust",
+        detail = "p99 ≈ 15s (reported)",
+        x = 420, y = 110, width = 220, height = 100,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Edge(
+        id = "s1-vs",
+        mode = "connector",
+        from = { nodeId: "s1-aiperf", anchor: "e" },
+        to = { nodeId: "s1-locust", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Label(
+        id = "s1-vs-l",
+        text = "same GPU · same model",
+        x = 260, y = 90, width = 180, height = 20,
+        fontSize = 12,
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Note(
+        id = "s1-note",
+        text = "Four confounds stacked: worker count · stop condition · cache state · endpoint identity",
+        x = 60, y = 250, width = 580, height = 40
+      )
+      sdk.Signal(
+        id = "s1-motion",
+        from = { nodeId: "s1-aiperf", anchor: "e" },
+        to = { nodeId: "s1-locust", anchor: "w" },
+        opacity = 0.5,
+        strokeWidth = 2.2,
+        label = "3x gap",
+        style = { stroke: theme(accent.warning) }
+      )
+
+      timeline main {
+        at 0 reveal s1-hdr duration 260
+        after s1-hdr reveal s1-aiperf duration 280
+        after s1-aiperf reveal s1-locust duration 280
+        after s1-locust reveal s1-vs-l duration 220
+        after s1-vs-l trace s1-vs duration 320
+        after s1-vs reveal s1-note duration 280
+        after s1-note trace s1-motion duration 900
+      }
+    }
+  }
+
+  slide "Confound 1: worker count" {
+    eyebrow: "Confound 1"
+    title: "AIPerf's default worker formula under-provisioned the client"
+    lede: "AIPerf's default is `min(concurrency, cpu_count*0.75-1)` HTTP worker processes. On an 8-CPU client pod at concurrency=250, that's 5 workers — Locust was explicitly configured with 50."
+
+    narration: "The first confound was pure client-side under-provisioning. AIPerf auto-sizes its worker-process pool from the CPU count of the machine it runs on, not from the concurrency target. On an 8-CPU pod that formula produced 5 workers, each one left multiplexing fifty simultaneous in-flight requests on a single asyncio event loop. Locust, meanwhile, had been given 50 workers explicitly. More requests sharing one event loop means more scheduling contention before each request's chunks get processed, and that contention shows up specifically in the tail — p99 and max — not the median. Passing --workers-max explicitly to match Locust's worker count closed most of this gap immediately."
+
+    term: {
+      word: "worker fan-out"
+      meaning: "The ratio of concurrent in-flight requests to HTTP worker processes. A higher fan-out means more requests time-sharing one process's single-threaded event loop, which inflates tail latency (not average latency) from scheduling contention."
+    }
+
+    points: [
+      "Default formula: min(concurrency, cpu_count*0.75-1) — 8 CPUs → 5 workers at concurrency=250.",
+      "5 workers → 50 concurrent requests per worker vs Locust's 50 workers → 5 per worker.",
+      "Fix: --workers-max 50 (or matched to the comparison target) closes most of the tail gap.",
+      "Evidence: log grep of AIPerf's own worker-count decision line; before/after --workers-max rerun."
+    ]
+
+    caption: "8 CPUs → 5 default workers → 50-deep fan-out per worker."
+
+    render: @scene {
+      sdk.Header(
+        id = "s2-hdr",
+        title = "5 WORKERS vs 50 WORKERS",
+        caption = "8 CPUs → 5 default workers → 50-deep fan-out per worker.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s2-cpu",
+        title = "8-CPU client pod",
+        detail = "min(conc, cpu*0.75-1)",
+        x = 40, y = 90, width = 220, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(ink.secondary)
+      )
+      sdk.Edge(
+        id = "s2-a1",
+        mode = "connector",
+        from = { nodeId: "s2-cpu", anchor: "e" },
+        to = { nodeId: "s2-5w", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "s2-5w",
+        title = "5 workers",
+        detail = "50 in-flight each",
+        x = 320, y = 90, width = 180, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Divider(
+        id = "s2-div",
+        axis = "x",
+        x = 40, y = 200, length = 600,
+        strokeRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s2-locust",
+        title = "Locust config",
+        detail = "--workers 50 (explicit)",
+        x = 40, y = 230, width = 220, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Edge(
+        id = "s2-a2",
+        mode = "connector",
+        from = { nodeId: "s2-locust", anchor: "e" },
+        to = { nodeId: "s2-50w", anchor: "w" },
+        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "s2-50w",
+        title = "50 workers",
+        detail = "5 in-flight each",
+        x = 320, y = 230, width = 180, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Note(
+        id = "s2-note",
+        text = "Fix: --workers-max 50 on the AIPerf side closes most of the tail gap",
+        x = 60, y = 335, width = 560, height = 32
+      )
+      sdk.Signal(
+        id = "s2-motion",
+        from = { nodeId: "s2-5w", anchor: "center" },
+        to = { nodeId: "s2-50w", anchor: "center" },
+        opacity = 0.45,
+        strokeWidth = 2.2,
+        label = "fan-out contrast",
+        style = { stroke: theme(accent.tertiary) }
+      )
+
+      timeline main {
+        at 0 reveal s2-hdr duration 260
+        after s2-hdr reveal s2-cpu duration 260
+        after s2-cpu trace s2-a1 duration 300
+        after s2-a1 reveal s2-5w duration 260
+        after s2-5w reveal s2-div duration 220
+        after s2-div reveal s2-locust duration 260
+        after s2-locust trace s2-a2 duration 300
+        after s2-a2 reveal s2-50w duration 260
+        after s2-50w reveal s2-note duration 260
+        after s2-note trace s2-motion duration 900
+      }
+    }
+  }
+
+  slide "Confound 2: stop condition" {
+    eyebrow: "Confound 2"
+    title: "Locust abandons stragglers; AIPerf waits for all of them"
+    lede: "Locust's default stop rule fires N requests continuously and polls completed-count every ~3s; the instant N have completed, every in-flight request is abandoned. AIPerf's default issues exactly N and waits for every one to return."
+
+    narration: "This is a truncation-bias problem, not a speed problem. Locust keeps firing new requests the whole time and only checks every three seconds whether the target count has completed — the moment it has, it kills everything still in flight, uncounted. Structurally, whatever is still running at that instant is disproportionately the slowest fraction of the population, so excluding it mechanically drags the reported percentiles down. AIPerf's default waits for literally every issued request to finish, so its percentiles include the real tail. Reproducing Locust's exact semantics with --overshoot-poll-interval, or the exact-cutoff variant at interval zero, collapses this gap to near zero — because at that point both tools are measuring the same population."
+
+    term: {
+      word: "truncation bias"
+      meaning: "Selection bias from excluding samples based on a rule correlated with the value being measured — here, excluding whichever requests haven't finished yet by a stopping instant, which are disproportionately the slow ones, before computing percentiles."
+    }
+
+    points: [
+      "Locust: keep firing, poll completed-count every ~3s, abandon stragglers on target hit (often 200+ requests over the 1,000 target).",
+      "AIPerf default: issue exactly N, wait for every one — a full, honest population.",
+      "--overshoot-poll-interval 0 reproduces Locust's exact-cutoff semantics for an apples-to-apples run.",
+      "Evidence: request counts observed (locust n=782 vs target 1000, from server-side windowed metrics)."
+    ]
+
+    caption: "Wait-for-all vs fire-and-abandon — different populations, different percentiles."
+
+    render: @scene {
+      sdk.Header(
+        id = "s3-hdr",
+        title = "TRUNCATION BIAS",
+        caption = "Wait-for-all vs fire-and-abandon — different populations, different percentiles.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Stepper(
+        id = "s3-steps",
+        steps = ["fire continuously", "poll every 3s", "abandon stragglers"],
+        linked = true,
+        gap = 18,
+        x = 60, y = 74, width = 560, height = 26
+      )
+      sdk.Panel(
+        id = "s3-locust",
+        title = "Locust population",
+        detail = "N completed · stragglers dropped",
+        x = 40, y = 130, width = 260, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s3-aiperf",
+        title = "AIPerf default population",
+        detail = "N issued · N completed · full tail",
+        x = 380, y = 130, width = 260, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Edge(
+        id = "s3-vs",
+        mode = "connector",
+        from = { nodeId: "s3-locust", anchor: "e" },
+        to = { nodeId: "s3-aiperf", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2 }
+      )
+      sdk.Panel(
+        id = "s3-fix",
+        title = "--overshoot-poll-interval 0",
+        detail = "reproduce Locust's exact cutoff",
+        x = 190, y = 260, width = 320, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s3-fix-link",
+        mode = "route",
+        from = { nodeId: "s3-aiperf", anchor: "s" },
+        to = { nodeId: "s3-fix", anchor: "n" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Signal(
+        id = "s3-motion",
+        from = { nodeId: "s3-locust", anchor: "center" },
+        to = { nodeId: "s3-fix", anchor: "center" },
+        opacity = 0.45,
+        strokeWidth = 2.2,
+        label = "match semantics",
+        style = { stroke: theme(accent.green) }
+      )
+
+      timeline main {
+        at 0 reveal s3-hdr duration 260
+        after s3-hdr stagger targets [s3-steps-step-0, s3-steps-step-1, s3-steps-step-2] step 70 duration 200
+        after s3-steps-step-2 reveal s3-locust duration 280
+        after s3-locust reveal s3-aiperf duration 280
+        after s3-aiperf trace s3-vs duration 280
+        after s3-vs reveal s3-fix duration 280
+        after s3-fix trace s3-fix-link duration 300
+        after s3-fix-link trace s3-motion duration 800
+      }
+    }
+  }
+
+  slide "Confound 3: cache state" {
+    eyebrow: "Confound 3"
+    title: "One run hit a warm KV cache; the other hit a cold one"
+    lede: "The server's own metrics showed prefix-cache hit rates of 2.8% on one run's window and 97.5% on the other's, ~7 hours apart. Cache-hit prompts skip most of prefill — nearly free compared to a genuine cold miss."
+
+    narration: "Once the worker-count and stop-condition confounds were controlled, a third one showed up directly in the server's own exported metrics: prefix_cache_hits_total over prefix_cache_queries_total was 2.8% in the window attributed to one tool's run and 97.5% in the other's — captured seven hours apart, on what turned out to be different endpoint deployments entirely (MTP speculative-decode vs vanilla). A cache hit skips almost the entire prefill computation for that prompt; a cold miss pays full price. Repeating the exact same client-side comparison while forcing every request to defeat the cache — a random nonce prepended to the start of every prompt, which breaks prefix matching by construction — collapsed clean-mode and overshoot-mode AIPerf runs to within 1-2% of each other and of Locust, on both a GB200 cluster and a single RTX 6000, confirming cache state (not tool identity) was driving the bulk of the tail-latency gap that truncation bias alone didn't explain."
+
+    term: {
+      word: "prefix cache hit rate"
+      meaning: "The fraction of a request's prompt tokens the inference server could serve from previously-computed KV cache instead of recomputing via prefill. A cache-hit-heavy run pays a fraction of the compute cost of a cache-miss-heavy run for prompts of identical length."
+    }
+
+    points: [
+      "Server metrics: prefix_cache_hits/queries = 2.8% on one run's window vs 97.5% on the other's.",
+      "The two runs were also on different endpoints (MTP speculative-decode vs vanilla) and 7 hours apart.",
+      "Nonce-prefix defeat (unique random token prepended per request) forces every run to a genuine 0% cache hit rate.",
+      "Evidence: overall_usage_prompt_cache_read_pct in AIPerf's own export; cache-defeated reruns converge clean vs overshoot to ~1-2%."
+    ]
+
+    caption: "2.8% vs 97.5% cache hit rate — not the same experiment."
+
+    render: @scene {
+      sdk.Header(
+        id = "s4-hdr",
+        title = "2.8% vs 97.5% CACHE HIT RATE",
+        caption = "2.8% vs 97.5% cache hit rate — not the same experiment.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s4-cold",
+        title = "Run A window",
+        detail = "2.8% cache hit · MTP endpoint",
+        x = 40, y = 100, width = 260, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s4-warm",
+        title = "Run B window",
+        detail = "97.5% cache hit · vanilla endpoint",
+        x = 380, y = 100, width = 260, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Edge(
+        id = "s4-vs",
+        mode = "connector",
+        from = { nodeId: "s4-cold", anchor: "e" },
+        to = { nodeId: "s4-warm", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2 }
+      )
+      sdk.Label(
+        id = "s4-gap-l",
+        text = "7 hours apart · different endpoints",
+        x = 220, y = 78, width = 260, height = 20,
+        fontSize = 12,
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s4-nonce",
+        title = "Nonce-prefix defeat",
+        detail = "every prompt forced to 0% cache hit",
+        x = 190, y = 250, width = 320, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s4-nonce-a",
+        mode = "route",
+        from = { nodeId: "s4-cold", anchor: "s" },
+        to = { nodeId: "s4-nonce", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2 }
+      )
+      sdk.Edge(
+        id = "s4-nonce-b",
+        mode = "route",
+        from = { nodeId: "s4-warm", anchor: "s" },
+        to = { nodeId: "s4-nonce", anchor: "e" },
+        style = { stroke: theme(accent.green), strokeWidth: 2 }
+      )
+      sdk.Note(
+        id = "s4-note",
+        text = "Cache-defeated reruns: clean vs overshoot AIPerf converge to ~1-2% of Locust",
+        x = 60, y = 350, width = 580, height = 30
+      )
+      sdk.Signal(
+        id = "s4-motion",
+        from = { nodeId: "s4-cold", anchor: "center" },
+        to = { nodeId: "s4-warm", anchor: "center" },
+        opacity = 0.45,
+        strokeWidth = 2.2,
+        label = "cache-state contrast",
+        style = { stroke: theme(accent.warning) }
+      )
+
+      timeline main {
+        at 0 reveal s4-hdr duration 260
+        after s4-hdr reveal s4-cold duration 280
+        after s4-cold reveal s4-warm duration 280
+        after s4-warm reveal s4-gap-l duration 220
+        after s4-gap-l trace s4-vs duration 300
+        after s4-vs reveal s4-nonce duration 280
+        after s4-nonce trace s4-nonce-a duration 260
+        after s4-nonce-a trace s4-nonce-b duration 260
+        after s4-nonce-b reveal s4-note duration 260
+        after s4-note trace s4-motion duration 900
+      }
+    }
+  }
+
+  slide "Confound 4: client overhead floor" {
+    eyebrow: "Confound 4 (separate axis)"
+    title: "Against a near-instant mock, client implementation speed dominates"
+    lede: "At real LLM latencies, client-side overhead is invisible next to GPU compute time. Strip the GPU out entirely — hit a fixed-response mock server — and a genuine, measurable python-vs-rust client speed gap appears: 4.5k req/s vs 200k req/s."
+
+    narration: "Every confound so far explains why the two tools looked different while measuring the same backend. This last one is a genuinely different axis: how fast is each tool's own request-issuing loop, independent of any server at all? Hitting a fixed-response mock with no real inference and no cache effects, Python AIPerf topped out around 4,500 requests per second, Locust around 12,000, and a from-source-fixed Rust AIPerf build around 200,000 — a real, reproducible client-implementation gap, not a measurement artifact. It only shows up because the mock server's response time is low enough (sub-millisecond) that client overhead is no longer negligible. At real inference latencies of seconds, this entire axis disappears into the noise — which is exactly why none of the earlier real-backend comparisons in this deck showed it."
+
+    term: {
+      word: "client overhead floor"
+      meaning: "The per-request cost a benchmarking tool's own request-issuing loop imposes, independent of network or server latency — visible only when server response time drops low enough (sub-millisecond) that it's no longer dwarfed by the thing being measured."
+    }
+
+    points: [
+      "Fixed-response mock, no GPU, no cache: python AIPerf ~4.5k req/s, Locust ~12k req/s, rust AIPerf ~200k req/s.",
+      "Root cause found in rust: dataset loading tokenized every row serially on one thread — 98s stall on a 32-core machine.",
+      "Fixed by parallelizing the tokenization pre-pass with rayon: ~7.7x wall-clock improvement (100s → 13s) for a 100k-row dataset.",
+      "Evidence: strace + per-thread CPU sampling pinpointing a single 99.7%-CPU thread; fix committed to runtime/src/dataset/loader/*.rs."
+    ]
+
+    caption: "Only visible when the server is faster than the client's own loop."
+
+    render: @scene {
+      sdk.Header(
+        id = "s5-hdr",
+        title = "CLIENT OVERHEAD, ISOLATED",
+        caption = "Only visible when the server is faster than the client's own loop.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s5-py",
+        title = "Python AIPerf",
+        detail = "~4.5k req/s",
+        x = 40, y = 100, width = 170, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s5-locust",
+        title = "Locust",
+        detail = "~12k req/s",
+        x = 260, y = 100, width = 170, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "s5-rust",
+        title = "Rust AIPerf",
+        detail = "~200k req/s",
+        x = 480, y = 100, width = 170, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Edge(
+        id = "s5-e1",
+        mode = "connector",
+        from = { nodeId: "s5-py", anchor: "e" },
+        to = { nodeId: "s5-locust", anchor: "w" },
+        style = { stroke: theme(ink.secondary), strokeWidth: 2 }
+      )
+      sdk.Edge(
+        id = "s5-e2",
+        mode = "connector",
+        from = { nodeId: "s5-locust", anchor: "e" },
+        to = { nodeId: "s5-rust", anchor: "w" },
+        style = { stroke: theme(ink.secondary), strokeWidth: 2 }
+      )
+      sdk.Panel(
+        id = "s5-fix",
+        title = "Root cause: serial tokenizer loop",
+        detail = "98s on 1 thread of 32 — parallelized with rayon",
+        x = 160, y = 250, width = 380, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s5-fix-link",
+        mode = "route",
+        from = { nodeId: "s5-rust", anchor: "s" },
+        to = { nodeId: "s5-fix", anchor: "e" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.2 }
+      )
+      sdk.Signal(
+        id = "s5-motion",
+        from = { nodeId: "s5-py", anchor: "center" },
+        to = { nodeId: "s5-rust", anchor: "center" },
+        opacity = 0.45,
+        strokeWidth = 2.2,
+        label = "~44x spread",
+        style = { stroke: theme(accent.tertiary) }
+      )
+
+      timeline main {
+        at 0 reveal s5-hdr duration 260
+        after s5-hdr reveal s5-py duration 260
+        after s5-py trace s5-e1 duration 260
+        after s5-e1 reveal s5-locust duration 260
+        after s5-locust trace s5-e2 duration 260
+        after s5-e2 reveal s5-rust duration 260
+        after s5-rust reveal s5-fix duration 280
+        after s5-fix trace s5-fix-link duration 280
+        after s5-fix-link trace s5-motion duration 900
+      }
+    }
+  }
+
+  slide "The reconciled picture" {
+    eyebrow: "The reconciled picture"
+    title: "Control all four, and AIPerf edges out Locust at the tail"
+    lede: "5x-repeated, nonce-controlled, worker-matched runs on GB200: AIPerf clean/overshoot p99 ≈ 60.1s average vs Locust's 62.6s — the reverse of the original 3x claim, within measurement noise."
+
+    narration: "Once every confound in this deck is controlled for at once — matched worker count, matched stop-condition semantics, and a cache-defeating nonce on every prompt — the tools converge. Five repeated runs on the GB200 backend put AIPerf's clean and overshoot p99 at roughly 60.1 seconds on average against Locust's 62.6 seconds, with 95% confidence intervals that mostly overlap. The same pattern held on a completely different piece of hardware, a single RTX 6000 running a quantized copy of the model. The original claim was real — the numbers genuinely differed — but the explanation was never a slow tool. It was four independent, stackable confounds, and controlling for all four flips the sign of the original result."
+
+    term: {
+      word: "confound-controlled comparison"
+      meaning: "A comparison where every variable other than the one under test — here, tool identity — has been matched or neutralized: same worker count, same stop-condition semantics, same cache state, same backend."
+    }
+
+    points: [
+      "GB200, 5x repeats, nonce-controlled, --workers-max matched: AIPerf p99 ≈ 60.1s avg vs Locust 62.6s.",
+      "Confirmed on a second, unrelated backend (RTX 6000, quantized model) — same convergence pattern.",
+      "Original claim not wrong about the numbers — wrong about attributing them to tool speed.",
+      "Evidence: 5x-repeat CI tables from both GB200 and RTX 6000 runs, all four confounds held fixed."
+    ]
+
+    caption: "Four confounds controlled → AIPerf and Locust agree within noise."
+
+    render: @scene {
+      sdk.Header(
+        id = "s6-hdr",
+        title = "CONTROLLED: WITHIN NOISE",
+        caption = "Four confounds controlled → AIPerf and Locust agree within noise.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Stepper(
+        id = "s6-steps",
+        steps = ["worker count", "stop condition", "cache state", "converged"],
+        linked = true,
+        gap = 16,
+        x = 40, y = 74, width = 600, height = 26
+      )
+      sdk.Panel(
+        id = "s6-aiperf",
+        title = "AIPerf (clean + overshoot)",
+        detail = "p99 ≈ 60.1s avg",
+        x = 60, y = 130, width = 250, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Panel(
+        id = "s6-locust",
+        title = "Locust",
+        detail = "p99 ≈ 62.6s avg",
+        x = 400, y = 130, width = 250, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "s6-vs",
+        mode = "connector",
+        from = { nodeId: "s6-aiperf", anchor: "e" },
+        to = { nodeId: "s6-locust", anchor: "w" },
+        style = { stroke: theme(accent.green), strokeWidth: 2.4 }
+      )
+      sdk.Label(
+        id = "s6-vs-l",
+        text = "within 95% CI overlap",
+        x = 260, y = 110, width = 200, height = 20,
+        fontSize = 12,
+        inkRole = theme(accent.green)
+      )
+      sdk.Note(
+        id = "s6-note",
+        text = "Confirmed on a second backend (RTX 6000, quantized) — same convergence",
+        x = 60, y = 250, width = 580, height = 30
+      )
+      sdk.Signal(
+        id = "s6-motion",
+        from = { nodeId: "s6-aiperf", anchor: "center" },
+        to = { nodeId: "s6-locust", anchor: "center" },
+        opacity = 0.55,
+        strokeWidth = 2.4,
+        label = "converged",
+        style = { stroke: theme(accent.green) }
+      )
+
+      timeline main {
+        at 0 reveal s6-hdr duration 260
+        after s6-hdr stagger targets [s6-steps-step-0, s6-steps-step-1, s6-steps-step-2, s6-steps-step-3] step 70 duration 200
+        after s6-steps-step-3 reveal s6-aiperf duration 280
+        after s6-aiperf reveal s6-locust duration 280
+        after s6-locust reveal s6-vs-l duration 220
+        after s6-vs-l trace s6-vs duration 320
+        after s6-vs reveal s6-note duration 260
+        after s6-note trace s6-motion duration 900
+      }
+    }
+  }
+}

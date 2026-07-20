@@ -21,6 +21,7 @@ export const EXPECTED_DECK_ROUTES = [
   ["dynosim", "/dynosim"],
   ["tstar-warmup", "/tstar-warmup"],
   ["synthetic-dataset-generator", "/synthetic-dataset-generator"],
+  ["aiperf-vs-locust", "/aiperf-vs-locust"],
 ] as const;
 
 export type RegisteredDeckId = (typeof EXPECTED_DECK_ROUTES)[number][0];
