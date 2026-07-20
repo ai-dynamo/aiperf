@@ -777,9 +777,11 @@ class MessagesEndpoint(BaseEndpoint):
             case EventType.ERROR:
                 error_detail = json_obj.get("error", {})
                 self.warning(
-                    lambda: f"Anthropic streaming error: "
-                    f"type={error_detail.get('type')}, "
-                    f"message={error_detail.get('message')}"
+                    lambda: (
+                        f"Anthropic streaming error: "
+                        f"type={error_detail.get('type')}, "
+                        f"message={error_detail.get('message')}"
+                    )
                 )
                 return None
 

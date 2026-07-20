@@ -148,8 +148,10 @@ class PromptGenerator(BaseGenerator):
         ]
         self._corpus_size = len(self._tokenized_corpus)
         self.debug(
-            lambda: f"Initialized corpus with {self._corpus_size} tokens "
-            f"from {len(chunks)} chunks using {num_threads} thread(s)"
+            lambda: (
+                f"Initialized corpus with {self._corpus_size} tokens "
+                f"from {len(chunks)} chunks using {num_threads} thread(s)"
+            )
         )
 
     def _create_prefix_prompt_pool(self) -> None:
@@ -164,7 +166,9 @@ class PromptGenerator(BaseGenerator):
         pool_size = self.prefix_prompts.pool_size or 0
         self._prefix_prompts = [self.generate_prompt(length) for _ in range(pool_size)]
         self.debug(
-            lambda: f"Initialized prefix prompts pool with {len(self._prefix_prompts)} prompts"
+            lambda: (
+                f"Initialized prefix prompts pool with {len(self._prefix_prompts)} prompts"
+            )
         )
 
     def generate(
@@ -433,8 +437,10 @@ class PromptGenerator(BaseGenerator):
             new_prompt = self.generate_prompt(length)
             self._user_context_prompts.append(new_prompt)
             self.debug(
-                lambda: f"Generated user context prompt #{len(self._user_context_prompts) - 1} "
-                f"for session {len(self._user_context_prompts) - 1}"
+                lambda: (
+                    f"Generated user context prompt #{len(self._user_context_prompts) - 1} "
+                    f"for session {len(self._user_context_prompts) - 1}"
+                )
             )
 
         return self._user_context_prompts[session_index]

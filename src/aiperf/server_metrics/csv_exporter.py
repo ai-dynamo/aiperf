@@ -111,8 +111,12 @@ class ServerMetricsCsvExporter(MetricsBaseExporter):
         super().__init__(exporter_config, **kwargs)
         self._file_path = exporter_config.cfg.artifacts.server_metrics_export_csv_file
         self.trace_or_debug(
-            lambda: f"Initializing ServerMetricsCsvExporter with config: {exporter_config}",
-            lambda: f"Initializing ServerMetricsCsvExporter with file path: {self._file_path}",
+            lambda: (
+                f"Initializing ServerMetricsCsvExporter with config: {exporter_config}"
+            ),
+            lambda: (
+                f"Initializing ServerMetricsCsvExporter with file path: {self._file_path}"
+            ),
         )
 
     def get_export_info(self) -> FileExportInfo:

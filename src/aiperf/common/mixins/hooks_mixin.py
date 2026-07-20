@@ -69,7 +69,9 @@ class HooksMixin(AIPerfLoggerMixin):
                     )
 
         self.trace(
-            lambda: f"Provided hook types: {self._provided_hook_types} for {self.__class__.__name__}"
+            lambda: (
+                f"Provided hook types: {self._provided_hook_types} for {self.__class__.__name__}"
+            )
         )
 
     def _check_hook_type_is_provided(self, hook_type: HookType) -> None:
@@ -152,8 +154,9 @@ class HooksMixin(AIPerfLoggerMixin):
                 )
             for param in params:
                 self.trace(
-                    lambda param=param,
-                    type=param_type: f"param: {param}, param_type: {type}"
+                    lambda param=param, type=param_type: (
+                        f"param: {param}, param_type: {type}"
+                    )
                 )
                 if not isinstance(param, param_type):
                     raise ValueError(

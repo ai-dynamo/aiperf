@@ -404,8 +404,8 @@ class TestRunsToDataframe:
             run.metadata.experiment_group = "group_a"
 
             if i == 1:  # Make middle run missing y metric
-                run.get_metric = (
-                    lambda name: {"p50": 100} if name == "throughput" else None
+                run.get_metric = lambda name: (
+                    {"p50": 100} if name == "throughput" else None
                 )
             else:
                 run.get_metric = lambda name: {"p50": 100}

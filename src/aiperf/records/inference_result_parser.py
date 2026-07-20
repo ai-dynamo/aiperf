@@ -420,8 +420,10 @@ class InferenceResultParser(CommunicationMixin):
             )
         except Exception as exc:  # noqa: BLE001 - best-effort; fall back to bare encode
             self.debug(
-                lambda exc=exc: f"Chat-template tokenization unavailable, "
-                f"falling back to bare-text encode: {exc!r}"
+                lambda exc=exc: (
+                    f"Chat-template tokenization unavailable, "
+                    f"falling back to bare-text encode: {exc!r}"
+                )
             )
             return None
         if not isinstance(tokens, list):

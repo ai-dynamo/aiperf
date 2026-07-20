@@ -1365,8 +1365,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             cached = self._processed_results.get(phase)
             if cached is not None:
                 self.debug(
-                    lambda: f"Results for phase {phase} already processed; "
-                    "returning cached result"
+                    lambda: (
+                        f"Results for phase {phase} already processed; "
+                        "returning cached result"
+                    )
                 )
                 return cached
             result = await self._process_results_impl(phase, cancelled)
