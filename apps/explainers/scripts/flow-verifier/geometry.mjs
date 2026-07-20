@@ -574,14 +574,77 @@ function pathDataFromPoints(points, nodesById) {
     );
 }
 
-function elbowPathData(start, end, via, axis) {
+function cardinalAnchorAxis(anchor) {
+  switch (String(anchor ?? "").toLowerCase()) {
+    case "left":
+    case "west":
+    case "w":
+    case "right":
+    case "east":
+    case "e":
+      return "x";
+    case "top":
+    case "north":
+    case "n":
+    case "bottom":
+    case "south":
+    case "s":
+      return "y";
+    default:
+      return undefined;
+  }
+}
+
+function elbowPathFromPoints(points) {
+  const compact = points.filter(
+    (point, index) =>
+      index === 0 ||
+      point.x !== points[index - 1].x ||
+      point.y !== points[index - 1].y,
+  );
+  const first = compact[0] ?? { x: 0, y: 0 };
+  let path = `M${first.x} ${first.y}`;
+  for (let index = 1; index < compact.length; index += 1) {
+    const previous = compact[index - 1];
+    const point = compact[index];
+    path += previous.y === point.y ? ` H${point.x}` : ` V${point.y}`;
+  }
+  return path;
+}
+
+function elbowPathData(start, end, via, axis, fromAnchor, toAnchor) {
   const dx = Math.abs(end.x - start.x);
   const dy = Math.abs(end.y - start.y);
-  const preferX = axis === "y" ? false : axis === "x" ? true : dx >= dy;
+  const sourceAxis = cardinalAnchorAxis(fromAnchor);
+  const targetAxis = cardinalAnchorAxis(toAnchor);
+  const preferX =
+    sourceAxis === "x" ||
+    (sourceAxis === undefined && targetAxis === "x") ||
+    (sourceAxis === undefined &&
+      targetAxis === undefined &&
+      (axis === "x" || (axis !== "y" && dx >= dy)));
   if (via) {
+    if (sourceAxis !== undefined || targetAxis !== undefined) {
+      const firstAxis = sourceAxis ?? (preferX ? "x" : "y");
+      const lastAxis = targetAxis ?? (firstAxis === "x" ? "y" : "x");
+      const firstJoin =
+        firstAxis === "x"
+          ? { x: via.x, y: start.y }
+          : { x: start.x, y: via.y };
+      const lastJoin =
+        lastAxis === "x"
+          ? { x: via.x, y: end.y }
+          : { x: end.x, y: via.y };
+      return elbowPathFromPoints([start, firstJoin, via, lastJoin, end]);
+    }
     return preferX
       ? `M${start.x} ${start.y} H${via.x} V${via.y} H${end.x} V${end.y}`
       : `M${start.x} ${start.y} V${via.y} H${via.x} V${end.y} H${end.x}`;
+  }
+  if (sourceAxis !== undefined && targetAxis !== undefined && sourceAxis !== targetAxis) {
+    return sourceAxis === "x"
+      ? `M${start.x} ${start.y} H${end.x} V${end.y}`
+      : `M${start.x} ${start.y} V${end.y} H${end.x}`;
   }
   if (preferX) {
     const midX = (start.x + end.x) / 2;
@@ -1286,7 +1349,14 @@ export function arrowPathData(node, nodesById) {
           : styledAxis === "x" || styledAxis === "y"
             ? styledAxis
             : undefined;
-      return elbowPathData(start, end, via, axis);
+      return elbowPathData(
+        start,
+        end,
+        via,
+        axis,
+        endpointAnchor(from),
+        endpointAnchor(to),
+      );
     }
     return `M${start.x} ${start.y} L${end.x} ${end.y}`;
   }

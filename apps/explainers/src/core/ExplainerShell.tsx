@@ -288,6 +288,8 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
       <main
         key={`slide-${index}-${restartKey}`}
         className={`ex-content-card ex-cinematic-stage ${classPrefix}-slide`}
+        hidden={index === slides.length - 1 && FinalCard !== undefined}
+        aria-hidden={index === slides.length - 1 && FinalCard !== undefined}
       >
         <div className={`ex-content-card__diagram ex-stage-hero ${classPrefix}-stage`}>
           <MentalModel
@@ -300,15 +302,27 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
           />
         </div>
 
-        <section className={`ex-content-card__copy ex-stage-copy ${classPrefix}-hero`}>
-          <div className="ex-eyebrow ex-eyebrow--accent">
-            {pad2(index + 1)} / {pad2(slides.length)} · {slide.eyebrow}
-          </div>
-          <h1 className="ex-slide-title">{slide.title}</h1>
-          <p className={`${classPrefix}-lede ex-lede`} style={{ margin: 0 }}>
-            {slide.lede}
-          </p>
-        </section>
+        <div className="ex-stage-footer">
+          {started ? (
+            <div className="ex-subtitles-row" data-testid="ex-subtitles-row">
+              <Subtitles
+                text={slide.narration}
+                activeWordIndex={activeWordIndex}
+                visible
+              />
+            </div>
+          ) : null}
+
+          <section className={`ex-content-card__copy ex-stage-copy ${classPrefix}-hero`}>
+            <div className="ex-eyebrow ex-eyebrow--accent">
+              {pad2(index + 1)} / {pad2(slides.length)} · {slide.eyebrow}
+            </div>
+            <h1 className="ex-slide-title">{slide.title}</h1>
+            <p className={`${classPrefix}-lede ex-lede`} style={{ margin: 0 }}>
+              {slide.lede}
+            </p>
+          </section>
+        </div>
       </main>
 
       {index === slides.length - 1 && FinalCard ? (
@@ -377,11 +391,6 @@ export function ExplainerShell({ deck }: { deck: DeckDefinition }) {
               ))}
             </div>
             {slide.caption ? <p className="ex-speaker-notes__caption">{slide.caption}</p> : null}
-            <Subtitles
-              text={slide.narration}
-              activeWordIndex={activeWordIndex}
-              visible={started}
-            />
             <details className="ex-more">
               <summary>Voice &amp; timing</summary>
               <div className="ex-more__body">

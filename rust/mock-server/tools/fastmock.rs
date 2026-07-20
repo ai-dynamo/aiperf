@@ -5,30 +5,57 @@
 //
 // Compile standalone (no cargo, no crates):  rustc -O fastmock.rs -o /tmp/fastmock
 //
-// Usage: fastmock [PORT] [--threads M] [--procs N]
-//   PORT        listen port (default 8131)
+// Usage: fastmock [PORT] [--threads M] [--procs N] [--uds PATH]
+//   PORT        listen port (default 8131); ignored when --uds is given
 //   --threads M M concurrent accept threads sharing one listener (default 1;
 //               0 = auto = available parallelism). Lifts the single-accept-loop
 //               ceiling with zero added latency — no proxy, same process.
 //   --procs N   N independent server processes sharing PORT via SO_REUSEPORT
 //               (default 1; 0 = auto = available parallelism). The kernel spreads
 //               new connections across the processes without a proxy hop.
+//               NOT supported with --uds (SO_REUSEPORT-for-AF_UNIX is skipped
+//               here to keep the raw-syscall bind path TCP-only); --procs is
+//               forced to 1 when --uds is set.
+//   --uds PATH  listen on a Unix domain socket at PATH instead of TCP. Any
+//               stale socket file at PATH is removed before binding.
+//   --mode M    UDS-only run mode, chosen once at startup (never re-checked
+//               per request/loop-iteration) (default: blocking):
+//                 blocking  thread-per-connection, blocking read()/write().
+//                 epoll     N worker threads, each with its own epoll
+//                           instance multiplexing many connections, so one
+//                           epoll_wait() can report many ready fds instead
+//                           of needing one parked thread per connection.
+//               Both modes block/park while idle (epoll_wait with a bounded
+//               timeout, blocking read() otherwise) — no mode here spins a
+//               CPU core at 100% waiting for data.
 //
 // --threads and --procs compose: `--procs 4 --threads 2` = 4 processes, each with
 // 2 accept threads.
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
+use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::thread;
 
 fn find(h: &[u8], n: &[u8]) -> Option<usize> {
     h.windows(n.len()).position(|w| w == n)
 }
+/// Byte-level, allocation-free header scan. The naive version this replaced
+/// (`String::from_utf8_lossy(head).to_lowercase()`) allocated two Strings on
+/// every single request — at millions of req/s that's millions of heap
+/// allocations/sec of pure overhead versus this zero-alloc version.
 fn content_length(head: &[u8]) -> usize {
-    let s = String::from_utf8_lossy(head).to_lowercase();
-    for line in s.split("\r\n") {
-        if let Some(v) = line.strip_prefix("content-length:") {
-            return v.trim().parse().unwrap_or(0);
+    for line in head.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let Some(colon) = line.iter().position(|&b| b == b':') else {
+            continue;
+        };
+        let (name, val) = line.split_at(colon);
+        if name.eq_ignore_ascii_case(b"content-length") {
+            let val = std::str::from_utf8(&val[1..]).unwrap_or("").trim();
+            return val.parse().unwrap_or(0);
         }
     }
     0
@@ -54,43 +81,189 @@ fn build_responses() -> Responses {
     }
 }
 
-fn handle(mut stream: TcpStream, chat: Arc<Vec<u8>>, models: Arc<Vec<u8>>) {
+/// Parses and answers every complete request found in `chunk` starting at
+/// offset 0. Returns the byte offset past the last complete request handled
+/// (== chunk.len() when nothing is left over). Shared by the zero-copy fast
+/// path and the accumulator fallback below — same parse logic, different
+/// backing buffer.
+fn drain_requests<S: Write>(
+    chunk: &[u8],
+    stream: &mut S,
+    chat: &Arc<Vec<u8>>,
+    models: &Arc<Vec<u8>>,
+) -> Result<usize, ()> {
+    let mut off = 0usize;
+    loop {
+        let rest = &chunk[off..];
+        let Some(hpos) = find(rest, b"\r\n\r\n") else {
+            break;
+        };
+        let head = &rest[..hpos];
+        let cl = if head.starts_with(b"GET") {
+            0
+        } else {
+            content_length(head)
+        };
+        let total = hpos + 4 + cl;
+        if rest.len() < total {
+            break;
+        }
+        let resp = if head.starts_with(b"GET") { models } else { chat };
+        if stream.write_all(resp).is_err() {
+            return Err(());
+        }
+        off += total;
+    }
+    Ok(off)
+}
+
+fn handle<S: Read + Write>(mut stream: S, chat: Arc<Vec<u8>>, models: Arc<Vec<u8>>) {
     let mut buf = vec![0u8; 65536];
-    let mut acc: Vec<u8> = Vec::with_capacity(65536);
+    // Only populated when a request spans more than one `read()` call (rare
+    // at pipeline depth 1: the client waits for a response before sending
+    // its next request, so a read almost always contains exactly one
+    // complete request already). Keeping the fast path copy-free avoids a
+    // Vec extend + drain per request in the overwhelmingly common case.
+    let mut acc: Vec<u8> = Vec::new();
     loop {
         let n = match stream.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => n,
             Err(_) => break,
         };
-        acc.extend_from_slice(&buf[..n]);
-        loop {
-            let Some(hpos) = find(&acc, b"\r\n\r\n") else { break };
-            let head = &acc[..hpos];
-            let cl = if head.starts_with(b"GET") {
-                0
-            } else {
-                content_length(head)
+        if acc.is_empty() {
+            let off = match drain_requests(&buf[..n], &mut stream, &chat, &models) {
+                Ok(off) => off,
+                Err(()) => return,
             };
-            let total = hpos + 4 + cl;
-            if acc.len() < total {
-                break;
+            if off < n {
+                acc.extend_from_slice(&buf[off..n]);
             }
-            let resp = if head.starts_with(b"GET") {
-                &models
-            } else {
-                &chat
+        } else {
+            acc.extend_from_slice(&buf[..n]);
+            let off = match drain_requests(&acc, &mut stream, &chat, &models) {
+                Ok(off) => off,
+                Err(()) => return,
             };
-            if stream.write_all(resp).is_err() {
-                return;
-            }
-            acc.drain(..total);
+            acc.drain(..off);
         }
     }
 }
 
+/// Minimal raw `epoll` bindings (std exposes no epoll API). Layout matches
+/// the kernel/glibc `struct epoll_event`, which is `packed` on x86_64/aarch64
+/// (natural alignment would otherwise insert padding the kernel doesn't
+/// expect).
+mod raw_epoll {
+    #[repr(C, packed)]
+    pub struct EpollEvent {
+        pub events: u32,
+        pub data: u64,
+    }
+    pub const EPOLL_CTL_ADD: i32 = 1;
+    pub const EPOLL_CTL_DEL: i32 = 2;
+    pub const EPOLLIN: u32 = 0x001;
+    extern "C" {
+        pub fn epoll_create1(flags: i32) -> i32;
+        pub fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut EpollEvent) -> i32;
+        pub fn epoll_wait(epfd: i32, events: *mut EpollEvent, maxevents: i32, timeout: i32) -> i32;
+    }
+}
+
+/// One epoll worker: owns an epoll instance and a private slice of
+/// connections (assigned round-robin by the acceptor via `new_conns`). A
+/// single `epoll_wait` call can report many ready connections at once,
+/// unlike the blocking model where each ready connection needs its own
+/// parked OS thread to wake.
+fn epoll_worker(new_conns: mpsc::Receiver<UnixStream>, resp: Arc<Responses>) {
+    use raw_epoll::*;
+    let epfd = unsafe { epoll_create1(0) };
+    assert!(epfd >= 0, "epoll_create1 failed");
+
+    let mut conns: std::collections::HashMap<RawFd, (UnixStream, Vec<u8>)> =
+        std::collections::HashMap::new();
+    let mut events: Vec<EpollEvent> = (0..1024).map(|_| EpollEvent { events: 0, data: 0 }).collect();
+    let mut scratch = vec![0u8; 65536];
+
+    loop {
+        // Drain newly-assigned connections (non-blocking check) before each
+        // wait so a burst of new connects doesn't wait a full epoll_wait
+        // timeout to start being served.
+        while let Ok(stream) = new_conns.try_recv() {
+            stream.set_nonblocking(true).ok();
+            let fd = stream.as_raw_fd();
+            let mut ev = EpollEvent { events: EPOLLIN, data: fd as u64 };
+            let rc = unsafe { epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &mut ev) };
+            if rc == 0 {
+                conns.insert(fd, (stream, Vec::new()));
+            }
+        }
+
+        // 20ms timeout so a quiet worker still periodically checks
+        // `new_conns` rather than only waking on socket readiness.
+        let n = unsafe { epoll_wait(epfd, events.as_mut_ptr(), events.len() as i32, 20) };
+        if n < 0 {
+            continue;
+        }
+        for ev in &events[..n as usize] {
+            let fd = ev.data as RawFd;
+            let Some((stream, acc)) = conns.get_mut(&fd) else {
+                continue;
+            };
+            let mut closed = false;
+            loop {
+                match stream.read(&mut scratch) {
+                    Ok(0) => {
+                        closed = true;
+                        break;
+                    }
+                    Ok(n) => {
+                        acc.extend_from_slice(&scratch[..n]);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(_) => {
+                        closed = true;
+                        break;
+                    }
+                }
+            }
+            if !closed && !acc.is_empty() {
+                match drain_requests(acc, stream, &resp.chat, &resp.models) {
+                    Ok(off) => {
+                        acc.drain(..off);
+                    }
+                    Err(()) => closed = true,
+                }
+            }
+            if closed {
+                let mut ev = EpollEvent { events: 0, data: 0 };
+                unsafe { epoll_ctl(epfd, EPOLL_CTL_DEL, fd, &mut ev) };
+                conns.remove(&fd);
+            }
+        }
+    }
+}
+
+fn serve_unix_epoll(listener: UnixListener, workers: usize) {
+    let resp = Arc::new(build_responses());
+    let workers = workers.max(1);
+    let mut senders = Vec::with_capacity(workers);
+    for _ in 0..workers {
+        let (tx, rx) = mpsc::channel::<UnixStream>();
+        let resp = resp.clone();
+        thread::spawn(move || epoll_worker(rx, resp));
+        senders.push(tx);
+    }
+    let mut next = 0usize;
+    for stream in listener.incoming() {
+        let Ok(stream) = stream else { continue };
+        let _ = senders[next % workers].send(stream);
+        next = next.wrapping_add(1);
+    }
+}
+
 /// The kernel serializes concurrent `accept` calls on the shared listener.
-fn accept_loop(listener: Arc<TcpListener>, resp: &Responses) {
+fn accept_loop_tcp(listener: Arc<TcpListener>, resp: &Responses) {
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         stream.set_nodelay(true).ok();
@@ -100,7 +273,16 @@ fn accept_loop(listener: Arc<TcpListener>, resp: &Responses) {
     }
 }
 
-fn serve(listener: TcpListener, threads: usize) {
+fn accept_loop_unix(listener: Arc<UnixListener>, resp: &Responses) {
+    for stream in listener.incoming() {
+        let Ok(stream) = stream else { continue };
+        let chat = resp.chat.clone();
+        let models = resp.models.clone();
+        thread::spawn(move || handle(stream, chat, models));
+    }
+}
+
+fn serve_tcp(listener: TcpListener, threads: usize) {
     let listener = Arc::new(listener);
     let resp = Arc::new(build_responses());
     let threads = threads.max(1);
@@ -108,7 +290,44 @@ fn serve(listener: TcpListener, threads: usize) {
     for _ in 0..threads {
         let l = listener.clone();
         let r = resp.clone();
-        handles.push(thread::spawn(move || accept_loop(l, &r)));
+        handles.push(thread::spawn(move || accept_loop_tcp(l, &r)));
+    }
+    for h in handles {
+        let _ = h.join();
+    }
+}
+
+/// Run mode, resolved once from `--mode` before any listener/thread is
+/// created — never re-checked inside a hot loop.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Blocking,
+    Epoll,
+}
+
+impl Mode {
+    fn parse(s: &str) -> Self {
+        match s {
+            "blocking" => Mode::Blocking,
+            "epoll" => Mode::Epoll,
+            other => panic!("unknown --mode '{}' (expected blocking|epoll)", other),
+        }
+    }
+}
+
+fn serve_unix(listener: UnixListener, threads: usize, mode: Mode) {
+    if mode == Mode::Epoll {
+        serve_unix_epoll(listener, threads);
+        return;
+    }
+    let listener = Arc::new(listener);
+    let resp = Arc::new(build_responses());
+    let threads = threads.max(1);
+    let mut handles = Vec::with_capacity(threads);
+    for _ in 0..threads {
+        let l = listener.clone();
+        let r = resp.clone();
+        handles.push(thread::spawn(move || accept_loop_unix(l, &r)));
     }
     for h in handles {
         let _ = h.join();
@@ -124,6 +343,8 @@ fn main() {
     let mut port = "8131".to_string();
     let mut threads: usize = 1;
     let mut procs: usize = 1;
+    let mut uds: Option<String> = None;
+    let mut mode = Mode::Blocking;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -135,6 +356,14 @@ fn main() {
                 i += 1;
                 procs = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(1);
             }
+            "--uds" => {
+                i += 1;
+                uds = args.get(i).cloned();
+            }
+            "--mode" => {
+                i += 1;
+                mode = Mode::parse(args.get(i).map(|s| s.as_str()).unwrap_or("blocking"));
+            }
             p if !p.starts_with("--") => port = p.to_string(),
             _ => {}
         }
@@ -145,6 +374,24 @@ fn main() {
     }
     if procs == 0 {
         procs = auto_parallelism();
+    }
+
+    if let Some(sock_path) = &uds {
+        if procs > 1 {
+            eprintln!("fastmock: --procs is not supported with --uds, ignoring (forcing --procs 1)");
+        }
+        // Remove a stale socket file from a previous unclean shutdown; bind()
+        // fails with EADDRINUSE against an existing path otherwise.
+        let _ = std::fs::remove_file(sock_path);
+        let listener = UnixListener::bind(sock_path)
+            .unwrap_or_else(|e| panic!("bind({}) failed: {}", sock_path, e));
+        let mode_desc = match mode {
+            Mode::Blocking => format!("{threads} accept threads, blocking"),
+            Mode::Epoll => format!("{threads} epoll workers"),
+        };
+        println!("fastmock listening on uds:{sock_path} ({mode_desc})");
+        serve_unix(listener, threads, mode);
+        return;
     }
 
     let is_child = std::env::var_os("FASTMOCK_CHILD").is_some();
@@ -163,7 +410,7 @@ fn main() {
     } else {
         println!("fastmock listening on {port} ({threads} accept threads)");
     }
-    serve(listener, threads);
+    serve_tcp(listener, threads);
 }
 
 /// Supervise `procs` SO_REUSEPORT workers and kill them with their parent.

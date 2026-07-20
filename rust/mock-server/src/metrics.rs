@@ -53,6 +53,29 @@ pub struct LabeledMetrics {
     pub streaming_requests: GenericCounter<AtomicU64>,
 }
 
+/// Pre-resolved metric handles keyed by `model` alone (no `endpoint` label),
+/// for the request-lifecycle recorders (`record_llm_inflight_start`/`_end`,
+/// `record_dynamo_success`) that used to call `.with_label_values()` fresh on
+/// every single request/token instead of going through a cache like
+/// `LabeledMetrics` — profiling showed those uncached lookups as one of the
+/// hottest costs in the whole request path (prometheus's `MetricVec` does a
+/// label-key hash + map lookup per call).
+pub struct ModelMetrics {
+    pub df_inflight: GenericGauge<PromAtomicI64>,
+    pub df_queued: GenericGauge<PromAtomicI64>,
+    pub df_request_duration: Histogram,
+    pub df_requests: GenericCounter<AtomicU64>,
+    pub df_input_seq_tokens: GenericCounter<AtomicU64>,
+    pub df_output_tokens: GenericCounter<AtomicU64>,
+    pub df_output_seq_tokens: GenericCounter<AtomicU64>,
+    pub dp_request_duration: Histogram,
+    pub dp_requests: GenericCounter<AtomicU64>,
+    pub dp_inflight: GenericGauge<PromAtomicI64>,
+    pub dd_request_duration: Histogram,
+    pub dd_requests: GenericCounter<AtomicU64>,
+    pub dd_inflight: GenericGauge<PromAtomicI64>,
+}
+
 pub struct MetricRecorder {
     pub metrics: AllMetrics,
     pub throughput: Arc<Throughput>,
@@ -60,6 +83,7 @@ pub struct MetricRecorder {
     total_kv_blocks: i64,
     initialized_models: Mutex<HashSet<String>>,
     labeled_cache: DashMap<(String, String), Arc<LabeledMetrics>>,
+    model_cache: DashMap<String, Arc<ModelMetrics>>,
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +102,7 @@ impl MetricRecorder {
             total_kv_blocks: 1024,
             initialized_models: Mutex::new(HashSet::new()),
             labeled_cache: DashMap::with_capacity_and_shard_amount(256, 32),
+            model_cache: DashMap::with_capacity_and_shard_amount(256, 32),
         }
     }
 
@@ -197,6 +222,53 @@ impl MetricRecorder {
         };
         let arc = Arc::new(built);
         self.labeled_cache.entry(key).or_insert(arc).clone()
+    }
+
+    /// Cache per-request handles for the model-only-keyed metrics used by
+    /// `record_llm_inflight_start`/`_end` and `record_dynamo_success`.
+    fn model_metrics(&self, model: &str) -> Arc<ModelMetrics> {
+        if let Some(hit) = self.model_cache.get(model) {
+            return hit.clone();
+        }
+        let m = &self.metrics;
+        let built = ModelMetrics {
+            df_inflight: m.dynamo_frontend.INFLIGHT_REQUESTS.with_label_values(&[model]),
+            df_queued: m.dynamo_frontend.QUEUED_REQUESTS.with_label_values(&[model]),
+            df_request_duration: m
+                .dynamo_frontend
+                .REQUEST_DURATION_SECONDS
+                .with_label_values(&[model]),
+            df_requests: m.dynamo_frontend.REQUESTS.with_label_values(&[model]),
+            df_input_seq_tokens: m
+                .dynamo_frontend
+                .INPUT_SEQUENCE_TOKENS
+                .with_label_values(&[model]),
+            df_output_tokens: m.dynamo_frontend.OUTPUT_TOKENS.with_label_values(&[model]),
+            df_output_seq_tokens: m
+                .dynamo_frontend
+                .OUTPUT_SEQUENCE_TOKENS
+                .with_label_values(&[model]),
+            dp_request_duration: m
+                .dynamo_prefill
+                .REQUEST_DURATION_SECONDS
+                .with_label_values(&["generate", model]),
+            dp_requests: m.dynamo_prefill.REQUESTS.with_label_values(&["generate", model]),
+            dp_inflight: m
+                .dynamo_prefill
+                .INFLIGHT_REQUESTS
+                .with_label_values(&["generate", model]),
+            dd_request_duration: m
+                .dynamo_decode
+                .REQUEST_DURATION_SECONDS
+                .with_label_values(&["generate", model]),
+            dd_requests: m.dynamo_decode.REQUESTS.with_label_values(&["generate", model]),
+            dd_inflight: m
+                .dynamo_decode
+                .INFLIGHT_REQUESTS
+                .with_label_values(&["generate", model]),
+        };
+        let arc = Arc::new(built);
+        self.model_cache.entry(model.to_string()).or_insert(arc).clone()
     }
 
     pub fn record_request_start(&self, endpoint: &str, model: &str) {
@@ -450,26 +522,11 @@ impl MetricRecorder {
         self.metrics.vllm.NUM_REQUESTS_WAITING.set(0);
         self.metrics.sglang.NUM_RUNNING_REQS.inc();
         self.metrics.sglang.NUM_QUEUE_REQS.set(0);
-        self.metrics
-            .dynamo_frontend
-            .INFLIGHT_REQUESTS
-            .with_label_values(&[model])
-            .inc();
-        self.metrics
-            .dynamo_frontend
-            .QUEUED_REQUESTS
-            .with_label_values(&[model])
-            .set(0);
-        self.metrics
-            .dynamo_prefill
-            .INFLIGHT_REQUESTS
-            .with_label_values(&["generate", model])
-            .inc();
-        self.metrics
-            .dynamo_decode
-            .INFLIGHT_REQUESTS
-            .with_label_values(&["generate", model])
-            .inc();
+        let mm = self.model_metrics(model);
+        mm.df_inflight.inc();
+        mm.df_queued.set(0);
+        mm.dp_inflight.inc();
+        mm.dd_inflight.inc();
         self.update_kv_cache_gauges(model);
     }
 
@@ -480,21 +537,10 @@ impl MetricRecorder {
         }
         self.metrics.vllm.NUM_REQUESTS_RUNNING.dec();
         self.metrics.sglang.NUM_RUNNING_REQS.dec();
-        self.metrics
-            .dynamo_frontend
-            .INFLIGHT_REQUESTS
-            .with_label_values(&[model])
-            .dec();
-        self.metrics
-            .dynamo_prefill
-            .INFLIGHT_REQUESTS
-            .with_label_values(&["generate", model])
-            .dec();
-        self.metrics
-            .dynamo_decode
-            .INFLIGHT_REQUESTS
-            .with_label_values(&["generate", model])
-            .dec();
+        let mm = self.model_metrics(model);
+        mm.df_inflight.dec();
+        mm.dp_inflight.dec();
+        mm.dd_inflight.dec();
         self.update_kv_cache_gauges(model);
     }
 
@@ -565,52 +611,17 @@ impl MetricRecorder {
         let p = usage.prompt_tokens as u64;
         let c = usage.completion_tokens as u64;
 
-        self.metrics
-            .dynamo_frontend
-            .REQUEST_DURATION_SECONDS
-            .with_label_values(&[model])
-            .observe(latency_secs);
-        self.metrics
-            .dynamo_frontend
-            .REQUESTS
-            .with_label_values(&[model])
-            .inc();
-        self.metrics
-            .dynamo_frontend
-            .INPUT_SEQUENCE_TOKENS
-            .with_label_values(&[model])
-            .inc_by(p);
-        self.metrics
-            .dynamo_frontend
-            .OUTPUT_TOKENS
-            .with_label_values(&[model])
-            .inc_by(c);
-        self.metrics
-            .dynamo_frontend
-            .OUTPUT_SEQUENCE_TOKENS
-            .with_label_values(&[model])
-            .inc_by(c);
+        let mm = self.model_metrics(model);
+        mm.df_request_duration.observe(latency_secs);
+        mm.df_requests.inc();
+        mm.df_input_seq_tokens.inc_by(p);
+        mm.df_output_tokens.inc_by(c);
+        mm.df_output_seq_tokens.inc_by(c);
 
-        self.metrics
-            .dynamo_prefill
-            .REQUEST_DURATION_SECONDS
-            .with_label_values(&["generate", model])
-            .observe(info.prefill.as_secs_f64());
-        self.metrics
-            .dynamo_prefill
-            .REQUESTS
-            .with_label_values(&["generate", model])
-            .inc();
-        self.metrics
-            .dynamo_decode
-            .REQUEST_DURATION_SECONDS
-            .with_label_values(&["generate", model])
-            .observe(info.decode.as_secs_f64());
-        self.metrics
-            .dynamo_decode
-            .REQUESTS
-            .with_label_values(&["generate", model])
-            .inc();
+        mm.dp_request_duration.observe(info.prefill.as_secs_f64());
+        mm.dp_requests.inc();
+        mm.dd_request_duration.observe(info.decode.as_secs_f64());
+        mm.dd_requests.inc();
     }
 
     pub fn record_llm_success(

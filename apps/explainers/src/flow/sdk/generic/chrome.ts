@@ -7,10 +7,8 @@
 //!
 //! `sdk.header` / `sdk.panel` / `sdk.card` / `sdk.chip` / `sdk.note` /
 //! `sdk.label` / `sdk.legend` / `sdk.callout` / `sdk.divider` / `sdk.bracket`
-//! expand deterministically into ordinary Scene IR fragments (`SceneFragment`)
-//! mirroring the geometry and spacing of the compiler's package-form macros
-//! in `compiler/desugar-scene-primitives.ts` (`core.panel`, `core.header`,
-//! `core.chip`, `core.note`, `core.callout`, `core.divider`, `core.bracket`).
+//! emit native semantic Scene IR fragments. Renderer-owned chrome and text are
+//! retained as semantic props rather than serialized visual-only children.
 //! Every factory is pure: no DOM, React, network, wall clock, or mutable
 //! global state. Generated node ids are seeded from `context.instanceId`
 //! (`${instanceId}` for the fragment root, `${instanceId}__role` for
@@ -194,8 +192,93 @@ function requireStringProp(
 // Result helpers.
 // ---------------------------------------------------------------------------
 
+const NATIVE_CHROME_COMPONENTS = new Set([
+  "sdk.header",
+  "sdk.panel",
+  "sdk.card",
+  "sdk.chip",
+  "sdk.note",
+]);
+
+function semanticPortNode(node: RenderNodeIr, role: string): RenderNodeIr {
+  return {
+    kind: "group",
+    id: node.id,
+    capabilityId: "core.semantic-port",
+    geometry: node.geometry,
+    style: {},
+    props: { role },
+    accessibility: node.accessibility,
+    fallback: node.fallback,
+    sourceMap: node.sourceMap,
+    ...(node.sdkOrigin !== undefined ? { sdkOrigin: node.sdkOrigin } : {}),
+    children: [],
+  };
+}
+
+/**
+ * Collapse renderer-owned visual descendants into semantic root props while
+ * retaining stable port target ids as non-visual semantic children.
+ */
+function semanticizeChromeFragment(fragment: SceneFragment): SceneFragment {
+  const root = fragment.roots[0];
+  if (
+    root === undefined ||
+    root.kind !== "group" ||
+    root.sdkOrigin === undefined ||
+    !NATIVE_CHROME_COMPONENTS.has(root.sdkOrigin.componentId)
+  ) {
+    return fragment;
+  }
+
+  const props: Record<string, JsonValue> = {};
+  const semanticChildren: RenderNodeIr[] = [];
+  let rootStyle = root.style;
+  for (const child of root.children) {
+    const role = child.sdkOrigin?.generatedRole;
+    if (role === "chrome") {
+      rootStyle = { ...child.style, ...rootStyle };
+      continue;
+    }
+    if (
+      child.kind === "text" &&
+      (role === "title" ||
+        role === "detail" ||
+        role === "subtitle" ||
+        role === "label" ||
+        role === "caption")
+    ) {
+      if (role === "caption" && root.sdkOrigin.componentId === "sdk.note") {
+        props.text = child.text;
+      } else {
+        props[role === "label" ? "label" : role] = child.text;
+      }
+      semanticChildren.push(semanticPortNode(child, role));
+      continue;
+    }
+    semanticChildren.push(child);
+  }
+
+  return {
+    ...fragment,
+    roots: [
+      {
+        ...root,
+        style: { ...rootStyle, coordinateSpace: "local" },
+        props,
+        children: semanticChildren,
+      },
+      ...fragment.roots.slice(1),
+    ],
+  };
+}
+
 function succeed(fragment: SceneFragment): Result<SceneFragment> {
-  return { ok: true, value: fragment, diagnostics: [] };
+  return {
+    ok: true,
+    value: semanticizeChromeFragment(fragment),
+    diagnostics: [],
+  };
 }
 
 function fail(diagnostics: readonly Diagnostic[]): Result<SceneFragment> {
@@ -1040,7 +1123,15 @@ function parseLegendEntries(
       );
       return;
     }
-    const colorRole = record !== undefined ? jsonString(record.colorRole) : undefined;
+    const colorRoleRaw = record !== undefined ? record.colorRole : undefined;
+    let colorRole: string | undefined;
+    if (typeof colorRoleRaw === "string" && colorRoleRaw.length > 0) {
+      colorRole = colorRoleRaw.startsWith("@theme.")
+        ? colorRoleRaw
+        : colorRoleRaw.includes(".")
+          ? `@theme.${colorRoleRaw}`
+          : colorRoleRaw;
+    }
     entries.push({ label, ...(colorRole !== undefined ? { colorRole } : {}) });
   });
 
@@ -1134,7 +1225,7 @@ const legendFactory: SdkComponentFactory = (props, _slots, context) => {
         id: rowId,
         capabilityId: "core.group",
         geometry: { x: 0, y: cursorY, width, height: rowHeight },
-        style: {},
+        style: { coordinateSpace: "local" },
         children: [swatch, labelNode],
         label: entry.label,
         sourceMap: context.sourceMap,
@@ -1160,7 +1251,7 @@ const legendFactory: SdkComponentFactory = (props, _slots, context) => {
       id: rootId,
       capabilityId: "core.group",
       geometry,
-      style: {},
+      style: { coordinateSpace: "local" },
       children,
       label: title ?? "Legend",
       sourceMap: context.sourceMap,

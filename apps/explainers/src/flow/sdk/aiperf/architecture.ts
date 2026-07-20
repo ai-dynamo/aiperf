@@ -169,13 +169,30 @@ function groupNode(
     id,
     capabilityId: "core.group",
     geometry,
-    style: {},
+    style: { coordinateSpace: "local" },
     accessibility: { label },
     fallback: label,
     sourceMap,
     children,
   };
 }
+
+/** Optional authored origin for AIPerf composites (`x` / `y` scene placement). */
+function authoredOrigin(
+  props: Readonly<Record<string, JsonValue>>,
+): Readonly<{ x: number; y: number }> {
+  const x = props.x;
+  const y = props.y;
+  return {
+    x: typeof x === "number" && Number.isFinite(x) ? x : 0,
+    y: typeof y === "number" && Number.isFinite(y) ? y : 0,
+  };
+}
+
+const GEOMETRY_ORIGIN_PROPS: Readonly<Record<string, ComponentPropDescriptor>> = {
+  x: { type: "number", required: false, default: 0 },
+  y: { type: "number", required: false, default: 0 },
+};
 
 function connectorNode(
   id: string,
@@ -362,6 +379,7 @@ function controllerCellsFactory(
   const surfaceRole = readThemeRole(props, "surfaceRole", "surface.panel");
   const inkRole = readThemeRole(props, "inkRole", "ink.primary");
   const lineRole = readThemeRole(props, "lineRole", "line.structural");
+  const origin = authoredOrigin(props);
 
   const { instanceId, sourceMap } = context;
   const rowWidth = cellLabels.length * CELL_WIDTH + (cellLabels.length - 1) * CELL_GAP;
@@ -417,7 +435,7 @@ function controllerCellsFactory(
 
   const root = groupNode(
     instanceId,
-    { x: 0, y: 0, width, height },
+    { x: origin.x, y: origin.y, width, height },
     sourceMap,
     `${controllerLabel} cell topology`,
     [controller, dispatch, ...cells],
@@ -465,6 +483,7 @@ function workerMergeFactory(
   const surfaceRole = readThemeRole(props, "surfaceRole", "surface.panel");
   const inkRole = readThemeRole(props, "inkRole", "ink.primary");
   const lineRole = readThemeRole(props, "lineRole", "line.structural");
+  const origin = authoredOrigin(props);
 
   const { instanceId, sourceMap } = context;
   const rowWidth =
@@ -514,7 +533,7 @@ function workerMergeFactory(
 
   const root = groupNode(
     instanceId,
-    { x: 0, y: 0, width, height },
+    { x: origin.x, y: origin.y, width, height },
     sourceMap,
     `${mergeLabel} worker merge`,
     [...workers, fold, merge],
@@ -570,6 +589,7 @@ function registryBootstrapFactory(
   const surfaceRole = readThemeRole(props, "surfaceRole", "surface.raised");
   const inkRole = readThemeRole(props, "inkRole", "ink.primary");
   const lineRole = readThemeRole(props, "lineRole", "line.structural");
+  const origin = authoredOrigin(props);
 
   const { instanceId, sourceMap } = context;
   const rowWidth =
@@ -625,7 +645,7 @@ function registryBootstrapFactory(
 
   const root = groupNode(
     instanceId,
-    { x: 0, y: 0, width, height },
+    { x: origin.x, y: origin.y, width, height },
     sourceMap,
     `${registryLabel} bootstrap`,
     [...categories, register, registry],
@@ -662,6 +682,7 @@ export const AIPERF_ARCHITECTURE_COMPONENTS: readonly SdkComponentDefinition[] =
       surfaceRole: stringProp("surface.panel"),
       inkRole: stringProp("ink.primary"),
       lineRole: stringProp("line.structural"),
+      ...GEOMETRY_ORIGIN_PROPS,
     },
     actions: ["enter", "draw", "trace", "emphasis"],
     factory: controllerCellsFactory,
@@ -674,6 +695,7 @@ export const AIPERF_ARCHITECTURE_COMPONENTS: readonly SdkComponentDefinition[] =
       surfaceRole: stringProp("surface.panel"),
       inkRole: stringProp("ink.primary"),
       lineRole: stringProp("line.structural"),
+      ...GEOMETRY_ORIGIN_PROPS,
     },
     actions: ["enter", "draw", "trace", "emphasis"],
     factory: workerMergeFactory,
@@ -692,6 +714,7 @@ export const AIPERF_ARCHITECTURE_COMPONENTS: readonly SdkComponentDefinition[] =
       surfaceRole: stringProp("surface.raised"),
       inkRole: stringProp("ink.primary"),
       lineRole: stringProp("line.structural"),
+      ...GEOMETRY_ORIGIN_PROPS,
     },
     actions: ["enter", "draw", "trace", "emphasis"],
     factory: registryBootstrapFactory,

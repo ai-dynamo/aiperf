@@ -167,7 +167,7 @@ coverage: #? run the tests and generate an html coverage report.
 
 install: install-app install-mock-server #? install the project (editable) and the native Rust mock-server command.
 
-install-app: bundle-cli #? install the project in editable mode and place the native `aiperf` binary on PATH.
+install-app: native-cli #? install the project in editable mode and place the native `aiperf` binary on PATH.
 	$(activate_venv) && uv pip install -e ".[dev]"
 	# Editable installs don't process the wheel's `.data/scripts/` entry, so the
 	# `aiperf` command must be placed on the venv PATH explicitly. This mirrors what
@@ -199,15 +199,15 @@ install-native: native-cli #? install the pure-Rust `aiperf` into dist/native-bi
 # free. Add it when you need the `bo`/`optuna`/`smooth_isotonic` search styles:
 #   make bundle-cli CLI_FEATURES="--features full,search-pyo3"
 CLI_FEATURES ?= --features full
-bundle-cli: #? build the unified aiperf binary (CLI_FEATURES-selectable) for packaging.
-	$(CARGO) build --release -p aiperf-cli $(CLI_FEATURES)
+bundle-cli: #? build the unified aiperf binary (CLI_FEATURES-selectable), fat-LTO optimized, for packaging.
+	$(CARGO) build --profile optimized -p aiperf-cli $(CLI_FEATURES)
 
 wheel: bundle-cli #? build the single aiperf wheel (maturin, manylinux) and repack the native binary into it.
 	$(activate_venv) && uv pip install "maturin[patchelf]" \
 		&& maturin build --release --out dist
 	# maturin can't install a native executable as the `aiperf` console script, so
-	# repack the built wheel to inject $(RUST_TARGET)/release/aiperf into its scripts dir.
-	$(activate_venv) && python tools/wheel_repack.py --wheel-dir dist --binary $(RUST_TARGET)/release/aiperf
+	# repack the built wheel to inject $(RUST_TARGET)/optimized/aiperf into its scripts dir.
+	$(activate_venv) && python tools/wheel_repack.py --wheel-dir dist --binary $(RUST_TARGET)/optimized/aiperf
 
 docker: #? build the docker image.
 	docker build -t $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_TAG) $(args) .

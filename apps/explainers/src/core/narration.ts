@@ -143,6 +143,9 @@ export function speakNarration(
   };
 
   options.onWord?.(0);
+  // Always run estimated word timing — many engines skip onboundary, which
+  // would otherwise leave karaoke stuck on the first word.
+  driveEstimatedWords();
   utterance.onboundary = (event) => {
     if (event.name && event.name !== "word") return;
     options.onWord?.(wordIndexFromChar(text, event.charIndex));
@@ -153,8 +156,7 @@ export function speakNarration(
     if (done || event.error === "interrupted" || event.error === "canceled") {
       return;
     }
-    // Some engines lack reliable boundary events; keep timing alive with estimates.
-    driveEstimatedWords();
+    // Estimated word timers already started; keep a completion fallback.
     timers.push(window.setTimeout(finish, fallbackMs));
   };
 

@@ -8,10 +8,9 @@
 
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::RwLock;
 
 use dashmap::DashMap;
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell};
 use serde_json::Value;
 
 use crate::models::{
@@ -37,15 +36,16 @@ const TOKENIZE_CACHE_MAX_BYTES: usize = 256 * 1024;
 static TOKENIZE_CACHE: Lazy<DashMap<String, Vec<String>>> =
     Lazy::new(|| DashMap::with_capacity_and_shard_amount(1024, 64));
 
-static CORPUS_TOKENS: RwLock<Option<Vec<String>>> = RwLock::new(None);
+/// Populated exactly once at startup, read on every generation call after
+/// that — `OnceCell` gives lock-free reads (just a loaded-check + pointer
+/// deref) instead of an `RwLock` acquisition on every request, since there's
+/// never a writer contending with readers in steady state.
+static CORPUS_TOKENS: OnceCell<Option<Vec<String>>> = OnceCell::new();
 
 /// Loads the optional Shakespeare corpus once.
 pub fn load_corpus() {
-    {
-        let guard = CORPUS_TOKENS.read().unwrap();
-        if guard.is_some() {
-            return;
-        }
+    if CORPUS_TOKENS.get().is_some() {
+        return;
     }
 
     let path = find_corpus_path();
@@ -77,8 +77,10 @@ pub fn load_corpus() {
         }
     };
 
-    let mut guard = CORPUS_TOKENS.write().unwrap();
-    *guard = tokens;
+    // `set` fails if another thread raced us and already populated it; that's
+    // fine, the loser's `tokens` is simply dropped — first writer wins, same
+    // as the old read-check-then-write-lock pattern.
+    let _ = CORPUS_TOKENS.set(tokens);
 }
 
 fn find_corpus_path() -> Option<PathBuf> {
@@ -370,8 +372,7 @@ fn cycle_tokens(prompt_tokens: &[String], num_tokens: usize, offset: usize) -> V
     if num_tokens == 0 {
         return Vec::new();
     }
-    let corpus_guard = CORPUS_TOKENS.read().unwrap();
-    if let Some(corpus) = corpus_guard.as_ref() {
+    if let Some(corpus) = CORPUS_TOKENS.get().and_then(|o| o.as_ref()) {
         if corpus.is_empty() {
             return cycle_prompt(prompt_tokens, num_tokens, offset);
         }
@@ -400,10 +401,11 @@ fn cycle_tokens_reversed(prompt_tokens: &[String], num_tokens: usize) -> Vec<Str
     if num_tokens == 0 {
         return Vec::new();
     }
-    let offset = {
-        let guard = CORPUS_TOKENS.read().unwrap();
-        guard.as_ref().map(|c| c.len() / 2).unwrap_or(0)
-    };
+    let offset = CORPUS_TOKENS
+        .get()
+        .and_then(|o| o.as_ref())
+        .map(|c| c.len() / 2)
+        .unwrap_or(0);
     cycle_tokens(prompt_tokens, num_tokens, offset)
 }
 

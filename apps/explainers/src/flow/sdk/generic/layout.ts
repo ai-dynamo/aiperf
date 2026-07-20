@@ -9,21 +9,17 @@
  *
  * Each factory is a pure, deterministic composer over already-expanded child
  * `SceneFragment`s supplied through `slots`. `sdk.stack` / `sdk.grid` /
- * `sdk.rail` emit a first-class `layout.*` group whose children arrangement
- * is computed by `SceneRenderer` at render time (direction/cols/gap style),
- * so this module only needs to size and tag the group. `sdk.lane` /
- * `sdk.swimlane` / `sdk.band` / `sdk.stepper` reuse the existing
- * `desugarPackageNode` macro geometry so behavior matches the package-form
- * authoring these components replace.
+ * Every factory emits one native semantic layout node. The shared capability
+ * layout registry computes child placement and intrinsic bounds at render and
+ * verification time.
  */
 
-import { desugarPackageNode } from "../../compiler/desugar-scene-primitives.js";
 import type {
   ComponentDescriptor,
   ComponentPropDescriptor,
   ComponentSlotDescriptor,
 } from "../../schema/component-descriptor.js";
-import { diagnostic, type Result } from "../../schema/diagnostic.js";
+import type { Result } from "../../schema/diagnostic.js";
 import type { ConnectorEndpointIr, GeometryIr, RenderNodeIr } from "../../schema/ir.js";
 import type { JsonValue } from "../../schema/json-value.js";
 import { attachSdkOrigin } from "../provenance.js";
@@ -117,10 +113,6 @@ function mergeChildPorts(
     }
   });
   return ports;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function createDescriptor(args: {
@@ -315,60 +307,34 @@ export const SDK_RAIL: SdkComponentDefinition = {
   actions: LAYOUT_ACTIONS,
 };
 
-// --- shared desugar-macro reuse (lane / swimlane / band / stepper) --------
+// --- shared native semantic layout node ------------------------------------
 
-/**
- * Builds a pseudo package-form record from authored props so the existing
- * `desugarPackageNode` geometry macros (`core.lane` / `core.swimlane` /
- * `core.band` / `core.stepper`) can be reused verbatim for SDK expansion.
- */
-function pseudoPackageNode(props: PropRecord): Record<string, unknown> {
-  return { ...props, geometry: geometryFromProps(props) };
-}
-
-function desugarOrFail(
+function semanticLayoutNode(
   context: SdkExpansionContext,
   capability: string,
   props: PropRecord,
   children: readonly RenderNodeIr[],
   label: string,
-): Result<RenderNodeIr> {
-  const id = nodeId(context);
-  try {
-    const node = desugarPackageNode(pseudoPackageNode(props), {
-      id,
-      capability,
-      children,
-      label,
+  componentId: string,
+): RenderNodeIr {
+  const gap = numberProp(props, "gap", 0);
+  return withOrigin(
+    {
+      kind: "group",
+      id: nodeId(context),
+      capabilityId: capability,
+      geometry: geometryFromProps(props),
+      style: { coordinateSpace: "local", gap },
+      props,
+      accessibility: { label },
       fallback: label,
-    });
-    if (node === undefined) {
-      return {
-        ok: false,
-        diagnostics: [
-          diagnostic(
-            "SDK_LAYOUT_DESUGAR_FAILED",
-            "error",
-            `"${capability}" macro expansion returned no node for instance "${id}".`,
-            context.sourceMap,
-          ),
-        ],
-      };
-    }
-    return { ok: true, value: node, diagnostics: [] };
-  } catch (error) {
-    return {
-      ok: false,
-      diagnostics: [
-        diagnostic(
-          "SDK_LAYOUT_INVALID",
-          "error",
-          `"${capability}" instance "${id}" is invalid: ${errorMessage(error)}`,
-          context.sourceMap,
-        ),
-      ],
-    };
-  }
+      sourceMap: context.sourceMap,
+      children,
+    },
+    context,
+    componentId,
+    "root",
+  );
 }
 
 // --- sdk.lane --------------------------------------------------------------
@@ -377,11 +343,14 @@ const laneFactory: SdkComponentFactory = (props, slots, context) => {
   const children = slotFragments(slots, "children");
   const childRoots = flattenRoots(children);
   const label = stringProp(props, "title") ?? stringProp(props, "text") ?? "lane";
-  const result = desugarOrFail(context, "core.lane", props, childRoots, label);
-  if (!result.ok) {
-    return result;
-  }
-  const node = withOrigin(result.value, context, "sdk.lane", "root");
+  const node = semanticLayoutNode(
+    context,
+    "core.lane",
+    { ...props, gap: numberProp(props, "gap", 8) },
+    childRoots,
+    label,
+    "sdk.lane",
+  );
   const id = nodeId(context);
   const ports = { self: { nodeId: id }, ...mergeChildPorts(children, "child") };
   const actions: Partial<Record<SdkActionName, readonly string[]>> = { enter: [id] };
@@ -414,11 +383,14 @@ const swimlaneFactory: SdkComponentFactory = (props, slots, context) => {
   const children = rowFragments.length > 0 ? rowFragments : slotFragments(slots, "children");
   const childRoots = flattenRoots(children);
   const label = stringProp(props, "title") ?? "swimlane";
-  const result = desugarOrFail(context, "core.swimlane", props, childRoots, label);
-  if (!result.ok) {
-    return result;
-  }
-  const node = withOrigin(result.value, context, "sdk.swimlane", "root");
+  const node = semanticLayoutNode(
+    context,
+    "core.swimlane",
+    { ...props, gap: numberProp(props, "gap", 8) },
+    childRoots,
+    label,
+    "sdk.swimlane",
+  );
   const id = nodeId(context);
   const ports = { self: { nodeId: id }, ...mergeChildPorts(children, "row") };
   const actions: Partial<Record<SdkActionName, readonly string[]>> = { enter: [id] };
@@ -454,11 +426,14 @@ const bandFactory: SdkComponentFactory = (props, slots, context) => {
   const children = slotFragments(slots, "children");
   const childRoots = flattenRoots(children);
   const label = stringProp(props, "title") ?? stringProp(props, "text") ?? "band";
-  const result = desugarOrFail(context, "core.band", props, childRoots, label);
-  if (!result.ok) {
-    return result;
-  }
-  const node = withOrigin(result.value, context, "sdk.band", "root");
+  const node = semanticLayoutNode(
+    context,
+    "core.band",
+    props,
+    childRoots,
+    label,
+    "sdk.band",
+  );
   const id = nodeId(context);
   const ports = { self: { nodeId: id }, ...mergeChildPorts(children, "child") };
   const actions: Partial<Record<SdkActionName, readonly string[]>> = { enter: [id] };
@@ -500,14 +475,36 @@ const stepperFactory: SdkComponentFactory = (props, slots, context) => {
   const stepFragments = slotFragments(slots, "steps").length > 0
     ? slotFragments(slots, "steps")
     : slotFragments(slots, "children");
-  const stepRoots = flattenRoots(stepFragments);
+  const authoredStepRoots = flattenRoots(stepFragments);
   const label = "stepper";
-  const result = desugarOrFail(context, "core.stepper", props, stepRoots, label);
-  if (!result.ok) {
-    return result;
-  }
-  const node = withOrigin(result.value, context, "sdk.stepper", "root");
   const id = nodeId(context);
+  const stepRoots =
+    stepTexts.length > 0
+      ? stepTexts.map(
+          (text, index): RenderNodeIr => ({
+            kind: "group",
+            id: `${id}-step-${index}`,
+            capabilityId: "core.step",
+            // Semantic steps remain indexable/verifiable Scene nodes. Native
+            // stepper layout replaces x/width at render time from label text.
+            geometry: { x: 0, y: 0, width: 72, height: 26 },
+            style: {},
+            props: { label: text, index },
+            accessibility: { label: text },
+            fallback: text,
+            sourceMap: context.sourceMap,
+            children: [],
+          }),
+        )
+      : authoredStepRoots;
+  const node = semanticLayoutNode(
+    context,
+    "core.stepper",
+    { ...props, gap: numberProp(props, "gap", 12) },
+    stepRoots,
+    label,
+    "sdk.stepper",
+  );
   const stepIds =
     stepTexts.length > 0
       ? stepTexts.map((_, index) => `${id}-step-${index}`)

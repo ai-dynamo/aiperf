@@ -45,10 +45,7 @@ import {
 
 import {
   asRecord,
-  capabilityKind,
-  desugarPackageNode,
   isSupportedPackageCapability,
-  lowerFirstClassPackageNode,
 } from "./desugar-scene-primitives.js";
 import { expandSymbolInvocations } from "./expand-symbols.js";
 import { link, type LinkedDocument } from "./link.js";
@@ -56,6 +53,7 @@ import { lower } from "./lower.js";
 import { collectSymbols } from "./symbols.js";
 import { resolveTimelineCueTiming } from "./timeline-timing.js";
 import { validate } from "./validate.js";
+import { lowerSemanticSceneNode } from "./semantic-scene-node.js";
 
 export type LowerExplainerSceneOptions = Readonly<{
   tokens?: ReadonlyMap<string, LiteralAst["value"]>;
@@ -662,22 +660,14 @@ function normalizePackageNode(value: unknown): RenderNodeIr {
   const fallback =
     typeof node.fallback === "string" ? node.fallback : label;
 
-  const common = {
+  return lowerSemanticSceneNode(node, {
     id,
     capability,
     children,
     label,
     fallback,
+    sourceMap: unknownRange,
     ...(description !== undefined ? { description } : {}),
-  };
-  const desugared = desugarPackageNode(node, common);
-  if (desugared !== undefined) {
-    return desugared;
-  }
-
-  return lowerFirstClassPackageNode(node, {
-    ...common,
-    kind: capabilityKind(capability),
   });
 }
 
@@ -921,4 +911,4 @@ export function lowerExplainerScene(
 }
 
 /** Re-export for callers / tests that inspect kind mapping. */
-export { capabilityKind };
+export { capabilityKind } from "./desugar-scene-primitives.js";

@@ -35,6 +35,23 @@ import {
 } from "./connector-routing.js";
 import { FlowArrow } from "./FlowArrow";
 import { MotionSignal } from "./MotionSignal";
+import {
+  hasNativeSemanticChrome,
+  resolveSemanticChrome,
+} from "./capabilities/chrome.js";
+import { resolveCapabilityLayout } from "./capabilities/registry.js";
+
+const SCENE_TEXT_SCALE = 0.9;
+const DEFAULT_SCENE_FONT_SIZE = 14;
+
+function scaledSceneFontSize(
+  value: unknown,
+  fallback = DEFAULT_SCENE_FONT_SIZE,
+): number {
+  const fontSize =
+    typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return fontSize * SCENE_TEXT_SCALE;
+}
 
 /** Minimal geometry for a scene node. */
 export type SceneGeometryLike = Readonly<{
@@ -88,6 +105,8 @@ export type SceneNodeLike = Readonly<{
     dy?: number;
   }>;
   style?: Readonly<Record<string, SceneStyleValue>>;
+  /** Component capability inputs retained for renderer-backed SDK foundations. */
+  props?: Readonly<Record<string, unknown>>;
   /** Glyph content for `core.text` / `kind: "text"` nodes. */
   text?: string;
   accessibility?: SceneNodeAccessibilityLike;
@@ -487,23 +506,6 @@ function styleCoordinateSpace(
   return undefined;
 }
 
-function styleGap(style: SceneNodeLike["style"]): number {
-  const gap = style?.gap;
-  return typeof gap === "number" && Number.isFinite(gap) ? Math.max(0, gap) : 0;
-}
-
-function styleCols(style: SceneNodeLike["style"]): number {
-  const cols = style?.cols;
-  if (typeof cols === "number" && Number.isFinite(cols) && cols >= 1) {
-    return Math.floor(cols);
-  }
-  return 1;
-}
-
-function styleDirection(style: SceneNodeLike["style"]): "row" | "column" {
-  return style?.direction === "row" ? "row" : "column";
-}
-
 /**
  * True when every geometried child fits in the parent's local [0,w]×[0,h] box.
  * Absolute scene children (e.g. y past parent height) return false.
@@ -603,207 +605,8 @@ function childrenUseLocalLayout(
   return true;
 }
 
-/** Compute stack child local geometries; enlarge parent when width/height are 0. */
-function computeStackLayout(
-  parentGeom: SceneGeometryLike,
-  children: readonly SceneNodeLike[],
-  style: SceneNodeLike["style"],
-): Readonly<{
-  parentGeom: SceneGeometryLike;
-  childGeoms: readonly SceneGeometryLike[];
-}> {
-  const direction = styleDirection(style);
-  const gap = styleGap(style);
-  const childGeoms: SceneGeometryLike[] = [];
-  let cursor = 0;
-  let cross = 0;
-  for (const child of children) {
-    const g = geometryOf(child);
-    if (direction === "row") {
-      childGeoms.push({
-        x: cursor,
-        y: 0,
-        width: g.width,
-        height: g.height,
-      });
-      cursor += g.width + gap;
-      cross = Math.max(cross, g.height);
-    } else {
-      childGeoms.push({
-        x: 0,
-        y: cursor,
-        width: g.width,
-        height: g.height,
-      });
-      cursor += g.height + gap;
-      cross = Math.max(cross, g.width);
-    }
-  }
-  if (childGeoms.length > 0) {
-    cursor = Math.max(0, cursor - gap);
-  }
-  const width =
-    parentGeom.width > 0
-      ? Math.max(
-          parentGeom.width,
-          direction === "row" ? cursor : cross,
-        )
-      : direction === "row"
-        ? cursor
-        : cross;
-  const height =
-    parentGeom.height > 0
-      ? Math.max(
-          parentGeom.height,
-          direction === "column" ? cursor : cross,
-        )
-      : direction === "column"
-        ? cursor
-        : cross;
-  return {
-    parentGeom: { ...parentGeom, width, height },
-    childGeoms,
-  };
-}
-
-/** Row-major grid child local geometries; enlarge parent when needed. */
-function computeGridLayout(
-  parentGeom: SceneGeometryLike,
-  children: readonly SceneNodeLike[],
-  style: SceneNodeLike["style"],
-): Readonly<{
-  parentGeom: SceneGeometryLike;
-  childGeoms: readonly SceneGeometryLike[];
-}> {
-  const cols = styleCols(style);
-  const gap = styleGap(style);
-  const cellWidths: number[] = Array.from({ length: cols }, () => 0);
-  const rowCount = Math.max(1, Math.ceil(children.length / cols));
-  const rowHeights: number[] = Array.from({ length: rowCount }, () => 0);
-  children.forEach((child, index) => {
-    const g = geometryOf(child);
-    const col = index % cols;
-    const row = Math.floor(index / cols);
-    cellWidths[col] = Math.max(cellWidths[col]!, g.width);
-    rowHeights[row] = Math.max(rowHeights[row]!, g.height);
-  });
-  const colOffsets: number[] = [];
-  let xCursor = 0;
-  for (let col = 0; col < cols; col++) {
-    colOffsets.push(xCursor);
-    xCursor += cellWidths[col]! + gap;
-  }
-  const rowOffsets: number[] = [];
-  let yCursor = 0;
-  for (let row = 0; row < rowCount; row++) {
-    rowOffsets.push(yCursor);
-    yCursor += rowHeights[row]! + gap;
-  }
-  const childGeoms = children.map((child, index) => {
-    const g = geometryOf(child);
-    const col = index % cols;
-    const row = Math.floor(index / cols);
-    return {
-      x: colOffsets[col]!,
-      y: rowOffsets[row]!,
-      width: g.width,
-      height: g.height,
-    };
-  });
-  const contentWidth = Math.max(0, xCursor - (children.length > 0 ? gap : 0));
-  const contentHeight = Math.max(0, yCursor - (children.length > 0 ? gap : 0));
-  return {
-    parentGeom: {
-      ...parentGeom,
-      width:
-        parentGeom.width > 0
-          ? Math.max(parentGeom.width, contentWidth)
-          : contentWidth,
-      height:
-        parentGeom.height > 0
-          ? Math.max(parentGeom.height, contentHeight)
-          : contentHeight,
-    },
-    childGeoms,
-  };
-}
-
-/** Equal-slot rail child local geometries; enlarge parent when needed. */
-function computeRailLayout(
-  parentGeom: SceneGeometryLike,
-  children: readonly SceneNodeLike[],
-  style: SceneNodeLike["style"],
-): Readonly<{
-  parentGeom: SceneGeometryLike;
-  childGeoms: readonly SceneGeometryLike[];
-}> {
-  const direction = styleDirection(style);
-  const gap = styleGap(style);
-  const count = children.length;
-  if (count === 0) {
-    return { parentGeom, childGeoms: [] };
-  }
-  const authored = children.map((child) => geometryOf(child));
-  const totalGap = gap * Math.max(count - 1, 0);
-  const maxChildWidth = Math.max(...authored.map((g) => g.width), 0);
-  const maxChildHeight = Math.max(...authored.map((g) => g.height), 0);
-  let parentWidth = parentGeom.width;
-  let parentHeight = parentGeom.height;
-  if (direction === "row") {
-    const minContentWidth =
-      authored.reduce((sum, g) => sum + (g.width > 0 ? g.width : maxChildWidth), 0) + totalGap;
-    if (parentWidth <= 0) {
-      parentWidth = minContentWidth > 0 ? minContentWidth : maxChildWidth * count + totalGap;
-    } else {
-      parentWidth = Math.max(parentWidth, minContentWidth);
-    }
-    if (parentHeight <= 0) {
-      parentHeight = maxChildHeight;
-    } else {
-      parentHeight = Math.max(parentHeight, maxChildHeight);
-    }
-    const slot = Math.max((parentWidth - totalGap) / count, 0);
-    const childGeoms = authored.map((g, index) => ({
-      x: index * (slot + gap),
-      y: 0,
-      width: slot,
-      height: g.height > 0 ? g.height : parentHeight,
-    }));
-    return {
-      parentGeom: { ...parentGeom, width: parentWidth, height: parentHeight },
-      childGeoms,
-    };
-  }
-  if (parentHeight <= 0) {
-    const minContentHeight =
-      authored.reduce((sum, g) => sum + (g.height > 0 ? g.height : maxChildHeight), 0) + totalGap;
-    parentHeight = minContentHeight > 0 ? minContentHeight : maxChildHeight * count + totalGap;
-  } else {
-    const minContentHeight =
-      authored.reduce((sum, g) => sum + (g.height > 0 ? g.height : maxChildHeight), 0) + totalGap;
-    parentHeight = Math.max(parentHeight, minContentHeight);
-  }
-  if (parentWidth <= 0) {
-    parentWidth = maxChildWidth;
-  } else {
-    parentWidth = Math.max(parentWidth, maxChildWidth);
-  }
-  const slot = Math.max((parentHeight - totalGap) / count, 0);
-  const childGeoms = authored.map((g, index) => ({
-    x: 0,
-    y: index * (slot + gap),
-    width: g.width > 0 ? g.width : parentWidth,
-    height: slot,
-  }));
-  return {
-    parentGeom: { ...parentGeom, width: parentWidth, height: parentHeight },
-    childGeoms,
-  };
-}
-
 /**
- * Resolve local child geometries for stack/grid/rail parents; otherwise authored.
- * Also returns a possibly auto-sized parent geometry.
+ * Resolve semantic capability geometry once for indexing and rendering.
  */
 function resolveContainerLayout(
   node: SceneNodeLike,
@@ -813,22 +616,15 @@ function resolveContainerLayout(
   parentGeom: SceneGeometryLike;
   childGeoms: readonly SceneGeometryLike[] | undefined;
 }> {
-  if (!Array.isArray(children) || children.length === 0) {
-    return { parentGeom, childGeoms: undefined };
-  }
-  const capability = capabilityOf(node);
-  if (capability === "layout.stack") {
-    return computeStackLayout(parentGeom, children, node.style);
-  }
-  if (capability === "layout.grid") {
-    return computeGridLayout(parentGeom, children, node.style);
-  }
-  if (capability === "layout.rail") {
-    return computeRailLayout(parentGeom, children, node.style);
-  }
+  const members = Array.isArray(children) ? children : [];
+  const layout = resolveCapabilityLayout(
+    { ...node, geometry: parentGeom },
+    members,
+  );
   return {
-    parentGeom,
-    childGeoms: children.map((child) => geometryOf(child)),
+    parentGeom: layout.bounds,
+    childGeoms:
+      members.length > 0 ? layout.childGeometries : undefined,
   };
 }
 
@@ -2544,6 +2340,8 @@ function motionConnectorPathData(
         ? undefined
         : resolveEndpoint(node.via, index, layoutOrigin),
       connectorAxisOf(node),
+      typeof from?.anchor === "string" ? from.anchor : undefined,
+      typeof to?.anchor === "string" ? to.anchor : undefined,
     );
   }
   return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} L${formatPathNumber(end.x)} ${formatPathNumber(end.y)}`;
@@ -3428,7 +3226,14 @@ function arrowPathData(
         node.via !== undefined
           ? resolveEndpoint(node.via, index, layoutOrigin)
           : undefined;
-      return elbowPathData(start, end, via, connectorAxisOf(node));
+      return elbowPathData(
+        start,
+        end,
+        via,
+        connectorAxisOf(node),
+        typeof from?.anchor === "string" ? from.anchor : undefined,
+        typeof to?.anchor === "string" ? to.anchor : undefined,
+      );
     }
     return `M${start.x} ${start.y} L${end.x} ${end.y}`;
   }
@@ -4009,6 +3814,105 @@ function renderNode(
         />
       );
     }
+  } else if (
+    capability === "core.image" &&
+    typeof node.props?.src === "string" &&
+    node.props.src.length > 0
+  ) {
+    const fit = node.props.fit;
+    const preserveAspectRatio =
+      fit === "cover" ? "xMidYMid slice" : fit === "fill" ? "none" : "xMidYMid meet";
+    body = (
+      <image
+        href={node.props.src}
+        x={geom.x}
+        y={geom.y}
+        width={geom.width}
+        height={geom.height}
+        preserveAspectRatio={preserveAspectRatio}
+        focusable={false}
+        aria-hidden="true"
+        style={styleToCss(node.style, theme)}
+        data-flow-image="true"
+      />
+    );
+  } else if (hasNativeSemanticChrome(node)) {
+    const semantic = resolveSemanticChrome(node, geom);
+    const { fill: fillPaint, stroke: strokePaint } = chalkRectPaints(
+      node.style,
+      theme,
+      themeBg,
+      themeStroke,
+    );
+    body = (
+      <>
+        {semantic.rootBox === undefined ? null : (
+          <rect
+            id={semantic.rootBox.id}
+            x={semantic.rootBox.geometry.x}
+            y={semantic.rootBox.geometry.y}
+            width={semantic.rootBox.geometry.width}
+            height={semantic.rootBox.geometry.height}
+            rx={semantic.rootBox.radius}
+            fill={fillPaint}
+            stroke={strokePaint}
+            strokeWidth={strokeWidthFromStyle(node.style, 1.3) * strokeScale}
+            focusable={false}
+            aria-hidden="true"
+            style={styleToCss(node.style, theme)}
+            data-flow-semantic-chrome={capability}
+          />
+        )}
+        {semantic.boxes.map((box) => (
+          <rect
+            key={box.id}
+            id={box.id}
+            x={box.geometry.x}
+            y={box.geometry.y}
+            width={box.geometry.width}
+            height={box.geometry.height}
+            rx={box.radius}
+            fill={fillPaint}
+            stroke={strokePaint}
+            strokeWidth={strokeWidthFromStyle(node.style, 1.3) * strokeScale}
+            focusable={false}
+            aria-hidden="true"
+            data-flow-semantic-chrome={capability}
+          />
+        ))}
+        {semantic.texts.map((part) => {
+          const centered = part.anchor === "middle";
+          return (
+            <text
+              key={part.id}
+              id={part.id}
+              x={
+                centered
+                  ? part.x + part.width / 2
+                  : part.anchor === "end"
+                    ? part.x + part.width
+                    : part.x
+              }
+              y={centered ? part.y + part.height / 2 : part.y}
+              dominantBaseline={centered ? "middle" : "hanging"}
+              textAnchor={part.anchor}
+              fill={
+                part.tone === "secondary"
+                  ? theme.text.secondary
+                  : theme.text.primary
+              }
+              fontSize={scaledSceneFontSize(part.fontSize)}
+              fontWeight={part.fontWeight}
+              focusable={false}
+              aria-hidden="true"
+              data-flow-semantic-text={capability}
+            >
+              {part.text}
+            </text>
+          );
+        })}
+      </>
+    );
   } else if (capability === "core.rect" || node.kind === "rect") {
     const { fill: fillPaint, stroke: strokePaint } = chalkRectPaints(
       node.style,
@@ -4111,8 +4015,7 @@ function renderNode(
       />
     );
   } else if (capability === "core.text" || node.kind === "text") {
-    const fontSize =
-      typeof node.style?.fontSize === "number" ? node.style.fontSize : 14;
+    const fontSize = scaledSceneFontSize(node.style?.fontSize);
     const rawAnchor =
       typeof node.style?.textAnchor === "string"
         ? node.style.textAnchor
@@ -4136,6 +4039,16 @@ function renderNode(
     const centerVertically =
       textAnchor === "middle" && geom.height > fontSize * 1.25;
     const textY = centerVertically ? geom.y + geom.height / 2 : geom.y;
+    const content = node.text ?? "";
+    const textLines =
+      content.includes("\n") || node.style?.whiteSpace === "pre"
+        ? content.split("\n")
+        : undefined;
+    const lineHeight =
+      typeof node.style?.lineHeight === "number" &&
+      Number.isFinite(node.style.lineHeight)
+        ? node.style.lineHeight
+        : fontSize * 1.3;
     body = (
       <text
         x={textX}
@@ -4146,9 +4059,19 @@ function renderNode(
         fontSize={fontSize}
         focusable={false}
         aria-hidden="true"
-        style={styleToCss(node.style, theme)}
+        style={{ ...styleToCss(node.style, theme), fontSize }}
       >
-        {node.text ?? ""}
+        {textLines === undefined
+          ? content
+          : textLines.map((line, index) => (
+              <tspan
+                key={`${node.id}-line-${index}`}
+                x={textX}
+                dy={index === 0 ? 0 : lineHeight}
+              >
+                {line}
+              </tspan>
+            ))}
       </text>
     );
   } else if (fanNode) {
@@ -4486,6 +4409,12 @@ function renderNode(
       : capability.length > 0
         ? capability
         : undefined;
+  const clipsChildren =
+    node.style?.overflow === "hidden" || node.style?.clip === true;
+  const clipPathId = `${markerPrefix}-clip-${node.id.replaceAll(
+    /[^a-zA-Z0-9_-]/g,
+    "-",
+  )}`;
 
   return (
     <g
@@ -4518,7 +4447,23 @@ function renderNode(
         <desc id={descriptionId}>{description}</desc>
       ) : null}
       {body}
-      {nested}
+      {clipsChildren ? (
+        <>
+          <defs>
+            <clipPath id={clipPathId}>
+              <rect
+                x={geom.x}
+                y={geom.y}
+                width={geom.width}
+                height={geom.height}
+              />
+            </clipPath>
+          </defs>
+          <g clipPath={`url(#${clipPathId})`}>{nested}</g>
+        </>
+      ) : (
+        nested
+      )}
     </g>
   );
 }

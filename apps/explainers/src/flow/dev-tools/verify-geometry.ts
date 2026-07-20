@@ -741,7 +741,14 @@ export function arrowPathData(
           : style.axis === "x" || style.axis === "y"
             ? style.axis
             : undefined;
-      return elbowPathData(start, end, via ?? undefined, axis);
+      return elbowPathData(
+        start,
+        end,
+        via ?? undefined,
+        axis,
+        endpointAnchor(value.from),
+        endpointAnchor(value.to),
+      );
     }
     return `M${start.x} ${start.y} L${end.x} ${end.y}`;
   }

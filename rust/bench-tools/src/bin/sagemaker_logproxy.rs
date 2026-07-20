@@ -154,7 +154,18 @@ fn classify_path(path: &str) -> RouteKind {
     // rest is "<name>/invocations[-response-stream]", possibly with a
     // trailing query string already stripped by the caller (we classify
     // path-only, query is preserved separately when rewriting the URI).
-    let Some((_name, tail)) = rest.split_once('/') else {
+    //
+    // Split on the LAST '/', not the first: some clients (notably rust
+    // aiperf's `--endpoint-type sagemaker`, which substitutes the
+    // request's *model name* into the `{model_name}` path template rather
+    // than a real SageMaker endpoint name) put a literal '/' inside the
+    // "name" segment itself, e.g. `/endpoints/google/gemma-4-31B-it/
+    // invocations-response-stream`. A first-'/' split would misparse that
+    // as name="google", tail="gemma-4-31B-it/invocations-response-stream"
+    // and fall through to Passthrough (404 against a plain chat backend).
+    // Splitting on the last '/' always isolates the true tail regardless
+    // of how many '/' the endpoint-name portion contains.
+    let Some((_name, tail)) = rest.rsplit_once('/') else {
         return RouteKind::Passthrough;
     };
     match tail {

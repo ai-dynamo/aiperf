@@ -753,7 +753,101 @@ export function verifyAdvancedCurveRouting() {
       finding("error", deck, "bundle", "curve-bundle-split", "bundled edges did not share one corridor"),
     );
   }
+
+  const anchoredElbow = arrowPathData(
+    {
+      id: "anchored-elbow",
+      kind: "elbow",
+      from: { x: 100, y: 100, anchor: "e" },
+      to: { x: 200, y: 300, anchor: "w" },
+    },
+    new Map(),
+  );
+  if (anchoredElbow !== "M100 100 H150 V300 H200") {
+    findings.push(
+      finding(
+        "error",
+        deck,
+        "anchored-elbow",
+        "elbow-runs-along-component-edge",
+        `east-to-west elbow must approach the target horizontally; got ${anchoredElbow}`,
+      ),
+    );
+  }
   return findings;
+}
+
+const ROUTING_EXEMPLAR_TITLES = [
+  "Complete 9×9 curve matrix",
+  "Cardinal curves",
+  "Corner and center curves",
+  "Same-side links and self-loops",
+  "Obstacle avoidance",
+  "Parallel lanes",
+  "Bundling",
+  "Anchor-safe orthogonal routing",
+  "Routing controls reference",
+];
+
+/** Pin the complete routing cookbook and its 81 ordered anchor pairs. */
+function verifyRoutingSdkExamples(pkg, findings) {
+  if (pkg?.id !== "flow-sdk-examples") return;
+  const slides = Array.isArray(pkg.slides) ? pkg.slides : [];
+  if (slides.length !== 19) {
+    findings.push(
+      finding(
+        "error",
+        pkg.id,
+        "*",
+        "routing-exemplar-slide-count",
+        `expected 19 slides, got ${slides.length}`,
+      ),
+    );
+  }
+  const titles = new Set(slides.map((slide) => slide?.title));
+  for (const title of ROUTING_EXEMPLAR_TITLES) {
+    if (!titles.has(title)) {
+      findings.push(
+        finding(
+          "error",
+          pkg.id,
+          "*",
+          "routing-exemplar-missing-slide",
+          `missing "${title}"`,
+        ),
+      );
+    }
+  }
+  const matrix = slides.find(
+    (slide) => slide?.title === "Complete 9×9 curve matrix",
+  );
+  const roots = Array.isArray(matrix?.render?.scene?.roots)
+    ? matrix.render.scene.roots
+    : [];
+  const pairs = new Set(
+    roots
+      .filter((node) => node?.style?.route === "curve")
+      .map(
+        (node) =>
+          `${node?.from?.anchor ?? "center"}:${node?.to?.anchor ?? "center"}`,
+      ),
+  );
+  const anchors = ["center", "n", "s", "e", "w", "ne", "nw", "se", "sw"];
+  for (const from of anchors) {
+    for (const to of anchors) {
+      if (!pairs.has(`${from}:${to}`)) {
+        findings.push(
+          finding(
+            "error",
+            pkg.id,
+            "curve-matrix",
+            "routing-anchor-pair-missing",
+            `missing ${from} → ${to}`,
+          ),
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -777,6 +871,8 @@ export function verifyPackageIr(pkg, options = {}) {
     );
     return findings;
   }
+
+  verifyRoutingSdkExamples(pkg, findings);
 
   slides.forEach((slide, index) => {
     const slideLabel = `${index}:${slide?.id ?? slide?.title ?? "slide"}`;

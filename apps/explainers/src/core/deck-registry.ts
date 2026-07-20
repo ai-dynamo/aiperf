@@ -22,6 +22,9 @@ export const EXPECTED_DECK_ROUTES = [
   ["tstar-warmup", "/tstar-warmup"],
   ["synthetic-dataset-generator", "/synthetic-dataset-generator"],
   ["aiperf-vs-locust", "/aiperf-vs-locust"],
+  ["flow-sdk-examples", "/flow-sdk-examples"],
+  ["sdk-generic-catalog", "/sdk-generic-catalog"],
+  ["sdk-diagram-catalog", "/sdk-diagram-catalog"],
 ] as const;
 
 export type RegisteredDeckId = (typeof EXPECTED_DECK_ROUTES)[number][0];

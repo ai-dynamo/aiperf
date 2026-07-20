@@ -69,13 +69,9 @@ import {
   type SdkInstanceIndex,
 } from "../sdk/expand.js";
 
-import {
-  asRecord,
-  capabilityKind,
-  desugarPackageNode,
-  lowerFirstClassPackageNode,
-} from "./desugar-scene-primitives.js";
+import { asRecord } from "./desugar-scene-primitives.js";
 import { expandSymbolInvocations } from "./expand-symbols.js";
+import { lowerSemanticSceneNode } from "./semantic-scene-node.js";
 import { collectSymbols } from "./symbols.js";
 import {
   findUnresolvedAfterRefs,
@@ -597,21 +593,14 @@ function normalizePackageRecord(value: unknown): RenderNodeIr {
       : undefined;
   const fallback = typeof node.fallback === "string" ? node.fallback : label;
 
-  const common = {
+  return lowerSemanticSceneNode(node, {
     id,
     capability,
     children,
     label,
     fallback,
+    sourceMap: unknownRange,
     ...(description !== undefined ? { description } : {}),
-  };
-  const desugared = desugarPackageNode(node, common);
-  if (desugared !== undefined) {
-    return desugared;
-  }
-  return lowerFirstClassPackageNode(node, {
-    ...common,
-    kind: capabilityKind(capability),
   });
 }
 

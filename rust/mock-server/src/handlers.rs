@@ -20,6 +20,7 @@ use bytes::Bytes;
 use futures::stream::Stream;
 use http_body_util::{BodyExt, Empty};
 use hyper::{Request, Uri};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::latency::{LatencySimulator, wait_for_processing};
@@ -384,39 +385,88 @@ pub async fn chat_completions(
     }
 }
 
-fn build_chat_response(ctx: &RequestCtx) -> Value {
-    let mut message = json!({
-        "role": "assistant",
-        "content": ctx.tokenized.content(),
-    });
-    if let Some(reasoning) = ctx.tokenized.reasoning_content() {
-        message["reasoning_content"] = Value::String(reasoning);
-    }
-    let finish_reason: Value = if let Some(tc) = &ctx.tool_call {
-        message["tool_calls"] = json!([{
-            "id": tc.id,
-            "type": "function",
-            "function": {
-                "name": tc.name,
-                "arguments": tc.arguments,
-            },
-        }]);
-        Value::String("tool_calls".to_string())
+/// Typed mirror of the `json!()`-built response this replaced. Serializing a
+/// typed struct directly skips building an intermediate `serde_json::Value`
+/// tree (a `String`/`Map`/`Vec` allocation per field) before serializing that
+/// tree to bytes — profiling showed `Value` construction/drop as a real
+/// allocator-traffic cost in the hot path. `#[serde(skip_serializing_if)]`
+/// on the optional fields reproduces the old behavior exactly: an absent
+/// `reasoning_content`/`tool_calls` means the key doesn't appear in the JSON
+/// at all, not `null`.
+#[derive(Serialize)]
+struct ChatResponseFunctionCall<'a> {
+    name: &'a str,
+    arguments: &'a str,
+}
+
+#[derive(Serialize)]
+struct ChatResponseToolCall<'a> {
+    id: &'a str,
+    #[serde(rename = "type")]
+    call_type: &'a str,
+    function: ChatResponseFunctionCall<'a>,
+}
+
+#[derive(Serialize)]
+struct ChatResponseMessage<'a> {
+    role: &'a str,
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<[ChatResponseToolCall<'a>; 1]>,
+}
+
+#[derive(Serialize)]
+struct ChatResponseChoice<'a> {
+    index: u32,
+    finish_reason: &'a str,
+    message: ChatResponseMessage<'a>,
+}
+
+#[derive(Serialize)]
+struct ChatResponse<'a> {
+    id: &'a str,
+    object: &'a str,
+    created: i64,
+    model: &'a str,
+    choices: [ChatResponseChoice<'a>; 1],
+    usage: &'a Usage,
+}
+
+fn build_chat_response(ctx: &RequestCtx) -> ChatResponse<'_> {
+    let (finish_reason, tool_calls) = if let Some(tc) = &ctx.tool_call {
+        (
+            "tool_calls",
+            Some([ChatResponseToolCall {
+                id: &tc.id,
+                call_type: "function",
+                function: ChatResponseFunctionCall {
+                    name: &tc.name,
+                    arguments: &tc.arguments,
+                },
+            }]),
+        )
     } else {
-        Value::String(ctx.tokenized.finish_reason.to_string())
+        (ctx.tokenized.finish_reason, None)
     };
-    json!({
-        "id": ctx.request_id,
-        "object": "chat.completion",
-        "created": now_secs(),
-        "model": ctx.model,
-        "choices": [{
-            "index": 0,
-            "finish_reason": finish_reason,
-            "message": message,
+    ChatResponse {
+        id: &ctx.request_id,
+        object: "chat.completion",
+        created: now_secs(),
+        model: &ctx.model,
+        choices: [ChatResponseChoice {
+            index: 0,
+            finish_reason,
+            message: ChatResponseMessage {
+                role: "assistant",
+                content: ctx.tokenized.content(),
+                reasoning_content: ctx.tokenized.reasoning_content(),
+                tool_calls,
+            },
         }],
-        "usage": ctx.usage,
-    })
+        usage: &ctx.usage,
+    }
 }
 
 pub async fn messages(

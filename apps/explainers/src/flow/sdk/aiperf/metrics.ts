@@ -168,13 +168,30 @@ function groupNode(
     id,
     capabilityId: "core.group",
     geometry,
-    style: {},
+    style: { coordinateSpace: "local" },
     accessibility: { label },
     fallback: label,
     sourceMap,
     children,
   };
 }
+
+/** Optional authored origin for AIPerf composites (`x` / `y` scene placement). */
+function authoredOrigin(
+  props: Readonly<Record<string, JsonValue>>,
+): Readonly<{ x: number; y: number }> {
+  const x = props.x;
+  const y = props.y;
+  return {
+    x: typeof x === "number" && Number.isFinite(x) ? x : 0,
+    y: typeof y === "number" && Number.isFinite(y) ? y : 0,
+  };
+}
+
+const GEOMETRY_ORIGIN_PROPS: Readonly<Record<string, ComponentPropDescriptor>> = {
+  x: { type: "number", required: false, default: 0 },
+  y: { type: "number", required: false, default: 0 },
+};
 
 function connectorNode(
   id: string,
@@ -338,6 +355,7 @@ function metricsExportFactory(
   const exporterSurfaceRole = readThemeRole(props, "exporterSurfaceRole", "surface.panel");
   const inkRole = readThemeRole(props, "inkRole", "ink.primary");
   const lineRole = readThemeRole(props, "lineRole", "line.structural");
+  const origin = authoredOrigin(props);
 
   const { instanceId, sourceMap } = context;
   const rowWidth =
@@ -394,7 +412,7 @@ function metricsExportFactory(
 
   const root = groupNode(
     instanceId,
-    { x: 0, y: 0, width, height },
+    { x: origin.x, y: origin.y, width, height },
     sourceMap,
     `${sourceLabel} export`,
     [source, fan, ...exporters],
@@ -432,6 +450,7 @@ export const AIPERF_METRICS_COMPONENTS: readonly SdkComponentDefinition[] = [
       surfaceRole: stringProp("surface.panel"),
       inkRole: stringProp("ink.primary"),
       lineRole: stringProp("line.structural"),
+      ...GEOMETRY_ORIGIN_PROPS,
     },
     actions: ["enter", "draw", "trace", "emphasis"],
     factory: metricsExportFactory,

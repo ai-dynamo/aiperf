@@ -48,12 +48,8 @@ import type {
   TimelineCueIr,
 } from "../schema/index.js";
 
-import {
-  capabilityKind,
-  desugarPackageNode,
-  lowerFirstClassPackageNode,
-} from "./desugar-scene-primitives.js";
 import type { LinkedDocument, SceneSymbolTable } from "./link.js";
+import { lowerSemanticSceneNode } from "./semantic-scene-node.js";
 import { resolveTimelineCueTiming } from "./timeline-timing.js";
 
 const GEOMETRY_KEYS = ["x", "y", "width", "height"] as const;
@@ -302,23 +298,13 @@ function lowerScenePrimitive(
         ? props.text
         : node.id;
   const fallback = node.fallback?.text ?? label;
-  const desugared = desugarPackageNode(props, {
+  return lowerSemanticSceneNode(props, {
     id: node.id,
     capability: node.capability,
     children,
     label,
     fallback,
-  });
-  if (desugared !== undefined) {
-    return desugared;
-  }
-  return lowerFirstClassPackageNode(props, {
-    id: node.id,
-    capability: node.capability,
-    kind: capabilityKind(node.capability),
-    children,
-    label,
-    fallback,
+    sourceMap: node.sourceMap,
   });
 }
 

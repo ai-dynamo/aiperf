@@ -15,6 +15,10 @@ members = [
     # pyo3 cdylib compiled into the single interned `aiperf` wheel (aiperf._native);
     # the unified `aiperf` binary rides along as interned package data.
     "pyext",
+    # Standalone benchmark-comparison utilities (logproxy, sagemaker-logproxy, ...)
+    # with no dependency on aiperf-runtime or aiperf-mock-server, so they build
+    # instantly regardless of aiperf's own build state.
+    "bench-tools",
 ]
 
 [workspace.package]
@@ -84,6 +88,25 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"
 
-[profile.release]
+# Plain `cargo build --release`/`--release -p <crate>` uses cargo's stock
+# release defaults (opt-level=3, lto=false, codegen-units=16) — fast to build,
+# for local iteration and non-shipped crates. Shipped product binaries
+# (aiperf-cli, aiperf-mock-server) build via the `optimized` profile below
+# instead, via `make native-cli`/`bundle-cli`/`mock-server-native`.
+
+# Whole-program-optimized profile for the actual shipped product binaries.
+# `cargo build --profile optimized -p aiperf-cli`/`aiperf-mock-server`.
+# Artifacts land in `target/optimized/`, not `target/release/`.
+[profile.optimized]
+inherits = "release"
 lto = "fat"
 codegen-units = 1
+
+# For standalone debug/benchmark-comparison utilities, not shipped product
+# binaries: `cargo build --profile bench-tools -p aiperf-bench-tools`. Same as
+# plain `--release` today (kept as an explicit named profile so it stays fast
+# even if `[profile.release]` itself is ever tightened again).
+[profile.bench-tools]
+inherits = "release"
+lto = false
+codegen-units = 16

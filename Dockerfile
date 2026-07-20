@@ -133,9 +133,9 @@ RUN cd /workspace \
          online)  CLI_FEATURES="--features parquet" ;; \
          *) echo "unknown AIPERF_RUNNER_PROFILE='${AIPERF_RUNNER_PROFILE}' (expected 'offline' or 'online')" >&2; exit 1 ;; \
        esac \
-    && cargo build --manifest-path rust/Cargo.toml --release -p aiperf-cli ${CLI_FEATURES} \
+    && cargo build --manifest-path rust/Cargo.toml --profile optimized -p aiperf-cli ${CLI_FEATURES} \
     && maturin build --release --out /dist \
-    && python tools/wheel_repack.py --wheel-dir /dist --binary rust/target/release/aiperf
+    && python tools/wheel_repack.py --wheel-dir /dist --binary rust/target/optimized/aiperf
 
 # Export-only stage: scratch-based so `docker buildx build --target
 # wheel-artifact --output type=local,dest=<dir>` writes only the wheel file

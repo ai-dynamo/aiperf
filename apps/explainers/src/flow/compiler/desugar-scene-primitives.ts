@@ -30,6 +30,19 @@ const DETAIL_HEIGHT = 20;
 const HEADER_TEXT_HEIGHT = 24;
 const INSET = 8;
 const DEFAULT_PAD = 12;
+const STEPPER_CHIP_HEIGHT = 26;
+const STEPPER_MIN_CHIP_WIDTH = 72;
+const STEPPER_CHAR_WIDTH = 6.2;
+const STEPPER_CHIP_PAD = 24;
+
+/** Estimate chip width for a numbered step label at the stepper's 11px bold font. */
+function stepperChipWidth(label: string, index: number): number {
+  const text = `${index + 1}. ${label}`;
+  return Math.max(
+    STEPPER_MIN_CHIP_WIDTH,
+    Math.ceil(text.length * STEPPER_CHAR_WIDTH) + STEPPER_CHIP_PAD,
+  );
+}
 
 export function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
@@ -135,12 +148,9 @@ export function capabilityKind(capability: string): RenderNodeIr["kind"] {
 }
 
 /**
- * Package capabilities with dedicated cases in `desugarPackageNode`.
- *
- * Keep this beside the desugar switch: every selector here must have a
- * corresponding lowering case below.
+ * Native semantic capabilities accepted by package-form authoring.
  */
-const DESUGAR_PACKAGE_CAPABILITIES = new Set<string>([
+const SEMANTIC_PACKAGE_CAPABILITIES = new Set<string>([
   "core.circle",
   "core.ellipse",
   "core.panel",
@@ -183,19 +193,13 @@ const FIRST_CLASS_PACKAGE_CAPABILITIES = new Set<string>([
   "motion.pulse",
 ]);
 
-/** True when the capability is a compiler macro that expands before IR emit. */
-export function isDesugarCapability(capability: string): boolean {
-  return DESUGAR_PACKAGE_CAPABILITIES.has(capability);
-}
-
 /**
  * Whether package-scene lowering recognizes this capability without a
- * manifest entry. This is authoritative for `desugarPackageNode` macros and
- * `lowerFirstClassPackageNode` selectors.
+ * manifest entry.
  */
 export function isSupportedPackageCapability(capability: string): boolean {
   return (
-    DESUGAR_PACKAGE_CAPABILITIES.has(capability) ||
+    SEMANTIC_PACKAGE_CAPABILITIES.has(capability) ||
     FIRST_CLASS_PACKAGE_CAPABILITIES.has(capability)
   );
 }
@@ -1225,22 +1229,14 @@ export function desugarPackageNode(
         style.linked === 1 ||
         style.linked === "true";
       const stepTexts = stringArrayProp(node, "steps");
-      const chipHeight = 26;
-      const gap = finiteOrUndefined(style.gap) ?? 12;
-      const stepCount =
-        stepTexts.length > 0 ? stepTexts.length : Math.max(children.length, 1);
-      const railWidth =
-        geometry.width > 0
-          ? geometry.width
-          : stepCount * 90 + gap * Math.max(stepCount - 1, 0);
-      const slotWidth =
-        stepCount > 0
-          ? Math.max((railWidth - gap * Math.max(stepCount - 1, 0)) / stepCount, 0)
-          : 0;
+      const gap = finiteOrUndefined(style.gap) ?? finiteOrUndefined(node.gap) ?? 12;
+      const chipHeight = STEPPER_CHIP_HEIGHT;
+
       const chips: RenderNodeIr[] =
         stepTexts.length > 0
           ? stepTexts.map((text, index) => {
               const chipId = `${id}-step-${index}`;
+              const chipWidth = stepperChipWidth(text, index);
               return {
                 kind: "group",
                 id: chipId,
@@ -1248,7 +1244,7 @@ export function desugarPackageNode(
                 geometry: {
                   x: 0,
                   y: 0,
-                  width: slotWidth,
+                  width: chipWidth,
                   height: chipHeight,
                 },
                 style: {},
@@ -1263,7 +1259,7 @@ export function desugarPackageNode(
                     geometry: {
                       x: 0,
                       y: 0,
-                      width: slotWidth,
+                      width: chipWidth,
                       height: chipHeight,
                     },
                     style: {
@@ -1282,7 +1278,7 @@ export function desugarPackageNode(
                     geometry: {
                       x: 0,
                       y: Math.max((chipHeight - 16) / 2, 0),
-                      width: slotWidth,
+                      width: chipWidth,
                       height: 16,
                     },
                     style: {
@@ -1294,42 +1290,70 @@ export function desugarPackageNode(
                 ],
               };
             })
-          : children.map((child) => ({
-              ...child,
-              geometry: {
-                ...child.geometry,
-                width:
-                  child.geometry.width > 0 ? child.geometry.width : slotWidth,
-                height:
-                  child.geometry.height > 0
-                    ? child.geometry.height
-                    : chipHeight,
-              },
-            }));
+          : children.map((child, index) => {
+              const stepLabel =
+                typeof child.accessibility?.label === "string"
+                  ? child.accessibility.label
+                  : typeof child.fallback === "string"
+                    ? child.fallback
+                    : `step ${index + 1}`;
+              const chipWidth =
+                child.geometry.width > 0
+                  ? child.geometry.width
+                  : stepperChipWidth(stepLabel, index);
+              return {
+                ...child,
+                geometry: {
+                  ...child.geometry,
+                  width: chipWidth,
+                  height:
+                    child.geometry.height > 0 ? child.geometry.height : chipHeight,
+                },
+              };
+            });
+
+      let cursorX = 0;
+      const laidOutChips = chips.map((chip, index) => {
+        const width = chip.geometry.width > 0 ? chip.geometry.width : STEPPER_MIN_CHIP_WIDTH;
+        const placed = {
+          ...chip,
+          geometry: {
+            ...chip.geometry,
+            x: cursorX,
+            y: 0,
+            width,
+            height: chip.geometry.height > 0 ? chip.geometry.height : chipHeight,
+          },
+        };
+        cursorX += width + (index < chips.length - 1 ? gap : 0);
+        return placed;
+      });
+      const fitWidth = Math.max(0, cursorX);
+      const railWidth = geometry.width > 0 ? Math.max(geometry.width, fitWidth) : fitWidth;
+      const railHeight =
+        geometry.height > 0 ? Math.max(geometry.height, chipHeight) : chipHeight;
+
       const rail: RenderNodeIr = {
         kind: "group",
         id: `${id}-rail`,
-        capabilityId: "layout.rail",
+        capabilityId: "core.group",
         geometry: {
           x: 0,
           y: 0,
           width: railWidth,
-          height: geometry.height > 0 ? geometry.height : chipHeight,
+          height: railHeight,
         },
-        style: {
-          direction: "row",
-          gap,
-        },
+        style: { coordinateSpace: "local" },
         accessibility: { label: `${label} rail` },
         fallback: `${label} rail`,
         sourceMap: unknownRange,
-        children: chips,
+        children: laidOutChips,
       };
       const links: RenderNodeIr[] = [];
-      if (linked && chips.length > 1) {
-        for (let index = 0; index < chips.length - 1; index += 1) {
-          const fromId = chips[index]?.id;
-          const toId = chips[index + 1]?.id;
+      if (linked && laidOutChips.length > 1) {
+        for (let index = 0; index < laidOutChips.length - 1; index += 1) {
+          const fromId = laidOutChips[index]?.id;
+          const toId = laidOutChips[index + 1]?.id;
           if (fromId === undefined || toId === undefined) {
             continue;
           }
@@ -1359,8 +1383,8 @@ export function desugarPackageNode(
         capabilityId: capability,
         geometry: {
           ...geometry,
-          width: geometry.width > 0 ? geometry.width : railWidth,
-          height: geometry.height > 0 ? geometry.height : chipHeight,
+          width: railWidth,
+          height: railHeight,
         },
         style,
         accessibility,

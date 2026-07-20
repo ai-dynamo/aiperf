@@ -170,13 +170,30 @@ function groupNode(
     id,
     capabilityId: "core.group",
     geometry,
-    style: {},
+    style: { coordinateSpace: "local" },
     accessibility: { label },
     fallback: label,
     sourceMap,
     children,
   };
 }
+
+/** Optional authored origin for AIPerf composites (`x` / `y` scene placement). */
+function authoredOrigin(
+  props: Readonly<Record<string, JsonValue>>,
+): Readonly<{ x: number; y: number }> {
+  const x = props.x;
+  const y = props.y;
+  return {
+    x: typeof x === "number" && Number.isFinite(x) ? x : 0,
+    y: typeof y === "number" && Number.isFinite(y) ? y : 0,
+  };
+}
+
+const GEOMETRY_ORIGIN_PROPS: Readonly<Record<string, ComponentPropDescriptor>> = {
+  x: { type: "number", required: false, default: 0 },
+  y: { type: "number", required: false, default: 0 },
+};
 
 function connectorNode(
   id: string,
@@ -316,6 +333,7 @@ function requestPipelineFactory(
   const inkRole = readThemeRole(props, "inkRole", "ink.primary");
   const lineRole = readThemeRole(props, "lineRole", "line.structural");
 
+  const origin = authoredOrigin(props);
   const { instanceId, sourceMap } = context;
   const width = stageLabels.length * STAGE_WIDTH + (stageLabels.length - 1) * STAGE_GAP;
   const height = STAGE_HEIGHT;
@@ -355,7 +373,7 @@ function requestPipelineFactory(
 
   const root = groupNode(
     instanceId,
-    { x: 0, y: 0, width, height },
+    { x: origin.x, y: origin.y, width, height },
     sourceMap,
     "Request pipeline",
     [...stages, ...edges],
@@ -423,6 +441,7 @@ function segmentPoolFactory(
   const inkRole = readThemeRole(props, "inkRole", "ink.primary");
   const lineRole = readThemeRole(props, "lineRole", "line.structural");
 
+  const origin = authoredOrigin(props);
   const { instanceId, sourceMap } = context;
   const rowWidth =
     segmentLabels.length * SEGMENT_WIDTH + (segmentLabels.length - 1) * SEGMENT_GAP;
@@ -470,7 +489,7 @@ function segmentPoolFactory(
     }),
   );
 
-  const root = groupNode(poolId, { x: 0, y: 0, width, height }, sourceMap, poolLabel, [
+  const root = groupNode(poolId, { x: origin.x, y: origin.y, width, height }, sourceMap, poolLabel, [
     chrome,
     title,
     ...segments,
@@ -517,6 +536,7 @@ function warmupHandoffFactory(
   const inkRole = readThemeRole(props, "inkRole", "ink.primary");
   const lineRole = readThemeRole(props, "lineRole", "line.structural");
 
+  const origin = authoredOrigin(props);
   const { instanceId, sourceMap } = context;
   const width = HANDOFF_WIDTH * 2 + HANDOFF_GAP;
   const height = HANDOFF_HEIGHT;
@@ -558,7 +578,7 @@ function warmupHandoffFactory(
 
   const root = groupNode(
     instanceId,
-    { x: 0, y: 0, width, height },
+    { x: origin.x, y: origin.y, width, height },
     sourceMap,
     `${fromLabel} to ${toLabel} handoff`,
     [fromBox, handoff, toBox],
@@ -606,6 +626,7 @@ function veloEnvelopeFactory(
   const inkRole = readThemeRole(props, "inkRole", "ink.primary");
   const lineRole = readThemeRole(props, "lineRole", "line.structural");
 
+  const origin = authoredOrigin(props);
   const { instanceId, sourceMap } = context;
   const width = PAYLOAD_WIDTH + ENVELOPE_PAD * 2;
   const height = PAYLOAD_HEIGHT + ENVELOPE_PAD * 2 + ENVELOPE_TITLE_BAND;
@@ -650,7 +671,7 @@ function veloEnvelopeFactory(
     lineRole,
   });
 
-  const root = groupNode(envelopeId, { x: 0, y: 0, width, height }, sourceMap, envelopeLabel, [
+  const root = groupNode(envelopeId, { x: origin.x, y: origin.y, width, height }, sourceMap, envelopeLabel, [
     chrome,
     title,
     payload,
@@ -706,6 +727,7 @@ function phaseLifecycleFactory(
   const inkRole = readThemeRole(props, "inkRole", "ink.primary");
   const lineRole = readThemeRole(props, "lineRole", "line.structural");
 
+  const origin = authoredOrigin(props);
   const { instanceId, sourceMap } = context;
   const width = phaseLabels.length * PHASE_WIDTH + (phaseLabels.length - 1) * PHASE_GAP;
   const height = PHASE_HEIGHT;
@@ -746,7 +768,7 @@ function phaseLifecycleFactory(
 
   const root = groupNode(
     instanceId,
-    { x: 0, y: 0, width, height },
+    { x: origin.x, y: origin.y, width, height },
     sourceMap,
     "Phase lifecycle",
     [...phases, ...transitions],
@@ -785,6 +807,7 @@ export const AIPERF_EXECUTION_COMPONENTS: readonly SdkComponentDefinition[] = [
       surfaceRole: stringProp("surface.panel"),
       inkRole: stringProp("ink.primary"),
       lineRole: stringProp("line.structural"),
+    ...GEOMETRY_ORIGIN_PROPS,
     },
     actions: ["enter", "draw", "trace", "emphasis"],
     factory: requestPipelineFactory,
@@ -798,6 +821,7 @@ export const AIPERF_EXECUTION_COMPONENTS: readonly SdkComponentDefinition[] = [
       surfaceRole: stringProp("surface.raised"),
       inkRole: stringProp("ink.primary"),
       lineRole: stringProp("line.structural"),
+    ...GEOMETRY_ORIGIN_PROPS,
     },
     actions: ["enter", "draw", "trace", "emphasis"],
     factory: segmentPoolFactory,
@@ -810,6 +834,7 @@ export const AIPERF_EXECUTION_COMPONENTS: readonly SdkComponentDefinition[] = [
       surfaceRole: stringProp("surface.panel"),
       inkRole: stringProp("ink.primary"),
       lineRole: stringProp("line.structural"),
+    ...GEOMETRY_ORIGIN_PROPS,
     },
     actions: ["enter", "draw", "trace", "emphasis"],
     factory: warmupHandoffFactory,
@@ -823,6 +848,7 @@ export const AIPERF_EXECUTION_COMPONENTS: readonly SdkComponentDefinition[] = [
       surfaceRole: stringProp("surface.raised"),
       inkRole: stringProp("ink.primary"),
       lineRole: stringProp("line.structural"),
+    ...GEOMETRY_ORIGIN_PROPS,
     },
     actions: ["enter", "draw", "trace", "emphasis"],
     factory: veloEnvelopeFactory,
@@ -834,6 +860,7 @@ export const AIPERF_EXECUTION_COMPONENTS: readonly SdkComponentDefinition[] = [
       surfaceRole: stringProp("surface.panel"),
       inkRole: stringProp("ink.primary"),
       lineRole: stringProp("line.structural"),
+    ...GEOMETRY_ORIGIN_PROPS,
     },
     actions: ["enter", "draw", "trace", "emphasis"],
     factory: phaseLifecycleFactory,

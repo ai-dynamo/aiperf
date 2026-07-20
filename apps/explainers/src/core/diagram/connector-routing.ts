@@ -165,25 +165,75 @@ export function curvePathData(
   return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} C${formatPathNumber(cp1.x)} ${formatPathNumber(cp1.y)} ${formatPathNumber(cp2.x)} ${formatPathNumber(cp2.y)} ${formatPathNumber(end.x)} ${formatPathNumber(end.y)}`;
 }
 
+function cardinalAnchorAxis(anchor: string | undefined): "x" | "y" | undefined {
+  switch ((anchor ?? "").toLowerCase()) {
+    case "left":
+    case "west":
+    case "w":
+    case "right":
+    case "east":
+    case "e":
+      return "x";
+    case "top":
+    case "north":
+    case "n":
+    case "bottom":
+    case "south":
+    case "s":
+      return "y";
+    default:
+      return undefined;
+  }
+}
+
 /**
- * Orthogonal elbow path: `M x1 y1 H/V mid H/V x2 y2`.
- * `via` supplies the bend coordinate; otherwise midpoint. `axis` prefers the
- * first segment direction (`x` → horizontal first).
+ * Orthogonal elbow path whose terminal legs are perpendicular to cardinal
+ * component anchors. This keeps intermediate legs away from running directly
+ * along a component side. `via` supplies an authored corridor coordinate;
+ * otherwise the corridor is centered between endpoints. `axis` remains the
+ * fallback first-segment preference for soft or corner anchors.
  */
 export function elbowPathData(
   start: Point2,
   end: Point2,
   via: Point2 | undefined,
   axis: "x" | "y" | undefined,
+  fromAnchor?: string | undefined,
+  toAnchor?: string | undefined,
 ): string {
   const dx = Math.abs(end.x - start.x);
   const dy = Math.abs(end.y - start.y);
-  const preferX = axis === "y" ? false : axis === "x" ? true : dx >= dy;
+  const sourceAxis = cardinalAnchorAxis(fromAnchor);
+  const targetAxis = cardinalAnchorAxis(toAnchor);
+  const preferX =
+    sourceAxis === "x" ||
+    (sourceAxis === undefined && targetAxis === "x") ||
+    (sourceAxis === undefined &&
+      targetAxis === undefined &&
+      (axis === "x" || (axis !== "y" && dx >= dy)));
   if (via !== undefined) {
+    if (sourceAxis !== undefined || targetAxis !== undefined) {
+      const firstAxis = sourceAxis ?? (preferX ? "x" : "y");
+      const lastAxis = targetAxis ?? (firstAxis === "x" ? "y" : "x");
+      const firstJoin =
+        firstAxis === "x"
+          ? { x: via.x, y: start.y }
+          : { x: start.x, y: via.y };
+      const lastJoin =
+        lastAxis === "x"
+          ? { x: via.x, y: end.y }
+          : { x: end.x, y: via.y };
+      return elbowPathFromPoints([start, firstJoin, via, lastJoin, end]);
+    }
     if (preferX) {
       return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} H${formatPathNumber(via.x)} V${formatPathNumber(via.y)} H${formatPathNumber(end.x)} V${formatPathNumber(end.y)}`;
     }
     return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} V${formatPathNumber(via.y)} H${formatPathNumber(via.x)} V${formatPathNumber(end.y)} H${formatPathNumber(end.x)}`;
+  }
+  if (sourceAxis !== undefined && targetAxis !== undefined && sourceAxis !== targetAxis) {
+    return sourceAxis === "x"
+      ? `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} H${formatPathNumber(end.x)} V${formatPathNumber(end.y)}`
+      : `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} V${formatPathNumber(end.y)} H${formatPathNumber(end.x)}`;
   }
   if (preferX) {
     const midX = (start.x + end.x) / 2;
@@ -191,4 +241,24 @@ export function elbowPathData(
   }
   const midY = (start.y + end.y) / 2;
   return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} V${formatPathNumber(midY)} H${formatPathNumber(end.x)} V${formatPathNumber(end.y)}`;
+}
+
+function elbowPathFromPoints(points: readonly Point2[]): string {
+  const compact = points.filter(
+    (point, index) =>
+      index === 0 ||
+      point.x !== points[index - 1]!.x ||
+      point.y !== points[index - 1]!.y,
+  );
+  const first = compact[0] ?? { x: 0, y: 0 };
+  let path = `M${formatPathNumber(first.x)} ${formatPathNumber(first.y)}`;
+  for (let index = 1; index < compact.length; index += 1) {
+    const previous = compact[index - 1]!;
+    const point = compact[index]!;
+    path +=
+      previous.y === point.y
+        ? ` H${formatPathNumber(point.x)}`
+        : ` V${formatPathNumber(point.y)}`;
+  }
+  return path;
 }

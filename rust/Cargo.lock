@@ -47,6 +47,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "aiperf-bench-tools"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "crc32fast",
+ "http-body-util",
+ "hyper 1.10.1",
+ "hyper-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "aiperf-cli"
 version = "0.0.0"
 dependencies = [
@@ -120,7 +135,6 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
- "crc32fast",
  "dashmap",
  "futures",
  "http 1.4.2",
@@ -142,7 +156,6 @@ dependencies = [
  "socket2 0.5.10",
  "tokio",
  "tokio-rustls 0.26.4",
- "tokio-stream",
  "tonic 0.14.6",
  "tower",
  "tracing",

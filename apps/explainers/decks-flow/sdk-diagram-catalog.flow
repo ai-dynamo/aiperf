@@ -1,0 +1,102 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Exhaustive visual smoke catalog for systems-diagram SDK primitives.
+
+explainer "SDK Diagram Catalog" {
+  id: "sdk-diagram-catalog"
+  route: "/sdk-diagram-catalog"
+  topic: "authoring"
+  storagePrefix: "sdk-diagram-catalog-explainer"
+  classPrefix: "deck-sdk-diagram-catalog"
+  eyebrowLabel: "SDK DIAGRAM CATALOG"
+  startGateTitle: "Systems-diagram component primitives"
+
+  hub: {
+    highlight: "Diagram primitives"
+    title: "compute · storage · messaging · control · boundaries"
+    description: "Visual smoke catalog for every systems-diagram Flow SDK primitive."
+  }
+
+  slide "Complete diagram catalog" {
+    eyebrow: "SDK · DIAGRAM"
+    title: "Complete systems-diagram catalog"
+    lede: "Every diagram primitive shares a coherent labeled-node grammar while exposing category-specific connection ports."
+    narration: "This catalog renders every systems-diagram SDK primitive in one verified scene."
+    points: [
+      "Compute, storage, messaging, network, control-flow, boundary, and supporting symbol families.",
+      "Storage exposes read and write; messaging exposes producer and consumer; network exposes inbound and outbound."
+    ]
+    caption: "Semantic ports make components directly connectable without generated-id knowledge."
+
+    render: @scene {
+      sdk.Header(
+        id = "diagram-header",
+        title = "SYSTEMS-DIAGRAM SDK PRIMITIVES",
+        caption = "41 registered components",
+        x = 18, y = 16, width = 664, height = 40
+      )
+      sdk.Grid(
+        id = "diagram-grid",
+        cols = 9,
+        gap = 6,
+        x = 18, y = 70, width = 664, height = 300
+      ) {
+        children {
+          sdk.User(id = "d-user", title = "user", width = 64, height = 48)
+          sdk.Client(id = "d-client", title = "client", width = 64, height = 48)
+          sdk.Service(id = "d-service", title = "service", width = 64, height = 48)
+          sdk.Server(id = "d-server", title = "server", width = 64, height = 48)
+          sdk.Process(id = "d-process", title = "process", width = 64, height = 48)
+          sdk.Worker(id = "d-worker", title = "worker", width = 64, height = 48)
+          sdk.Function(id = "d-function", title = "function", width = 64, height = 48)
+          sdk.Container(id = "d-container", title = "container", width = 64, height = 48)
+          sdk.Cloud(id = "d-cloud", title = "cloud", width = 64, height = 48)
+
+          sdk.Database(id = "d-database", title = "database", width = 64, height = 48)
+          sdk.DataStore(id = "d-store", title = "store", width = 64, height = 48)
+          sdk.Cache(id = "d-cache", title = "cache", width = 64, height = 48)
+          sdk.File(id = "d-file", title = "file", width = 64, height = 48)
+          sdk.ObjectStore(id = "d-object", title = "object", width = 64, height = 48)
+          sdk.Volume(id = "d-volume", title = "volume", width = 64, height = 48)
+          sdk.Queue(id = "d-queue", title = "queue", width = 64, height = 48)
+          sdk.Topic(id = "d-topic", title = "topic", width = 64, height = 48)
+          sdk.Stream(id = "d-stream", title = "stream", width = 64, height = 48)
+
+          sdk.EventBus(id = "d-bus", title = "event bus", width = 64, height = 48)
+          sdk.Gateway(id = "d-gateway", title = "gateway", width = 64, height = 48)
+          sdk.Endpoint(id = "d-endpoint", title = "endpoint", width = 64, height = 48)
+          sdk.LoadBalancer(id = "d-lb", title = "balancer", width = 64, height = 48)
+          sdk.Firewall(id = "d-firewall", title = "firewall", width = 64, height = 48)
+          sdk.Start(id = "d-start", title = "start", width = 64, height = 48)
+          sdk.End(id = "d-end", title = "end", width = 64, height = 48)
+          sdk.ProcessStep(id = "d-step", title = "step", width = 64, height = 48)
+          sdk.Decision(id = "d-decision", title = "decision", branches = ["yes", "no"], width = 64, height = 48)
+
+          sdk.Merge(id = "d-merge", title = "merge", width = 64, height = 48)
+          sdk.Delay(id = "d-delay", title = "delay", width = 64, height = 48)
+          sdk.Retry(id = "d-retry", title = "retry", width = 64, height = 48)
+          sdk.Loop(id = "d-loop", title = "loop", width = 64, height = 48)
+          sdk.Boundary(id = "d-boundary", title = "boundary", width = 64, height = 48)
+          sdk.Zone(id = "d-zone", title = "zone", width = 64, height = 48)
+          sdk.Cluster(id = "d-cluster", title = "cluster", width = 64, height = 48)
+          sdk.TrustBoundary(id = "d-trust", title = "trust", width = 64, height = 48)
+          sdk.Document(id = "d-document", title = "document", width = 64, height = 48)
+
+          sdk.Terminal(id = "d-terminal", title = "terminal", width = 64, height = 48)
+          sdk.Clock(id = "d-clock", title = "clock", width = 64, height = 48)
+          sdk.Lock(id = "d-lock", title = "lock", width = 64, height = 48)
+          sdk.Key(id = "d-key", title = "key", width = 64, height = 48)
+          sdk.Warning(id = "d-warning", title = "warning", width = 64, height = 48)
+        }
+      }
+
+      timeline main {
+        at 0 reveal diagram-header duration 180
+        after diagram-header reveal diagram-grid duration 260
+      }
+    }
+  }
+}

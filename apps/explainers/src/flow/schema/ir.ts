@@ -158,6 +158,8 @@ export type RenderNodeBaseIr = Readonly<{
   sourceMap: SourceRange;
   /** Compiler-only SDK provenance; omitted from serialized DeckPackage scenes. */
   sdkOrigin?: SdkOriginIr | undefined;
+  /** Capability-specific authored data retained for native semantic rendering. */
+  props?: Readonly<Record<string, JsonValue>> | undefined;
   /** SVG path data for connector / arrow / path nodes. */
   path?: string | undefined;
   /** Polyline or control points for path / connector nodes. */
@@ -457,6 +459,7 @@ const renderNodeBaseShape = {
   fallback: z.string().min(1),
   sourceMap: sourceRangeSchema,
   sdkOrigin: sdkOriginSchema.optional(),
+  props: z.record(z.string(), jsonValueSchema).optional(),
   path: z.string().optional(),
   points: z.array(polylinePointSchema).optional(),
 };

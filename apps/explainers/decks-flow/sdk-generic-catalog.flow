@@ -1,0 +1,106 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Exhaustive visual smoke catalog for generic SDK primitives.
+
+explainer "SDK Generic Catalog" {
+  id: "sdk-generic-catalog"
+  route: "/sdk-generic-catalog"
+  topic: "authoring"
+  storagePrefix: "sdk-generic-catalog-explainer"
+  classPrefix: "deck-sdk-generic-catalog"
+  eyebrowLabel: "SDK GENERIC CATALOG"
+  startGateTitle: "Generic component primitives"
+
+  hub: {
+    highlight: "Generic primitives"
+    title: "content · status · data · indicators · containers"
+    description: "Visual smoke catalog for every generic Flow SDK primitive."
+  }
+
+  slide "Complete generic catalog" {
+    eyebrow: "SDK · GENERIC"
+    title: "Complete generic catalog"
+    lede: "Every generic primitive expands through the production SDK registry into deterministic Scene IR."
+    narration: "This catalog renders every generic SDK primitive in one verified scene."
+    points: [
+      "Foundations, content, status, data display, navigation, indicators, and containers.",
+      "Each component carries stable ids, semantic ports, actions, accessibility, and provenance."
+    ]
+    caption: "The catalog is intentionally dense: it is a smoke test and authoring index."
+
+    render: @scene {
+      sdk.Header(
+        id = "generic-header",
+        title = "GENERIC SDK PRIMITIVES",
+        caption = "45 registered components",
+        x = 18, y = 16, width = 664, height = 40
+      )
+      sdk.Grid(
+        id = "generic-grid",
+        cols = 9,
+        gap = 6,
+        x = 18, y = 70, width = 664, height = 300
+      ) {
+        children {
+          sdk.Shape(id = "g-shape", label = "shape", width = 64, height = 42)
+          sdk.Text(id = "g-text", text = "text", width = 64, height = 42)
+          sdk.RichText(id = "g-rich", text = "rich\ntext", width = 64, height = 42)
+          sdk.Icon(id = "g-icon", icon = "check", width = 64, height = 42)
+          sdk.Image(id = "g-image", src = "/aiperf-mark.svg", label = "image", width = 64, height = 42)
+          sdk.Line(id = "g-line", label = "line", width = 64, height = 42)
+          sdk.Arrow(id = "g-arrow", label = "arrow", width = 64, height = 42)
+          sdk.Spacer(id = "g-spacer", label = "spacer", width = 64, height = 42)
+          sdk.Inset(id = "g-inset", label = "inset", width = 64, height = 42)
+
+          sdk.Title(id = "g-title", text = "title", width = 64, height = 42)
+          sdk.Paragraph(id = "g-paragraph", text = "paragraph", width = 64, height = 42)
+          sdk.Caption(id = "g-caption", text = "caption", width = 64, height = 42)
+          sdk.CodeBlock(id = "g-code", text = "fn main()", width = 64, height = 42)
+          sdk.Quote(id = "g-quote", text = "quote", width = 64, height = 42)
+          sdk.List(id = "g-list", items = ["one", "two"], width = 64, height = 42)
+          sdk.KeyValue(id = "g-kv", items = ["key: value"], width = 64, height = 42)
+          sdk.PropertyList(id = "g-properties", items = ["a: 1", "b: 2"], width = 64, height = 42)
+          sdk.Badge(id = "g-badge", label = "badge", variant = "info", width = 64, height = 42)
+
+          sdk.StatusDot(id = "g-dot", label = "dot", variant = "success", width = 64, height = 42)
+          sdk.Avatar(id = "g-avatar", label = "avatar", icon = "user", width = 64, height = 42)
+          sdk.IconLabel(id = "g-icon-label", label = "label", icon = "check", width = 64, height = 42)
+          sdk.Alert(id = "g-alert", title = "alert", variant = "warning", width = 64, height = 42)
+          sdk.StatusCard(id = "g-status-card", title = "status", variant = "success", width = 64, height = 42)
+          sdk.EmptyState(id = "g-empty", title = "empty", icon = "file", width = 64, height = 42)
+          sdk.Stat(id = "g-stat", title = "stat", items = ["42"], width = 64, height = 42)
+          sdk.Metric(id = "g-metric", title = "metric", items = ["12 ms"], width = 64, height = 42)
+          sdk.Table(id = "g-table", items = ["name", "value"], width = 64, height = 42)
+
+          sdk.TableRow(id = "g-row", label = "row", width = 64, height = 42)
+          sdk.TableCell(id = "g-cell", label = "cell", width = 64, height = 42)
+          sdk.TagList(id = "g-tags", items = ["A", "B"], width = 64, height = 42)
+          sdk.Breadcrumb(id = "g-breadcrumb", items = ["root", "leaf"], width = 64, height = 42)
+          sdk.Tabs(id = "g-tabs", items = ["one", "two"], width = 64, height = 42)
+          sdk.Pagination(id = "g-pages", items = ["1", "2", "3"], width = 64, height = 42)
+          sdk.Timeline(id = "g-timeline", items = ["start", "end"], width = 64, height = 42)
+          sdk.TimelineItem(id = "g-timeline-item", title = "event", width = 64, height = 42)
+          sdk.Progress(id = "g-progress", label = "progress", value = 0.7, width = 64, height = 42)
+
+          sdk.Meter(id = "g-meter", label = "meter", value = 0.6, width = 64, height = 42)
+          sdk.Gauge(id = "g-gauge", label = "gauge", value = 0.8, width = 64, height = 42)
+          sdk.Sparkline(id = "g-spark", label = "spark", values = [1, 4, 2, 5], width = 64, height = 42)
+          sdk.Rating(id = "g-rating", label = "rating", value = 0.8, width = 64, height = 42)
+          sdk.Semaphore(id = "g-semaphore", label = "semaphore", value = 0.5, width = 64, height = 42)
+          sdk.Section(id = "g-section", title = "section", width = 64, height = 42)
+          sdk.Toolbar(id = "g-toolbar", label = "toolbar", width = 64, height = 42)
+          sdk.SplitPane(id = "g-split", label = "split", width = 64, height = 42)
+          sdk.MediaObject(id = "g-media", label = "media", width = 64, height = 42)
+        }
+      }
+
+      timeline main {
+        at 0 reveal generic-header duration 180
+        after generic-header reveal generic-grid duration 260
+      }
+    }
+  }
+}
