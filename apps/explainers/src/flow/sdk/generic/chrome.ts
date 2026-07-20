@@ -40,7 +40,12 @@ import type {
   TextNodeIr,
 } from "../../schema/index.js";
 import { diagnostic } from "../../schema/index.js";
-import { estimateTextWidth } from "../../../core/diagram/text-metrics.js";
+import {
+  estimateTextWidth,
+  INSET,
+  measuredWrappedHeight,
+  TITLE_HEIGHT,
+} from "../../../core/diagram/text-metrics.js";
 import { attachSdkOrigin, type SdkOrigin } from "../provenance.js";
 import type {
   SceneFragment,
@@ -51,16 +56,15 @@ import type {
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
-// Shared geometry constants (kept in sync with diagram text-metrics / chrome layout).
+// Shared geometry constants live in text-metrics.ts (single source of truth).
 // ---------------------------------------------------------------------------
-
-const INSET = 8;
-const TITLE_HEIGHT = 22;
 
 const HEADER_DEFAULT_GEOMETRY = { x: 18, y: 16, width: 664, height: 66 } as const;
 const PANEL_DEFAULT_GEOMETRY = { width: 160, height: 70 } as const;
 const CHIP_DEFAULT_GEOMETRY = { width: 84, height: 26 } as const;
 const NOTE_DEFAULT_GEOMETRY = { width: 160, height: 48 } as const;
+/** Body font size the note caption renders at; drives unauthored height grow. */
+const NOTE_FONT_SIZE = 12;
 const LABEL_DEFAULT_GEOMETRY = { width: 120, height: 22 } as const;
 const CALLOUT_DEFAULT_GEOMETRY = { width: 140, height: 48 } as const;
 const CALLOUT_STEM_DROP = 24;
@@ -757,11 +761,21 @@ const noteFactory: SdkComponentFactory = (props, _slots, context) => {
   }
 
   const rootId = context.instanceId;
+  // Grow the note to fit wrapped text when height is unauthored; an explicit
+  // authored height always wins (unchanged behavior). Single-line notes never
+  // shrink below the default via the max() floor.
+  const noteWidth = numberProp(props, "width") ?? NOTE_DEFAULT_GEOMETRY.width;
+  const authoredHeight = numberProp(props, "height");
   const geometry: GeometryIr = {
     x: numberProp(props, "x") ?? 0,
     y: numberProp(props, "y") ?? 0,
-    width: numberProp(props, "width") ?? NOTE_DEFAULT_GEOMETRY.width,
-    height: numberProp(props, "height") ?? NOTE_DEFAULT_GEOMETRY.height,
+    width: noteWidth,
+    height:
+      authoredHeight ??
+      Math.max(
+        measuredWrappedHeight(text, noteWidth, NOTE_FONT_SIZE),
+        NOTE_DEFAULT_GEOMETRY.height,
+      ),
   };
   const surfaceRole = stringProp(props, "surfaceRole") ?? "@theme.surface.elevated";
   const strokeRole = stringProp(props, "strokeRole") ?? "@theme.ink.secondary";

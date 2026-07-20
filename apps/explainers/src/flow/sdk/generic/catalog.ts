@@ -22,6 +22,7 @@ import type {
 } from "../../schema/ir.js";
 import type { JsonValue } from "../../schema/json-value.js";
 import type { StyleValueIr } from "../../schema/theme.js";
+import { measuredWrappedHeight } from "../../../core/diagram/text-metrics.js";
 import { attachSdkOrigin } from "../provenance.js";
 import type {
   SceneFragment,
@@ -164,7 +165,9 @@ const ICON_PATHS: Readonly<Record<string, string>> = {
   user: "M12 3 A4 4 0 1 1 12 11 A4 4 0 1 1 12 3 M4 22 C4 16 8 13 12 13 C16 13 20 16 20 22",
   server: "M3 4 H21 V10 H3 Z M3 14 H21 V20 H3 Z M6 7 H7 M6 17 H7",
   database: "M4 6 C4 2 20 2 20 6 V18 C20 22 4 22 4 18 Z M4 6 C4 10 20 10 20 6 M4 12 C4 16 20 16 20 12",
-  cloud: "M7 19 H18 A4 4 0 0 0 18 11 A6 6 0 0 0 6.5 9 A5 5 0 0 0 7 19",
+  // Open outline (distinct endpoints) so verifier geometry does not treat the
+  // glyph as an arrow-degenerate closed loop — e.g. il-v3__icon IconLabel.
+  cloud: "M7 19 H18 A4 4 0 0 0 18 11 A6 6 0 0 0 6.5 9 A5 5 0 0 0 4.5 15",
   arrow: "M3 12 H20 M14 6 L20 12 L14 18",
   code: "M9 6 L3 12 L9 18 M15 6 L21 12 L15 18",
   file: "M5 2 H15 L20 7 V22 H5 Z M15 2 V7 H20",
@@ -188,6 +191,34 @@ function geometry(props: Props, spec: CatalogSpec): GeometryIr {
     width: numberProp(props, "width", spec.width),
     height: numberProp(props, "height", spec.height),
   };
+}
+
+/** True when the author supplied an explicit finite `height` prop. */
+function heightAuthored(props: Props): boolean {
+  const value = props.height;
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/**
+ * Geometry for a prose text primitive, growing the box height to fit wrapped
+ * content when the author did not size it explicitly. An authored `height`
+ * always wins (unchanged behavior). When unauthored, the height is the greater
+ * of the measured wrapped-line stack and the table default, so single-line
+ * specimens never shrink below their prior fixed size.
+ */
+function textGeometry(
+  props: Props,
+  spec: CatalogSpec,
+  text: string,
+  fontSize: number,
+  weight: "normal" | "bold",
+): GeometryIr {
+  const box = geometry(props, spec);
+  if (heightAuthored(props)) {
+    return box;
+  }
+  const grown = measuredWrappedHeight(text, box.width, fontSize, weight);
+  return { ...box, height: Math.max(grown, spec.height) };
 }
 
 function origin<T extends RenderNodeIr>(
@@ -526,15 +557,22 @@ function shapeFactory(spec: CatalogSpec): SdkComponentFactory {
 
 function textFactory(spec: CatalogSpec): SdkComponentFactory {
   return (props, _slots, context) => {
-    const box = geometry(props, spec);
     const text = visibleText(props, spec.id.slice(4));
     const isCode = spec.id === "sdk.codeBlock";
     const isQuote = spec.id === "sdk.quote";
     const inkRole = stringProp(props, "inkRole") ?? "@theme.ink.primary";
     if (!isCode && !isQuote) {
+      const fontSize = spec.id === "sdk.title" ? 22 : spec.id === "sdk.caption" ? 10 : 12;
+      const fontWeight = spec.id === "sdk.title" ? "bold" : "normal";
+      // sdk.text / richText / title / paragraph grow to fit wrapped prose when
+      // height is unauthored; sdk.caption keeps its fixed single-line box.
+      const box =
+        spec.id === "sdk.caption"
+          ? geometry(props, spec)
+          : textGeometry(props, spec, text, fontSize, fontWeight);
       const node = textNode(context.instanceId, text, box, context, spec.id, "root", {
-        fontSize: spec.id === "sdk.title" ? 22 : spec.id === "sdk.caption" ? 10 : 12,
-        fontWeight: spec.id === "sdk.title" ? "bold" : "normal",
+        fontSize,
+        fontWeight,
         fontFamily: "inherit",
         fontStyle: "normal",
         textAnchor: "start",
@@ -547,6 +585,9 @@ function textFactory(spec: CatalogSpec): SdkComponentFactory {
         exit: [node.id],
       });
     }
+    // sdk.quote grows to fit wrapped body text when height is unauthored;
+    // sdk.codeBlock preserves its fixed table box (code is not re-wrapped).
+    const box = isQuote ? textGeometry(props, spec, text, 12, "normal") : geometry(props, spec);
     const root = groupNode(
       spec,
       context,

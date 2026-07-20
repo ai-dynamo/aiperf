@@ -78,3 +78,28 @@ export function wrapTextToWidth(
   lines.push(current);
   return lines;
 }
+
+/**
+ * Line-height multiple applied to the (scaled) font size when stacking wrapped
+ * lines. Mirrors `SceneRenderer`'s `fontSize * 1.3` default so expand-time box
+ * auto-grow and render-time line stacking stay in agreement.
+ */
+export const SCENE_LINE_HEIGHT_RATIO = 1.3;
+
+/**
+ * Expand-time height a wrapped text block occupies inside `maxWidth`, in the
+ * same pixel space as scene geometry. `fontSize` is the authored (unscaled)
+ * value; scaling replicates `SceneRenderer` exactly (`scaledSceneFontSize`
+ * feeds both the wrap measurement and the line height) so the computed line
+ * count matches what the renderer draws. Returns `0` for empty text.
+ */
+export function measuredWrappedHeight(
+  text: string,
+  maxWidth: number,
+  fontSize: number,
+  weight: "normal" | "bold" = "normal",
+): number {
+  const scaled = scaledSceneFontSize(fontSize);
+  const lineCount = wrapTextToWidth(text, maxWidth, scaled, weight).length;
+  return lineCount * scaled * SCENE_LINE_HEIGHT_RATIO;
+}
