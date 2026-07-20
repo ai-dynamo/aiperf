@@ -1025,9 +1025,8 @@ explainer "SDK Generic Catalog" {
     caption: "One number, one title, one subtitle; alignment carries the weight."
     render: @scene {
       sdk.Header(id = "divider-h", title = "SDK.SECTIONDIVIDER", caption = "chapter break", x = 18, y = 16, width = 664, height = 44)
-      sdk.SectionDivider(id = "divider-demo", eyebrow = "CHAPTER", number = "03", title = "Crate topology", subtitle = "Three crates share one workspace", x = 20, y = 70, width = 640)
-      sdk.Caption(id = "divider-cap", text = "Right-aligned chapter break · huge number over title and subtitle", x = 18, y = 382, width = 664, height = 16)
-      timeline main { at 0 reveal divider-h duration 180 after divider-h reveal divider-demo duration 280 after divider-demo reveal divider-cap duration 140 }
+      sdk.SectionDivider(id = "divider-demo", eyebrow = "CHAPTER", number = "03", title = "Crate topology", subtitle = "Three crates share one workspace", x = 20, y = 84, width = 640)
+      timeline main { at 0 reveal divider-h duration 180 after divider-h reveal divider-demo duration 280 }
     }
   }
 
@@ -1039,9 +1038,8 @@ explainer "SDK Generic Catalog" {
     caption: "Direction row or column; every box carries a green accent edge."
     render: @scene {
       sdk.Header(id = "chain-h", title = "SDK.STEPCHAIN", caption = "ordered stages", x = 18, y = 16, width = 664, height = 44)
-      sdk.StepChain(id = "chain-demo", steps = [{ number: "01", label: "VALIDATE", detail: "config v2" }, { number: "02", label: "SCHEDULE", detail: "workload" }, { number: "03", label: "EMIT", detail: "records" }], x = 52, y = 120)
-      sdk.Caption(id = "chain-cap", text = "Numbered step boxes linked by green arrows, validate through emit", x = 18, y = 382, width = 664, height = 16)
-      timeline main { at 0 reveal chain-h duration 180 after chain-h reveal chain-demo duration 300 after chain-demo reveal chain-cap duration 140 }
+      sdk.StepChain(id = "chain-demo", steps = [{ number: "01", label: "VALIDATE", detail: "config v2" }, { number: "02", label: "SCHEDULE", detail: "workload" }, { number: "03", label: "EMIT", detail: "records" }], x = 52, y = 150)
+      timeline main { at 0 reveal chain-h duration 180 after chain-h reveal chain-demo duration 300 }
     }
   }
 
@@ -1053,9 +1051,8 @@ explainer "SDK Generic Catalog" {
     caption: "The value dominates; the title and description explain it."
     render: @scene {
       sdk.Header(id = "bigstat-h", title = "SDK.BIGSTAT", caption = "hero figure", x = 18, y = 16, width = 664, height = 44)
-      sdk.BigStat(id = "bigstat-demo", value = "3", title = "execution modes", description = "online · offline replay · dry run", x = 54, y = 64, width = 480)
-      sdk.Caption(id = "bigstat-cap", text = "One giant value over a title and a one-line description", x = 18, y = 382, width = 664, height = 16)
-      timeline main { at 0 reveal bigstat-h duration 180 after bigstat-h reveal bigstat-demo duration 300 after bigstat-demo reveal bigstat-cap duration 140 }
+      sdk.BigStat(id = "bigstat-demo", value = "3", title = "execution modes", description = "online · offline replay · dry run", x = 54, y = 78, width = 480)
+      timeline main { at 0 reveal bigstat-h duration 180 after bigstat-h reveal bigstat-demo duration 300 }
     }
   }
 
@@ -1067,9 +1064,8 @@ explainer "SDK Generic Catalog" {
     caption: "Columns are configurable; every cell shares the green top accent."
     render: @scene {
       sdk.Header(id = "compare-h", title = "SDK.COMPAREGRID", caption = "peer cells", x = 18, y = 16, width = 664, height = 44)
-      sdk.CompareGrid(id = "compare-demo", columns = 3, items = [{ label: "Deterministic", detail: "same seed, same run" }, { label: "Observable", detail: "every record captured" }, { label: "Composable", detail: "seams over monoliths" }], x = 6, y = 130)
-      sdk.Caption(id = "compare-cap", text = "Three green-accented cells compared side by side", x = 18, y = 382, width = 664, height = 16)
-      timeline main { at 0 reveal compare-h duration 180 after compare-h reveal compare-demo duration 300 after compare-demo reveal compare-cap duration 140 }
+      sdk.CompareGrid(id = "compare-demo", columns = 3, items = [{ label: "Deterministic", detail: "same seed, same run" }, { label: "Observable", detail: "every record captured" }, { label: "Composable", detail: "seams over monoliths" }], x = 6, y = 150)
+      timeline main { at 0 reveal compare-h duration 180 after compare-h reveal compare-demo duration 300 }
     }
   }
 
@@ -1081,9 +1077,8 @@ explainer "SDK Generic Catalog" {
     caption: "Chips index the order; emphasis marks the steps that matter."
     render: @scene {
       sdk.Header(id = "seq-h", title = "SDK.NUMBEREDSEQUENCE", caption = "indexed rows", x = 18, y = 16, width = 664, height = 44)
-      sdk.NumberedSequence(id = "seq-demo", items = [{ number: "1", title: "on_arrival", detail: "request enters the sink", emphasis: true }, { number: "2", title: "on_admit", detail: "admission gate opens" }, { number: "3", title: "on_token", detail: "first token is TTFT", emphasis: true }, { number: "4", title: "on_usage", detail: "terminal usage recorded" }], x = 54, y = 72)
-      sdk.Caption(id = "seq-cap", text = "Numbered chips beside bordered callback boxes, green where emphasized", x = 18, y = 382, width = 664, height = 16)
-      timeline main { at 0 reveal seq-h duration 180 after seq-h reveal seq-demo duration 300 after seq-demo reveal seq-cap duration 140 }
+      sdk.NumberedSequence(id = "seq-demo", items = [{ number: "1", title: "on_arrival", detail: "request enters the sink", emphasis: true }, { number: "2", title: "on_admit", detail: "admission gate opens" }, { number: "3", title: "on_token", detail: "first token is TTFT", emphasis: true }, { number: "4", title: "on_usage", detail: "terminal usage recorded" }], x = 54, y = 86)
+      timeline main { at 0 reveal seq-h duration 180 after seq-h reveal seq-demo duration 300 }
     }
   }
 
@@ -1095,9 +1090,8 @@ explainer "SDK Generic Catalog" {
     caption: "Ticks label the scale; filled marks are exact, hollow marks are late."
     render: @scene {
       sdk.Header(id = "axis-h", title = "SDK.TIMELINEAXIS", caption = "labeled scale", x = 18, y = 16, width = 664, height = 44)
-      sdk.TimelineAxis(id = "axis-demo", start = 0, end = 3, unit = "ms", ticks = [{ at: 0, label: "0ms" }, { at: 1, label: "1ms" }, { at: 2, label: "2ms" }, { at: 3, label: "3ms" }], markers = [{ at: 1, label: "fire" }, { at: 2.4, label: "late wake", style: "late" }], target = { at: 2, label: "deadline" }, x = 30, y = 150, width = 640)
-      sdk.Caption(id = "axis-cap", text = "Ticks at 0 to 3 ms with on-time and late markers against a deadline", x = 18, y = 382, width = 664, height = 16)
-      timeline main { at 0 reveal axis-h duration 180 after axis-h reveal axis-demo duration 300 after axis-demo reveal axis-cap duration 140 }
+      sdk.TimelineAxis(id = "axis-demo", start = 0, end = 3, unit = "ms", ticks = [{ at: 0, label: "0ms" }, { at: 1, label: "1ms" }, { at: 2, label: "2ms" }, { at: 3, label: "3ms" }], markers = [{ at: 1, label: "fire" }, { at: 2.4, label: "late wake", style: "late" }], target = { at: 2, label: "deadline" }, x = 60, y = 150, width = 560)
+      timeline main { at 0 reveal axis-h duration 180 after axis-h reveal axis-demo duration 300 }
     }
   }
 
@@ -1109,9 +1103,8 @@ explainer "SDK Generic Catalog" {
     caption: "The root can be filled to mark it; children hang from connecting lines."
     render: @scene {
       sdk.Header(id = "tree-h", title = "SDK.NODETREE", caption = "root over children", x = 18, y = 16, width = 664, height = 44)
-      sdk.NodeTree(id = "tree-demo", root = { label: "pop", detail: "min deadline", emphasis: true }, children = [{ label: "t=1ms" }, { label: "t=2ms" }, { label: "t=4ms" }], orderNote = "The heap yields the earliest deadline first", x = 80, y = 76)
-      sdk.Caption(id = "tree-cap", text = "A popped root box above three sleeper children with an order note", x = 18, y = 382, width = 664, height = 16)
-      timeline main { at 0 reveal tree-h duration 180 after tree-h reveal tree-demo duration 300 after tree-demo reveal tree-cap duration 140 }
+      sdk.NodeTree(id = "tree-demo", root = { label: "pop", detail: "min deadline", emphasis: true }, children = [{ label: "t=1ms" }, { label: "t=2ms" }, { label: "t=4ms" }], orderNote = "The heap yields the earliest deadline first", x = 80, y = 90)
+      timeline main { at 0 reveal tree-h duration 180 after tree-h reveal tree-demo duration 300 }
     }
   }
 
@@ -1123,9 +1116,8 @@ explainer "SDK Generic Catalog" {
     caption: "Left-edge color groups cards; the grid wraps by column count."
     render: @scene {
       sdk.Header(id = "cards-h", title = "SDK.CARDGRID", caption = "titled cards", x = 18, y = 16, width = 664, height = 44)
-      sdk.CardGrid(id = "cards-demo", columns = 2, cards = [{ title: "aiperf-cli", detail: "CLI, routing, self-execution", accent: "green" }, { title: "aiperf-runtime", detail: "clocks, transports, metrics", accent: "green" }, { title: "aiperf-mock-server", detail: "deterministic inference target", accent: "black" }, { title: "pyext", detail: "pyo3 packaging module", accent: "gray" }], x = 80, y = 72)
-      sdk.Caption(id = "cards-cap", text = "A two-by-two grid of crate cards with colored left edges", x = 18, y = 382, width = 664, height = 16)
-      timeline main { at 0 reveal cards-h duration 180 after cards-h reveal cards-demo duration 300 after cards-demo reveal cards-cap duration 140 }
+      sdk.CardGrid(id = "cards-demo", columns = 2, cards = [{ title: "aiperf-cli", detail: "CLI, routing, self-execution", accent: "green" }, { title: "aiperf-runtime", detail: "clocks, transports, metrics", accent: "green" }, { title: "aiperf-mock-server", detail: "deterministic inference target", accent: "black" }, { title: "pyext", detail: "pyo3 packaging module", accent: "gray" }], x = 80, y = 86)
+      timeline main { at 0 reveal cards-h duration 180 after cards-h reveal cards-demo duration 300 }
     }
   }
 
