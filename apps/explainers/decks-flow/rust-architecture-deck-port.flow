@@ -383,5 +383,317 @@ explainer "Rust Architecture — Deck Port" {
     }
   }
 
-  // slides appended by Tasks 7-10
+  // ---- Chapter 4 — Component Reference (Task 7) ----
+
+  slide "Divider 03" {
+    eyebrow: "CHAPTER 03"
+    title: "Component Reference"
+    lede: "A through R — the process boundary to the mock server."
+    narration: "Chapter-break slide 03: a huge green monospace '03' over the bold title 'Component Reference' and the gray subtitle 'A through R — the process boundary to the mock server', right-aligned."
+    caption: "Chapter 03 · Component Reference."
+    render: @scene {
+      sdk.SectionDivider(id = "div03", number = "03", title = "Component Reference", subtitle = "A through R — the process boundary to the mock server", x = 34, y = 58, width = 650)
+      timeline main {
+        at 0 reveal div03 duration 320
+      }
+    }
+  }
+
+  slide "A · Process boundary" {
+    eyebrow: "PROCESS BOUNDARY · PROTOCOL V2"
+    title: "The stdio entry point and the wire contract"
+    lede: "stdout is the protocol channel; everything else is stderr."
+    narration: "Component A — the process boundary. A green letter badge 'A' with the kicker 'process boundary · protocol v2'. stdin carries the envelope into aiperf-runner; stdout is the protocol channel; stderr is tracing. Argument dispatch: --capabilities emits the plugins catalog, --cell runs one cell, cells>1 is the cellular controller, and the default is a single-process execute. The wire contract: RunnerEnvelopeV2 is strict deny_unknown_fields while the embedded config stays open, and into_authored() decides scheduled vs graph from the dataset format, yielding AuthoredRunSpecV2."
+    caption: "stdio boundary · strict envelope · argument dispatch."
+    render: @scene {
+      sdk.Shape(id = "pb-badge", variant = "rect", label = "A", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "pb-badge-l", text = "A", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "pb-kicker", text = "PROCESS BOUNDARY · PROTOCOL V2", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "pb-title", text = "The stdio entry point and the wire contract", x = 40, y = 56, width = 620, height = 28, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "pb-sub", text = "stdin envelope in · stdout is the protocol channel · everything else is stderr (AIPERF_RUNNER_LOG)", x = 40, y = 88, width = 620, height = 20, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "pb-arg-label", text = "ARGUMENT DISPATCH", x = 40, y = 116, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "pb-arg-1", items = ["--capabilities → plugins catalog", "--cell → one cell of a run"], gap = 10, x = 40, y = 136, width = 620, height = 28)
+      sdk.TagList(id = "pb-arg-2", items = ["cells > 1 → cellular controller", "default → single-process execute"], gap = 10, x = 40, y = 170, width = 620, height = 28)
+      sdk.Caption(id = "pb-wire-label", text = "THE WIRE CONTRACT", x = 40, y = 206, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.CardGrid(id = "pb-wire", columns = 2, cards = [{ title: "RunnerEnvelopeV2", detail: "strict deny_unknown_fields; embedded config stays open", accent: "green" }, { title: "into_authored()", detail: "scheduled vs graph → AuthoredRunSpecV2", accent: "green" }], x = 42, y = 226)
+      timeline main {
+        at 0 reveal pb-badge duration 160
+        at 0 reveal pb-badge-l duration 160
+        after pb-badge reveal pb-kicker duration 140
+        after pb-kicker reveal pb-title duration 200
+        after pb-title reveal pb-sub duration 160
+        after pb-sub reveal pb-arg-label duration 140
+        after pb-arg-label stagger targets [pb-arg-1, pb-arg-2] step 90 duration 180
+        after pb-arg-2 reveal pb-wire-label duration 140
+        after pb-wire-label reveal pb-wire duration 260
+      }
+    }
+  }
+
+  slide "A · Coordinator pipeline" {
+    eyebrow: "RUNNERV2COORDINATOR::HANDLE"
+    title: "The ten-step pipeline"
+    lede: "Validate, lower, select, prepare, execute — a fixed order with one branch after step 8."
+    narration: "Component A continued — RunnerV2Coordinator::handle runs a fixed ten-step pipeline. Steps 1–3 validate_outer, into_authored, validate_selection; 4–5 validate_endpoint_profiles and sidecar_inputs.prepare; 6–8 RunnerRunContext::new, pair validate_run, report_provenance; 9–10 prepare_with_context and operation.execute. After step 8 the operation branches: Validate emits RunValidationV2 { Static } and exits 0; Execute continues through steps 9–10 to RunTerminalV2 { report_path }."
+    caption: "Ten ordered steps · one branch after provenance."
+    render: @scene {
+      sdk.Shape(id = "cp-badge", variant = "rect", label = "A", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "cp-badge-l", text = "A", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "cp-kicker", text = "RUNNERV2COORDINATOR::HANDLE", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "cp-title", text = "The ten-step pipeline", x = 40, y = 56, width = 620, height = 28, inkRole = theme(ink.primary))
+      sdk.TagList(id = "cp-1", items = ["1 validate_outer", "2 into_authored", "3 validate_selection"], gap = 8, x = 40, y = 94, width = 620, height = 28)
+      sdk.TagList(id = "cp-2", items = ["4 validate_endpoint_profiles", "5 sidecar_inputs.prepare"], gap = 8, x = 40, y = 126, width = 620, height = 28)
+      sdk.TagList(id = "cp-3", items = ["6 RunnerRunContext::new", "7 validate_run", "8 report_provenance"], gap = 8, x = 40, y = 158, width = 620, height = 28)
+      sdk.TagList(id = "cp-4", items = ["9 prepare_with_context", "10 operation.execute()"], gap = 8, x = 40, y = 190, width = 620, height = 28)
+      sdk.CompareGrid(id = "cp-branch", columns = 2, items = [{ label: "operation == Validate", detail: "RunValidationV2 { Static } · exit 0" }, { label: "operation == Execute", detail: "steps 9–10 → RunTerminalV2 { report_path }" }], x = 4, y = 226)
+      timeline main {
+        at 0 reveal cp-badge duration 160
+        at 0 reveal cp-badge-l duration 160
+        after cp-badge reveal cp-kicker duration 140
+        after cp-kicker reveal cp-title duration 200
+        after cp-title stagger targets [cp-1, cp-2, cp-3, cp-4] step 80 duration 160
+        after cp-4 reveal cp-branch duration 260
+      }
+    }
+  }
+
+  slide "B · Input resolution" {
+    eyebrow: "INPUT RESOLUTION"
+    title: "Three resolvers, one strict decode each"
+    lede: "All injected into the coordinator and side-effect-free at validation time."
+    narration: "Component B — input resolution. Three resolvers each do the sole strict decode of their input into a prepared value. The graph adapter (dag_jsonl, weka, dynamo, aiperf) produces a GraphInputBundle that bypasses the linear loader registry. The dataset adapter (synthetic, file, public) produces a PreparedDatasetInput, materialized online or hash-identity under dynosim. The sidecar adapter decodes 5 sidecars into a type-erased PreparedSidecarInputs."
+    caption: "Three adapters · one strict decode each → a prepared value."
+    render: @scene {
+      sdk.Shape(id = "ir-badge", variant = "rect", label = "B", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ir-badge-l", text = "B", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ir-kicker", text = "INPUT RESOLUTION", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "ir-title", text = "Three resolvers, one strict decode each", x = 40, y = 56, width = 620, height = 28, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ir-sub", text = "Each resolver does the sole strict decode of its input → a prepared value, then hands it to the coordinator", x = 40, y = 88, width = 620, height = 32, inkRole = theme(ink.secondary))
+      sdk.NumberedSequence(id = "ir-seq", items = [{ number: "1", title: "Graph adapter", detail: "dag_jsonl · weka · dynamo · aiperf → GraphInputBundle (bypasses loader registry)", emphasis: true }, { number: "2", title: "Dataset adapter", detail: "synthetic · file · public → PreparedDatasetInput (materialized vs hash-identity)" }, { number: "3", title: "Sidecar adapter", detail: "5 sidecars → PreparedSidecarInputs (type-erased store)" }], x = 40, y = 130)
+      timeline main {
+        at 0 reveal ir-badge duration 160
+        at 0 reveal ir-badge-l duration 160
+        after ir-badge reveal ir-kicker duration 140
+        after ir-kicker reveal ir-title duration 200
+        after ir-title reveal ir-sub duration 160
+        after ir-sub reveal ir-seq duration 320
+      }
+    }
+  }
+
+  slide "C · Execution paths" {
+    eyebrow: "EXECUTION PATHS"
+    title: "One native driver, replaceable placement"
+    lede: "execute.rs lowers a protocol-neutral NativeRunSpec onto current_thread + LocalSet."
+    narration: "Component C — execution paths. prepare_and_execute_native lowers a NativeRunSpec, waits on readiness BEFORE creating the artifact dir, then dispatches to run_graph_phases for a graph plan or run_scheduled_phases otherwise, all on a current_thread runtime plus LocalSet. Placement is chosen by NativeRequestExecutorFactory: workers==1 uses a single TransportSink on the coordinator reactor; otherwise the ThreadPerCoreRequestExecutor gives one current_thread runtime and sink per OS thread, with bounded mpsc channels and per-worker record concat at drain."
+    caption: "One driver · readiness before artifacts · thread-per-core placement."
+    render: @scene {
+      sdk.Shape(id = "ep-badge", variant = "rect", label = "C", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ep-badge-l", text = "C", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ep-kicker", text = "EXECUTION PATHS", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "ep-title", text = "One native driver, replaceable placement", x = 40, y = 56, width = 620, height = 28, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ep-sub", text = "execute.rs lowers a protocol-neutral NativeRunSpec onto current_thread + LocalSet", x = 40, y = 88, width = 620, height = 32, inkRole = theme(ink.secondary))
+      sdk.CardGrid(id = "ep-cards", columns = 2, cards = [{ title: "prepare_and_execute_native", detail: "readiness.wait BEFORE artifact dir · block_on the native run", accent: "green" }, { title: "graph vs scheduled", detail: "graph plan → run_graph_phases, else scheduled", accent: "gray" }, { title: "workers == 1", detail: "single TransportSink on the coordinator reactor", accent: "gray" }, { title: "ThreadPerCoreRequestExecutor", detail: "runtime + sink per OS thread · bounded mpsc", accent: "green" }], x = 42, y = 128)
+      timeline main {
+        at 0 reveal ep-badge duration 160
+        at 0 reveal ep-badge-l duration 160
+        after ep-badge reveal ep-kicker duration 140
+        after ep-kicker reveal ep-title duration 200
+        after ep-title reveal ep-sub duration 160
+        after ep-sub reveal ep-cards duration 320
+      }
+    }
+  }
+
+  slide "D · HTTP transport" {
+    eyebrow: "HTTP TRANSPORT"
+    title: "TransportSink over hyper and a Clock"
+    lede: "!Send, Rc-based — maps observer callbacks onto hyper streaming and SSE parsing."
+    narration: "Component D — the HTTP TransportSink over hyper and a Clock. It is !Send and Rc-based, mapping the hyper byte stream and SSE chat chunks onto observer callbacks: on_admit at dispatch, TTFT released on the first meaningful chat token, on_classified_token for Output or Reasoning, and on_usage producing a k6-style HttpTrace. Role-only, usage-only, finish-only and [DONE] frames do not release TTFT — mirroring the Python worker. The body is Value xor Bytes, one absolute deadline that can't restart, and prewarm is a discarded round-trip that is never recorded."
+    caption: "Observer callbacks over hyper · TTFT on first real token."
+    render: @scene {
+      sdk.Shape(id = "ht-badge", variant = "rect", label = "D", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ht-badge-l", text = "D", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ht-kicker", text = "HTTP TRANSPORT", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "ht-title", text = "TransportSink over hyper and a Clock", x = 40, y = 56, width = 620, height = 28, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ht-sub", text = "!Send, Rc-based — body is Value xor Bytes, one absolute deadline, prewarm never recorded", x = 40, y = 88, width = 620, height = 32, inkRole = theme(ink.secondary))
+      sdk.NumberedSequence(id = "ht-seq", items = [{ number: "1", title: "on_admit", detail: "at dispatch" }, { number: "2", title: "TTFT", detail: "released on first meaningful chat token (not role/usage/[DONE])", emphasis: true }, { number: "3", title: "on_classified_token", detail: "Output / Reasoning" }, { number: "4", title: "on_usage", detail: "→ k6-style HttpTrace" }], x = 40, y = 128)
+      timeline main {
+        at 0 reveal ht-badge duration 160
+        at 0 reveal ht-badge-l duration 160
+        after ht-badge reveal ht-kicker duration 140
+        after ht-kicker reveal ht-title duration 200
+        after ht-title reveal ht-sub duration 160
+        after ht-sub reveal ht-seq duration 320
+      }
+    }
+  }
+
+  slide "D · HTTP internals" {
+    eyebrow: "TRANSPORT_HTTP · THE CLIENT STACK"
+    title: "A Clock-driven port of the Python transport"
+    lede: "Every connection phase timestamped: DNS → TCP → optional TLS/ALPN → httpN."
+    narration: "Component D internals — transport_http, a Clock-driven port of the Python transport. Every connection phase is timestamped: DNS (cached, Clock-injected) → TCP (+ socketopts) → optional TLS/ALPN → httpN (h1 / h2c / h2). Three internals: pool.rs leases a connection and marks it reusable after a full drain (Pooled / Never / StickyUserSessions); sse/reader.rs uses a 3-byte back-scan so it decodes only complete, multibyte-safe lines; and ClientConfig sets keepalive 300s, 2500 conns/origin, chain/host-only verify, and never uses an ambient HTTP_PROXY."
+    caption: "Timestamped connection phases · pool, SSE reader, ClientConfig."
+    render: @scene {
+      sdk.Shape(id = "hi-badge", variant = "rect", label = "D", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "hi-badge-l", text = "D", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "hi-kicker", text = "TRANSPORT_HTTP · THE CLIENT STACK", x = 84, y = 24, width = 520, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "hi-title", text = "A Clock-driven port of the Python transport", x = 40, y = 54, width = 620, height = 28, inkRole = theme(ink.primary))
+      sdk.Caption(id = "hi-life-label", text = "CONNECTION LIFECYCLE — EVERY PHASE TIMESTAMPED", x = 40, y = 90, width = 520, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "hi-life", items = ["DNS (cached, Clock)", "→ TCP (+socketopts)", "→ TLS / ALPN (optional)", "→ httpN (h1/h2c/h2)"], gap = 10, x = 40, y = 110, width = 640, height = 32)
+      sdk.NumberedSequence(id = "hi-cards", items = [{ number: "1", title: "pool.rs lease", detail: "Pooled / Never / StickyUserSessions · reusable after full drain" }, { number: "2", title: "sse/reader.rs", detail: "3-byte back-scan · multibyte-safe · complete lines only" }, { number: "3", title: "ClientConfig", detail: "keepalive 300s · 2500 conns/origin · no ambient HTTP_PROXY" }], x = 40, y = 158)
+      timeline main {
+        at 0 reveal hi-badge duration 160
+        at 0 reveal hi-badge-l duration 160
+        after hi-badge reveal hi-kicker duration 140
+        after hi-kicker reveal hi-title duration 200
+        after hi-title reveal hi-life-label duration 140
+        after hi-life-label reveal hi-life duration 220
+        after hi-life reveal hi-cards duration 280
+      }
+    }
+  }
+
+  slide "E · gRPC transport" {
+    eyebrow: "GRPC TRANSPORT"
+    title: "Tonic + Clock, same observer callbacks"
+    lede: "Produces a compatibility RequestRecord/HttpTrace so downstream metrics never branch on transport."
+    narration: "Component E — the gRPC transport on Tonic plus a Clock. Three call shapes over a RawBytesCodec: unary, server-stream, and bidi. A DeadlineKind races clock.sleep across ChannelReady, Cancellation, and Total. gRPC status maps to HTTP equivalents — Cancelled to 499, DeadlineExceeded to 504 — and it produces the same observer callbacks plus a compatibility HttpTrace so downstream metrics never branch on transport. Bindings: KServe OIP v2 (5) and Riva (9), from a checked-in Prost mirror with no build-time protoc, via the binding_factory! macro."
+    caption: "Tonic + Clock · same callbacks · status → HTTP-equivalent."
+    render: @scene {
+      sdk.Shape(id = "gr-badge", variant = "rect", label = "E", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "gr-badge-l", text = "E", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "gr-kicker", text = "GRPC TRANSPORT", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "gr-title", text = "Tonic + Clock, same observer callbacks", x = 40, y = 54, width = 620, height = 28, inkRole = theme(ink.primary))
+      sdk.Caption(id = "gr-shapes-label", text = "CALL SHAPES · DEADLINEKIND RACES CLOCK.SLEEP", x = 40, y = 90, width = 540, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "gr-shapes", items = ["unary", "server-stream", "bidi · RawBytesCodec"], gap = 10, x = 40, y = 110, width = 640, height = 28)
+      sdk.TagList(id = "gr-deadlines", items = ["ChannelReady", "Cancellation", "Total (DeadlineKind)"], gap = 10, x = 40, y = 142, width = 640, height = 28)
+      sdk.Caption(id = "gr-status-label", text = "STATUS → HTTP-EQUIVALENT", x = 40, y = 178, width = 400, height = 16, inkRole = theme(accent.primary))
+      sdk.CompareGrid(id = "gr-status", columns = 2, items = [{ label: "Cancelled → 499", detail: "same observer callbacks + compatibility HttpTrace" }, { label: "DeadlineExceeded → 504", detail: "downstream metrics never branch on transport" }], x = 4, y = 198)
+      sdk.TagList(id = "gr-bindings", items = ["KServe OIP v2 · 5", "Riva · 9", "Prost mirror · binding_factory!"], gap = 10, x = 40, y = 330, width = 640, height = 28)
+      timeline main {
+        at 0 reveal gr-badge duration 160
+        at 0 reveal gr-badge-l duration 160
+        after gr-badge reveal gr-kicker duration 140
+        after gr-kicker reveal gr-title duration 200
+        after gr-title reveal gr-shapes-label duration 140
+        after gr-shapes-label stagger targets [gr-shapes, gr-deadlines] step 90 duration 180
+        after gr-deadlines reveal gr-status-label duration 140
+        after gr-status-label reveal gr-status duration 240
+        after gr-status reveal gr-bindings duration 200
+      }
+    }
+  }
+
+  slide "F · Endpoints" {
+    eyebrow: "ENDPOINTS"
+    title: "Request bodies and usage, per provider dialect"
+    lede: "Transport is out of scope; auth headers are a dialect property."
+    narration: "Component F — endpoints own request bodies and usage per provider dialect, with transport out of scope and auth headers a dialect property. Config lowering runs only through the frozen registry: RawEndpointConfig (authored, identity-free) → Effective (validated, bound to one factory) → PreparedEndpoint (an EndpointKey table). format_prepared_payload splices a BodyPlan of pre-serialized bytes with no re-serialize. EndpointDescriptor carries produces_tokens, tokenizes_input, requires_raw_token_ids and Modality; extraction is a single-pass walk where UsageView normalizes disjoint provider usage envelopes. Built-in dialects span chat through 9× kserve, 9× riva, and dynosim."
+    caption: "Frozen-registry lowering · BodyPlan splice · many dialects."
+    render: @scene {
+      sdk.Shape(id = "ed-badge", variant = "rect", label = "F", x = 40, y = 16, width = 34, height = 34, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ed-badge-l", text = "F", x = 40, y = 23, width = 34, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ed-kicker", text = "ENDPOINTS", x = 84, y = 24, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "ed-title", text = "Request bodies and usage, per provider dialect", x = 40, y = 54, width = 620, height = 28, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ed-low-label", text = "CONFIG LOWERING — ONLY THE FROZEN REGISTRY CONSTRUCTS IT", x = 40, y = 90, width = 600, height = 16, inkRole = theme(accent.primary))
+      sdk.StepChain(id = "ed-low", direction = "row", steps = [{ number: "1", label: "RawEndpointConfig", detail: "authored, identity-free" }, { number: "2", label: "Effective", detail: "validated, bound to factory" }, { number: "3", label: "PreparedEndpoint", detail: "EndpointKey table" }], x = 40, y = 110)
+      sdk.Caption(id = "ed-dia-label", text = "BUILT-IN DIALECTS", x = 40, y = 238, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "ed-dia-1", items = ["chat", "completions", "responses", "messages", "embeddings"], gap = 8, x = 40, y = 258, width = 640, height = 28)
+      sdk.TagList(id = "ed-dia-2", items = ["rankings ×3", "hf generate", "image gen/edit", "video gen", "solido_rag", "vllm_generate"], gap = 8, x = 40, y = 290, width = 640, height = 28)
+      sdk.TagList(id = "ed-dia-3", items = ["raw · template", "9× kserve", "9× riva", "dynosim"], gap = 8, x = 40, y = 322, width = 640, height = 28)
+      timeline main {
+        at 0 reveal ed-badge duration 160
+        at 0 reveal ed-badge-l duration 160
+        after ed-badge reveal ed-kicker duration 140
+        after ed-kicker reveal ed-title duration 200
+        after ed-title reveal ed-low-label duration 140
+        after ed-low-label reveal ed-low duration 280
+        after ed-low reveal ed-dia-label duration 140
+        after ed-dia-label stagger targets [ed-dia-1, ed-dia-2, ed-dia-3] step 80 duration 160
+      }
+    }
+  }
+
+  slide "G · Dataset pipeline" {
+    eyebrow: "DATASET PIPELINE"
+    title: "Load → compose → store → sample → materialize"
+    lede: "A content-addressed store shares payload bytes across worker threads."
+    narration: "Component G — the dataset pipeline: load, compose, store, sample, materialize. A content-addressed store keys segments by BLAKE3 of the parent id and wire bytes, so shared prefixes dedup. Turn::dispatch_body has a precedence — raw, then token-ids, then messages, first present wins — over dense Handles shared across worker threads. Loaders cover simple, synthetic, trace (Mooncake, Bailian, BurstGPT, SageMaker) and public (ShareGPT, HF, MT-Bench), with explicit lookup plus structural auto-detect. precompute_body_plans pre-serializes eligible static turns. Media uses a generator plus a separate publisher; tokenizers are Tiktoken and HuggingFace."
+    caption: "Five stages · content-addressed store · loaders, media, tokenizers."
+    render: @scene {
+      sdk.Shape(id = "dp-badge", variant = "rect", label = "G", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "dp-badge-l", text = "G", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "dp-kicker", text = "DATASET PIPELINE", x = 82, y = 20, width = 500, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "dp-title", text = "Load → compose → store → sample → materialize", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.TagList(id = "dp-stages", items = ["load →", "compose →", "store →", "sample →", "materialize"], gap = 10, x = 40, y = 82, width = 640, height = 28)
+      sdk.CardGrid(id = "dp-cards", columns = 2, cards = [{ title: "Loaders", detail: "simple/synthetic/trace/public · explicit lookup + auto-detect", accent: "green" }, { title: "precompute_body_plans", detail: "pre-serialize static turns · cache BodyPlans", accent: "green" }, { title: "Media", detail: "generator + publisher · inline vs content-server URL", accent: "gray" }, { title: "Tokenizers", detail: "Tiktoken (o200k/cl100k) + HuggingFace tokenizer.json", accent: "gray" }], x = 42, y = 120)
+      timeline main {
+        at 0 reveal dp-badge duration 160
+        at 0 reveal dp-badge-l duration 160
+        after dp-badge reveal dp-kicker duration 140
+        after dp-kicker reveal dp-title duration 200
+        after dp-title reveal dp-stages duration 200
+        after dp-stages reveal dp-cards duration 320
+      }
+    }
+  }
+
+  slide "G · Segment store" {
+    eyebrow: "MATERIALIZATION · STEP 1 — THE ARENA"
+    title: "Every message chunk is an interned segment"
+    lede: "Conversation and Turn hold only dense Handle(u32) indices."
+    narration: "Component G, materialization step 1 — the arena. Every message chunk is an interned segment in an InMemorySegmentStore, and Conversation and Turn hold only dense Handle(u32) indices, so sharing a Dataset across worker threads shares the payload bytes rather than copying. Two turns that reference h0 store it once. SegmentId is BLAKE3 of the parent id folded with the wire bytes, so shared prefixes dedup while identical text under a different prefix or media stays a distinct segment. Payload variants are Message, Text, Raw, TokenIds, Media, and TraceHashIds."
+    caption: "Dense arena · Handle(u32) sharing · BLAKE3 SegmentId."
+    render: @scene {
+      sdk.Shape(id = "ss-badge", variant = "rect", label = "G", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ss-badge-l", text = "G", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ss-kicker", text = "MATERIALIZATION · STEP 1 — THE ARENA", x = 82, y = 20, width = 540, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "ss-title", text = "Every message chunk is an interned segment", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ss-sub", text = "Conversation and Turn hold only dense Handle(u32) indices — sharing a Dataset shares payload bytes", x = 40, y = 80, width = 620, height = 34, inkRole = theme(ink.secondary))
+      sdk.CardGrid(id = "ss-cards", columns = 2, cards = [{ title: "InMemorySegmentStore", detail: "dense arena · both turns reference h0 → stored once", accent: "green" }, { title: "SegmentId = BLAKE3(parent ‖ wire)", detail: "shared prefixes dedup; else a distinct segment", accent: "green" }], x = 42, y = 124)
+      sdk.Caption(id = "ss-var-label", text = "PAYLOAD VARIANTS", x = 40, y = 248, width = 320, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "ss-variants", items = ["Message", "Text", "Raw", "TokenIds", "Media", "TraceHashIds"], gap = 8, x = 40, y = 268, width = 640, height = 28)
+      timeline main {
+        at 0 reveal ss-badge duration 160
+        at 0 reveal ss-badge-l duration 160
+        after ss-badge reveal ss-kicker duration 140
+        after ss-kicker reveal ss-title duration 200
+        after ss-title reveal ss-sub duration 160
+        after ss-sub reveal ss-cards duration 280
+        after ss-cards reveal ss-var-label duration 140
+        after ss-var-label reveal ss-variants duration 200
+      }
+    }
+  }
+
+  slide "G · Pre-serialization" {
+    eyebrow: "MATERIALIZATION · STEP 2 — AHEAD OF THE RUN"
+    title: "Static turns are serialized once, up front"
+    lede: "The cost of JSON serialization is paid before profiling starts — never on the request path."
+    narration: "Component G, materialization step 2 — ahead of the run. Static turns are serialized once, up front, so JSON serialization cost is paid before profiling and never on the request path. A Turn of Handles goes through lower_messages_for_endpoint, where the ShapeLowerer serializes eligible static turns to message wires, becoming a Payload::Message of pre-serialized bytes back in the arena; precompute_body_plans then caches one BodyPlan per profiling record. Eligible turns — fully-known static message bodies — are interned once and reused every dispatch. Excluded turns — token-native vllm_generate and any per-request dynamic fields — are built on the hot path."
+    caption: "Serialize once up front · eligible vs excluded turns."
+    render: @scene {
+      sdk.Shape(id = "ps-badge", variant = "rect", label = "G", x = 40, y = 12, width = 32, height = 32, surfaceRole = theme(accent.primary))
+      sdk.Label(id = "ps-badge-l", text = "G", x = 40, y = 18, width = 32, height = 20, inkRole = theme(ink.primary))
+      sdk.Caption(id = "ps-kicker", text = "MATERIALIZATION · STEP 2 — AHEAD OF THE RUN", x = 82, y = 20, width = 560, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "ps-title", text = "Static turns are serialized once, up front", x = 40, y = 48, width = 640, height = 26, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "ps-sub", text = "The cost of JSON serialization is paid before profiling starts — never on the request path", x = 40, y = 80, width = 640, height = 20, inkRole = theme(ink.secondary))
+      sdk.TagList(id = "ps-flow-1", items = ["Turn (Handles) →", "lower_messages_for_endpoint →"], gap = 10, x = 40, y = 108, width = 640, height = 28)
+      sdk.TagList(id = "ps-flow-2", items = ["Payload::Message →", "precompute_body_plans"], gap = 10, x = 40, y = 140, width = 640, height = 28)
+      sdk.CompareGrid(id = "ps-cards", columns = 2, items = [{ label: "Eligible — pre-serialized", detail: "static message turns; wire bytes interned once, reused every dispatch" }, { label: "Excluded — built at dispatch", detail: "token-native vllm_generate + any per-request dynamic fields" }], x = 4, y = 200)
+      timeline main {
+        at 0 reveal ps-badge duration 160
+        at 0 reveal ps-badge-l duration 160
+        after ps-badge reveal ps-kicker duration 140
+        after ps-kicker reveal ps-title duration 200
+        after ps-title reveal ps-sub duration 160
+        after ps-sub stagger targets [ps-flow-1, ps-flow-2] step 90 duration 180
+        after ps-flow-2 reveal ps-cards duration 280
+      }
+    }
+  }
+
+  // slides appended by Tasks 8-10
 }
