@@ -722,6 +722,21 @@ Token block size for hash-based prompt synthesis when dataset entries carry `has
 
 Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. Format: `ISL,OSL:prob;ISL,OSL:prob` (semicolons separate pairs, probabilities are percentages 0-100 that must sum to 100). Supports optional stddev: `ISL|stddev,OSL|stddev:prob`. Examples: `128,64:25;512,128:50;1024,256:25` or with variance: `256|10,128|5:40;512|20,256|10:60`. Also supports bracket `[(256,128):40,(512,256):60]` and JSON formats.
 
+#### `--random-range-ratio` `<str>`
+
+Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. The window is computed from `--random-range-ratio-mode` (defaults to `vllm`): vllm mode → `[floor(mean*(1-r)), ceil(mean*(1+r))]` (symmetric); sglang mode → `[max(1, int(mean*r)), mean]` (lower-bounded). Accepts a single float (applied to both ISL and OSL) or a JSON object `{"input": 0.3, "output": 0.5}` for independent values. Uses `--osl` for the OSL mean, falling back to 128 when `--osl` is not set. Mutually exclusive with `--seq-dist`. When a tokenizer is configured, the ISL mean is automatically reduced by `tokenizer.num_special_tokens_to_add(pair=False)` so `--isl` represents total server-side input tokens, matching `vllm bench serve` semantics.
+
+#### `--random-range-ratio-mode` `<str>`
+
+Sampling formula for `--random-range-ratio`. `vllm` (default) mirrors `vllm bench serve`: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`, ratio in `[0, 1)`. `sglang` mirrors `sglang.bench_serving`: lower-bounded window `[max(1, int(mean*r)), mean]`, ratio in `[0, 1]`. Only applies when `--random-range-ratio` is set.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `vllm` | _default_ | vllm bench serve semantics: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`. r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1). |
+| `sglang` |  | sglang bench_serving semantics: lower-bounded window `[max(1, int(mean*r)), mean]`. r=0 allows full variability [1, mean]; r=1 fixes length at mean. Produces an average length &lt;= mean, which skews benchmark throughput relative to the "mean" reading. |
+
 ### Output Sequence Length (OSL)
 
 #### `--prompt-output-tokens-mean`, `--output-tokens-mean`, `--osl` `<str>`
@@ -2246,6 +2261,21 @@ Token block size for hash-based prompt synthesis when dataset entries carry `has
 #### `--seq-dist`, `--sequence-distribution` `<str>`
 
 Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. Format: `ISL,OSL:prob;ISL,OSL:prob` (semicolons separate pairs, probabilities are percentages 0-100 that must sum to 100). Supports optional stddev: `ISL|stddev,OSL|stddev:prob`. Examples: `128,64:25;512,128:50;1024,256:25` or with variance: `256|10,128|5:40;512|20,256|10:60`. Also supports bracket `[(256,128):40,(512,256):60]` and JSON formats.
+
+#### `--random-range-ratio` `<str>`
+
+Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. The window is computed from `--random-range-ratio-mode` (defaults to `vllm`): vllm mode → `[floor(mean*(1-r)), ceil(mean*(1+r))]` (symmetric); sglang mode → `[max(1, int(mean*r)), mean]` (lower-bounded). Accepts a single float (applied to both ISL and OSL) or a JSON object `{"input": 0.3, "output": 0.5}` for independent values. Uses `--osl` for the OSL mean, falling back to 128 when `--osl` is not set. Mutually exclusive with `--seq-dist`. When a tokenizer is configured, the ISL mean is automatically reduced by `tokenizer.num_special_tokens_to_add(pair=False)` so `--isl` represents total server-side input tokens, matching `vllm bench serve` semantics.
+
+#### `--random-range-ratio-mode` `<str>`
+
+Sampling formula for `--random-range-ratio`. `vllm` (default) mirrors `vllm bench serve`: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`, ratio in `[0, 1)`. `sglang` mirrors `sglang.bench_serving`: lower-bounded window `[max(1, int(mean*r)), mean]`, ratio in `[0, 1]`. Only applies when `--random-range-ratio` is set.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `vllm` | _default_ | vllm bench serve semantics: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`. r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1). |
+| `sglang` |  | sglang bench_serving semantics: lower-bounded window `[max(1, int(mean*r)), mean]`. r=0 allows full variability [1, mean]; r=1 fixes length at mean. Produces an average length &lt;= mean, which skews benchmark throughput relative to the "mean" reading. |
 
 ### Output Sequence Length (OSL)
 

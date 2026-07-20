@@ -49,6 +49,7 @@ from aiperf.common.enums import (
     ImageSourceSamplingStrategy,
     ModelSelectionStrategy,
     PromptCorpus,
+    RangeRatioMode,
     RequestContentType,
     ServerMetricsFormat,
     SweepMode,
@@ -1294,6 +1295,44 @@ class CLIConfig(BaseConfig):
             group=Groups.ISL,
         ),
     ] = None
+
+    prompt_random_range_ratio: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. "
+            "The window is computed from `--random-range-ratio-mode` (defaults to `vllm`): "
+            "vllm mode → `[floor(mean*(1-r)), ceil(mean*(1+r))]` (symmetric); "
+            "sglang mode → `[max(1, int(mean*r)), mean]` (lower-bounded). "
+            "Accepts a single float (applied to both ISL and OSL) or a JSON object "
+            '`{"input": 0.3, "output": 0.5}` for independent values. '
+            "Uses `--osl` for the OSL mean, falling back to 128 when `--osl` is not set. "
+            "Mutually exclusive with `--seq-dist`. "
+            "When a tokenizer is configured, the ISL mean is automatically reduced by "
+            "`tokenizer.num_special_tokens_to_add(pair=False)` so `--isl` represents total "
+            "server-side input tokens, matching `vllm bench serve` semantics.",
+        ),
+        CLIParameter(
+            name=("--random-range-ratio",),
+            group=Groups.ISL,
+        ),
+    ] = None
+
+    prompt_random_range_ratio_mode: Annotated[
+        RangeRatioMode,
+        Field(
+            default=RangeRatioMode.VLLM,
+            description="Sampling formula for `--random-range-ratio`. "
+            "`vllm` (default) mirrors `vllm bench serve`: symmetric window `[floor(mean*(1-r)), ceil(mean*(1+r))]`, "
+            "ratio in `[0, 1)`. "
+            "`sglang` mirrors `sglang.bench_serving`: lower-bounded window `[max(1, int(mean*r)), mean]`, ratio in `[0, 1]`. "
+            "Only applies when `--random-range-ratio` is set.",
+        ),
+        CLIParameter(
+            name=("--random-range-ratio-mode",),
+            group=Groups.ISL,
+        ),
+    ] = RangeRatioMode.VLLM
 
     ##############################################################################
     # Output Sequence Length (OSL)
