@@ -8,40 +8,40 @@ explainer "AIPerf vs Locust" {
   storagePrefix: "aiperf-vs-locust-explainer"
   classPrefix: "deck-aiperf-vs-locust"
   eyebrowLabel: "AIPERF VS LOCUST"
-  startGateTitle: "Two concurrency models: virtual users vs distributed synchronized workers"
+  startGateTitle: "Two load-generation architectures, traced from source"
 
   hub: {
     highlight: "aiperf vs locust"
-    title: "greenlet virtual users vs process-per-worker credit dispatch"
-    description: "Locust simulates concurrency with cooperative greenlets inside a process. AIPerf achieves concurrency with real OS processes synchronized by a central credit-issuing coordinator."
+    title: "gevent greenlets + ZeroMQ vs multiprocessing + ZMQ credit routing"
+    description: "Locust simulates virtual users as cooperative gevent greenlets coordinated over ZeroMQ. AIPerf runs every worker as a real OS process, admitted per-request by a ZMQ-routed credit ledger."
   }
 
-  slide "Two concurrency models" {
-    eyebrow: "Two concurrency models"
-    title: "Simulated users vs synchronized worker processes"
-    lede: "Locust's concurrency primitive is the virtual user: one cooperative greenlet per simulated client, many sharing a single OS thread. AIPerf's concurrency primitive is the worker: a real OS process, admitted into flight by a central coordinator."
+  slide "Two architectures" {
+    eyebrow: "Overview"
+    title: "Cooperative greenlets vs process-per-worker credit routing"
+    lede: "Locust's unit of concurrency is a gevent greenlet running one User's task loop. AIPerf's unit of concurrency is a real OS process admitted into flight by a credit dispatched over a ZeroMQ ROUTER socket."
 
-    narration: "Both tools drive load at a target concurrency, but they get there by fundamentally different means. Locust spawns one gevent greenlet per virtual user and lets gevent's cooperative scheduler interleave them on however many OS threads it's given — concurrency is simulated by yielding at I/O boundaries, not by parallel execution. AIPerf spawns a fixed pool of real OS processes as workers, and a separate coordinator process centrally decides which worker gets to send the next request by handing out an admission token called a credit. Every slide after this one is source-verified detail on one side of that split."
+    narration: "Both tools are built around message-passing infrastructure — Locust uses ZeroMQ for its master/worker wire protocol, and AIPerf uses ZeroMQ for essentially everything between its many processes. But what rides on top of that infrastructure is structurally different. Locust's concurrency unit is a greenlet: cheap, cooperatively scheduled, no OS thread or process backing it. AIPerf's concurrency unit is a real multiprocessing.Process, and every request that process sends is individually authorized by a credit dispatched from a central router. The rest of this deck traces both all the way from source."
 
     term: {
-      word: "concurrency primitive"
-      meaning: "The unit a load-testing tool multiplies to reach a target in-flight-request count. Locust multiplies greenlets; AIPerf multiplies OS processes coordinated by credit admission."
+      word: "concurrency unit"
+      meaning: "The thing a load-testing tool multiplies to reach a target in-flight-request count. Locust multiplies gevent greenlets inside worker processes; AIPerf multiplies real worker processes, each admitted per-request by a credit."
     }
 
     points: [
-      "Locust: N virtual users = N gevent greenlets, cooperatively scheduled on shared OS threads.",
-      "AIPerf: concurrency = number of credits in flight, admitted across a fixed pool of worker OS processes.",
-      "Locust's unit of concurrency is a green thread; AIPerf's is a real process plus an admission token.",
-      "Evidence: locust/user/users.py (User.start → group.spawn); aiperf/controller/multiprocess_service_manager.py (multiprocessing.Process)."
+      "Locust: User class → gevent.Greenlet, many per OS process, ZeroMQ ROUTER/DEALER only for master↔worker coordination.",
+      "AIPerf: every service (worker, timing_manager, dataset_manager, records_manager, ...) is its own multiprocessing.Process.",
+      "AIPerf's ZMQ usage is pervasive: an event bus, a credit router, a credit-return channel, and two more proxies, all inside one run.",
+      "Evidence: locust/user/users.py, locust/rpc/zmqrpc.py; aiperf/controller/multiprocess_service_manager.py, aiperf/common/enums/enums.py (CommAddress)."
     ]
 
-    caption: "Greenlets simulate concurrency; processes plus credits synchronize it."
+    caption: "Greenlets inside processes vs processes admitted by credits."
 
     render: @scene {
       sdk.Header(
         id = "s1-hdr",
-        title = "SIMULATED vs SYNCHRONIZED",
-        caption = "Greenlets simulate concurrency; processes plus credits synchronize it.",
+        title = "GREENLETS vs CREDIT-ROUTED PROCESSES",
+        caption = "Greenlets inside processes vs processes admitted by credits.",
         x = 18, y = 16, width = 664, height = 44,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
@@ -49,7 +49,7 @@ explainer "AIPerf vs Locust" {
       sdk.Panel(
         id = "s1-locust",
         title = "Locust",
-        detail = "virtual users = greenlets",
+        detail = "User → gevent.Greenlet",
         x = 60, y = 110, width = 240, height = 100,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
@@ -57,7 +57,7 @@ explainer "AIPerf vs Locust" {
       sdk.Panel(
         id = "s1-aiperf",
         title = "AIPerf",
-        detail = "workers = OS processes + credits",
+        detail = "Credit → worker OS process",
         x = 400, y = 110, width = 240, height = 100,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
@@ -70,8 +70,8 @@ explainer "AIPerf vs Locust" {
       )
       sdk.Note(
         id = "s1-note",
-        text = "Same target concurrency, two different mechanisms to reach it",
-        x = 60, y = 250, width = 580, height = 32
+        text = "Both use ZeroMQ — for different jobs and at different scope",
+        x = 60, y = 250, width = 580, height = 30
       )
       sdk.Signal(
         id = "s1-motion",
@@ -79,7 +79,7 @@ explainer "AIPerf vs Locust" {
         to = { nodeId: "s1-aiperf", anchor: "w" },
         opacity = 0.45,
         strokeWidth = 2.2,
-        label = "two mechanisms",
+        label = "two architectures",
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -94,171 +94,136 @@ explainer "AIPerf vs Locust" {
     }
   }
 
-  slide "Locust: the virtual user" {
+  slide "Locust: the per-user loop" {
     eyebrow: "Locust architecture"
-    title: "A User is a class; a virtual user is that class's greenlet"
-    lede: "Locust's User.start() spawns a gevent.Greenlet running run_user(self) inside a Group. Every virtual user is cooperative: it runs until it yields at an I/O wait, then gevent switches to the next greenlet."
+    title: "TaskSet.run(): execute a task, then wait(), forever"
+    lede: "User.start() spawns group.spawn(run_user, self) — a real gevent.Greenlet. Inside it, TaskSet.run() loops: pick a task, execute it, call wait(). With wait_time=0, wait() reduces to gevent.sleep(0), a cooperative yield with no time delay."
 
-    narration: "In Locust, you author a User subclass whose tasks describe one simulated client's behavior. Calling start() does not create a thread or a process — it calls group.spawn(run_user, self), which asks gevent to schedule a new greenlet. Gevent monkey-patches the standard library's blocking calls so that whenever a greenlet would block on network I/O, it yields control back to the scheduler instead, and another greenlet runs in the gap. Thousands of virtual users can exist because each one is cheap — a stack and a state machine, not an OS thread — but only one greenlet is actually executing Python bytecode at any instant, on one CPU core, within one OS process."
+    narration: "The actual loop lives in TaskSet.run(): while True, pop a task off the queue if empty, execute it via execute_next_task, then call self.wait(). wait() calls self._sleep(self.wait_time()), and _sleep is literally gevent.sleep(seconds) — no other primitive is used. When a User subclass sets wait_time to constant(0), that lambda always returns the integer 0, so the loop calls gevent.sleep(0). Per gevent's own semantics, sleep(0) does not block for any wall-clock duration — it performs exactly one cooperative context-switch to the event loop, letting other ready greenlets run, then resumes. So the effective behavior is: fire a request, and the instant it completes, loop back and fire the next one, rate-limited only by request latency and gevent's scheduling fairness, not by any artificial delay."
 
     term: {
-      word: "greenlet"
-      meaning: "A gevent cooperative, single-threaded green thread. Cheap to create in large numbers because it has no OS-level thread or process backing it, but true parallelism across greenlets in one process is not possible — they interleave, they don't run simultaneously."
+      word: "gevent.sleep(0)"
+      meaning: "gevent's primitive for yielding cooperative control back to the event loop without a wall-clock delay. Used as the wait() implementation when wait_time returns 0, making a Locust User's loop effectively continuous rather than throttled."
     }
 
     points: [
-      "User.start(group) calls group.spawn(run_user, self) — a gevent.Greenlet, not an OS thread or process.",
-      "With wait_time=0, each greenlet loops immediately after its request completes — at most one in-flight request per user.",
-      "N users spawned at once means exactly N in flight at steady state — concurrency is exact, just not centrally counted.",
-      "Evidence: locust/user/users.py — `self._greenlet = group.spawn(run_user, self)`; locust_user_concurrency_num_requests.py — `wait_time = constant(0)`."
+      "User.start(group) → group.spawn(run_user, self) — locust/user/users.py:200, a real gevent.Greenlet.",
+      "TaskSet.run() loop: get_next_task → execute_next_task → wait() — locust/user/task.py:354-368.",
+      "wait() → self._sleep(self.wait_time()); _sleep is gevent.sleep(seconds) — task.py:451-470.",
+      "User.wait_time = constant(0) by default; constant(0) is `lambda instance: 0` — users.py:82, wait_time.py:18-27."
     ]
 
-    caption: "One OS process, many greenlets, cooperative interleaving."
+    caption: "One greenlet, one loop: execute, yield, execute again."
 
     render: @scene {
       sdk.Header(
         id = "s2-hdr",
-        title = "USER.START() → GREENLET",
-        caption = "One OS process, many greenlets, cooperative interleaving.",
+        title = "TaskSet.run() — THE ACTUAL LOOP",
+        caption = "One greenlet, one loop: execute, yield, execute again.",
         x = 18, y = 16, width = 664, height = 44,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
       sdk.Panel(
-        id = "s2-proc",
-        title = "One OS process",
-        detail = "gevent event loop",
-        x = 40, y = 90, width = 600, height = 220,
-        surfaceRole = theme(surface.base),
-        strokeRole = theme(ink.tertiary)
-      )
-      sdk.Panel(
-        id = "s2-g1",
-        title = "greenlet",
-        detail = "User #1",
-        x = 70, y = 130, width = 110, height = 70,
+        id = "s2-exec",
+        title = "execute_next_task()",
+        detail = "runs the @task method",
+        x = 80, y = 100, width = 220, height = 80,
         surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.secondary)
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Edge(
+        id = "s2-e1",
+        mode = "connector",
+        from = { nodeId: "s2-exec", anchor: "e" },
+        to = { nodeId: "s2-wait", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
       )
       sdk.Panel(
-        id = "s2-g2",
-        title = "greenlet",
-        detail = "User #2",
-        x = 210, y = 130, width = 110, height = 70,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.secondary)
-      )
-      sdk.Panel(
-        id = "s2-g3",
-        title = "greenlet",
-        detail = "User #3",
-        x = 350, y = 130, width = 110, height = 70,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.secondary)
-      )
-      sdk.Panel(
-        id = "s2-gn",
-        title = "greenlet",
-        detail = "User #N",
-        x = 490, y = 130, width = 110, height = 70,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.secondary)
-      )
-      sdk.Panel(
-        id = "s2-sched",
-        title = "gevent scheduler",
-        detail = "switches on I/O yield",
-        x = 210, y = 240, width = 260, height = 50,
+        id = "s2-wait",
+        title = "wait()",
+        detail = "gevent.sleep(wait_time())",
+        x = 380, y = 100, width = 220, height = 80,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Edge(
-        id = "s2-e1",
+        id = "s2-loop",
         mode = "route",
-        from = { nodeId: "s2-g1", anchor: "s" },
-        to = { nodeId: "s2-sched", anchor: "n" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 1.6 }
+        from = { nodeId: "s2-wait", anchor: "s" },
+        to = { nodeId: "s2-exec", anchor: "s" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2, dash: [4, 3] }
+      )
+      sdk.Panel(
+        id = "s2-zero",
+        title = "wait_time = constant(0)",
+        detail = "gevent.sleep(0) → cooperative yield, 0 delay",
+        x = 160, y = 240, width = 400, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
       )
       sdk.Edge(
         id = "s2-e2",
         mode = "route",
-        from = { nodeId: "s2-g2", anchor: "s" },
-        to = { nodeId: "s2-sched", anchor: "n" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 1.6 }
-      )
-      sdk.Edge(
-        id = "s2-e3",
-        mode = "route",
-        from = { nodeId: "s2-g3", anchor: "s" },
-        to = { nodeId: "s2-sched", anchor: "n" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 1.6 }
-      )
-      sdk.Edge(
-        id = "s2-e4",
-        mode = "route",
-        from = { nodeId: "s2-gn", anchor: "s" },
-        to = { nodeId: "s2-sched", anchor: "n" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 1.6 }
+        from = { nodeId: "s2-wait", anchor: "s" },
+        to = { nodeId: "s2-zero", anchor: "n" },
+        style = { stroke: theme(accent.green), strokeWidth: 2 }
       )
       sdk.Note(
         id = "s2-note",
-        text = "Only one greenlet runs Python bytecode at a time — interleaved, not parallel",
-        x = 70, y = 320, width = 540, height = 30
+        text = "No other delay primitive exists in this loop — _sleep is only ever gevent.sleep()",
+        x = 60, y = 335, width = 580, height = 30
       )
       sdk.Signal(
         id = "s2-motion",
-        from = { nodeId: "s2-g1", anchor: "center" },
-        to = { nodeId: "s2-gn", anchor: "center" },
-        opacity = 0.4,
-        strokeWidth = 2,
-        label = "cooperative switch",
-        style = { stroke: theme(accent.secondary) }
+        from = { nodeId: "s2-exec", anchor: "center" },
+        to = { nodeId: "s2-wait", anchor: "center" },
+        opacity = 0.45,
+        strokeWidth = 2.2,
+        label = "continuous loop",
+        style = { stroke: theme(accent.primary) }
       )
 
       timeline main {
         at 0 reveal s2-hdr duration 260
-        after s2-hdr reveal s2-proc duration 260
-        after s2-proc reveal s2-g1 duration 220
-        after s2-g1 reveal s2-g2 duration 200
-        after s2-g2 reveal s2-g3 duration 200
-        after s2-g3 reveal s2-gn duration 200
-        after s2-gn reveal s2-sched duration 240
-        after s2-sched trace s2-e1 duration 200
-        after s2-e1 trace s2-e2 duration 200
-        after s2-e2 trace s2-e3 duration 200
-        after s2-e3 trace s2-e4 duration 200
-        after s2-e4 reveal s2-note duration 260
-        after s2-note trace s2-motion duration 800
+        after s2-hdr reveal s2-exec duration 260
+        after s2-exec trace s2-e1 duration 280
+        after s2-e1 reveal s2-wait duration 260
+        after s2-wait trace s2-loop duration 320
+        after s2-loop reveal s2-zero duration 260
+        after s2-zero trace s2-e2 duration 240
+        after s2-e2 reveal s2-note duration 260
+        after s2-note trace s2-motion duration 900
       }
     }
   }
 
-  slide "Locust: distributed mode" {
+  slide "Locust: master/worker distribution" {
     eyebrow: "Locust architecture"
-    title: "Master/worker scales OS processes; greenlets stay cooperative inside each"
-    lede: "A MasterRunner coordinates one or more WorkerRunner OS processes for horizontal scale, but the greenlet model doesn't change — each worker process still runs its own share of virtual users as cooperative greenlets."
+    title: "MasterRunner distributes users; UsersDispatcher decides how"
+    lede: "MasterRunner spawns no greenlets itself — it directs WorkerRunner processes over ZeroMQ ROUTER/DEALER sockets (msgpack-encoded Message envelopes). UsersDispatcher round-robins workers via itertools.cycle and draws user classes from a Kullback-Leibler-weighted generator."
 
-    narration: "Locust does have real OS-process distribution: a MasterRunner process coordinates any number of WorkerRunner processes, each typically on its own machine or core. That's genuine horizontal scaling across processes. But the distribution boundary is coarse-grained — one process runs a batch of virtual users — and inside each worker process, those virtual users are still gevent greenlets sharing one cooperative scheduler, exactly as in single-process mode. The master does not synchronize individual request admission across workers; each worker's greenlets run independently once spawned."
+    narration: "MasterRunner's own docstring says it plainly: it doesn't spawn any user greenlets itself, it expects WorkerRunners to connect, then directs them to start and stop user greenlets. The wire protocol underneath is ZeroMQ — the master binds a ROUTER socket, each worker connects a DEALER socket identified by its client ID, and every message is a small (message_type, data, node_id) envelope serialized with msgpack. To decide which worker gets the next simulated user, UsersDispatcher keeps an itertools.cycle over pre-sorted worker nodes and just takes the next one each time — a plain round robin. Which user CLASS to place next, independent of worker, comes from a Kullback-Leibler divergence generator that yields class names in proportion to their configured weight, so a 5:1 weight ratio produces an interleaved pattern like AAABAAAAABAA rather than five in a row then one."
 
     term: {
-      word: "MasterRunner / WorkerRunner"
-      meaning: "Locust's distributed-mode process roles. MasterRunner assigns a share of the target user count to each WorkerRunner process; each WorkerRunner then runs its assigned virtual users as independent greenlets with no further per-request coordination from the master."
+      word: "UsersDispatcher"
+      meaning: "Locust's algorithm for deciding, on a MasterRunner, which worker process and which User subclass receives the next simulated user during ramp-up: itertools.cycle for round-robin worker placement, a KL-divergence generator for weighted user-class interleaving."
     }
 
     points: [
-      "MasterRunner distributes a user-count share to each WorkerRunner OS process.",
-      "Distribution is coarse: process-level user counts, not per-request coordination.",
-      "Inside each worker process, virtual users are still independent cooperative greenlets.",
-      "Evidence: locust/runners.py — MasterRunner, WorkerRunner, DistributedRunner."
+      "MasterRunner docstring: \"doesn't spawn any user greenlets itself\" — directs WorkerRunners instead (runners.py:653-656).",
+      "Wire protocol: ZeroMQ ROUTER (master) / DEALER (worker), Message(type, data, node_id) serialized with msgpack (rpc/zmqrpc.py, rpc/protocol.py:32-47).",
+      "Worker placement: itertools.cycle(sorted worker nodes) — plain round robin (dispatch.py:105).",
+      "User-class placement: a Kullback-Leibler divergence generator weighted by User.weight (dispatch.py:26-44)."
     ]
 
-    caption: "Processes scale the greenlet pool; they don't synchronize individual requests."
+    caption: "ZeroMQ ROUTER/DEALER envelopes; round-robin workers, KL-weighted user classes."
 
     render: @scene {
       sdk.Header(
         id = "s3-hdr",
-        title = "MASTER → WORKERS → GREENLETS",
-        caption = "Processes scale the greenlet pool; they don't synchronize individual requests.",
+        title = "MASTER → ZMQ ROUTER/DEALER → WORKERS",
+        caption = "ZeroMQ ROUTER/DEALER envelopes; round-robin workers, KL-weighted user classes.",
         x = 18, y = 16, width = 664, height = 44,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
@@ -266,32 +231,32 @@ explainer "AIPerf vs Locust" {
       sdk.Panel(
         id = "s3-master",
         title = "MasterRunner",
-        detail = "assigns user-count shares",
-        x = 260, y = 80, width = 200, height = 70,
+        detail = "zmq.ROUTER · UsersDispatcher",
+        x = 260, y = 80, width = 220, height = 80,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Panel(
         id = "s3-w1",
-        title = "WorkerRunner",
-        detail = "process A",
-        x = 80, y = 190, width = 170, height = 70,
+        title = "WorkerRunner A",
+        detail = "zmq.DEALER",
+        x = 60, y = 200, width = 180, height = 70,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
         id = "s3-w2",
-        title = "WorkerRunner",
-        detail = "process B",
-        x = 290, y = 190, width = 170, height = 70,
+        title = "WorkerRunner B",
+        detail = "zmq.DEALER",
+        x = 280, y = 200, width = 180, height = 70,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
         id = "s3-w3",
-        title = "WorkerRunner",
-        detail = "process C",
-        x = 500, y = 190, width = 170, height = 70,
+        title = "WorkerRunner C",
+        detail = "zmq.DEALER",
+        x = 500, y = 200, width = 180, height = 70,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -318,8 +283,8 @@ explainer "AIPerf vs Locust" {
       )
       sdk.Note(
         id = "s3-note",
-        text = "Each WorkerRunner still runs its own greenlet pool, independently, once assigned",
-        x = 60, y = 290, width = 580, height = 30
+        text = "cycle(workers) round-robins placement; KL-weighted generator interleaves user classes",
+        x = 60, y = 300, width = 580, height = 30
       )
       sdk.Signal(
         id = "s3-motion",
@@ -327,7 +292,7 @@ explainer "AIPerf vs Locust" {
         to = { nodeId: "s3-w2", anchor: "center" },
         opacity = 0.4,
         strokeWidth = 2,
-        label = "coarse assignment",
+        label = "spawn message",
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -338,7 +303,7 @@ explainer "AIPerf vs Locust" {
         after s3-e1 reveal s3-w1 duration 240
         after s3-w1 trace s3-e2 duration 240
         after s3-e2 reveal s3-w2 duration 240
-        after s3-w2 trace s3-e3 duration 240
+        after s3-e2 trace s3-e3 duration 240
         after s3-e3 reveal s3-w3 duration 240
         after s3-w3 reveal s3-note duration 260
         after s3-note trace s3-motion duration 800
@@ -346,542 +311,900 @@ explainer "AIPerf vs Locust" {
     }
   }
 
-  slide "Locust: why overshoot" {
+  slide "Locust: stats merge and stop semantics" {
     eyebrow: "Locust architecture"
-    title: "No central admission means stopping at N is poll-then-kill"
-    lede: "Locust core has no built-in 'stop after N total requests' primitive. Because greenlets fire independently with no admission gate, the only lever to stop at a target is periodic stats polling plus a hard kill — which structurally overshoots and abandons stragglers."
+    title: "Stats push every 3.0s; stop drains only between tasks"
+    lede: "Every worker pushes its own already-aggregated stats to the master every WORKER_REPORT_INTERVAL (3.0s), and the master merges them by calling extend() on its running total. Stopping is a real drain, but only if --stop-timeout is set, and only up to the next task boundary."
 
-    narration: "This follows directly from the greenlet model, not from any specific script's choices. Every virtual-user greenlet loops and fires its own requests with no per-request check-in against a central authority — there is nothing in the architecture that could tell a single greenlet 'stop now, we've hit N.' The only aggregate view of total completed requests is environment.stats.total, refreshed on the master from a periodic worker_report event that core Locust fires every WORKER_REPORT_INTERVAL — a fixed 3.0-second cadence, not driven by request completions. A stop-at-N implementation has no choice but to watch that periodic report and, once the target is crossed, call runner.quit(). And runner.quit()'s own docstring says exactly what it does: stop the test and kill all greenlets. Any request a greenlet was mid-flight on at that instant is simply abandoned, uncounted — there's no drain phase, because there's no per-request admission ledger to drain against, only greenlets to kill or not kill."
+    narration: "WorkerRunner.stats_reporter loops forever: send stats, then gevent.sleep(3.0). Each report already contains that worker's own aggregated StatsEntry objects; the master doesn't recompute from raw samples, it calls stats.total.extend() to merge each worker's total into its own running total roughly every three seconds. On stopping, Locust does have a genuine core drain mechanism, not just a user-script convenience: if environment.stop_timeout is set, a running greenlet's state flips to STOPPING and TaskSet.run()'s loop checks that flag and raises StopUser after the CURRENT task returns — not immediately. The master then waits up to stop_timeout, plus a 60-second safety margin, for every worker's user count to actually reach zero before proceeding. But that protection has an exact edge documented in User.wait()'s own docstring: if a greenlet happens to be inside wait() — sleeping between tasks — when the stop signal arrives, it's killed immediately regardless of stop_timeout, because there's no task in progress to let finish. And if stop_timeout isn't set at all, every greenlet is killed immediately via gevent.Greenlet.kill(), full stop, no exceptions."
 
     term: {
-      word: "poll-then-kill"
-      meaning: "The only mechanism available to stop a Locust run at a specific total-request target: periodically check aggregated stats (every WORKER_REPORT_INTERVAL, 3.0s) and call runner.quit() once crossed, which kills every greenlet immediately rather than draining in-flight requests — because there is no central admission ledger to drain."
+      word: "stop_timeout drain"
+      meaning: "Locust's core (not user-script) graceful-stop mechanism: when set, a stopping User finishes its current task before exiting, bounded by stop_timeout seconds. It does not protect a User that is currently inside wait() when the stop signal arrives — that greenlet is killed immediately regardless."
     }
 
     points: [
-      "Locust core has no built-in stop-at-N-requests feature — no primitive to gate admission against a target count.",
-      "worker_report fires on a fixed WORKER_REPORT_INTERVAL = 3.0s cadence (locust/runners.py), not on request completion.",
-      "Stop-at-N is implemented externally: watch worker_report, call runner.quit() once environment.stats.total.num_requests reaches target.",
-      "Evidence: locust/runners.py — `WORKER_REPORT_INTERVAL = 3.0`; `Runner.quit()` docstring: \"kill all greenlets for the runner\"."
+      "stats_reporter: send_stats() then gevent.sleep(WORKER_REPORT_INTERVAL=3.0) forever — runners.py:1450-1456.",
+      "Master merges via stats.total.extend(unserialized worker total) — stats.py:792-806, incremental merge not full recompute.",
+      "With --stop-timeout: stop signal sets STOPPING; TaskSet checks it and raises StopUser only after the current task returns.",
+      "Without --stop-timeout, or if the greenlet is inside wait() at stop time: immediate gevent.Greenlet.kill(), no drain at all."
     ]
 
-    caption: "Poll every 3s, then kill — because no credit ledger exists to drain."
-
-    render: @scene {
-      sdk.Header(
-        id = "s3b-hdr",
-        title = "STOP AT N = POLL THEN KILL",
-        caption = "Poll every 3s, then kill — because no credit ledger exists to drain.",
-        x = 18, y = 16, width = 664, height = 44,
-        surfaceRole = theme(surface.secondary),
-        inkRole = theme(ink.secondary)
-      )
-      sdk.Stepper(
-        id = "s3b-steps",
-        steps = ["greenlets fire freely", "poll stats every 3.0s", "target crossed", "quit() kills all"],
-        linked = true,
-        gap = 14,
-        x = 40, y = 74, width = 600, height = 26
-      )
-      sdk.Panel(
-        id = "s3b-fire",
-        title = "Greenlets",
-        detail = "no per-request check-in",
-        x = 40, y = 130, width = 160, height = 80,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.secondary)
-      )
-      sdk.Edge(
-        id = "s3b-e1",
-        mode = "connector",
-        from = { nodeId: "s3b-fire", anchor: "e" },
-        to = { nodeId: "s3b-poll", anchor: "w" },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 2 }
-      )
-      sdk.Panel(
-        id = "s3b-poll",
-        title = "worker_report",
-        detail = "every 3.0s (fixed)",
-        x = 240, y = 130, width = 160, height = 80,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.tertiary)
-      )
-      sdk.Edge(
-        id = "s3b-e2",
-        mode = "connector",
-        from = { nodeId: "s3b-poll", anchor: "e" },
-        to = { nodeId: "s3b-cross", anchor: "w" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2 }
-      )
-      sdk.Panel(
-        id = "s3b-cross",
-        title = "target crossed",
-        detail = "num_requests >= N",
-        x = 440, y = 130, width = 160, height = 80,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.warning)
-      )
-      sdk.Panel(
-        id = "s3b-kill",
-        title = "runner.quit()",
-        detail = "kills every greenlet — no drain",
-        x = 240, y = 250, width = 300, height = 70,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.warning)
-      )
-      sdk.Edge(
-        id = "s3b-e3",
-        mode = "route",
-        from = { nodeId: "s3b-cross", anchor: "s" },
-        to = { nodeId: "s3b-kill", anchor: "e" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
-      )
-      sdk.Note(
-        id = "s3b-note",
-        text = "In-flight requests killed mid-flight are abandoned, not counted — no admission ledger to drain",
-        x = 60, y = 350, width = 580, height = 30
-      )
-      sdk.Signal(
-        id = "s3b-motion",
-        from = { nodeId: "s3b-fire", anchor: "center" },
-        to = { nodeId: "s3b-kill", anchor: "center" },
-        opacity = 0.45,
-        strokeWidth = 2.2,
-        label = "poll then kill",
-        style = { stroke: theme(accent.warning) }
-      )
-
-      timeline main {
-        at 0 reveal s3b-hdr duration 260
-        after s3b-hdr stagger targets [s3b-steps-step-0, s3b-steps-step-1, s3b-steps-step-2, s3b-steps-step-3] step 70 duration 200
-        after s3b-steps-step-3 reveal s3b-fire duration 260
-        after s3b-fire trace s3b-e1 duration 240
-        after s3b-e1 reveal s3b-poll duration 260
-        after s3b-poll trace s3b-e2 duration 240
-        after s3b-e2 reveal s3b-cross duration 260
-        after s3b-cross trace s3b-e3 duration 260
-        after s3b-e3 reveal s3b-kill duration 260
-        after s3b-kill reveal s3b-note duration 260
-        after s3b-note trace s3b-motion duration 900
-      }
-    }
-  }
-
-  slide "AIPerf: the worker process" {
-    eyebrow: "AIPerf architecture"
-    title: "A worker is a real OS process, not a green thread"
-    lede: "AIPerf's MultiProcessServiceManager spawns each worker as a multiprocessing.Process (fork or spawn context) — a genuinely separate OS process with its own PID, memory space, and event loop."
-
-    narration: "Where Locust's virtual users are cheap cooperative greenlets sharing one process, AIPerf's workers are heavyweight by comparison and genuinely parallel: each one is spawned via Python's multiprocessing module as its own OS process, with its own PID visible in a process listing, its own memory space, and its own asyncio event loop. AIPerf isn't alone in spawning multiple processes — several other AIPerf services (the timing manager, dataset manager, record processors) are separate OS processes too, communicating over a ZMQ message bus rather than shared memory or function calls."
-
-    term: {
-      word: "multiprocessing.Process"
-      meaning: "Python's standard mechanism for spawning a genuinely separate OS process (via fork or spawn) with its own interpreter, memory space, and GIL — as opposed to a thread or greenlet, which share the parent process's memory and, for threads, its GIL."
-    }
-
-    points: [
-      "AIPerf worker processes are multiprocessing.Process instances — real PIDs, real separate memory.",
-      "Not just HTTP workers: timing_manager, dataset_manager, record_processor_* are separate OS processes too.",
-      "Inter-process coordination happens over a ZMQ message bus, not shared memory.",
-      "Evidence: aiperf/controller/multiprocess_service_manager.py — `Process | SpawnProcess | ForkProcess`."
-    ]
-
-    caption: "Every AIPerf worker is a real, separately-scheduled OS process."
+    caption: "Report every 3s, merge incrementally; drain protects the task, not the wait."
 
     render: @scene {
       sdk.Header(
         id = "s4-hdr",
-        title = "PROCESS, NOT GREENLET",
-        caption = "Every AIPerf worker is a real, separately-scheduled OS process.",
+        title = "3.0s STATS PUSH · BOUNDED DRAIN",
+        caption = "Report every 3s, merge incrementally; drain protects the task, not the wait.",
         x = 18, y = 16, width = 664, height = 44,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
       sdk.Panel(
-        id = "s4-w1",
-        title = "worker_a1",
-        detail = "PID 1001 · own event loop",
-        x = 40, y = 100, width = 180, height = 90,
+        id = "s4-worker",
+        title = "Worker stats_reporter",
+        detail = "send → sleep(3.0) → repeat",
+        x = 60, y = 100, width = 240, height = 80,
         surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.primary)
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "s4-e1",
+        mode = "connector",
+        from = { nodeId: "s4-worker", anchor: "e" },
+        to = { nodeId: "s4-merge", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
       )
       sdk.Panel(
-        id = "s4-w2",
-        title = "worker_b2",
-        detail = "PID 1002 · own event loop",
-        x = 260, y = 100, width = 180, height = 90,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.primary)
-      )
-      sdk.Panel(
-        id = "s4-w3",
-        title = "worker_c3",
-        detail = "PID 1003 · own event loop",
-        x = 480, y = 100, width = 180, height = 90,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.primary)
-      )
-      sdk.Panel(
-        id = "s4-other",
-        title = "timing_manager · dataset_manager · record_processor_*",
-        detail = "also separate OS processes",
-        x = 100, y = 230, width = 460, height = 70,
+        id = "s4-merge",
+        title = "stats.total.extend()",
+        detail = "incremental merge on master",
+        x = 400, y = 100, width = 240, height = 80,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
+      sdk.Panel(
+        id = "s4-inTask",
+        title = "In a task",
+        detail = "stop_timeout: finishes, then exits",
+        x = 60, y = 230, width = 260, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Panel(
+        id = "s4-inWait",
+        title = "In wait()",
+        detail = "killed immediately, no exception",
+        x = 380, y = 230, width = 260, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
       sdk.Note(
         id = "s4-note",
-        text = "No shared memory between processes — coordination happens over ZMQ",
-        x = 100, y = 330, width = 460, height = 30
+        text = "No --stop-timeout at all: every greenlet killed immediately, in a task or not",
+        x = 60, y = 330, width = 580, height = 30
       )
       sdk.Signal(
         id = "s4-motion",
-        from = { nodeId: "s4-w1", anchor: "center" },
-        to = { nodeId: "s4-w3", anchor: "center" },
+        from = { nodeId: "s4-inTask", anchor: "center" },
+        to = { nodeId: "s4-inWait", anchor: "center" },
         opacity = 0.4,
         strokeWidth = 2,
-        label = "independent PIDs",
-        style = { stroke: theme(accent.primary) }
+        label = "protected vs not",
+        style = { stroke: theme(accent.warning) }
       )
 
       timeline main {
         at 0 reveal s4-hdr duration 260
-        after s4-hdr reveal s4-w1 duration 240
-        after s4-w1 reveal s4-w2 duration 240
-        after s4-w2 reveal s4-w3 duration 240
-        after s4-w3 reveal s4-other duration 260
-        after s4-other reveal s4-note duration 260
+        after s4-hdr reveal s4-worker duration 260
+        after s4-worker trace s4-e1 duration 280
+        after s4-e1 reveal s4-merge duration 260
+        after s4-merge reveal s4-inTask duration 260
+        after s4-inTask reveal s4-inWait duration 260
+        after s4-inWait reveal s4-note duration 260
         after s4-note trace s4-motion duration 800
       }
     }
   }
 
-  slide "AIPerf: credit-synchronized dispatch" {
+  slide "AIPerf: process topology" {
     eyebrow: "AIPerf architecture"
-    title: "A central coordinator admits every request with a credit"
-    lede: "AIPerf's timing_manager decides when the next request may be sent and hands out a credit — an admission token — to a worker over a ZMQ ROUTER-DEALER socket. Workers don't decide their own concurrency; the coordinator does."
+    title: "system_controller launches and hosts everything else"
+    lede: "The aiperf profile CLI process becomes the SystemController, which starts three ZMQ proxies inside itself, then forks dataset_manager, timing_manager, worker_manager, and records_manager as real OS processes — and workers are spawned dynamically, on command, after the run starts."
 
-    narration: "This is the piece with no equivalent on the Locust side. In Locust, once a greenlet is running, it decides for itself when to fire its next request — there is no central authority approving each request. In AIPerf, request admission is centralized: the timing manager process is the single source of truth for how many requests are currently allowed to be in flight, and it communicates that decision to workers by dispatching a discrete message called a credit over a ZMQ ROUTER socket, matched to each worker's DEALER socket. A worker only sends an HTTP request once it holds a credit for it. That's what makes AIPerf's concurrency model synchronized rather than simulated: the in-flight count is an explicit, centrally-tracked invariant, not an emergent property of how many greenlets happen to be running."
+    narration: "SystemController is where the aiperf profile invocation actually lands — it hosts the ZMQ proxies directly (not as separate processes) and, via a MultiProcessServiceManager, forks every other required service as a genuine multiprocessing.Process: dataset_manager, timing_manager, worker_manager, records_manager always, plus optional gpu_telemetry_manager, server_metrics_manager, network_latency_manager, and an API server depending on config. Workers themselves are not part of that initial required set — they're spawned dynamically in response to a SpawnWorkersCommand, which WorkerManager computes and emits after doing its own CPU-count-based sizing, and SystemController is the one that actually calls multiprocessing.Process(...).start() for each worker replica. Record processors scale along with workers automatically, at a quarter of the worker count by default."
 
     term: {
-      word: "credit"
-      meaning: "A discrete admission token issued by AIPerf's timing_manager to a specific worker process over a ZMQ ROUTER-DEALER socket pair, authorizing that worker to send exactly one request. Concurrency is the count of credits currently outstanding, tracked centrally."
+      word: "SystemController"
+      meaning: "The top-level AIPerf process — what an `aiperf profile` invocation actually becomes. It hosts the run's three ZMQ proxies in-process and owns the MultiProcessServiceManager that forks every other service as a real OS process, including workers, which it spawns dynamically on command rather than at startup."
     }
 
     points: [
-      "timing_manager is the single source of truth for how many requests may be in flight.",
-      "Dispatch is router → worker over the CREDIT_ROUTER ZMQ address; each worker holds a DEALER socket.",
-      "A worker sends an HTTP request only once it has received a credit for it — not on its own schedule.",
-      "Evidence: aiperf/credit/sticky_router.py — CreditRouterProtocol, `address=CommAddress.CREDIT_ROUTER`."
+      "`aiperf profile` process becomes SystemController; ProxyManager (3 proxies) runs inside it, not as a separate process.",
+      "Always-forked: dataset_manager, timing_manager, worker_manager, records_manager — one multiprocessing.Process each.",
+      "Workers are spawned dynamically via SpawnWorkersCommand, not at startup — SystemController does the actual Process(...).start().",
+      "Record processors auto-scale at max(1, workers // 4) by default (Environment.RECORD.PROCESSOR_SCALE_FACTOR)."
     ]
 
-    caption: "Concurrency is a centrally-tracked invariant, not an emergent count of running greenlets."
+    caption: "One process hosts the proxies and forks the rest — workers spawn on command."
 
     render: @scene {
       sdk.Header(
         id = "s5-hdr",
-        title = "TIMING_MANAGER ISSUES CREDITS",
-        caption = "Concurrency is a centrally-tracked invariant, not an emergent count of running greenlets.",
+        title = "SYSTEM_CONTROLLER FORKS THE FLEET",
+        caption = "One process hosts the proxies and forks the rest — workers spawn on command.",
         x = 18, y = 16, width = 664, height = 44,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
       sdk.Panel(
-        id = "s5-tm",
-        title = "timing_manager",
-        detail = "tracks in-flight count",
-        x = 260, y = 80, width = 200, height = 80,
+        id = "s5-sc",
+        title = "SystemController",
+        detail = "hosts 3 ZMQ proxies · forks services",
+        x = 220, y = 80, width = 260, height = 80,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
       sdk.Panel(
-        id = "s5-router",
-        title = "CREDIT_ROUTER",
-        detail = "ZMQ ROUTER socket",
-        x = 260, y = 190, width = 200, height = 60,
+        id = "s5-dm",
+        title = "dataset_manager",
+        detail = "always forked",
+        x = 40, y = 200, width = 150, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "s5-tm",
+        title = "timing_manager",
+        detail = "always forked",
+        x = 210, y = 200, width = 150, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "s5-wm",
+        title = "worker_manager",
+        detail = "always forked",
+        x = 380, y = 200, width = 150, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "s5-rm",
+        title = "records_manager",
+        detail = "always forked",
+        x = 550, y = 200, width = 150, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
       sdk.Edge(
-        id = "s5-e0",
-        mode = "route",
-        from = { nodeId: "s5-tm", anchor: "s" },
-        to = { nodeId: "s5-router", anchor: "n" },
-        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
-      )
-      sdk.Panel(
-        id = "s5-w1",
-        title = "worker DEALER",
-        detail = "holds credit → sends request",
-        x = 40, y = 290, width = 180, height = 70,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.primary)
-      )
-      sdk.Panel(
-        id = "s5-w2",
-        title = "worker DEALER",
-        detail = "holds credit → sends request",
-        x = 260, y = 290, width = 180, height = 70,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.primary)
-      )
-      sdk.Panel(
-        id = "s5-w3",
-        title = "worker DEALER",
-        detail = "holds credit → sends request",
-        x = 480, y = 290, width = 180, height = 70,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.primary)
-      )
-      sdk.Edge(
         id = "s5-e1",
-        mode = "connector",
-        from = { nodeId: "s5-router", anchor: "s" },
-        to = { nodeId: "s5-w1", anchor: "n" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2 }
+        mode = "route",
+        from = { nodeId: "s5-sc", anchor: "s" },
+        to = { nodeId: "s5-dm", anchor: "n" },
+        style = { stroke: theme(accent.warning), strokeWidth: 1.6 }
       )
       sdk.Edge(
         id = "s5-e2",
-        mode = "connector",
-        from = { nodeId: "s5-router", anchor: "s" },
-        to = { nodeId: "s5-w2", anchor: "n" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2 }
+        mode = "route",
+        from = { nodeId: "s5-sc", anchor: "s" },
+        to = { nodeId: "s5-tm", anchor: "n" },
+        style = { stroke: theme(accent.warning), strokeWidth: 1.6 }
       )
       sdk.Edge(
         id = "s5-e3",
-        mode = "connector",
-        from = { nodeId: "s5-router", anchor: "s" },
-        to = { nodeId: "s5-w3", anchor: "n" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2 }
+        mode = "route",
+        from = { nodeId: "s5-sc", anchor: "s" },
+        to = { nodeId: "s5-wm", anchor: "n" },
+        style = { stroke: theme(accent.warning), strokeWidth: 1.6 }
+      )
+      sdk.Edge(
+        id = "s5-e4",
+        mode = "route",
+        from = { nodeId: "s5-sc", anchor: "s" },
+        to = { nodeId: "s5-rm", anchor: "n" },
+        style = { stroke: theme(accent.warning), strokeWidth: 1.6 }
+      )
+      sdk.Panel(
+        id = "s5-workers",
+        title = "N × worker",
+        detail = "spawned on SpawnWorkersCommand",
+        x = 210, y = 300, width = 320, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Edge(
+        id = "s5-e5",
+        mode = "route",
+        from = { nodeId: "s5-wm", anchor: "s" },
+        to = { nodeId: "s5-workers", anchor: "n" },
+        style = { stroke: theme(accent.primary), strokeWidth: 2, dash: [4, 3] }
       )
       sdk.Signal(
         id = "s5-motion",
-        from = { nodeId: "s5-tm", anchor: "center" },
-        to = { nodeId: "s5-w2", anchor: "center" },
-        opacity = 0.5,
-        strokeWidth = 2.2,
-        label = "credit dispatch",
-        style = { stroke: theme(accent.warning) }
+        from = { nodeId: "s5-sc", anchor: "center" },
+        to = { nodeId: "s5-workers", anchor: "center" },
+        opacity = 0.4,
+        strokeWidth = 2,
+        label = "dynamic spawn",
+        style = { stroke: theme(accent.primary) }
       )
 
       timeline main {
         at 0 reveal s5-hdr duration 260
-        after s5-hdr reveal s5-tm duration 260
-        after s5-tm trace s5-e0 duration 260
-        after s5-e0 reveal s5-router duration 260
-        after s5-router trace s5-e1 duration 220
-        after s5-e1 reveal s5-w1 duration 220
-        after s5-router trace s5-e2 duration 220
-        after s5-e2 reveal s5-w2 duration 220
-        after s5-router trace s5-e3 duration 220
-        after s5-e3 reveal s5-w3 duration 220
-        after s5-w3 trace s5-motion duration 900
+        after s5-hdr reveal s5-sc duration 280
+        after s5-sc trace s5-e1 duration 220
+        after s5-e1 reveal s5-dm duration 220
+        after s5-sc trace s5-e2 duration 220
+        after s5-e2 reveal s5-tm duration 220
+        after s5-sc trace s5-e3 duration 220
+        after s5-e3 reveal s5-wm duration 220
+        after s5-sc trace s5-e4 duration 220
+        after s5-e4 reveal s5-rm duration 220
+        after s5-wm trace s5-e5 duration 260
+        after s5-e5 reveal s5-workers duration 260
+        after s5-workers trace s5-motion duration 800
       }
     }
   }
 
-  slide "AIPerf: how stop conditions work" {
+  slide "AIPerf: ZMQ socket topology" {
     eyebrow: "AIPerf architecture"
-    title: "The credit ledger makes the cutoff exact, and draining optional"
-    lede: "Because timing_manager already tracks every outstanding credit, a request-count limit is a synchronous counter check in the admission path, not a poll — and the same ledger tells the runner exactly when every in-flight request has finished, so it can wait for a real drain instead of killing anything."
+    title: "Five distinct socket patterns for five different jobs"
+    lede: "One XPUB/XSUB event bus for pub/sub messaging, a DEALER/ROUTER proxy for on-demand dataset requests, a PUSH/PULL proxy for raw inference results — all three hosted inside SystemController — plus a ROUTER/DEALER credit dispatch channel and a dedicated PUSH/PULL credit-return channel, both bound directly inside timing_manager."
 
-    narration: "AIPerf's default stop condition is RequestCountStopCondition. Its whole implementation is one line: can_send_any_turn returns true while requests_sent is less than the configured total — checked inline, synchronously, every time the timing manager is about to admit a new request. There's no periodic timer involved in deciding when to stop issuing; the ledger that already exists for credit dispatch is the same ledger the stop condition reads. Once issuance stops, the phase doesn't exit immediately either — it awaits an event, all_credits_returned_event, that only gets set once every credit that was ever issued has come back. That's a real drain, not a fixed wait: it ends exactly when the last in-flight request completes, whenever that is. AIPerf can also explicitly replicate Locust's poll-then-kill behavior on request — an opt-in overshoot mode that bypasses this exact gate and abandons stragglers on a timer, specifically for comparing against tools that don't have a credit ledger to check against. That mode exists because Locust's mechanism does; it isn't the default because AIPerf doesn't need it to be."
+    narration: "AIPerf doesn't use one ZMQ pattern for everything — it picks the pattern that matches each job. Broadcast-style status and lifecycle messages ride an XPUB/XSUB event bus that every service publishes to and subscribes from. Workers occasionally need to ask the dataset manager for a conversation on demand, so that's a DEALER/ROUTER request-reply proxy. Raw inference results stream from workers toward the record-processing pipeline as fire-and-forget PUSH/PULL. Credit dispatch specifically is not proxied at all — timing_manager's StickyCreditRouter binds a ROUTER socket directly, and each worker connects a DEALER socket carrying its own identity, so the router can address a credit to one specific worker. Credit returns ride their own separate PUSH/PULL channel rather than going back over the same ROUTER, so the dispatch direction never has to double as a return path."
 
     term: {
-      word: "exact-cutoff admission"
-      meaning: "Stopping request issuance the instant a target count is reached, verified by a synchronous check against a counter that's already being maintained for another purpose (credit dispatch) — as opposed to periodically polling an aggregate stat and killing work once it's noticed to be over target."
+      word: "CommAddress"
+      meaning: "AIPerf's enum of every distinct logical ZMQ address in the system (EVENT_BUS_PROXY_FRONTEND/BACKEND, CREDIT_ROUTER, CREDIT_RETURN, DATASET_MANAGER_PROXY_FRONTEND/BACKEND, RAW_INFERENCE_PROXY_FRONTEND/BACKEND, ...), each with a fixed socket pattern and a defined bind/connect side."
     }
 
     points: [
-      "Default: RequestCountStopCondition.can_send_any_turn() — `requests_sent < total_expected_requests`, checked inline, not polled.",
-      "After issuance stops, the phase awaits all_credits_returned_event — set exactly when every issued credit has returned; a real drain.",
-      "Opt-in overshoot mode bypasses the exact gate and abandons stragglers on a timer, deliberately reproducing Locust's semantics for direct comparison.",
-      "Evidence: aiperf/timing/phase/stop_conditions.py — RequestCountStopCondition; aiperf/credit/callback_handler.py — all_credits_returned_event."
+      "Event bus: XPUB/XSUB, proxied inside SystemController — every service PUBs to the frontend, SUBs from the backend.",
+      "Dataset requests: DEALER/ROUTER proxy — workers' fallback path to ask dataset_manager for a conversation on demand.",
+      "Raw inference results: PUSH/PULL proxy — workers push results fire-and-forget toward the record pipeline.",
+      "Credit dispatch (ROUTER/DEALER) and credit return (dedicated PUSH/PULL) are NOT proxied — bound directly by timing_manager."
     ]
 
-    caption: "Same counter for dispatch and cutoff — no polling, and draining is exact."
+    caption: "The credit channels bypass the proxy layer entirely — bound straight into timing_manager."
 
     render: @scene {
       sdk.Header(
-        id = "s5b-hdr",
-        title = "SAME LEDGER, EXACT CUTOFF",
-        caption = "Same counter for dispatch and cutoff — no polling, and draining is exact.",
+        id = "s6-hdr",
+        title = "FIVE PATTERNS, FIVE JOBS",
+        caption = "The credit channels bypass the proxy layer entirely — bound straight into timing_manager.",
         x = 18, y = 16, width = 664, height = 44,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
       sdk.Panel(
-        id = "s5b-locust",
-        title = "Locust",
-        detail = "poll every 3.0s → kill all",
-        x = 40, y = 90, width = 260, height = 80,
+        id = "s6-proxy",
+        title = "SystemController proxies",
+        detail = "event bus · dataset req · raw inference",
+        x = 40, y = 90, width = 300, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "s6-credit",
+        title = "timing_manager (direct bind)",
+        detail = "CREDIT_ROUTER · CREDIT_RETURN",
+        x = 380, y = 90, width = 260, height = 90,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Divider(
+        id = "s6-div",
+        axis = "y",
+        x = 350, y = 80, length = 200,
+        strokeRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s6-bus",
+        title = "XPUB/XSUB",
+        detail = "event bus, broadcast",
+        x = 40, y = 220, width = 140, height = 60,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
-        id = "s5b-aiperf",
-        title = "AIPerf",
-        detail = "inline counter check → real drain",
-        x = 380, y = 90, width = 260, height = 80,
+        id = "s6-dset",
+        title = "DEALER/ROUTER",
+        detail = "dataset requests",
+        x = 200, y = 220, width = 140, height = 60,
         surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.primary)
-      )
-      sdk.Divider(
-        id = "s5b-div",
-        axis = "y",
-        x = 350, y = 80, length = 190,
-        strokeRole = theme(ink.tertiary)
+        strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
-        id = "s5b-gate",
-        title = "can_send_any_turn()",
-        detail = "requests_sent < total_expected_requests",
-        x = 380, y = 200, width = 260, height = 60,
+        id = "s6-raw",
+        title = "PUSH/PULL",
+        detail = "raw inference results",
+        x = 360, y = 220, width = 140, height = 60,
         surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.primary)
-      )
-      sdk.Edge(
-        id = "s5b-e1",
-        mode = "route",
-        from = { nodeId: "s5b-aiperf", anchor: "s" },
-        to = { nodeId: "s5b-gate", anchor: "n" },
-        style = { stroke: theme(accent.primary), strokeWidth: 2 }
-      )
-      sdk.Panel(
-        id = "s5b-drain",
-        title = "all_credits_returned_event",
-        detail = "set when the last credit returns",
-        x = 380, y = 280, width = 260, height = 60,
-        surfaceRole = theme(surface.elevated),
-        strokeRole = theme(accent.green)
-      )
-      sdk.Edge(
-        id = "s5b-e2",
-        mode = "route",
-        from = { nodeId: "s5b-gate", anchor: "s" },
-        to = { nodeId: "s5b-drain", anchor: "n" },
-        style = { stroke: theme(accent.green), strokeWidth: 2 }
+        strokeRole = theme(accent.secondary)
       )
       sdk.Note(
-        id = "s5b-note",
-        text = "Opt-in overshoot mode exists to reproduce Locust's poll-then-kill for direct comparison — not the default",
-        x = 40, y = 360, width = 600, height = 32
+        id = "s6-note",
+        text = "ROUTER addresses one worker by identity for dispatch; a separate PUSH/PULL channel carries returns",
+        x = 60, y = 320, width = 580, height = 32
       )
       sdk.Signal(
-        id = "s5b-motion",
-        from = { nodeId: "s5b-locust", anchor: "center" },
-        to = { nodeId: "s5b-aiperf", anchor: "center" },
-        opacity = 0.45,
-        strokeWidth = 2.2,
-        label = "poll+kill vs gate+drain",
+        id = "s6-motion",
+        from = { nodeId: "s6-proxy", anchor: "e" },
+        to = { nodeId: "s6-credit", anchor: "w" },
+        opacity = 0.4,
+        strokeWidth = 2,
+        label = "proxied vs direct-bound",
         style = { stroke: theme(accent.tertiary) }
       )
 
       timeline main {
-        at 0 reveal s5b-hdr duration 260
-        after s5b-hdr reveal s5b-locust duration 280
-        after s5b-locust reveal s5b-div duration 220
-        after s5b-div reveal s5b-aiperf duration 280
-        after s5b-aiperf trace s5b-e1 duration 260
-        after s5b-e1 reveal s5b-gate duration 260
-        after s5b-gate trace s5b-e2 duration 260
-        after s5b-e2 reveal s5b-drain duration 260
-        after s5b-drain reveal s5b-note duration 280
-        after s5b-note trace s5b-motion duration 900
+        at 0 reveal s6-hdr duration 260
+        after s6-hdr reveal s6-proxy duration 280
+        after s6-proxy reveal s6-div duration 220
+        after s6-div reveal s6-credit duration 280
+        after s6-credit reveal s6-bus duration 220
+        after s6-bus reveal s6-dset duration 220
+        after s6-dset reveal s6-raw duration 220
+        after s6-raw reveal s6-note duration 260
+        after s6-note trace s6-motion duration 800
+      }
+    }
+  }
+
+  slide "AIPerf: the credit lifecycle" {
+    eyebrow: "AIPerf architecture"
+    title: "Created, dispatched, gated, stuck to a session, returned"
+    lede: "CreditIssuer builds a Credit and hands it to StickyCreditRouter, which won't dispatch anything until every worker has announced WorkerReady. Multi-turn conversations stick to the worker that handled the first turn, so session state and cache locality survive the whole conversation."
+
+    narration: "A credit's life starts in CreditIssuer, which acquires a concurrency slot, increments the atomic sent counter, then builds the Credit object and hands it to the router. Before any of that can happen, the phase runner has already awaited wait_for_workers with a 30-second timeout — a startup gate that exists specifically to close the race where a credit could be issued before any worker has registered. Each worker announces itself once, on start, by sending WorkerReady over its DEALER socket; the router treats that as the trigger to register the worker and, on the first one, to unblock anyone waiting on worker availability. Dispatch itself is where the file's name comes from: StickyCreditRouter keeps a session-id-to-worker-id map, and if a credit belongs to a conversation whose earlier turn already landed on a specific worker, it's routed there again — so that worker's cached session state, and any inference-server-side prefix cache locality that follows from hitting the same backend repeatedly, both stay warm across the whole conversation. Only a conversation's first turn goes through least-loaded selection; the sticky mapping is created only if more turns are coming, and is torn down on the conversation's final turn. When a worker finishes, it returns the credit over a completely separate PUSH/PULL channel — not back over the ROUTER — specifically so the dispatch direction never has to double as the return path."
+
+    term: {
+      word: "sticky session routing"
+      meaning: "StickyCreditRouter's policy of routing every subsequent turn of a multi-turn conversation to the same worker that handled its first turn, keyed by x_correlation_id, so per-conversation session state and any resulting inference-server cache locality persist for the conversation's duration. Only first turns use least-loaded worker selection."
+    }
+
+    points: [
+      "wait_for_workers(timeout=30s) blocks the very first credit issuance until at least one WorkerReady has been seen.",
+      "First turn of a conversation: least-loaded worker selection. Later turns: routed to the same worker via a sticky session map.",
+      "Sticky mapping is created only when more turns are coming, and popped on the conversation's final turn.",
+      "Credit dispatch (ROUTER→DEALER) and credit return (worker PUSH→router PULL) are separate one-directional channels."
+    ]
+
+    caption: "First turn picks the worker; every later turn goes back to the same one."
+
+    render: @scene {
+      sdk.Header(
+        id = "s7-hdr",
+        title = "CREATE → GATE → STICK → RETURN",
+        caption = "First turn picks the worker; every later turn goes back to the same one.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Stepper(
+        id = "s7-steps",
+        steps = ["CreditIssuer creates", "wait_for_workers gate", "sticky or least-loaded", "PUSH/PULL return"],
+        linked = true,
+        gap = 14,
+        x = 40, y = 70, width = 600, height = 26
+      )
+      sdk.Panel(
+        id = "s7-t1",
+        title = "Turn 1",
+        detail = "least-loaded worker",
+        x = 60, y = 130, width = 180, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Panel(
+        id = "s7-worker",
+        title = "worker_a1",
+        detail = "sticky mapping created",
+        x = 300, y = 130, width = 200, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s7-e1",
+        mode = "connector",
+        from = { nodeId: "s7-t1", anchor: "e" },
+        to = { nodeId: "s7-worker", anchor: "w" },
+        style = { stroke: theme(accent.primary), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "s7-t2",
+        title = "Turn 2, Turn 3, ...",
+        detail = "same worker, sticky routed",
+        x = 300, y = 250, width = 200, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s7-e2",
+        mode = "route",
+        from = { nodeId: "s7-worker", anchor: "s" },
+        to = { nodeId: "s7-t2", anchor: "n" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+      )
+      sdk.Panel(
+        id = "s7-return",
+        title = "CreditReturn",
+        detail = "separate PUSH/PULL channel",
+        x = 540, y = 130, width = 130, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s7-e3",
+        mode = "route",
+        from = { nodeId: "s7-worker", anchor: "e" },
+        to = { nodeId: "s7-return", anchor: "n" },
+        style = { stroke: theme(accent.green), strokeWidth: 2 }
+      )
+      sdk.Signal(
+        id = "s7-motion",
+        from = { nodeId: "s7-t1", anchor: "center" },
+        to = { nodeId: "s7-t2", anchor: "center" },
+        opacity = 0.4,
+        strokeWidth = 2,
+        label = "stays on one worker",
+        style = { stroke: theme(accent.warning) }
+      )
+
+      timeline main {
+        at 0 reveal s7-hdr duration 260
+        after s7-hdr stagger targets [s7-steps-step-0, s7-steps-step-1, s7-steps-step-2, s7-steps-step-3] step 70 duration 200
+        after s7-steps-step-3 reveal s7-t1 duration 260
+        after s7-t1 trace s7-e1 duration 280
+        after s7-e1 reveal s7-worker duration 260
+        after s7-worker trace s7-e2 duration 280
+        after s7-e2 reveal s7-t2 duration 260
+        after s7-worker trace s7-e3 duration 260
+        after s7-e3 reveal s7-return duration 260
+        after s7-return trace s7-motion duration 800
+      }
+    }
+  }
+
+  slide "AIPerf: stop conditions are ANDed" {
+    eyebrow: "AIPerf architecture"
+    title: "Five StopCondition classes; every applicable one must agree"
+    lede: "StopConditionChecker builds only the subset of conditions whose should_use(config) is true for this phase, then combines them with AND — every active condition has to independently permit sending, every time, before the next request goes out."
+
+    narration: "AIPerf defines five StopCondition subclasses: two lifecycle conditions that are always active, and three optional ones — request count, session count, and duration — that switch on only when their corresponding config field is set. StopConditionChecker evaluates should_use for each at phase start and keeps only the ones that apply, then can_send_any_turn is implemented as all(func() for func in self._can_send_any_turn_funcs) — a plain Python all(), meaning AND, not OR. There's no scenario where one permissive condition overrides a stricter one; every active condition has to agree before a request can go out. Request-count itself opts out entirely when overshoot-poll mode is configured, handing the stop decision to a different mechanism instead."
+
+    term: {
+      word: "StopConditionChecker"
+      meaning: "AIPerf's aggregator over every StopCondition whose should_use(config) is true for the current phase. Combines them with a plain Python all() — AND logic — so every applicable condition must independently permit continuing before the phase sends another request."
+    }
+
+    points: [
+      "Always active: LifecycleStopCondition (cancellation/sending-complete), DagLifecycleStopCondition (DAG-child cancellation gate).",
+      "Conditionally active: RequestCountStopCondition, SessionCountStopCondition, DurationStopCondition — only when their config field is set.",
+      "can_send_any_turn() = all(f() for f in active_funcs) — every applicable condition must agree, no OR anywhere in the checker.",
+      "RequestCountStopCondition.should_use returns False when overshoot_poll_interval_sec is set — it hands off entirely."
+    ]
+
+    caption: "Every applicable condition votes; any one no-vote stops the phase."
+
+    render: @scene {
+      sdk.Header(
+        id = "s8-hdr",
+        title = "ALL() — NOT ANY()",
+        caption = "Every applicable condition votes; any one no-vote stops the phase.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s8-c1",
+        title = "Lifecycle",
+        detail = "always active",
+        x = 40, y = 90, width = 140, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "s8-c2",
+        title = "DagLifecycle",
+        detail = "always active",
+        x = 200, y = 90, width = 140, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Panel(
+        id = "s8-c3",
+        title = "RequestCount",
+        detail = "if configured",
+        x = 360, y = 90, width = 140, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "s8-c4",
+        title = "SessionCount",
+        detail = "if configured",
+        x = 520, y = 90, width = 140, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "s8-and",
+        title = "all(...)",
+        detail = "AND across active conditions",
+        x = 240, y = 220, width = 220, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s8-e1",
+        mode = "route",
+        from = { nodeId: "s8-c1", anchor: "s" },
+        to = { nodeId: "s8-and", anchor: "n" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 1.6 }
+      )
+      sdk.Edge(
+        id = "s8-e2",
+        mode = "route",
+        from = { nodeId: "s8-c2", anchor: "s" },
+        to = { nodeId: "s8-and", anchor: "n" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 1.6 }
+      )
+      sdk.Edge(
+        id = "s8-e3",
+        mode = "route",
+        from = { nodeId: "s8-c3", anchor: "s" },
+        to = { nodeId: "s8-and", anchor: "n" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 1.6 }
+      )
+      sdk.Edge(
+        id = "s8-e4",
+        mode = "route",
+        from = { nodeId: "s8-c4", anchor: "s" },
+        to = { nodeId: "s8-and", anchor: "n" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 1.6 }
+      )
+      sdk.Note(
+        id = "s8-note",
+        text = "RequestCountStopCondition disables itself entirely when overshoot-poll mode is on",
+        x = 60, y = 320, width = 580, height = 30
+      )
+
+      timeline main {
+        at 0 reveal s8-hdr duration 260
+        after s8-hdr reveal s8-c1 duration 220
+        after s8-c1 reveal s8-c2 duration 220
+        after s8-c2 reveal s8-c3 duration 220
+        after s8-c3 reveal s8-c4 duration 220
+        after s8-c4 reveal s8-and duration 260
+        after s8-and trace s8-e1 duration 220
+        after s8-e1 trace s8-e2 duration 220
+        after s8-e2 trace s8-e3 duration 220
+        after s8-e3 trace s8-e4 duration 220
+        after s8-e4 reveal s8-note duration 260
+      }
+    }
+  }
+
+  slide "AIPerf: the overshoot poller" {
+    eyebrow: "AIPerf architecture"
+    title: "Reproducing Locust's semantics needed two independent bypasses"
+    lede: "RequestCountStopCondition disables itself when overshoot-poll mode is on — but that alone wasn't enough. CreditCounter has its own, separate cap check used to compute is_final_credit, and it had to be told to stand down too."
+
+    narration: "Getting AIPerf to behave like Locust's poll-then-kill wasn't a matter of just turning off the request-count stop condition — there were two independent gates enforcing the same limit from different places, and both had to bypass simultaneously. RequestCountStopCondition's should_use already excludes itself when overshoot_poll_interval_sec is set. But CreditCounter._request_count_cap_reached is a completely separate check, used to compute is_final_credit during increment_sent, and its own docstring says plainly that this cap is disabled here as well as in RequestCountStopCondition — because RequestCountStopCondition alone would not be enough. Once both are bypassed, OvershootAbandonPoller takes over entirely: in poll mode it sleeps a fixed interval, checks completed count against target, and repeats; in exact mode there's no polling loop at all, a synchronous callback fires the instant the completed counter crosses target. Either way, once triggered, abandon_now cancels every in-flight credit across every worker through the router and marks the phase complete immediately — no grace period, matching Locust's runner.quit() semantics on purpose."
+
+    term: {
+      word: "dual bypass"
+      meaning: "Reproducing Locust's overshoot-then-abandon stop semantics inside AIPerf required disabling two independent request-count gates simultaneously: RequestCountStopCondition (in the stop-condition list) and CreditCounter's own internal cap check (used separately to compute is_final_credit) — one alone was documented as insufficient."
+    }
+
+    points: [
+      "RequestCountStopCondition.should_use excludes itself when overshoot_poll_interval_sec is set.",
+      "CreditCounter._request_count_cap_reached is a second, independent cap check — its docstring says it must ALSO be disabled.",
+      "Poll mode (interval > 0): sleep, check completed >= target, repeat. Exact mode (interval == 0): a synchronous callback, no loop.",
+      "Either mode ends in cancel_all_credits() across every worker — abandon, not drain, deliberately matching Locust's quit()."
+    ]
+
+    caption: "Two independent caps, one target — both had to stand down."
+
+    render: @scene {
+      sdk.Header(
+        id = "s9-hdr",
+        title = "TWO GATES, ONE TARGET",
+        caption = "Two independent caps, one target — both had to stand down.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s9-gate1",
+        title = "RequestCountStopCondition",
+        detail = "should_use → False",
+        x = 40, y = 100, width = 260, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "s9-gate2",
+        title = "CreditCounter cap check",
+        detail = "_request_count_cap_reached → False",
+        x = 380, y = 100, width = 260, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "s9-poller",
+        title = "OvershootAbandonPoller",
+        detail = "poll or exact-cutoff mode",
+        x = 200, y = 220, width = 260, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s9-e1",
+        mode = "route",
+        from = { nodeId: "s9-gate1", anchor: "s" },
+        to = { nodeId: "s9-poller", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2 }
+      )
+      sdk.Edge(
+        id = "s9-e2",
+        mode = "route",
+        from = { nodeId: "s9-gate2", anchor: "s" },
+        to = { nodeId: "s9-poller", anchor: "e" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2 }
+      )
+      sdk.Panel(
+        id = "s9-abandon",
+        title = "cancel_all_credits()",
+        detail = "no grace period — matches Locust quit()",
+        x = 200, y = 330, width = 260, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "s9-e3",
+        mode = "route",
+        from = { nodeId: "s9-poller", anchor: "s" },
+        to = { nodeId: "s9-abandon", anchor: "n" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2.2 }
+      )
+      sdk.Signal(
+        id = "s9-motion",
+        from = { nodeId: "s9-gate1", anchor: "center" },
+        to = { nodeId: "s9-gate2", anchor: "center" },
+        opacity = 0.4,
+        strokeWidth = 2,
+        label = "one alone is not enough",
+        style = { stroke: theme(accent.secondary) }
+      )
+
+      timeline main {
+        at 0 reveal s9-hdr duration 260
+        after s9-hdr reveal s9-gate1 duration 260
+        after s9-gate1 reveal s9-gate2 duration 260
+        after s9-gate2 trace s9-motion duration 700
+        after s9-motion trace s9-e1 duration 260
+        after s9-e1 trace s9-e2 duration 260
+        after s9-e2 reveal s9-poller duration 260
+        after s9-poller trace s9-e3 duration 260
+        after s9-e3 reveal s9-abandon duration 260
+      }
+    }
+  }
+
+  slide "AIPerf: inside one worker process" {
+    eyebrow: "AIPerf architecture"
+    title: "One event loop, one asyncio.Task per in-flight credit"
+    lede: "A worker doesn't throttle itself — no semaphore, no gather-with-limit. Every credit it receives becomes an independent asyncio.Task on its one event loop, sharing one aiohttp connection pool. Concurrency admission is entirely upstream, at credit issuance."
+
+    narration: "Inside a single worker process, receiving a Credit over the DEALER socket schedules self.execute_async on _on_credit_drop_message_task as an independent asyncio.Task, tracked in a plain dict keyed by credit id. There's no semaphore inside the worker limiting how many of these run at once — the worker will happily run however many tasks it's been handed. The actual HTTP calls share one aiohttp.ClientSession backed by a TCPConnector whose size is set by a connection-limit config, defaulting to 2500 — high enough that it's essentially never the constraint. So a worker's own code makes no admission decisions at all; every constraint on how much is running at once was already applied upstream, at the moment timing_manager decided whether a credit could be issued in the first place. Whatever a worker is handed, it runs — which is exactly why the credit ledger, not the worker, is where AIPerf's concurrency guarantee actually lives."
+
+    term: {
+      word: "task-per-credit"
+      meaning: "AIPerf worker concurrency model: every received Credit becomes its own asyncio.Task on the worker's single event loop, with no internal semaphore or gather-limit — the worker executes whatever concurrency it's handed, because admission was already decided upstream by the credit ledger."
+    }
+
+    points: [
+      "Credit received on DEALER → asyncio.Task per credit, tracked in self.credit_tasks — no worker-side semaphore.",
+      "Shared aiohttp.ClientSession + TCPConnector, sized by Environment.HTTP.CONNECTION_LIMIT (default 2500).",
+      "The worker makes zero admission decisions — it runs exactly whatever concurrency it's been handed.",
+      "Real concurrency enforcement lives entirely upstream, in CreditIssuer's slot acquisition before a credit is ever sent."
+    ]
+
+    caption: "The worker doesn't gate anything — the ledger already did."
+
+    render: @scene {
+      sdk.Header(
+        id = "s10-hdr",
+        title = "WORKER: NO SELF-THROTTLING",
+        caption = "The worker doesn't gate anything — the ledger already did.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Panel(
+        id = "s10-recv",
+        title = "Credit received",
+        detail = "on DEALER socket",
+        x = 40, y = 100, width = 180, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "s10-e1",
+        mode = "connector",
+        from = { nodeId: "s10-recv", anchor: "e" },
+        to = { nodeId: "s10-task", anchor: "w" },
+        style = { stroke: theme(accent.primary), strokeWidth: 2 }
+      )
+      sdk.Panel(
+        id = "s10-task",
+        title = "asyncio.Task",
+        detail = "one per credit, no limit here",
+        x = 260, y = 100, width = 200, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.primary)
+      )
+      sdk.Edge(
+        id = "s10-e2",
+        mode = "connector",
+        from = { nodeId: "s10-task", anchor: "e" },
+        to = { nodeId: "s10-pool", anchor: "w" },
+        style = { stroke: theme(accent.secondary), strokeWidth: 2 }
+      )
+      sdk.Panel(
+        id = "s10-pool",
+        title = "aiohttp pool",
+        detail = "CONNECTION_LIMIT = 2500",
+        x = 500, y = 100, width = 160, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Panel(
+        id = "s10-upstream",
+        title = "Real gate: CreditIssuer slot acquisition",
+        detail = "happens before dispatch, not inside the worker",
+        x = 140, y = 240, width = 420, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s10-e3",
+        mode = "route",
+        from = { nodeId: "s10-recv", anchor: "s" },
+        to = { nodeId: "s10-upstream", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2, dash: [4, 3] }
+      )
+      sdk.Signal(
+        id = "s10-motion",
+        from = { nodeId: "s10-task", anchor: "center" },
+        to = { nodeId: "s10-upstream", anchor: "center" },
+        opacity = 0.4,
+        strokeWidth = 2,
+        label = "gate is upstream",
+        style = { stroke: theme(accent.warning) }
+      )
+
+      timeline main {
+        at 0 reveal s10-hdr duration 260
+        after s10-hdr reveal s10-recv duration 260
+        after s10-recv trace s10-e1 duration 260
+        after s10-e1 reveal s10-task duration 260
+        after s10-task trace s10-e2 duration 260
+        after s10-e2 reveal s10-pool duration 260
+        after s10-pool reveal s10-upstream duration 260
+        after s10-upstream trace s10-e3 duration 280
+        after s10-e3 trace s10-motion duration 800
       }
     }
   }
 
   slide "Side by side" {
     eyebrow: "Side by side"
-    title: "Self-limiting by loop structure vs centrally enforced by ledger"
-    lede: "Both tools hit an exact target concurrency in steady state — that part is not the difference. Locust gets there structurally (N users, wait_time=0, one request per user at a time); AIPerf gets there because a coordinator explicitly counts and gates every admission."
+    title: "Where the two architectures actually diverge"
+    lede: "Both reach exact steady-state concurrency. Locust does it structurally, one greenlet per user with a zero-delay loop; AIPerf does it with an explicit credit ledger that a worker never even sees the gating logic for. The ledger is also what makes AIPerf's stop-at-N exact where Locust's is necessarily poll-then-kill."
 
-    narration: "Put next to each other, the honest contrast is not 'exact vs approximate' — both land on exactly the configured concurrency once the run reaches steady state. With wait_time set to zero and every user spawned at once, N Locust greenlets structurally maintain at most one in-flight request each, so N users means N in flight, self-limiting by the shape of the loop itself with no coordinator required. AIPerf reaches the same exact number by the opposite route: a coordinator process, timing_manager, explicitly counts outstanding credits and only admits a new request when the count allows it. The two mechanisms diverge somewhere else entirely — at the stop condition. Locust's greenlets have no shared counter to check a total-requests target against, so stopping at N total requires the poll-then-kill pattern from three slides back. AIPerf's coordinator already has the exact counter a stop condition needs, so it can gate the cutoff with the same synchronous check it uses for admission, and drain exactly rather than killing anything."
+    narration: "Tracing both all the way from source lands on one real divergence, not several. Locust's concurrency is exact once you account for wait_time=0 and simultaneous spawn — N greenlets, each with at most one in-flight request, is a structural guarantee of the loop itself, no coordinator required. AIPerf's concurrency is exact too, but for a different reason: CreditIssuer explicitly acquires a slot before every dispatch, and the worker that eventually runs the request never makes an admission decision at all. That difference is invisible until you need to stop at an exact total count. Locust has no counter a stop condition could check against — worker_report only fires every three seconds, so stopping at N is necessarily poll, then kill every greenlet, in-flight work included. AIPerf's stop condition reads the exact same counter the credit ledger already maintains, so it can gate the cutoff synchronously and then genuinely drain, waiting on an event that fires exactly when the last credit returns. AIPerf can also deliberately disable that advantage — the overshoot poller reproduces Locust's poll-then-kill on purpose, for direct comparison, which took bypassing two independent internal gates to pull off cleanly."
 
     term: {
-      word: "self-limiting vs centrally enforced"
-      meaning: "Self-limiting: an invariant that holds because of how a unit's own loop is shaped (Locust — one greenlet, one in-flight request at a time, by construction). Centrally enforced: an invariant a separate coordinator actively counts and gates admission against (AIPerf — timing_manager's credit ledger)."
+      word: "the actual divergence"
+      meaning: "Not 'exact vs approximate concurrency' — both are exact in steady state. The real difference is whether a central, checkable counter exists at all: AIPerf's credit ledger is that counter, and its existence is what makes an exact stop-at-N gate and a real drain possible; Locust's loop structure gives it exact concurrency without ever needing such a counter, which is exactly why it has none to check for stopping."
     }
 
     points: [
-      "Locust: N users, wait_time=0, one in-flight request per greenlet — concurrency = N by construction, no coordinator needed.",
-      "AIPerf: timing_manager counts outstanding credits and gates new admissions against that count explicitly.",
-      "Both hit exact steady-state concurrency; they diverge at the stop condition, not the concurrency mechanism.",
-      "Consequence: AIPerf's admission counter doubles as an exact stop-at-N gate; Locust has no counter to check, so it polls and kills."
+      "Locust: wait_time=0, N users spawned at once → exactly N in flight, self-limiting, no coordinator.",
+      "AIPerf: CreditIssuer acquires a slot per dispatch; the worker that runs the request makes no admission decision.",
+      "Locust's stop-at-N has nothing to poll but worker_report (3.0s cadence) → poll-then-kill, no drain by default.",
+      "AIPerf's stop-at-N reads the same counter the ledger already maintains → exact gate + real event-driven drain."
     ]
 
-    caption: "Same steady-state concurrency, different stop-condition consequences."
+    caption: "Same steady-state concurrency; the ledger is what makes the cutoff exact."
 
     render: @scene {
       sdk.Header(
-        id = "s6-hdr",
-        title = "SAME CONCURRENCY, DIFFERENT MECHANISM",
-        caption = "Same steady-state concurrency, different stop-condition consequences.",
+        id = "s11-hdr",
+        title = "THE COUNTER IS THE DIFFERENCE",
+        caption = "Same steady-state concurrency; the ledger is what makes the cutoff exact.",
         x = 18, y = 16, width = 664, height = 44,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
       )
       sdk.Panel(
-        id = "s6-locust",
+        id = "s11-locust",
         title = "Locust",
-        detail = "N users · wait_time=0 · 1 in-flight each",
+        detail = "exact via loop structure · no counter",
         x = 40, y = 100, width = 280, height = 100,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
-      sdk.Label(
-        id = "s6-locust-l",
-        text = "self-limiting by loop structure",
-        x = 60, y = 210, width = 240, height = 22,
-        fontSize = 13,
-        inkRole = theme(accent.secondary)
-      )
       sdk.Panel(
-        id = "s6-aiperf",
+        id = "s11-aiperf",
         title = "AIPerf",
-        detail = "timing_manager → credit → worker process",
+        detail = "exact via credit ledger · has a counter",
         x = 380, y = 100, width = 280, height = 100,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
-      sdk.Label(
-        id = "s6-aiperf-l",
-        text = "centrally enforced by ledger",
-        x = 400, y = 210, width = 240, height = 22,
-        fontSize = 13,
-        inkRole = theme(accent.primary)
-      )
       sdk.Divider(
-        id = "s6-div",
+        id = "s11-div",
         axis = "y",
         x = 350, y = 90, length = 160,
         strokeRole = theme(ink.tertiary)
       )
-      sdk.Note(
-        id = "s6-note",
-        text = "Both hit the exact target concurrency — the counter that makes AIPerf's cutoff exact is what Locust's loop never needed to have",
-        x = 60, y = 260, width = 580, height = 32
+      sdk.Panel(
+        id = "s11-stop-l",
+        title = "Stop at N",
+        detail = "poll every 3.0s, then kill",
+        x = 60, y = 240, width = 240, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s11-stop-a",
+        title = "Stop at N",
+        detail = "synchronous gate, real drain",
+        x = 400, y = 240, width = 240, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.green)
+      )
+      sdk.Edge(
+        id = "s11-e1",
+        mode = "route",
+        from = { nodeId: "s11-locust", anchor: "s" },
+        to = { nodeId: "s11-stop-l", anchor: "n" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2 }
+      )
+      sdk.Edge(
+        id = "s11-e2",
+        mode = "route",
+        from = { nodeId: "s11-aiperf", anchor: "s" },
+        to = { nodeId: "s11-stop-a", anchor: "n" },
+        style = { stroke: theme(accent.green), strokeWidth: 2 }
       )
       sdk.Signal(
-        id = "s6-motion",
-        from = { nodeId: "s6-locust", anchor: "e" },
-        to = { nodeId: "s6-aiperf", anchor: "w" },
+        id = "s11-motion",
+        from = { nodeId: "s11-locust", anchor: "center" },
+        to = { nodeId: "s11-aiperf", anchor: "center" },
         opacity = 0.45,
         strokeWidth = 2.2,
-        label = "same concurrency, different mechanism",
+        label = "the counter is the difference",
         style = { stroke: theme(accent.tertiary) }
       )
 
       timeline main {
-        at 0 reveal s6-hdr duration 260
-        after s6-hdr reveal s6-locust duration 280
-        after s6-locust reveal s6-locust-l duration 220
-        after s6-locust-l reveal s6-div duration 220
-        after s6-div reveal s6-aiperf duration 280
-        after s6-aiperf reveal s6-aiperf-l duration 220
-        after s6-aiperf-l reveal s6-note duration 260
-        after s6-note trace s6-motion duration 900
+        at 0 reveal s11-hdr duration 260
+        after s11-hdr reveal s11-locust duration 280
+        after s11-locust reveal s11-div duration 220
+        after s11-div reveal s11-aiperf duration 280
+        after s11-aiperf trace s11-e1 duration 260
+        after s11-e1 reveal s11-stop-l duration 260
+        after s11-aiperf trace s11-e2 duration 260
+        after s11-e2 reveal s11-stop-a duration 260
+        after s11-stop-a trace s11-motion duration 900
       }
     }
   }
