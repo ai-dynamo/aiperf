@@ -104,5 +104,169 @@ explainer "Rust Architecture — Deck Port" {
     }
   }
 
-  // slides appended by Tasks 5-10
+  // ---- Chapter 2 — Two Seams (Task 5) ----
+
+  slide "Divider 01" {
+    eyebrow: "CHAPTER 01"
+    title: "The Two Seams"
+    lede: "If you understand these, the rest is composition."
+    narration: "Chapter-break slide 01: a huge green monospace '01' over the bold title 'The Two Seams' and the gray subtitle 'If you understand these, the rest is composition', right-aligned."
+    caption: "Chapter 01 · The Two Seams."
+    render: @scene {
+      sdk.sectionDivider(id = "div01", number = "01", title = "The Two Seams", subtitle = "If you understand these, the rest is composition", x = 34, y = 58, width = 650)
+      timeline main {
+        at 0 reveal div01 duration 320
+      }
+    }
+  }
+
+  slide "Seams overview" {
+    eyebrow: "TWO SEAMS"
+    title: "Two trait seams carry the architecture"
+    lede: "Everything passes through the waist — run modes above, runtime concerns below, neither branches on the other."
+    narration: "Two trait seams carry the architecture. A row of run-mode pills — online-real, online-mock, offline co-sim — funnels down into a two-box waist, {clock} and {transport}, which then fans back out to the runtime-concern pills scheduling, pacing, admission, reporting. The modes above and concerns below never branch on each other."
+    caption: "Two seams · the waist everything passes through."
+    render: @scene {
+      sdk.Title(id = "seams-title", text = "Two trait seams carry the architecture", x = 34, y = 20, width = 640, height = 32, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "seams-sub", text = "Everything passes through the waist — modes above, runtime concerns below, neither branches on the other", x = 34, y = 56, width = 640, height = 24, inkRole = theme(ink.secondary))
+      sdk.TagList(id = "seams-modes", items = ["online-real", "online-mock", "offline co-sim"], gap = 12, x = 150, y = 92, width = 400, height = 34)
+      sdk.compareGrid(id = "seams-waist", columns = 2, items = [{ label: "{clock}", detail: "wall-vs-virtual time · RealClock · SimClock" }, { label: "{transport}", detail: "dispatch + measure · Dispatchable · RequestSink · RequestObserver" }], x = 122, y = 134)
+      sdk.TagList(id = "seams-concerns", items = ["scheduling", "pacing", "admission", "reporting"], gap = 12, x = 130, y = 276, width = 440, height = 34)
+      timeline main {
+        at 0 reveal seams-title duration 200
+        after seams-title reveal seams-sub duration 180
+        after seams-sub reveal seams-modes duration 200
+        after seams-modes reveal seams-waist duration 260
+        after seams-waist reveal seams-concerns duration 200
+      }
+    }
+  }
+
+  slide "Clock" {
+    eyebrow: "{CLOCK}"
+    title: "One Clock trait, two implementations"
+    lede: "now_ns · sleep · is_virtual — dispatch on is_virtual() and nothing above the seam cares."
+    narration: "One Clock trait, two implementations. On the left RealClock is a timeline: ticks at 0/1/2/3 ms, a dashed green target deadline, a filled-green 'timerfd exact' marker at the deadline and a hollow-gray 'wheel late' marker past it. On the right SimClock is a BinaryHeap: the popped root (100,0) fills green over its two children (140,1) and (140,2), with the pop order noted beneath."
+    caption: "RealClock timeline vs SimClock heap."
+    render: @scene {
+      sdk.Caption(id = "clock-eyebrow", text = "{clock}", x = 34, y = 18, width = 300, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "clock-title", text = "One Clock trait, two implementations", x = 34, y = 40, width = 640, height = 30, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "clock-sub", text = "now_ns · sleep · is_virtual — dispatch on is_virtual() and nothing above the seam cares", x = 34, y = 74, width = 640, height = 22, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "clock-real-name", text = "RealClock — timerfd (ns) vs tokio 1ms wheel", x = 20, y = 108, width = 320, height = 16, inkRole = theme(ink.primary))
+      sdk.timelineAxis(id = "clock-real", start = 0, end = 3, ticks = [{ at: 0, label: "0ms" }, { at: 1, label: "1ms" }, { at: 2, label: "2ms" }, { at: 3, label: "3ms" }], target = { at: 1.6, label: "target" }, markers = [{ at: 1.6, label: "timerfd exact" }, { at: 2, label: "wheel late", style: "late" }], x = 20, y = 132, width = 300)
+      sdk.Caption(id = "clock-sim-name", text = "SimClock — BinaryHeap<Sleeper>, reversed Ord pops earliest", x = 356, y = 108, width = 340, height = 16, inkRole = theme(ink.primary))
+      sdk.nodeTree(id = "clock-sim", root = { label: "(100, 0)", emphasis: true }, children = [{ label: "(140, 1)" }, { label: "(140, 2)" }], orderNote = "pop order → (100,0) → (140,1) → (140,2)", x = 356, y = 132)
+      timeline main {
+        at 0 reveal clock-eyebrow duration 160
+        after clock-eyebrow reveal clock-title duration 220
+        after clock-title reveal clock-sub duration 180
+        after clock-sub reveal clock-real-name duration 140
+        after clock-real-name reveal clock-real duration 260
+        after clock-real reveal clock-sim-name duration 140
+        after clock-sim-name reveal clock-sim duration 260
+      }
+    }
+  }
+
+  slide "Drivers" {
+    eyebrow: "{CLOCK} · DRIVERS"
+    title: "Same executor, two ways to drive it"
+    lede: "The driver dispatches on is_virtual() — real time yields to the reactor, virtual time is pumped by hand."
+    narration: "Same executor, two ways to drive it. drive_real is a wall-clock timeline whose reactor fires futures at three green deadlines. drive_sim is an idle-pump loop: poll the LocalSet to quiescence, advance_to the next event time, wake sleepers in heap order, then repeat — an idle heap with no clock event panics as a deadlock."
+    caption: "drive_real fires; drive_sim pumps."
+    render: @scene {
+      sdk.Caption(id = "drv-eyebrow", text = "{clock} · drivers", x = 34, y = 18, width = 300, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "drv-title", text = "Same executor, two ways to drive it", x = 34, y = 40, width = 640, height = 30, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "drv-sub", text = "The driver dispatches on is_virtual() — real time yields to the reactor, virtual time is pumped by hand", x = 34, y = 74, width = 640, height = 22, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "drv-real-name", text = "drive_real — reactor fires at wall-clock deadlines", x = 20, y = 108, width = 320, height = 16, inkRole = theme(ink.primary))
+      sdk.timelineAxis(id = "drv-real", start = 0, end = 3, markers = [{ at: 0.6, label: "fire" }, { at: 1.5, label: "fire" }, { at: 2.4, label: "fire" }], x = 20, y = 132, width = 300)
+      sdk.Caption(id = "drv-real-note", text = "real wall-clock time →", x = 20, y = 250, width = 300, height = 16, inkRole = theme(ink.tertiary))
+      sdk.Caption(id = "drv-sim-name", text = "drive_sim · idle-pump loop", x = 360, y = 108, width = 330, height = 16, inkRole = theme(accent.primary))
+      sdk.ProcessStep(id = "drv-poll", title = "poll", detail = "LocalSet", x = 360, y = 150, width = 100, height = 58)
+      sdk.ProcessStep(id = "drv-adv", title = "advance_to", detail = "next event", x = 475, y = 150, width = 100, height = 58)
+      sdk.ProcessStep(id = "drv-wake", title = "wake", detail = "sleepers", x = 590, y = 150, width = 100, height = 58)
+      sdk.Edge(id = "drv-e1", mode = "route", from = ref("drv-poll.output"), to = ref("drv-adv.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
+      sdk.Edge(id = "drv-e2", mode = "route", from = ref("drv-adv.output"), to = ref("drv-wake.input"), style = { stroke: theme(accent.green), strokeWidth: 2.2, fill: "none" })
+      sdk.Edge(id = "drv-back", mode = "route", from = ref("drv-wake.output"), to = ref("drv-poll.input"), via = { x: 475, y: 240 }, style = { stroke: theme(accent.warning), strokeWidth: 2.0, fill: "none" })
+      sdk.Caption(id = "drv-repeat", text = "repeat — idle with no clock event → panic", x = 360, y = 250, width = 330, height = 16, inkRole = theme(ink.tertiary))
+      sdk.Paragraph(id = "drv-foot", text = "The graph engine's drive_*_with_source variants also merge an external SimEventSource — e.g. the in-process dynosim engine.", x = 34, y = 296, width = 640, height = 36, inkRole = theme(ink.secondary))
+      timeline main {
+        at 0 reveal drv-eyebrow duration 160
+        after drv-eyebrow reveal drv-title duration 220
+        after drv-title reveal drv-sub duration 180
+        after drv-sub reveal drv-real-name duration 140
+        after drv-real-name reveal drv-real duration 220
+        after drv-real reveal drv-real-note duration 120
+        after drv-real-note reveal drv-sim-name duration 140
+        after drv-sim-name reveal drv-poll duration 160
+        after drv-poll trace drv-e1 duration 160
+        after drv-e1 reveal drv-adv duration 160
+        after drv-adv trace drv-e2 duration 160
+        after drv-e2 reveal drv-wake duration 160
+        after drv-wake trace drv-back duration 200
+        after drv-back reveal drv-repeat duration 120
+        after drv-repeat reveal drv-foot duration 200
+      }
+    }
+  }
+
+  slide "Transport seam" {
+    eyebrow: "{TRANSPORT}"
+    title: "Three traits, no concrete request types"
+    lede: "Real HTTP, native gRPC, mock HTTP and in-process co-sim all feed the same observer."
+    narration: "Three traits, no concrete request types. Three cards — Dispatchable (Send + Sync, uuid/input_length/max_output_tokens), RequestSink<R> (?Send, !Send hyper/gRPC sinks on a LocalSet), and RequestObserver (no Send/Sync, worker-local Rc/RefCell). Below, a pill row real HTTP / native gRPC / mock HTTP / co-sim arrows into one RequestObserver."
+    caption: "Three transport traits, one observer."
+    render: @scene {
+      sdk.Caption(id = "trans-eyebrow", text = "{transport}", x = 34, y = 18, width = 300, height = 18, inkRole = theme(accent.primary))
+      sdk.Title(id = "trans-title", text = "Three traits, no concrete request types", x = 34, y = 40, width = 640, height = 30, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "trans-sub", text = "Real HTTP, native gRPC, mock HTTP and in-process co-sim all feed the same observer", x = 34, y = 74, width = 640, height = 22, inkRole = theme(ink.secondary))
+      sdk.compareGrid(id = "trans-cards", columns = 3, items = [{ label: "Dispatchable", detail: "Send + Sync · uuid, input_length, max_output_tokens; no concrete request type" }, { label: "RequestSink<R>", detail: "?Send · hyper/gRPC sinks are !Send, driven on a LocalSet; Err is transport failure" }, { label: "RequestObserver", detail: "no Send/Sync · worker-local Rc/RefCell, no per-token mutex" }], x = 4, y = 108)
+      sdk.TagList(id = "trans-tags", items = ["real HTTP", "native gRPC", "mock HTTP", "co-sim"], gap = 8, x = 34, y = 300, width = 380, height = 32)
+      sdk.Caption(id = "trans-arrow", text = "→ one RequestObserver — scheduling, pacing, reporting never branch on the backend", x = 430, y = 306, width = 250, height = 40, inkRole = theme(ink.primary))
+      timeline main {
+        at 0 reveal trans-eyebrow duration 160
+        after trans-eyebrow reveal trans-title duration 220
+        after trans-title reveal trans-sub duration 180
+        after trans-sub reveal trans-cards duration 300
+        after trans-cards reveal trans-tags duration 200
+        after trans-tags reveal trans-arrow duration 160
+      }
+    }
+  }
+
+  slide "Observer sequence" {
+    eyebrow: "{TRANSPORT} · CALLBACK SEQUENCE"
+    title: "The life of one request, in callbacks"
+    lede: "Six observer callbacks, in order, from arrival to terminal."
+    narration: "The life of one request, in callbacks. Six numbered rows with alternating green and black index chips: on_arrival, on_admit, on_token (first token derives TTFT), on_usage (terminal authoritative server usage), on_endpoint_metrics (default no-op), and on_terminal (Completed · Rejected · Canceled · Failed)."
+    caption: "Six observer callbacks in order."
+    render: @scene {
+      sdk.Caption(id = "seq-title", text = "The life of one request, in callbacks", x = 34, y = 8, width = 640, height = 22, inkRole = theme(ink.primary))
+      sdk.numberedSequence(id = "seq-list", items = [{ number: "1", title: "on_arrival", detail: "arrival_ms, input_length, requested_output_length", emphasis: true }, { number: "2", title: "on_admit", detail: "admit_ms, reused_input_tokens", emphasis: true }, { number: "3", title: "on_token", detail: "on_classified_token / batch — first token derives TTFT" }, { number: "4", title: "on_usage", detail: "terminal server usage, 13 optional fields; absent stays absent", emphasis: true }, { number: "5", title: "on_endpoint_metrics", detail: "image/video facts; default no-op", emphasis: true }, { number: "6", title: "on_terminal", detail: "Completed · Rejected · Canceled · Failed" }], x = 34, y = 34)
+      timeline main {
+        at 0 reveal seq-title duration 200
+        after seq-title reveal seq-list duration 320
+      }
+    }
+  }
+
+  slide "Three modes" {
+    eyebrow: "THE PAYOFF OF TWO SEAMS"
+    title: "3 interchangeable run modes from one codebase"
+    lede: "Online-real, online-mock, and offline co-sim — same codebase, three ways."
+    narration: "The payoff of two seams: a giant green 3 beside 'interchangeable run modes from one codebase', over a three-column row — online-real (real clock, real HTTP/gRPC against a live server), online-mock (real clock against the standalone mock server), and offline co-sim (virtual clock, deterministic dynosim, byte-exact)."
+    caption: "Three interchangeable run modes."
+    render: @scene {
+      sdk.Caption(id = "modes-eyebrow", text = "The payoff of two seams", x = 360, y = 10, width = 320, height = 20, inkRole = theme(ink.secondary))
+      sdk.bigStat(id = "modes-stat", value = "3", title = "interchangeable run modes from one codebase", x = 30, y = 6, width = 640)
+      sdk.compareGrid(id = "modes-grid", columns = 3, items = [{ label: "online-real", detail: "Real clock, real HTTP/gRPC against a live server" }, { label: "online-mock", detail: "Real clock against the standalone mock server" }, { label: "offline co-sim", detail: "Virtual clock, deterministic dynosim — byte-exact" }], x = 4, y = 278)
+      timeline main {
+        at 0 reveal modes-eyebrow duration 160
+        after modes-eyebrow reveal modes-stat duration 320
+        after modes-stat reveal modes-grid duration 260
+      }
+    }
+  }
+
+  // slides appended by Tasks 6-10
 }
