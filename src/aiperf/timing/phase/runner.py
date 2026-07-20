@@ -9,10 +9,12 @@ Owns the LoopScheduler and all per-phase components (lifecycle, progress, stop_c
 from __future__ import annotations
 
 import asyncio
+import time
+import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import BaselineKind, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.mixins import TaskManagerMixin
@@ -281,13 +283,37 @@ class PhaseRunner(TaskManagerMixin):
         """Handle completion of background return wait task (seamless mode).
 
         Called when _return_wait_task finishes. Cancels progress reporting and
-        notifies the orchestrator via on_phase_complete callback.
+        notifies the orchestrator callback.
         """
         if self._progress_task:
             self._progress_task.cancel()
 
         if self._on_phase_complete:
             self._on_phase_complete()
+
+    def _capture_baseline_boundary(self, phase_id: str, kind: BaselineKind) -> int:
+        boundary_ns = time.time_ns()
+        self.execute_async(
+            self._phase_publisher.publish_phase_baseline_request(
+                self._config, phase_id, kind
+            )
+        )
+        return boundary_ns
+
+    async def _capture_baseline_boundary_before_completion(
+        self, phase_id: str, kind: BaselineKind
+    ) -> int:
+        boundary_ns = time.time_ns()
+        try:
+            await self._phase_publisher.publish_phase_baseline_request(
+                self._config, phase_id, kind
+            )
+        except Exception as exc:
+            self.warning(
+                f"Failed to publish {kind.value} phase baseline request for "
+                f"phase {self._config.phase}: {exc}"
+            )
+        return boundary_ns
 
     async def run(
         self,
@@ -369,6 +395,10 @@ class PhaseRunner(TaskManagerMixin):
         returning-complete pipeline. The exception path (publishing partial
         lifecycle state) lives in the caller's ``except``.
         """
+        phase_id = uuid.uuid4().hex
+        self._baseline_start_ns: int | None = None
+        self._baseline_end_ns: int | None = None
+
         self._concurrency_manager.configure_for_phase(
             self._phase_key,
             self._config.concurrency,
@@ -385,6 +415,10 @@ class PhaseRunner(TaskManagerMixin):
         )
 
         self._create_rampers(strategy)
+
+        self._baseline_start_ns = self._capture_baseline_boundary(
+            phase_id, BaselineKind.START
+        )
 
         self._lifecycle.start()
         stats = self._progress.create_stats(self._lifecycle)
@@ -414,24 +448,36 @@ class PhaseRunner(TaskManagerMixin):
                 self._lifecycle.mark_complete(grace_period_triggered=True)
                 self._progress.freeze_completed_counts()
             self._progress.all_credits_returned_event.set()
-            return self._progress.create_stats(self._lifecycle)
+            self._baseline_end_ns = (
+                await self._capture_baseline_boundary_before_completion(
+                    phase_id, BaselineKind.END
+                )
+            )
+            return self._create_final_stats()
 
         # Seamless mode: phase flows into next without waiting for returns.
         # Progress task continues in background until phase complete.
         if self._config.seamless and not is_final_phase:
             self._return_wait_task = self.execute_async(
-                self._wait_for_returning_complete()
+                self._wait_for_returning_complete(phase_id=phase_id)
             )
             self._return_wait_task.add_done_callback(self._on_return_wait_complete)
         else:
-            await self._wait_for_returning_complete()
+            await self._wait_for_returning_complete(phase_id=phase_id)
             self._progress_task.cancel()
 
         for ramper in self._rampers:
             ramper.stop()
         self._scheduler.cancel_all()
 
-        return self._progress.create_stats(self._lifecycle)
+        return self._create_final_stats()
+
+    def _create_final_stats(self) -> CreditPhaseStats:
+        return self._progress.create_stats_with_baseline_window(
+            self._lifecycle,
+            baseline_start_ns=self._baseline_start_ns,
+            baseline_end_ns=self._baseline_end_ns,
+        )
 
     async def _publish_phase_failure_lifecycle(self) -> None:
         """Flush phase-end lifecycle messages on a hard failure path so other
@@ -641,7 +687,7 @@ class PhaseRunner(TaskManagerMixin):
             await self._phase_publisher.publish_progress(stats)
             await self._phase_publisher.publish_phase_sending_complete(stats)
 
-    async def _wait_for_returning_complete(self) -> None:
+    async def _wait_for_returning_complete(self, phase_id: str | None = None) -> None:
         """Wait for all credits to return (with grace period).
 
         Multi-stage process on timeout:
@@ -714,7 +760,13 @@ class PhaseRunner(TaskManagerMixin):
             if not self._lifecycle.is_complete:
                 self._lifecycle.mark_complete(grace_period_triggered=timed_out)
                 self._progress.freeze_completed_counts()
-            stats = self._progress.create_stats(self._lifecycle)
+            if phase_id is not None and self._baseline_end_ns is None:
+                self._baseline_end_ns = (
+                    await self._capture_baseline_boundary_before_completion(
+                        phase_id, BaselineKind.END
+                    )
+                )
+            stats = self._create_final_stats()
             self.notice(self._format_phase_complete(stats))
             await self._phase_publisher.publish_progress(stats)
             await self._phase_publisher.publish_phase_complete(

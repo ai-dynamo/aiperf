@@ -222,3 +222,18 @@ class PhaseProgressTracker:
             grace_period_timeout_triggered=lifecycle.grace_period_triggered,
             was_cancelled=lifecycle.was_cancelled,
         )
+
+    def create_stats_with_baseline_window(
+        self,
+        lifecycle: PhaseLifecycle,
+        *,
+        baseline_start_ns: int | None,
+        baseline_end_ns: int | None,
+    ) -> CreditPhaseStats:
+        """Create stats annotated with metric baseline gate timestamps."""
+        return self.create_stats(lifecycle).model_copy(
+            update={
+                "baseline_start_ns": baseline_start_ns,
+                "baseline_end_ns": baseline_end_ns,
+            }
+        )

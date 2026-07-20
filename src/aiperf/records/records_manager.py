@@ -1297,20 +1297,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ]
         return sorted(
             stats,
-            key=lambda item: item.phase_index
-            if item.phase_index is not None
-            else 10**9,
+            key=lambda item: (
+                item.phase_index if item.phase_index is not None else 10**9
+            ),
         )
 
     async def _build_phase_profile_results(
         self, phase: CreditPhase, cancelled: bool
     ) -> list[PhaseProfileResults] | None:
-        if phase != CreditPhase.PROFILING or not self._has_multiple_profiling_phases():
+        concrete_phase_stats = self._iter_concrete_phase_stats()
+        if not concrete_phase_stats:
             return None
-
-        concrete_phase_stats = self._iter_concrete_phase_stats(
-            phase=CreditPhase.PROFILING
-        )
 
         phase_results: list[PhaseProfileResults] = []
         acc_items = [
@@ -1318,37 +1315,114 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             for acc_type, acc in self._accumulators.items()
             if acc in self._metric_record_accumulators
         ]
-        if not acc_items:
-            return None
+
+        cfg = getattr(getattr(self, "run", None), "cfg", None)
+        gpu_telemetry_disabled = bool(getattr(cfg, "gpu_telemetry_disabled", False))
+        server_metrics_disabled = bool(getattr(cfg, "server_metrics_disabled", False))
+        telemetry_errors = [
+            ErrorDetailsCount(error_details=error_details, count=count)
+            for error_details, count in self._telemetry_state.error_counts.items()
+        ]
+        server_metrics_errors = [
+            ErrorDetailsCount(error_details=error_details, count=count)
+            for error_details, count in self._server_metrics_state.error_counts.items()
+        ]
 
         for stats in concrete_phase_stats:
             if stats.phase_index is None:
                 continue
+            phase_metric_start_ns = stats.start_ns
+            phase_metric_end_ns = stats.requests_end_ns
+            phase_baseline_start_ns = stats.baseline_start_ns or stats.start_ns
+            phase_baseline_end_ns = stats.baseline_end_ns or stats.requests_end_ns
             records_results: list[MetricResult] = []
             error_results: list[ErrorDetails] = []
             ctx = ExportContext(
-                start_ns=stats.start_ns,
-                end_ns=stats.requests_end_ns,
+                start_ns=phase_metric_start_ns,
+                end_ns=phase_metric_end_ns,
                 phase=stats.phase,
                 phase_index=stats.phase_index,
                 phase_name=stats.phase_name,
                 phase_kind=stats.phase_kind or stats.phase.value,
+                is_phase_scoped=True,
                 error_summary=self._error_tracker.get_error_summary_for_phase(
                     stats.phase, phase_index=stats.phase_index
                 ),
                 cancelled=cancelled,
             )
-            summaries = await asyncio.gather(
-                *[
-                    self._summarize_one_accumulator(acc_type, acc, ctx)
-                    for acc_type, acc in acc_items
-                ],
-                return_exceptions=False,
-            )
-            for acc_type, summary in summaries:
-                self._bucket_accumulator_summary(
-                    acc_type, summary, records_results, error_results
+            if acc_items:
+                summaries = await asyncio.gather(
+                    *[
+                        self._summarize_one_accumulator(acc_type, acc, ctx)
+                        for acc_type, acc in acc_items
+                    ],
+                    return_exceptions=False,
                 )
+                for acc_type, summary in summaries:
+                    self._bucket_accumulator_summary(
+                        acc_type, summary, records_results, error_results
+                    )
+
+            telemetry_results = None
+            telemetry_warnings: list[str] = []
+            if (
+                self._gpu_telemetry_accumulator is not None
+                and not gpu_telemetry_disabled
+            ):
+                try:
+                    telemetry_results = (
+                        await self._gpu_telemetry_accumulator.export_results(
+                            ExportContext(
+                                start_ns=phase_baseline_start_ns,
+                                end_ns=phase_baseline_end_ns,
+                                phase=stats.phase,
+                                phase_index=stats.phase_index,
+                                phase_name=stats.phase_name,
+                                phase_kind=stats.phase_kind or stats.phase.value,
+                                is_phase_scoped=True,
+                                error_summary=telemetry_errors,
+                            )
+                        )
+                    )
+                    if telemetry_results is None:
+                        telemetry_warnings.append(
+                            "No GPU telemetry data available for this phase."
+                        )
+                except Exception as e:  # noqa: BLE001 - phase artifact remains best-effort
+                    telemetry_warnings.append(
+                        f"GPU telemetry phase export failed: {type(e).__name__}: {e}"
+                    )
+
+            server_metrics_results = None
+            server_metrics_warnings: list[str] = []
+            if (
+                self._server_metrics_accumulator is not None
+                and not server_metrics_disabled
+            ):
+                try:
+                    server_metrics_results = (
+                        await self._server_metrics_accumulator.export_results(
+                            ExportContext(
+                                start_ns=phase_baseline_start_ns,
+                                end_ns=phase_baseline_end_ns,
+                                phase=stats.phase,
+                                phase_index=stats.phase_index,
+                                phase_name=stats.phase_name,
+                                phase_kind=stats.phase_kind or stats.phase.value,
+                                is_phase_scoped=True,
+                                error_summary=server_metrics_errors,
+                            )
+                        )
+                    )
+                    if server_metrics_results is None:
+                        server_metrics_warnings.append(
+                            "No server metrics data available for this phase."
+                        )
+                except Exception as e:  # noqa: BLE001
+                    server_metrics_warnings.append(
+                        f"Server metrics phase export failed: {type(e).__name__}: {e}"
+                    )
+
             phase_results.append(
                 PhaseProfileResults(
                     phase_index=stats.phase_index,
@@ -1359,12 +1433,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     records=records_results,
                     start_ns=stats.start_ns,
                     end_ns=stats.requests_end_ns,
+                    baseline_start_ns=stats.baseline_start_ns,
+                    baseline_end_ns=stats.baseline_end_ns,
                     was_cancelled=stats.was_cancelled or cancelled,
                     successful_request_count=stats.success_records,
                     error_request_count=stats.error_records,
                     error_summary=self._error_tracker.get_error_summary_for_phase(
                         stats.phase, phase_index=stats.phase_index
                     ),
+                    telemetry_results=telemetry_results,
+                    server_metrics_results=server_metrics_results,
+                    telemetry_warnings=telemetry_warnings,
+                    server_metrics_warnings=server_metrics_warnings,
                 )
             )
         return phase_results or None
@@ -1506,8 +1586,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             cached = self._processed_results.get(phase)
             if cached is not None:
                 self.debug(
-                    lambda: f"Results for phase {phase} already processed; "
-                    "returning cached result"
+                    lambda: (
+                        f"Results for phase {phase} already processed; "
+                        "returning cached result"
+                    )
                 )
                 return cached
             result = await self._process_results_impl(phase, cancelled)

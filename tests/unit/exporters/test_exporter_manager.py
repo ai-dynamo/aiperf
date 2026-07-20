@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,6 +15,8 @@ from aiperf.common.models import (
     PhaseProfileResults,
     ProfileResults,
 )
+from aiperf.common.models.export_models import TelemetryExportData, TelemetrySummary
+from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.plugin.enums import (
@@ -139,6 +142,23 @@ class TestExporterManager:
                         count=2,
                     )
                 ],
+                telemetry_results=TelemetryExportData(
+                    summary=TelemetrySummary(
+                        endpoints_configured=["dcgm"],
+                        endpoints_successful=["dcgm"],
+                        start_time=datetime.fromtimestamp(3 / 1_000_000_000),
+                        end_time=datetime.fromtimestamp(4 / 1_000_000_000),
+                    ),
+                    endpoints={},
+                ),
+                server_metrics_results=ServerMetricsResults(
+                    benchmark_id="bench",
+                    endpoint_summaries={},
+                    start_ns=3,
+                    end_ns=4,
+                    endpoints_configured=["server"],
+                    endpoints_successful=["server"],
+                ),
             ),
         ]
         manager = ExporterManager(
@@ -166,6 +186,8 @@ class TestExporterManager:
         storm_entry = manifest["phases"][1]
         assert storm_entry["metrics_json"] == "phases/storm/profile_export_aiperf.json"
         assert storm_entry["metrics_csv"] == "phases/storm/profile_export_aiperf.csv"
+        assert storm_entry["gpu_telemetry_json"] == "phases/storm/gpu_telemetry.json"
+        assert storm_entry["server_metrics_json"] == "phases/storm/server_metrics.json"
         assert storm_entry["start_ns"] == 3
         assert storm_entry["end_ns"] == 4
         assert storm_entry["successful_request_count"] == 3
@@ -184,6 +206,20 @@ class TestExporterManager:
         assert (
             output_config / "phases" / "storm" / "profile_export_aiperf.csv"
         ).exists()
+        telemetry_json = json.loads(
+            (output_config / "phases" / "storm" / "gpu_telemetry.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert telemetry_json["phase"]["phase_name"] == "storm"
+        assert telemetry_json["data"]["summary"]["endpoints_configured"] == ["dcgm"]
+        server_metrics_json = json.loads(
+            (output_config / "phases" / "storm" / "server_metrics.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert server_metrics_json["phase"]["phase_kind"] == "profiling"
+        assert server_metrics_json["data"]["benchmark_id"] == "bench"
 
     @pytest.mark.asyncio
     async def test_write_phase_export_handles_disabled_and_failed_exporters(

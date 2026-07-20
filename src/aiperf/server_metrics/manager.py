@@ -17,6 +17,7 @@ from aiperf.common.enums import (
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_message, on_stop
 from aiperf.common.messages import (
+    PhaseBaselineRequestMessage,
     ProfileCancelCommand,
     ProfileCompleteCommand,
     ProfileConfigureCommand,
@@ -25,6 +26,7 @@ from aiperf.common.messages import (
     ServerMetricsStatusMessage,
 )
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
+from aiperf.common.mixins import BaselineCollectorMixin
 from aiperf.common.models import ErrorDetails, ServerMetricsRecord
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.common.redact import redact_url
@@ -38,7 +40,7 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
-class ServerMetricsManager(BaseComponentService):
+class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
     """Coordinates multiple ServerMetricsDataCollector instances for server metrics collection.
 
     The ServerMetricsManager coordinates multiple ServerMetricsDataCollector instances
@@ -133,7 +135,9 @@ class ServerMetricsManager(BaseComponentService):
 
         for endpoint_url in self._server_metrics_endpoints:
             self.debug(
-                lambda url=endpoint_url: f"Server Metrics: Testing reachability of {url}"
+                lambda url=endpoint_url: (
+                    f"Server Metrics: Testing reachability of {url}"
+                )
             )
             collector = ServerMetricsDataCollector(
                 endpoint_url=endpoint_url,
@@ -148,11 +152,15 @@ class ServerMetricsManager(BaseComponentService):
                 if is_reachable:
                     self._collectors[endpoint_url] = collector
                     self.debug(
-                        lambda url=endpoint_url: f"Server Metrics: Prometheus endpoint {url} is reachable"
+                        lambda url=endpoint_url: (
+                            f"Server Metrics: Prometheus endpoint {url} is reachable"
+                        )
                     )
                 else:
                     self.debug(
-                        lambda url=endpoint_url: f"Server Metrics: Prometheus endpoint {url} is not reachable"
+                        lambda url=endpoint_url: (
+                            f"Server Metrics: Prometheus endpoint {url} is not reachable"
+                        )
                     )
             except Exception as e:
                 self.error(f"Server Metrics: Exception testing {endpoint_url}: {e}")
@@ -178,7 +186,9 @@ class ServerMetricsManager(BaseComponentService):
                 await collector.initialize()
                 await collector.collect_and_process_metrics()
                 self.debug(
-                    lambda url=endpoint_url: f"Server Metrics: Captured baseline from {url}"
+                    lambda url=endpoint_url: (
+                        f"Server Metrics: Captured baseline from {url}"
+                    )
                 )
             except Exception as e:
                 self.warning(
@@ -193,6 +203,30 @@ class ServerMetricsManager(BaseComponentService):
             ],
             endpoints_reachable=reachable_endpoints,
         )
+
+    async def collect_baseline(self, message: PhaseBaselineRequestMessage) -> None:
+        """Capture a one-shot server-metrics scrape for a phase boundary."""
+        if self._server_metrics_disabled or not self._collectors:
+            return
+        previous_phase = self._active_phase
+        boundary_phase = (
+            CreditPhase.WARMUP
+            if message.phase_kind == "warmup"
+            else CreditPhase.PROFILING
+        )
+        self._active_phase = boundary_phase
+        errors: list[str] = []
+        try:
+            for endpoint_url, collector in list(self._collectors.items()):
+                try:
+                    await collector.collect_and_process_metrics()
+                except Exception as exc:
+                    errors.append(f"{endpoint_url}: {type(exc).__name__}: {exc}")
+        finally:
+            if self._active_phase == boundary_phase:
+                self._active_phase = previous_phase
+        if errors:
+            raise RuntimeError("; ".join(errors))
 
     @on_command(CommandType.PROFILE_START)
     async def _on_start_profiling(self, message: ProfileStartCommand) -> None:
@@ -272,7 +306,9 @@ class ServerMetricsManager(BaseComponentService):
                     try:
                         await collector.collect_and_process_metrics()
                         self.debug(
-                            lambda url=endpoint_url: f"Server Metrics: Captured warmup final state from {url}"
+                            lambda url=endpoint_url: (
+                                f"Server Metrics: Captured warmup final state from {url}"
+                            )
                         )
                     except Exception as e:  # noqa: BLE001 - one endpoint's scrape failure must not skip the rest
                         self.warning(
@@ -326,7 +362,9 @@ class ServerMetricsManager(BaseComponentService):
             try:
                 await collector.collect_and_process_metrics()
                 self.debug(
-                    lambda url=endpoint_url: f"Server Metrics: Captured final state from {url}"
+                    lambda url=endpoint_url: (
+                        f"Server Metrics: Captured final state from {url}"
+                    )
                 )
             except Exception as e:
                 self.warning(

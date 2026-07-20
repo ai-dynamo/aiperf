@@ -20,6 +20,10 @@ from typing import TYPE_CHECKING, Any
 
 from aiperf.common.enums import DatasetType
 from aiperf.common.phase import infer_legacy_phase_kind
+from aiperf.config.flags._resolver_gpu_telemetry import (
+    build_gpu_telemetry_override,
+    normalize_gpu_telemetry_base_for_override,
+)
 from aiperf.config.flags._resolver_helpers import promote_benchmark_magic_lists
 from aiperf.config.flags._resolver_server_metrics import (
     build_server_metrics_override,
@@ -101,6 +105,7 @@ def resolve_config(
 
     overrides = build_cli_overrides(cli_config, benchmark_config=base_config.benchmark)
     overrides = _wrap_under_envelope(overrides) if overrides else overrides
+    yaml_dict = normalize_gpu_telemetry_base_for_override(yaml_dict, overrides)
     yaml_dict = normalize_server_metrics_base_for_override(yaml_dict, overrides)
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
     _apply_dataset_filter_overrides(merged, cli_config)
@@ -175,6 +180,7 @@ def build_cli_overrides(
     _apply_input_overrides(out, cli)
     _apply_recipe_and_multirun(out, cli, benchmark_config=benchmark_config)
     _apply_artifacts_overrides(out, cli)
+    _apply_optional_section(out, "gpu_telemetry", build_gpu_telemetry_override(cli))
     _apply_optional_section(out, "server_metrics", build_server_metrics_override(cli))
     _apply_optional_section(out, "tokenizer", build_tokenizer(cli))
     _apply_optional_section(out, "accuracy", build_accuracy(cli))

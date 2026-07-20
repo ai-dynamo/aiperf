@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.enums import CreditPhase
 from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.messages.inference_messages import (
@@ -20,6 +21,7 @@ from aiperf.common.models import (
     BranchStats,
     CreditPhaseStats,
     MetricResult,
+    PhaseRecordsStats,
     ProcessRecordsResult,
     ProfileResults,
     TelemetryMetrics,
@@ -221,24 +223,146 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         )
 
     @pytest.mark.asyncio
-    async def test_warmup_plus_single_profiling_does_not_build_phase_results(
-        self,
-    ) -> None:
+    async def test_warmup_plus_single_profiling_builds_phase_results(self) -> None:
         manager = RecordsManager.__new__(RecordsManager)
-        manager.run = SimpleNamespace(
-            cfg=SimpleNamespace(
-                phases=[
-                    SimpleNamespace(kind="warmup"),
-                    SimpleNamespace(kind="profiling"),
-                ]
-            )
+        manager._records_tracker = MagicMock()
+        warmup_tracker = MagicMock()
+        warmup_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.WARMUP,
+            phase_index=0,
+            phase_name="warmup",
+            phase_kind="warmup",
+            start_ns=1_000,
+            requests_end_ns=2_000,
         )
+        profile_tracker = MagicMock()
+        profile_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            profiling_index=0,
+            phase_name="load",
+            phase_kind="profiling",
+            start_ns=3_000,
+            requests_end_ns=4_000,
+        )
+        manager._records_tracker._phase_trackers = {
+            (CreditPhase.WARMUP, 0): warmup_tracker,
+            (CreditPhase.PROFILING, 1): profile_tracker,
+        }
+        manager._accumulators = {}
+        manager._metric_record_accumulators = []
+        manager._telemetry_state = ErrorTrackingState()
+        manager._server_metrics_state = ErrorTrackingState()
+        manager._gpu_telemetry_accumulator = None
+        manager._server_metrics_accumulator = None
+        manager._error_tracker = ErrorTracker()
 
         results = await RecordsManager._build_phase_profile_results(
             manager, CreditPhase.PROFILING, cancelled=False
         )
 
-        assert results is None
+        assert results is not None
+        assert [r.phase_name for r in results] == ["warmup", "load"]
+
+    @pytest.mark.asyncio
+    async def test_phase_telemetry_exports_use_baseline_window(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._records_tracker = MagicMock()
+        profile_tracker = MagicMock()
+        profile_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=0,
+            profiling_index=0,
+            phase_name="load",
+            phase_kind="profiling",
+            start_ns=1_000,
+            requests_end_ns=2_000,
+            baseline_start_ns=900,
+            baseline_end_ns=2_200,
+        )
+        manager._records_tracker._phase_trackers = {
+            (CreditPhase.PROFILING, 0): profile_tracker,
+        }
+        manager._accumulators = {}
+        manager._metric_record_accumulators = []
+        manager._telemetry_state = ErrorTrackingState()
+        manager._server_metrics_state = ErrorTrackingState()
+        manager._error_tracker = ErrorTracker()
+
+        class _CaptureAccumulator:
+            def __init__(self) -> None:
+                self.contexts: list[ExportContext] = []
+
+            async def export_results(self, ctx: ExportContext):
+                self.contexts.append(ctx)
+                return None
+
+        gpu_accumulator = _CaptureAccumulator()
+        server_accumulator = _CaptureAccumulator()
+        manager._gpu_telemetry_accumulator = gpu_accumulator
+        manager._server_metrics_accumulator = server_accumulator
+
+        results = await RecordsManager._build_phase_profile_results(
+            manager, CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert results is not None
+        assert results[0].baseline_start_ns == 900
+        assert results[0].baseline_end_ns == 2_200
+        assert gpu_accumulator.contexts[0].start_ns == 900
+        assert gpu_accumulator.contexts[0].end_ns == 2_200
+        assert gpu_accumulator.contexts[0].is_phase_scoped is True
+        assert server_accumulator.contexts[0].start_ns == 900
+        assert server_accumulator.contexts[0].end_ns == 2_200
+        assert server_accumulator.contexts[0].is_phase_scoped is True
+
+    @pytest.mark.asyncio
+    async def test_disabled_observability_skips_phase_exports(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.run = SimpleNamespace(
+            cfg=SimpleNamespace(
+                gpu_telemetry_disabled=True,
+                server_metrics_disabled=True,
+            )
+        )
+        manager._records_tracker = MagicMock()
+        profile_tracker = MagicMock()
+        profile_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=0,
+            profiling_index=0,
+            phase_name="load",
+            phase_kind="profiling",
+            start_ns=1_000,
+            requests_end_ns=2_000,
+            baseline_start_ns=900,
+            baseline_end_ns=2_200,
+        )
+        manager._records_tracker._phase_trackers = {
+            (CreditPhase.PROFILING, 0): profile_tracker,
+        }
+        manager._accumulators = {}
+        manager._metric_record_accumulators = []
+        manager._telemetry_state = ErrorTrackingState()
+        manager._server_metrics_state = ErrorTrackingState()
+        manager._error_tracker = ErrorTracker()
+
+        class _UnexpectedAccumulator:
+            async def export_results(self, ctx: ExportContext):
+                raise AssertionError("disabled observability should not export")
+
+        manager._gpu_telemetry_accumulator = _UnexpectedAccumulator()
+        manager._server_metrics_accumulator = _UnexpectedAccumulator()
+
+        results = await RecordsManager._build_phase_profile_results(
+            manager, CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert results is not None
+        assert results[0].telemetry_results is None
+        assert results[0].server_metrics_results is None
+        assert results[0].telemetry_warnings == []
+        assert results[0].server_metrics_warnings == []
 
 
 class TestRecordsManagerTimeslice:

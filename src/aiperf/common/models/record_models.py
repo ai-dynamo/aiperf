@@ -35,8 +35,9 @@ from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
-from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.common.models.export_models import JsonMetricResult, TelemetryExportData
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
 from aiperf.common.types import JsonObject, MetricTagT, PhaseKind
@@ -318,6 +319,16 @@ class PhaseProfileResults(AIPerfBaseModel):
         ge=0,
         description="Phase request completion time in nanoseconds, when available.",
     )
+    baseline_start_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Phase START baseline gate completion time in nanoseconds, when available.",
+    )
+    baseline_end_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Phase END baseline gate completion time in nanoseconds, when available.",
+    )
     was_cancelled: bool = Field(
         default=False, description="Whether this phase was cancelled early."
     )
@@ -330,6 +341,22 @@ class PhaseProfileResults(AIPerfBaseModel):
     error_summary: list[ErrorDetailsCount] = Field(
         default_factory=list,
         description="A list of the unique phase error details and their counts",
+    )
+    telemetry_results: TelemetryExportData | None = Field(
+        default=None,
+        description="GPU telemetry summary scoped to this concrete phase.",
+    )
+    server_metrics_results: ServerMetricsResults | None = Field(
+        default=None,
+        description="Server metrics summary scoped to this concrete phase.",
+    )
+    telemetry_warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-fatal telemetry warnings for phase artifact export.",
+    )
+    server_metrics_warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-fatal server metrics warnings for phase artifact export.",
     )
 
 

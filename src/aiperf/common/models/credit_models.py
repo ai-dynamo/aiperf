@@ -50,6 +50,16 @@ class BasePhaseStats(AIPerfBaseModel):
         ge=0,
         description="The time in which the last credit was returned from the workers in nanoseconds. If None, the phase has not completed.",
     )
+    baseline_start_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="The timestamp after the phase START baseline gate completed, when available.",
+    )
+    baseline_end_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="The timestamp after the phase END baseline gate completed, when available.",
+    )
 
     # Expectation / stop condition fields
     total_expected_requests: int | None = Field(

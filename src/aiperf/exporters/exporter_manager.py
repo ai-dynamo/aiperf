@@ -169,11 +169,76 @@ class ExporterManager(AIPerfLoggerMixin):
                 manifest_entry=entry,
                 manifest_key="metrics_csv",
             )
+            await self._write_phase_observability_export(
+                phase_result=phase_result,
+                phase_dir=phase_dir,
+                manifest_entry=entry,
+                attr="telemetry_results",
+                warnings_attr="telemetry_warnings",
+                file_name="gpu_telemetry.json",
+                manifest_key="gpu_telemetry_json",
+            )
+            await self._write_phase_observability_export(
+                phase_result=phase_result,
+                phase_dir=phase_dir,
+                manifest_entry=entry,
+                attr="server_metrics_results",
+                warnings_attr="server_metrics_warnings",
+                file_name="server_metrics.json",
+                manifest_key="server_metrics_json",
+            )
             manifest_entries.append(entry)
         try:
             await asyncio.to_thread(self._write_phase_manifest, manifest_entries)
         except (OSError, ValueError) as exc:
             self.warning(f"Failed to write phase artifact manifest: {exc}")
+
+    async def _write_phase_observability_export(
+        self,
+        *,
+        phase_result,
+        phase_dir: Path,
+        manifest_entry: dict[str, Any],
+        attr: str,
+        warnings_attr: str,
+        file_name: str,
+        manifest_key: str,
+    ) -> None:
+        data = getattr(phase_result, attr, None)
+        warnings = list(getattr(phase_result, warnings_attr, []) or [])
+        if data is None and not warnings:
+            return
+        file_path = phase_dir / file_name
+        payload = {
+            "schema_version": 1,
+            "phase": {
+                "phase_index": phase_result.phase_index,
+                "profiling_index": phase_result.profiling_index,
+                "phase_name": phase_result.phase_name,
+                "phase_kind": phase_result.phase_kind,
+                "start_ns": phase_result.start_ns,
+                "end_ns": phase_result.end_ns,
+                "was_cancelled": phase_result.was_cancelled,
+            },
+            "data": data.model_dump(mode="json", exclude_none=True) if data else None,
+            "warnings": warnings,
+        }
+        try:
+            content = orjson.dumps(
+                scrub_non_finite(payload),
+                option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
+            ).decode("utf-8")
+            await asyncio.to_thread(
+                file_path.write_text, content + "\n", encoding="utf-8"
+            )
+        except Exception as exc:
+            self.error(
+                f"Failed to write phase observability export {file_path}: {exc!r}"
+            )
+            return
+        manifest_entry[manifest_key] = file_path.relative_to(
+            self._run.cfg.artifacts.dir
+        ).as_posix()
 
     async def _write_phase_export(
         self,

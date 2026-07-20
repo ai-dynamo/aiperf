@@ -82,6 +82,9 @@ class ExportContext:
     phase_kind: str | None = None
     """Semantic phase kind for diagnostics/export metadata."""
 
+    is_phase_scoped: bool = False
+    """True when exporting an individual concrete phase rather than aggregate results."""
+
     error_summary: list[ErrorDetailsCount] | None = None
     """De-duplicated profile-run error counts to surface in the export, if any."""
 
