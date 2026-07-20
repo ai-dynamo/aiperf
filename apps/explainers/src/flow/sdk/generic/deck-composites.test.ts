@@ -355,3 +355,123 @@ describe("sdk.cardGrid", () => {
     expect(result.diagnostics[0]?.code).toBe("SDK_PROP_REQUIRED");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Flow-engine free-text sizing. The remaining deck composites route their one
+// free-text field through the shared flow-layout engine (`layoutFlow` +
+// `textFlowLeaf`): a long, wrapping field grows its own box past the
+// single-line floor, and a short field stays exactly at the floor. These
+// assertions lock the migrated sizing path (not the prior bespoke line-count
+// math) into place.
+// ---------------------------------------------------------------------------
+
+/** Recursively find a node's geometry by id within a scene fragment root. */
+function findGeometry(
+  node: { id: string; geometry?: { height: number }; children?: readonly unknown[] } | undefined,
+  targetId: string,
+): { height: number } | undefined {
+  if (node === undefined) {
+    return undefined;
+  }
+  if (node.id === targetId) {
+    return node.geometry;
+  }
+  for (const child of node.children ?? []) {
+    const hit = findGeometry(
+      child as { id: string; geometry?: { height: number }; children?: readonly unknown[] },
+      targetId,
+    );
+    if (hit !== undefined) {
+      return hit;
+    }
+  }
+  return undefined;
+}
+
+const LONG_PROSE =
+  "This is a deliberately long free-text field that must wrap across several " +
+  "lines when measured against its box width so the flow-layout engine grows " +
+  "the field's own box well beyond the single-line minimum height floor.";
+
+describe("flow-engine free-text sizing", () => {
+  it("grows the sectionDivider subtitle box for wrapping prose but keeps a short subtitle at the floor", () => {
+    const definition = createSdkRegistry().lookup("sdk.sectionDivider")!;
+    const longResult = definition.factory(
+      { id: "sd", number: "01", title: "Seams", subtitle: LONG_PROSE },
+      {},
+      context("sd"),
+    );
+    const shortResult = definition.factory(
+      { id: "sd2", number: "01", title: "Seams", subtitle: "short" },
+      {},
+      context("sd2"),
+    );
+    expect(longResult.ok && shortResult.ok).toBe(true);
+    if (!longResult.ok || !shortResult.ok) {
+      return;
+    }
+    const longH = findGeometry(longResult.value.roots[0] as never, "sd__subtitle")!.height;
+    const shortH = findGeometry(shortResult.value.roots[0] as never, "sd2__subtitle")!.height;
+    // Floor is DIVIDER_SUBTITLE_H (34); a short subtitle stays at it, the long
+    // one grows past it.
+    expect(shortH).toBe(34);
+    expect(longH).toBeGreaterThan(34);
+  });
+
+  it("grows the bigStat description box for wrapping prose", () => {
+    const definition = createSdkRegistry().lookup("sdk.bigStat")!;
+    const result = definition.factory(
+      { id: "bs", value: "3", description: LONG_PROSE },
+      {},
+      context("bs"),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    // Floor is BIG_STAT_DESCRIPTION_H (30).
+    expect(findGeometry(result.value.roots[0] as never, "bs__description")!.height).toBeGreaterThan(30);
+  });
+
+  it("grows the nodeTree orderNote caption box for wrapping prose", () => {
+    const definition = createSdkRegistry().lookup("sdk.nodeTree")!;
+    const result = definition.factory(
+      {
+        id: "nt",
+        root: { label: "root" },
+        children: [{ label: "a" }, { label: "b" }],
+        orderNote: LONG_PROSE,
+      },
+      {},
+      context("nt"),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    // Floor is TREE_CAPTION_H (24).
+    expect(findGeometry(result.value.roots[0] as never, "nt__caption")!.height).toBeGreaterThan(24);
+  });
+
+  it("sizes timelineAxis tick and marker label boxes through the engine (single-line labels at the floor)", () => {
+    const definition = createSdkRegistry().lookup("sdk.timelineAxis")!;
+    const result = definition.factory(
+      {
+        id: "ta",
+        start: 0,
+        end: 3,
+        ticks: [{ at: 0, label: "0ms" }],
+        markers: [{ at: 1, label: "exact", style: "exact" }],
+      },
+      {},
+      context("ta"),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    // Short single-line captions floor at AXIS_LABEL_H (16).
+    expect(findGeometry(result.value.roots[0] as never, "ta__tick-0__label")!.height).toBe(16);
+    expect(findGeometry(result.value.roots[0] as never, "ta__marker-0__label")!.height).toBe(16);
+  });
+});

@@ -53,7 +53,9 @@ import type {
 import type { JsonValue } from "../../schema/json-value.js";
 import type { SourceRange } from "../../schema/source.js";
 import type { StyleValueIr } from "../../schema/theme.js";
-import { measuredWrappedHeight } from "../../../core/diagram/text-metrics.js";
+import { measuredWrappedHeight, scaledSceneFontSize } from "../../../core/diagram/text-metrics.js";
+import { layoutFlow, type FlowNode } from "../../../core/diagram/layout/flow-engine.js";
+import { textFlowLeaf } from "../../../core/diagram/layout/text-flow-leaf.js";
 import { attachSdkOrigin, type SdkOrigin } from "../provenance.js";
 import type {
   SceneFragment,
@@ -166,6 +168,32 @@ function grownTextHeight(
   weight: "normal" | "bold" = "normal",
 ): number {
   return Math.max(measuredWrappedHeight(text, textWidth, fontSize, weight), fixedHeight);
+}
+
+/**
+ * Height a free-text field's own box needs to hold its wrapped content, sized
+ * through the shared flow-layout engine (a single `textFlowLeaf` node) rather
+ * than a bespoke line-count/`Math.max` computation — so every text-bearing box
+ * routes through one measure-once sizing path. `minHeight` floors the result so
+ * single-line specimens never shrink below their original box height, exactly
+ * as the prior hand-rolled `Math.max(..., fixedHeight)` did. `fontSize` is the
+ * authored (unscaled) value; it is scaled here as `SceneRenderer` paints
+ * (`scaledSceneFontSize`) before measurement, matching `textFlowLeaf`'s
+ * pre-scaled `scaledFontSize` contract.
+ */
+function flowTextHeight(
+  text: string,
+  textWidth: number,
+  fontSize: number,
+  minHeight: number,
+  weight: "normal" | "bold" = "normal",
+): number {
+  const node: FlowNode = {
+    id: "text",
+    measure: textFlowLeaf(text, scaledSceneFontSize(fontSize), weight),
+    minHeight,
+  };
+  return layoutFlow(node, { maxWidth: textWidth }).get("text")!.height;
 }
 
 // ---------------------------------------------------------------------------
@@ -387,7 +415,7 @@ const sectionDividerFactory: SdkComponentFactory = (props, _slots, context) => {
     // The subtitle is the one free-form prose field; grow its own box (and thus
     // the divider group) to fit wrapped lines. No sibling shift is needed since
     // it is the last stacked element.
-    const subtitleH = grownTextHeight(subtitle, width, 20, DIVIDER_SUBTITLE_H);
+    const subtitleH = flowTextHeight(subtitle, width, 20, DIVIDER_SUBTITLE_H);
     children.push(
       attachSdkOrigin(
         buildText({
@@ -788,7 +816,7 @@ const bigStatFactory: SdkComponentFactory = (props, _slots, context) => {
     // Description is the one free-form prose field; grow its own box (and the
     // stat group) to fit wrapped lines. It is the last stacked element, so no
     // sibling shift is needed.
-    const descriptionH = grownTextHeight(description, width, 16, BIG_STAT_DESCRIPTION_H);
+    const descriptionH = flowTextHeight(description, width, 16, BIG_STAT_DESCRIPTION_H);
     children.push(
       attachSdkOrigin(
         buildText({
@@ -1332,6 +1360,10 @@ const AXIS_TICK_H = 10; // tick mark height below the axis
 const AXIS_MARKER_R = 8; // marker circle radius
 const AXIS_TARGET_TOP = 12; // dashed target line top y
 const AXIS_HEIGHT = 128;
+const AXIS_LABEL_FONT = 12; // tick / marker / target caption font size
+const AXIS_TICK_LABEL_W = 80; // tick caption box width
+const AXIS_MARKER_LABEL_W = 120; // marker / target caption box width
+const AXIS_LABEL_H = 16; // single-line caption box height floor
 
 function parseAxisTicks(value: JsonValue | undefined): readonly AxisTick[] {
   const raw = jsonArray(value);
@@ -1455,9 +1487,16 @@ const timelineAxisFactory: SdkComponentFactory = (props, _slots, context) => {
         buildText({
           id: `${targetLineId}__label`,
           text: targetLabel,
-          // Sits fully above the drop-line's top edge.
-          geometry: { x: targetX - 60, y: AXIS_TARGET_TOP - 20, width: 120, height: 16 },
-          style: { fontSize: 12, fontWeight: "bold", fill: COLOR_ACCENT, textAnchor: "middle" },
+          // Sits fully above the drop-line's top edge; the caption box is sized
+          // through the shared flow engine (wraps at its width, floors at the
+          // single-line height) rather than a fixed line box.
+          geometry: {
+            x: targetX - AXIS_MARKER_LABEL_W / 2,
+            y: AXIS_TARGET_TOP - 20,
+            width: AXIS_MARKER_LABEL_W,
+            height: flowTextHeight(targetLabel, AXIS_MARKER_LABEL_W, AXIS_LABEL_FONT, AXIS_LABEL_H, "bold"),
+          },
+          style: { fontSize: AXIS_LABEL_FONT, fontWeight: "bold", fill: COLOR_ACCENT, textAnchor: "middle" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.timelineAxis", context, "targetLabel"),
@@ -1489,8 +1528,13 @@ const timelineAxisFactory: SdkComponentFactory = (props, _slots, context) => {
         buildText({
           id: `${tickId}__label`,
           text: tick.label,
-          geometry: { x: tickX - 40, y: AXIS_LINE_Y + AXIS_LINE_THICKNESS + AXIS_TICK_H + 4, width: 80, height: 16 },
-          style: { fontSize: 12, fill: COLOR_SECONDARY, textAnchor: "middle" },
+          geometry: {
+            x: tickX - AXIS_TICK_LABEL_W / 2,
+            y: AXIS_LINE_Y + AXIS_LINE_THICKNESS + AXIS_TICK_H + 4,
+            width: AXIS_TICK_LABEL_W,
+            height: flowTextHeight(tick.label, AXIS_TICK_LABEL_W, AXIS_LABEL_FONT, AXIS_LABEL_H),
+          },
+          style: { fontSize: AXIS_LABEL_FONT, fill: COLOR_SECONDARY, textAnchor: "middle" },
           sourceMap: context.sourceMap,
         }),
         makeOrigin("sdk.timelineAxis", context, "tickLabel"),
@@ -1530,9 +1574,14 @@ const timelineAxisFactory: SdkComponentFactory = (props, _slots, context) => {
         buildText({
           id: `${markerId}__label`,
           text: marker.label,
-          geometry: { x: markerX - 60, y: markerCy - AXIS_MARKER_R - 18, width: 120, height: 16 },
+          geometry: {
+            x: markerX - AXIS_MARKER_LABEL_W / 2,
+            y: markerCy - AXIS_MARKER_R - 18,
+            width: AXIS_MARKER_LABEL_W,
+            height: flowTextHeight(marker.label, AXIS_MARKER_LABEL_W, AXIS_LABEL_FONT, AXIS_LABEL_H, "bold"),
+          },
           style: {
-            fontSize: 12,
+            fontSize: AXIS_LABEL_FONT,
             fontWeight: "bold",
             fill: marker.late ? COLOR_MUTED : COLOR_ACCENT,
             textAnchor: "middle",
@@ -1829,7 +1878,7 @@ const nodeTreeFactory: SdkComponentFactory = (props, _slots, context) => {
     // The order-note caption is the one free-form prose field; grow its own box
     // (and the tree group) to fit wrapped lines. It is the last element, so no
     // sibling shift is needed.
-    const captionH = grownTextHeight(orderNote, width, 13, TREE_CAPTION_H);
+    const captionH = flowTextHeight(orderNote, width, 13, TREE_CAPTION_H);
     nodes.push(
       attachSdkOrigin(
         buildText({
