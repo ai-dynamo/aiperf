@@ -346,6 +346,127 @@ explainer "AIPerf vs Locust" {
     }
   }
 
+  slide "Locust: why overshoot" {
+    eyebrow: "Locust architecture"
+    title: "No central admission means stopping at N is poll-then-kill"
+    lede: "Locust core has no built-in 'stop after N total requests' primitive. Because greenlets fire independently with no admission gate, the only lever to stop at a target is periodic stats polling plus a hard kill — which structurally overshoots and abandons stragglers."
+
+    narration: "This follows directly from the greenlet model, not from any specific script's choices. Every virtual-user greenlet loops and fires its own requests with no per-request check-in against a central authority — there is nothing in the architecture that could tell a single greenlet 'stop now, we've hit N.' The only aggregate view of total completed requests is environment.stats.total, refreshed on the master from a periodic worker_report event that core Locust fires every WORKER_REPORT_INTERVAL — a fixed 3.0-second cadence, not driven by request completions. A stop-at-N implementation has no choice but to watch that periodic report and, once the target is crossed, call runner.quit(). And runner.quit()'s own docstring says exactly what it does: stop the test and kill all greenlets. Any request a greenlet was mid-flight on at that instant is simply abandoned, uncounted — there's no drain phase, because there's no per-request admission ledger to drain against, only greenlets to kill or not kill."
+
+    term: {
+      word: "poll-then-kill"
+      meaning: "The only mechanism available to stop a Locust run at a specific total-request target: periodically check aggregated stats (every WORKER_REPORT_INTERVAL, 3.0s) and call runner.quit() once crossed, which kills every greenlet immediately rather than draining in-flight requests — because there is no central admission ledger to drain."
+    }
+
+    points: [
+      "Locust core has no built-in stop-at-N-requests feature — no primitive to gate admission against a target count.",
+      "worker_report fires on a fixed WORKER_REPORT_INTERVAL = 3.0s cadence (locust/runners.py), not on request completion.",
+      "Stop-at-N is implemented externally: watch worker_report, call runner.quit() once environment.stats.total.num_requests reaches target.",
+      "Evidence: locust/runners.py — `WORKER_REPORT_INTERVAL = 3.0`; `Runner.quit()` docstring: \"kill all greenlets for the runner\"."
+    ]
+
+    caption: "Poll every 3s, then kill — because no credit ledger exists to drain."
+
+    render: @scene {
+      sdk.Header(
+        id = "s3b-hdr",
+        title = "STOP AT N = POLL THEN KILL",
+        caption = "Poll every 3s, then kill — because no credit ledger exists to drain.",
+        x = 18, y = 16, width = 664, height = 44,
+        surfaceRole = theme(surface.secondary),
+        inkRole = theme(ink.secondary)
+      )
+      sdk.Stepper(
+        id = "s3b-steps",
+        steps = ["greenlets fire freely", "poll stats every 3.0s", "target crossed", "quit() kills all"],
+        linked = true,
+        gap = 14,
+        x = 40, y = 74, width = 600, height = 26
+      )
+      sdk.Panel(
+        id = "s3b-fire",
+        title = "Greenlets",
+        detail = "no per-request check-in",
+        x = 40, y = 130, width = 160, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.secondary)
+      )
+      sdk.Edge(
+        id = "s3b-e1",
+        mode = "connector",
+        from = { nodeId: "s3b-fire", anchor: "e" },
+        to = { nodeId: "s3b-poll", anchor: "w" },
+        style = { stroke: theme(accent.tertiary), strokeWidth: 2 }
+      )
+      sdk.Panel(
+        id = "s3b-poll",
+        title = "worker_report",
+        detail = "every 3.0s (fixed)",
+        x = 240, y = 130, width = 160, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.tertiary)
+      )
+      sdk.Edge(
+        id = "s3b-e2",
+        mode = "connector",
+        from = { nodeId: "s3b-poll", anchor: "e" },
+        to = { nodeId: "s3b-cross", anchor: "w" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2 }
+      )
+      sdk.Panel(
+        id = "s3b-cross",
+        title = "target crossed",
+        detail = "num_requests >= N",
+        x = 440, y = 130, width = 160, height = 80,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Panel(
+        id = "s3b-kill",
+        title = "runner.quit()",
+        detail = "kills every greenlet — no drain",
+        x = 240, y = 250, width = 300, height = 70,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s3b-e3",
+        mode = "route",
+        from = { nodeId: "s3b-cross", anchor: "s" },
+        to = { nodeId: "s3b-kill", anchor: "e" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2.2 }
+      )
+      sdk.Note(
+        id = "s3b-note",
+        text = "In-flight requests killed mid-flight are abandoned, not counted — no admission ledger to drain",
+        x = 60, y = 350, width = 580, height = 30
+      )
+      sdk.Signal(
+        id = "s3b-motion",
+        from = { nodeId: "s3b-fire", anchor: "center" },
+        to = { nodeId: "s3b-kill", anchor: "center" },
+        opacity = 0.45,
+        strokeWidth = 2.2,
+        label = "poll then kill",
+        style = { stroke: theme(accent.warning) }
+      )
+
+      timeline main {
+        at 0 reveal s3b-hdr duration 260
+        after s3b-hdr stagger targets [s3b-steps-step-0, s3b-steps-step-1, s3b-steps-step-2, s3b-steps-step-3] step 70 duration 200
+        after s3b-steps-step-3 reveal s3b-fire duration 260
+        after s3b-fire trace s3b-e1 duration 240
+        after s3b-e1 reveal s3b-poll duration 260
+        after s3b-poll trace s3b-e2 duration 240
+        after s3b-e2 reveal s3b-cross duration 260
+        after s3b-cross trace s3b-e3 duration 260
+        after s3b-e3 reveal s3b-kill duration 260
+        after s3b-kill reveal s3b-note duration 260
+        after s3b-note trace s3b-motion duration 900
+      }
+    }
+  }
+
   slide "AIPerf: the worker process" {
     eyebrow: "AIPerf architecture"
     title: "A worker is a real OS process, not a green thread"
@@ -575,7 +696,8 @@ explainer "AIPerf vs Locust" {
       "Locust: User → greenlet → gevent cooperative scheduler → emergent concurrency.",
       "AIPerf: timing_manager → credit → ZMQ ROUTER-DEALER → worker OS process → enforced concurrency.",
       "Locust scales out via master/worker OS processes; the greenlet model is unchanged inside each.",
-      "AIPerf's workers are always OS processes, from concurrency=1 upward — there's no cooperative-greenlet tier."
+      "AIPerf's workers are always OS processes, from concurrency=1 upward — there's no cooperative-greenlet tier.",
+      "Consequence: AIPerf's credit ledger can gate admission exactly; Locust's stop-at-N is necessarily poll-then-kill."
     ]
 
     caption: "Same goal, different machinery: gevent scheduling vs credit-gated processes."
