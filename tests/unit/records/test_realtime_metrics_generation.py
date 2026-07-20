@@ -19,7 +19,7 @@ from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.records.records_manager_processing import generate_realtime_metrics
 from tests.unit.post_processors.conftest import (
     create_accumulator_with_metrics,
-    create_metric_records_message,
+    create_metric_records_data,
 )
 
 
@@ -99,22 +99,22 @@ async def test_generate_realtime_metrics_excludes_warmup_records(
     no phase mask and averaged the warmup + profiling latencies together."""
     accumulator = create_accumulator_with_metrics(benchmark_run, RequestLatencyMetric)
 
-    warmup = create_metric_records_message(
+    warmup = create_metric_records_data(
         session_num=0,
         benchmark_phase=CreditPhase.WARMUP,
         request_start_ns=1_000_000_000,
         request_end_ns=1_100_000_000,
         results=[{RequestLatencyMetric.tag: 100_000_000.0}],
     )
-    profiling = create_metric_records_message(
+    profiling = create_metric_records_data(
         session_num=0,
         benchmark_phase=CreditPhase.PROFILING,
         request_start_ns=2_000_000_000,
         request_end_ns=2_200_000_000,
         results=[{RequestLatencyMetric.tag: 200_000_000.0}],
     )
-    await accumulator.process_record(warmup.to_data())
-    await accumulator.process_record(profiling.to_data())
+    await accumulator.process_record(warmup)
+    await accumulator.process_record(profiling)
 
     flat = await generate_realtime_metrics([accumulator])
 

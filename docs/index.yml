@@ -27,6 +27,8 @@ navigation:
       path: tutorials/openai-text-endpoints.md
     - page: Profile the OpenAI Responses API with AIPerf
       path: tutorials/openai-responses.md
+    - page: Profile the Anthropic Messages API with AIPerf
+      path: tutorials/anthropic-messages-endpoint.md
     - page: Profile Hugging Face TGI Models with AIPerf
       path: tutorials/huggingface-tgi.md
     - page: Profile Vision Language Models with AIPerf
@@ -185,6 +187,8 @@ navigation:
     path: benchmark-modes/timing-modes-reference.md
   - page: Trace Replay with Mooncake Traces
     path: benchmark-modes/trace-replay.md
+  - page: Baseten Trace Replay
+    path: tutorials/baseten-trace.md
   - page: Conversation DAG Benchmarks
     path: benchmark-modes/dag.md
 

@@ -91,7 +91,7 @@ class TestSampleProcessing:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_network_latency_sample(_sample())
+            await processor.process_record(_sample())
 
         output_file = (
             cfg_probing_enabled.cfg.artifacts.network_latency_export_jsonl_file
@@ -116,9 +116,7 @@ class TestSampleProcessing:
 
         async with aiperf_lifecycle(processor):
             for i in range(5):
-                await processor.process_network_latency_sample(
-                    _sample(rtt_ns=1_000 + i)
-                )
+                await processor.process_record(_sample(rtt_ns=1_000 + i))
 
         output_file = (
             cfg_probing_enabled.cfg.artifacts.network_latency_export_jsonl_file

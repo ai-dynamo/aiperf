@@ -517,7 +517,74 @@ class RecordRoutingMetadata(BaseModel):
             "Record type identifiers this accumulator or stream exporter accepts for routing. "
             "RecordsManager dispatches incoming records to all accumulators and stream exporters "
             "whose record_types include the matching type. "
-            "Values: 'metric_records', 'gpu_telemetry', 'server_metrics'."
+            "Values: 'metric_records', 'gpu_telemetry', 'server_metrics', 'accuracy', "
+            "'network_latency', 'credit_phase_stats'."
+        ),
+    )
+
+
+class RecordProducerMetadata(BaseModel):
+    """Metadata schema for record producer plugins.
+
+    Producers parse a record and emit one typed result on a declared record-type
+    channel. RecordProcessorService groups producer outputs by this declared
+    ``record_type`` (rather than runtime type-sniffing) and routes each group to
+    its dedicated downstream message.
+
+    Referenced by: categories.yaml record_processor.metadata_class
+    Used in: plugins.yaml record_processor entries
+    """
+
+    record_type: str = Field(
+        description="The record_type channel this producer emits onto. Values: "
+        "'metric_records', 'accuracy', 'gpu_telemetry', 'server_metrics', "
+        "'network_latency', 'credit_phase_stats'.",
+    )
+
+
+class AnalyzerMetadata(BaseModel):
+    """Metadata schema for analyzer plugins.
+
+    Analyzers run at summarize time and join across accumulators. They store no
+    records; instead they declare their dependencies by KIND:
+
+    - ``required_accumulators``: needs the LIVE accumulator instance (via
+      ``SummaryContext.get_accumulator``) to run a query not present in the
+      summary — e.g. energy efficiency calls ``GPUTelemetryAccumulator``'s
+      windowed ``total_energy_joules`` / ``total_power_watts``.
+    - ``required_summaries``: needs only the already-computed summary output
+      (via ``SummaryContext.get_output``) — e.g. energy efficiency reads token
+      and duration totals off the metrics accumulator's summary.
+
+    RecordsManager runs an analyzer only when every required accumulator is
+    loaded AND every required summary was produced; otherwise it is skipped
+    (e.g. energy efficiency is skipped when GPU telemetry is disabled).
+
+    Referenced by: categories.yaml analyzer.metadata_class
+    Used in: plugins.yaml analyzer entries
+    """
+
+    required_accumulators: list[str] = Field(
+        default_factory=list,
+        description=(
+            "AccumulatorType names whose LIVE instance this analyzer queries via "
+            "SummaryContext.get_accumulator(). The analyzer is skipped unless all "
+            "are loaded. Values: 'metric_records', 'gpu_telemetry', 'server_metrics', "
+            "'accuracy', 'network_latency'."
+        ),
+    )
+
+    required_summaries: list[str] = Field(
+        default_factory=list,
+        description=(
+            "AccumulatorType names whose SUMMARY output this analyzer reads via "
+            "SummaryContext.get_output(). The analyzer is skipped unless all were "
+            "produced. NOTE: only the 'metric_results' summary is currently "
+            "registered into SummaryContext.accumulator_outputs; side-channel "
+            "accumulators (gpu_telemetry, server_metrics, accuracy, network_latency) "
+            "summarize separately and are NOT available here -- depend on their LIVE "
+            "instance via required_accumulators instead. Declaring one of those in "
+            "required_summaries silently skips the analyzer every run."
         ),
     )
 

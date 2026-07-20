@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import time
 from pathlib import Path
-from typing import Generic
+from typing import ClassVar, Generic
 
 import aiofiles
 import orjson
@@ -33,6 +33,12 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         output_file: Path to the JSONL output file
         lines_written: Number of lines written
     """
+
+    # Field names to exclude from each serialized JSONL line. Subclasses that
+    # write a model carrying a wire-only field (e.g. a RecordData ``record_type``
+    # discriminator needed for ZMQ reconstruction but not wanted on disk) set this
+    # to keep the on-disk output identical to before that field was added.
+    _jsonl_exclude_fields: ClassVar[set[str] | None] = None
 
     def __init__(
         self,
@@ -112,7 +118,13 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             # scrub_non_finite enforces "null on disk = absent" across the
             # JSONL so per-record NaN/inf doesn't masquerade as missing.
             json_bytes = orjson.dumps(
-                scrub_non_finite(record.model_dump(exclude_none=True, mode="json"))
+                scrub_non_finite(
+                    record.model_dump(
+                        exclude_none=True,
+                        mode="json",
+                        exclude=self._jsonl_exclude_fields,
+                    )
+                )
             )
 
             buffer_to_flush = None

@@ -20,6 +20,7 @@
     "AccuracyBenchmarkType": {
       "enum": [
         "mmlu",
+        "mmlu_pro",
         "aime",
         "hellaswag",
         "bigbench",
@@ -151,7 +152,8 @@
         "lighteval_expr",
         "lighteval_latex",
         "lighteval_gpqa",
-        "lighteval_gsm8k"
+        "lighteval_gsm8k",
+        "mmlu_pro"
       ],
       "title": "AccuracyGraderType",
       "type": "string"
@@ -3276,7 +3278,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, directories for random_pool.",
+                  "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, directories for random_pool.",
                   "title": "Path"
                 },
                 "records": {
@@ -3309,7 +3311,7 @@
                 "format": {
                   "$ref": "#/$defs/DatasetFormat",
                   "default": "single_turn",
-                  "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
+                  "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
                 },
                 "sampling": {
                   "$ref": "#/$defs/DatasetSamplingStrategy",
@@ -3326,7 +3328,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Only used with mooncake_trace format."
+                  "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there)."
                 },
                 "entries": {
                   "anyOf": [
@@ -3355,6 +3357,21 @@
                   "description": "Random seed for deterministic sampling. When set, makes random/shuffle sampling reproducible across runs. Overrides global random_seed for this dataset.",
                   "title": "Randomseed"
                 },
+                "traceSessionSampleRatio": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0.0,
+                      "maximum": 1.0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Fraction of trace sessions to keep for replay, sampled whole-session to preserve multi-turn integrity; deterministic when ``random_seed`` is set. Only supported by the baseten_trace loader.",
+                  "title": "Tracesessionsampleratio"
+                },
                 "interTurnDelayCapSeconds": {
                   "anyOf": [
                     {
@@ -3366,8 +3383,60 @@
                     }
                   ],
                   "default": null,
-                  "description": "Clamp per-turn replay delays (read from JSONL trace files) to at most this many seconds. ``None`` disables the cap. Used by the DAG JSONL loader to keep long pre-recorded waits from stalling the benchmark; ``DelayCapTracker`` reports the clamp count at end of load.",
+                  "description": "Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load.",
                   "title": "Interturndelaycapseconds"
+                },
+                "maxIdleGapCapSeconds": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0.0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. The cap is in replay wall-clock seconds, applied after replay_speedup compression, so it bounds actual benchmark idle time regardless of speedup. Only supported by the baseten_trace loader.",
+                  "title": "Maxidlegapcapseconds"
+                },
+                "replaySpeedup": {
+                  "anyOf": [
+                    {
+                      "exclusiveMinimum": 0.0,
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "Trace replay wall-clock compression (10 = 10x faster than recorded): divides normalized timestamps and inter-turn delays; ``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay untouched (KV-cache fidelity). Only supported by the baseten_trace loader.",
+                  "title": "Replayspeedup"
+                },
+                "openLoopReplay": {
+                  "default": true,
+                  "description": "Open-loop replay (the default): each session starts at its absolute, speedup-scaled recorded timestamp; continuation turns fire at max(recorded timestamp, prior-turn completion). Set ``False`` for closed-loop back-pressure: continuation turns fire a think-time (recorded start-to-start gap minus recorded e2e duration) after the prior turn completes, keeping sessions causally ordered when replayed service times differ from recorded (e.g. A/A comparisons). Only honored by the baseten_trace loader.",
+                  "title": "Openloopreplay",
+                  "type": "boolean"
+                },
+                "openLoopStrict": {
+                  "default": false,
+                  "description": "In open-loop replay, fire every trace row at its absolute recorded timestamp as an independent single-turn session, trading away multi-turn grouping and session metrics. Only honored by the baseten_trace loader.",
+                  "title": "Openloopstrict",
+                  "type": "boolean"
+                },
+                "omitKvHints": {
+                  "default": false,
+                  "description": "Drop recorded KV-cache hints (``hash_ids``, ``block_size``) from replayed request bodies, for strict frontends that reject unknown parameters. Only honored by the baseten_trace loader.",
+                  "title": "Omitkvhints",
+                  "type": "boolean"
+                },
+                "forceMinTokens": {
+                  "default": true,
+                  "description": "Pin ``min_tokens`` to the recorded output length so replayed generations match recorded lengths; disable to let EOS end generations naturally (some servers reject ``min_tokens``). Only honored by the baseten_trace loader.",
+                  "title": "Forcemintokens",
+                  "type": "boolean"
                 },
                 "osl": {
                   "anyOf": [
@@ -8736,6 +8805,7 @@
       "enum": [
         "burst_gpt_trace",
         "bailian_trace",
+        "baseten_trace",
         "mooncake_trace",
         "raw_payload",
         "inputs_json",
@@ -9322,6 +9392,7 @@
         "cohere_rankings",
         "completions",
         "responses",
+        "messages",
         "chat_embeddings",
         "embeddings",
         "hf_tei_rankings",
@@ -9366,7 +9437,7 @@
             }
           ],
           "default": null,
-          "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, directories for random_pool.",
+          "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/bailian_trace, Parquet for baseten_trace, directories for random_pool.",
           "title": "Path"
         },
         "records": {
@@ -9399,7 +9470,7 @@
         "format": {
           "$ref": "#/$defs/DatasetFormat",
           "default": "single_turn",
-          "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
+          "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
         },
         "sampling": {
           "$ref": "#/$defs/DatasetSamplingStrategy",
@@ -9416,7 +9487,7 @@
             }
           ],
           "default": null,
-          "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Only used with mooncake_trace format."
+          "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Applies to trace formats such as mooncake_trace and baseten_trace, except speedup_ratio, which is rejected for baseten_trace (use replay_speedup / --replay-speedup to scale replay pacing there)."
         },
         "entries": {
           "anyOf": [
@@ -9467,6 +9538,32 @@
           "title": "Randomseed",
           "x-jinja2-supported": true
         },
+        "traceSessionSampleRatio": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "maximum": 1.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Fraction of trace sessions to keep for replay, sampled whole-session to preserve multi-turn integrity; deterministic when ``random_seed`` is set. Only supported by the baseten_trace loader.",
+          "title": "Tracesessionsampleratio",
+          "x-jinja2-supported": true
+        },
         "interTurnDelayCapSeconds": {
           "anyOf": [
             {
@@ -9488,9 +9585,83 @@
             }
           ],
           "default": null,
-          "description": "Clamp per-turn replay delays (read from JSONL trace files) to at most this many seconds. ``None`` disables the cap. Used by the DAG JSONL loader to keep long pre-recorded waits from stalling the benchmark; ``DelayCapTracker`` reports the clamp count at end of load.",
+          "description": "Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load.",
           "title": "Interturndelaycapseconds",
           "x-jinja2-supported": true
+        },
+        "maxIdleGapCapSeconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. The cap is in replay wall-clock seconds, applied after replay_speedup compression, so it bounds actual benchmark idle time regardless of speedup. Only supported by the baseten_trace loader.",
+          "title": "Maxidlegapcapseconds",
+          "x-jinja2-supported": true
+        },
+        "replaySpeedup": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Trace replay wall-clock compression (10 = 10x faster than recorded): divides normalized timestamps and inter-turn delays; ``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay untouched (KV-cache fidelity). Only supported by the baseten_trace loader.",
+          "title": "Replayspeedup",
+          "x-jinja2-supported": true
+        },
+        "openLoopReplay": {
+          "default": true,
+          "description": "Open-loop replay (the default): each session starts at its absolute, speedup-scaled recorded timestamp; continuation turns fire at max(recorded timestamp, prior-turn completion). Set ``False`` for closed-loop back-pressure: continuation turns fire a think-time (recorded start-to-start gap minus recorded e2e duration) after the prior turn completes, keeping sessions causally ordered when replayed service times differ from recorded (e.g. A/A comparisons). Only honored by the baseten_trace loader.",
+          "title": "Openloopreplay",
+          "type": "boolean"
+        },
+        "openLoopStrict": {
+          "default": false,
+          "description": "In open-loop replay, fire every trace row at its absolute recorded timestamp as an independent single-turn session, trading away multi-turn grouping and session metrics. Only honored by the baseten_trace loader.",
+          "title": "Openloopstrict",
+          "type": "boolean"
+        },
+        "omitKvHints": {
+          "default": false,
+          "description": "Drop recorded KV-cache hints (``hash_ids``, ``block_size``) from replayed request bodies, for strict frontends that reject unknown parameters. Only honored by the baseten_trace loader.",
+          "title": "Omitkvhints",
+          "type": "boolean"
+        },
+        "forceMinTokens": {
+          "default": true,
+          "description": "Pin ``min_tokens`` to the recorded output length so replayed generations match recorded lengths; disable to let EOS end generations naturally (some servers reject ``min_tokens``). Only honored by the baseten_trace loader.",
+          "title": "Forcemintokens",
+          "type": "boolean"
         },
         "osl": {
           "anyOf": [
