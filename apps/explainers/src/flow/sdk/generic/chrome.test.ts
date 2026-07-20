@@ -78,6 +78,29 @@ describe("sdk.note chrome factory", () => {
   });
 });
 
+describe("sdk.panel and sdk.chip managed-layout escape hatch", () => {
+  it.each([
+    ["sdk.panel", { id: "panel", title: "Panel" }],
+    ["sdk.chip", { id: "chip", label: "Chip" }],
+  ] as const)(
+    "preserves absolute geometry for %s inside a managed container",
+    (componentId, props) => {
+      const definition = createSdkRegistry().lookup(componentId)!;
+      const result = expandSdkInvocation(
+        definition,
+        { ...props, style: { position: "absolute" } },
+        {},
+        context(props.id),
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.roots[0]?.style?.position).toBe("absolute");
+      }
+    },
+  );
+});
+
 describe("sdk.bracket chrome factory", () => {
   it.each([
     { side: "left", start: "ne", end: "se" },

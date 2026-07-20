@@ -23,6 +23,11 @@ import {
   type CurveRouteResult,
   type RouteObstacle,
 } from "../../core/diagram/connector-routing.js";
+import {
+  capabilityOf as sceneCapabilityOf,
+  isMotionSignalNode as sceneIsMotionSignalNode,
+} from "../../core/diagram/node-classification.js";
+import type { SceneNodeLike } from "../../core/diagram/scene-types.js";
 
 /** Resolve one authored scene once for browser-side geometry verification. */
 export function resolveSceneForGeometryVerification(
@@ -95,12 +100,6 @@ const ARROW_KINDS = new Set([
 const DOT_CAPS = new Set(["core.dot", "core.circle"]);
 const DOT_KINDS = new Set(["dot", "circle"]);
 const BOX_CAPS = new Set(["core.rect", "core.text"]);
-const MOTION_CAPS = new Set([
-  "motion.signal",
-  "motion.dot",
-  "core.motion",
-  "motion.motion-signal",
-]);
 
 function record(value: unknown): UnknownRecord {
   return typeof value === "object" && value !== null
@@ -113,26 +112,11 @@ function styleOf(node: unknown): UnknownRecord {
 }
 
 /**
- * Returns a node's canonical or authoring-alias capability, mirroring
- * SceneRenderer's three-tier resolution: `capabilityId`, then `capability`,
- * then a `core.${kind}` fallback so kind-only nodes (no explicit capability
- * authored yet) still classify correctly instead of resolving to `""`.
+ * Returns a node's canonical or authoring-alias capability via shared
+ * `node-classification.ts` resolution.
  */
 export function capabilityOf(node: unknown): string {
-  const value = record(node);
-  if (
-    typeof value.capabilityId === "string" &&
-    value.capabilityId.length > 0
-  ) {
-    return value.capabilityId;
-  }
-  if (typeof value.capability === "string" && value.capability.length > 0) {
-    return value.capability;
-  }
-  if (typeof value.kind === "string" && value.kind.length > 0) {
-    return `core.${value.kind}`;
-  }
-  return "";
+  return sceneCapabilityOf(node as SceneNodeLike);
 }
 
 /** Returns a node's structural kind. */
@@ -156,30 +140,10 @@ export function isFanNode(node: unknown): boolean {
 }
 
 /**
- * Mirror SceneRenderer motion-signal classification so guide strokes are not
- * treated as orphan connectors. Dots are never motion guides.
+ * Motion-signal classification via shared `node-classification.ts`.
  */
 export function isMotionSignalNode(node: unknown): boolean {
-  if (isDotLike(node)) return false;
-  const capability = capabilityOf(node);
-  if (MOTION_CAPS.has(capability)) return true;
-  const value = record(node);
-  const id = String(value.id ?? "");
-  if (/motion[-_]?sig/i.test(id) || /^motion\d+$/i.test(id)) return true;
-  if (/motion/i.test(id) && isArrowLike(node)) return true;
-  const label = String(record(value.accessibility).label ?? "").toLowerCase();
-  if (label.includes("motion signal")) return true;
-  const style = styleOf(node);
-  const motion = style.motion;
-  const role = style.role;
-  return (
-    motion === true ||
-    motion === 1 ||
-    motion === "signal" ||
-    motion === "dot" ||
-    role === "motion" ||
-    role === "motion-signal"
-  );
+  return sceneIsMotionSignalNode(node as SceneNodeLike);
 }
 
 /** True when the author disabled arrowheads (undirected divider / guide). */
@@ -229,14 +193,6 @@ export function isMotionCompanionDot(node: unknown): boolean {
   if (role === "motion-signal" || role === "motion-dot") return true;
   const id = String(record(node).id ?? "");
   return /motion[-_]?sig/i.test(id) && /-dot$/i.test(id);
-}
-
-/** Id of the motion path a companion dot is paired with (`…-dot` → stem). */
-export function motionCompanionPathId(dotId: unknown): string | null {
-  const id = String(dotId ?? "");
-  const match = /^(.*)-dot$/i.exec(id);
-  if (!match || !/motion[-_]?sig/i.test(match[1])) return null;
-  return match[1];
 }
 
 /** Static legend chips are exempt from orphan-dot proximity checks. */

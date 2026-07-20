@@ -31,14 +31,13 @@ const MOTION_CAPS = new Set([
   "motion.signal",
   "motion.dot",
   "core.motion",
+  "core.motion-signal",
   "motion.motion-signal",
 ]);
 
 /**
  * Returns a node's canonical or authoring-alias capability, mirroring
- * SceneRenderer's three-tier resolution: `capabilityId`, then `capability`,
- * then a `core.${kind}` fallback so kind-only nodes (no explicit capability
- * authored yet) still classify correctly instead of resolving to `""`.
+ * `node-classification.ts` three-tier resolution.
  */
 export function capabilityOf(node) {
   if (typeof node?.capabilityId === "string" && node.capabilityId.length > 0) {
@@ -69,7 +68,7 @@ export function isFanNode(node) {
 }
 
 /**
- * Mirror SceneRenderer motion-signal classification so guide strokes are not
+ * Mirror `node-classification.ts` motion-signal classification so guide strokes are not
  * treated as orphan connectors. Dots are never motion guides.
  */
 export function isMotionSignalNode(node) {
@@ -112,14 +111,6 @@ export function isMotionCompanionDot(node) {
   if (role === "motion-signal" || role === "motion-dot") return true;
   const id = String(node?.id ?? "");
   return /motion[-_]?sig/i.test(id) && /-dot$/i.test(id);
-}
-
-/** Id of the motion path a companion dot is paired with (`…-dot` → stem). */
-export function motionCompanionPathId(dotId) {
-  const id = String(dotId ?? "");
-  const m = /^(.*)-dot$/i.exec(id);
-  if (!m || !/motion[-_]?sig/i.test(m[1])) return null;
-  return m[1];
 }
 
 /** Static legend chips: skip orphan-dot proximity. */
@@ -274,6 +265,16 @@ export function pathPoints(pathData) {
     }
   }
   return points;
+}
+
+/** True when parsed path endpoints coincide within tolerance (zero-length edge). */
+export function pathEndpointsCoincident(points, tolerance = 0.5) {
+  if (!Array.isArray(points) || points.length < 2) {
+    return true;
+  }
+  const first = points[0];
+  const last = points[points.length - 1];
+  return Math.hypot(first.x - last.x, first.y - last.y) <= tolerance;
 }
 
 function normalizeVector(vector) {
@@ -780,6 +781,8 @@ function readPreferredSide(record, key) {
   }
 }
 
+// Retained for `verifyAdvancedCurveRouting` in `ir.mjs`: a deck-independent
+// synthetic matrix that asserts router determinism without a resolved snapshot.
 export function normalizeCurveRouteOptions(style) {
   const clearanceRaw = readNumber(style, "clearance");
   const curvatureRaw = readNumber(style, "curvature");
@@ -811,10 +814,27 @@ function segmentBoundsPoints(start, segments) {
   return points;
 }
 
-function penetratedIds(segments, obstacles) {
+/**
+ * Obstacles widened by `clearance` for post-smoothing penetration checks, with
+ * each inflated rectangle shrunk away from the route's own `start`/`end`.
+ * Mirror of `inflateForPenetrationCheck` in connector-routing-search.ts.
+ */
+function inflateForPenetrationCheck(obstacles, clearance, start, end) {
+  return obstacles.flatMap((obstacle) => {
+    let bounds = inflateBounds(obstacle.bounds, clearance);
+    bounds = shrinkBoundsToExcludePoint(bounds, start);
+    bounds = shrinkBoundsToExcludePoint(bounds, end);
+    if (bounds.width <= 0 || bounds.height <= 0) return [];
+    return [{ id: obstacle.id, bounds }];
+  });
+}
+
+/** Mirror of `penetratedIds` in connector-routing-search.ts. */
+function penetratedIds(segments, obstacles, clearance, start, end) {
+  const inflated = inflateForPenetrationCheck(obstacles, clearance, start, end);
   const hits = new Set();
   for (const segment of segments) {
-    for (const id of cubicPenetrations(segment, obstacles)) hits.add(id);
+    for (const id of cubicPenetrations(segment, inflated)) hits.add(id);
   }
   return [...hits].sort((a, b) => a.localeCompare(b));
 }
@@ -844,6 +864,15 @@ function applyLaneOffset(points, offset) {
   return shifted;
 }
 
+/** Perimeter loop side order used when the author has no side preference. */
+const SELF_LOOP_SIDE_ORDER = ["n", "e", "s", "w"];
+
+/**
+ * Perimeter loop candidates for a self-edge. Mirror of `selfLoopCandidates`
+ * in connector-routing-search.ts: `preferredSide` moves the matching side to
+ * the front of the candidate list instead of filtering, so an obstructed
+ * preferred side still falls through to the remaining sides in order.
+ */
 function selfLoopCandidates(input) {
   const bounds = input.sourceBounds ?? input.targetBounds;
   if (bounds === undefined) return [];
@@ -854,21 +883,36 @@ function selfLoopCandidates(input) {
   const right = bounds.x + bounds.width + gap;
   const top = bounds.y - gap;
   const bottom = bounds.y + bounds.height + gap;
-  return [
-    [start, { x: start.x, y: top }, { x: end.x, y: top }, end],
-    [start, { x: right, y: start.y }, { x: right, y: end.y }, end],
-    [start, { x: start.x, y: bottom }, { x: end.x, y: bottom }, end],
-    [start, { x: left, y: start.y }, { x: left, y: end.y }, end],
-  ];
+  const bySide = {
+    n: [start, { x: start.x, y: top }, { x: end.x, y: top }, end],
+    e: [start, { x: right, y: start.y }, { x: right, y: end.y }, end],
+    s: [start, { x: start.x, y: bottom }, { x: end.x, y: bottom }, end],
+    w: [start, { x: left, y: start.y }, { x: left, y: end.y }, end],
+  };
+  const preferred = input.options.preferredSide;
+  const order =
+    preferred === "auto" || !(preferred in bySide)
+      ? SELF_LOOP_SIDE_ORDER
+      : [preferred, ...SELF_LOOP_SIDE_ORDER.filter((side) => side !== preferred)];
+  return order.map((side) => bySide[side]);
 }
 
-function renderPolyline(waypoints, fromDir, toDir, obstacles, curvature) {
+/**
+ * Smooth a polyline down the curvature ladder, keeping the least-penetrating
+ * result. Mirror of `renderPolyline` in connector-routing-search.ts: penetration
+ * is checked against obstacles inflated by `clearance` so a curve that bows into
+ * the buffer zone (without touching the true obstacle rectangle) still triggers
+ * a retry instead of being reported as clean.
+ */
+function renderPolyline(waypoints, fromDir, toDir, obstacles, curvature, clearance) {
+  const start = waypoints[0];
+  const end = waypoints[waypoints.length - 1];
   let bestSegments = smoothPolyline(waypoints, fromDir, toDir, curvature);
-  let bestPenetrations = penetratedIds(bestSegments, obstacles);
+  let bestPenetrations = penetratedIds(bestSegments, obstacles, clearance, start, end);
   if (bestPenetrations.length > 0) {
     for (const factor of CURVATURE_LADDER) {
       const candidate = smoothPolyline(waypoints, fromDir, toDir, Math.max(curvature * factor, 0.02));
-      const penetrations = penetratedIds(candidate, obstacles);
+      const penetrations = penetratedIds(candidate, obstacles, clearance, start, end);
       if (penetrations.length < bestPenetrations.length) {
         bestSegments = candidate;
         bestPenetrations = penetrations;
@@ -900,7 +944,7 @@ export function routeCurve(input) {
     let bestLoop;
     let bestLoopWaypoints;
     for (const candidate of candidates) {
-      const rendered = renderPolyline(candidate, fromDir, toDir, obstacles, options.curvature);
+      const rendered = renderPolyline(candidate, fromDir, toDir, obstacles, options.curvature, options.clearance);
       if (rendered.penetrations.length === 0) {
         bestLoop = rendered;
         bestLoopWaypoints = candidate;
@@ -929,13 +973,20 @@ export function routeCurve(input) {
     feasible = resolved.feasible;
   }
 
-  let best = renderPolyline(waypoints, fromDir, toDir, obstacles, options.curvature);
+  let best = renderPolyline(waypoints, fromDir, toDir, obstacles, options.curvature, options.clearance);
   let bestWaypoints = waypoints;
   const laneOffset = input.laneOffset ?? 0;
   if (laneOffset !== 0) {
     for (const factor of LANE_OFFSET_LADDER) {
       const offsetWaypoints = applyLaneOffset(waypoints, laneOffset * factor);
-      const rendered = renderPolyline(offsetWaypoints, fromDir, toDir, obstacles, options.curvature);
+      const rendered = renderPolyline(
+        offsetWaypoints,
+        fromDir,
+        toDir,
+        obstacles,
+        options.curvature,
+        options.clearance,
+      );
       if (rendered.penetrations.length <= best.penetrations.length) {
         best = rendered;
         bestWaypoints = offsetWaypoints;

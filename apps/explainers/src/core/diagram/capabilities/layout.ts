@@ -225,11 +225,12 @@ function managedDiagnostics(
   const overflowing = geometries
     .map((geometry, index) => ({ geometry, child: children[index] }))
     .filter(
-      ({ geometry }) =>
-        geometry.x < contentBounds.x ||
-        geometry.y < contentBounds.y ||
-        geometry.x + geometry.width > contentBounds.x + contentBounds.width ||
-        geometry.y + geometry.height > contentBounds.y + contentBounds.height,
+      ({ geometry, child }) =>
+        !isAbsolute(child!) &&
+        (geometry.x < contentBounds.x ||
+          geometry.y < contentBounds.y ||
+          geometry.x + geometry.width > contentBounds.x + contentBounds.width ||
+          geometry.y + geometry.height > contentBounds.y + contentBounds.height),
     )
     .map(({ child }) => child?.id)
     .filter((id): id is string => id !== undefined);

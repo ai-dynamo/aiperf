@@ -54,7 +54,7 @@ explainer "Dynosim" {
         id = "s0-modes",
         direction = "row",
         gap = 16,
-        x = 80, y = 78, width = 540, height = 22
+        x = 80, y = 86, width = 540, height = 22
       ) {
         children {
           sdk.Chip(
@@ -128,7 +128,7 @@ explainer "Dynosim" {
       sdk.Callout(
         id = "s0-callout",
         text = "no socket I/O",
-        x = 300, y = 70, width = 110, height = 22,
+        x = 300, y = 88, width = 110, height = 22,
         target = { x: 355, y: 130 },
         strokeRole = theme(accent.secondary)
       )

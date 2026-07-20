@@ -11,7 +11,7 @@ import type { SceneIrLike } from "../scene-types.js";
 import { resolveScene } from "./resolve-scene.js";
 
 describe("resolved scene final validation", () => {
-  it("ignores decorative bands but reports overlapping content siblings", () => {
+  it("ignores decorative bands and brackets but reports overlapping content siblings", () => {
     const scene: SceneIrLike = {
       viewport: { width: 200, height: 100 },
       roots: [
@@ -27,6 +27,20 @@ describe("resolved scene final validation", () => {
           kind: "group",
           capabilityId: "core.chip",
           geometry: { x: 20, y: 20, width: 80, height: 20 },
+          children: [],
+        },
+        {
+          id: "bracket",
+          kind: "path",
+          capabilityId: "core.bracket",
+          geometry: { x: 100, y: 10, width: 60, height: 30 },
+          children: [],
+        },
+        {
+          id: "bracket-panel",
+          kind: "rect",
+          capabilityId: "core.panel",
+          geometry: { x: 120, y: 20, width: 50, height: 20 },
           children: [],
         },
         {
@@ -53,6 +67,9 @@ describe("resolved scene final validation", () => {
 
     expect(overlaps).not.toContainEqual(
       expect.objectContaining({ nodeIds: ["band", "band-chip"] }),
+    );
+    expect(overlaps).not.toContainEqual(
+      expect.objectContaining({ nodeIds: ["bracket", "bracket-panel"] }),
     );
     expect(overlaps).toContainEqual(
       expect.objectContaining({ nodeIds: ["first-chip", "second-chip"] }),

@@ -6,6 +6,7 @@
 //! JSON-safe serialization of canonical resolved scenes for verifier consumers.
 
 import type { SceneNodeLike } from "../scene-types.js";
+import { capabilityOf as nodeCapabilityOf } from "../node-classification.js";
 import type {
   ResolvedGeneratedPart,
   ResolvedScene,
@@ -15,7 +16,7 @@ import type {
 const DEFAULT_VIEWPORT = Object.freeze({ width: 700, height: 400 });
 
 function capabilityOf(node: SceneNodeLike): string {
-  return node.capabilityId ?? node.capability ?? node.kind ?? "";
+  return nodeCapabilityOf(node);
 }
 
 /**

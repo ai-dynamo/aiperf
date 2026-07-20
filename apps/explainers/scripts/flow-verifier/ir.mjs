@@ -17,6 +17,7 @@ import {
   isMotionSignalNode,
   nodeIds,
   normalizeCurveRouteOptions,
+  pathEndpointsCoincident,
   pathPoints,
   routeCurve,
   timelineDurationMs,
@@ -521,14 +522,14 @@ function verifySceneIr(deck, slideLabel, scene, options, findings) {
           continue;
         }
         const pts = pathPoints(path);
-        if (pts.length < 2) {
+        if (pts.length < 2 || pathEndpointsCoincident(pts)) {
           findings.push(
             finding(
               "error",
               deck,
               slideLabel,
               "arrow-degenerate-path",
-              `arrow/path node "${id}" path does not yield endpoints`,
+              `arrow/path node "${id}" path does not yield distinct endpoints`,
             ),
           );
           continue;

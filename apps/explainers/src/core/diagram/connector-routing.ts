@@ -199,6 +199,31 @@ function samePoint(a: Point2, b: Point2): boolean {
   return Math.abs(a.x - b.x) <= 1e-6 && Math.abs(a.y - b.y) <= 1e-6;
 }
 
+/**
+ * Axis a vector points along predominantly. Used for corner/soft anchors
+ * (whose exit direction is diagonal or peer-relative) so escape stubs bend
+ * perpendicular to the leg that actually dominates travel instead of
+ * defaulting to a fixed axis.
+ */
+function dominantAxis(vector: Point2): "x" | "y" {
+  return Math.abs(vector.x) >= Math.abs(vector.y) ? "x" : "y";
+}
+
+/**
+ * Snaps a possibly-diagonal exit direction to the cardinal direction along
+ * its dominant axis, preserving sign. Escape stubs feed directly into
+ * H/V-only elbow segments, so a corner or soft anchor's genuinely diagonal
+ * exit vector (from `anchorExitDirection`) must be reduced to one axis
+ * before it is used to build a stub — otherwise the stub's own endpoint is
+ * off-axis from the anchor and produces a segment `elbowPathFromPoints`
+ * cannot represent as pure H/V.
+ */
+function dominantCardinalDirection(direction: Point2): Point2 {
+  return dominantAxis(direction) === "x"
+    ? { x: direction.x >= 0 ? 1 : -1, y: 0 }
+    : { x: 0, y: direction.y >= 0 ? 1 : -1 };
+}
+
 /** Deterministic offset used to keep a same-axis elbow bend from collapsing. */
 const SAME_AXIS_ELBOW_OFFSET = 24;
 
@@ -312,7 +337,11 @@ function resolveElbowEscapeStub(
   if (!segmentBlocked(anchor, direct)) {
     return [direct];
   }
-  const horizontal = direction.x !== 0;
+  // Bend perpendicular to whichever axis dominates travel, not merely
+  // whichever component is nonzero — corner/soft anchors exit diagonally,
+  // so `direction.x !== 0` would misclassify a mostly-vertical escape as
+  // horizontal and bend along the wrong axis.
+  const horizontal = dominantAxis(direction) === "x";
   const blockers = inflated.filter(
     (obstacle) =>
       pointInBounds(direct, obstacle.bounds, true) ||
@@ -384,14 +413,44 @@ function unionBounds(boxes: readonly RouteObstacle[]): Bounds2 | undefined {
 }
 
 /**
- * Best-effort rectilinear detour around the combined footprint of every
- * obstacle. Used only as a last resort when the deterministic grid search
- * cannot find a route at all, so a search abort never silently falls back to
- * a straight path that cuts through the blocker. Tries clearing over the
- * top, under the bottom, and past either side of the union bounds and keeps
- * the first candidate whose legs cross no obstacle.
+ * One rectilinear clear line strictly outside a union bounds rectangle: an
+ * axis, the cardinal direction that reaches it from inside, and the
+ * coordinate value of the line itself. Any point that lies on this line sits
+ * outside every obstacle folded into the union, so a straight leg between two
+ * such points — regardless of their other coordinate — can never cross an
+ * obstacle.
  */
-function detourAroundObstacles(
+type ClearLine = Readonly<{ axis: "x" | "y"; direction: Point2; value: number }>;
+
+function clearLinesAround(union: Bounds2): readonly ClearLine[] {
+  const margin = 1;
+  return [
+    { axis: "y", direction: { x: 0, y: -1 }, value: roundCanonical(union.y - margin) },
+    {
+      axis: "y",
+      direction: { x: 0, y: 1 },
+      value: roundCanonical(union.y + union.height + margin),
+    },
+    { axis: "x", direction: { x: -1, y: 0 }, value: roundCanonical(union.x - margin) },
+    {
+      axis: "x",
+      direction: { x: 1, y: 0 },
+      value: roundCanonical(union.x + union.width + margin),
+    },
+  ];
+}
+
+/**
+ * Rectilinear detour around the combined footprint of every obstacle,
+ * against one particular (already inflated) obstacle set. Tries the plain
+ * 4-point U through each clear line first; when a leg of every U still
+ * crosses some other obstacle (e.g. one sits directly above `start` on the
+ * "top" candidate), falls back to escaping `start` and `end` toward the same
+ * clear line independently — each escape may bend once around a blocker,
+ * mirroring `resolveElbowEscapeStub` — then connecting straight across the
+ * line itself, which by construction cannot cross any obstacle in this set.
+ */
+function detourAroundObstaclesAt(
   start: Point2,
   end: Point2,
   inflated: readonly RouteObstacle[],
@@ -400,23 +459,61 @@ function detourAroundObstacles(
   if (union === undefined) {
     return undefined;
   }
-  const margin = 1;
-  const top = roundCanonical(union.y - margin);
-  const bottom = roundCanonical(union.y + union.height + margin);
-  const left = roundCanonical(union.x - margin);
-  const right = roundCanonical(union.x + union.width + margin);
-  const candidates: readonly Point2[][] = [
-    [start, { x: start.x, y: top }, { x: end.x, y: top }, end],
-    [start, { x: start.x, y: bottom }, { x: end.x, y: bottom }, end],
-    [start, { x: left, y: start.y }, { x: left, y: end.y }, end],
-    [start, { x: right, y: start.y }, { x: right, y: end.y }, end],
-  ];
-  for (const candidate of candidates) {
+  const lines = clearLinesAround(union);
+  for (const line of lines) {
+    const candidate: Point2[] =
+      line.axis === "y"
+        ? [start, { x: start.x, y: line.value }, { x: end.x, y: line.value }, end]
+        : [start, { x: line.value, y: start.y }, { x: line.value, y: end.y }, end];
+    if (orthogonalSegmentsVisible(candidate, inflated)) {
+      return candidate;
+    }
+  }
+  for (const line of lines) {
+    const startDistance =
+      line.axis === "y" ? Math.abs(start.y - line.value) : Math.abs(start.x - line.value);
+    const endDistance =
+      line.axis === "y" ? Math.abs(end.y - line.value) : Math.abs(end.x - line.value);
+    const startStub = resolveElbowEscapeStub(start, line.direction, startDistance, inflated);
+    const endStub = resolveElbowEscapeStub(end, line.direction, endDistance, inflated);
+    if (startStub === undefined || endStub === undefined) {
+      continue;
+    }
+    const raw = [start, ...startStub, ...[...endStub].reverse(), end];
+    const candidate = raw.filter(
+      (point, index) => index === 0 || !samePoint(point, raw[index - 1]!),
+    );
     if (orthogonalSegmentsVisible(candidate, inflated)) {
       return candidate;
     }
   }
   return undefined;
+}
+
+/**
+ * Best-effort rectilinear detour around every obstacle. Used only as a last
+ * resort when the deterministic grid search cannot find a route at all, so a
+ * search abort never silently falls back to a straight path that cuts
+ * through a blocker. Retries against the clearance-relaxed (true-bounds)
+ * obstacle set when the halo-inflated set leaves no room to maneuver, so the
+ * result is always checked against — and guaranteed clear of — at least the
+ * real obstacle geometry even in that fallback.
+ */
+function detourAroundObstacles(
+  start: Point2,
+  end: Point2,
+  obstacles: readonly RouteObstacle[],
+  clearance: number,
+): readonly Point2[] | undefined {
+  const primary = detourAroundObstaclesAt(
+    start,
+    end,
+    inflateElbowObstacles(obstacles, clearance, start, end),
+  );
+  if (primary !== undefined) {
+    return primary;
+  }
+  return detourAroundObstaclesAt(start, end, inflateElbowObstacles(obstacles, 0, start, end));
 }
 
 /**
@@ -435,8 +532,11 @@ function obstacleAwareElbowPoints(
 ): readonly Point2[] | undefined {
   const pad = Number.isFinite(clearance) ? Math.max(clearance, 0) : 12;
   const inflated = inflateElbowObstacles(obstacles, pad, start, end);
-  const sourceDirection = anchorExitDirection(fromAnchor, end, start);
-  const targetDirection = anchorExitDirection(toAnchor, start, end);
+  // Corner/soft anchors exit diagonally; cardinalize to the dominant axis so
+  // every escape stub — and the segment from `start`/`end` into it — stays
+  // orthogonal (see `dominantCardinalDirection`).
+  const sourceDirection = dominantCardinalDirection(anchorExitDirection(fromAnchor, end, start));
+  const targetDirection = dominantCardinalDirection(anchorExitDirection(toAnchor, start, end));
   const escape = Math.max(pad, 1);
   const sourceStub = resolveElbowEscapeStub(start, sourceDirection, escape, inflated);
   const targetStub = resolveElbowEscapeStub(end, targetDirection, escape, inflated);
@@ -515,7 +615,10 @@ function obstacleAwareElbowPoints(
 
   type SearchState = Readonly<{ index: number; axis: "x" | "y" }>;
   const stateKey = (state: SearchState): string => `${state.index}:${state.axis}`;
-  const sourceArrivalAxis = elbowStubArrivalAxis(sourceStub, cardinalAnchorAxis(fromAnchor) ?? "x");
+  // Fall back to the exit direction's dominant axis, not a hardcoded "x" —
+  // corner/soft anchors have no cardinal axis but still travel predominantly
+  // along one of the two when the escape stub landed with a single point.
+  const sourceArrivalAxis = elbowStubArrivalAxis(sourceStub, dominantAxis(sourceDirection));
   const startState: SearchState = { index: sourceIndex, axis: sourceArrivalAxis };
   const distances = new Map<string, number>([[stateKey(startState), 0]]);
   const previous = new Map<string, string>();
@@ -584,11 +687,45 @@ function obstacleAwareElbowPoints(
 }
 
 /**
+ * Ordered vertices of the authored `via`-corridor elbow: the terminal legs
+ * are perpendicular to cardinal component anchors when either end has one,
+ * mirroring `defaultElbowPoints`; otherwise the first leg follows `preferX`.
+ */
+function viaElbowPoints(
+  start: Point2,
+  end: Point2,
+  via: Point2,
+  sourceAxis: "x" | "y" | undefined,
+  targetAxis: "x" | "y" | undefined,
+  preferX: boolean,
+): readonly Point2[] {
+  if (sourceAxis !== undefined || targetAxis !== undefined) {
+    const firstAxis = sourceAxis ?? (preferX ? "x" : "y");
+    const lastAxis = targetAxis ?? (firstAxis === "x" ? "y" : "x");
+    const firstJoin = firstAxis === "x" ? { x: via.x, y: start.y } : { x: start.x, y: via.y };
+    const lastJoin = lastAxis === "x" ? { x: via.x, y: end.y } : { x: end.x, y: via.y };
+    return [start, firstJoin, via, lastJoin, end];
+  }
+  if (preferX) {
+    return [start, { x: via.x, y: start.y }, via, { x: end.x, y: via.y }, end];
+  }
+  return [start, { x: start.x, y: via.y }, via, { x: via.x, y: end.y }, end];
+}
+
+/**
  * Orthogonal elbow path whose terminal legs are perpendicular to cardinal
  * component anchors. This keeps intermediate legs away from running directly
  * along a component side. `via` supplies an authored corridor coordinate;
  * otherwise the corridor is centered between endpoints. `axis` remains the
  * fallback first-segment preference for soft or corner anchors.
+ *
+ * When `obstacles` is non-empty, avoidance is mandatory: the candidate path
+ * (the `via` corridor if authored, otherwise the direct elbow) is only used
+ * once it is confirmed clear of every obstacle's clearance halo. A blocked
+ * `via` is dropped — an authored corridor is a hint, not permission to cut
+ * through a blocker — and every blocked candidate defers to the deterministic
+ * grid search, then to a guaranteed-clear detour around the obstacles' union
+ * footprint. The obstructed candidate itself is never returned.
  */
 export function elbowPathData(
   start: Point2,
@@ -610,56 +747,50 @@ export function elbowPathData(
     (sourceAxis === undefined &&
       targetAxis === undefined &&
       (axis === "x" || (axis !== "y" && dx >= dy)));
-  if (
-    via === undefined &&
-    sourceAxis !== undefined &&
-    targetAxis !== undefined &&
-    obstacles.length > 0
-  ) {
-    const inflated = inflateElbowObstacles(obstacles, clearance, start, end);
-    const direct = defaultElbowPoints(start, end, preferX, sourceAxis, targetAxis);
-    if (!orthogonalSegmentsVisible(direct, inflated)) {
-      const routed = obstacleAwareElbowPoints(
-        start,
-        end,
-        fromAnchor!,
-        toAnchor!,
-        obstacles,
-        clearance,
-      );
-      if (routed !== undefined) {
-        return elbowPathFromPoints(routed);
-      }
-      // The deterministic grid search found no obstacle-free route (e.g. an
-      // escape stub could not clear a blocker even after bending). Never
-      // fall through to the obstructed `direct` path below: detour around
-      // every obstacle's combined footprint as a best-effort last resort.
-      const detour = detourAroundObstacles(start, end, inflated);
-      if (detour !== undefined) {
-        return elbowPathFromPoints(detour);
-      }
-    }
-  }
+
+  const avoiding = obstacles.length > 0;
+  const inflated = avoiding ? inflateElbowObstacles(obstacles, clearance, start, end) : [];
+
   if (via !== undefined) {
-    if (sourceAxis !== undefined || targetAxis !== undefined) {
-      const firstAxis = sourceAxis ?? (preferX ? "x" : "y");
-      const lastAxis = targetAxis ?? (firstAxis === "x" ? "y" : "x");
-      const firstJoin =
-        firstAxis === "x"
-          ? { x: via.x, y: start.y }
-          : { x: start.x, y: via.y };
-      const lastJoin =
-        lastAxis === "x"
-          ? { x: via.x, y: end.y }
-          : { x: end.x, y: via.y };
-      return elbowPathFromPoints([start, firstJoin, via, lastJoin, end]);
+    const viaPoints = viaElbowPoints(start, end, via, sourceAxis, targetAxis, preferX);
+    if (!avoiding || orthogonalSegmentsVisible(viaPoints, inflated)) {
+      return elbowPathFromPoints(viaPoints);
     }
-    if (preferX) {
-      return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} H${formatPathNumber(via.x)} V${formatPathNumber(via.y)} H${formatPathNumber(end.x)} V${formatPathNumber(end.y)}`;
-    }
-    return `M${formatPathNumber(start.x)} ${formatPathNumber(start.y)} V${formatPathNumber(via.y)} H${formatPathNumber(via.x)} V${formatPathNumber(end.y)} H${formatPathNumber(end.x)}`;
+    // The authored corridor cuts through an obstacle's clearance halo: drop
+    // it and fall through to the same obstacle-aware search used below for
+    // via-less routes, rather than silently routing through the blocker.
   }
-  return elbowPathFromPoints(defaultElbowPoints(start, end, preferX, sourceAxis, targetAxis));
+
+  const direct = defaultElbowPoints(start, end, preferX, sourceAxis, targetAxis);
+  if (!avoiding || orthogonalSegmentsVisible(direct, inflated)) {
+    return elbowPathFromPoints(direct);
+  }
+
+  // Corner/soft anchors have no cardinal axis but still exit along a real
+  // direction; `obstacleAwareElbowPoints` and its escape stubs derive
+  // bend axes from that direction (see `dominantAxis`), so the search runs
+  // regardless of whether either anchor is cardinal.
+  const routed = obstacleAwareElbowPoints(
+    start,
+    end,
+    fromAnchor ?? "center",
+    toAnchor ?? "center",
+    obstacles,
+    clearance,
+  );
+  if (routed !== undefined) {
+    return elbowPathFromPoints(routed);
+  }
+  // The deterministic grid search found no obstacle-free route (e.g. an
+  // escape stub could not clear a blocker even after bending). Never fall
+  // through to the obstructed `direct` path above: detour around every
+  // obstacle's combined footprint instead, which always succeeds short of an
+  // endpoint being fully enclosed by obstacles on every side.
+  const detour = detourAroundObstacles(start, end, obstacles, clearance);
+  if (detour !== undefined) {
+    return elbowPathFromPoints(detour);
+  }
+  return elbowPathFromPoints(direct);
 }
 
 function elbowPathFromPoints(points: readonly Point2[]): string {

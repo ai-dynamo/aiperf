@@ -13,6 +13,7 @@ import type {
   ScenePointLike,
 } from "../scene-types.js";
 import {
+  isRoutingObstacle,
   resolveConnectors,
   svgPathEndpoints,
 } from "./resolve-connectors.js";
@@ -66,6 +67,7 @@ function edge(
 function resolve(
   connector: SceneNodeLike,
   extraNodes: readonly SceneNodeLike[] = [],
+  options: Readonly<{ generatedPartIds?: ReadonlySet<string> }> = {},
 ) {
   const nodes = [
     panel("a", PANEL_BOUNDS.a!),
@@ -82,7 +84,24 @@ function resolve(
       ]),
     ),
     ancestorIdsById: new Map(nodes.map((node) => [node.id, []])),
+    ...(options.generatedPartIds === undefined
+      ? {}
+      : { generatedPartIds: options.generatedPartIds }),
   });
+}
+
+function decorativeNode(
+  id: string,
+  capabilityId: string,
+  geometry: SceneGeometryLike,
+): SceneNodeLike {
+  return {
+    id,
+    kind: "group",
+    capabilityId,
+    geometry,
+    children: [],
+  };
 }
 
 describe("svgPathEndpoints", () => {
@@ -314,5 +333,116 @@ describe("resolveConnectors", () => {
         nodeIds: expect.arrayContaining(["edge", "blocker"]),
       }),
     );
+  });
+
+  it("excludes decorative bands, brackets, and thin labels from route obstacles", () => {
+    const band = decorativeNode("map-band", "core.band", {
+      x: 0,
+      y: 0,
+      width: 300,
+      height: 200,
+    });
+    const bracket = decorativeNode("dispatch-bracket", "core.bracket", {
+      x: 40,
+      y: 10,
+      width: 20,
+      height: 80,
+    });
+    const label = decorativeNode("rx2-ew-label", "core.text", {
+      x: 100,
+      y: 40,
+      width: 200,
+      height: 20,
+    });
+    const result = resolve(edge({ route: "curve" }), [band, bracket, label]);
+
+    expect(
+      result.diagnostics.some(({ code }) => code === "SCENE_ROUTE_FALLBACK"),
+    ).toBe(false);
+    expect(result.connectorsById.get("edge")?.penetratedObstacleIds).toEqual([]);
+  });
+
+  it("still treats content panels as routing obstacles", () => {
+    const blocker = panel("blocker", {
+      x: 75,
+      y: -100,
+      width: 150,
+      height: 300,
+    });
+    const result = resolve(edge({ route: "curve" }), [blocker]);
+
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "SCENE_ROUTE_FALLBACK",
+        nodeIds: expect.arrayContaining(["edge", "blocker"]),
+      }),
+    );
+  });
+
+  it("excludes generated semantic parts from route obstacles", () => {
+    const generated = panel("note__caption", {
+      x: 130,
+      y: 10,
+      width: 40,
+      height: 80,
+    });
+    const result = resolve(edge({ route: "curve" }), [generated], {
+      generatedPartIds: new Set(["note__caption"]),
+    });
+
+    expect(
+      result.diagnostics.some(({ code }) => code === "SCENE_ROUTE_FALLBACK"),
+    ).toBe(false);
+  });
+
+  it("does not emit route fallback warnings when search is infeasible but the path does not penetrate", () => {
+    const crowding = [
+      panel("row-1", { x: 110, y: 30, width: 30, height: 40 }),
+      panel("row-2", { x: 110, y: 80, width: 30, height: 40 }),
+      panel("row-3", { x: 110, y: 130, width: 30, height: 40 }),
+    ];
+    const result = resolve(
+      {
+        ...edge({
+          route: "curve",
+          from: { nodeId: "a", anchor: "e" },
+          to: { nodeId: "b", anchor: "w" },
+        }),
+        style: { route: "curve", clearance: 24 },
+      },
+      crowding,
+    );
+    const resolved = result.connectorsById.get("edge");
+
+    if (resolved?.usedFallback === true && resolved.penetratedObstacleIds.length === 0) {
+      expect(
+        result.diagnostics.some(({ code }) => code === "SCENE_ROUTE_FALLBACK"),
+      ).toBe(false);
+    }
+  });
+});
+
+describe("isRoutingObstacle", () => {
+  it("matches overlap-validation decorative policy for bands and annotation text", () => {
+    const band = decorativeNode("band", "core.band", {
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+    });
+    const label = decorativeNode("label", "core.text", {
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 20,
+    });
+    const panelNode = panel("panel", { x: 0, y: 0, width: 100, height: 72 });
+
+    expect(isRoutingObstacle(band, band.geometry!)).toBe(false);
+    expect(isRoutingObstacle(label, label.geometry!)).toBe(false);
+    expect(isRoutingObstacle(panelNode, panelNode.geometry!)).toBe(true);
+    expect(
+      isRoutingObstacle(panelNode, panelNode.geometry!, new Set(["panel"])),
+    ).toBe(false);
   });
 });

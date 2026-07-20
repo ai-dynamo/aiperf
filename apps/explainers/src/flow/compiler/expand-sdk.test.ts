@@ -225,6 +225,82 @@ describe("expandSdkInvocations SDK-attempt parse failures", () => {
   });
 });
 
+describe("expandSdkInvocations pipeline / flow draw cues", () => {
+  it("expands authored `trace <pipeline>` to edge ids with action trace (reveal alone is not a draw cue)", () => {
+    const revealOnly = expand(`
+      sdk.Pipeline(id = "pipe", x = 0, y = 0) {
+        nodes {
+          sdk.Panel(id = "n0", title = "1", x = 0, y = 0, width = 72, height = 40)
+          sdk.Panel(id = "n1", title = "2", x = 0, y = 0, width = 72, height = 40)
+        }
+      }
+      timeline main {
+        at 0 reveal pipe duration 200
+      }
+    `);
+    expect(revealOnly.status).toBe("ok");
+    if (revealOnly.status !== "ok") {
+      return;
+    }
+    const revealEdgeCues = revealOnly.value.render.scene.timeline.filter(
+      (cue) =>
+        cue.target === "pipe__edge-0" &&
+        (cue.action === "draw" ||
+          cue.action === "trace" ||
+          cue.action === "reveal-stroke"),
+    );
+    expect(revealEdgeCues).toEqual([]);
+
+    const withTrace = expand(`
+      sdk.Pipeline(id = "pipe", x = 0, y = 0) {
+        nodes {
+          sdk.Panel(id = "n0", title = "1", x = 0, y = 0, width = 72, height = 40)
+          sdk.Panel(id = "n1", title = "2", x = 0, y = 0, width = 72, height = 40)
+        }
+      }
+      timeline main {
+        at 0 reveal pipe duration 200
+        after pipe trace pipe duration 300
+      }
+    `);
+    expect(withTrace.status).toBe("ok");
+    if (withTrace.status !== "ok") {
+      return;
+    }
+    expect(
+      withTrace.value.render.scene.timeline.some(
+        (cue) => cue.target === "pipe__edge-0" && cue.action === "trace",
+      ),
+    ).toBe(true);
+  });
+
+  it("expands authored `trace <flow>` to the backing edge when edge:true", () => {
+    const result = expand(`
+      sdk.Panel(id = "a", title = "A", x = 0, y = 0, width = 80, height = 40)
+      sdk.Panel(id = "b", title = "B", x = 200, y = 0, width = 80, height = 40)
+      sdk.Flow(
+        id = "flow",
+        edge = true,
+        from = { nodeId: "a", anchor: "e" },
+        to = { nodeId: "b", anchor: "w" }
+      )
+      timeline main {
+        at 0 trace flow duration 400
+      }
+    `);
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") {
+      return;
+    }
+    expect(
+      result.value.render.scene.timeline.some(
+        (cue) => cue.target === "flow__edge" && cue.action === "trace",
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("expandSdkInvocations stagger targets[]", () => {
   it("expands instance ids in targets[] to enter-bound node ids", () => {
     const result = expand(`
@@ -287,5 +363,44 @@ describe("expandSdkInvocations stagger targets[]", () => {
           d.code === "SDK_TIMELINE_UNKNOWN_TARGET" && d.message.includes("ghost"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("expandSdkInvocations named freeform group geometry", () => {
+  it("unions child geometry into the named group box instead of a zero-area {0,0,0,0} box", () => {
+    const result = expand(`
+      sdk.Note(id = "note", text = "hi", x = 0, y = 0, width = 40, height = 20)
+      freeform illustration {
+        rect r1 { x 10 y 5 width 30 height 40 label "r1" fallback "r1" }
+        rect r2 { x 100 y 20 width 20 height 15 label "r2" fallback "r2" }
+      }
+    `);
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") {
+      return;
+    }
+    const group = result.value.render.scene.roots.find((node) => node.id === "illustration");
+    expect(group?.kind).toBe("group");
+    // Union of r1 [10,5]-[40,45] and r2 [100,20]-[120,35]: x/y at the min
+    // corner, width/height spanning to the max corner across both rects.
+    expect(group?.geometry).toEqual({ x: 10, y: 5, width: 110, height: 40 });
+    expect(group?.geometry.width).toBeGreaterThan(0);
+    expect(group?.geometry.height).toBeGreaterThan(0);
+  });
+
+  it("falls back to a {0,0,0,0} box when a named freeform block has no positive-area children", () => {
+    const result = expand(`
+      sdk.Note(id = "note", text = "hi", x = 0, y = 0, width = 40, height = 20)
+      freeform empty {}
+    `);
+
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") {
+      return;
+    }
+    const group = result.value.render.scene.roots.find((node) => node.id === "empty");
+    expect(group?.kind).toBe("group");
+    expect(group?.geometry).toEqual({ x: 0, y: 0, width: 0, height: 0 });
   });
 });

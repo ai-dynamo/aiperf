@@ -79,6 +79,106 @@ describe("elbowPathData obstacle avoidance", () => {
     expect(points.at(-1)).toEqual(end);
     expect(points.every((point) => point.y === start.y)).toBe(true);
   });
+
+  it("never penetrates a blocker when both the grid search and the plain 4-point detour fail", () => {
+    // Construct case for the detour-fallthrough regression: `capTop`/`capBottom`
+    // straddle the source's escape column (x=100) closely enough that both of
+    // `resolveElbowEscapeStub`'s perpendicular bend candidates for the east
+    // escape are themselves blocked, so `obstacleAwareElbowPoints` aborts
+    // entirely. Because `capTop`/`capBottom` also sit on `start`'s straight
+    // vertical escape and `wall` spans the full straight horizontal one, all
+    // four plain U-shaped candidates in the old `detourAroundObstacles` are
+    // blocked too. `elbowPathData` must still return a route that never
+    // crosses any of the three obstacles' true bounds instead of silently
+    // falling back through `wall`.
+    const start: Point2 = { x: 100, y: 100 };
+    const end: Point2 = { x: 300, y: 100 };
+    const wall: RouteObstacle = {
+      id: "wall",
+      bounds: { x: 110, y: 0, width: 30, height: 200 },
+    };
+    const capTop: RouteObstacle = {
+      id: "capTop",
+      bounds: { x: 90, y: -20, width: 20, height: 60 },
+    };
+    const capBottom: RouteObstacle = {
+      id: "capBottom",
+      bounds: { x: 90, y: 160, width: 20, height: 60 },
+    };
+    const obstacles = [wall, capTop, capBottom];
+
+    const d = elbowPathData(start, end, undefined, undefined, "e", "w", obstacles, 12);
+    const points = elbowVertices(d);
+
+    expect(points[0]).toEqual(start);
+    expect(points.at(-1)).toEqual(end);
+    for (const obstacle of obstacles) {
+      expect(pathCrossesObstacle(points, obstacle)).toBe(false);
+    }
+  });
+
+  it("drops an authored via corridor that cuts through a blocker instead of routing through it", () => {
+    // Regression for via bypassing avoidance: the old code composed the
+    // `via` polyline unconditionally, even when obstacles were supplied. Here
+    // the via corridor detours through `blocker`, but the plain direct route
+    // (a straight line between soft/center anchors) is already clear, so
+    // dropping `via` and falling through to the direct check must recover a
+    // clean route rather than keep the obstructed via path.
+    const start: Point2 = { x: 0, y: 0 };
+    const end: Point2 = { x: 200, y: 0 };
+    const via: Point2 = { x: 100, y: -50 };
+    const blocker: RouteObstacle = {
+      id: "blocker",
+      bounds: { x: 90, y: -70, width: 20, height: 50 },
+    };
+
+    const d = elbowPathData(start, end, via, undefined, undefined, undefined, [blocker], 12);
+    const points = elbowVertices(d);
+
+    expect(points[0]).toEqual(start);
+    expect(points.at(-1)).toEqual(end);
+    expect(pathCrossesObstacle(points, blocker)).toBe(false);
+  });
+
+  it("still honors a via corridor that avoidance confirms is clear", () => {
+    const start: Point2 = { x: 0, y: 0 };
+    const end: Point2 = { x: 200, y: 0 };
+    const via: Point2 = { x: 100, y: -50 };
+    // Far from the via corridor: avoidance must not disturb a genuinely
+    // clear authored `via`.
+    const distantBlocker: RouteObstacle = {
+      id: "distant",
+      bounds: { x: 500, y: 500, width: 20, height: 20 },
+    };
+
+    const d = elbowPathData(start, end, via, undefined, undefined, undefined, [distantBlocker], 12);
+    const points = elbowVertices(d);
+
+    expect(points).toContainEqual(via);
+    expect(pathCrossesObstacle(points, distantBlocker)).toBe(false);
+  });
+
+  it("runs obstacle avoidance for a diagonal corner anchor, not only cardinal pairs", () => {
+    // Regression: obstacle avoidance used to require BOTH anchors to be
+    // cardinal (n/s/e/w), so a corner anchor like `se` skipped the check
+    // entirely and could return the direct elbow straight through a
+    // blocker. It must now run the same search/detour machinery, with escape
+    // stubs bent to the diagonal exit direction's dominant axis (bug 4)
+    // rather than treating any nonzero dx as horizontal.
+    const start: Point2 = { x: 100, y: 100 };
+    const end: Point2 = { x: 300, y: 180 };
+    const blocker: RouteObstacle = {
+      id: "blocker",
+      bounds: { x: 190, y: 120, width: 20, height: 40 },
+    };
+
+    const d = elbowPathData(start, end, undefined, undefined, "se", "w", [blocker], 12);
+    const points = elbowVertices(d);
+
+    expect(points[0]).toEqual(start);
+    expect(points.at(-1)).toEqual(end);
+    expect(pathCrossesObstacle(points, blocker)).toBe(false);
+  });
 });
 
 describe("elbowPathData same-side cardinal anchors", () => {

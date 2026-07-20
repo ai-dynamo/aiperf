@@ -1234,6 +1234,7 @@ function indicatorFactory(spec: CatalogSpec): SdkComponentFactory {
     const value = Math.min(max, Math.max(min, authored));
     const ratio = (value - min) / (max - min);
     const children: RenderNodeIr[] = [];
+    let pulseTargetId: string | undefined;
     if (spec.id === "sdk.sparkline") {
       const values = numericValues(props);
       if (values.length < 2) {
@@ -1307,24 +1308,45 @@ function indicatorFactory(spec: CatalogSpec): SdkComponentFactory {
         );
       });
     } else {
+      const track = rectNode(
+        `${context.instanceId}__track`,
+        { x: 0, y: 0, width: box.width, height: box.height },
+        context,
+        spec.id,
+        "track",
+        "indicator track",
+        { fill: "@theme.surface.elevated", radius: box.height / 2 },
+      );
+      const fill = rectNode(
+        `${context.instanceId}__value`,
+        { x: 0, y: 0, width: box.width * ratio, height: box.height },
+        context,
+        spec.id,
+        "value",
+        "indicator value",
+        { fill: "@theme.accent.primary", radius: box.height / 2 },
+      );
+      pulseTargetId = fill.id;
+      // Track and value intentionally share the same band: the value bar
+      // paints over the full-width track to show progress. Nest both under
+      // a layout.overlay band so the resolver treats the pairing as an
+      // authored overlay rather than a sibling-spacing defect.
       children.push(
-        rectNode(
-          `${context.instanceId}__track`,
-          { x: 0, y: 0, width: box.width, height: box.height },
+        origin(
+          {
+            kind: "group",
+            id: `${context.instanceId}__band`,
+            capabilityId: "layout.overlay",
+            geometry: { x: 0, y: 0, width: box.width, height: box.height },
+            style: {},
+            accessibility: { label: "indicator band" },
+            fallback: "indicator band",
+            sourceMap: context.sourceMap,
+            children: [track, fill],
+          },
           context,
           spec.id,
-          "track",
-          "indicator track",
-          { fill: "@theme.surface.elevated", radius: box.height / 2 },
-        ),
-        rectNode(
-          `${context.instanceId}__value`,
-          { x: 0, y: 0, width: box.width * ratio, height: box.height },
-          context,
-          spec.id,
-          "value",
-          "indicator value",
-          { fill: "@theme.accent.primary", radius: box.height / 2 },
+          "band",
         ),
       );
     }
@@ -1345,9 +1367,13 @@ function indicatorFactory(spec: CatalogSpec): SdkComponentFactory {
       [root],
       {
         self: { nodeId: root.id },
-        value: { nodeId: children.at(-1)?.id ?? root.id },
+        value: { nodeId: pulseTargetId ?? children.at(-1)?.id ?? root.id },
       },
-      actionsFor(spec, root.id, children.map((child) => child.id)),
+      actionsFor(
+        spec,
+        root.id,
+        pulseTargetId !== undefined ? [pulseTargetId] : children.map((child) => child.id),
+      ),
     );
   };
 }

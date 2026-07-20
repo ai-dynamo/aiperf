@@ -121,6 +121,100 @@ describe("resolveScene", () => {
     });
   });
 
+  it("applies relativePosition on top of a managed-layout geometry override", () => {
+    const scene: SceneIrLike = {
+      viewport: { width: 700, height: 400 },
+      roots: [
+        panel("anchor", 40, 30, { x: 10, y: 20 }),
+        {
+          id: "stack",
+          kind: "group",
+          capabilityId: "layout.stack",
+          geometry: { x: 200, y: 200, width: 0, height: 0 },
+          style: { direction: "column", gap: 8 },
+          children: [
+            {
+              ...panel("shifted", 100, 30),
+              relativePosition: {
+                nodeId: "anchor",
+                anchor: "se",
+                dx: 5,
+                dy: 7,
+              },
+            },
+          ],
+        },
+      ],
+      timeline: [],
+    };
+
+    const resolved = resolveScene(scene);
+
+    expect(resolved.worldGeometryById.get("shifted")).toEqual({
+      x: 55,
+      y: 57,
+      width: 100,
+      height: 30,
+    });
+  });
+
+  it("diagnoses a relativePosition target with no resolved world geometry", () => {
+    const scene: SceneIrLike = {
+      roots: [
+        {
+          ...panel("before", 20, 10, { x: 300, y: 200 }),
+          relativePosition: {
+            nodeId: "later",
+            anchor: "center",
+          },
+        },
+        panel("later", 20, 10, { x: 400, y: 300 }),
+      ],
+      timeline: [],
+    };
+
+    const resolved = resolveScene(scene);
+
+    expect(resolved.worldGeometryById.get("before")).toMatchObject({
+      x: 300,
+      y: 200,
+    });
+    expect(resolved.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "SCENE_RELATIVE_POSITION_TARGET_MISSING",
+        severity: "error",
+        nodeIds: ["before", "later"],
+      }),
+    );
+  });
+
+  it("diagnoses duplicate node ids while still resolving the second occurrence", () => {
+    const scene: SceneIrLike = {
+      roots: [
+        panel("dup", 40, 20, { x: 10, y: 20 }),
+        panel("dup", 40, 20, { x: 200, y: 20 }),
+      ],
+      timeline: [],
+    };
+
+    const resolved = resolveScene(scene);
+
+    expect(resolved.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "SCENE_DUPLICATE_NODE_ID",
+        severity: "error",
+        nodeIds: ["dup"],
+      }),
+    );
+    expect(resolved.nodesById.get("dup")).toBe(scene.roots[1]);
+    expect(resolved.worldGeometryById.get("dup")).toEqual({
+      x: 200,
+      y: 20,
+      width: 40,
+      height: 20,
+    });
+  });
+
   it("promotes managed layout diagnostics into source-mapped scene findings", () => {
     const overflowRange = {
       source: "test.flow",

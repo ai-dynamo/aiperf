@@ -632,6 +632,35 @@ function lowerFreeformDeclaration(
   return normalizePackageRecord(declarationToRecord(declaration, bindings, state));
 }
 
+/**
+ * Bounding box union of a set of top-level render nodes' own geometry.
+ * Mirrors `sdk/generic/composites.ts`'s `unionGeometry` so a named freeform
+ * group reports its actual footprint instead of an empty `{0,0,0,0}` box that
+ * the verifier's `zero-area-box` check would otherwise flag (any `core.group`
+ * with a truthy `geometry` object is box-like regardless of its values).
+ */
+function unionOfNodeGeometry(nodes: readonly RenderNodeIr[]): RenderNodeIr["geometry"] | undefined {
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  let sawPositiveArea = false;
+  for (const node of nodes) {
+    const geometry = node.geometry;
+    minX = Math.min(minX, geometry.x);
+    minY = Math.min(minY, geometry.y);
+    maxX = Math.max(maxX, geometry.x + geometry.width);
+    maxY = Math.max(maxY, geometry.y + geometry.height);
+    if (geometry.width > 0 && geometry.height > 0) {
+      sawPositiveArea = true;
+    }
+  }
+  if (!sawPositiveArea) {
+    return undefined;
+  }
+  return { x: minX, y: minY, width: Math.max(maxX - minX, 0), height: Math.max(maxY - minY, 0) };
+}
+
 function lowerFreeformBlock(
   block: FreeformBlockAst,
   state: ExpansionState,
@@ -642,11 +671,19 @@ function lowerFreeformBlock(
   if (block.id === undefined) {
     return nodes;
   }
+  // A named freeform group must carry the union of its children's geometry
+  // rather than a synthetic `{0,0,0,0}` box: the latter reads as a zero-area
+  // box to the verifier (`core.group` with any geometry object is box-like),
+  // and unioning preserves the existing world-coordinate placement of
+  // children (a group whose own box has positive width/height is treated as
+  // already-absolute by the scene resolver, matching the prior `{0,0,0,0}`
+  // "not local" placement outcome).
+  const geometry = unionOfNodeGeometry(nodes) ?? { x: 0, y: 0, width: 0, height: 0 };
   const group: RenderNodeIr = {
     kind: "group",
     id: block.id,
     capabilityId: "core.group",
-    geometry: { x: 0, y: 0, width: 0, height: 0 },
+    geometry,
     style: {},
     accessibility: { label: block.id },
     fallback: block.id,

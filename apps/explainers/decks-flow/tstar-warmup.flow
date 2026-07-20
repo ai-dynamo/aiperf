@@ -146,7 +146,7 @@ explainer "t* Warmup" {
         steps = ["phase warmup", "t* chop", "handoff"],
         linked = true,
         gap = 18,
-        x = 80, y = 68, width = 540, height = 26
+        x = 80, y = 86, width = 540, height = 24
       )
       sdk.Panel(
         id = "s2-ord",
@@ -305,7 +305,7 @@ explainer "t* Warmup" {
       sdk.Label(
         id = "s3-cut-l",
         text = "t*",
-        x = 318, y = 56, width = 44, height = 20,
+        x = 318, y = 88, width = 44, height = 20,
         fontSize = 14,
         weight = "bold",
         inkRole = theme(accent.warning)
@@ -1029,7 +1029,7 @@ explainer "t* Warmup" {
       sdk.Label(
         id = "s9-cut-l",
         text = "t*",
-        x = 258, y = 56, width = 44, height = 20,
+        x = 258, y = 88, width = 44, height = 20,
         fontSize = 14,
         weight = "bold",
         inkRole = theme(accent.warning)
@@ -1619,7 +1619,7 @@ explainer "t* Warmup" {
         id = "s14-lane",
         title = "LaneHandoff",
         detail = "one live lane",
-        x = 320, y = 110, width = 180, height = 90,
+        x = 280, y = 110, width = 180, height = 90,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1627,7 +1627,7 @@ explainer "t* Warmup" {
         id = "s14-fields",
         title = "Fields",
         detail = "template · id · t* · exec · walls",
-        x = 540, y = 110, width = 130, height = 90,
+        x = 460, y = 110, width = 190, height = 80,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -2332,7 +2332,7 @@ explainer "t* Warmup" {
         id = "s20-phase",
         title = "graph_phase_runtime",
         detail = "drain · resume",
-        x = 550, y = 110, width = 120, height = 80,
+        x = 536, y = 110, width = 151, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )

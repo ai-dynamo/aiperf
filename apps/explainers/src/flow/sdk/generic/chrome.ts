@@ -160,6 +160,14 @@ function relativePositionProp(
   };
 }
 
+/** Preserves explicitly authored geometry inside a managed layout container. */
+function managedLayoutEscapeHatch(
+  props: Readonly<Record<string, JsonValue>>,
+): Readonly<Record<string, StyleValueIr>> {
+  const style = jsonRecord(props["style"]);
+  return style?.["position"] === "absolute" ? { position: "absolute" } : {};
+}
+
 /** Reads a required non-empty string prop, recording a diagnostic when absent. */
 function requireStringProp(
   props: Readonly<Record<string, JsonValue>>,
@@ -486,6 +494,7 @@ const PANEL_DESCRIPTOR = makeDescriptor("sdk.panel", "Panel", "core.panel", {
   surfaceRole: { type: "string", required: false },
   strokeRole: { type: "string", required: false },
   position: { type: "object", required: false },
+  style: { type: "object", required: false },
 });
 
 const panelFactory: SdkComponentFactory = (props, _slots, context) => {
@@ -528,6 +537,7 @@ const panelFactory: SdkComponentFactory = (props, _slots, context) => {
       ...(relativePosition !== undefined ? { relativePosition } : {}),
       style: {
         coordinateSpace: "local",
+        ...managedLayoutEscapeHatch(props),
         ...(surfaceRole !== undefined ? { fill: surfaceRole } : {}),
         ...(strokeRole !== undefined ? { stroke: strokeRole } : {}),
       },
@@ -662,6 +672,7 @@ const CHIP_DESCRIPTOR = makeDescriptor("sdk.chip", "Chip", "core.chip", {
   radius: { type: "number", required: false, default: 0 },
   surfaceRole: { type: "string", required: false },
   strokeRole: { type: "string", required: false },
+  style: { type: "object", required: false },
 });
 
 const chipFactory: SdkComponentFactory = (props, _slots, context) => {
@@ -692,6 +703,7 @@ const chipFactory: SdkComponentFactory = (props, _slots, context) => {
       geometry,
       style: {
         coordinateSpace: "local",
+        ...managedLayoutEscapeHatch(props),
         radius,
         rx: radius,
         ...(surfaceRole !== undefined ? { fill: surfaceRole } : {}),

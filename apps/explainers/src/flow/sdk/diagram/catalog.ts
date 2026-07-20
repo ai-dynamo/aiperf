@@ -334,6 +334,10 @@ function standardFactory(spec: DiagramSpec): SdkComponentFactory {
     const ports = semanticPorts(spec, context, box, props);
     ports.icon = { nodeId: glyphId };
     ports.title = { nodeId: titleId };
+    const topologyDrawIds =
+      spec.id === "sdk.retry" || spec.id === "sdk.loop"
+        ? [root.id, `${context.instanceId}__back-edge`]
+        : [root.id];
     return {
       ok: true,
       value: {
@@ -341,7 +345,7 @@ function standardFactory(spec: DiagramSpec): SdkComponentFactory {
         ports,
         actions:
           spec.category === "control" || spec.category === "messaging" || spec.category === "network"
-            ? { enter: [root.id], draw: [root.id], trace: [root.id] }
+            ? { enter: [root.id], draw: topologyDrawIds, trace: topologyDrawIds }
             : { enter: [root.id], emphasis: [root.id], exit: [root.id] },
       },
       diagnostics: [],

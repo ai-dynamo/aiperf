@@ -158,6 +158,7 @@ const MANAGED_LAYOUT_PROPS: Readonly<Record<
   string,
   ComponentPropDescriptor
 >> = {
+  coordinateSpace: { type: "string", required: false, default: "local" },
   padding: { type: "number", required: false, default: 0 },
   align: { type: "string", required: false, default: "start" },
   justify: { type: "string", required: false, default: "start" },
@@ -170,7 +171,8 @@ function managedStyle(
   extras: Readonly<Record<string, StyleValueIr>> = {},
 ): Readonly<Record<string, StyleValueIr>> {
   return {
-    coordinateSpace: "local",
+    coordinateSpace:
+      stringProp(props, "coordinateSpace") === "absolute" ? "absolute" : "local",
     padding: Math.max(0, numberProp(props, "padding", 0)),
     align: stringProp(props, "align") ?? "start",
     justify: stringProp(props, "justify") ?? "start",

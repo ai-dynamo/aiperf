@@ -31,6 +31,7 @@ function parseArgs(argv) {
     baseUrl: null,
     out: null,
     viewport: { width: 1440, height: 1100 },
+    onlySlide: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -43,6 +44,9 @@ function parseArgs(argv) {
     else if (arg === "--viewport") options.viewport = parseViewport(argv[++i]);
     else if (arg.startsWith("--viewport=")) {
       options.viewport = parseViewport(arg.slice("--viewport=".length));
+    } else if (arg === "--only-slide") options.onlySlide = Number(argv[++i]);
+    else if (arg.startsWith("--only-slide=")) {
+      options.onlySlide = Number(arg.slice("--only-slide=".length));
     }
   }
   return options;
@@ -227,14 +231,37 @@ async function pausePlayback(page) {
 }
 
 async function slideCount(page) {
+  const segmentCount = await page.locator(".ex-progress__segment").count();
+  if (segmentCount > 0) {
+    return segmentCount;
+  }
   const text = await page
-    .locator("text=/\\d+\\s*\\/\\s*\\d+/")
+    .locator(".ex-stage-copy .ex-eyebrow")
     .first()
     .textContent()
     .catch(() => null);
   if (!text) return null;
   const m = text.match(/(\d+)\s*\/\s*(\d+)/);
   return m ? Number(m[2]) : null;
+}
+
+async function currentSlideIndex(page) {
+  const chapter = await page
+    .locator(".ex-bottom-nav__chapter")
+    .textContent()
+    .catch(() => null);
+  const chapterMatch = chapter?.match(/Chapter\s+(\d+)/i);
+  if (chapterMatch) {
+    return Number(chapterMatch[1]);
+  }
+  const text = await page
+    .locator(".ex-stage-copy .ex-eyebrow")
+    .first()
+    .textContent()
+    .catch(() => null);
+  if (!text) return null;
+  const m = text.match(/^(\d+)\s*\//);
+  return m ? Number(m[1]) : null;
 }
 
 async function goToSlide(page, slideIndex1Based) {
@@ -247,6 +274,35 @@ async function goToSlide(page, slideIndex1Based) {
     return true;
   }
   return false;
+}
+
+async function ensureSlide(page, slideIndex1Based, totalSlides) {
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    const current = await currentSlideIndex(page);
+    if (current === slideIndex1Based) {
+      return true;
+    }
+    if (current !== null && current < slideIndex1Based) {
+      const moved = await goNext(page);
+      if (moved) {
+        await page.waitForTimeout(350);
+        continue;
+      }
+    }
+    const jumped = await goToSlide(page, slideIndex1Based);
+    if (jumped) {
+      await page.waitForTimeout(350);
+      continue;
+    }
+    const segment = page.locator(".ex-progress__segment").nth(slideIndex1Based - 1);
+    if (await segment.count()) {
+      await segment.click({ force: true }).catch(() => {});
+      await page.waitForTimeout(350);
+      continue;
+    }
+    break;
+  }
+  return (await currentSlideIndex(page)) === slideIndex1Based;
 }
 
 async function goNext(page) {
@@ -307,24 +363,42 @@ async function main() {
     await page.waitForTimeout(400);
 
     const total = (await slideCount(page)) ?? 1;
-    console.error(`screenshotting ${options.deck}: ${total} slides → ${outDir}`);
+    if (
+      options.onlySlide !== null &&
+      Number.isFinite(options.onlySlide) &&
+      options.onlySlide > total
+    ) {
+      throw new Error(
+        `--only-slide ${options.onlySlide} exceeds deck slide count ${total}`,
+      );
+    }
+    const startIndex =
+      options.onlySlide !== null && Number.isFinite(options.onlySlide)
+        ? Math.max(1, Math.min(options.onlySlide, total)) - 1
+        : 0;
+    const endIndex =
+      options.onlySlide !== null && Number.isFinite(options.onlySlide)
+        ? startIndex + 1
+        : total;
+    console.error(
+      `screenshotting ${options.deck}: slides ${startIndex + 1}-${endIndex} of ${total} → ${outDir}`,
+    );
 
-    for (let i = 0; i < total; i += 1) {
+    for (let i = startIndex; i < endIndex; i += 1) {
       await dismissStartGate(page);
       await pausePlayback(page);
-      const jumped = await goToSlide(page, i + 1);
-      if (!jumped && i > 0) {
-        const moved = await goNext(page);
-        if (!moved) {
-          console.error(`  stopped: cannot reach slide ${i + 1}/${total}`);
-          break;
-        }
+      const reached = await ensureSlide(page, i + 1, total);
+      if (!reached) {
+        console.error(
+          `  stopped: could not reach slide ${i + 1}/${total} (current ${await currentSlideIndex(page)})`,
+        );
+        break;
       }
       await pausePlayback(page);
       await waitForSceneSettle(page, 1800);
       const name = `slide-${String(i + 1).padStart(2, "0")}.png`;
       const path = join(outDir, name);
-      await page.screenshot({ path, fullPage: true });
+      await page.screenshot({ path, fullPage: false });
       paths.push(path);
       console.error(`  wrote ${name}`);
 

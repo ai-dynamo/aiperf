@@ -446,7 +446,7 @@ function geometryFromEndpointsOrZero(
   return { x: 0, y: 0, width: 0, height: 0 };
 }
 
-/** Optional static backing edge for `sdk.flow`, bound to the same `draw` action as the signal. */
+/** Optional static backing edge for `sdk.flow`, bound to the same `draw`/`trace` actions as the signal. */
 function buildFlowEdgeNode(
   props: PropRecord,
   context: SdkExpansionContext,
@@ -532,7 +532,9 @@ const flowFactory: SdkComponentFactory = (props, _slots, context) => {
   return ok(roots, ports, {
     enter: roots.map((root) => root.id),
     draw: drawTargets,
-    trace: [signalNode.id],
+    // Keep `trace` identical to `draw` so authored `trace <flow>` cues also
+    // stroke the optional backing edge (IR missing-draw-cue otherwise).
+    trace: drawTargets,
     fade: [signalNode.id],
   });
 };

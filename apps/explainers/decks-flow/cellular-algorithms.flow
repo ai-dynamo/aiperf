@@ -80,12 +80,24 @@ explainer "Cellular algorithm workbook" {
 
     render: @scene {
       sdk.Header(id = "header", title = "WORKBOOK · STATUS & EVIDENCE", caption = "status labels · source-backed evidence.")
-      sdk.Panel(id = "algo-built", title = "modulo-cell-ownership", x = 35, y = 132, width = 190, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-built", label = "BUILT", x = 155, y = 120, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "algo-partial", title = "final-report-assembly", x = 255, y = 132, width = 190, height = 72, strokeRole = "@theme.accent.tertiary")
-      sdk.Chip(id = "st-partial", label = "PARTIAL", x = 375, y = 120, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary")
-      sdk.Panel(id = "algo-gated", title = "phaser-start", x = 475, y = 132, width = 190, height = 72, strokeRole = "@theme.accent.secondary")
-      sdk.Chip(id = "st-gated", label = "FEATURE-GATED", x = 549, y = 120, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Overlay(id = "badge-algo-built", x = 35, y = 120, width = 190, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "algo-built", title = "modulo-cell-ownership", x = 35, y = 132, width = 190, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-built", label = "BUILT", x = 155, y = 120, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-algo-partial", x = 255, y = 120, width = 190, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "algo-partial", title = "final-report-assembly", x = 255, y = 132, width = 190, height = 72, strokeRole = "@theme.accent.tertiary", style = { position: "absolute" })
+          sdk.Chip(id = "st-partial", label = "PARTIAL", x = 375, y = 120, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-algo-gated", x = 475, y = 120, width = 190, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "algo-gated", title = "phaser-start", x = 475, y = 132, width = 190, height = 72, strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+          sdk.Chip(id = "st-gated", label = "FEATURE-GATED", x = 549, y = 120, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+        }
+      }
       sdk.Panel(id = "evidence", title = "Evidence", x = 110, y = 275, width = 480, height = 54, strokeRole = "@theme.accent.primary")
       timeline primary {
         at 0 reveal header duration 260
@@ -118,14 +130,30 @@ explainer "Cellular algorithm workbook" {
 
     render: @scene {
       sdk.Header(id = "header", title = "ELIGIBILITY · FAIL-CLOSED GATES", caption = "dispatch → promote → admit → validate.")
-      sdk.Panel(id = "dispatch", title = "execution-mode-dispatch", x = 22, y = 150, width = 150, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-d", label = "BUILT", x = 102, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "promote", title = "controller-promotion", x = 205, y = 150, width = 150, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-p", label = "BUILT", x = 285, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "validate", title = "velo-feature-admission", x = 388, y = 150, width = 150, height = 72, strokeRole = "@theme.accent.secondary")
-      sdk.Chip(id = "st-v", label = "FEATURE-GATED", x = 422, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
-      sdk.Panel(id = "velo", title = "run-shape-validation", x = 570, y = 150, width = 108, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-velo", label = "BUILT", x = 608, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Overlay(id = "badge-dispatch", x = 12, y = 138, width = 180, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "dispatch", title = "execution-mode-dispatch", x = 12, y = 150, width = 180, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-d", label = "BUILT", x = 122, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-promote", x = 198, y = 138, width = 159, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "promote", title = "controller-promotion", x = 198, y = 150, width = 159, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-p", label = "BUILT", x = 287, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-validate", x = 363, y = 138, width = 173, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "validate", title = "velo-feature-admission", x = 363, y = 150, width = 173, height = 72, strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+          sdk.Chip(id = "st-v", label = "FEATURE-GATED", x = 420, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-velo", x = 541, y = 138, width = 159, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "velo", title = "run-shape-validation", x = 541, y = 150, width = 159, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-velo", label = "BUILT", x = 630, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
       sdk.Edge(id = "a1", mode = "connector", from = { nodeId: "dispatch", anchor: "e" }, to = { nodeId: "promote", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "a2", mode = "connector", from = { nodeId: "promote", anchor: "e" }, to = { nodeId: "validate", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "a3", mode = "connector", from = { nodeId: "validate", anchor: "e" }, to = { nodeId: "velo", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
@@ -164,13 +192,21 @@ explainer "Cellular algorithm workbook" {
 
     render: @scene {
       sdk.Header(id = "header", title = "OWNERSHIP · DISJOINT TILING", caption = "one position · exactly one owner.")
-      sdk.Panel(id = "modulo", title = "modulo-cell-ownership", x = 30, y = 145, width = 210, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-mod", label = "BUILT", x = 170, y = 133, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Overlay(id = "badge-modulo", x = 30, y = 133, width = 210, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "modulo", title = "modulo-cell-ownership", x = 30, y = 145, width = 210, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-mod", label = "BUILT", x = 170, y = 133, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
       sdk.Panel(id = "c0", title = "cell 0", x = 290, y = 105, width = 170, height = 58, strokeRole = "@theme.accent.secondary")
       sdk.Panel(id = "c1", title = "cell 1", x = 290, y = 181, width = 170, height = 58, strokeRole = "@theme.accent.secondary")
       sdk.Panel(id = "c2", title = "cell 2", x = 290, y = 257, width = 170, height = 58, strokeRole = "@theme.accent.secondary")
-      sdk.Panel(id = "conv", title = "conversation-ownership", x = 500, y = 145, width = 170, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-conv", label = "BUILT", x = 554, y = 133, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Overlay(id = "badge-conv", x = 500, y = 133, width = 170, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "conv", title = "conversation-ownership", x = 500, y = 145, width = 170, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-conv", label = "BUILT", x = 554, y = 133, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
       sdk.FanOut(id = "o1", from = { nodeId: "modulo", anchor: "e" }, to = [{ nodeId: "c0", anchor: "w" }, { nodeId: "c1", anchor: "w" }, { nodeId: "c2", anchor: "w" }], axis = "x", style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.FanIn(id = "ownership-merge", from = [{ nodeId: "c0", anchor: "e" }, { nodeId: "c1", anchor: "e" }, { nodeId: "c2", anchor: "e" }], to = { nodeId: "conv", anchor: "w" }, axis = "x", style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Label(id = "inv", text = "disjoint + complete", x = 100, y = 340, width = 500, height = 20, fontSize = 12, align = "middle")
@@ -208,12 +244,24 @@ explainer "Cellular algorithm workbook" {
 
     render: @scene {
       sdk.Header(id = "header", title = "CONTROL · REPLAY + LIVE + START", caption = "replay seam · generations · START.")
-      sdk.Panel(id = "replay", title = "broadcast-attach-replay", x = 22, y = 150, width = 185, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-r", label = "BUILT", x = 137, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "gen", title = "phaser-generation-advance", x = 250, y = 150, width = 195, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-g", label = "BUILT", x = 375, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "start", title = "phaser-start", x = 488, y = 150, width = 190, height = 72, strokeRole = "@theme.accent.secondary")
-      sdk.Chip(id = "st-s", label = "FEATURE-GATED", x = 562, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Overlay(id = "badge-replay", x = 22, y = 138, width = 185, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "replay", title = "broadcast-attach-replay", x = 22, y = 150, width = 185, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-r", label = "BUILT", x = 137, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-gen", x = 250, y = 138, width = 195, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "gen", title = "phaser-generation-advance", x = 250, y = 150, width = 195, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-g", label = "BUILT", x = 375, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-start", x = 488, y = 138, width = 190, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "start", title = "phaser-start", x = 488, y = 150, width = 190, height = 72, strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+          sdk.Chip(id = "st-s", label = "FEATURE-GATED", x = 562, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+        }
+      }
       sdk.Edge(id = "c1", mode = "line", from = { nodeId: "replay", anchor: "e" }, to = { nodeId: "gen", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "c2", mode = "line", from = { nodeId: "gen", anchor: "e" }, to = { nodeId: "start", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Label(id = "ctrl-note", text = "coordination changes · ownership does not", x = 80, y = 292, width = 540, height = 24, fontSize = 12, align = "middle")
@@ -250,12 +298,24 @@ explainer "Cellular algorithm workbook" {
 
     render: @scene {
       sdk.Header(id = "header", title = "DISTRIBUTION · CANONICAL + OVERLAY", caption = "canonical path · optional verification overlay.")
-      sdk.Panel(id = "canon", title = "canonical-regeneration", x = 35, y = 122, width = 220, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-canon", label = "BUILT", x = 185, y = 110, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "fanout", title = "controller-fanout-generation", x = 35, y = 245, width = 220, height = 72, strokeRole = "@theme.accent.secondary")
-      sdk.Chip(id = "st-fan", label = "FEATURE-GATED", x = 139, y = 233, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
-      sdk.Panel(id = "miss", title = "distribution-miss", x = 440, y = 174, width = 225, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-miss", label = "BUILT", x = 595, y = 162, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Overlay(id = "badge-canon", x = 35, y = 110, width = 220, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "canon", title = "canonical-regeneration", x = 35, y = 122, width = 220, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-canon", label = "BUILT", x = 185, y = 110, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-fanout", x = 35, y = 233, width = 220, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "fanout", title = "controller-fanout-generation", x = 35, y = 245, width = 220, height = 72, strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+          sdk.Chip(id = "st-fan", label = "FEATURE-GATED", x = 139, y = 233, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-miss", x = 440, y = 162, width = 225, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "miss", title = "distribution-miss", x = 440, y = 174, width = 225, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-miss", label = "BUILT", x = 595, y = 162, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
       sdk.Edge(id = "d1", mode = "line", from = { nodeId: "canon", anchor: "e" }, to = { nodeId: "miss", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "d2", mode = "path", from = { nodeId: "fanout", anchor: "e" }, to = { nodeId: "miss", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       timeline primary {
@@ -290,10 +350,18 @@ explainer "Cellular algorithm workbook" {
 
     render: @scene {
       sdk.Header(id = "header", title = "EXECUTION · TWO-LEVEL PARTITION", caption = "global run → cell slice → worker shard.")
-      sdk.Panel(id = "tlp", title = "two-level-partition", x = 30, y = 150, width = 175, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-tlp", label = "BUILT", x = 135, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "iss", title = "issuance-dispatch-injection", x = 260, y = 150, width = 170, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-iss", label = "BUILT", x = 314, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Overlay(id = "badge-tlp", x = 30, y = 138, width = 175, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "tlp", title = "two-level-partition", x = 30, y = 150, width = 175, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-tlp", label = "BUILT", x = 135, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-iss", x = 260, y = 138, width = 170, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "iss", title = "issuance-dispatch-injection", x = 260, y = 150, width = 170, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-iss", label = "BUILT", x = 314, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
       sdk.Panel(id = "w0", title = "worker 0", x = 500, y = 108, width = 180, height = 64, strokeRole = "@theme.accent.secondary")
       sdk.Panel(id = "w1", title = "worker 1", x = 500, y = 225, width = 180, height = 64, strokeRole = "@theme.accent.secondary")
       sdk.Edge(id = "e1", mode = "line", from = { nodeId: "tlp", anchor: "e" }, to = { nodeId: "iss", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
@@ -332,13 +400,21 @@ explainer "Cellular algorithm workbook" {
 
     render: @scene {
       sdk.Header(id = "header", title = "CAPTURE · STORAGE MODES", caption = "finalize once · select storage fidelity.")
-      sdk.Panel(id = "term", title = "terminal-record-finalization", x = 20, y = 150, width = 165, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-term", label = "BUILT", x = 115, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Overlay(id = "badge-term", x = 20, y = 138, width = 165, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "term", title = "terminal-record-finalization", x = 20, y = 150, width = 165, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-term", label = "BUILT", x = 115, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
       sdk.Panel(id = "retain", title = "retain-record-capture", x = 225, y = 92, width = 210, height = 60, strokeRole = "@theme.accent.secondary")
       sdk.Panel(id = "fold", title = "streaming-exact-fold", x = 225, y = 170, width = 210, height = 60, strokeRole = "@theme.accent.secondary")
       sdk.Panel(id = "sketch", title = "tagged-sketch-merge", x = 225, y = 248, width = 210, height = 60, strokeRole = "@theme.accent.tertiary")
-      sdk.Panel(id = "compat", title = "storage compatibility", x = 485, y = 150, width = 190, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-compat", label = "BUILT", x = 605, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
+      sdk.Overlay(id = "badge-compat", x = 485, y = 138, width = 190, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "compat", title = "storage compatibility", x = 485, y = 150, width = 190, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-compat", label = "BUILT", x = 605, y = 138, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
       sdk.Edge(id = "cap1", mode = "line", from = { nodeId: "term", anchor: "e" }, to = { nodeId: "fold", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       timeline primary {
         at 0 reveal header duration 260
@@ -372,12 +448,24 @@ explainer "Cellular algorithm workbook" {
 
     render: @scene {
       sdk.Header(id = "header", title = "MERGE · EXPLICIT LAWS", caption = "partition set → validated reduction → report.")
-      sdk.Panel(id = "sgom", title = "scheduled-global-ordinal-merge", x = 25, y = 116, width = 220, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-sgom", label = "BUILT", x = 175, y = 104, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "fidelity", title = "merged-report-fidelity-boundary", x = 25, y = 246, width = 220, height = 72, strokeRole = "@theme.accent.tertiary")
-      sdk.Chip(id = "st-fid", label = "PARTIAL", x = 175, y = 234, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary")
-      sdk.Panel(id = "report", title = "final-report-assembly", x = 445, y = 165, width = 225, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-rep", label = "PARTIAL", x = 600, y = 153, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary")
+      sdk.Overlay(id = "badge-sgom", x = 25, y = 104, width = 220, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "sgom", title = "scheduled-global-ordinal-merge", x = 25, y = 116, width = 220, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-sgom", label = "BUILT", x = 175, y = 104, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-fidelity", x = 25, y = 234, width = 220, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "fidelity", title = "merged-report-fidelity-boundary", x = 25, y = 246, width = 220, height = 72, strokeRole = "@theme.accent.tertiary", style = { position: "absolute" })
+          sdk.Chip(id = "st-fid", label = "PARTIAL", x = 175, y = 234, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-report", x = 445, y = 153, width = 225, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "report", title = "final-report-assembly", x = 445, y = 165, width = 225, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-rep", label = "PARTIAL", x = 600, y = 153, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary", style = { position: "absolute" })
+        }
+      }
       sdk.Edge(id = "m1", mode = "path", from = { nodeId: "sgom", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Edge(id = "m2", mode = "path", from = { nodeId: "fidelity", anchor: "e" }, to = { nodeId: "report", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       timeline primary {
@@ -412,14 +500,30 @@ explainer "Cellular algorithm workbook" {
 
     render: @scene {
       sdk.Header(id = "header", title = "ARTIFACTS · AUTHORITY + FAILURE", caption = "allowlist → upload → atomic publish → barrier.")
-      sdk.Panel(id = "allow", title = "artifact-authority-allowlist", x = 20, y = 150, width = 160, height = 72, strokeRole = "@theme.accent.secondary")
-      sdk.Chip(id = "st-allow", label = "FEATURE-GATED", x = 64, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
-      sdk.Panel(id = "upload", title = "HTTP zstd upload", x = 215, y = 150, width = 150, height = 72, strokeRole = "@theme.accent.secondary")
-      sdk.Chip(id = "st-up", label = "FEATURE-GATED", x = 249, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
-      sdk.Panel(id = "atomic", title = "atomic replace", x = 400, y = 150, width = 130, height = 72, strokeRole = "@theme.accent.secondary")
-      sdk.Chip(id = "st-at", label = "FEATURE-GATED", x = 414, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
-      sdk.Panel(id = "barrier", title = "completion barrier", x = 565, y = 150, width = 115, height = 72, strokeRole = "@theme.accent.secondary")
-      sdk.Chip(id = "st-bar", label = "FEATURE-GATED", x = 564, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
+      sdk.Overlay(id = "badge-allow", x = 20, y = 138, width = 160, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "allow", title = "artifact-authority-allowlist", x = 20, y = 150, width = 160, height = 72, strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+          sdk.Chip(id = "st-allow", label = "FEATURE-GATED", x = 64, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-upload", x = 215, y = 138, width = 150, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "upload", title = "HTTP zstd upload", x = 215, y = 150, width = 150, height = 72, strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+          sdk.Chip(id = "st-up", label = "FEATURE-GATED", x = 249, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-atomic", x = 400, y = 138, width = 130, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "atomic", title = "atomic replace", x = 400, y = 150, width = 130, height = 72, strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+          sdk.Chip(id = "st-at", label = "FEATURE-GATED", x = 414, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-barrier", x = 556, y = 138, width = 144, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "barrier", title = "completion barrier", x = 556, y = 150, width = 144, height = 72, strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+          sdk.Chip(id = "st-bar", label = "FEATURE-GATED", x = 584, y = 138, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+        }
+      }
       sdk.Edge(id = "ar1", mode = "line", from = { nodeId: "allow", anchor: "e" }, to = { nodeId: "upload", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "ar2", mode = "line", from = { nodeId: "upload", anchor: "e" }, to = { nodeId: "atomic", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Edge(id = "ar3", mode = "line", from = { nodeId: "atomic", anchor: "e" }, to = { nodeId: "barrier", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
@@ -460,13 +564,13 @@ explainer "Cellular algorithm workbook" {
       sdk.Header(id = "header", title = "COMPOSITION · CANONICAL ROUTE", caption = "selectors → ordered algorithms → artifacts.")
       sdk.Panel(id = "rt-eligibility", title = "eligibility", x = 18, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "rt-a0", mode = "connector", from = { nodeId: "rt-eligibility", anchor: "e" }, to = { nodeId: "rt-ownership", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
-      sdk.Panel(id = "rt-ownership", title = "ownership", x = 103, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "rt-ownership", title = "ownership", x = 103, y = 90, width = 74, height = 64, strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "rt-a1", mode = "connector", from = { nodeId: "rt-ownership", anchor: "e" }, to = { nodeId: "rt-control", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2 })
       sdk.Panel(id = "rt-control", title = "control", x = 188, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.secondary")
       sdk.Edge(id = "rt-a2", mode = "connector", from = { nodeId: "rt-control", anchor: "e" }, to = { nodeId: "rt-distribution", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
       sdk.Panel(id = "rt-distribution", title = "distribution", x = 273, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.secondary")
       sdk.Edge(id = "rt-a3", mode = "connector", from = { nodeId: "rt-distribution", anchor: "e" }, to = { nodeId: "rt-execution", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2 })
-      sdk.Panel(id = "rt-execution", title = "execution", x = 358, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "rt-execution", title = "execution", x = 358, y = 90, width = 74, height = 64, strokeRole = "@theme.accent.tertiary")
       sdk.Edge(id = "rt-a4", mode = "connector", from = { nodeId: "rt-execution", anchor: "e" }, to = { nodeId: "rt-capture", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
       sdk.Panel(id = "rt-capture", title = "capture", x = 443, y = 160, width = 74, height = 64, strokeRole = "@theme.accent.tertiary")
       sdk.Edge(id = "rt-a5", mode = "connector", from = { nodeId: "rt-capture", anchor: "e" }, to = { nodeId: "rt-merge", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 2.2 })
@@ -514,12 +618,24 @@ explainer "Cellular algorithm workbook" {
 
     render: @scene {
       sdk.Header(id = "header", title = "COMPOSITION · STATUS BRANCHES", caption = "built · feature-gated · partial.")
-      sdk.Panel(id = "canon-route", title = "canonical route", x = 35, y = 118, width = 195, height = 72, strokeRole = "@theme.accent.primary")
-      sdk.Chip(id = "st-cr", label = "BUILT", x = 160, y = 106, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "branches", title = "phaser / fan-out / Stage E", x = 252, y = 118, width = 195, height = 72, strokeRole = "@theme.accent.secondary")
-      sdk.Chip(id = "st-br", label = "FEATURE-GATED", x = 331, y = 106, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary")
-      sdk.Panel(id = "partials", title = "report / telemetry / cancel", x = 469, y = 118, width = 195, height = 72, strokeRole = "@theme.accent.tertiary")
-      sdk.Chip(id = "st-pa", label = "PARTIAL", x = 594, y = 106, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary")
+      sdk.Overlay(id = "badge-canon-route", x = 35, y = 106, width = 195, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "canon-route", title = "canonical route", x = 35, y = 118, width = 195, height = 72, strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+          sdk.Chip(id = "st-cr", label = "BUILT", x = 160, y = 106, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.primary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-branches", x = 252, y = 106, width = 195, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "branches", title = "phaser / fan-out / Stage E", x = 252, y = 118, width = 195, height = 72, strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+          sdk.Chip(id = "st-br", label = "FEATURE-GATED", x = 331, y = 106, width = 116, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.secondary", style = { position: "absolute" })
+        }
+      }
+      sdk.Overlay(id = "badge-partials", x = 469, y = 106, width = 195, height = 84, coordinateSpace = "absolute") {
+        children {
+          sdk.Panel(id = "partials", title = "report / telemetry / cancel", x = 469, y = 118, width = 195, height = 72, strokeRole = "@theme.accent.tertiary", style = { position: "absolute" })
+          sdk.Chip(id = "st-pa", label = "PARTIAL", x = 594, y = 106, width = 70, height = 22, surfaceRole = "@theme.surface.secondary", strokeRole = "@theme.accent.tertiary", style = { position: "absolute" })
+        }
+      }
       sdk.Label(id = "status-msg", text = "status text travels with every selected algorithm", x = 60, y = 280, width = 580, height = 28, fontSize = 12, align = "middle")
       timeline primary {
         at 0 reveal header duration 260

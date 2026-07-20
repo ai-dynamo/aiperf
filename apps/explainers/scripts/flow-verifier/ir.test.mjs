@@ -4,6 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { pathEndpointsCoincident, pathPoints } from "./geometry.mjs";
 import { verifyPackageIr } from "./ir.mjs";
 
 function packageWithConnector() {
@@ -92,5 +93,12 @@ describe("flow verifier canonical snapshot contract", () => {
         code: "resolved-connector-missing",
       }),
     );
+  });
+});
+
+describe("flow verifier path degeneracy", () => {
+  it("flags zero-length connector paths", () => {
+    const pts = pathPoints("M10 20 L10 20");
+    expect(pathEndpointsCoincident(pts)).toBe(true);
   });
 });

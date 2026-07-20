@@ -38,12 +38,12 @@ explainer "Rust Architecture Atlas" {
       sdk.Edge(id = "a0a", mode = "route", from = { nodeId: "config", anchor: "e" }, to = { nodeId: "aiperf", anchor: "w" }, style = { stroke: "@theme.accent.secondary", strokeWidth: 2.2, fill: "none" })
       sdk.Panel(id = "aiperf", title = "aiperf", detail = "cli/src/main.rs", x = 270, y = 80, width = 180, height = 90, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
       sdk.Edge(id = "a0b", mode = "route", from = { nodeId: "aiperf", anchor: "s" }, to = { nodeId: "execute", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none" })
-      sdk.Panel(id = "execute", title = "aiperf --execute", detail = "protocol v2 child", x = 250, y = 210, width = 220, height = 80, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "execute", title = "aiperf --execute", detail = "protocol v2 child", x = 250, y = 220, width = 220, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Edge(id = "a0c", mode = "route", from = { nodeId: "execute", anchor: "e" }, to = { nodeId: "cell", anchor: "w" }, style = { stroke: "@theme.accent.warning", strokeWidth: 2.2, fill: "none" })
-      sdk.Panel(id = "cell", title = "--cell N", detail = "optional", x = 520, y = 210, width = 140, height = 80, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
-      sdk.Panel(id = "real", title = "real server", detail = "HTTP / gRPC", x = 60, y = 240, width = 150, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Panel(id = "mock", title = "mock-server", detail = "standalone", x = 250, y = 240, width = 170, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
-      sdk.Panel(id = "dyno", title = "Dynosim", detail = "feature gate", x = 460, y = 240, width = 180, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "cell", title = "--cell N", detail = "optional", x = 520, y = 220, width = 140, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
+      sdk.Panel(id = "real", title = "real server", detail = "HTTP / gRPC", x = 60, y = 320, width = 150, height = 64, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "mock", title = "mock-server", detail = "standalone", x = 250, y = 320, width = 170, height = 64, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "dyno", title = "Dynosim", detail = "feature gate", x = 460, y = 320, width = 180, height = 64, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       timeline primary {
         at 0 reveal hdr0 duration 280
         after hdr0 reveal config duration 280
@@ -468,14 +468,14 @@ explainer "Rust Architecture Atlas" {
     caption: "compile-time composition · Clock/Sink substitution · cellular wraps the core."
     render: @scene {
       sdk.Header(id = "hdr10", title = "EXTENSION SEAMS", caption = "compile-time composition · Clock/Sink substitution · cellular wraps the core.", x = 18, y = 16, width = 664, height = 44, surfaceRole = "@theme.surface.secondary")
-      sdk.Panel(id = "ext", title = "AIPerfExtension", detail = "transactional register", x = 240, y = 90, width = 200, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
-      sdk.Edge(id = "a10a", mode = "path", from = { x: 340, y: 162 }, to = { x: 340, y: 192 }, path = "M340 162 V192", x = 0, y = 0, width = 700, height = 400, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none" })
-      sdk.Panel(id = "reg", title = "AIPerfRegistry", detail = "frozen once", x = 230, y = 192, width = 220, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "ds", title = "datasets", detail = "loaders", x = 40, y = 270, width = 110, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Panel(id = "ep", title = "endpoints", detail = "dialects", x = 170, y = 270, width = 110, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Panel(id = "tr", title = "transports", detail = "HTTP·gRPC", x = 300, y = 270, width = 110, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
-      sdk.Panel(id = "wl", title = "workloads", detail = "sched·graph", x = 430, y = 270, width = 110, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
-      sdk.Panel(id = "ex", title = "exporters", detail = "sinks", x = 560, y = 270, width = 110, height = 72, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "ext", title = "AIPerfExtension", detail = "transactional register", x = 240, y = 90, width = 200, height = 60, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
+      sdk.Edge(id = "a10a", mode = "connector", from = { nodeId: "ext", anchor: "s" }, to = { nodeId: "reg", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none" })
+      sdk.Panel(id = "reg", title = "AIPerfRegistry", detail = "frozen once", x = 230, y = 178, width = 220, height = 60, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "ds", title = "datasets", detail = "loaders", x = 40, y = 262, width = 110, height = 64, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "ep", title = "endpoints", detail = "dialects", x = 170, y = 262, width = 110, height = 64, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "tr", title = "transports", detail = "HTTP·gRPC", x = 300, y = 262, width = 110, height = 64, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "wl", title = "workloads", detail = "sched·graph", x = 430, y = 262, width = 110, height = 64, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
+      sdk.Panel(id = "ex", title = "exporters", detail = "sinks", x = 560, y = 262, width = 110, height = 64, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.ink.secondary")
       timeline primary {
         at 0 reveal hdr10 duration 280
         after hdr10 reveal ext duration 280

@@ -4,6 +4,11 @@
  */
 
 //! Pure canonical connector resolution and source-mapped geometry diagnostics.
+//!
+//! Fan-in/fan-out topology (`core.fan-*`, `kind:"fan"`) is intentionally excluded
+//! from canonical connector resolution: SceneRenderer still computes fan trunk/branch
+//! geometry locally, and the verifier validates cardinality/trace cues only. Treat
+//! fans as an accepted exception until fan geometry is canonicalized.
 
 import {
   elbowPathData,
@@ -20,6 +25,10 @@ import type {
   RouteObstacle,
   RoutedSibling,
 } from "../connector-routing-types.js";
+import {
+  capabilityOf,
+  isMotionSignalNode,
+} from "../node-classification.js";
 import type {
   SceneGeometryLike,
   SceneNodeLike,
@@ -40,11 +49,23 @@ const UNKNOWN_RANGE: SceneSourceRangeLike = Object.freeze({
   end: Object.freeze({ offset: 0, line: 1, column: 1 }),
 });
 
+/** Maximum resolved height for annotation text excluded from routing obstacles. */
+const ANNOTATION_TEXT_MAX_HEIGHT = 32;
+
+/** Decorative capabilities that must not block automatic connector routing. */
+const NON_ROUTING_CAPABILITIES = new Set([
+  "core.band",
+  "core.bracket",
+  "core.divider",
+  "core.legend",
+]);
+
 /** Inputs required to resolve all connectors in one canonical scene. */
 export type ResolveConnectorsInput = Readonly<{
   nodesById: ReadonlyMap<string, SceneNodeLike>;
   worldGeometryById: ReadonlyMap<string, SceneGeometryLike>;
   ancestorIdsById: ReadonlyMap<string, readonly string[]>;
+  generatedPartIds?: ReadonlySet<string>;
 }>;
 
 /** Canonical connector paths plus deterministic ordered diagnostics. */
@@ -159,26 +180,13 @@ function resolveEndpoint(
   return { x: 0, y: 0 };
 }
 
-function capabilityOf(node: SceneNodeLike): string {
-  return node.capabilityId ?? node.capability ?? "";
-}
-
-function isMotionSignal(node: SceneNodeLike): boolean {
-  const capability = capabilityOf(node);
-  return (
-    capability === "motion.signal" ||
-    capability === "core.motion-signal" ||
-    node.style?.motion === "signal"
-  );
-}
-
 function isDecorativeConnector(node: SceneNodeLike): boolean {
   return capabilityOf(node) === "core.divider" || node.kind === "divider";
 }
 
 function isEdgeBoundMotionSignal(node: SceneNodeLike): boolean {
   return (
-    isMotionSignal(node) &&
+    isMotionSignalNode(node) &&
     typeof node.edgeRef === "string" &&
     node.edgeRef.length > 0
   );
@@ -209,7 +217,7 @@ function isConnector(node: SceneNodeLike): boolean {
     capability === "core.elbow" ||
     capability === "core.route" ||
     capability === "core.line" ||
-    isMotionSignal(node)
+    isMotionSignalNode(node)
   );
 }
 
@@ -242,7 +250,7 @@ function directedPolicy(
   const capability = capabilityOf(node);
   if (
     markerDisabled(node) ||
-    isMotionSignal(node) ||
+    isMotionSignalNode(node) ||
     capability === "core.bracket" ||
     node.kind === "bracket"
   ) {
@@ -403,6 +411,34 @@ function distance(left: ResolvedPoint, right: ResolvedPoint): number {
   return Math.hypot(left.x - right.x, left.y - right.y);
 }
 
+/**
+ * Whether a resolved node should participate in automatic route obstacle sets.
+ * Decorative chrome, generated semantic parts, and thin annotation labels are
+ * excluded so routes are not forced around backdrop geometry they intentionally
+ * cross.
+ */
+export function isRoutingObstacle(
+  node: SceneNodeLike,
+  geometry: SceneGeometryLike,
+  generatedPartIds?: ReadonlySet<string>,
+): boolean {
+  if (generatedPartIds?.has(node.id) === true) {
+    return false;
+  }
+  const capability = capabilityOf(node);
+  if (NON_ROUTING_CAPABILITIES.has(capability)) {
+    return false;
+  }
+  if (
+    capability === "core.text" &&
+    geometry.height > 0 &&
+    geometry.height <= ANNOTATION_TEXT_MAX_HEIGHT
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function routeObstacles(
   candidate: SceneNodeLike,
   sourceId: string | undefined,
@@ -424,6 +460,7 @@ function routeObstacles(
       excluded.has(id) ||
       node === undefined ||
       isConnector(node) ||
+      !isRoutingObstacle(node, geometry, input.generatedPartIds) ||
       !(geometry.width > 0) ||
       !(geometry.height > 0)
     ) {
@@ -579,7 +616,7 @@ function validatePath(
 ): void {
   // Motion signals often bind to an edge and carry companion path geometry that
   // is not meant to attach to the signal's own from/to ports.
-  if (isMotionSignal(candidate.node)) {
+  if (isMotionSignalNode(candidate.node)) {
     return;
   }
   const authored =
@@ -747,7 +784,7 @@ export function resolveConnectors(
       laneOffsets.get(candidate.node.id) ?? 0,
     );
     validatePath(candidate, path, diagnostics);
-    if (path.usedFallback) {
+    if (path.penetratedObstacleIds.length > 0) {
       diagnostics.push(
         makeDiagnostic(
           candidate.node,
@@ -846,7 +883,7 @@ function resolveEdgeBoundMotionSignals(
       continue;
     }
     const referencedNode = input.nodesById.get(edgeRef);
-    if (referencedNode === undefined || isMotionSignal(referencedNode)) {
+    if (referencedNode === undefined || isMotionSignalNode(referencedNode)) {
       diagnostics.push(
         makeDiagnostic(
           node,
@@ -914,7 +951,7 @@ function detectDuplicateStandaloneSignals(
   diagnostics: SceneResolutionDiagnostic[],
 ): void {
   const motionNodes = [...input.nodesById.values()]
-    .filter((node) => isMotionSignal(node) && !isEdgeBoundMotionSignal(node))
+    .filter((node) => isMotionSignalNode(node) && !isEdgeBoundMotionSignal(node))
     .sort((left, right) => left.id.localeCompare(right.id));
   for (const node of motionNodes) {
     const motion = connectorsById.get(node.id);
@@ -926,7 +963,7 @@ function detectDuplicateStandaloneSignals(
         continue;
       }
       const otherNode = input.nodesById.get(otherId);
-      if (otherNode === undefined || isMotionSignal(otherNode)) {
+      if (otherNode === undefined || isMotionSignalNode(otherNode)) {
         continue;
       }
       if (connectorsMatch(motion, other)) {

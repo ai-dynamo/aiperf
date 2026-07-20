@@ -182,7 +182,8 @@ type SceneNodeIndex = Readonly<{
   connectorsById: ReadonlyMap<string, ResolvedConnector>;
 }>;
 
-type ScenePoint = Readonly<{ x: number; y: number }>;
+/** @internal exported for direct unit testing of fan/arrowhead geometry helpers. */
+export type ScenePoint = Readonly<{ x: number; y: number }>;
 
 export type FanSegment = Readonly<{
   id: string;
@@ -305,7 +306,7 @@ function authoredCameraAt(
   }
 
   const time = Math.max(0, Math.trunc(finiteNumber(timeMs)));
-  const keyframes = camera
+  const sorted = camera
     .map((keyframe, index) => ({ keyframe, index }))
     .sort(
       (left, right) =>
@@ -313,6 +314,20 @@ function authoredCameraAt(
         left.index - right.index,
     )
     .map(({ keyframe }) => keyframe);
+  // Duplicate `at` values (authoring mistake or a generated override) would
+  // otherwise leave `findIndex` picking whichever duplicate sorted first;
+  // collapse adjacent equal-`at` keyframes and keep the last so the later
+  // authored keyframe consistently wins.
+  const keyframes: SceneCameraKeyframeLike[] = [];
+  for (const keyframe of sorted) {
+    const at = finiteNumber(keyframe.at);
+    const previous = keyframes[keyframes.length - 1];
+    if (previous !== undefined && finiteNumber(previous.at) === at) {
+      keyframes[keyframes.length - 1] = keyframe;
+    } else {
+      keyframes.push(keyframe);
+    }
+  }
   const first = keyframes[0]!;
   const last = keyframes[keyframes.length - 1]!;
 
@@ -363,6 +378,12 @@ function sceneViewBox(
   const zoom = Math.max(camera.zoom, Number.EPSILON);
   const visibleWidth = width / zoom;
   const visibleHeight = height / zoom;
+  if (!Number.isFinite(visibleWidth) || !Number.isFinite(visibleHeight)) {
+    // An extreme (near-zero) zoom can overflow finite-but-huge viewport math
+    // to Infinity; fall back to the static, unzoomed viewport rather than
+    // emit a non-finite viewBox that browsers reject outright.
+    return `0 0 ${width} ${height}`;
+  }
   const minX = camera.x - visibleWidth / 2;
   const minY = camera.y - visibleHeight / 2;
   return `${minX} ${minY} ${visibleWidth} ${visibleHeight}`;
@@ -1212,7 +1233,8 @@ function atomicOrthogonalSpans(
   return spans;
 }
 
-type FanAtomicSpan = Readonly<{
+/** @internal exported for direct unit testing of fan segment orientation. */
+export type FanAtomicSpan = Readonly<{
   axis: "h" | "v";
   fixed: number;
   from: number;
@@ -1327,7 +1349,8 @@ function subtractInterval(
   return parts.filter((part) => part.to - part.from > 0.001);
 }
 
-function fanSegmentFromAtomic(
+/** @internal exported for direct unit testing of destination orientation. */
+export function fanSegmentFromAtomic(
   id: string,
   span: FanAtomicSpan,
 ): FanSegment {
@@ -1340,14 +1363,31 @@ function fanSegmentFromAtomic(
       ? { x: span.to, y: span.fixed }
       : { x: span.fixed, y: span.to };
   const destination = span.destination;
-  const directed =
-    destination === undefined
-      ? { start, end }
-      : pointsNear(end, destination)
-        ? { start, end }
-        : pointsNear(start, destination)
+  let directed = { start, end };
+  if (destination !== undefined) {
+    if (pointsNear(end, destination)) {
+      directed = { start, end };
+    } else if (pointsNear(start, destination)) {
+      directed = { start: end, end: start };
+    } else {
+      // Neither endpoint sits on the destination within epsilon (a merged
+      // corridor whose destination is inset from both span ends) — orient
+      // toward whichever end is actually closer so the marker still points
+      // at the destination instead of always defaulting to `end`.
+      const distanceToEnd = Math.hypot(
+        end.x - destination.x,
+        end.y - destination.y,
+      );
+      const distanceToStart = Math.hypot(
+        start.x - destination.x,
+        start.y - destination.y,
+      );
+      directed =
+        distanceToStart < distanceToEnd
           ? { start: end, end: start }
           : { start, end };
+    }
+  }
   return {
     id,
     d: fanPath([directed.start, directed.end]),
@@ -1454,6 +1494,26 @@ function fanPathPoints(d: string): ScenePoint[] {
   return points;
 }
 
+/** Closest point to `point` on segment `a`-`b`, clamped to the segment. */
+function projectPointOntoSegment(
+  point: ScenePoint,
+  a: ScenePoint,
+  b: ScenePoint,
+): Readonly<{ point: ScenePoint; distance: number }> {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSquared = dx * dx + dy * dy;
+  const t =
+    lengthSquared === 0
+      ? 0
+      : clamp01(((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared);
+  const projected = { x: a.x + dx * t, y: a.y + dy * t };
+  return {
+    point: projected,
+    distance: Math.hypot(point.x - projected.x, point.y - projected.y),
+  };
+}
+
 /** Split a fan trajectory at the junction into trunk and branch ball paths. */
 function splitFanTrajectoryAtJunction(
   d: string,
@@ -1463,27 +1523,44 @@ function splitFanTrajectoryAtJunction(
   if (points.length < 2) {
     return undefined;
   }
-  let junctionIndex = points.findIndex((point) => pointsNear(point, junction));
-  if (junctionIndex < 0) {
-      // Authored bend: pick the orthogonal corner closest to the junction.
-    let best = 0;
-    let bestDist = Number.POSITIVE_INFINITY;
-    points.forEach((point, index) => {
-      const dist =
-        Math.abs(point.x - junction.x) + Math.abs(point.y - junction.y);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = index;
-      }
-    });
-    junctionIndex = best;
+  const vertexIndex = points.findIndex((point) => pointsNear(point, junction));
+  if (vertexIndex > 0 && vertexIndex < points.length - 1) {
+    return {
+      head: fanPath(points.slice(0, vertexIndex + 1)),
+      tail: fanPath(points.slice(vertexIndex)),
+    };
   }
-  if (junctionIndex <= 0 || junctionIndex >= points.length - 1) {
+  // No interior vertex sits on the junction — an authored junction can land
+  // off-trajectory (a bend the automatic routing did not produce), and the
+  // nearest vertex can be a trajectory endpoint. Snapping to that endpoint
+  // used to bail out with `undefined`, dropping the ball entirely; instead
+  // project onto the nearest edge and splice the projected point into the
+  // polyline so every trajectory still yields a head/tail split.
+  let bestSegmentIndex = 0;
+  let bestProjection = projectPointOntoSegment(junction, points[0]!, points[1]!);
+  for (let index = 1; index < points.length - 1; index++) {
+    const projection = projectPointOntoSegment(
+      junction,
+      points[index]!,
+      points[index + 1]!,
+    );
+    if (projection.distance < bestProjection.distance) {
+      bestProjection = projection;
+      bestSegmentIndex = index;
+    }
+  }
+  const spliced = [
+    ...points.slice(0, bestSegmentIndex + 1),
+    bestProjection.point,
+    ...points.slice(bestSegmentIndex + 1),
+  ];
+  const junctionIndex = bestSegmentIndex + 1;
+  if (junctionIndex <= 0 || junctionIndex >= spliced.length - 1) {
     return undefined;
   }
   return {
-    head: fanPath(points.slice(0, junctionIndex + 1)),
-    tail: fanPath(points.slice(junctionIndex)),
+    head: fanPath(spliced.slice(0, junctionIndex + 1)),
+    tail: fanPath(spliced.slice(junctionIndex)),
   };
 }
 
@@ -1611,12 +1688,27 @@ function polylinePathData(
   return d;
 }
 
-function timelineDurationMs(timeline: readonly SceneTimelineCueLike[]): number {
-  return timeline.reduce(
+/**
+ * Scene duration spans the latest cue end and the latest authored camera
+ * keyframe `at` — a camera move scheduled after the last cue must still get
+ * to play instead of being clamped away by a duration derived from cues alone.
+ */
+function timelineDurationMs(
+  timeline: readonly SceneTimelineCueLike[],
+  camera?: readonly SceneCameraKeyframeLike[],
+): number {
+  const cueEnd = timeline.reduce(
     (maximum, cue) =>
       Math.max(maximum, finiteNumber(cue.at) + finiteNumber(cue.duration)),
     0,
   );
+  const cameraEnd = Array.isArray(camera)
+    ? camera.reduce(
+        (maximum, keyframe) => Math.max(maximum, finiteNumber(keyframe.at)),
+        0,
+      )
+    : 0;
+  return Math.max(cueEnd, cameraEnd);
 }
 
 function isEnterLikeAction(action: string): boolean {
@@ -2938,6 +3030,17 @@ function rewriteLastEndpoint(
   return undefined;
 }
 
+/** Index of the last SVG path command letter in `d` (path always starts with `M`). */
+function lastCommandStartIndex(d: string): number {
+  const commandLetters = /[MmLlHhVvCcSsQqTtAaZz]/g;
+  let lastIndex = -1;
+  let match: RegExpExecArray | null;
+  while ((match = commandLetters.exec(d)) !== null) {
+    lastIndex = match.index;
+  }
+  return lastIndex;
+}
+
 function shortenPathEndWithDom(d: string, inset: number): string | undefined {
   try {
     const path = document.createElementNS(SVG_NS, "path");
@@ -2951,11 +3054,35 @@ function shortenPathEndWithDom(d: string, inset: number): string | undefined {
     }
     const cutAt = total - inset;
     const end = path.getPointAtLength(cutAt);
-    const rewritten = rewriteLastEndpoint(d, end.x, end.y);
-    if (rewritten !== undefined) {
-      return rewritten;
+    const trimmed = d.trim();
+    const lastCommandIndex = lastCommandStartIndex(trimmed);
+    const lastLetter =
+      lastCommandIndex >= 0 ? trimmed[lastCommandIndex] : undefined;
+    // A cubic's chord rewrite keeps the original control points and only
+    // moves the terminal anchor, which is a different curve rather than a
+    // truncated one — always prefer the arc-length-accurate polyline below.
+    const isCubicEnding = lastLetter === "C" || lastLetter === "c";
+    let lastSegmentStart = 0;
+    if (lastCommandIndex > 0) {
+      const prefixPath = document.createElementNS(SVG_NS, "path");
+      prefixPath.setAttribute("d", trimmed.slice(0, lastCommandIndex));
+      lastSegmentStart = prefixPath.getTotalLength();
     }
-    // Fallback for uncommon commands: polyline up to the cut.
+    // `rewriteLastEndpoint` only moves the last command's own endpoint, so
+    // it is only correct when the cut point still falls within that last
+    // segment. A cut deep enough to land on an earlier segment must drop
+    // whole trailing commands instead — handled by the polyline fallback.
+    const cutWithinLastSegment =
+      !isCubicEnding && cutAt >= lastSegmentStart - 0.01;
+    if (cutWithinLastSegment) {
+      const rewritten = rewriteLastEndpoint(d, end.x, end.y);
+      if (rewritten !== undefined) {
+        return rewritten;
+      }
+    }
+    // Multi-segment cuts that land before the final command, cubic endings,
+    // and any other unsupported ending rebuild the path as an arc-length
+    // polyline up to the cut instead of rewriting just the last endpoint.
     const steps = Math.max(12, Math.min(64, Math.ceil(cutAt / 3)));
     const parts: string[] = [];
     for (let i = 0; i <= steps; i++) {
@@ -3285,13 +3412,19 @@ function renderNode(
     ? traceProgressForNode(node.id, timeline, playbackTimeMs)
     : undefined;
   const themeAccent = theme.accent.primary;
-  const emphasis = emphasisForNode(
-    node.id,
-    timeline,
-    playbackTimeMs,
-    themeAccent,
-  );
-  const pulseCue = pulseCueForNode(node.id, timeline, playbackTimeMs);
+  // Emphasize/pulse cues ease across a window keyed to `playbackTimeMs`; while
+  // paused that time is frozen, but pausing mid-envelope must not leave the
+  // glow/scale parked at whatever intensity the cue happened to be at (same
+  // rationale as continuousPulseForNode's pause gate below). Reduced motion
+  // already snaps `playbackTimeMs` to the final frame, so it needs no
+  // separate gate here.
+  const cueFrozenByPause = !playback.playing && !playback.reducedMotion;
+  const emphasis = cueFrozenByPause
+    ? undefined
+    : emphasisForNode(node.id, timeline, playbackTimeMs, themeAccent);
+  const pulseCue = cueFrozenByPause
+    ? undefined
+    : pulseCueForNode(node.id, timeline, playbackTimeMs);
   // Continuous pulse and emphasize/pulse cues animate a visible node; a
   // hidden node (pre-enter or fully faded) has nothing to glow/scale and
   // must not keep animating underneath its own invisibility.
@@ -3918,15 +4051,17 @@ function renderNode(
       // progress 0→1 once and park the ball at the destination — that felt like
       // a zip through boxes. Keep draw/enter for visibility only.
       //
-      // Deliberately not gated on `playback.playing`: SMIL's indefinite
-      // `<animate>`/`<animateMotion>` loop is un-keyed to `playbackTimeMs`
-      // (it is a decorative, self-timed loop, not a timeline-driven
-      // progress). Toggling `active` off on pause would unmount the circle,
-      // and remounting on resume restarts `begin={delay}` from zero —
-      // desyncing the dot from where it was before pausing. Leaving it
-      // mounted keeps the loop's own wall-clock continuity across
+      // `active` is deliberately not gated on `playback.playing`: SMIL's
+      // indefinite `<animate>`/`<animateMotion>` loop is un-keyed to
+      // `playbackTimeMs` (it is a decorative, self-timed loop, not a
+      // timeline-driven progress). Toggling `active` off on pause would
+      // unmount the circle, and remounting on resume restarts `begin={delay}`
+      // from zero — desyncing the dot from where it was before pausing.
+      // Leaving it mounted keeps the loop's own wall-clock continuity across
       // pause/resume; only a genuinely inactive state (reduced motion,
       // hidden node, or an endpoint not yet on stage) should unmount it.
+      // Pausing must still freeze the dot in place, which `paused` below
+      // does via the SVG document's own pauseAnimations without unmounting.
       const smilActive =
         !playback.reducedMotion &&
         appearance.state !== "hidden" &&
@@ -3963,6 +4098,7 @@ function renderNode(
                   )}
                   reducedMotion={playback.reducedMotion}
                   active={smilActive}
+                  paused={!playback.playing}
                   r={DEFAULT_DOT_RADIUS}
                   data-flow-motion-signal={node.id}
                   data-flow-motion-segment={String(segmentIndex)}
@@ -4206,10 +4342,10 @@ export function SceneRenderer({
       roots: nextRoots,
       index: nextIndex,
       timeline: nextTimeline,
-      durationMs: timelineDurationMs(nextTimeline),
+      durationMs: timelineDurationMs(nextTimeline, scene.camera),
       sceneTips: collectSceneTips(nextRoots),
     };
-  }, [scene.id, scene.roots, scene.timeline]);
+  }, [scene.id, scene.roots, scene.timeline, scene.camera]);
   const [playbackTimeMs, setPlaybackTimeMs] = useState(0);
   const playbackTimeMsRef = useRef(0);
   const rate = playbackRate > 0 ? playbackRate : 1;

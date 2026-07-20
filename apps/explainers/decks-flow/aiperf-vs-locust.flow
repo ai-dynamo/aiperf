@@ -50,7 +50,7 @@ explainer "AIPerf vs Locust" {
         id = "s1-locust",
         title = "Locust",
         detail = "N virtual users",
-        x = 40, y = 80, width = 260, height = 72,
+        x = 40, y = 86, width = 260, height = 68,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -58,7 +58,7 @@ explainer "AIPerf vs Locust" {
         id = "s1-t1",
         title = "thread 1",
         detail = "1 in-flight request",
-        x = 50, y = 158, width = 75, height = 50,
+        x = 50, y = 172, width = 64, height = 40,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.secondary)
       )
@@ -66,7 +66,7 @@ explainer "AIPerf vs Locust" {
         id = "s1-t2",
         title = "thread 2",
         detail = "1 in-flight request",
-        x = 135, y = 158, width = 75, height = 50,
+        x = 128, y = 172, width = 64, height = 40,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.secondary)
       )
@@ -74,14 +74,14 @@ explainer "AIPerf vs Locust" {
         id = "s1-t3",
         title = "thread 3",
         detail = "1 in-flight request",
-        x = 220, y = 158, width = 75, height = 50,
+        x = 206, y = 172, width = 64, height = 40,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.secondary)
       )
       sdk.Label(
         id = "s1-tdots",
         text = "... thread N",
-        x = 60, y = 208, width = 220, height = 20,
+        x = 60, y = 238, width = 220, height = 20,
         fontSize = 12,
         inkRole = theme(ink.tertiary)
       )
@@ -109,7 +109,7 @@ explainer "AIPerf vs Locust" {
       sdk.Label(
         id = "s1-lcount",
         text = "concurrency = N threads",
-        x = 50, y = 235, width = 250, height = 20,
+        x = 50, y = 254, width = 250, height = 20,
         fontSize = 12,
         weight = "bold",
         inkRole = theme(accent.secondary)
@@ -117,14 +117,14 @@ explainer "AIPerf vs Locust" {
       sdk.Divider(
         id = "s1-div",
         axis = "y",
-        x = 335, y = 80, length = 260,
+        x = 335, y = 86, length = 260,
         strokeRole = theme(ink.tertiary)
       )
       sdk.Panel(
         id = "s1-aiperf",
         title = "AIPerf",
         detail = "1 worker (thread-per-core)",
-        x = 380, y = 80, width = 260, height = 72,
+        x = 380, y = 86, width = 260, height = 68,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -132,7 +132,7 @@ explainer "AIPerf vs Locust" {
         id = "s1-c1",
         title = "credit → task",
         detail = "1 in-flight request",
-        x = 390, y = 150, width = 75, height = 50,
+        x = 390, y = 188, width = 64, height = 40,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.primary)
       )
@@ -140,7 +140,7 @@ explainer "AIPerf vs Locust" {
         id = "s1-c2",
         title = "credit → task",
         detail = "1 in-flight request",
-        x = 475, y = 150, width = 75, height = 50,
+        x = 468, y = 188, width = 64, height = 40,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.primary)
       )
@@ -148,14 +148,14 @@ explainer "AIPerf vs Locust" {
         id = "s1-c3",
         title = "credit → task",
         detail = "1 in-flight request",
-        x = 560, y = 150, width = 75, height = 50,
+        x = 546, y = 188, width = 64, height = 40,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.primary)
       )
       sdk.Label(
         id = "s1-cdots",
         text = "... many more credits, one worker",
-        x = 390, y = 208, width = 260, height = 20,
+        x = 390, y = 248, width = 260, height = 20,
         fontSize = 12,
         inkRole = theme(ink.tertiary)
       )
@@ -183,7 +183,7 @@ explainer "AIPerf vs Locust" {
       sdk.Label(
         id = "s1-acount",
         text = "concurrency = credits, not workers",
-        x = 390, y = 235, width = 260, height = 20,
+        x = 390, y = 274, width = 260, height = 20,
         fontSize = 12,
         weight = "bold",
         inkRole = theme(accent.primary)
@@ -192,7 +192,7 @@ explainer "AIPerf vs Locust" {
         id = "s1-host",
         title = "One worker hosts many units",
         detail = "the worker is an execution host, not the unit itself",
-        x = 60, y = 285, width = 580, height = 50,
+        x = 60, y = 300, width = 580, height = 45,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -750,7 +750,7 @@ explainer "AIPerf vs Locust" {
         id = "s5-tm",
         title = "Scheduling",
         detail = "admission · in-process",
-        x = 195, y = 165, width = 145, height = 55,
+        x = 185, y = 165, width = 145, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -758,7 +758,7 @@ explainer "AIPerf vs Locust" {
         id = "s5-wm",
         title = "Transport sinks",
         detail = "HTTP · gRPC · in-process",
-        x = 360, y = 165, width = 145, height = 55,
+        x = 370, y = 175, width = 135, height = 48,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -766,7 +766,7 @@ explainer "AIPerf vs Locust" {
         id = "s5-rm",
         title = "Metrics · report",
         detail = "in-process merge",
-        x = 525, y = 165, width = 145, height = 55,
+        x = 535, y = 175, width = 135, height = 48,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -802,7 +802,7 @@ explainer "AIPerf vs Locust" {
         id = "s5-opt1",
         title = "Telemetry",
         detail = "optional",
-        x = 30, y = 235, width = 100, height = 40,
+        x = 30, y = 260, width = 100, height = 40,
         surfaceRole = theme(surface.base),
         strokeRole = theme(ink.tertiary)
       )
@@ -810,7 +810,7 @@ explainer "AIPerf vs Locust" {
         id = "s5-opt2",
         title = "Server metrics",
         detail = "optional",
-        x = 145, y = 235, width = 110, height = 40,
+        x = 145, y = 260, width = 110, height = 40,
         surfaceRole = theme(surface.base),
         strokeRole = theme(ink.tertiary)
       )
@@ -818,7 +818,7 @@ explainer "AIPerf vs Locust" {
         id = "s5-opt3",
         title = "Network latency",
         detail = "optional",
-        x = 270, y = 235, width = 120, height = 40,
+        x = 270, y = 260, width = 120, height = 40,
         surfaceRole = theme(surface.base),
         strokeRole = theme(ink.tertiary)
       )
@@ -826,7 +826,7 @@ explainer "AIPerf vs Locust" {
         id = "s5-opt4",
         title = "--cells N",
         detail = "optional cellular",
-        x = 405, y = 235, width = 100, height = 40,
+        x = 535, y = 260, width = 100, height = 40,
         surfaceRole = theme(surface.base),
         strokeRole = theme(ink.tertiary)
       )
@@ -835,13 +835,14 @@ explainer "AIPerf vs Locust" {
         mode = "route",
         from = { nodeId: "s5-sc", anchor: "s" },
         to = { nodeId: "s5-opt2", anchor: "n" },
+        via = { x: 350, y: 240 },
         style = { stroke: theme(ink.tertiary), strokeWidth: 1, dash: [3, 3] }
       )
       sdk.Panel(
         id = "s5-workers",
         title = "N × OS-thread sub-cell",
         detail = "workers > 1 · thread-per-core · LocalSet + sink",
-        x = 195, y = 300, width = 300, height = 55,
+        x = 195, y = 325, width = 300, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -850,6 +851,7 @@ explainer "AIPerf vs Locust" {
         mode = "route",
         from = { nodeId: "s5-wm", anchor: "s" },
         to = { nodeId: "s5-workers", anchor: "n" },
+        via = { x: 443, y: 315 },
         style = { stroke: theme(accent.primary), strokeWidth: 2, dash: [4, 3] }
       )
       sdk.Signal(
@@ -919,7 +921,7 @@ explainer "AIPerf vs Locust" {
         id = "s6-coord",
         title = "aiperf --execute",
         detail = "single process runtime",
-        x = 40, y = 86, width = 300, height = 50,
+        x = 50, y = 86, width = 300, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -927,7 +929,7 @@ explainer "AIPerf vs Locust" {
         id = "s6-bus",
         title = "Admission gate",
         detail = "shared when dispatch=global",
-        x = 30, y = 140, width = 160, height = 55,
+        x = 30, y = 178, width = 145, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -935,7 +937,7 @@ explainer "AIPerf vs Locust" {
         id = "s6-dset",
         title = "Worker LocalSet",
         detail = "scheduling + sink",
-        x = 210, y = 140, width = 160, height = 55,
+        x = 225, y = 178, width = 160, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -943,7 +945,7 @@ explainer "AIPerf vs Locust" {
         id = "s6-raw",
         title = "Metrics merge",
         detail = "at phase boundary",
-        x = 390, y = 140, width = 160, height = 55,
+        x = 405, y = 178, width = 160, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -952,6 +954,7 @@ explainer "AIPerf vs Locust" {
         mode = "route",
         from = { nodeId: "s6-coord", anchor: "s" },
         to = { nodeId: "s6-bus", anchor: "n" },
+        via = { x: 200, y: 158 },
         style = { stroke: theme(accent.tertiary), strokeWidth: 1.4 }
       )
       sdk.Edge(
@@ -959,6 +962,7 @@ explainer "AIPerf vs Locust" {
         mode = "route",
         from = { nodeId: "s6-coord", anchor: "s" },
         to = { nodeId: "s6-dset", anchor: "n" },
+        via = { x: 200, y: 158 },
         style = { stroke: theme(accent.tertiary), strokeWidth: 1.4 }
       )
       sdk.Edge(
@@ -966,19 +970,20 @@ explainer "AIPerf vs Locust" {
         mode = "route",
         from = { nodeId: "s6-coord", anchor: "s" },
         to = { nodeId: "s6-raw", anchor: "n" },
+        via = { x: 395, y: 158 },
         style = { stroke: theme(accent.tertiary), strokeWidth: 1.4 }
       )
       sdk.Divider(
         id = "s6-div",
         axis = "x",
-        x = 40, y = 215, length = 610,
+        x = 40, y = 235, length = 610,
         strokeRole = theme(ink.tertiary)
       )
       sdk.Panel(
         id = "s6-timing",
         title = "Dispatch strategy",
         detail = "sharded · global · global-hop",
-        x = 220, y = 235, width = 260, height = 55,
+        x = 220, y = 250, width = 260, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -986,7 +991,7 @@ explainer "AIPerf vs Locust" {
         id = "s6-dispatch",
         title = "Credit issue",
         detail = "admit then run on a worker",
-        x = 60, y = 310, width = 220, height = 50,
+        x = 60, y = 325, width = 220, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -994,7 +999,7 @@ explainer "AIPerf vs Locust" {
         id = "s6-return",
         title = "Credit complete",
         detail = "observe · release slot",
-        x = 400, y = 310, width = 220, height = 50,
+        x = 400, y = 325, width = 220, height = 50,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1083,7 +1088,7 @@ explainer "AIPerf vs Locust" {
         id = "s7-t1",
         title = "Turn 1",
         detail = "least-loaded selection",
-        x = 40, y = 110, width = 150, height = 78,
+        x = 40, y = 122, width = 150, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1091,7 +1096,7 @@ explainer "AIPerf vs Locust" {
         id = "s7-wa",
         title = "Worker A",
         detail = "load: low",
-        x = 230, y = 100, width = 120, height = 45,
+        x = 230, y = 118, width = 120, height = 36,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.tertiary)
       )
@@ -1099,7 +1104,7 @@ explainer "AIPerf vs Locust" {
         id = "s7-wb",
         title = "Worker B",
         detail = "load: chosen",
-        x = 230, y = 150, width = 120, height = 45,
+        x = 230, y = 168, width = 120, height = 36,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1107,7 +1112,7 @@ explainer "AIPerf vs Locust" {
         id = "s7-wc",
         title = "Worker C",
         detail = "load: high",
-        x = 230, y = 200, width = 120, height = 45,
+        x = 230, y = 218, width = 120, height = 36,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.tertiary)
       )
@@ -1122,7 +1127,7 @@ explainer "AIPerf vs Locust" {
         id = "s7-map",
         title = "sticky map",
         detail = "conversation → Worker B",
-        x = 400, y = 150, width = 150, height = 45,
+        x = 400, y = 168, width = 150, height = 36,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1137,7 +1142,7 @@ explainer "AIPerf vs Locust" {
         id = "s7-t2",
         title = "Turn 2, 3, ...",
         detail = "reads sticky map",
-        x = 400, y = 100, width = 150, height = 40,
+        x = 400, y = 118, width = 150, height = 36,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1151,14 +1156,14 @@ explainer "AIPerf vs Locust" {
       sdk.Divider(
         id = "s7-div",
         axis = "x",
-        x = 40, y = 260, length = 610,
+        x = 40, y = 284, length = 610,
         strokeRole = theme(ink.tertiary)
       )
       sdk.Panel(
         id = "s7-return",
         title = "Credit complete",
         detail = "observe · release admission slot",
-        x = 220, y = 280, width = 260, height = 55,
+        x = 220, y = 300, width = 260, height = 55,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )
@@ -1167,6 +1172,7 @@ explainer "AIPerf vs Locust" {
         mode = "route",
         from = { nodeId: "s7-wb", anchor: "s" },
         to = { nodeId: "s7-return", anchor: "n" },
+        via = { x: 340, y: 284 },
         style = { stroke: theme(accent.green), strokeWidth: 2 }
       )
       sdk.Signal(
@@ -1233,7 +1239,7 @@ explainer "AIPerf vs Locust" {
         id = "s8-c1",
         title = "Lifecycle",
         detail = "always active · vote: yes",
-        x = 30, y = 80, width = 130, height = 72,
+        x = 30, y = 86, width = 118, height = 58,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1241,7 +1247,7 @@ explainer "AIPerf vs Locust" {
         id = "s8-c2",
         title = "DAG lifecycle",
         detail = "always active · vote: yes",
-        x = 175, y = 80, width = 130, height = 72,
+        x = 165, y = 86, width = 118, height = 58,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.tertiary)
       )
@@ -1249,7 +1255,7 @@ explainer "AIPerf vs Locust" {
         id = "s8-c3",
         title = "Request count",
         detail = "if configured · vote: yes",
-        x = 320, y = 80, width = 130, height = 72,
+        x = 300, y = 86, width = 118, height = 58,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1257,7 +1263,7 @@ explainer "AIPerf vs Locust" {
         id = "s8-c4",
         title = "Session count",
         detail = "if configured · vote: yes",
-        x = 465, y = 80, width = 130, height = 72,
+        x = 435, y = 86, width = 118, height = 58,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1648,7 +1654,7 @@ explainer "AIPerf vs Locust" {
         id = "s10-steps",
         direction = "row",
         gap = 18,
-        x = 30, y = 274, width = 500, height = 52,
+        x = 30, y = 292, width = 500, height = 52,
         align = "stretch",
         fixedWidth = true,
         fixedHeight = true
@@ -1689,7 +1695,7 @@ explainer "AIPerf vs Locust" {
       sdk.Label(
         id = "s10-note",
         text = "The worker itself never decides how much concurrency it runs — it only executes",
-        x = 30, y = 340, width = 640, height = 20,
+        x = 30, y = 358, width = 640, height = 20,
         fontSize = 12,
         inkRole = theme(ink.secondary)
       )
@@ -1761,7 +1767,7 @@ explainer "AIPerf vs Locust" {
         id = "s11-locust",
         title = "Locust",
         detail = "exact via loop structure · no counter",
-        x = 30, y = 86, width = 290, height = 78,
+        x = 30, y = 86, width = 290, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
@@ -1769,7 +1775,7 @@ explainer "AIPerf vs Locust" {
         id = "s11-aiperf",
         title = "AIPerf",
         detail = "exact via credit ledger · has a counter",
-        x = 360, y = 86, width = 290, height = 78,
+        x = 360, y = 86, width = 290, height = 72,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
@@ -1782,7 +1788,7 @@ explainer "AIPerf vs Locust" {
       sdk.Label(
         id = "s11-ltime",
         text = "poll cadence:",
-        x = 30, y = 150, width = 100, height = 18,
+        x = 30, y = 172, width = 100, height = 18,
         fontSize = 11,
         inkRole = theme(ink.tertiary)
       )
@@ -1790,7 +1796,7 @@ explainer "AIPerf vs Locust" {
         id = "s11-p0",
         title = "check",
         detail = "t=0s",
-        x = 30, y = 172, width = 70, height = 40,
+        x = 30, y = 198, width = 70, height = 36,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.warning)
       )
@@ -1798,7 +1804,7 @@ explainer "AIPerf vs Locust" {
         id = "s11-p1",
         title = "check",
         detail = "t=3s",
-        x = 120, y = 172, width = 70, height = 40,
+        x = 120, y = 198, width = 70, height = 36,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.warning)
       )
@@ -1806,7 +1812,7 @@ explainer "AIPerf vs Locust" {
         id = "s11-p2",
         title = "kill all",
         detail = "target crossed",
-        x = 210, y = 172, width = 100, height = 40,
+        x = 210, y = 198, width = 100, height = 36,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
       )
@@ -1827,7 +1833,7 @@ explainer "AIPerf vs Locust" {
       sdk.Label(
         id = "s11-atime",
         text = "synchronous check:",
-        x = 360, y = 150, width = 140, height = 18,
+        x = 360, y = 172, width = 140, height = 18,
         fontSize = 11,
         inkRole = theme(ink.tertiary)
       )
@@ -1835,7 +1841,7 @@ explainer "AIPerf vs Locust" {
         id = "s11-a0",
         title = "check",
         detail = "every dispatch",
-        x = 360, y = 172, width = 90, height = 40,
+        x = 360, y = 198, width = 90, height = 36,
         surfaceRole = theme(surface.base),
         strokeRole = theme(accent.green)
       )
@@ -1843,7 +1849,7 @@ explainer "AIPerf vs Locust" {
         id = "s11-a1",
         title = "gate + drain",
         detail = "target reached, exact",
-        x = 470, y = 172, width = 120, height = 40,
+        x = 470, y = 198, width = 120, height = 36,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.green)
       )

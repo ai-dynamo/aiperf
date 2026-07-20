@@ -21,6 +21,12 @@ export type MotionSignalProps = Omit<SVGProps<SVGCircleElement>, "color"> & {
   active?: boolean;
   /** When true, hide the traveling dot (final-frame / a11y reduced motion). */
   reducedMotion?: boolean;
+  /**
+   * When true, freeze the indefinite SMIL loop in place without unmounting
+   * it (playback paused). Ignored in timeline `progress` mode, where the
+   * dot position is already driven by (frozen) `playbackTimeMs` upstream.
+   */
+  paused?: boolean;
 };
 
 function clamp01(value: number): number {
@@ -45,6 +51,7 @@ export function MotionSignal({
   progress,
   active = true,
   reducedMotion: reducedMotionProp,
+  paused = false,
   className,
   r = 5,
   children,
@@ -56,11 +63,36 @@ export function MotionSignal({
   const reducedMotion = reducedMotionProp === true || prefersReducedMotion;
   const motionClassName = ["motion-signal", className].filter(Boolean).join(" ");
   const measureRef = useRef<SVGPathElement | null>(null);
+  const circleRef = useRef<SVGCircleElement | null>(null);
   const [point, setPoint] = useState<Readonly<{ x: number; y: number }> | null>(
     null,
   );
 
   const timelineMode = typeof progress === "number" && Number.isFinite(progress);
+
+  // The indefinite SMIL loop below is un-keyed to `playbackTimeMs` (see the
+  // `active` doc comment on why it stays mounted across pause/resume), so
+  // freezing it takes the SVG document's own pause/unpause rather than a
+  // React re-render. Multiple mounted SMIL dots calling this redundantly is
+  // harmless: `pauseAnimations`/`unpauseAnimations` are idempotent flags on
+  // the owning document's animation timeline, not per-element toggles.
+  useLayoutEffect(() => {
+    if (timelineMode) {
+      return;
+    }
+    const svg = circleRef.current?.ownerSVGElement;
+    if (svg === null || svg === undefined) {
+      return;
+    }
+    if (typeof svg.pauseAnimations !== "function") {
+      return;
+    }
+    if (paused) {
+      svg.pauseAnimations();
+    } else if (typeof svg.unpauseAnimations === "function") {
+      svg.unpauseAnimations();
+    }
+  }, [timelineMode, paused]);
 
   useLayoutEffect(() => {
     if (!timelineMode || reducedMotion || !active) {
@@ -137,6 +169,7 @@ export function MotionSignal({
   return (
     <circle
       {...circleProps}
+      ref={circleRef}
       r={r}
       fill={color ?? theme.category.green}
       // SMIL opacity animation begins at `delay`; stay invisible until then
@@ -144,6 +177,7 @@ export function MotionSignal({
       opacity={0}
       className={motionClassName}
       aria-hidden={ariaHidden}
+      data-motion-paused={paused ? "true" : undefined}
     >
       <animate
         attributeName="opacity"

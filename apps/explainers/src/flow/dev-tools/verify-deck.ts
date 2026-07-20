@@ -23,6 +23,7 @@ import {
 import {
   SNAP_PX,
   arrowPathData,
+  capabilityOf,
   drawProgress,
   geomOf,
   inViewport,
@@ -139,7 +140,8 @@ function pointNearPath(
 
 function fanCardinalityValid(node: RenderNodeIr): boolean {
   const value = node as unknown as Readonly<Record<string, unknown>>;
-  if (value.capability === "core.fan-out") {
+  const capability = capabilityOf(node);
+  if (capability === "core.fan-out") {
     return (
       value.from !== null &&
       typeof value.from === "object" &&
@@ -148,7 +150,7 @@ function fanCardinalityValid(node: RenderNodeIr): boolean {
       value.to.length >= 2
     );
   }
-  if (value.capability === "core.fan-in") {
+  if (capability === "core.fan-in") {
     return (
       Array.isArray(value.from) &&
       value.from.length >= 2 &&

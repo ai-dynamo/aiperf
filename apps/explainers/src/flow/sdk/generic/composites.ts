@@ -70,6 +70,7 @@ import type {
   SdkComponentFactory,
   SdkExpansionContext,
 } from "../types.js";
+import { portOrRootEndpoint } from "./topology.js";
 
 type PropRecord = Readonly<Record<string, JsonValue>>;
 type SlotRecord = Readonly<Record<string, readonly SceneFragment[]>>;
@@ -177,22 +178,6 @@ function mergeChildPorts(
     }
   });
   return ports;
-}
-
-/** Resolves a preferred named port on a fragment, falling back to its root id + anchor. */
-function portOrRootEndpoint(
-  fragment: SceneFragment,
-  preferredPorts: readonly string[],
-  anchor: string,
-): ConnectorEndpointIr {
-  for (const portName of preferredPorts) {
-    const port = fragment.ports[portName];
-    if (port !== undefined) {
-      return port;
-    }
-  }
-  const rootId = primaryRootId(fragment);
-  return rootId !== undefined ? { nodeId: rootId, anchor } : { x: 0, y: 0 };
 }
 
 function scalarStyleFromJson(record: Record<string, JsonValue>): Record<string, StyleValueIr> {
@@ -541,11 +526,27 @@ const hubSpokeFactory: SdkComponentFactory = (props, slots, context) => {
   const mode = linkEdgeMode(stringProp(props, "edgeMode"));
   const { capabilityId, style } = linkEdgeCapabilityAndStyle(mode);
   const hubAnchor = portOrRootEndpoint(hubFragment, ["output", "self"], "e");
+  if (hubAnchor === undefined) {
+    return fail(
+      context,
+      "SDK_HUB_SPOKE_HUB_ENDPOINT_UNRESOLVED",
+      `sdk.hubSpoke "${context.instanceId}" hub slot entry has no resolvable port or root id.`,
+      "Ensure the hub slot's component invocation expands to at least one root node.",
+    );
+  }
 
   const edges: RenderNodeIr[] = [];
   const spokePorts: Record<string, ConnectorEndpointIr> = {};
-  spokes.forEach((spoke, index) => {
+  for (const [index, spoke] of spokes.entries()) {
     const spokeAnchor = portOrRootEndpoint(spoke, ["input", "self"], "w");
+    if (spokeAnchor === undefined) {
+      return fail(
+        context,
+        "SDK_HUB_SPOKE_SPOKE_ENDPOINT_UNRESOLVED",
+        `sdk.hubSpoke "${context.instanceId}" spoke ${index} has no resolvable port or root id.`,
+        "Ensure every spokes slot entry expands to at least one root node.",
+      );
+    }
     const edgeId = nodeId(context, `edge-${index}`);
     const label = `${context.instanceId} hub to spoke ${index}`;
     edges.push(
@@ -571,7 +572,7 @@ const hubSpokeFactory: SdkComponentFactory = (props, slots, context) => {
     if (spokeRootId !== undefined) {
       spokePorts[`spoke[${index}]`] = { nodeId: spokeRootId };
     }
-  });
+  }
 
   const hubRoots = flattenRoots([hubFragment]);
   const spokeRoots = flattenRoots(spokes);
@@ -632,11 +633,27 @@ const treeFactory: SdkComponentFactory = (props, slots, context) => {
   // Preferring the fragment's own "root" port lets a nested `sdk.tree`
   // compose as a child/root here without exposing its generated node ids.
   const rootAnchor = portOrRootEndpoint(rootFragment, ["root", "output", "self"], "s");
+  if (rootAnchor === undefined) {
+    return fail(
+      context,
+      "SDK_TREE_ROOT_ENDPOINT_UNRESOLVED",
+      `sdk.tree "${context.instanceId}" root slot entry has no resolvable port or root id.`,
+      "Ensure the root slot's component invocation expands to at least one root node.",
+    );
+  }
 
   const edges: RenderNodeIr[] = [];
   const childPorts: Record<string, ConnectorEndpointIr> = {};
-  childFragments.forEach((child, index) => {
+  for (const [index, child] of childFragments.entries()) {
     const childAnchor = portOrRootEndpoint(child, ["root", "input", "self"], "n");
+    if (childAnchor === undefined) {
+      return fail(
+        context,
+        "SDK_TREE_CHILD_ENDPOINT_UNRESOLVED",
+        `sdk.tree "${context.instanceId}" child ${index} has no resolvable port or root id.`,
+        "Ensure every children slot entry expands to at least one root node.",
+      );
+    }
     const edgeId = nodeId(context, `edge-${index}`);
     const label = `${context.instanceId} branch ${index}`;
     edges.push(
@@ -662,7 +679,7 @@ const treeFactory: SdkComponentFactory = (props, slots, context) => {
     if (childRootId !== undefined) {
       childPorts[`child[${index}]`] = { nodeId: childRootId };
     }
-  });
+  }
 
   const rootRoots = flattenRoots([rootFragment]);
   const childRoots = flattenRoots(childFragments);
@@ -908,7 +925,23 @@ const stateTransitionFactory: SdkComponentFactory = (props, slots, context) => {
   const mode = linkEdgeMode(stringProp(props, "mode"));
   const capabilityId = mode === "route" ? "core.route" : "core.connector";
   const fromAnchor = portOrRootEndpoint(fromFragment, ["exit", "output", "self"], "e");
+  if (fromAnchor === undefined) {
+    return fail(
+      context,
+      "SDK_STATE_TRANSITION_FROM_ENDPOINT_UNRESOLVED",
+      `sdk.stateTransition "${context.instanceId}" from slot entry has no resolvable port or root id.`,
+      "Ensure the from slot's component invocation expands to at least one root node.",
+    );
+  }
   const toAnchor = portOrRootEndpoint(toFragment, ["entry", "input", "self"], "w");
+  if (toAnchor === undefined) {
+    return fail(
+      context,
+      "SDK_STATE_TRANSITION_TO_ENDPOINT_UNRESOLVED",
+      `sdk.stateTransition "${context.instanceId}" to slot entry has no resolvable port or root id.`,
+      "Ensure the to slot's component invocation expands to at least one root node.",
+    );
+  }
 
   const edgeId = nodeId(context, "edge");
   const edgeLabel = stringProp(props, "label") ?? "state transition";

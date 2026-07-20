@@ -160,6 +160,32 @@ describe("generic SDK catalog", () => {
     }
   });
 
+  it("groups indicator paint layers under an intentional overlay", () => {
+    const definition = createSdkRegistry().lookup("sdk.progress")!;
+    const result = definition.factory(
+      { id: "progress", value: 0.6, width: 240, height: 12 },
+      {},
+      { instanceId: "progress", sourceMap: SOURCE_MAP, themeTokens: new Map() },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const root = result.value.roots[0];
+      expect(root?.kind === "group" && root.children).toEqual([
+        expect.objectContaining({
+          id: "progress__band",
+          capabilityId: "layout.overlay",
+          children: [
+            expect.objectContaining({ id: "progress__track" }),
+            expect.objectContaining({ id: "progress__value" }),
+          ],
+        }),
+      ]);
+      expect(result.value.ports.value).toEqual({ nodeId: "progress__value" });
+      expect(result.value.actions.pulse).toEqual(["progress__value"]);
+    }
+  });
+
   it("maps shape variants to renderer capabilities and rejects unknown variants", () => {
     const definition = createSdkRegistry().lookup("sdk.shape")!;
     const context = {
@@ -296,10 +322,11 @@ describe("generic SDK catalog", () => {
     expect(table.ok).toBe(true);
     expect(row.ok).toBe(true);
     if (table.ok && row.ok) {
-      expect(table.value.roots[0]?.kind === "group" && table.value.roots[0].children.length)
-        .toBeGreaterThan(0);
-      expect(table.value.ports["row[0]"]).toBeDefined();
-      expect(table.value.ports["cell[0][0]"]).toBeDefined();
+      const tableRoot = table.value.roots[0];
+      expect(tableRoot?.capabilityId).toBe("core.panel");
+      expect(tableRoot?.kind === "group" && tableRoot.children.length).toBe(0);
+      expect(tableRoot?.props?.steps).toEqual(["Name", "Value"]);
+      expect(table.value.ports.self).toEqual({ nodeId: "concise-table" });
       expect(row.value.roots[0]?.kind === "group" && row.value.roots[0].children[0]?.kind)
         .toBe("text");
     }
@@ -668,6 +695,7 @@ describe("generic SDK catalog", () => {
         align: "center",
         justify: "end",
         fixedWidth: true,
+        coordinateSpace: "absolute",
       },
       { children: [CHILD] },
       context,
@@ -701,7 +729,7 @@ describe("generic SDK catalog", () => {
       expect(overlay.value.roots[0]).toMatchObject({
         capabilityId: "layout.overlay",
         style: {
-          coordinateSpace: "local",
+          coordinateSpace: "absolute",
           padding: 8,
           align: "center",
           justify: "end",
@@ -957,11 +985,15 @@ describe("generic SDK catalog", () => {
     ] as const;
 
     for (const [componentId, props, capabilityId, expectedProps] of cases) {
-      const result = registry.lookup(componentId)!.factory(props, {}, {
-        instanceId: props.id,
-        sourceMap: SOURCE_MAP,
-        themeTokens: new Map(),
-      });
+      const result = registry.lookup(componentId)!.factory(
+        props as Record<string, JsonValue>,
+        {},
+        {
+          instanceId: props.id,
+          sourceMap: SOURCE_MAP,
+          themeTokens: new Map(),
+        },
+      );
       expect(result.ok, componentId).toBe(true);
       if (result.ok) {
         expect(result.value.roots[0], componentId).toMatchObject({

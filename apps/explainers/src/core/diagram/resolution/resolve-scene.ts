@@ -316,7 +316,11 @@ function appendFinalValidationDiagnostics(input: {
         const rightNode = input.nodesById.get(rightId);
         if (
           capabilityOf(leftNode ?? { id: "" }) === "core.band" ||
-          capabilityOf(rightNode ?? { id: "" }) === "core.band"
+          capabilityOf(leftNode ?? { id: "" }) === "core.bracket" ||
+          capabilityOf(leftNode ?? { id: "" }) === "core.divider" ||
+          capabilityOf(rightNode ?? { id: "" }) === "core.band" ||
+          capabilityOf(rightNode ?? { id: "" }) === "core.bracket" ||
+          capabilityOf(rightNode ?? { id: "" }) === "core.divider"
         ) {
           continue;
         }
@@ -408,7 +412,7 @@ export function resolveScene(scene: SceneIrLike): ResolvedScene {
     ancestors: readonly string[],
   ): void => {
     let authored = geometryOverride ?? geometryOf(node);
-    if (geometryOverride === undefined && node.relativePosition !== undefined) {
+    if (node.relativePosition !== undefined) {
       const target = worldGeometryById.get(node.relativePosition.nodeId);
       if (target !== undefined) {
         const anchor = nodeAnchorPoint(target, node.relativePosition.anchor);
@@ -419,6 +423,16 @@ export function resolveScene(scene: SceneIrLike): ResolvedScene {
           x: coordinatesAreLocal ? worldX - originX : worldX,
           y: coordinatesAreLocal ? worldY - originY : worldY,
         };
+      } else {
+        diagnostics.push({
+          code: "SCENE_RELATIVE_POSITION_TARGET_MISSING",
+          severity: "error",
+          message: `Node "${node.id}" has a relativePosition referencing unresolved node "${node.relativePosition.nodeId}".`,
+          range: node.sourceMap ?? UNKNOWN_SCENE_RANGE,
+          nodeIds: [node.id, node.relativePosition.nodeId],
+          repair:
+            "Reference a node id that resolves before this node, or author explicit geometry.",
+        });
       }
     }
 
@@ -438,6 +452,16 @@ export function resolveScene(scene: SceneIrLike): ResolvedScene {
         }
       : layout.bounds;
 
+    if (nodesById.has(node.id)) {
+      diagnostics.push({
+        code: "SCENE_DUPLICATE_NODE_ID",
+        severity: "error",
+        message: `Node id "${node.id}" is used by more than one node in the scene.`,
+        range: node.sourceMap ?? UNKNOWN_SCENE_RANGE,
+        nodeIds: [node.id],
+        repair: "Give each authored node a unique id.",
+      });
+    }
     nodesById.set(node.id, node);
     worldGeometryById.set(node.id, worldGeometry);
     ancestorIdsById.set(node.id, Object.freeze([...ancestors]));
@@ -558,6 +582,7 @@ export function resolveScene(scene: SceneIrLike): ResolvedScene {
     nodesById,
     worldGeometryById,
     ancestorIdsById,
+    generatedPartIds: new Set(generatedPartsById.keys()),
   });
   diagnostics.push(...connectors.diagnostics);
   appendFinalValidationDiagnostics({

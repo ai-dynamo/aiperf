@@ -142,6 +142,22 @@ describe("native Scene capability layout", () => {
     );
   });
 
+  it("permits absolute overlay children outside local bounds", () => {
+    const overlay = node("overlay", "layout.overlay", 80, 40);
+    const children = [
+      node("badge", "core.chip", 70, 22, {
+        geometry: { x: 155, y: 120, width: 70, height: 22 },
+        style: { position: "absolute" },
+      }),
+    ];
+
+    const layout = resolveCapabilityLayout(overlay, children);
+
+    expect(layout.diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "SCENE_MANAGED_CONTENT_OVERFLOW" }),
+    );
+  });
+
   it("intentionally overlays aligned children without overlap diagnostics", () => {
     const overlay = node("overlay", "layout.overlay", 80, 40, {
       style: { align: "stretch" },

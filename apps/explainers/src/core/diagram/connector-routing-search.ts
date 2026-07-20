@@ -433,13 +433,49 @@ const CURVATURE_LADDER = [1, 0.5, 0.25, 0.05] as const;
 /** Deterministic descending lane-offset ladder (100% → 0% in 25% steps). */
 const LANE_OFFSET_LADDER = [1, 0.75, 0.5, 0.25] as const;
 
+/**
+ * Obstacles widened by `clearance` for post-smoothing penetration checks, with
+ * each inflated rectangle shrunk away from the route's own `start`/`end` (the
+ * same treatment `resolveWaypoints` gives the search graph). Without the
+ * shrink, an obstacle that legitimately sits inside its own clearance halo of
+ * a connector endpoint — the exact case `resolveWaypoints` keeps routable —
+ * would make every sampled point at that endpoint register as a permanent
+ * penetration, so the curvature ladder could never find a clean rounding.
+ *
+ * The waypoint search already routes interior legs around this same halo;
+ * checking rounded cubics against only the raw obstacle rectangle let a
+ * smoothed curve bow into the clearance buffer between waypoints — visually
+ * hugging an obstacle closer than authored — without ever tripping the
+ * curvature/lane retry ladder below.
+ */
+function inflateForPenetrationCheck(
+  obstacles: readonly RouteObstacle[],
+  clearance: number,
+  start: Point2,
+  end: Point2,
+): RouteObstacle[] {
+  return obstacles.flatMap((obstacle): RouteObstacle[] => {
+    let bounds = inflateBounds(obstacle.bounds, clearance);
+    bounds = shrinkBoundsToExcludePoint(bounds, start);
+    bounds = shrinkBoundsToExcludePoint(bounds, end);
+    if (bounds.width <= 0 || bounds.height <= 0) {
+      return [];
+    }
+    return [{ id: obstacle.id, bounds }];
+  });
+}
+
 function penetratedIds(
   segments: readonly CubicSegment[],
   obstacles: readonly RouteObstacle[],
+  clearance: number,
+  start: Point2,
+  end: Point2,
 ): string[] {
+  const inflated = inflateForPenetrationCheck(obstacles, clearance, start, end);
   const hits = new Set<string>();
   for (const segment of segments) {
-    for (const id of cubicPenetrations(segment, obstacles)) {
+    for (const id of cubicPenetrations(segment, inflated)) {
       hits.add(id);
     }
   }
@@ -479,9 +515,17 @@ function applyLaneOffset(points: readonly Point2[], offset: number): readonly Po
   return shifted;
 }
 
+/** Perimeter loop side order used when the author has no side preference. */
+const SELF_LOOP_SIDE_ORDER: readonly Exclude<PreferredSide, "auto">[] = ["n", "e", "s", "w"];
+
 /**
  * Perimeter loop candidates for a self-edge (source and target on one box).
  * Each candidate exits one side, runs a lane parallel to the box, and returns.
+ *
+ * Candidates are tried in order and the first zero-penetration result wins
+ * (see `routeCurve`), so `preferredSide` is honored by moving the matching
+ * side to the front rather than by filtering: an obstructed preferred side
+ * still falls through to the remaining sides in their default order.
  */
 function selfLoopCandidates(input: CurveRouteInput): readonly (readonly Point2[])[] {
   const bounds = input.sourceBounds ?? input.targetBounds;
@@ -495,12 +539,18 @@ function selfLoopCandidates(input: CurveRouteInput): readonly (readonly Point2[]
   const right = bounds.x + bounds.width + gap;
   const top = bounds.y - gap;
   const bottom = bounds.y + bounds.height + gap;
-  return [
-    [start, { x: start.x, y: top }, { x: end.x, y: top }, end],
-    [start, { x: right, y: start.y }, { x: right, y: end.y }, end],
-    [start, { x: start.x, y: bottom }, { x: end.x, y: bottom }, end],
-    [start, { x: left, y: start.y }, { x: left, y: end.y }, end],
-  ];
+  const bySide: Record<Exclude<PreferredSide, "auto">, readonly Point2[]> = {
+    n: [start, { x: start.x, y: top }, { x: end.x, y: top }, end],
+    e: [start, { x: right, y: start.y }, { x: right, y: end.y }, end],
+    s: [start, { x: start.x, y: bottom }, { x: end.x, y: bottom }, end],
+    w: [start, { x: left, y: start.y }, { x: left, y: end.y }, end],
+  };
+  const preferred = input.options.preferredSide;
+  const order: readonly Exclude<PreferredSide, "auto">[] =
+    preferred === "auto"
+      ? SELF_LOOP_SIDE_ORDER
+      : [preferred, ...SELF_LOOP_SIDE_ORDER.filter((side) => side !== preferred)];
+  return order.map((side) => bySide[side]);
 }
 
 type RenderedPolyline = Readonly<{
@@ -508,20 +558,34 @@ type RenderedPolyline = Readonly<{
   penetrations: readonly string[];
 }>;
 
-/** Smooth a polyline down the curvature ladder, keeping the least-penetrating result. */
+/**
+ * Smooth a polyline down the curvature ladder, keeping the least-penetrating
+ * result. Penetration is checked against obstacles inflated by `clearance` —
+ * the same halo the waypoint search avoids, minus the shrink around this
+ * polyline's own endpoints — so a curve that bows into the buffer zone
+ * (without touching the true obstacle rectangle) still triggers a retry
+ * instead of being reported as clean.
+ */
 function renderPolyline(
   waypoints: readonly Point2[],
   fromDir: Point2,
   toDir: Point2,
   obstacles: readonly RouteObstacle[],
   curvature: number,
+  clearance: number,
 ): RenderedPolyline {
+  // `waypoints` always keeps its own first/last points exactly at the route's
+  // start/end (resolveWaypoints, selfLoopCandidates, and applyLaneOffset all
+  // preserve endpoints), so they double as the shrink anchors `penetratedIds`
+  // needs to exempt a legitimately near-endpoint obstacle halo.
+  const start = waypoints[0]!;
+  const end = waypoints[waypoints.length - 1]!;
   let bestSegments = smoothPolyline(waypoints, fromDir, toDir, curvature);
-  let bestPenetrations = penetratedIds(bestSegments, obstacles);
+  let bestPenetrations = penetratedIds(bestSegments, obstacles, clearance, start, end);
   if (bestPenetrations.length > 0) {
     for (const factor of CURVATURE_LADDER) {
       const candidate = smoothPolyline(waypoints, fromDir, toDir, Math.max(curvature * factor, 0.02));
-      const penetrations = penetratedIds(candidate, obstacles);
+      const penetrations = penetratedIds(candidate, obstacles, clearance, start, end);
       if (penetrations.length < bestPenetrations.length) {
         bestSegments = candidate;
         bestPenetrations = penetrations;
@@ -539,10 +603,11 @@ function renderPolyline(
  *
  * The result is deterministic for identical input: the polyline comes from the
  * visibility-graph A*, then smoothing is retried down a fixed curvature ladder
- * until no rounded segment penetrates an obstacle interior. When avoidance is
- * disabled or no penetration-free rounding exists, the least-penetrating finite
- * geometry is returned and `usedFallback` reports the degradation. The function
- * never throws and never emits non-finite coordinates.
+ * until no rounded segment penetrates a clearance-inflated obstacle (not just
+ * the obstacle's raw rectangle). When avoidance is disabled or no
+ * penetration-free rounding exists, the least-penetrating finite geometry is
+ * returned and `usedFallback` reports the degradation. The function never
+ * throws and never emits non-finite coordinates.
  */
 export function routeCurve(input: CurveRouteInput): CurveRouteResult {
   const options = input.options ?? DEFAULT_CURVE_ROUTE_OPTIONS;
@@ -562,7 +627,14 @@ export function routeCurve(input: CurveRouteInput): CurveRouteResult {
     let bestLoop: RenderedPolyline | undefined;
     let bestLoopWaypoints: readonly Point2[] | undefined;
     for (const candidate of candidates) {
-      const rendered = renderPolyline(candidate, fromDir, toDir, input.obstacles, options.curvature);
+      const rendered = renderPolyline(
+        candidate,
+        fromDir,
+        toDir,
+        input.obstacles,
+        options.curvature,
+        options.clearance,
+      );
       if (rendered.penetrations.length === 0) {
         bestLoop = rendered;
         bestLoopWaypoints = candidate;
@@ -591,14 +663,21 @@ export function routeCurve(input: CurveRouteInput): CurveRouteResult {
     feasible = resolved.feasible;
   }
 
-  let best = renderPolyline(waypoints, fromDir, toDir, input.obstacles, options.curvature);
+  let best = renderPolyline(waypoints, fromDir, toDir, input.obstacles, options.curvature, options.clearance);
   let bestWaypoints = waypoints;
 
   const laneOffset = input.laneOffset ?? 0;
   if (laneOffset !== 0) {
     for (const factor of LANE_OFFSET_LADDER) {
       const offsetWaypoints = applyLaneOffset(waypoints, laneOffset * factor);
-      const rendered = renderPolyline(offsetWaypoints, fromDir, toDir, input.obstacles, options.curvature);
+      const rendered = renderPolyline(
+        offsetWaypoints,
+        fromDir,
+        toDir,
+        input.obstacles,
+        options.curvature,
+        options.clearance,
+      );
       if (rendered.penetrations.length <= best.penetrations.length) {
         best = rendered;
         bestWaypoints = offsetWaypoints;

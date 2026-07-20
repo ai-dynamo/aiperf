@@ -35,7 +35,7 @@ explainer "Rust Architecture" {
     caption: "One executable, two hats: operator CLI and execution child."
     render: @scene {
       sdk.Header(id = "header", title = "ONE BINARY", caption = "cli is entry + engine", x = 18, y = 16, width = 664, height = 44, surfaceRole = "@theme.surface.secondary")
-      sdk.Panel(id = "binary", title = "aiperf binary", detail = "cli/src/main.rs", x = 250, y = 70, width = 200, height = 96, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
+      sdk.Panel(id = "binary", title = "aiperf binary", detail = "cli/src/main.rs", x = 250, y = 88, width = 200, height = 88, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Label(id = "footer", text = "public CLI on the outside · execution child on the inside", x = 50, y = 210, width = 600, height = 24, fontSize = 13, align = "middle", inkRole = "@theme.ink.secondary")
       sdk.Panel(id = "cli-hat", title = "public CLI", detail = "outside", x = 90, y = 240, width = 180, height = 55, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.secondary")
       sdk.Edge(id = "a1", mode = "route", from = { nodeId: "cli-hat", anchor: "e" }, to = { nodeId: "engine-hat", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 2.2, fill: "none" })
