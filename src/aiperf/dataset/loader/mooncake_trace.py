@@ -80,12 +80,14 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     def _infer_context_mode(
         self, traces: list[MooncakeTrace]
     ) -> ConversationContextMode | None:
-        """Auto-detect MESSAGE_ARRAY_WITH_RESPONSES when all traces are self-contained.
+        """Resolve an explicit mode or detect self-contained message/payload rows.
 
         Self-contained traces (pre-built `messages` or verbatim `payload`) bypass
         endpoint formatting and need to be replayed verbatim. Mixed sessions that
         combine self-contained traces with synthesized prompts, or mix `messages`
-        and `payload` modes, are rejected.
+        and `payload` modes, are rejected. Synthetic input-length/hash rows may opt
+        into the same replacement semantics by declaring one consistent
+        `context_mode` on every row in the session.
         """
         msg_trace_count = sum(1 for trace in traces if trace.messages is not None)
         payload_trace_count = sum(1 for trace in traces if trace.payload is not None)
@@ -99,13 +101,34 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
                 f"the offending sessions or convert all entries to a single "
                 f"self-contained mode."
             )
-        if self_contained_count == len(traces) and self_contained_count > 0:
-            return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
         if self_contained_count > 0:
+            if self_contained_count != len(traces):
+                raise ValueError(
+                    "Mixed Mooncake sessions with both raw `messages`/`payload` and synthesized prompts are unsupported."
+                )
+            inferred_mode = ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        else:
+            inferred_mode = None
+
+        declared_modes = {
+            trace.context_mode for trace in traces if trace.context_mode is not None
+        }
+        if not declared_modes:
+            return inferred_mode
+        if len(declared_modes) != 1 or any(
+            trace.context_mode is None for trace in traces
+        ):
             raise ValueError(
-                "Mixed Mooncake sessions with both raw `messages`/`payload` and synthesized prompts are unsupported."
+                "Mooncake session context_mode must be identical and present on every row"
             )
-        return None
+
+        declared_mode = declared_modes.pop()
+        if inferred_mode is not None and declared_mode != inferred_mode:
+            raise ValueError(
+                "Mooncake messages/payload sessions require "
+                "context_mode='message_array_with_responses'"
+            )
+        return declared_mode
 
     def _get_text_input(self, trace: MooncakeTrace) -> str | None:
         if trace.messages is not None or trace.payload is not None:

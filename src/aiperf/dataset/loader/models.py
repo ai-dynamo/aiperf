@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from pydantic import ConfigDict, Field, model_validator
 
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
 from aiperf.plugin.enums import CustomDatasetType
 
@@ -307,6 +308,13 @@ class MooncakeTrace(AIPerfBaseModel):
     session_id: str | None = Field(
         None, description="Unique identifier for the conversation session"
     )
+    context_mode: ConversationContextMode | None = Field(
+        None,
+        description="How prior turns are accumulated for this session. Repeat the "
+        "same value on every row in a session. Use "
+        "message_array_with_responses for self-contained full-context "
+        "input_length/hash_ids rows.",
+    )
     extra: dict[str, Any] | None = Field(
         default=None,
         description="Per-turn extra fields shallow-merged into the request body at dispatch time. Keys override formatter defaults on collision.",
@@ -355,6 +363,20 @@ class MooncakeTrace(AIPerfBaseModel):
                 raise ValueError("'tools' must be a non-empty list")
         if self.messages is not None:
             validate_chat_messages(self.messages)
+        return self
+
+    @model_validator(mode="after")
+    def validate_context_mode(self) -> "MooncakeTrace":
+        """Restrict Mooncake rows to context modes supported by their schema."""
+        supported = {
+            ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+            ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+        }
+        if self.context_mode is not None and self.context_mode not in supported:
+            raise ValueError(
+                "Mooncake context_mode must be 'deltas_without_responses' or "
+                "'message_array_with_responses'"
+            )
         return self
 
 
