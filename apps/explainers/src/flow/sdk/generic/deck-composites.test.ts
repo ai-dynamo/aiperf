@@ -74,6 +74,16 @@ describe("sdk.stepChain", () => {
     expect(result.value.ports["step[1]"]).toEqual({ nodeId: "sc__step-1" });
     // One arrow between the two steps.
     expect(result.value.ports["arrow[0]"]).toEqual({ nodeId: "sc__arrow-0" });
+    const root = result.value.roots[0];
+    const arrow =
+      root?.kind === "group"
+        ? root.children.find((child) => child.id === "sc__arrow-0")
+        : undefined;
+    expect(arrow).toMatchObject({
+      geometry: { x: 168, y: 58, width: 46, height: 0 },
+      from: { nodeId: "sc__step-0", anchor: "e" },
+      to: { nodeId: "sc__step-1", anchor: "w" },
+    });
   });
 
   it("emits a diagnostic (not a throw) when the required steps prop is absent", () => {
@@ -229,6 +239,35 @@ describe("sdk.timelineAxis", () => {
 });
 
 describe("sdk.nodeTree", () => {
+  it("paints an explicit backdrop for an emphasized root", () => {
+    const definition = createSdkRegistry().lookup("sdk.nodeTree")!;
+    const result = definition.factory(
+      {
+        id: "nt",
+        root: { label: "pop", emphasis: true },
+        children: [{ label: "t=1ms" }],
+      },
+      {},
+      context("nt"),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const tree = result.value.roots[0];
+    const rootBox =
+      tree?.kind === "group"
+        ? tree.children.find((child) => child.id === "nt__root")
+        : undefined;
+    expect(rootBox?.kind).toBe("group");
+    expect(rootBox?.kind === "group" ? rootBox.children[0] : undefined).toMatchObject({
+      id: "nt__root__backdrop",
+      capabilityId: "core.rect",
+      style: { fill: "#76B900" },
+    });
+  });
+
   it("expands with a root, children, and caption into a core.group tree", () => {
     const definition = createSdkRegistry().lookup("sdk.nodeTree")!;
     const result = definition.factory(
@@ -252,6 +291,16 @@ describe("sdk.nodeTree", () => {
     expect(result.value.ports["child[0]"]).toEqual({ nodeId: "nt__child-0" });
     expect(result.value.ports["child[1]"]).toEqual({ nodeId: "nt__child-1" });
     expect(result.value.ports.caption).toEqual({ nodeId: "nt__caption" });
+    const tree = result.value.roots[0];
+    const firstLine =
+      tree?.kind === "group"
+        ? tree.children.find((child) => child.id === "nt__line-0")
+        : undefined;
+    expect(firstLine).toMatchObject({
+      geometry: { x: 75, y: 60, width: 95, height: 70 },
+      from: { nodeId: "nt__root", anchor: "s" },
+      to: { nodeId: "nt__child-0", anchor: "n" },
+    });
   });
 
   it("emits a diagnostic (not a throw) when the required children prop is absent", () => {
