@@ -65,7 +65,7 @@ explainer "Rust Architecture — Deck Port" {
       sdk.Shape(id = "thesis-p4", variant = "rounded", label = "native-v2.json", x = 570, y = 128, width = 120, height = 44, strokeRole = theme(ink.tertiary))
       sdk.Caption(id = "thesis-p4-sub", text = "+ terminal line", x = 570, y = 176, width = 120, height = 16, inkRole = theme(ink.tertiary))
 
-      sdk.CompareGrid(id = "thesis-takeaways", columns = 3, items = [{ label: "Python owns config", detail: "sweep planning and presentation; pipes exactly one JSON envelope to a fresh runner child" }, { label: "aiperf-runner", detail: "the only Rust executable on the product path — validate, drive the load test, write the report" }, { label: "Two trait seams", detail: "{clock} and {transport} make the identical code run in three interchangeable modes" }], x = 4, y = 228)
+      sdk.CompareGrid(id = "thesis-takeaways", columns = 3, items = [{ label: "Python owns config", detail: "one envelope to a fresh child" }, { label: "aiperf-runner", detail: "the only Rust exe on path" }, { label: "Two trait seams", detail: "one codebase, three modes" }], x = 4, y = 228)
 
       timeline main {
         at 0 reveal thesis-eyebrow duration 180
@@ -90,11 +90,16 @@ explainer "Rust Architecture — Deck Port" {
     render: @scene {
       sdk.Title(id = "orient-title", text = "What the runner does, in order", x = 40, y = 30, width = 620, height = 36, inkRole = theme(ink.primary))
       sdk.Paragraph(id = "orient-sub", text = "Everything from a single envelope arriving on stdin to a terminal line on stdout", x = 40, y = 76, width = 620, height = 24, inkRole = theme(ink.secondary))
-      sdk.StepChain(id = "orient-chain", direction = "row", steps = [{ number: "01", label: "VALIDATE", detail: "Envelope vs frozen registries; fail closed" }, { number: "02", label: "SELECT", detail: "Pick a {transport, workload}; build data or graph" }, { number: "03", label: "DRIVE", detail: "Phased load test over one injected Clock" }, { number: "04", label: "MEASURE", detail: "Fine-grained timing, lock-free per worker" }, { number: "05", label: "REPORT", detail: "Write native-v2.json; fan out exporters" }, { number: "06", label: "EMIT", detail: "One terminal JSONL line on stdout" }], x = 0, y = 132)
+      // The 6-stage pipeline is split across two rows of three: the composite's
+      // fixed step-box width overflows the 700×400 scene viewport at six-in-a-row,
+      // so 01→03 and 04→06 stack, each an sdk.StepChain that fits cleanly.
+      sdk.StepChain(id = "orient-chain-a", direction = "row", steps = [{ number: "01", label: "VALIDATE", detail: "frozen registries" }, { number: "02", label: "SELECT", detail: "transport + workload" }, { number: "03", label: "DRIVE", detail: "phased over Clock" }], x = 52, y = 118)
+      sdk.StepChain(id = "orient-chain-b", direction = "row", steps = [{ number: "04", label: "MEASURE", detail: "lock-free per worker" }, { number: "05", label: "REPORT", detail: "write native-v2.json" }, { number: "06", label: "EMIT", detail: "one JSONL line on stdout" }], x = 52, y = 258)
       timeline main {
         at 0 reveal orient-title duration 200
         after orient-title reveal orient-sub duration 180
-        after orient-sub reveal orient-chain duration 320
+        after orient-sub reveal orient-chain-a duration 300
+        after orient-chain-a reveal orient-chain-b duration 300
       }
     }
   }
