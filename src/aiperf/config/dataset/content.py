@@ -12,7 +12,7 @@ used as building blocks inside dataset variants. Video configs live in
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Self
+from typing import TYPE_CHECKING, Annotated, Self
 
 from pydantic import (
     BeforeValidator,
@@ -29,8 +29,13 @@ from aiperf.common.enums import (
     ImageSource,
     ImageSourceSamplingStrategy,
     PromptCorpus,
+    RangeRatioMode,
 )
 from aiperf.config.base import BaseConfig
+
+if TYPE_CHECKING:
+    from aiperf.common.models.sequence_distribution import SequenceLengthSampler
+
 from aiperf.config.types import (
     FixedDistribution,
     SamplingDistribution,
@@ -200,6 +205,29 @@ class PromptConfig(BaseConfig):
         ),
     ]
 
+    random_range_ratio: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. "
+            "Accepts a single float (applied to both ISL and OSL) or a JSON object "
+            '{"input": 0.3, "output": 0.5} for independent values. '
+            "Mutually exclusive with sequence_distribution. "
+            "When a tokenizer is configured, the ISL mean is automatically reduced by "
+            "tokenizer.num_special_tokens_to_add(pair=False) so --isl represents total server-side input tokens.",
+        ),
+    ]
+
+    random_range_ratio_mode: Annotated[
+        RangeRatioMode,
+        Field(
+            default=RangeRatioMode.VLLM,
+            description="Sampling formula for random_range_ratio. "
+            "vllm (default): symmetric window [floor(mean*(1-r)), ceil(mean*(1+r))], ratio in [0, 1). "
+            "sglang: lower-bounded window [max(1, int(mean*r)), mean], ratio in [0, 1].",
+        ),
+    ]
+
     @field_validator("sequence_distribution")
     @classmethod
     def validate_sequence_probabilities(
@@ -208,6 +236,73 @@ class PromptConfig(BaseConfig):
         if v is not None:
             validate_probability_distribution(v)
         return v
+
+    @model_validator(mode="after")
+    def _validate_random_range_ratio(self) -> Self:
+        if self.random_range_ratio is None:
+            return self
+        from aiperf.common.models.sequence_distribution import RangeRatioDistribution
+
+        try:
+            RangeRatioDistribution.parse_cli_value(
+                self.random_range_ratio, self.random_range_ratio_mode
+            )
+        except Exception as e:
+            raise ValueError(f"Invalid random_range_ratio value: {e}") from e
+
+        if self.sequence_distribution is not None:
+            raise ValueError(
+                "random_range_ratio cannot be combined with sequence_distribution; "
+                "use one or the other."
+            )
+        return self
+
+    def get_sequence_distribution(
+        self, num_special_tokens: int = 0
+    ) -> SequenceLengthSampler | None:
+        """Return a sampler for (ISL, OSL) pairs, or None if not configured."""
+        if self.sequence_distribution is not None:
+            from aiperf.common.models.sequence_distribution import (
+                SequenceLengthDistribution,
+                SequenceLengthPair,
+            )
+
+            pairs = [
+                SequenceLengthPair(
+                    input_seq_len=int(entry.isl.expected_value),
+                    output_seq_len=int(entry.osl.expected_value),
+                    probability=float(entry.probability),
+                    input_seq_len_stddev=float(
+                        getattr(entry.isl, "stddev", 0.0) or 0.0
+                    ),
+                    output_seq_len_stddev=float(
+                        getattr(entry.osl, "stddev", 0.0) or 0.0
+                    ),
+                )
+                for entry in self.sequence_distribution
+            ]
+            return SequenceLengthDistribution(pairs)
+
+        if self.random_range_ratio is not None:
+            from aiperf.common.models.sequence_distribution import (
+                RangeRatioDistribution,
+            )
+
+            input_ratio, output_ratio = RangeRatioDistribution.parse_cli_value(
+                self.random_range_ratio, self.random_range_ratio_mode
+            )
+            isl_mean = int(self.isl.expected_value) if self.isl is not None else 512
+            osl_mean = int(self.osl.expected_value) if self.osl is not None else 128
+            return RangeRatioDistribution(
+                isl_mean=isl_mean,
+                osl_mean=osl_mean,
+                input_ratio=input_ratio,
+                output_ratio=output_ratio,
+                mode=self.random_range_ratio_mode,
+                num_special_tokens=num_special_tokens,
+            )
+
+        return None
 
 
 class PromptSelectionConfig(BaseConfig):

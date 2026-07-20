@@ -422,6 +422,19 @@ def _apply_sequence_distribution(d: dict[str, Any], cli: CLIConfig) -> None:
     ]
 
 
+def _apply_random_range_ratio(d: dict[str, Any], cli: CLIConfig) -> None:
+    if not cli.prompt_random_range_ratio:
+        return
+    from aiperf.common.models.sequence_distribution import RangeRatioDistribution
+
+    RangeRatioDistribution.parse_cli_value(
+        cli.prompt_random_range_ratio, cli.prompt_random_range_ratio_mode
+    )
+    d.setdefault("prompts", {})["random_range_ratio"] = cli.prompt_random_range_ratio
+    if "prompt_random_range_ratio_mode" in cli.model_fields_set:
+        d["prompts"]["random_range_ratio_mode"] = cli.prompt_random_range_ratio_mode
+
+
 def _apply_turns(d: dict[str, Any], cli: CLIConfig) -> None:
     fields_set = cli.model_fields_set
     if (
@@ -547,6 +560,7 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
     ),
     ("prompt_batch_size", "--prompt-batch-size/--batch-size-text"),
     ("prompt_sequence_distribution", "--seq-dist/--sequence-distribution"),
+    ("prompt_random_range_ratio", "--random-range-ratio"),
     ("image_batch_size", "--image-batch-size"),
     ("image_source", "--image-source"),
     ("image_source_sampling", "--image-source-sampling"),
@@ -991,6 +1005,7 @@ _NON_TEXT_TEXT_TRIGGERS: tuple[tuple[str, str], ...] = (
     ),
     ("prompt_batch_size", "--prompt-batch-size/--batch-size-text"),
     ("prompt_sequence_distribution", "--seq-dist/--sequence-distribution"),
+    ("prompt_random_range_ratio", "--random-range-ratio"),
 )
 
 # Tokenizer options are also rejected for non-tokenizing endpoints
@@ -1069,6 +1084,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _attach_subtables(d, cli)
     _apply_dataset_type(d, cli, needs_text)
     _apply_sequence_distribution(d, cli)
+    _apply_random_range_ratio(d, cli)
     _apply_turns(d, cli)
     _apply_synthesis(d, cli)
     _apply_implicit_media_batch(d, cli)

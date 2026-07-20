@@ -10,10 +10,7 @@ from aiperf.common import random_generator as rng
 from aiperf.common.enums import ConversationContextMode, ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
-from aiperf.common.models.sequence_distribution import (
-    SequenceLengthDistribution,
-    SequenceLengthPair,
-)
+from aiperf.common.models.sequence_distribution import SequenceLengthSampler
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset import SyntheticDataset
 from aiperf.dataset.generator.audio import AudioGenerator
@@ -167,13 +164,12 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         self.turn_count = 0
 
-        # ``PromptConfig.sequence_distribution`` is a
-        # ``list[SequenceDistributionEntry]`` of typed ``SamplingDistribution``
-        # objects. Convert each entry directly to a ``SequenceLengthPair``
-        # (extracting mean + stddev from the underlying distribution) and
-        # build the runtime distribution without re-serializing through
-        # ``DistributionParser.parse``, which only accepts strings.
-        self._seq_distribution = self._build_sequence_distribution()
+        num_special_tokens = (
+            tokenizer.num_prompt_special_tokens() if tokenizer is not None else 0
+        )
+        self._seq_distribution: SequenceLengthSampler | None = (
+            self._build_sequence_distribution(num_special_tokens)
+        )
 
         # Cache for turn-level sequence lengths to ensure ISL/OSL pairing consistency
         self._turn_sequence_cache: dict[int, tuple[int, int]] = {}
@@ -301,33 +297,20 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         """
         ...
 
-    def _build_sequence_distribution(self) -> SequenceLengthDistribution | None:
-        """Build a runtime sequence-length distribution from config entries.
+    def _build_sequence_distribution(
+        self, num_special_tokens: int = 0
+    ) -> SequenceLengthSampler | None:
+        """Build a runtime sequence-length sampler from config.
 
-        ``PromptConfig.sequence_distribution`` is a list of
-        ``SequenceDistributionEntry`` carrying typed ``SamplingDistribution``
-        ISL/OSL fields (Fixed/Normal/LogNormal/...). Pull the mean and the
-        normal-distribution stddev (0 for non-normal types) off each entry to
-        construct ``SequenceLengthPair`` directly. ``DistributionParser.parse``
-        only accepts strings and would reject this list shape.
+        Delegates to ``PromptConfig.get_sequence_distribution()`` which handles
+        both ``sequence_distribution`` (probabilistic ISL/OSL pairs) and
+        ``random_range_ratio`` (uniform window sampling).
         """
         if self._synthetic_prompts is None:
             return None
-        entries = self._synthetic_prompts.sequence_distribution
-        if not entries:
-            return None
-
-        pairs = [
-            SequenceLengthPair(
-                input_seq_len=int(entry.isl.expected_value),
-                output_seq_len=int(entry.osl.expected_value),
-                probability=float(entry.probability),
-                input_seq_len_stddev=float(getattr(entry.isl, "stddev", 0.0) or 0.0),
-                output_seq_len_stddev=float(getattr(entry.osl, "stddev", 0.0) or 0.0),
-            )
-            for entry in entries
-        ]
-        return SequenceLengthDistribution(pairs)
+        return self._synthetic_prompts.get_sequence_distribution(
+            num_special_tokens=num_special_tokens
+        )
 
     def _osl_distribution(self) -> SamplingDistribution | None:
         """Resolve the OSL distribution to use as a fallback for max_tokens.
