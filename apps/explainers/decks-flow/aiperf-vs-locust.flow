@@ -12,36 +12,36 @@ explainer "AIPerf vs Locust" {
 
   hub: {
     highlight: "aiperf vs locust"
-    title: "cooperative green threads vs process-per-worker credit admission"
-    description: "Locust simulates virtual users as cooperative green threads coordinated by a central process. AIPerf runs every worker as a real OS process, admitted per-request by a routed credit ledger."
+    title: "cooperative green threads vs ledger-admitted tasks"
+    description: "Locust's concurrency unit is a cooperative green thread, one per simulated user. AIPerf's concurrency unit is an admitted credit, realized as a lightweight task — and many of those run concurrently inside a single worker process."
   }
 
   slide "Two architectures" {
     eyebrow: "Overview"
-    title: "Cooperative green threads vs process-per-worker credit admission"
-    lede: "Locust's unit of concurrency is a lightweight cooperative thread running one simulated user's loop. AIPerf's unit of concurrency is a real OS process, and every request it sends is individually authorized by a credit dispatched from a central router."
+    title: "Cooperative green threads vs ledger-admitted tasks"
+    lede: "Locust's unit of concurrency is a lightweight cooperative thread running one simulated user's loop. AIPerf's unit of concurrency is an admitted credit — not a worker process. A single worker process can, and normally does, run many credits at once."
 
-    narration: "Both tools are built around message-passing between processes — Locust for coordinating its master and worker processes, AIPerf for coordinating essentially everything it runs. But what rides on top of that messaging is structurally different. Locust's concurrency unit is a green thread: cheap, cooperatively scheduled, with no OS thread or process backing it individually. AIPerf's concurrency unit is a real, separate operating-system process, and every request that process sends is individually authorized by a credit handed out by a central coordinator. The rest of this deck traces both all the way down to how that actually works."
+    narration: "Both tools are built around message-passing between processes — Locust for coordinating its master and worker processes, AIPerf for coordinating essentially everything it runs. But the actual unit of concurrency each tool multiplies is different, and it's easy to state incorrectly. Locust's concurrency unit really is one process-lightweight thing per user: a green thread, cheap and cooperatively scheduled. AIPerf's concurrency unit is NOT the worker process — it's the credit, an individually admitted in-flight request, realized inside a worker as its own lightweight task. A worker process is just an execution host: it can run, and normally does run, many credits concurrently on its one event loop, with no cap of its own. So the fair comparison is green thread to credit, not green thread to process — a worker process is closer to what a whole fleet of Locust worker processes would be, since it's hosting many concurrent units of work at once, not one."
 
     term: {
       word: "concurrency unit"
-      meaning: "The thing a load-testing tool multiplies to reach a target in-flight-request count. Locust multiplies cooperative green threads inside worker processes; AIPerf multiplies real worker processes, each admitted per-request by a credit."
+      meaning: "The thing a load-testing tool multiplies to reach a target in-flight-request count. For Locust that unit is a cooperative green thread. For AIPerf it is an admitted credit — a worker process is an execution host that runs many credits concurrently, not one concurrency unit per process."
     }
 
     points: [
-      "Locust: a virtual user is a cooperative green thread, many sharing one worker process.",
-      "AIPerf: every part of the system — each worker included — is its own separate operating-system process.",
-      "AIPerf's inter-process messaging is pervasive: a status bus, a credit router, a credit-return channel, and more, all within one run.",
-      "Locust's inter-process messaging is narrower: it exists mainly to coordinate master and worker processes, not individual requests."
+      "Locust: a virtual user is a cooperative green thread — one thread, at most one in-flight request.",
+      "AIPerf: a credit is the concurrency unit — one credit, one in-flight request, realized as a lightweight task inside a worker.",
+      "A single AIPerf worker process normally runs many credits concurrently, with no internal cap of its own.",
+      "The fair comparison is green thread to credit, not green thread to worker process — a worker hosts many concurrency units at once."
     ]
 
-    caption: "Green threads inside processes vs processes admitted by credits."
+    caption: "One green thread per request vs one admitted credit per request — not one process per request."
 
     render: @scene {
       sdk.Header(
         id = "s1-hdr",
-        title = "GREEN THREADS vs CREDIT-ADMITTED PROCESSES",
-        caption = "Green threads inside processes vs processes admitted by credits.",
+        title = "GREEN THREADS vs ADMITTED CREDITS",
+        caption = "One green thread per request vs one admitted credit per request — not one process per request.",
         x = 18, y = 16, width = 664, height = 44,
         surfaceRole = theme(surface.secondary),
         inkRole = theme(ink.secondary)
@@ -50,28 +50,43 @@ explainer "AIPerf vs Locust" {
         id = "s1-locust",
         title = "Locust",
         detail = "virtual user → cooperative green thread",
-        x = 60, y = 110, width = 240, height = 100,
+        x = 60, y = 100, width = 240, height = 90,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.secondary)
       )
       sdk.Panel(
         id = "s1-aiperf",
         title = "AIPerf",
-        detail = "credit → worker OS process",
-        x = 400, y = 110, width = 240, height = 100,
+        detail = "admitted credit → lightweight task",
+        x = 400, y = 100, width = 240, height = 90,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.primary)
       )
       sdk.Divider(
         id = "s1-div",
         axis = "y",
-        x = 350, y = 90, length = 220,
+        x = 350, y = 90, length = 200,
         strokeRole = theme(ink.tertiary)
+      )
+      sdk.Panel(
+        id = "s1-host",
+        title = "One worker process",
+        detail = "hosts many credits at once — not one",
+        x = 380, y = 220, width = 280, height = 60,
+        surfaceRole = theme(surface.elevated),
+        strokeRole = theme(accent.warning)
+      )
+      sdk.Edge(
+        id = "s1-e1",
+        mode = "route",
+        from = { nodeId: "s1-aiperf", anchor: "s" },
+        to = { nodeId: "s1-host", anchor: "n" },
+        style = { stroke: theme(accent.warning), strokeWidth: 2 }
       )
       sdk.Note(
         id = "s1-note",
-        text = "Both coordinate over message-passing — for different jobs and at different scope",
-        x = 60, y = 250, width = 580, height = 30
+        text = "The worker process is an execution host, not the concurrency unit itself",
+        x = 60, y = 300, width = 580, height = 30
       )
       sdk.Signal(
         id = "s1-motion",
@@ -79,7 +94,7 @@ explainer "AIPerf vs Locust" {
         to = { nodeId: "s1-aiperf", anchor: "w" },
         opacity = 0.45,
         strokeWidth = 2.2,
-        label = "two architectures",
+        label = "thread vs credit, not process",
         style = { stroke: theme(accent.tertiary) }
       )
 
@@ -88,7 +103,9 @@ explainer "AIPerf vs Locust" {
         after s1-hdr reveal s1-locust duration 280
         after s1-locust reveal s1-div duration 220
         after s1-div reveal s1-aiperf duration 280
-        after s1-aiperf reveal s1-note duration 260
+        after s1-aiperf trace s1-e1 duration 260
+        after s1-e1 reveal s1-host duration 260
+        after s1-host reveal s1-note duration 260
         after s1-note trace s1-motion duration 900
       }
     }
