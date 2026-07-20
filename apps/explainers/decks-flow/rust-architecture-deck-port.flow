@@ -268,5 +268,120 @@ explainer "Rust Architecture — Deck Port" {
     }
   }
 
-  // slides appended by Tasks 6-10
+  // ---- Chapter 3 — Crate Topology & Flow (Task 6) ----
+
+  slide "Divider 02" {
+    eyebrow: "CHAPTER 02"
+    title: "Crate Topology and the End-to-End Flow"
+    lede: "Four crates, one product path, one typed outcome."
+    narration: "Chapter-break slide 02: a huge green monospace '02' over the bold title 'Crate Topology and the End-to-End Flow' and the gray subtitle 'Four crates, one product path, one typed outcome', right-aligned."
+    caption: "Chapter 02 · Crate Topology and the End-to-End Flow."
+    render: @scene {
+      sdk.SectionDivider(id = "div02", number = "02", title = "Crate Topology and the End-to-End Flow", subtitle = "Four crates, one product path, one typed outcome", x = 34, y = 58, width = 650)
+      timeline main {
+        at 0 reveal div02 duration 320
+      }
+    }
+  }
+
+  slide "Crate topology" {
+    eyebrow: "FOUR CRATES"
+    title: "Four crates"
+    lede: "16 former aiperf-* crates are now modules inside one library crate — no binary of its own."
+    narration: "Four crates. A dependency-direction chip row reads loadgen-core ← aiperf ← aiperf-runner, with aiperf-mock-server standing apart as independent. Below, a 2×2 card grid: loadgen-core (green — the {transport} seam plus trace collector, zero engine/HTTP deps), aiperf (green — the library-only runtime, no binary), aiperf-runner (black — the sole strict Rust executable Python launches, protocol-v2 only), and aiperf-mock-server (gray — the standalone online test/benchmark target, not in the runner dep graph)."
+    caption: "Four crates · one dependency chain, one independent target."
+    render: @scene {
+      sdk.Title(id = "crate-title", text = "Four crates", x = 40, y = 18, width = 620, height = 30, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "crate-sub", text = "16 former aiperf-* crates are now modules inside one library crate — no binary of its own", x = 40, y = 52, width = 620, height = 22, inkRole = theme(ink.secondary))
+      sdk.TagList(id = "crate-deps", items = ["loadgen-core", "← aiperf", "← aiperf-runner", "| aiperf-mock-server (independent)"], gap = 10, x = 40, y = 84, width = 620, height = 32)
+      sdk.CardGrid(id = "crate-cards", columns = 2, cards = [{ title: "loadgen-core", detail: "{transport} seam + trace collector · zero deps", accent: "green" }, { title: "aiperf", detail: "Library-only runtime · no binary", accent: "green" }, { title: "aiperf-runner", detail: "The only strict Rust exe · protocol-v2 only", accent: "black" }, { title: "aiperf-mock-server", detail: "Standalone test target · off the dep graph", accent: "gray" }], x = 42, y = 124)
+      timeline main {
+        at 0 reveal crate-title duration 200
+        after crate-title reveal crate-sub duration 180
+        after crate-sub reveal crate-deps duration 200
+        after crate-deps reveal crate-cards duration 300
+      }
+    }
+  }
+
+  slide "Module universe" {
+    eyebrow: "THE MODULE UNIVERSE"
+    title: "The module universe"
+    lede: "aiperf/src/lib.rs declares foundations and the composition modules that assemble them."
+    narration: "The module universe. aiperf/src/lib.rs declares foundations and the composition modules that assemble them. A green FOUNDATIONS label sits over a wrapped row of leaf-module chips — clock, transport_http, transport_grpc, endpoints, dataset, rng, timing, graph, metrics_core, adaptive_core, accuracy_core, gpu_telemetry, network_latency, server_metrics, content_server, cellular, extensions. A green COMPOSITION label sits over a second wrapped row — http, grpc, run, scheduled, phase_runtime, workload, report, metrics, export, adaptive, accuracy, ancillary, dynosim*."
+    caption: "Foundations and composition modules of aiperf/src/lib.rs."
+    render: @scene {
+      sdk.Title(id = "mod-title", text = "The module universe", x = 40, y = 16, width = 620, height = 30, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "mod-sub", text = "aiperf/src/lib.rs declares foundations and the composition modules that assemble them", x = 40, y = 50, width = 620, height = 22, inkRole = theme(ink.secondary))
+      // sdk.TagList renders as a single non-wrapping lane, so the 17 foundation
+      // and 13 composition modules are split into fixed-width rows that each stay
+      // inside the 700px scene viewport (≈6-7 chips per row).
+      sdk.Caption(id = "mod-found-label", text = "FOUNDATIONS", x = 40, y = 82, width = 300, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "mod-found-1", items = ["clock", "transport_http", "transport_grpc", "endpoints", "dataset", "rng"], gap = 8, x = 40, y = 102, width = 620, height = 28)
+      sdk.TagList(id = "mod-found-2", items = ["timing", "graph", "metrics_core", "adaptive_core", "accuracy_core", "gpu_telemetry"], gap = 8, x = 40, y = 132, width = 620, height = 28)
+      sdk.TagList(id = "mod-found-3", items = ["network_latency", "server_metrics", "content_server", "cellular", "extensions"], gap = 8, x = 40, y = 162, width = 620, height = 28)
+      sdk.Caption(id = "mod-comp-label", text = "COMPOSITION", x = 40, y = 210, width = 300, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "mod-comp-1", items = ["http", "grpc", "run", "scheduled", "phase_runtime", "workload", "report"], gap = 8, x = 40, y = 230, width = 620, height = 28)
+      sdk.TagList(id = "mod-comp-2", items = ["metrics", "export", "adaptive", "accuracy", "ancillary", "dynosim*"], gap = 8, x = 40, y = 260, width = 620, height = 28)
+      timeline main {
+        at 0 reveal mod-title duration 200
+        after mod-title reveal mod-sub duration 180
+        after mod-sub reveal mod-found-label duration 140
+        after mod-found-label stagger targets [mod-found-1, mod-found-2, mod-found-3] step 90 duration 200
+        after mod-found-3 reveal mod-comp-label duration 140
+        after mod-comp-label stagger targets [mod-comp-1, mod-comp-2] step 90 duration 200
+      }
+    }
+  }
+
+  slide "Flow diagram" {
+    eyebrow: "COMMAND LINE TO RESULTS"
+    title: "Command line to results"
+    lede: "One JSON envelope down stdin; one terminal line back up stdout."
+    narration: "Command line to results. A vertical pipeline chains six boxes top to bottom: Python emits Config-v2 → BenchmarkRun → one protocol-v2 JSON envelope; over stdin the aiperf-runner · main.rs box does mimalloc, stderr tracing, arg dispatch, catch_unwind; RunnerV2Coordinator::handle runs its 10-step pipeline validate → lower → select pair → prepare → execute; execute.rs performs the native run on current_thread + LocalSet; persist + export writes native-v2.json atomically; and finally Python reads the terminal line and opens native-v2.json and the artifact files."
+    caption: "One envelope down stdin, one terminal line up stdout."
+    render: @scene {
+      // The source is a 6-box vertical pipeline. A column sdk.StepChain (fixed
+      // 132px stride → ~752px for six boxes) overruns the 700×400 scene
+      // viewport, so the same ordered top-to-bottom flow is carried by
+      // sdk.NumberedSequence (68px stride), matching the "Observer sequence"
+      // slide's proven vertical-stack shape. stdin/stdout hand-offs are noted
+      // inline in the stage details.
+      sdk.Caption(id = "flow-title", text = "Command line to results", x = 34, y = 8, width = 640, height = 22, inkRole = theme(ink.primary))
+      sdk.NumberedSequence(id = "flow-chain", items = [{ number: "PY", title: "Python", detail: "Config-v2 → BenchmarkRun → protocol-v2 JSON envelope", emphasis: true }, { number: "01", title: "aiperf-runner · main.rs", detail: "stdin · mimalloc · tracing · catch_unwind → JSONL + exit code" }, { number: "02", title: "RunnerV2Coordinator::handle", detail: "10-step: validate → lower → select → prepare → execute" }, { number: "03", title: "execute.rs · native run", detail: "current_thread + LocalSet; graph or scheduled phases", emphasis: true }, { number: "04", title: "persist + export", detail: "atomic native-v2.json · best-effort exporters · commit once" }, { number: "PY", title: "Python reads back", detail: "stdout terminal line → opens native-v2.json + artifacts", emphasis: true }], x = 150, y = 34)
+      timeline main {
+        at 0 reveal flow-title duration 200
+        after flow-title reveal flow-chain duration 360
+      }
+    }
+  }
+
+  slide "Failure funnel" {
+    eyebrow: "EVERY FAILURE IS TYPED"
+    title: "Every failure is typed"
+    lede: "A caught panic becomes a typed failure, never a bare crash — Python always sees exactly one JSONL line."
+    narration: "Every failure is typed. A green RunnerFailureStageV2 label sits over a five-column row of stage cells — Protocol, Validation, Preparation, Execution, Reporting. Below, a three-column outcome row maps exit codes to meaning: 0 success, 1 validated failure, 2 protocol failure. A closing line notes each failure carries a redacted diagnostic, with credentials scrubbed before anything reaches stdout."
+    caption: "Five failure stages, three typed exit codes."
+    render: @scene {
+      sdk.Title(id = "fail-title", text = "Every failure is typed", x = 40, y = 12, width = 620, height = 28, inkRole = theme(ink.primary))
+      sdk.Paragraph(id = "fail-sub", text = "A caught panic becomes a typed failure, never a bare crash — Python always sees exactly one JSONL line", x = 40, y = 44, width = 620, height = 22, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "fail-stage-label", text = "RunnerFailureStageV2", x = 40, y = 78, width = 320, height = 16, inkRole = theme(accent.primary))
+      // The 5-stage row uses sdk.TagList (bordered chips): a 5-column
+      // sdk.CompareGrid at its fixed 220px cell width overflows the 700px scene
+      // viewport, so the equivalent chip lane carries the same 5 stage labels.
+      sdk.TagList(id = "fail-stages", items = ["Protocol", "Validation", "Preparation", "Execution", "Reporting"], gap = 10, x = 40, y = 100, width = 620, height = 40)
+      sdk.CompareGrid(id = "fail-codes", columns = 3, items = [{ label: "0", detail: "success" }, { label: "1", detail: "validated failure" }, { label: "2", detail: "protocol failure" }], x = 4, y = 240)
+      sdk.Paragraph(id = "fail-foot", text = "Each carries a redacted diagnostic — credentials scrubbed before anything reaches stdout.", x = 40, y = 368, width = 620, height = 20, inkRole = theme(ink.secondary))
+      timeline main {
+        at 0 reveal fail-title duration 200
+        after fail-title reveal fail-sub duration 180
+        after fail-sub reveal fail-stage-label duration 140
+        after fail-stage-label reveal fail-stages duration 300
+        after fail-stages reveal fail-codes duration 260
+        after fail-codes reveal fail-foot duration 180
+      }
+    }
+  }
+
+  // slides appended by Tasks 7-10
 }
