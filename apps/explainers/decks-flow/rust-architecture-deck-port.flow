@@ -113,7 +113,7 @@ explainer "Rust Architecture — Deck Port" {
     narration: "Chapter-break slide 01: a huge green monospace '01' over the bold title 'The Two Seams' and the gray subtitle 'If you understand these, the rest is composition', right-aligned."
     caption: "Chapter 01 · The Two Seams."
     render: @scene {
-      sdk.sectionDivider(id = "div01", number = "01", title = "The Two Seams", subtitle = "If you understand these, the rest is composition", x = 34, y = 58, width = 650)
+      sdk.SectionDivider(id = "div01", number = "01", title = "The Two Seams", subtitle = "If you understand these, the rest is composition", x = 34, y = 58, width = 650)
       timeline main {
         at 0 reveal div01 duration 320
       }
@@ -130,7 +130,7 @@ explainer "Rust Architecture — Deck Port" {
       sdk.Title(id = "seams-title", text = "Two trait seams carry the architecture", x = 34, y = 20, width = 640, height = 32, inkRole = theme(ink.primary))
       sdk.Paragraph(id = "seams-sub", text = "Everything passes through the waist — modes above, runtime concerns below, neither branches on the other", x = 34, y = 56, width = 640, height = 24, inkRole = theme(ink.secondary))
       sdk.TagList(id = "seams-modes", items = ["online-real", "online-mock", "offline co-sim"], gap = 12, x = 150, y = 92, width = 400, height = 34)
-      sdk.compareGrid(id = "seams-waist", columns = 2, items = [{ label: "{clock}", detail: "wall-vs-virtual time · RealClock · SimClock" }, { label: "{transport}", detail: "dispatch + measure · Dispatchable · RequestSink · RequestObserver" }], x = 122, y = 134)
+      sdk.CompareGrid(id = "seams-waist", columns = 2, items = [{ label: "{clock}", detail: "wall-vs-virtual time · RealClock · SimClock" }, { label: "{transport}", detail: "dispatch + measure · Dispatchable · RequestSink · RequestObserver" }], x = 122, y = 134)
       sdk.TagList(id = "seams-concerns", items = ["scheduling", "pacing", "admission", "reporting"], gap = 12, x = 130, y = 276, width = 440, height = 34)
       timeline main {
         at 0 reveal seams-title duration 200
@@ -153,9 +153,9 @@ explainer "Rust Architecture — Deck Port" {
       sdk.Title(id = "clock-title", text = "One Clock trait, two implementations", x = 34, y = 40, width = 640, height = 30, inkRole = theme(ink.primary))
       sdk.Paragraph(id = "clock-sub", text = "now_ns · sleep · is_virtual — dispatch on is_virtual() and nothing above the seam cares", x = 34, y = 74, width = 640, height = 22, inkRole = theme(ink.secondary))
       sdk.Caption(id = "clock-real-name", text = "RealClock — timerfd (ns) vs tokio 1ms wheel", x = 20, y = 108, width = 320, height = 16, inkRole = theme(ink.primary))
-      sdk.timelineAxis(id = "clock-real", start = 0, end = 3, ticks = [{ at: 0, label: "0ms" }, { at: 1, label: "1ms" }, { at: 2, label: "2ms" }, { at: 3, label: "3ms" }], target = { at: 1.6, label: "target" }, markers = [{ at: 1.6, label: "timerfd exact" }, { at: 2, label: "wheel late", style: "late" }], x = 20, y = 132, width = 300)
+      sdk.TimelineAxis(id = "clock-real", start = 0, end = 3, ticks = [{ at: 0, label: "0ms" }, { at: 1, label: "1ms" }, { at: 2, label: "2ms" }, { at: 3, label: "3ms" }], target = { at: 1.6, label: "target" }, markers = [{ at: 1.6, label: "timerfd exact" }, { at: 2, label: "wheel late", style: "late" }], x = 20, y = 132, width = 300)
       sdk.Caption(id = "clock-sim-name", text = "SimClock — BinaryHeap<Sleeper>, reversed Ord pops earliest", x = 356, y = 108, width = 340, height = 16, inkRole = theme(ink.primary))
-      sdk.nodeTree(id = "clock-sim", root = { label: "(100, 0)", emphasis: true }, children = [{ label: "(140, 1)" }, { label: "(140, 2)" }], orderNote = "pop order → (100,0) → (140,1) → (140,2)", x = 356, y = 132)
+      sdk.NodeTree(id = "clock-sim", root = { label: "(100, 0)", emphasis: true }, children = [{ label: "(140, 1)" }, { label: "(140, 2)" }], orderNote = "pop order → (100,0) → (140,1) → (140,2)", x = 356, y = 132)
       timeline main {
         at 0 reveal clock-eyebrow duration 160
         after clock-eyebrow reveal clock-title duration 220
@@ -179,7 +179,7 @@ explainer "Rust Architecture — Deck Port" {
       sdk.Title(id = "drv-title", text = "Same executor, two ways to drive it", x = 34, y = 40, width = 640, height = 30, inkRole = theme(ink.primary))
       sdk.Paragraph(id = "drv-sub", text = "The driver dispatches on is_virtual() — real time yields to the reactor, virtual time is pumped by hand", x = 34, y = 74, width = 640, height = 22, inkRole = theme(ink.secondary))
       sdk.Caption(id = "drv-real-name", text = "drive_real — reactor fires at wall-clock deadlines", x = 20, y = 108, width = 320, height = 16, inkRole = theme(ink.primary))
-      sdk.timelineAxis(id = "drv-real", start = 0, end = 3, markers = [{ at: 0.6, label: "fire" }, { at: 1.5, label: "fire" }, { at: 2.4, label: "fire" }], x = 20, y = 132, width = 300)
+      sdk.TimelineAxis(id = "drv-real", start = 0, end = 3, markers = [{ at: 0.6, label: "fire" }, { at: 1.5, label: "fire" }, { at: 2.4, label: "fire" }], x = 20, y = 132, width = 300)
       sdk.Caption(id = "drv-real-note", text = "real wall-clock time →", x = 20, y = 250, width = 300, height = 16, inkRole = theme(ink.tertiary))
       sdk.Caption(id = "drv-sim-name", text = "drive_sim · idle-pump loop", x = 360, y = 108, width = 330, height = 16, inkRole = theme(accent.primary))
       sdk.ProcessStep(id = "drv-poll", title = "poll", detail = "LocalSet", x = 360, y = 150, width = 100, height = 58)
@@ -220,9 +220,9 @@ explainer "Rust Architecture — Deck Port" {
       sdk.Caption(id = "trans-eyebrow", text = "{transport}", x = 34, y = 18, width = 300, height = 18, inkRole = theme(accent.primary))
       sdk.Title(id = "trans-title", text = "Three traits, no concrete request types", x = 34, y = 40, width = 640, height = 30, inkRole = theme(ink.primary))
       sdk.Paragraph(id = "trans-sub", text = "Real HTTP, native gRPC, mock HTTP and in-process co-sim all feed the same observer", x = 34, y = 74, width = 640, height = 22, inkRole = theme(ink.secondary))
-      sdk.compareGrid(id = "trans-cards", columns = 3, items = [{ label: "Dispatchable", detail: "Send + Sync · uuid, input_length, max_output_tokens; no concrete request type" }, { label: "RequestSink<R>", detail: "?Send · hyper/gRPC sinks are !Send, driven on a LocalSet; Err is transport failure" }, { label: "RequestObserver", detail: "no Send/Sync · worker-local Rc/RefCell, no per-token mutex" }], x = 4, y = 108)
+      sdk.CompareGrid(id = "trans-cards", columns = 3, items = [{ label: "Dispatchable", detail: "Send + Sync · no concrete type" }, { label: "RequestSink<R>", detail: "?Send · !Send on a LocalSet" }, { label: "RequestObserver", detail: "no Send/Sync · Rc/RefCell" }], x = 4, y = 108)
       sdk.TagList(id = "trans-tags", items = ["real HTTP", "native gRPC", "mock HTTP", "co-sim"], gap = 8, x = 34, y = 300, width = 380, height = 32)
-      sdk.Caption(id = "trans-arrow", text = "→ one RequestObserver — scheduling, pacing, reporting never branch on the backend", x = 430, y = 306, width = 250, height = 40, inkRole = theme(ink.primary))
+      sdk.Caption(id = "trans-arrow", text = "→ one RequestObserver · backend never leaks up", x = 430, y = 306, width = 250, height = 40, inkRole = theme(ink.primary))
       timeline main {
         at 0 reveal trans-eyebrow duration 160
         after trans-eyebrow reveal trans-title duration 220
@@ -242,7 +242,7 @@ explainer "Rust Architecture — Deck Port" {
     caption: "Six observer callbacks in order."
     render: @scene {
       sdk.Caption(id = "seq-title", text = "The life of one request, in callbacks", x = 34, y = 8, width = 640, height = 22, inkRole = theme(ink.primary))
-      sdk.numberedSequence(id = "seq-list", items = [{ number: "1", title: "on_arrival", detail: "arrival_ms, input_length, requested_output_length", emphasis: true }, { number: "2", title: "on_admit", detail: "admit_ms, reused_input_tokens", emphasis: true }, { number: "3", title: "on_token", detail: "on_classified_token / batch — first token derives TTFT" }, { number: "4", title: "on_usage", detail: "terminal server usage, 13 optional fields; absent stays absent", emphasis: true }, { number: "5", title: "on_endpoint_metrics", detail: "image/video facts; default no-op", emphasis: true }, { number: "6", title: "on_terminal", detail: "Completed · Rejected · Canceled · Failed" }], x = 34, y = 34)
+      sdk.NumberedSequence(id = "seq-list", items = [{ number: "1", title: "on_arrival", detail: "arrival_ms, input_length, requested_output_length", emphasis: true }, { number: "2", title: "on_admit", detail: "admit_ms, reused_input_tokens", emphasis: true }, { number: "3", title: "on_token", detail: "on_classified_token / batch — first token derives TTFT" }, { number: "4", title: "on_usage", detail: "terminal server usage, 13 optional fields; absent stays absent", emphasis: true }, { number: "5", title: "on_endpoint_metrics", detail: "image/video facts; default no-op", emphasis: true }, { number: "6", title: "on_terminal", detail: "Completed · Rejected · Canceled · Failed" }], x = 34, y = 34)
       timeline main {
         at 0 reveal seq-title duration 200
         after seq-title reveal seq-list duration 320
@@ -258,8 +258,8 @@ explainer "Rust Architecture — Deck Port" {
     caption: "Three interchangeable run modes."
     render: @scene {
       sdk.Caption(id = "modes-eyebrow", text = "The payoff of two seams", x = 360, y = 10, width = 320, height = 20, inkRole = theme(ink.secondary))
-      sdk.bigStat(id = "modes-stat", value = "3", title = "interchangeable run modes from one codebase", x = 30, y = 6, width = 640)
-      sdk.compareGrid(id = "modes-grid", columns = 3, items = [{ label: "online-real", detail: "Real clock, real HTTP/gRPC against a live server" }, { label: "online-mock", detail: "Real clock against the standalone mock server" }, { label: "offline co-sim", detail: "Virtual clock, deterministic dynosim — byte-exact" }], x = 4, y = 278)
+      sdk.BigStat(id = "modes-stat", value = "3", title = "interchangeable run modes from one codebase", x = 30, y = 6, width = 640)
+      sdk.CompareGrid(id = "modes-grid", columns = 3, items = [{ label: "online-real", detail: "Real clock · real HTTP/gRPC" }, { label: "online-mock", detail: "Real clock · mock server" }, { label: "offline co-sim", detail: "Virtual clock · dynosim" }], x = 4, y = 278)
       timeline main {
         at 0 reveal modes-eyebrow duration 160
         after modes-eyebrow reveal modes-stat duration 320
