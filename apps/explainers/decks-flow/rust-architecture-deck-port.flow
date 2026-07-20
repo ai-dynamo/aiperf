@@ -1173,8 +1173,10 @@ explainer "Rust Architecture — Deck Port" {
       sdk.CompareGrid(id = "dy-modes", columns = 2, items = [{ label: "dynosim_offline", detail: "Sim clock · drive_sim_with_source · enforced byte-exact parity vs Dynamo" }, { label: "dynosim_online", detail: "Real clock · drive_real_with_source · relaxed parity" }], x = 40, y = 108)
       sdk.Caption(id = "dy-axis", text = "The two modes differ only in the clock / driver axis", x = 40, y = 232, width = 640, height = 16, inkRole = theme(ink.secondary))
       sdk.Caption(id = "dy-comp-label", text = "SHARED SEAMS", x = 40, y = 256, width = 640, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "dy-comp", items = ["DynosimSink · same RequestSink / HttpRequestDispatcher / TurnDispatcher seams", "EngineHost · bridges the DES/wall clock as a SimEventSource", "token priority · raw_token_ids → trace_hash_ids → chat body"], gap = 8, x = 40, y = 276, width = 640, height = 52)
-      sdk.Caption(id = "dy-note", text = "Requires worker_count == 1 · dynamo-full adds the router / ZMQ / KV / AIC surface", x = 40, y = 340, width = 640, height = 16, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "dy-c1", text = "DynosimSink · same RequestSink / HttpRequestDispatcher / TurnDispatcher seams", x = 40, y = 276, width = 660, height = 20, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "dy-c2", text = "EngineHost · bridges the DES/wall clock as a SimEventSource", x = 40, y = 300, width = 660, height = 20, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "dy-c3", text = "token priority · raw_token_ids → trace_hash_ids → chat body", x = 40, y = 324, width = 660, height = 20, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "dy-note", text = "Requires worker_count == 1 · dynamo-full adds the router / ZMQ / KV / AIC surface", x = 40, y = 352, width = 660, height = 16, inkRole = theme(ink.secondary))
       timeline main {
         at 0 reveal dy-badge duration 160
         at 0 reveal dy-badge-l duration 160
@@ -1184,8 +1186,8 @@ explainer "Rust Architecture — Deck Port" {
         after dy-sub reveal dy-modes duration 320
         after dy-modes reveal dy-axis duration 140
         after dy-axis reveal dy-comp-label duration 140
-        after dy-comp-label reveal dy-comp duration 200
-        after dy-comp reveal dy-note duration 160
+        after dy-comp-label stagger targets [dy-c1, dy-c2, dy-c3] step 90 duration 180
+        after dy-c3 reveal dy-note duration 160
       }
     }
   }
@@ -1205,9 +1207,12 @@ explainer "Rust Architecture — Deck Port" {
       sdk.Caption(id = "ms-lat-label", text = "TWO LATENCY MODELS · GOODPUT vs LOAD", x = 40, y = 106, width = 640, height = 16, inkRole = theme(accent.primary))
       sdk.Paragraph(id = "ms-lat", text = "an analytic curve vs a queue-threshold model — goodput batch-collapses past the queue threshold", x = 40, y = 126, width = 640, height = 20, inkRole = theme(ink.secondary))
       sdk.Caption(id = "ms-feat-label", text = "SERVER FEATURES", x = 40, y = 158, width = 640, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "ms-feat", items = ["prefix cache · SGLang-style eviction, chain-hash blocks", "DCGM faker · 100 Hz, throughput-driven per-GPU telemetry", "TCP_NODELAY · manual accept loop, no Nagle on SSE chunks", "--fast · zero latency, no scheduler or cache"], gap = 8, x = 40, y = 178, width = 640, height = 52)
-      sdk.Caption(id = "ms-dial-label", text = "7 PROMETHEUS DIALECTS", x = 40, y = 244, width = 640, height = 16, inkRole = theme(accent.primary))
-      sdk.TagList(id = "ms-dial", items = ["vllm:*", "sglang:*", "trtllm:*", "dynamo_*", "+3"], gap = 8, x = 40, y = 264, width = 640, height = 26)
+      sdk.Paragraph(id = "ms-f1", text = "prefix cache · SGLang-style eviction, chain-hash blocks", x = 40, y = 178, width = 660, height = 20, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "ms-f2", text = "DCGM faker · 100 Hz, throughput-driven per-GPU telemetry", x = 40, y = 202, width = 660, height = 20, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "ms-f3", text = "TCP_NODELAY · manual accept loop, no Nagle on SSE chunks", x = 40, y = 226, width = 660, height = 20, inkRole = theme(ink.secondary))
+      sdk.Paragraph(id = "ms-f4", text = "--fast · zero latency, no scheduler or cache", x = 40, y = 250, width = 660, height = 20, inkRole = theme(ink.secondary))
+      sdk.Caption(id = "ms-dial-label", text = "7 PROMETHEUS DIALECTS", x = 40, y = 280, width = 640, height = 16, inkRole = theme(accent.primary))
+      sdk.TagList(id = "ms-dial", items = ["vllm:*", "sglang:*", "trtllm:*", "dynamo_*", "+3"], gap = 8, x = 40, y = 300, width = 640, height = 26)
       timeline main {
         at 0 reveal ms-badge duration 160
         at 0 reveal ms-badge-l duration 160
@@ -1217,8 +1222,8 @@ explainer "Rust Architecture — Deck Port" {
         after ms-sub reveal ms-lat-label duration 140
         after ms-lat-label reveal ms-lat duration 160
         after ms-lat reveal ms-feat-label duration 140
-        after ms-feat-label reveal ms-feat duration 220
-        after ms-feat reveal ms-dial-label duration 140
+        after ms-feat-label stagger targets [ms-f1, ms-f2, ms-f3, ms-f4] step 80 duration 160
+        after ms-f4 reveal ms-dial-label duration 140
         after ms-dial-label reveal ms-dial duration 180
       }
     }
