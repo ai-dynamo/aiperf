@@ -125,7 +125,7 @@ describe("sdk.bigStat", () => {
 });
 
 describe("sdk.compareGrid", () => {
-  it("expands with minimal valid props and roots a layout.grid of cells", () => {
+  it("expands with minimal valid props and roots a core.group of cells", () => {
     const definition = createSdkRegistry().lookup("sdk.compareGrid")!;
     const result = definition.factory(
       { id: "cg", items: [{ label: "Clock" }, { label: "Dispatch" }, { label: "Transport" }] },
@@ -138,7 +138,7 @@ describe("sdk.compareGrid", () => {
       return;
     }
     expect(result.diagnostics).toHaveLength(0);
-    expect(result.value.roots[0]!.capabilityId).toBe("layout.grid");
+    expect(result.value.roots[0]!.capabilityId).toBe("core.group");
     expect(result.value.ports["cell[0]"]).toEqual({ nodeId: "cg__cell-0" });
     expect(result.value.ports["cell[2]"]).toEqual({ nodeId: "cg__cell-2" });
   });
@@ -320,7 +320,7 @@ describe("sdk.nodeTree", () => {
 });
 
 describe("sdk.cardGrid", () => {
-  it("expands with minimal valid props and roots a layout.grid of cards", () => {
+  it("expands with minimal valid props and roots a core.group of cards", () => {
     const definition = createSdkRegistry().lookup("sdk.cardGrid")!;
     const result = definition.factory(
       {
@@ -339,7 +339,7 @@ describe("sdk.cardGrid", () => {
       return;
     }
     expect(result.diagnostics).toHaveLength(0);
-    expect(result.value.roots[0]!.capabilityId).toBe("layout.grid");
+    expect(result.value.roots[0]!.capabilityId).toBe("core.group");
     expect(result.value.ports["card[0]"]).toEqual({ nodeId: "cg2__card-0" });
     expect(result.value.ports["card[1]"]).toEqual({ nodeId: "cg2__card-1" });
   });

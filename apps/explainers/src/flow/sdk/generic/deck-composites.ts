@@ -54,7 +54,7 @@ import type { JsonValue } from "../../schema/json-value.js";
 import type { SourceRange } from "../../schema/source.js";
 import type { StyleValueIr } from "../../schema/theme.js";
 import { measuredWrappedHeight, scaledSceneFontSize } from "../../../core/diagram/text-metrics.js";
-import { layoutFlow, type FlowNode } from "../../../core/diagram/layout/flow-engine.js";
+import { layoutFlow, type FlowBox, type FlowNode } from "../../../core/diagram/layout/flow-engine.js";
 import { textFlowLeaf } from "../../../core/diagram/layout/text-flow-leaf.js";
 import { attachSdkOrigin, type SdkOrigin } from "../provenance.js";
 import type {
@@ -194,6 +194,123 @@ function flowTextHeight(
     minHeight,
   };
   return layoutFlow(node, { maxWidth: textWidth }).get("text")!.height;
+}
+
+// ---------------------------------------------------------------------------
+// Grid layout via the flow-layout engine. `sdk.compareGrid` / `sdk.cardGrid`
+// model an N-column grid as a `direction: "column"` root of `direction: "row"`
+// FlowNodes (one row per grid row), each row `align: "stretch"` so every cell
+// in it inherits that row's own cross-size — which the engine computes as the
+// max of its children. Each cell is a `direction: "column"` node with a fixed
+// column width; its detail body is a `textFlowLeaf` that measures its own
+// wrapped height exactly once (cache-based; no measure/paint divergence). This
+// yields PER-ROW uniform cell heights (the tallest cell's content in each row)
+// without a separate "find the tallest cell" pass, replacing the older
+// grid-wide single-height arithmetic.
+// ---------------------------------------------------------------------------
+
+/** One grid cell's detail-body measurement inputs (label/accent are fixed). */
+type GridCellSpec = Readonly<{
+  detail?: string;
+  detailFontSize: number;
+  detailWeight?: "normal" | "bold";
+}>;
+
+/** Flow-engine-resolved grid geometry: per-cell boxes plus overall extent. */
+type GridLayoutResult = Readonly<{
+  cellBoxes: readonly FlowBox[];
+  detailBoxes: readonly (FlowBox | undefined)[];
+  width: number;
+  height: number;
+}>;
+
+/**
+ * Resolve per-cell boxes for an N-column grid through the flow-layout engine.
+ * Cell widths are fixed to `cellWidth`; each cell's height is the flow engine's
+ * per-row max (so a row is uniform-height), and the detail leaf's own resolved
+ * box supplies the exact wrapped-text height. Font sizes passed to
+ * `textFlowLeaf` are pre-scaled with `scaledSceneFontSize` per its contract.
+ */
+function computeGridCellBoxes(args: {
+  rootId: string;
+  cellIdFor: (index: number) => string;
+  detailLeafIdFor: (index: number) => string;
+  cells: readonly GridCellSpec[];
+  columns: number;
+  cellWidth: number;
+  detailWidth: number;
+  detailTopY: number;
+  bottomInset: number;
+  minCellHeight: number;
+  gap: number;
+}): GridLayoutResult {
+  const rows: FlowNode[] = [];
+  for (let rowStart = 0; rowStart < args.cells.length; rowStart += args.columns) {
+    const rowCells: FlowNode[] = [];
+    for (let column = 0; column < args.columns; column += 1) {
+      const index = rowStart + column;
+      if (index >= args.cells.length) {
+        break;
+      }
+      const spec = args.cells[index]!;
+      const children: FlowNode[] =
+        spec.detail !== undefined
+          ? [
+              {
+                id: args.detailLeafIdFor(index),
+                measure: textFlowLeaf(
+                  spec.detail,
+                  scaledSceneFontSize(spec.detailFontSize),
+                  spec.detailWeight ?? "normal",
+                ),
+                fixedWidth: args.detailWidth,
+                // Reserve the header band above the detail (accent + label) and
+                // the bottom inset; the column sum is the cell's content height.
+                margin: { top: args.detailTopY, bottom: args.bottomInset },
+              },
+            ]
+          : [];
+      rowCells.push({
+        id: args.cellIdFor(index),
+        direction: "column",
+        fixedWidth: args.cellWidth,
+        minHeight: args.minCellHeight,
+        children,
+      });
+    }
+    rows.push({
+      id: `${args.rootId}__row-${rows.length}`,
+      direction: "row",
+      align: "stretch",
+      columnGap: args.gap,
+      children: rowCells,
+    });
+  }
+
+  const width = args.columns * args.cellWidth + Math.max(args.columns - 1, 0) * args.gap;
+  const root: FlowNode = {
+    id: args.rootId,
+    direction: "column",
+    rowGap: args.gap,
+    children: rows,
+  };
+  const out = layoutFlow(root, { maxWidth: width });
+
+  const cellBoxes = args.cells.map(
+    (_, index) =>
+      out.get(args.cellIdFor(index)) ?? {
+        x: 0,
+        y: 0,
+        width: args.cellWidth,
+        height: args.minCellHeight,
+      },
+  );
+  const detailBoxes = args.cells.map((spec, index) =>
+    spec.detail !== undefined ? out.get(args.detailLeafIdFor(index)) : undefined,
+  );
+  const rootHeight = out.get(args.rootId)?.height ?? args.minCellHeight;
+
+  return { cellBoxes, detailBoxes, width, height: rootHeight };
 }
 
 // ---------------------------------------------------------------------------
@@ -944,20 +1061,31 @@ const compareGridFactory: SdkComponentFactory = (props, _slots, context) => {
   const children: RenderNodeIr[] = [];
   const ports: Record<string, ConnectorEndpointIr> = {};
 
-  // Uniform cell height across this grid instance: grown to the TALLEST cell's
-  // wrapped detail text (matching the HTML source's uniform-height card rows).
+  // Per-ROW uniform cell heights via the flow-layout engine: every cell in a
+  // row auto-sizes to that row's tallest wrapped-detail content (see
+  // `computeGridCellBoxes`), replacing the older grid-wide single-height math.
   const detailWidth = COMPARE_CELL_W - COMPARE_INSET * 2;
   const detailTopY = STEP_ACCENT_THICKNESS + 54;
-  const cellHeight = items.reduce((max, item) => {
-    if (item.detail === undefined) {
-      return max;
-    }
-    const needed = detailTopY + measuredWrappedHeight(item.detail, detailWidth, 14) + COMPARE_INSET;
-    return Math.max(max, needed);
-  }, COMPARE_CELL_H);
+  const layout = computeGridCellBoxes({
+    rootId,
+    cellIdFor: (index) => `${rootId}__cell-${index}`,
+    detailLeafIdFor: (index) => `${rootId}__cell-${index}__detail`,
+    cells: items.map((item) => ({
+      ...(item.detail !== undefined ? { detail: item.detail } : {}),
+      detailFontSize: 14,
+    })),
+    columns,
+    cellWidth: COMPARE_CELL_W,
+    detailWidth,
+    detailTopY,
+    bottomInset: COMPARE_INSET,
+    minCellHeight: COMPARE_CELL_H,
+    gap,
+  });
 
   items.forEach((item, index) => {
     const cellId = `${rootId}__cell-${index}`;
+    const cellBox = layout.cellBoxes[index]!;
     const cellChildren: RenderNodeIr[] = [
       attachSdkOrigin(
         buildRect({
@@ -987,6 +1115,7 @@ const compareGridFactory: SdkComponentFactory = (props, _slots, context) => {
     ];
 
     if (item.detail !== undefined) {
+      const detailBox = layout.detailBoxes[index];
       cellChildren.push(
         attachSdkOrigin(
           buildText({
@@ -996,7 +1125,7 @@ const compareGridFactory: SdkComponentFactory = (props, _slots, context) => {
               x: COMPARE_INSET,
               y: detailTopY,
               width: detailWidth,
-              height: grownTextHeight(item.detail, detailWidth, 14, 48),
+              height: detailBox?.height ?? grownTextHeight(item.detail, detailWidth, 14, 48),
             },
             style: { fontSize: 14, fill: COLOR_MUTED, textAnchor: "start" },
             sourceMap: context.sourceMap,
@@ -1011,7 +1140,7 @@ const compareGridFactory: SdkComponentFactory = (props, _slots, context) => {
         buildGroup({
           id: cellId,
           capabilityId: "core.group",
-          geometry: { x: 0, y: 0, width: COMPARE_CELL_W, height: cellHeight },
+          geometry: { x: cellBox.x, y: cellBox.y, width: COMPARE_CELL_W, height: cellBox.height },
           style: {
             coordinateSpace: "local",
             fill: COLOR_SURFACE,
@@ -1028,16 +1157,15 @@ const compareGridFactory: SdkComponentFactory = (props, _slots, context) => {
     ports[`cell[${index}]`] = { nodeId: cellId };
   });
 
-  const rowCount = Math.ceil(items.length / columns);
-  const width = columns * COMPARE_CELL_W + (columns - 1) * gap;
-  const height = rowCount * cellHeight + (rowCount - 1) * gap;
+  const width = layout.width;
+  const height = layout.height;
 
   const root = attachSdkOrigin(
     buildGroup({
       id: rootId,
-      capabilityId: "layout.grid",
+      capabilityId: "core.group",
       geometry: { x, y, width, height },
-      style: { coordinateSpace: "local", cols: columns, gap },
+      style: { coordinateSpace: "local" },
       children,
       label: "compare grid",
       sourceMap: context.sourceMap,
@@ -1058,7 +1186,7 @@ const compareGridFactory: SdkComponentFactory = (props, _slots, context) => {
 };
 
 export const COMPARE_GRID_DEFINITION: SdkComponentDefinition = {
-  descriptor: makeDescriptor("sdk.compareGrid", "layout.grid", {
+  descriptor: makeDescriptor("sdk.compareGrid", "core.group", {
     columns: { type: "number", required: false, default: COMPARE_DEFAULT_COLUMNS },
     items: { type: "json", required: true },
     gap: { type: "number", required: false, default: COMPARE_GAP },
@@ -2021,22 +2149,34 @@ const cardGridFactory: SdkComponentFactory = (props, _slots, context) => {
   const children: RenderNodeIr[] = [];
   const ports: Record<string, ConnectorEndpointIr> = {};
 
-  // Uniform card height across this grid instance: grown to the TALLEST card's
-  // wrapped detail text (matching the HTML source's uniform-height card rows).
+  // Per-ROW uniform card heights via the flow-layout engine: every card in a
+  // row auto-sizes to that row's tallest wrapped-detail content (see
+  // `computeGridCellBoxes`), replacing the older grid-wide single-height math.
   const cardDetailWidth = CARD_W - CARD_INSET * 2;
   const cardDetailTopY = 54;
-  const cardHeight = cards.reduce((max, card) => {
-    const needed = cardDetailTopY + measuredWrappedHeight(card.detail, cardDetailWidth, 14) + CARD_INSET;
-    return Math.max(max, needed);
-  }, CARD_H);
+  const layout = computeGridCellBoxes({
+    rootId,
+    cellIdFor: (index) => `${rootId}__card-${index}`,
+    detailLeafIdFor: (index) => `${rootId}__card-${index}__detail`,
+    cells: cards.map((card) => ({ detail: card.detail, detailFontSize: 14 })),
+    columns,
+    cellWidth: CARD_W,
+    detailWidth: cardDetailWidth,
+    detailTopY: cardDetailTopY,
+    bottomInset: CARD_INSET,
+    minCellHeight: CARD_H,
+    gap,
+  });
 
   cards.forEach((card, index) => {
     const cardId = `${rootId}__card-${index}`;
+    const cardBox = layout.cellBoxes[index]!;
+    const detailBox = layout.detailBoxes[index];
     const cardChildren: RenderNodeIr[] = [
       attachSdkOrigin(
         buildRect({
           id: `${cardId}__accent`,
-          geometry: { x: 0, y: 0, width: CARD_ACCENT_W, height: cardHeight },
+          geometry: { x: 0, y: 0, width: CARD_ACCENT_W, height: cardBox.height },
           style: { fill: cardAccentColor(card.accent) },
           label: `${card.title} accent`,
           sourceMap: context.sourceMap,
@@ -2061,7 +2201,7 @@ const cardGridFactory: SdkComponentFactory = (props, _slots, context) => {
             x: CARD_INSET,
             y: cardDetailTopY,
             width: cardDetailWidth,
-            height: grownTextHeight(card.detail, cardDetailWidth, 14, 44),
+            height: detailBox?.height ?? grownTextHeight(card.detail, cardDetailWidth, 14, 44),
           },
           style: { fontSize: 14, fill: COLOR_MUTED, textAnchor: "start" },
           sourceMap: context.sourceMap,
@@ -2075,7 +2215,7 @@ const cardGridFactory: SdkComponentFactory = (props, _slots, context) => {
         buildGroup({
           id: cardId,
           capabilityId: "core.group",
-          geometry: { x: 0, y: 0, width: CARD_W, height: cardHeight },
+          geometry: { x: cardBox.x, y: cardBox.y, width: CARD_W, height: cardBox.height },
           style: { coordinateSpace: "local", fill: COLOR_SURFACE, stroke: COLOR_BORDER, strokeWidth: 1 },
           children: cardChildren,
           label: card.title,
@@ -2087,16 +2227,15 @@ const cardGridFactory: SdkComponentFactory = (props, _slots, context) => {
     ports[`card[${index}]`] = { nodeId: cardId };
   });
 
-  const rowCount = Math.ceil(cards.length / columns);
-  const width = columns * CARD_W + (columns - 1) * gap;
-  const height = rowCount * cardHeight + (rowCount - 1) * gap;
+  const width = layout.width;
+  const height = layout.height;
 
   const root = attachSdkOrigin(
     buildGroup({
       id: rootId,
-      capabilityId: "layout.grid",
+      capabilityId: "core.group",
       geometry: { x, y, width, height },
-      style: { coordinateSpace: "local", cols: columns, gap },
+      style: { coordinateSpace: "local" },
       children,
       label: "card grid",
       sourceMap: context.sourceMap,
@@ -2112,7 +2251,7 @@ const cardGridFactory: SdkComponentFactory = (props, _slots, context) => {
 };
 
 export const CARD_GRID_DEFINITION: SdkComponentDefinition = {
-  descriptor: makeDescriptor("sdk.cardGrid", "layout.grid", {
+  descriptor: makeDescriptor("sdk.cardGrid", "core.group", {
     columns: { type: "number", required: false, default: CARD_DEFAULT_COLUMNS },
     cards: { type: "json", required: true },
     gap: { type: "number", required: false, default: CARD_GAP },
